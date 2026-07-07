@@ -94,6 +94,12 @@ export function shouldAutoScrollToBottom(input: {
   return input.followMode === "follow" && input.isAtBottom;
 }
 
+export function shouldApplyExternalForceStickToBottom(input: {
+  followMode: "follow" | "detached";
+}): boolean {
+  return input.followMode === "follow";
+}
+
 export function shouldRunScheduledBottomScroll(input: {
   followMode: "follow" | "detached";
   isAtBottom: boolean;

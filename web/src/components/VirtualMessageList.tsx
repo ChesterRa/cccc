@@ -17,6 +17,7 @@ import {
   getStableMessageKey,
   isVirtualizedScrollNearEnd,
   shouldAutoScrollToBottom,
+  shouldApplyExternalForceStickToBottom,
   shouldDetachChatFollowOnScroll,
   shouldNotifyScrollChange,
   shouldPromoteScrollToFollow,
@@ -25,6 +26,10 @@ import {
   VIRTUAL_OVERSCAN_ROWS,
   wasAtBottomBeforeContentChange,
 } from "./virtualMessageListHelpers";
+import {
+  usePrependCompensationController,
+  useTopHistoryLoadCoordinator,
+} from "./virtualMessageListPrependCompensation";
 import { classNames } from "../utils/classNames";
 import type { WebModelDeliveryStatus } from "../utils/webModelDeliveryStatus";
 import { getNonVirtualMessageListTopMargin } from "./virtualMessageListLayout";
@@ -333,14 +338,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   const bottomScrollRequestTokenRef = useRef(0);
   const scrollRafScheduledRef = useRef(false);
   const snapshotFlushTimerRef = useRef<number | null>(null);
-  // For history loading scroll position preservation (prepend older messages)
-  const topLoadArmedRef = useRef(true);
-  const pendingPrependCompensationRef = useRef<{
-    previousOffset: number;
-    previousTotalSize: number;
-    anchorId: string;
-    anchorOffsetPx: number;
-  } | null>(null);
   const lastScrollTopRef = useRef(0);
   const previousContentSizeRef = useRef(0);
   // Mark container resize work, such as the footer reply bar appearing or
@@ -429,6 +426,14 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     followModeRef.current = next;
   }, []);
 
+  const detachFollowModeForHistoryLoad = useCallback(() => {
+    setFollowMode("detached");
+  }, [setFollowMode]);
+
+  const markAwayFromBottomForHistoryLoad = useCallback(() => {
+    setAtBottom(false);
+  }, [setAtBottom]);
+
   const scrollToMessageAnchor = useCallback((eventId: string, offsetPx = 0) => {
     const el = parentRef.current;
     if (!el || !eventId) return false;
@@ -450,6 +455,22 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     el.scrollTo({ top: row.offsetTop + Math.max(0, offsetPx), behavior: "auto" });
     return true;
   }, [displayMessages, getMessageRowById, shouldVirtualize, virtualizer]);
+
+  const scrollToVirtualOffset = useCallback((offsetPx: number) => {
+    virtualizer.scrollToOffset(offsetPx, { align: "start", behavior: "auto" });
+  }, [virtualizer]);
+
+  const prependCompensation = usePrependCompensationController({
+    parentRef,
+    lastScrollTopRef,
+    getMessageRowById,
+    isVirtualized: shouldVirtualize,
+    scrollToVirtualOffset,
+  });
+  const getAnchorTop = useCallback((anchorId: string) => {
+    const row = getMessageRowById(anchorId);
+    return row ? row.getBoundingClientRect().top : null;
+  }, [getMessageRowById]);
 
   const checkIsAtBottom = useCallback(() => {
     const el = parentRef.current;
@@ -499,6 +520,18 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     forceStickToBottomUntilRef.current = 0;
     cancelScheduledScroll();
   }, [cancelScheduledScroll]);
+
+  const topHistoryLoad = useTopHistoryLoadCoordinator({
+    compensation: prependCompensation,
+    getAnchorSnapshot,
+    getAnchorTop,
+    getCurrentContentSize,
+    scrollToMessageAnchor,
+    cancelPendingBottomScroll,
+    detachFollowMode: detachFollowModeForHistoryLoad,
+    markAwayFromBottom: markAwayFromBottomForHistoryLoad,
+    onLoadMore,
+  });
 
   const shouldForceStickToBottom = useCallback(() => {
     return forceStickToBottomUntilRef.current > performance.now();
@@ -737,26 +770,15 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     // Use a hysteresis "arm/disarm" gate instead of relying on scroll direction.
     // This prevents repeated loads when the scroll position jitters near the top
     // (e.g. due to browser scroll anchoring or dynamic row measurement).
-    if (curTop > topRearmPx) topLoadArmedRef.current = true;
-
-    const atTop = curTop < topTriggerPx;
-    if (atTop && topLoadArmedRef.current && hasMoreHistory && !isLoadingHistory && onLoadMore) {
-      topLoadArmedRef.current = false;
-      setFollowMode("detached");
-      setAtBottom(false);
-      cancelPendingBottomScroll();
-      const anchor = getAnchorSnapshot(curTop);
-      pendingPrependCompensationRef.current = {
-        previousOffset: curTop,
-        previousTotalSize: getCurrentContentSize(),
-        anchorId: anchor?.anchorId || "",
-        anchorOffsetPx: Number(anchor?.offsetPx || 0),
-      };
-
-      onLoadMore();
-    }
+    topHistoryLoad.handleTopHistoryScroll({
+      scrollTop: curTop,
+      topTriggerPx,
+      topRearmPx,
+      hasMoreHistory,
+      isLoadingHistory,
     });
-  }, [cancelPendingBottomScroll, chatUnreadCount, checkIsAtBottom, getAnchorSnapshot, getCurrentContentSize, hasMoreHistory, isLoadingHistory, onLoadMore, onScrollChange, onScrollSnapshot, setAtBottom, setFollowMode, showScrollButton]);
+    });
+  }, [cancelPendingBottomScroll, chatUnreadCount, checkIsAtBottom, getAnchorSnapshot, hasMoreHistory, isLoadingHistory, onScrollChange, onScrollSnapshot, setAtBottom, setFollowMode, showScrollButton, topHistoryLoad]);
 
   // When switching views (group or window-mode), reset internal scroll bookkeeping.
   //
@@ -788,13 +810,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     setAtBottom(!hasInitialJumpTarget);
     setFollowMode(hasInitialJumpTarget ? "detached" : "follow");
     didInitialScrollRef.current = false;
-    topLoadArmedRef.current = true;
     cancelPendingBottomScroll();
     if (snapshotFlushTimerRef.current) {
       window.clearTimeout(snapshotFlushTimerRef.current);
       snapshotFlushTimerRef.current = null;
     }
-    pendingPrependCompensationRef.current = null;
+    topHistoryLoad.reset();
     lastScrollTopRef.current = 0;
     previousContentSizeRef.current = getCurrentContentSize();
     prevTailSnapshotRef.current = getChatTailSnapshot(
@@ -812,7 +833,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (shouldVirtualize) {
       virtualizer.measure();
     }
-  }, [displayMessages, getCurrentContentSize, initialScrollAnchorId, initialScrollTargetId, resetKey, cancelPendingBottomScroll, onScrollSnapshot, setAtBottom, setFollowMode, shouldVirtualize, virtualizer]);
+  }, [cancelPendingBottomScroll, displayMessages, getCurrentContentSize, initialScrollAnchorId, initialScrollTargetId, resetKey, onScrollSnapshot, setAtBottom, setFollowMode, shouldVirtualize, topHistoryLoad, virtualizer]);
 
   const tailMutationSignature = useMemo(() => {
     const lastMessage = displayMessages[displayMessages.length - 1];
@@ -895,6 +916,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
   useEffect(() => {
     if (!forceStickToBottomToken) return;
+    if (!shouldApplyExternalForceStickToBottom({ followMode: followModeRef.current })) return;
     setAtBottom(true);
     setFollowMode("follow");
     scheduleForceStickToBottom();
@@ -984,8 +1006,9 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         window.cancelAnimationFrame(remeasureRafRef.current);
         remeasureRafRef.current = null;
       }
+      prependCompensation.cancelCorrection();
     };
-  }, []);
+  }, [prependCompensation]);
 
   useEffect(() => {
     return () => {
@@ -1008,32 +1031,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   }, [onScrollSnapshot, resetKey, scrollRef]);
 
   useLayoutEffect(() => {
-    if (isLoadingHistory) return;
-    const pending = pendingPrependCompensationRef.current;
-    const el = parentRef.current;
-    if (!pending || !el) return;
-
-    pendingPrependCompensationRef.current = null;
-
-    if (pending.anchorId && scrollToMessageAnchor(pending.anchorId, pending.anchorOffsetPx)) {
-      lastScrollTopRef.current = el.scrollTop;
-      topLoadArmedRef.current = false;
-      return;
-    }
-
-    const nextTotalSize = getCurrentContentSize();
-    const delta = Math.max(0, nextTotalSize - pending.previousTotalSize);
-    if (delta <= 0) return;
-
-    const nextTop = pending.previousOffset + delta;
-    if (shouldVirtualize) {
-      virtualizer.scrollToOffset(nextTop, { align: "start", behavior: "auto" });
-    } else {
-      el.scrollTo({ top: nextTop, behavior: "auto" });
-    }
-    lastScrollTopRef.current = nextTop;
-    topLoadArmedRef.current = false;
-  }, [displayMessages, getCurrentContentSize, isLoadingHistory, scrollToMessageAnchor, shouldVirtualize, virtualizer]);
+    topHistoryLoad.applyPendingPrependCompensation({ isLoadingHistory });
+  }, [displayMessages, isLoadingHistory, topHistoryLoad]);
 
   const effectiveHighlightEventId = replyJumpHighlightId || highlightEventId;
   const showHistoryStatus = isLoadingHistory || (!hasMoreHistory && !isLoadingHistory);

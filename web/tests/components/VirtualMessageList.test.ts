@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   getAutoFollowTrigger,
   getStableMessageKey,
+  shouldApplyExternalForceStickToBottom,
   shouldAutoScrollToBottom,
   shouldDetachChatFollowOnScroll,
   shouldNotifyScrollChange,
@@ -305,6 +306,13 @@ describe("shouldAutoScrollToBottom", () => {
         forceStickToBottom: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe("shouldApplyExternalForceStickToBottom", () => {
+  it("accepts parent force-stick tokens only while the list is already following", () => {
+    expect(shouldApplyExternalForceStickToBottom({ followMode: "follow" })).toBe(true);
+    expect(shouldApplyExternalForceStickToBottom({ followMode: "detached" })).toBe(false);
   });
 });
 
