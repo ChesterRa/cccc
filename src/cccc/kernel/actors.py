@@ -244,6 +244,7 @@ def add_actor(
             runtime=runtime_name,
             runner=runner_kind,
             requested_source=runtime_state_source,
+            command=command_list,
         ),
         internal_kind=(str(internal_kind or "").strip() or None),
         created_at=now,
@@ -446,6 +447,15 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
 
     if str(item.get("runtime") or "").strip() != "codex" or str(item.get("runner") or "pty").strip() != "pty":
         item["runtime_state_source"] = "terminal"
+    elif "runtime_state_source" not in patch and "command" in patch:
+        inferred_source = default_runtime_state_source(
+            runtime=str(item.get("runtime") or ""),
+            runner=str(item.get("runner") or ""),
+            requested_source=None,
+            command=list(item.get("command") or []) if isinstance(item.get("command"), list) else [],
+        )
+        if inferred_source == "terminal":
+            item["runtime_state_source"] = "terminal"
     elif "runtime_state_source" not in patch and (
         "runtime" in patch or "runner" in patch or not str(item.get("runtime_state_source") or "").strip()
     ):
@@ -453,6 +463,7 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             runtime=str(item.get("runtime") or ""),
             runner=str(item.get("runner") or ""),
             requested_source=None,
+            command=list(item.get("command") or []) if isinstance(item.get("command"), list) else [],
         )
 
     if "internal_kind" in patch:
