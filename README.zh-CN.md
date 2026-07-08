@@ -216,7 +216,7 @@ CCCC 跨 16 种一线运行时编排 agent，除此之外还支持 `custom` 运�
 | OpenCode | 通过运行时配置自动 MCP 配置 | `opencode` |
 | Custom | 手动配置 | 任意命令 |
 
-这里列的是稳定的运行时入口或使用表面。CCCC 会自动套用各运行时的启动默认设置；actor/profile 的命令可在设置中查看和自定义。
+这里列的是稳定的运行时入口或使用表面。CCCC 会自动套用各运行时的启动默认设置；actor/profile 的命令可在设置中查看和自定义。[支持的运行时指南](https://chesterra.github.io/cccc/guide/runtimes)列出了默认 autonomy flags，包括 `agy --dangerously-skip-permissions`、`grok --always-approve`、`opencode --auto` 等跳过审批模式。
 
 ```bash
 cccc setup --runtime claude       # 自动配置该运行时的 MCP
@@ -228,6 +228,8 @@ cccc doctor                       # 检查环境和运行时可用性
 ```
 
 Actor 可以以 **PTY**（嵌入式终端）或 **headless**（无终端的结构化 I/O）模式运行。Claude Code 和 Codex CLI 支持两种模式；headless 模式下 daemon 对投递和流式传输具有更精细的控制。
+
+每个支持运行时的 setup 命令、runner mode 指引和排障方式，见[支持的运行时指南](https://chesterra.github.io/cccc/guide/runtimes)。
 
 ### ChatGPT Web / GPT-5.x 作为本地开发 actor
 
@@ -248,6 +250,8 @@ Group Bridge 将 CCCC 从一个本地 working group 扩展为一组可信协作�
 | **Full** | 允许高度可信的远端 group 通过与本地 actor 相同的访问面修改文件、运行命令 |
 
 这让 CCCC 适用于多机器开发、跨环境 lead/worker 协作，以及可信团队之间请求状态、证据或实现帮助的场景。它不是公开访客访问功能：只有在你愿意让对方查看或操作目标工作区时，才授予 read/full 权限。
+
+从 Web UI 的 **Settings > Group Bridge** 开始配置：一端生成一次性配对邀请，另一端提交邀请，发起端审批请求。审批通过后，远端 group 会作为显式收件人出现，agent 也可以通过 `cccc_remote_access(action="list")` 发现可用访问能力。完整步骤、消息流、remote MCP 工具和排障方式见 [Group Bridge 指南](https://chesterra.github.io/cccc/guide/group-bridge)。
 
 ## 消息与协调
 

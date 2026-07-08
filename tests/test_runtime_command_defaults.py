@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 
 class TestRuntimeCommandDefaults(unittest.TestCase):
-    def test_kimi_runtime_uses_yolo_flags_for_launch(self) -> None:
+    def test_runtime_defaults_include_autonomy_flags_for_launch(self) -> None:
         from cccc.kernel.runtime import get_runtime_command_with_flags
 
         self.assertEqual(get_runtime_command_with_flags("copilot"), ["copilot", "--allow-all"])
@@ -17,8 +17,8 @@ class TestRuntimeCommandDefaults(unittest.TestCase):
         self.assertEqual(get_runtime_command_with_flags("antigravity"), ["agy", "--dangerously-skip-permissions"])
         self.assertEqual(get_runtime_command_with_flags("kimi"), ["kimi", "--yolo"])
         self.assertEqual(get_runtime_command_with_flags("hermes"), ["hermes", "--tui", "--yolo"])
-        self.assertEqual(get_runtime_command_with_flags("opencode"), ["opencode"])
-        self.assertEqual(get_runtime_command_with_flags("grok"), ["grok"])
+        self.assertEqual(get_runtime_command_with_flags("opencode"), ["opencode", "--auto"])
+        self.assertEqual(get_runtime_command_with_flags("grok"), ["grok", "--always-approve"])
 
     def test_update_actor_accepts_cursor_runtime(self) -> None:
         from cccc.kernel.actors import add_actor, update_actor

@@ -352,10 +352,10 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         "kiro": ["kiro-cli", "chat", "--trust-all-tools"],
         "kilo": ["kilo"],
         "droid": ["droid", "--auto", "high"],
-        "grok": ["grok"],
+        "grok": ["grok", "--always-approve"],
         "hermes": ["hermes", "--tui", "--yolo"],
         "kimi": ["kimi", "--yolo"],
-        "opencode": ["opencode"],
+        "opencode": ["opencode", "--auto"],
         "custom": [],
         "web_model": [],
     }

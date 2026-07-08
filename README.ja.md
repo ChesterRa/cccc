@@ -216,7 +216,7 @@ CCCC は 16 種の主要ランタイムでエージェントを編成し、残�
 | OpenCode | ランタイム設定経由の MCP 自動設定 | `opencode` |
 | Custom | 手動設定 | 任意のコマンド |
 
-ここでは安定したランタイムの入口または利用サーフェスのみを示します。CCCC はランタイムごとの起動デフォルトを自動適用し、actor/profile のコマンドは設定で確認・変更できます。
+ここでは安定したランタイムの入口または利用サーフェスのみを示します。CCCC はランタイムごとの起動デフォルトを自動適用し、actor/profile のコマンドは設定で確認・変更できます。[サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) には、`agy --dangerously-skip-permissions`、`grok --always-approve`、`opencode --auto` など、承認を省略する既定の autonomy flags も記載しています。
 
 ```bash
 cccc setup --runtime claude       # ランタイムの MCP を自動設定
@@ -228,6 +228,8 @@ cccc doctor                       # 環境とランタイムの可用性を検�
 ```
 
 Actor は **PTY**（埋め込みターミナル）または **headless**（ターミナルなしの構造化 I/O）モードで実行できます。Claude Code と Codex CLI は両モードに対応。headless モードでは daemon が配信とストリーミングをより精密に制御します。
+
+各サポートランタイムの setup コマンド、runner mode の指針、トラブルシュートは [サポートランタイムガイド](https://chesterra.github.io/cccc/guide/runtimes) を参照してください。
 
 ### ChatGPT Web / GPT-5.x をローカル開発 actor として
 
@@ -248,6 +250,8 @@ Group Bridge は、CCCC を 1 つのローカル working group から、信頼�
 | **Full** | 高度に信頼したリモート group が、ネイティブ actor と同じローカルアクセス面でファイル編集やコマンド実行 |
 
 これにより、複数マシンでの開発、複数環境をまたぐ lead/worker 協調、信頼済みチーム間でのステータス・証拠・実装支援の依頼が扱いやすくなります。これは公開ゲストアクセス機能ではありません。read/full は、対象ワークスペースを見せたり操作させたりしてよい相手にだけ付与してください。
+
+Web UI の **Settings > Group Bridge** から開始します。一方が一回限りの pairing invitation を生成し、もう一方がそれを送信して、発行側がリクエストを承認します。承認後、remote group は明示的な宛先として表示され、agent は `cccc_remote_access(action="list")` で利用可能なアクセス権を確認できます。設定手順、メッセージフロー、remote MCP ツール、トラブルシュートは [Group Bridge ガイド](https://chesterra.github.io/cccc/guide/group-bridge) を参照してください。
 
 ## メッセージングと協調
 

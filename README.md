@@ -217,7 +217,7 @@ CCCC orchestrates agents across 16 first-class runtimes, with `custom` available
 | OpenCode | Auto MCP setup via runtime config | `opencode` |
 | Custom | Manual | Any command |
 
-These are stable runtime entrypoints or surfaces. CCCC applies runtime-specific launch defaults automatically; actor/profile commands can be reviewed and customized in settings.
+These are stable runtime entrypoints or surfaces. CCCC applies runtime-specific launch defaults automatically; actor/profile commands can be reviewed and customized in settings. The [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes) lists the default autonomy flags, including approval-bypass modes such as `agy --dangerously-skip-permissions`, `grok --always-approve`, and `opencode --auto`.
 
 ```bash
 cccc setup --runtime claude       # auto-configures MCP for this runtime
@@ -229,6 +229,8 @@ cccc doctor                       # verify environment and runtime availability
 ```
 
 Actors can run as **PTY** (embedded terminal) or **headless** (structured I/O without a terminal). Claude Code and Codex CLI support both modes; headless gives the daemon tighter delivery and streaming control.
+
+For setup commands, runner-mode guidance, and troubleshooting for every supported runtime, see the [Supported Runtimes guide](https://chesterra.github.io/cccc/guide/runtimes).
 
 ### ChatGPT Web / GPT-5.x as a local development actor
 
@@ -249,6 +251,8 @@ Access is intentionally layered:
 | **Full** | Let a highly trusted remote group edit files and run commands through the same local-access surface used by native actors |
 
 This makes CCCC useful for multi-machine work, lead/worker coordination across several environments, or trusted team collaboration where one group needs to ask another group for status, evidence, or implementation help. It is not a public guest-access feature: grant read/full access only to remote groups you trust with the target workspace.
+
+Start from **Settings > Group Bridge** in the Web UI: one side generates a one-time pairing invitation, the other side submits it, and the issuer approves the request. After approval, remote groups appear as explicit recipients, and agents can discover available access with `cccc_remote_access(action="list")`. For setup steps, message flow, remote MCP tools, and troubleshooting, see the [Group Bridge guide](https://chesterra.github.io/cccc/guide/group-bridge).
 
 ## Messaging & Coordination
 

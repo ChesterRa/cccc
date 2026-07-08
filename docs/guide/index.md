@@ -20,6 +20,8 @@ Use this section based on what you are trying to do next.
 
 - [Operations Runbook](/guide/operations) for triage, recovery, and upgrade flow
 - [Web UI Guide](/guide/web-ui) for control-plane behavior
+- [Supported Runtimes](/guide/runtimes) for Claude Code, Codex, ChatGPT Web, Grok, Kimi, and other actor runtimes
+- [Group Bridge](/guide/group-bridge) for trusted cross-group messaging and remote access
 - [Capability Allowlist Baseline](/guide/capability-allowlist) for MCP/skill curation levels
 - [ChatGPT Web Model Runtime](/guide/web-model-runtime) for MCP-capable ChatGPT GPT-5.x setup
 - [IM Bridge](/guide/im-bridge/) for mobile/remote operations

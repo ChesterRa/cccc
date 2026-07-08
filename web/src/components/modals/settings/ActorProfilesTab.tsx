@@ -61,9 +61,9 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   kilo: "kilo",
   antigravity: "agy --dangerously-skip-permissions",
   droid: "droid --auto high",
-  grok: "grok",
+  grok: "grok --always-approve",
   kimi: "kimi --yolo",
-  opencode: "opencode",
+  opencode: "opencode --auto",
   web_model: "",
   custom: "",
 };
