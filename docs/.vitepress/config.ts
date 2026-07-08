@@ -1,4 +1,39 @@
-import { defineConfig, type HeadConfig } from 'vitepress'
+import { readdirSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { defineConfig, type DefaultTheme, HeadConfig } from 'vitepress'
+
+const DOCS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+function compareSemverDesc(a: string, b: string): number {
+  const parse = (version: string) => version.split('.').map((part) => Number(part) || 0)
+  const left = parse(a)
+  const right = parse(b)
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const diff = (right[index] || 0) - (left[index] || 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+function buildReleaseSidebarItems(): DefaultTheme.SidebarItem[] {
+  const releaseDir = resolve(DOCS_DIR, 'release')
+  const releaseItems = readdirSync(releaseDir)
+    .map((fileName) => /^v(\d+\.\d+\.\d+)_release_notes\.md$/.exec(fileName))
+    .filter((match): match is RegExpExecArray => !!match)
+    .map((match) => ({
+      version: match[1],
+      text: `v${match[1]} Release Notes`,
+      link: `/release/v${match[1]}_release_notes`,
+    }))
+    .sort((a, b) => compareSemverDesc(a.version, b.version))
+    .map(({ text, link }) => ({ text, link }))
+
+  return [
+    { text: 'Overview', link: '/release/' },
+    ...releaseItems,
+  ]
+}
 
 // Privacy-friendly visit counting (no cookies, no personal data).
 // To enable: create a site at https://www.goatcounter.com (free for open source),
@@ -27,13 +62,15 @@ export default defineConfig({
   srcExclude: [
     '_archive_local/**',
     'ITERATION_PLAN.md',
+    'guide/agent-framework-coevolution-prd.md',
     'plan/**',
     'review/**',
     'superpowers/**',
+    'vnext/**',
     'voice-secretary/**'
   ],
 
-  // Ignore dead links in legacy vnext docs
+  // Ignore legacy local-only links in excluded docs.
   ignoreDeadLinks: [
     /archive/,
     /localhost:8848\/ui\/index/
@@ -50,6 +87,7 @@ export default defineConfig({
     nav: [
       { text: 'Guide', link: '/guide/' },
       { text: 'Reference', link: '/reference/architecture' },
+      { text: 'Standards', link: '/standards/' },
       { text: 'SDK', link: '/sdk/' },
       { text: 'Release', link: '/release/' }
     ],
@@ -81,6 +119,7 @@ export default defineConfig({
             { text: 'Web UI', link: '/guide/web-ui' },
             { text: 'ChatGPT Web Model Runtime', link: '/guide/web-model-runtime' },
             { text: 'Group Space + NotebookLM', link: '/guide/group-space-notebooklm' },
+            { text: 'Capability Allowlist', link: '/guide/capability-allowlist' },
             { text: 'Best Practices', link: '/guide/best-practices' },
             { text: 'FAQ', link: '/guide/faq' }
           ]
@@ -110,6 +149,17 @@ export default defineConfig({
           ]
         }
       ],
+      '/standards/': [
+        {
+          text: 'Standards',
+          items: [
+            { text: 'Overview', link: '/standards/' },
+            { text: 'CCCS v1', link: '/standards/CCCS_V1' },
+            { text: 'Daemon IPC v1', link: '/standards/CCCC_DAEMON_IPC_V1' },
+            { text: 'Context Ops v1', link: '/standards/CCCC_CONTEXT_OPS_V1' }
+          ]
+        }
+      ],
       '/sdk/': [
         {
           text: 'SDK',
@@ -122,37 +172,7 @@ export default defineConfig({
       '/release/': [
         {
           text: 'Release Hub',
-          items: [
-            { text: 'Overview', link: '/release/' },
-            { text: 'v0.4.27 Release Notes', link: '/release/v0.4.27_release_notes' },
-            { text: 'v0.4.26 Release Notes', link: '/release/v0.4.26_release_notes' },
-            { text: 'v0.4.25 Release Notes', link: '/release/v0.4.25_release_notes' },
-            { text: 'v0.4.24 Release Notes', link: '/release/v0.4.24_release_notes' },
-            { text: 'v0.4.23 Release Notes', link: '/release/v0.4.23_release_notes' },
-            { text: 'v0.4.22 Release Notes', link: '/release/v0.4.22_release_notes' },
-            { text: 'v0.4.21 Release Notes', link: '/release/v0.4.21_release_notes' },
-            { text: 'v0.4.20 Release Notes', link: '/release/v0.4.20_release_notes' },
-            { text: 'v0.4.19 Release Notes', link: '/release/v0.4.19_release_notes' },
-            { text: 'v0.4.18 Release Notes', link: '/release/v0.4.18_release_notes' },
-            { text: 'v0.4.17 Release Notes', link: '/release/v0.4.17_release_notes' },
-            { text: 'v0.4.16 Release Notes', link: '/release/v0.4.16_release_notes' },
-            { text: 'v0.4.15 Release Notes', link: '/release/v0.4.15_release_notes' },
-            { text: 'v0.4.14 Release Notes', link: '/release/v0.4.14_release_notes' },
-            { text: 'v0.4.13 Release Notes', link: '/release/v0.4.13_release_notes' },
-            { text: 'v0.4.12 Release Notes', link: '/release/v0.4.12_release_notes' },
-            { text: 'v0.4.11 Release Notes', link: '/release/v0.4.11_release_notes' },
-            { text: 'v0.4.10 Release Notes', link: '/release/v0.4.10_release_notes' },
-            { text: 'v0.4.9 Release Notes', link: '/release/v0.4.9_release_notes' },
-            { text: 'v0.4.8 Release Notes', link: '/release/v0.4.8_release_notes' },
-            { text: 'v0.4.7 Release Notes', link: '/release/v0.4.7_release_notes' },
-            { text: 'v0.4.6 Release Notes', link: '/release/v0.4.6_release_notes' },
-            { text: 'v0.4.5 Release Notes', link: '/release/v0.4.5_release_notes' },
-            { text: 'v0.4.4 Release Notes', link: '/release/v0.4.4_release_notes' },
-            { text: 'v0.4.3 Release Notes', link: '/release/v0.4.3_release_notes' },
-            { text: 'v0.4.2 Release Notes', link: '/release/v0.4.2_release_notes' },
-            { text: 'v0.4.1 Release Notes', link: '/release/v0.4.1_release_notes' },
-            { text: 'v0.4.0 Release Notes', link: '/release/v0.4.0_release_notes' }
-          ]
+          items: buildReleaseSidebarItems()
         }
       ]
     },

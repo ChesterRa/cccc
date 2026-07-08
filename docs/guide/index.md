@@ -1,6 +1,8 @@
 # Guide
 
-Use this section based on your role and goal.
+CCCC coordinates coding agents as a durable group chat: messages are routed, read state is visible, operations are controlled through one daemon, and the same group can be reached from Web UI, CLI, MCP, and IM bridges.
+
+Use this section based on what you are trying to do next.
 
 ## If You Are New to CCCC
 
@@ -33,3 +35,4 @@ Use this section based on your role and goal.
 - **Scope**: a directory context attached to a group
 - **Ledger**: append-only collaboration event stream
 - **Daemon**: single writer and source of operational truth
+- **Group Bridge**: an explicit trust edge between local-first CCCC groups

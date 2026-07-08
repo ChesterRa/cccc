@@ -1,43 +1,51 @@
+<script setup>
+import { withBase } from 'vitepress'
+
+const releaseModules = import.meta.glob('./v*_release_notes.md')
+
+function compareSemverDesc(a, b) {
+  const parse = (version) => version.split('.').map((part) => Number(part) || 0)
+  const left = parse(a)
+  const right = parse(b)
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const diff = (right[index] || 0) - (left[index] || 0)
+    if (diff !== 0) return diff
+  }
+  return 0
+}
+
+const releases = Object.keys(releaseModules)
+  .map((fileName) => /^\.\/v(\d+\.\d+\.\d+)_release_notes\.md$/.exec(fileName))
+  .filter(Boolean)
+  .map((match) => ({
+    version: match[1],
+    text: `v${match[1]} Release Notes`,
+    link: `/release/v${match[1]}_release_notes.html`,
+  }))
+  .sort((a, b) => compareSemverDesc(a.version, b.version))
+
+const latestReleases = releases.slice(0, 3)
+</script>
+
 # Release Hub
 
-Use this page to find published release notes.
+Use this page to find published release notes. New release note files matching `v*_release_notes.md` are listed automatically.
 
 ## Latest
 
-- [v0.4.30 Release Notes](/release/v0.4.30_release_notes)
-- [v0.4.29 Release Notes](/release/v0.4.29_release_notes)
-- [v0.4.28 Release Notes](/release/v0.4.28_release_notes)
+<ul>
+  <li v-for="release in latestReleases" :key="release.version">
+    <a :href="withBase(release.link)">{{ release.text }}</a>
+  </li>
+</ul>
 
-## v0.4 Series
+## All Releases
 
-- [v0.4.27 Release Notes](/release/v0.4.27_release_notes)
-- [v0.4.26 Release Notes](/release/v0.4.26_release_notes)
-- [v0.4.25 Release Notes](/release/v0.4.25_release_notes)
-- [v0.4.24 Release Notes](/release/v0.4.24_release_notes)
-- [v0.4.23 Release Notes](/release/v0.4.23_release_notes)
-- [v0.4.22 Release Notes](/release/v0.4.22_release_notes)
-- [v0.4.21 Release Notes](/release/v0.4.21_release_notes)
-- [v0.4.20 Release Notes](/release/v0.4.20_release_notes)
-- [v0.4.19 Release Notes](/release/v0.4.19_release_notes)
-- [v0.4.18 Release Notes](/release/v0.4.18_release_notes)
-- [v0.4.17 Release Notes](/release/v0.4.17_release_notes)
-- [v0.4.16 Release Notes](/release/v0.4.16_release_notes)
-- [v0.4.15 Release Notes](/release/v0.4.15_release_notes)
-- [v0.4.14 Release Notes](/release/v0.4.14_release_notes)
-- [v0.4.13 Release Notes](/release/v0.4.13_release_notes)
-- [v0.4.12 Release Notes](/release/v0.4.12_release_notes)
-- [v0.4.11 Release Notes](/release/v0.4.11_release_notes)
-- [v0.4.10 Release Notes](/release/v0.4.10_release_notes)
-- [v0.4.9 Release Notes](/release/v0.4.9_release_notes)
-- [v0.4.8 Release Notes](/release/v0.4.8_release_notes)
-- [v0.4.7 Release Notes](/release/v0.4.7_release_notes)
-- [v0.4.6 Release Notes](/release/v0.4.6_release_notes)
-- [v0.4.5 Release Notes](/release/v0.4.5_release_notes)
-- [v0.4.4 Release Notes](/release/v0.4.4_release_notes)
-- [v0.4.3 Release Notes](/release/v0.4.3_release_notes)
-- [v0.4.2 Release Notes](/release/v0.4.2_release_notes)
-- [v0.4.1 Release Notes](/release/v0.4.1_release_notes)
-- [v0.4.0 Release Notes](/release/v0.4.0_release_notes)
+<ul>
+  <li v-for="release in releases" :key="release.version">
+    <a :href="withBase(release.link)">{{ release.text }}</a>
+  </li>
+</ul>
 
 ## Related Docs
 
