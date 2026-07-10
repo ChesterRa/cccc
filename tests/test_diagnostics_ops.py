@@ -271,7 +271,7 @@ class TestDiagnosticsOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_terminal_tail_includes_kimi_log_when_process_exits_without_terminal_output(self) -> None:
+    def test_terminal_tail_does_not_include_shared_kimi_log_for_exit_marker(self) -> None:
         from unittest.mock import patch
 
         from cccc.kernel.actors import add_actor
@@ -282,11 +282,7 @@ class TestDiagnosticsOps(unittest.TestCase):
         try:
             kimi_log = Path(td) / ".kimi" / "logs" / "kimi.log"
             kimi_log.parent.mkdir(parents=True, exist_ok=True)
-            kimi_log.write_text(
-                "openai.AuthenticationError: Error code: 401 - invalid_authentication_error\n"
-                "The API Key appears to be invalid or may have expired.\n",
-                encoding="utf-8",
-            )
+            kimi_log.write_text("older shared error\n", encoding="utf-8")
             group = create_group(load_registry(), title="terminal-tail-kimi-log")
             add_actor(
                 group,
@@ -296,6 +292,8 @@ class TestDiagnosticsOps(unittest.TestCase):
                 runner="pty",
                 env={"HOME": td},
             )
+            with kimi_log.open("a", encoding="utf-8") as stream:
+                stream.write("openai.AuthenticationError: invalid_authentication_error\n")
 
             with patch(
                 "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.tail_output",
@@ -313,10 +311,10 @@ class TestDiagnosticsOps(unittest.TestCase):
 
             text = str((resp.result or {}).get("text") or "")
             self.assertTrue(resp.ok, getattr(resp, "error", None))
-            self.assertIn("Process exited with code 1", text)
-            self.assertIn("Runtime log", text)
-            self.assertIn("invalid_authentication_error", text)
-            self.assertIn("API Key appears to be invalid", text)
+            self.assertEqual(text, "Process exited with code 1 before producing terminal output.\n")
+            self.assertNotIn("Runtime log", text)
+            self.assertNotIn("invalid_authentication_error", text)
+            self.assertNotIn("older shared error", text)
         finally:
             cleanup()
 

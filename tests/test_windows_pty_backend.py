@@ -7,6 +7,7 @@ import unittest
 from types import SimpleNamespace
 from collections import deque
 from pathlib import Path
+from unittest.mock import patch
 
 
 def _windows_pty_diagnostics() -> str:
@@ -40,6 +41,29 @@ class _NonReentrantLock:
 
 
 class TestWindowsPtyBackendInternals(unittest.TestCase):
+    def _snapshot_session(self, *, group_id: str = "g1", actor_id: str = "a1"):
+        from cccc.runners.pty_win import PtySession
+
+        session = object.__new__(PtySession)
+        session.group_id = group_id
+        session.actor_id = actor_id
+        session._runtime = ""
+        session._lock = threading.Lock()
+        session._backlog = deque()
+        session._backlog_bytes = 0
+        session._backlog_start_offset = 0
+        session._backlog_end_offset = 0
+        session._first_output_at = None
+        session._last_output_at = None
+        session._max_backlog_bytes = 1024
+        session._terminal_signal_buffer = ""
+        session._terminal_override = None
+        session._mode_tail = b""
+        session._query_tail = b""
+        session._bracketed_paste = False
+        session._bracketed_paste_changed_at = None
+        return session
+
     def test_on_wake_readable_does_not_reenter_session_lock(self) -> None:
         from cccc.runners.pty_win import PtySession
 
@@ -136,6 +160,212 @@ class TestWindowsPtyBackendInternals(unittest.TestCase):
         session._loop()
 
         self.assertEqual(session.tail_output(max_bytes=64), b"late output")
+
+    def test_supervisor_keeps_tail_and_history_after_session_exit(self) -> None:
+        from cccc.runners.pty_win import PtySupervisor
+
+        supervisor = PtySupervisor()
+        session = self._snapshot_session()
+        session._append_backlog(b"failed\r\n")
+
+        with supervisor._lock:
+            supervisor._sessions[(session.group_id, session.actor_id)] = session
+
+        supervisor._on_session_exit(session)
+
+        self.assertFalse(supervisor.actor_running("g1", "a1"))
+        self.assertEqual(
+            supervisor.tail_output(group_id="g1", actor_id="a1", max_bytes=200),
+            b"failed\r\n",
+        )
+        page = supervisor.history_page(group_id="g1", actor_id="a1", limit_bytes=200)
+        self.assertEqual(page["data"], b"failed\r\n")
+        self.assertEqual(page["start_cursor"], 0)
+        self.assertEqual(page["end_cursor"], len(b"failed\r\n"))
+
+    def test_supervisor_keeps_nonzero_exit_evidence_when_session_has_no_output(self) -> None:
+        from cccc.runners.pty_win import PtySupervisor
+
+        supervisor = PtySupervisor()
+        session = self._snapshot_session()
+        session._proc = SimpleNamespace(exitstatus=7)
+
+        with supervisor._lock:
+            supervisor._sessions[(session.group_id, session.actor_id)] = session
+
+        supervisor._on_session_exit(session)
+
+        output = supervisor.tail_output(group_id="g1", actor_id="a1", max_bytes=200)
+        self.assertIn(b"Process exited with code 7 before producing terminal output.", output)
+
+    def test_stop_waits_for_reader_output_before_closing_event_loop(self) -> None:
+        from cccc.runners.pty_win import PtySession
+
+        class _JoinThread:
+            def __init__(self, on_join) -> None:
+                self._on_join = on_join
+
+            def is_alive(self) -> bool:
+                return True
+
+            def join(self, timeout: float) -> None:
+                _ = timeout
+                self._on_join()
+
+        session = self._snapshot_session()
+        session._running = True
+        session._proc = SimpleNamespace(pid=0)
+        session._output_q = queue.Queue()
+        session._attach_q = queue.Queue()
+        session._wake_r = _WakeSocket()
+        session._clients = {}
+        session._max_client_buffer_bytes = 0
+        session._terminate_process = lambda: None
+        session._notify_wake = lambda: None
+
+        def _reader_finishes() -> None:
+            if session._running:
+                session._output_q.put(b"final output")
+            session._output_q.put(None)
+
+        session._reader_thread = _JoinThread(_reader_finishes)
+        session._thread = _JoinThread(session._on_wake_readable)
+
+        PtySession.stop(session)
+
+        self.assertEqual(session.tail_output(max_bytes=64), b"final output")
+
+    def test_stop_drains_output_queued_during_reader_timeout_fallback(self) -> None:
+        from cccc.runners.pty_win import PtySession
+
+        class _SlowReaderThread:
+            def __init__(self) -> None:
+                self._join_count = 0
+
+            def is_alive(self) -> bool:
+                return True
+
+            def join(self, timeout: float) -> None:
+                _ = timeout
+                self._join_count += 1
+                if self._join_count == 2:
+                    session._output_q.put(b"late final output")
+                    session._output_q.put(None)
+
+        class _SlowLoopThread:
+            def is_alive(self) -> bool:
+                return True
+
+            def join(self, timeout: float) -> None:
+                _ = timeout
+
+        session = self._snapshot_session()
+        session._running = True
+        session._proc = SimpleNamespace(pid=0)
+        session._output_q = queue.Queue()
+        session._clients = {}
+        session._max_client_buffer_bytes = 0
+        session._terminate_process = lambda: None
+        session._notify_wake = lambda: None
+        session._reader_thread = _SlowReaderThread()
+        session._thread = _SlowLoopThread()
+
+        PtySession.stop(session)
+
+        self.assertEqual(session.tail_output(max_bytes=64), b"late final output")
+        self.assertTrue(session._output_q.empty())
+
+    def test_start_actor_finalizes_session_that_exits_before_registration(self) -> None:
+        from cccc.runners.pty_snapshot import MAX_EXIT_SNAPSHOT_BYTES
+        from cccc.runners.pty_win import PtySupervisor
+
+        class _FastExitSession:
+            def __init__(self, *, group_id: str, actor_id: str, on_exit, **_kwargs) -> None:
+                self.group_id = group_id
+                self.actor_id = actor_id
+                self._data = b"discarded" + (b"x" * MAX_EXIT_SNAPSHOT_BYTES)
+                self._exit_thread = threading.Thread(target=on_exit, args=(self,))
+                self._exit_thread.start()
+                self._exit_thread.join(timeout=0.2)
+
+            def is_running(self) -> bool:
+                return False
+
+            def _backlog_snapshot(self):
+                return self._data, 0, len(self._data)
+
+            def returncode(self):
+                return 1
+
+            def tail_output(self, *, max_bytes: int) -> bytes:
+                return self._data[-max_bytes:]
+
+        supervisor = PtySupervisor()
+        with patch("cccc.runners.pty_win.PtySession", _FastExitSession):
+            session = supervisor.start_actor(
+                group_id="g1",
+                actor_id="a1",
+                cwd=Path.cwd(),
+                command=["cmd.exe", "/c", "exit", "1"],
+                env={},
+            )
+        session._exit_thread.join(timeout=1.0)
+
+        self.assertFalse(session._exit_thread.is_alive())
+        self.assertNotIn(("g1", "a1"), supervisor._sessions)
+        self.assertEqual(
+            supervisor.tail_output(
+                group_id="g1",
+                actor_id="a1",
+                max_bytes=MAX_EXIT_SNAPSHOT_BYTES + len(b"discarded"),
+            ),
+            b"x" * MAX_EXIT_SNAPSHOT_BYTES,
+        )
+
+    def test_supervisor_stop_methods_snapshot_output_produced_during_stop(self) -> None:
+        from cccc.runners.pty_win import PtySupervisor
+
+        class _OutputDuringStopSession:
+            def __init__(self, supervisor: PtySupervisor, actor_id: str) -> None:
+                self.group_id = "g1"
+                self.actor_id = actor_id
+                self._supervisor = supervisor
+                self._data = b"before stop\n"
+
+            def is_running(self) -> bool:
+                return True
+
+            def stop(self) -> None:
+                self._data += b"during stop\n"
+                self._supervisor._on_session_exit(self)
+                self._data += b"after exit callback\n"
+
+            def _backlog_snapshot(self):
+                return self._data, 0, len(self._data)
+
+            def returncode(self):
+                return 0
+
+        cases = (
+            ("stop_actor", {"group_id": "g1", "actor_id": "a1"}),
+            ("stop_group", {"group_id": "g1"}),
+            ("stop_all", {}),
+        )
+        for index, (method_name, kwargs) in enumerate(cases, start=1):
+            with self.subTest(method=method_name):
+                supervisor = PtySupervisor()
+                session = _OutputDuringStopSession(supervisor, f"a{index}")
+                if method_name == "stop_actor":
+                    kwargs = {"group_id": "g1", "actor_id": session.actor_id}
+                with supervisor._lock:
+                    supervisor._sessions[(session.group_id, session.actor_id)] = session
+
+                getattr(supervisor, method_name)(**kwargs)
+
+                self.assertEqual(
+                    supervisor.tail_output(group_id="g1", actor_id=session.actor_id, max_bytes=200),
+                    b"before stop\nduring stop\nafter exit callback\n",
+                )
 
 
 @unittest.skipUnless(os.name == "nt", "Windows-only ConPTY backend check")

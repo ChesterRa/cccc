@@ -65,6 +65,7 @@ AGENTS.md
 .windsurf/
 .factory/
 .antigravitycli/
+.omo/
 .github/*
 !.github/workflows/
 !.github/workflows/**

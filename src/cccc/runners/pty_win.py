@@ -14,6 +14,8 @@ from typing import Callable, Dict, Iterable, Optional, Tuple
 
 from ..kernel.working_state import derive_pty_terminal_override
 from .platform_support import load_winpty_process_class, pty_support_error_message
+from .pty_lifecycle import LifecycleGate
+from .pty_snapshot import PtyBacklogSnapshot, PtyBacklogSnapshotCache
 from ..util.process import terminate_pid
 
 _WINPTY_PROCESS = load_winpty_process_class()
@@ -153,6 +155,18 @@ class PtySession:
             return int(getattr(self._proc, "pid", 0) or 0)
         except Exception:
             return 0
+
+    def returncode(self) -> Optional[int]:
+        for name in ("exitstatus", "returncode", "get_exitstatus"):
+            try:
+                value = getattr(self._proc, name, None)
+                if callable(value):
+                    value = value()
+                if value is not None:
+                    return int(value)
+            except Exception:
+                continue
+        return None
 
     def _proc_alive(self) -> bool:
         try:
@@ -430,9 +444,15 @@ class PtySession:
             else:
                 sock, since, control = item, None, True
             self._attach_client_now(sock, since=since, control=control)
+        self._drain_output_queue()
+
+    def _drain_output_queue(self) -> None:
+        output_q = getattr(self, "_output_q", None)
+        if output_q is None:
+            return
         while True:
             try:
-                chunk = self._output_q.get_nowait()
+                chunk = output_q.get_nowait()
             except queue.Empty:
                 break
             if chunk is None:
@@ -517,7 +537,6 @@ class PtySession:
                 pass
 
     def stop(self) -> None:
-        self._running = False
         pid = self.pid
         if pid > 0:
             try:
@@ -525,17 +544,48 @@ class PtySession:
             except Exception:
                 pass
         self._terminate_process()
+
+        # Keep the reader alive until the terminated ConPTY has yielded its
+        # final output and sentinel; the event loop owns backlog appends.
+        try:
+            if self._reader_thread.is_alive():
+                self._reader_thread.join(timeout=1.0)
+        except Exception:
+            pass
         self._notify_wake()
         try:
             if self._thread.is_alive():
                 self._thread.join(timeout=1.0)
         except Exception:
             pass
+
+        # A broken backend may never deliver EOF. Bound shutdown while still
+        # giving any already-queued output one final chance to be consumed.
+        reader_alive = False
+        loop_alive = False
         try:
-            if self._reader_thread.is_alive():
-                self._reader_thread.join(timeout=1.0)
+            reader_alive = bool(self._reader_thread.is_alive())
         except Exception:
             pass
+        try:
+            loop_alive = bool(self._thread.is_alive())
+        except Exception:
+            pass
+        if reader_alive or loop_alive:
+            self._running = False
+            self._terminate_process()
+            self._notify_wake()
+            try:
+                if reader_alive:
+                    self._reader_thread.join(timeout=0.2)
+            except Exception:
+                pass
+            try:
+                if loop_alive:
+                    self._thread.join(timeout=0.2)
+            except Exception:
+                pass
+        self._drain_output_queue()
 
     def attach_client(
         self,
@@ -795,7 +845,9 @@ class PtySession:
 class PtySupervisor:
     def __init__(self) -> None:
         self._lock = threading.Lock()
+        self._lifecycle = LifecycleGate()
         self._sessions: Dict[Tuple[str, str], PtySession] = {}
+        self._last_backlogs = PtyBacklogSnapshotCache()
         self._exit_hook: Optional[Callable[[PtySession], None]] = None
 
     def set_exit_hook(self, hook: Optional[Callable[[PtySession], None]]) -> None:
@@ -804,9 +856,43 @@ class PtySupervisor:
 
     def _drop_if_same(self, group_id: str, actor_id: str, session: PtySession) -> None:
         key = (group_id, actor_id)
+        snapshot = self._snapshot_session(session)
         with self._lock:
             if self._sessions.get(key) is session:
                 self._sessions.pop(key, None)
+                self._last_backlogs.remember(key, snapshot)
+
+    def _snapshot_session(self, session: PtySession) -> PtyBacklogSnapshot:
+        try:
+            data, start, end = session._backlog_snapshot()
+        except Exception:
+            data, start, end = b"", 0, 0
+        if not isinstance(data, bytes):
+            data = bytes(str(data or ""), encoding="utf-8", errors="replace")
+        if not data:
+            try:
+                returncode = session.returncode()
+            except Exception:
+                returncode = None
+            if returncode not in (None, 0):
+                data = f"Process exited with code {returncode} before producing terminal output.\n".encode("utf-8")
+                start = 0
+                end = len(data)
+        return PtyBacklogSnapshot(
+            data=data,
+            start_cursor=int(start or 0),
+            end_cursor=int(end or 0),
+        )
+
+    def _finalize_stopped_session(self, key: Tuple[str, str], session: PtySession) -> None:
+        snapshot = self._snapshot_session(session)
+        with self._lock:
+            current = self._sessions.get(key)
+            if current is not None and current is not session:
+                return
+            if current is session:
+                self._sessions.pop(key, None)
+            self._last_backlogs.remember(key, snapshot)
 
     def _on_session_exit(self, session: PtySession) -> None:
         try:
@@ -843,8 +929,9 @@ class PtySupervisor:
             return b""
         with self._lock:
             s = self._sessions.get(key)
+            snapshot = self._last_backlogs.get(key) if s is None else None
         if s is None:
-            return b""
+            return snapshot.tail_output(max_bytes=int(max_bytes or 0)) if snapshot is not None else b""
         try:
             return s.tail_output(max_bytes=int(max_bytes or 0))
         except Exception:
@@ -863,7 +950,13 @@ class PtySupervisor:
             return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
         with self._lock:
             s = self._sessions.get(key)
+            snapshot = self._last_backlogs.get(key) if s is None else None
         if s is None:
+            if snapshot is not None:
+                try:
+                    return snapshot.history_page(before=before, limit_bytes=int(limit_bytes or 0))
+                except Exception:
+                    pass
             return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
         try:
             return s.history_page(before=before, limit_bytes=int(limit_bytes or 0))
@@ -912,54 +1005,95 @@ class PtySupervisor:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         if not key[0] or not key[1]:
             raise ValueError("missing group_id/actor_id")
+        with self._lifecycle.begin_start(key):
+            return self._start_actor_serialized(
+                key=key,
+                cwd=cwd,
+                command=command,
+                env=env,
+                runtime=runtime,
+                max_backlog_bytes=max_backlog_bytes,
+            )
+
+    def _start_actor_serialized(
+        self,
+        *,
+        key: Tuple[str, str],
+        cwd: Path,
+        command: Iterable[str],
+        env: Dict[str, str],
+        runtime: str,
+        max_backlog_bytes: int,
+    ) -> PtySession:
         with self._lock:
             existing = self._sessions.get(key)
         if existing is not None and existing.is_running():
             return existing
-        session = PtySession(
-            group_id=key[0],
-            actor_id=key[1],
-            cwd=cwd,
-            command=command,
-            env=env,
-            runtime=runtime,
-            on_exit=self._on_session_exit,
-            max_backlog_bytes=int(max_backlog_bytes or 0),
-        )
+        registered = threading.Event()
+
+        def _on_registered_session_exit(exited: PtySession) -> None:
+            registered.wait()
+            self._on_session_exit(exited)
+
+        try:
+            session = PtySession(
+                group_id=key[0],
+                actor_id=key[1],
+                cwd=cwd,
+                command=command,
+                env=env,
+                runtime=runtime,
+                on_exit=_on_registered_session_exit,
+                max_backlog_bytes=int(max_backlog_bytes or 0),
+            )
+        except BaseException:
+            registered.set()
+            raise
         with self._lock:
-            self._sessions[key] = session
+            try:
+                self._sessions[key] = session
+                self._last_backlogs.discard(key)
+            finally:
+                registered.set()
         return session
+
+    def _stop_actor_serialized(self, key: Tuple[str, str], *, suppress_errors: bool) -> None:
+        with self._lock:
+            session = self._sessions.get(key)
+        if session is None:
+            return
+        try:
+            session.stop()
+        except Exception:
+            if not suppress_errors:
+                raise
+        finally:
+            self._finalize_stopped_session(key, session)
 
     def stop_actor(self, *, group_id: str, actor_id: str) -> None:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
-        with self._lock:
-            s = self._sessions.pop(key, None)
-        if s is not None:
-            s.stop()
+        lease = self._lifecycle.begin_stop(key)
+        if lease is None:
+            return
+        with lease:
+            self._stop_actor_serialized(key, suppress_errors=False)
 
     def stop_group(self, *, group_id: str) -> None:
         gid = str(group_id or "").strip()
         if not gid:
             return
-        with self._lock:
-            items = [(k, s) for k, s in self._sessions.items() if k[0] == gid]
-            for k, _ in items:
-                self._sessions.pop(k, None)
-        for _, s in items:
-            try:
-                s.stop()
-            except Exception:
-                pass
+        with self._lifecycle.begin_bulk_stop(group_id=gid):
+            with self._lock:
+                keys = [key for key in self._sessions if key[0] == gid]
+            for key in keys:
+                self._stop_actor_serialized(key, suppress_errors=True)
 
     def stop_all(self) -> None:
-        with self._lock:
-            items = list(self._sessions.items())
-            self._sessions.clear()
-        for _, s in items:
-            try:
-                s.stop()
-            except Exception:
-                pass
+        with self._lifecycle.begin_bulk_stop(group_id=None):
+            with self._lock:
+                keys = list(self._sessions)
+            for key in keys:
+                self._stop_actor_serialized(key, suppress_errors=True)
 
     def attach(
         self,

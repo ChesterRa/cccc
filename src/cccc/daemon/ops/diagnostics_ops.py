@@ -25,7 +25,6 @@ from ...ports.web.runtime_control import (
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.terminal_render import render_transcript
-from ..runtime_log_diagnostics import runtime_log_tail, terminal_output_needs_runtime_log
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...util.conv import coerce_bool
@@ -271,7 +270,11 @@ def handle_terminal_tail(
     try:
         raw = b""
         try:
-            raw = pty_runner.SUPERVISOR.tail_output(group_id=group_id, actor_id=actor_id, max_bytes=pty_backlog_bytes())
+            raw = pty_runner.SUPERVISOR.tail_output(
+                group_id=group_id,
+                actor_id=actor_id,
+                max_bytes=pty_backlog_bytes(),
+            )
         except Exception:
             raw = b""
         raw_text = raw.decode("utf-8", errors="replace")
@@ -287,14 +290,6 @@ def handle_terminal_tail(
             if not text.strip() and raw_text.strip():
                 hint = "Rendered transcript is empty; try disabling Strip ANSI for full-screen TUIs."
         text = strip_codex_working_status_lines(text, runtime=str(actor.get("runtime") or ""))
-        if terminal_output_needs_runtime_log(text):
-            runtime_log = runtime_log_tail(
-                str(actor.get("runtime") or ""),
-                env=actor.get("env") if isinstance(actor.get("env"), dict) else None,
-                max_chars=max(1000, min(max_chars, 6000)),
-            )
-            if runtime_log:
-                text = f"{text.rstrip()}\n\n{runtime_log}".strip()
         if len(text) > max_chars:
             text = text[-max_chars:]
         return DaemonResponse(
