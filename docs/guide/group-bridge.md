@@ -108,7 +108,9 @@ Full tools:
 |------|-----|
 | `cccc_remote_repo_edit` | Replace, write, move, delete, or create files in the remote active scope. |
 | `cccc_remote_apply_patch` | Apply a Codex-style patch in the remote active scope. |
+| `cccc_remote_shell` | Run a bounded one-shot command in the remote workspace. |
 | `cccc_remote_exec_command` | Run a long-running command in the remote workspace. |
+| `cccc_remote_write_stdin` | Poll, write to, or terminate a remote exec session. |
 
 `cccc_remote_git` also allows mutation actions such as `add` and `commit` when the remote group grants **Full** access.
 
@@ -137,6 +139,6 @@ Runtime state, credentials, and browser sessions remain local to each CCCC insta
 | Agents cannot see remote read/full tools | Restart already-running actor runtimes after setup and check the capability allowlist. |
 | `bridge_remote_mcp_unavailable` | The bridge exists for messages, but the HTTP(S) remote MCP endpoint or token is not available. Refresh the bridge state and verify the remote endpoint. |
 | Read/full calls are denied | The remote side has not granted that access level. Ask the remote operator to update the bridge access. |
-| Remote command hangs or times out | Use `cccc_remote_exec_command` for long-running commands and poll the returned session; keep one-shot shell commands short. |
+| Remote command hangs or times out | Use `cccc_remote_exec_command` for long-running commands and poll the returned session with `cccc_remote_write_stdin`; keep `cccc_remote_shell` commands short. |
 
 For collaboration semantics and cross-group provenance fields, see [CCCC Collaboration Standard v1](/standards/CCCS_V1).

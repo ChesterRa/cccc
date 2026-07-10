@@ -29,7 +29,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 
 ## Autonomy Defaults
 
-CCCC applies conservative runtime-specific launch defaults for actors it starts. These defaults are intended to keep agent sessions moving without repeated approval prompts, while still leaving actor/profile commands editable in the Web settings.
+CCCC applies runtime-specific launch defaults for actors it starts. These defaults are intended to keep agent sessions moving without repeated approval prompts, while still leaving actor/profile commands editable in the Web settings.
 
 | Runtime id | Default command | Permission / autonomy behavior |
 |------------|-----------------|--------------------------------|
