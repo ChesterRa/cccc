@@ -11,7 +11,7 @@ import struct
 import subprocess
 import threading
 import time
-from collections import deque
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Optional, Tuple
@@ -49,6 +49,45 @@ class _PtyClient:
     control: bool
     writer: bool
     outbuf: bytearray
+
+
+@dataclass
+class _PtyBacklogSnapshot:
+    data: bytes
+    start_cursor: int
+    end_cursor: int
+
+    def tail_output(self, *, max_bytes: int) -> bytes:
+        limit = int(max_bytes or 0)
+        if limit <= 0:
+            return self.data
+        return self.data[-limit:]
+
+    def history_page(self, *, before: Optional[int], limit_bytes: int) -> Dict[str, object]:
+        limit = int(limit_bytes or 0)
+        if limit <= 0:
+            limit = 64_000
+        page_end = self.end_cursor if before is None else int(before)
+        if page_end < self.start_cursor:
+            return {
+                "data": b"",
+                "start_cursor": self.start_cursor,
+                "end_cursor": self.start_cursor,
+                "has_more": False,
+                "cursor_expired": True,
+            }
+        if page_end > self.end_cursor:
+            page_end = self.end_cursor
+        page_start = max(self.start_cursor, page_end - limit)
+        rel_start = max(0, page_start - self.start_cursor)
+        rel_end = max(0, page_end - self.start_cursor)
+        return {
+            "data": self.data[rel_start:rel_end],
+            "start_cursor": page_start,
+            "end_cursor": page_end,
+            "has_more": page_start > self.start_cursor,
+            "cursor_expired": False,
+        }
 
 
 class PtySession:
@@ -149,6 +188,13 @@ class PtySession:
     @property
     def pid(self) -> int:
         return int(getattr(self._proc, "pid", 0) or 0)
+
+    def returncode(self) -> Optional[int]:
+        try:
+            rc = self._proc.poll()
+        except Exception:
+            return None
+        return int(rc) if rc is not None else None
 
     def is_running(self) -> bool:
         return bool(self._running) and self._proc.poll() is None
@@ -746,6 +792,8 @@ class PtySupervisor:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._sessions: Dict[Tuple[str, str], PtySession] = {}
+        self._last_backlogs: "OrderedDict[Tuple[str, str], _PtyBacklogSnapshot]" = OrderedDict()
+        self._max_last_backlogs = 64
         self._exit_hook: Optional[Callable[[PtySession], None]] = None
 
     def set_exit_hook(self, hook: Optional[Callable[[PtySession], None]]) -> None:
@@ -754,9 +802,35 @@ class PtySupervisor:
 
     def _drop_if_same(self, group_id: str, actor_id: str, session: PtySession) -> None:
         key = (group_id, actor_id)
+        snapshot = self._snapshot_session(session)
         with self._lock:
             if self._sessions.get(key) is session:
                 self._sessions.pop(key, None)
+                self._remember_snapshot_locked(key, snapshot)
+
+    def _snapshot_session(self, session: PtySession) -> _PtyBacklogSnapshot:
+        try:
+            data, start, end = session._backlog_snapshot()
+        except Exception:
+            data, start, end = b"", 0, 0
+        if not isinstance(data, bytes):
+            data = bytes(str(data or ""), encoding="utf-8", errors="replace")
+        if not data:
+            try:
+                returncode = session.returncode()
+            except Exception:
+                returncode = None
+            if returncode not in (None, 0):
+                data = f"Process exited with code {returncode} before producing terminal output.\n".encode("utf-8")
+                start = 0
+                end = len(data)
+        return _PtyBacklogSnapshot(data=data, start_cursor=int(start or 0), end_cursor=int(end or 0))
+
+    def _remember_snapshot_locked(self, key: Tuple[str, str], snapshot: _PtyBacklogSnapshot) -> None:
+        self._last_backlogs[key] = snapshot
+        self._last_backlogs.move_to_end(key)
+        while len(self._last_backlogs) > self._max_last_backlogs:
+            self._last_backlogs.popitem(last=False)
 
     def _on_session_exit(self, session: PtySession) -> None:
         try:
@@ -793,8 +867,9 @@ class PtySupervisor:
             return b""
         with self._lock:
             s = self._sessions.get(key)
+            snapshot = self._last_backlogs.get(key) if s is None else None
         if s is None:
-            return b""
+            return snapshot.tail_output(max_bytes=int(max_bytes or 0)) if snapshot is not None else b""
         try:
             return s.tail_output(max_bytes=int(max_bytes or 0))
         except Exception:
@@ -813,7 +888,13 @@ class PtySupervisor:
             return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
         with self._lock:
             s = self._sessions.get(key)
+            snapshot = self._last_backlogs.get(key) if s is None else None
         if s is None:
+            if snapshot is not None:
+                try:
+                    return snapshot.history_page(before=before, limit_bytes=int(limit_bytes or 0))
+                except Exception:
+                    pass
             return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
         try:
             return s.history_page(before=before, limit_bytes=int(limit_bytes or 0))
@@ -879,12 +960,17 @@ class PtySupervisor:
         )
         with self._lock:
             self._sessions[key] = session
+            self._last_backlogs.pop(key, None)
         return session
 
     def stop_actor(self, *, group_id: str, actor_id: str) -> None:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:
             s = self._sessions.pop(key, None)
+        if s is not None:
+            snapshot = self._snapshot_session(s)
+            with self._lock:
+                self._remember_snapshot_locked(key, snapshot)
         if s is not None:
             s.stop()
 
@@ -896,6 +982,10 @@ class PtySupervisor:
             items = [(k, s) for k, s in self._sessions.items() if k[0] == gid]
             for k, _ in items:
                 self._sessions.pop(k, None)
+        snapshots = [(k, self._snapshot_session(s)) for k, s in items]
+        with self._lock:
+            for k, snapshot in snapshots:
+                self._remember_snapshot_locked(k, snapshot)
         for _, s in items:
             try:
                 s.stop()
@@ -906,6 +996,10 @@ class PtySupervisor:
         with self._lock:
             items = list(self._sessions.items())
             self._sessions.clear()
+        snapshots = [(k, self._snapshot_session(s)) for k, s in items]
+        with self._lock:
+            for k, snapshot in snapshots:
+                self._remember_snapshot_locked(k, snapshot)
         for _, s in items:
             try:
                 s.stop()

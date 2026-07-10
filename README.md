@@ -31,8 +31,7 @@ One `pip install`. Zero infrastructure, production-grade power.
 
 <div align="center">
 
-<video src="https://github.com/user-attachments/assets/460b6719-428b-4c1c-8879-0ebf8b8cee4f" controls="controls" muted="muted" autoplay="autoplay" loop="loop" style="max-width: 100%;">
-</video>
+<img src="screenshots/overview.png" alt="CCCC Web UI overview" width="100%">
 
 </div>
 

@@ -237,6 +237,130 @@ class TestDiagnosticsOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_terminal_tail_returns_last_output_for_stopped_pty_actor(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="terminal-tail-stopped")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="kimi", runner="pty")
+
+            with (
+                patch("cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.actor_running", return_value=False),
+                patch(
+                    "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.tail_output",
+                    return_value=b"Error code: 401\ninvalid_authentication_error\n",
+                ),
+            ):
+                resp = self._call(
+                    "terminal_tail",
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "strip_ansi": False,
+                        "compact": False,
+                    },
+                )[0]
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual((resp.result or {}).get("text"), "Error code: 401\ninvalid_authentication_error\n")
+        finally:
+            cleanup()
+
+    def test_terminal_tail_includes_kimi_log_when_process_exits_without_terminal_output(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        td, cleanup = self._with_home()
+        try:
+            kimi_log = Path(td) / ".kimi" / "logs" / "kimi.log"
+            kimi_log.parent.mkdir(parents=True, exist_ok=True)
+            kimi_log.write_text(
+                "openai.AuthenticationError: Error code: 401 - invalid_authentication_error\n"
+                "The API Key appears to be invalid or may have expired.\n",
+                encoding="utf-8",
+            )
+            group = create_group(load_registry(), title="terminal-tail-kimi-log")
+            add_actor(
+                group,
+                actor_id="peer1",
+                title="Peer 1",
+                runtime="kimi",
+                runner="pty",
+                env={"HOME": td},
+            )
+
+            with patch(
+                "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.tail_output",
+                return_value=b"Process exited with code 1 before producing terminal output.\n",
+            ):
+                resp = self._call(
+                    "terminal_tail",
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "strip_ansi": False,
+                        "compact": False,
+                    },
+                )[0]
+
+            text = str((resp.result or {}).get("text") or "")
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertIn("Process exited with code 1", text)
+            self.assertIn("Runtime log", text)
+            self.assertIn("invalid_authentication_error", text)
+            self.assertIn("API Key appears to be invalid", text)
+        finally:
+            cleanup()
+
+    def test_terminal_tail_does_not_include_kimi_log_when_terminal_output_is_empty(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        td, cleanup = self._with_home()
+        try:
+            kimi_log = Path(td) / ".kimi" / "logs" / "kimi.log"
+            kimi_log.parent.mkdir(parents=True, exist_ok=True)
+            kimi_log.write_text("historical authentication error\n", encoding="utf-8")
+            group = create_group(load_registry(), title="terminal-tail-empty-kimi")
+            add_actor(
+                group,
+                actor_id="peer1",
+                title="Peer 1",
+                runtime="kimi",
+                runner="pty",
+                env={"HOME": td},
+            )
+
+            with patch(
+                "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.tail_output",
+                return_value=b"",
+            ):
+                resp = self._call(
+                    "terminal_tail",
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "strip_ansi": False,
+                        "compact": False,
+                    },
+                )[0]
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual((resp.result or {}).get("text"), "")
+        finally:
+            cleanup()
+
     def test_terminal_history_strips_codex_working_status_lines(self) -> None:
         from unittest.mock import patch
 

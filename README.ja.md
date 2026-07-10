@@ -31,8 +31,7 @@ Claude Code、Codex、ChatGPT Web など 16 のランタイムをひとつの永
 
 <div align="center">
 
-<video src="https://github.com/user-attachments/assets/8f9c3986-f1ba-4e59-a114-bcb383ff49a7" controls="controls" muted="muted" autoplay="autoplay" loop="loop" style="max-width: 100%;">
-</video>
+<img src="screenshots/overview.png" alt="CCCC Web UI の概要" width="100%">
 
 </div>
 

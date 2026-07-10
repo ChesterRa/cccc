@@ -25,6 +25,7 @@ from ...ports.web.runtime_control import (
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.terminal_render import render_transcript
+from ..runtime_log_diagnostics import runtime_log_tail, terminal_output_needs_runtime_log
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...util.conv import coerce_bool
@@ -263,8 +264,6 @@ def handle_terminal_tail(
     runner_kind = str(actor.get("runner") or "pty").strip()
     if runner_kind != "pty":
         return _error("not_pty_actor", "terminal transcript is only available for PTY actors", details={"runner": runner_kind})
-    if not pty_runner.SUPERVISOR.actor_running(group_id, actor_id):
-        return _error("actor_not_running", "actor is not running (no live transcript available)")
     if max_chars <= 0:
         max_chars = 8000
     if max_chars > 200_000:
@@ -288,6 +287,14 @@ def handle_terminal_tail(
             if not text.strip() and raw_text.strip():
                 hint = "Rendered transcript is empty; try disabling Strip ANSI for full-screen TUIs."
         text = strip_codex_working_status_lines(text, runtime=str(actor.get("runtime") or ""))
+        if terminal_output_needs_runtime_log(text):
+            runtime_log = runtime_log_tail(
+                str(actor.get("runtime") or ""),
+                env=actor.get("env") if isinstance(actor.get("env"), dict) else None,
+                max_chars=max(1000, min(max_chars, 6000)),
+            )
+            if runtime_log:
+                text = f"{text.rstrip()}\n\n{runtime_log}".strip()
         if len(text) > max_chars:
             text = text[-max_chars:]
         return DaemonResponse(
@@ -351,8 +358,6 @@ def handle_terminal_history(
     runner_kind = str(actor.get("runner") or "pty").strip()
     if runner_kind != "pty":
         return _error("not_pty_actor", "terminal transcript is only available for PTY actors", details={"runner": runner_kind})
-    if not pty_runner.SUPERVISOR.actor_running(group_id, actor_id):
-        return _error("actor_not_running", "actor is not running (no live transcript available)")
     try:
         page = pty_runner.SUPERVISOR.history_page(
             group_id=group_id,
