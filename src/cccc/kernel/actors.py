@@ -448,6 +448,9 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
     if str(item.get("runtime") or "").strip() != "codex" or str(item.get("runner") or "pty").strip() != "pty":
         item["runtime_state_source"] = "terminal"
     elif "runtime_state_source" not in patch and "command" in patch:
+        # Command updates are conservative: profile/provider commands must move
+        # to terminal state, but we do not infer that an existing terminal source
+        # was default-derived and safe to switch back to app_server.
         inferred_source = default_runtime_state_source(
             runtime=str(item.get("runtime") or ""),
             runner=str(item.get("runner") or ""),

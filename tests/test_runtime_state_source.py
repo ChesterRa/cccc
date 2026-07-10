@@ -1,6 +1,44 @@
 import pytest
 
-from cccc.kernel.runtime_state_source import default_runtime_state_source
+from cccc.kernel.runtime_state_source import (
+    codex_pty_command_prefers_terminal_state,
+    default_runtime_state_source,
+)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["codex", "--profile", "local", "--search"],
+        ["codex", "--profile=local", "--search"],
+        ["codex", "-p", "local", "--search"],
+        ["codex", "--oss"],
+        ["codex", "--local-provider", "ollama"],
+        ["codex", "--local-provider=lmstudio"],
+        ["codex", "-c", "model_provider=local", "--search"],
+        ["codex", "-c", "model_providers.ollama.base_url='http://127.0.0.1:11434'"],
+        ["codex", "--config=openai_base_url='http://127.0.0.1:1234/v1'"],
+    ],
+)
+def test_codex_pty_provider_profile_commands_prefer_terminal_state(command) -> None:
+    assert codex_pty_command_prefers_terminal_state(command) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        None,
+        [],
+        ["codex"],
+        ["codex", "--search"],
+        ["codex", "-m", "gpt-5"],
+        ["codex", "-c", "shell_environment_policy.inherit=all", "--search"],
+        ["node", "codex", "--profile", "local"],
+        ["codex", "--", "--profile", "local"],
+    ],
+)
+def test_codex_pty_plain_commands_do_not_force_terminal_state(command) -> None:
+    assert codex_pty_command_prefers_terminal_state(command) is False
 
 
 @pytest.mark.parametrize(
@@ -73,3 +111,43 @@ def test_update_actor_switches_codex_provider_command_to_terminal_default(tmp_pa
     )
 
     assert actor["runtime_state_source"] == "terminal"
+
+
+def test_update_actor_keeps_terminal_state_when_profile_command_is_removed(tmp_path, monkeypatch) -> None:
+    from cccc.kernel.actors import add_actor, update_actor
+
+    group = _runtime_source_group(tmp_path, monkeypatch)
+    actor = add_actor(
+        group,
+        actor_id="peer1",
+        runtime="codex",
+        runner="pty",
+        command=["codex", "--profile", "local", "--search"],
+    )
+    assert actor["runtime_state_source"] == "terminal"
+
+    actor = update_actor(group, "peer1", {"command": ["codex", "--search"]})
+
+    assert actor["runtime_state_source"] == "terminal"
+
+
+def test_update_actor_allows_explicit_app_server_after_profile_command_is_removed(tmp_path, monkeypatch) -> None:
+    from cccc.kernel.actors import add_actor, update_actor
+
+    group = _runtime_source_group(tmp_path, monkeypatch)
+    actor = add_actor(
+        group,
+        actor_id="peer1",
+        runtime="codex",
+        runner="pty",
+        command=["codex", "--profile", "local", "--search"],
+    )
+    assert actor["runtime_state_source"] == "terminal"
+
+    actor = update_actor(
+        group,
+        "peer1",
+        {"command": ["codex", "--search"], "runtime_state_source": "app_server"},
+    )
+
+    assert actor["runtime_state_source"] == "app_server"

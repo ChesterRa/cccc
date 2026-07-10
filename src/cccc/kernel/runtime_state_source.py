@@ -29,7 +29,12 @@ def _codex_config_key(value: str) -> str:
 
 
 def codex_pty_command_prefers_terminal_state(command: list[str] | None) -> bool:
-    """Return whether a Codex PTY command must run as the actual terminal process."""
+    """Return whether a Codex PTY command should use terminal-derived state.
+
+    App-server state is preferable only when the app-server process faithfully
+    represents the actor command. Profile/provider/local-model flags currently
+    bind behavior to the terminal command, so terminal state is the safer truth.
+    """
 
     items = [str(item or "").strip() for item in list(command or []) if str(item or "").strip()]
     if not items:
@@ -41,6 +46,8 @@ def codex_pty_command_prefers_terminal_state(command: list[str] | None) -> bool:
     i = 1
     while i < len(items):
         arg = items[i]
+        if arg == "--":
+            break
         if arg in {"-p", "--profile", "--oss", "--local-provider"}:
             return True
         if arg.startswith("--profile=") or arg.startswith("--local-provider="):
