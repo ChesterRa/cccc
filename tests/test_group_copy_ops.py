@@ -397,15 +397,23 @@ class TestGroupCopyOps(unittest.TestCase):
                 assert group is not None
                 group.ledger_path.write_text("hello\n", encoding="utf-8")
 
-                package_bytes, _manifest, _filename = group_copy_ops._build_package_bytes(
-                    group_id,
-                    max_package_bytes=1024 * 1024,
-                )
-                limit = len(package_bytes) - 1
-                self.assertGreater(limit, 0)
+                with patch.object(
+                    group_copy_ops,
+                    "utc_now_iso",
+                    return_value="2026-07-10T00:00:00.000000Z",
+                ):
+                    package_bytes, _manifest, _filename = group_copy_ops._build_package_bytes(
+                        group_id,
+                        max_package_bytes=1024 * 1024,
+                    )
+                    limit = len(package_bytes) - 1
+                    self.assertGreater(limit, 0)
 
-                with patch.object(group_copy_ops, "MAX_PACKAGE_B64_BYTES", limit):
-                    export_resp, _ = self._call("group_copy_export", {"group_id": group_id, "by": "user"})
+                    with patch.object(group_copy_ops, "MAX_PACKAGE_B64_BYTES", limit):
+                        export_resp, _ = self._call(
+                            "group_copy_export",
+                            {"group_id": group_id, "by": "user"},
+                        )
 
                 self.assertFalse(export_resp.ok)
                 self.assertEqual(getattr(export_resp.error, "code", ""), "copy_package_too_large")
