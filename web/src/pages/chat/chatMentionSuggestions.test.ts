@@ -89,7 +89,7 @@ describe("buildComposerMentionSuggestions", () => {
       groups: [],
     });
 
-    expect(items.map((item) => item.value)).toEqual(["@peers", "peer-1"]);
+    expect(items.map((item) => item.value)).toEqual(["peer-1", "@peers"]);
   });
 
   it("builds group suggestions with description and id metadata for # mentions", () => {

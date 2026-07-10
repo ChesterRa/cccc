@@ -52,6 +52,7 @@ function buildAgentMentionSuggestions(recipientActors: Actor[], needle: string):
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
 
   return [
+    ...actorItems,
     ...base.map((token) => ({
       kind: "agent" as const,
       value: token,
@@ -59,7 +60,6 @@ function buildAgentMentionSuggestions(recipientActors: Actor[], needle: string):
       description: undefined,
       keywords: [token],
     })),
-    ...actorItems,
   ].filter((item) => matchesMentionFilter(item, needle));
 }
 
