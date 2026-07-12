@@ -641,7 +641,9 @@ class TestMcpCapabilityUse(unittest.TestCase):
     def test_mcp_router_capability_use_accepts_actor_id_without_by(self) -> None:
         from cccc.ports.mcp import server as mcp_server
 
-        with patch.dict(os.environ, {"CCCC_GROUP_ID": "", "CCCC_ACTOR_ID": ""}, clear=False), patch(
+        from cccc.ports.mcp.common import runtime_context_override
+
+        with runtime_context_override(home="/tmp/cccc-mcp-test", group_id="", actor_id=""), patch.dict(os.environ, {"CCCC_GROUP_ID": "", "CCCC_ACTOR_ID": ""}, clear=False), patch(
             "cccc.ports.mcp.server.capability_use",
             return_value={"ok": True},
         ) as use_mock:

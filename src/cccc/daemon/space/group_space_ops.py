@@ -597,13 +597,13 @@ def _release_query_slot(*, lane_key: str) -> None:
         _QUERY_ACTIVE_BY_LANE[lane_key] = active - 1
 
 
-def _requested_query_source_ids(options: Any) -> List[str]:
+def _requested_query_source_ids(options: Any) -> list[str]:
     if not isinstance(options, dict):
         return []
     raw = options.get("source_ids")
     if not isinstance(raw, list):
         return []
-    out: List[str] = []
+    out: list[str] = []
     for item in raw:
         sid = str(item or "").strip()
         if sid and sid not in out:
@@ -611,9 +611,9 @@ def _requested_query_source_ids(options: Any) -> List[str]:
     return out
 
 
-def _referenced_query_source_ids(references: Any) -> List[str]:
+def _referenced_query_source_ids(references: Any) -> list[str]:
     refs = references if isinstance(references, list) else []
-    out: List[str] = []
+    out: list[str] = []
     for item in refs:
         if not isinstance(item, dict):
             continue
@@ -623,7 +623,7 @@ def _referenced_query_source_ids(references: Any) -> List[str]:
     return out
 
 
-def _explicit_source_basis_hint(*, requested_source_ids: List[str], referenced_source_ids: List[str]) -> str:
+def _explicit_source_basis_hint(*, requested_source_ids: list[str], referenced_source_ids: list[str]) -> str:
     if requested_source_ids and referenced_source_ids:
         requested = set(requested_source_ids)
         referenced = set(referenced_source_ids)

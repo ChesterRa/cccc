@@ -147,6 +147,8 @@ export function AgentTab({
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  // Initialization snapshot; live option effects below keep it current without recreating xterm.
+  const terminalOptionsSnapshotRef = useRef({ isDark, scrollbackLines: terminalScrollbackLines });
   const [activated, setActivated] = useState(false);
   // Bumped to trigger a fresh WebSocket connection from the reconnect button
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
@@ -308,8 +310,8 @@ export function AgentTab({
   const ghostActionButtonClass =
     "inline-flex items-center gap-1.5 rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-[var(--color-text-tertiary)] transition-colors hover:border-[var(--glass-border-subtle)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed";
 
-  // Update terminal theme when isDark changes
   useEffect(() => {
+    terminalOptionsSnapshotRef.current.isDark = isDark;
     if (terminalRef.current) {
       terminalRef.current.options.theme = getTerminalTheme(isDark);
     }
@@ -322,16 +324,14 @@ export function AgentTab({
     }
   }, [canControl]);
 
-  // Update terminal scrollback when global settings change.
   useEffect(() => {
+    terminalOptionsSnapshotRef.current.scrollbackLines = terminalScrollbackLines;
     if (terminalRef.current) {
       terminalRef.current.options.scrollback = terminalScrollbackLines;
     }
   }, [terminalScrollbackLines]);
 
-  // Initialize terminal. Theme, stdin, and scrollback changes are applied by
-  // option-update effects above; they must not dispose/recreate the live xterm
-  // instance because the WebSocket input/resize subscriptions are bound to it.
+  // Initialize once; live option changes above must not recreate the WebSocket-bound xterm.
   useEffect(() => {
     if (!termRef.current || isHeadless || !isRunning || !activated) return;
 
@@ -342,11 +342,11 @@ export function AgentTab({
       cursorInactiveStyle: "none",
       fontSize: 13,
       fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, monospace',
-      theme: getTerminalTheme(isDark),
+      theme: getTerminalTheme(terminalOptionsSnapshotRef.current.isDark),
       disableStdin: !canControl,
       // Bigger scrollback improves history browsing without going "infinite" and hurting perf.
       // Default is 8k lines; the user can override it in Global → Developer settings.
-      scrollback: terminalScrollbackLines || 8000,
+      scrollback: terminalOptionsSnapshotRef.current.scrollbackLines || 8000,
       allowProposedApi: true,
     });
 
