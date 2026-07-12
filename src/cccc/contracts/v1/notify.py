@@ -5,7 +5,7 @@ System notifications are separated from chat messages to avoid polluting user co
 Kinds:
 - nudge: remind an actor to handle unread messages
 - keepalive: remind an actor to continue work (after detecting a "Next:" declaration)
-- help_nudge: remind an actor to refresh the collaboration playbook (cccc_help)
+- help_nudge: remind an actor to refresh the collaboration protocol reference (cccc_help)
 - actor_idle: actor idle alert (to foreman)
 - silence_check: group silence alert (to foreman)
 - auto_idle: group automatically transitioned to idle after repeated silence checks

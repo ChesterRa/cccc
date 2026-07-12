@@ -17,25 +17,17 @@ from .install_capability import INSTALL_CAPABILITY_ID, INSTALL_CAPABILITY_RECORD
 CORE_BASIC_TOOLS: Tuple[str, ...] = (
     "cccc_help",
     "cccc_bootstrap",
-    "cccc_project_info",
     "cccc_capability_search",
-    "cccc_capability_state",
-    "cccc_capability_enable",
-    "cccc_capability_install",
     "cccc_capability_use",
     "cccc_inbox_list",
     "cccc_inbox_mark_read",
     "cccc_message_send",
-    "cccc_tracked_send",
     "cccc_message_reply",
     "cccc_file",
-    "cccc_repo",
-    "cccc_presentation",
     "cccc_context_get",
     "cccc_coordination",
     "cccc_task",
     "cccc_agent_state",
-    "cccc_memory",
 )
 
 CORE_ADMIN_TOOLS: Tuple[str, ...] = (
@@ -62,7 +54,18 @@ VOICE_SECRETARY_CORE_TOOLS: Tuple[str, ...] = (
     "cccc_voice_secretary_request",
 )
 
+# Web Model clients cache a fixed connector schema and use CCCC tools as their
+# direct local fallback. Keep the pre-Lean core there explicitly; only ordinary
+# actors adopt the reduced always-visible surface.
 WEB_MODEL_CORE_TOOLS: Tuple[str, ...] = CORE_BASIC_TOOLS + (
+    "cccc_project_info",
+    "cccc_capability_state",
+    "cccc_capability_enable",
+    "cccc_capability_install",
+    "cccc_tracked_send",
+    "cccc_repo",
+    "cccc_presentation",
+    "cccc_memory",
     "cccc_runtime_wait_next_turn",
     "cccc_runtime_complete_turn",
     "cccc_code_exec",
@@ -145,13 +148,16 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
         "tags": ("automation", "ops"),
     },
     "pack:context-advanced": {
-        "title": "Context Advanced",
-        "description": "Low-level context batch sync and memory admin operations.",
+        "title": "Extended Context + Delegation",
+        "description": "Project context, tracked delegation, low-level context sync, and memory operations.",
         "tool_names": (
+            "cccc_project_info",
+            "cccc_tracked_send",
             "cccc_context_sync",
+            "cccc_memory",
             "cccc_memory_admin",
         ),
-        "tags": ("context", "memory", "admin"),
+        "tags": ("context", "delegation", "memory"),
     },
     "pack:headless-notify": {
         "title": "Headless + Notify",
@@ -163,19 +169,25 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
         "tags": ("headless", "notify", "runner"),
     },
     "pack:diagnostics": {
-        "title": "Terminal Debug",
-        "description": "Terminal transcript and local debug diagnostics.",
+        "title": "Workspace Utilities",
+        "description": "Repository inspection, presentation rendering, terminal transcript, and debug diagnostics.",
         "tool_names": (
+            "cccc_repo",
+            "cccc_presentation",
             "cccc_terminal",
             "cccc_debug",
         ),
-        "tags": ("terminal", "debug", "diagnostics"),
+        "tags": ("workspace", "repo", "presentation", "diagnostics"),
     },
     "pack:capability-admin": {
         "title": "Capability Admin",
-        "description": "Foreman/admin capability governance: import, block, and uninstall capability records.",
-        "tool_names": CAPABILITY_ADMIN_TOOLS,
-        "tags": ("capability", "admin", "governance"),
+        "description": "Capability state, enablement, installation, and governance operations.",
+        "tool_names": (
+            "cccc_capability_state",
+            "cccc_capability_enable",
+            "cccc_capability_install",
+        ) + CAPABILITY_ADMIN_TOOLS,
+        "tags": ("capability", "install", "admin", "governance"),
     },
 }
 

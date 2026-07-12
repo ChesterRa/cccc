@@ -22,6 +22,16 @@ class TestAutomationNudgeDigest(unittest.TestCase):
                 reg = load_registry()
                 group = create_group(reg, title="test")
                 add_actor(group, actor_id="peer1", runtime="codex", runner="pty", enabled=True)
+                automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
+                automation.update(
+                    {
+                        "nudge_after_seconds": 300,
+                        "reply_required_nudge_after_seconds": 300,
+                        "attention_ack_nudge_after_seconds": 600,
+                        "unread_nudge_after_seconds": 900,
+                    }
+                )
+                group.doc["automation"] = automation
 
                 manager = AutomationManager()
                 cfg = _cfg(group)

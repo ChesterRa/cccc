@@ -1934,7 +1934,7 @@ class AutomationManager:
                         _save_state(group, state)
 
     def _check_help_nudge(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
-        """Remind running actors to refresh the help playbook via cccc_help.
+        """Remind running actors to refresh the protocol reference via cccc_help.
 
         This is intentionally low-frequency and tied to "work volume" rather than pure time,
         to avoid nagging idle sessions.

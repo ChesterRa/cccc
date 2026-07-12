@@ -224,6 +224,26 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertFalse(web_model_only_tools & resolve_core_tool_names(actor_role="peer"))
         self.assertTrue(web_model_only_tools <= resolve_core_tool_names(actor_role="peer", is_web_model=True))
 
+    def test_web_model_keeps_fixed_schema_fallbacks_outside_generic_lean_core(self) -> None:
+        from cccc.kernel.capabilities import CORE_BASIC_TOOLS, WEB_MODEL_CORE_TOOLS
+
+        fixed_schema_fallbacks = {
+            "cccc_repo",
+            "cccc_capability_enable",
+            "cccc_memory",
+        }
+        self.assertFalse(fixed_schema_fallbacks & set(CORE_BASIC_TOOLS))
+        self.assertTrue(fixed_schema_fallbacks <= set(WEB_MODEL_CORE_TOOLS))
+
+    def test_bootstrap_description_matches_on_demand_help_and_hidden_tool_routes(self) -> None:
+        bootstrap = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_bootstrap"), None)
+        self.assertIsInstance(bootstrap, dict)
+        description = str((bootstrap or {}).get("description") or "")
+
+        self.assertIn("Call cccc_help only when", description)
+        self.assertIn("hidden tools are routed through cccc_capability_use", description)
+        self.assertNotIn("usually follow with cccc_help once", description)
+
     def test_web_model_turn_tools_describe_transport_boundary(self) -> None:
         wait = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_runtime_wait_next_turn"), None)
         complete = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_runtime_complete_turn"), None)

@@ -351,7 +351,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertIn("actor=peer1", prompt)
             self.assertIn("Session bootstrap for this browser chat", prompt)
             self.assertIn("You are peer1", prompt)
-            self.assertIn("Platform Invariants:", prompt)
+            self.assertIn("CCCC Protocol:", prompt)
             self.assertIn("Web transport:", prompt)
             self.assertIn("do not call cccc_runtime_wait_next_turn", prompt)
             self.assertIn("Text typed only in this web chat is not delivered", prompt)
@@ -719,7 +719,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             prompt = str(calls[0].get("prompt") or "")
             self.assertIn("Session bootstrap for this browser chat", prompt)
-            self.assertIn("Platform Invariants:", prompt)
+            self.assertIn("CCCC Protocol:", prompt)
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)

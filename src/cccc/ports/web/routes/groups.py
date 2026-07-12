@@ -2083,7 +2083,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if not reasons:
             return (
                 "Help updated",
-                "Group help changed. Run `cccc_help` now to refresh your effective playbook.",
+                "Group help changed. Run `cccc_help` now to refresh your effective protocol reference.",
             )
         if len(reasons) == 1:
             title = f"Help updated: {reasons[0]}"
@@ -2091,7 +2091,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             title = "Help updated: multiple sections"
         joined = ", ".join(reasons)
         message = (
-            f"Updated: {joined}. Run `cccc_help` now to refresh your effective playbook; "
+            f"Updated: {joined}. Run `cccc_help` now to refresh your effective protocol reference; "
             "then update `cccc_agent_state` if your plan changes."
         )
         return title, message

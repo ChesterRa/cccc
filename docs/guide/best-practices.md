@@ -26,11 +26,11 @@ Brief overview of the codebase structure.
 What we're working on right now.
 ```
 
-Agents read this via `cccc_project_info` to understand context.
+Agents read this on demand via `cccc_capability_use(tool_name="cccc_project_info", tool_arguments={})`.
 
-### Customize the Help Playbook
+### Customize the Protocol Reference
 
-The help playbook is the collaboration contract that agents follow. You can customize it per-group.
+The help protocol reference is the group-specific CCCC collaboration contract. You can customize it per-group without turning it into a general reasoning or writing guide.
 
 #### File Priority
 

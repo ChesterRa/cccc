@@ -534,7 +534,7 @@ def _notify_actor_notes_target(*, group_id: str, target_actor_id: str) -> List[s
                     "priority": "normal",
                     "title": "Help updated: your actor note",
                     "message": (
-                        "Updated: your actor note. Run `cccc_help` now to refresh your effective playbook; "
+                        "Updated: your actor note. Run `cccc_help` now to refresh your effective protocol reference; "
                         "then update `cccc_agent_state` if your plan changes."
                     ),
                     "target_actor_id": str(target_view.get("id") or target),

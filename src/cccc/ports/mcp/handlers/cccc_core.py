@@ -850,11 +850,14 @@ def bootstrap(
         ),
         "memory_recall_gate": memory_recall_gate,
         "next_calls": {
-            "help": "cccc_help()",
-            "project_info": "cccc_project_info()",
+            "help": "cccc_help()  # when a CCCC route or state boundary is unclear",
+            "project_info": 'cccc_capability_use(tool_name="cccc_project_info", tool_arguments={})',
             "context_get": "cccc_context_get()",
             "inbox_list": 'cccc_inbox_list(kind_filter="all")',
-            "memory_search": 'cccc_memory(action="search", query=...)',
+            "memory_search": (
+                'cccc_capability_use(tool_name="cccc_memory", '
+                'tool_arguments={"action":"search","query":"..."})'
+            ),
             "interrupt_triage": (
                 'If inbox_preview messages have signal_family="interrupt", treat them as coordination interrupts: '
                 'refresh or reply, then resume the current task unless priority changed.'

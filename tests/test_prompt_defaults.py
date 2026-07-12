@@ -8,21 +8,16 @@ class TestPromptDefaults(unittest.TestCase):
         from cccc.kernel.prompt_files import DEFAULT_PREAMBLE_BODY
 
         body = str(DEFAULT_PREAMBLE_BODY or "")
-        self.assertIn("Startup routes:", body)
-        self.assertIn("Execution default:", body)
+        self.assertIn("Startup:", body)
         self.assertIn("cccc_bootstrap", body)
-        self.assertIn("context_hygiene", body)
         self.assertIn("cccc_help", body)
-        self.assertIn("cccc_context_get", body)
-        self.assertIn("cccc_project_info", body)
-        self.assertIn("Reuse working paths first.", body)
-        self.assertNotIn("Working stance:", body)
-        self.assertNotIn("Work like a teammate, not a script.", body)
-        self.assertNotIn("Prefer silence over low-signal chatter", body)
-        self.assertNotIn("routine `@all` updates", body)
-        self.assertNotIn("finish it end-to-end", body)
-        self.assertNotIn("intent is not progress", body)
-        self.assertLessEqual(len(body.split()), 90)
+        self.assertIn("only when", body)
+        self.assertNotIn("context_hygiene", body)
+        self.assertNotIn("memory_recall_gate", body)
+        self.assertNotIn("cccc_context_get", body)
+        self.assertNotIn("cccc_project_info", body)
+        self.assertNotIn("Execution default:", body)
+        self.assertLessEqual(len(body.split()), 30)
 
     def test_default_preamble_avoids_long_rule_duplication(self) -> None:
         from cccc.kernel.prompt_files import DEFAULT_PREAMBLE_BODY
@@ -34,74 +29,35 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertNotIn("cccc_capability_search", body)
         self.assertNotIn("cccc_agent_state(action=update", body)
 
-    def test_builtin_help_is_compact(self) -> None:
+    def test_builtin_help_is_compact_and_protocol_complete(self) -> None:
         from cccc.kernel.prompt_files import load_builtin_help_markdown
 
         body = str(load_builtin_help_markdown() or "")
         common_body = body.split("\n## Actor Notes\n", 1)[0]
-        self.assertLessEqual(len(common_body.split()), 1400)
-        self.assertIn("This is your working playbook for this group.", body)
-        self.assertIn("## CCCC Creed", body)
-        self.assertIn("Do not obey wording blindly; find the objective, constraint, success test.", body)
-        self.assertIn("Never lose the high ground; re-check the real objective, chosen path, and option to step back.", body)
-        self.assertIn("Ask what you are serving: the real outcome, or the comfort of staying busy.", body)
-        self.assertIn("Plans are bets; inspected reality outranks memory, reports, confidence.", body)
-        self.assertIn("Your widest judgment is at the start; write an exit criterion into open_loops before you grind.", body)
-        self.assertIn("If exceptions grow, stop protecting sunk cost and reframe.", body)
-        self.assertIn("A reply is not progress; after interruption, recover active work, open loops, commitments.", body)
-        self.assertIn("Mechanisms must pay rent; add machinery only when it removes confusion.", body)
-        self.assertIn("Do not sound done; finish with evidence, risk, residual work, next state.", body)
-        self.assertNotIn("Local motion can be global failure", body)
-        self.assertNotIn("If stuck twice", body)
-        self.assertNotIn("Reports are witnesses", body)
-        self.assertNotIn("When an answer feels neat", body)
-        self.assertIn("## Working Stance", body)
-        self.assertIn("## Communication Patterns", body)
+        self.assertLessEqual(len(common_body.split()), 650)
+        self.assertIn("CCCC routes and shared-state reference", body)
         self.assertIn("## Core Routes", body)
-        self.assertIn("## Control Plane", body)
-        self.assertIn("## Memory and Recall", body)
-        self.assertIn("## Capability", body)
-        self.assertIn('`enable_hint="enable_now"`', body)
-        self.assertIn("Use capability tools only when the visible core tools are not enough", body)
+        self.assertIn("## Collaboration State", body)
+        self.assertIn("### State Layers", body)
+        self.assertIn("### Durable Coordination", body)
+        self.assertIn("### Recovery and Recall", body)
+        self.assertIn("## Capabilities", body)
         self.assertIn("## Actor Notes", body)
         self.assertIn("## Appendix", body)
-        self.assertIn("present the post-review version, not the first draft", body)
-        self.assertIn("Prefer silence over low-signal chatter.", body)
-        self.assertIn("This user is not generic. Learn their bar and dislikes; let that shape your defaults.", body)
-        self.assertIn("Use `open_loops` as current memo", body)
-        self.assertIn("tie each entry to a concrete referent", body)
-        self.assertIn("record its exit criterion in `open_loops`", body)
-        self.assertNotIn("Creed-derived warnings", body)
-        self.assertIn("Use Creed to turn abstract failure modes into concrete `open_loops`", body)
-        self.assertIn("Keep `persona_notes` durable; do not dump task memos or temporary creed pins there.", body)
-        self.assertNotIn("resume_hint", body)
-        self.assertNotIn("## Common Work Loops", body)
-        self.assertNotIn("cccc_code_exec", body)
-        self.assertNotIn("cccc_repo_edit", body)
-        self.assertNotIn("cccc_apply_patch", body)
-        self.assertNotIn("cccc_git(action=", body)
-        self.assertNotIn("cccc_runtime_complete_turn", body)
-        self.assertIn('"standing by"', body)
-        self.assertIn('"received"', body)
-        self.assertIn("routine status, acknowledgements", body)
-        self.assertIn("Do not drip-feed obvious in-scope next steps", body)
-        self.assertIn('if nothing changed, stay silent, not "received" or "standing by"', body)
-        self.assertNotIn("## Quick Card", body)
-        self.assertNotIn("## Where Things Live", body)
-        self.assertNotIn("### NotebookLM Work vs Memory Lane", body)
-        self.assertNotIn("### NotebookLM Artifact Runs", body)
-        self.assertNotIn("### Capsule Skill Boundary", body)
-        self.assertNotIn("### Terminal Transcript", body)
-        self.assertNotIn("### Automation Tools", body)
-        self.assertNotIn("## Quick Card", body)
-        self.assertIn("Treat `done`, `idle`, and silence as evaluation signals, not closure truth.", body)
-        self.assertIn("Protect verifier boundaries unless changing the verifier is explicitly in scope.", body)
-        self.assertNotIn("### Skill Evolution Proposals", body)
-        self.assertNotIn("`source_id=agent_self_proposed`", body)
-        self.assertNotIn("`skill:agent_self_proposed:<stable-slug>`", body)
-        self.assertNotIn("`cccc_capability_state.active_capsule_skills`", body)
-        self.assertNotIn("capsule_text", body)
-        self.assertNotIn("manual_only", body)
+        self.assertIn("daemon and append-only group ledger are the source of truth", body)
+        self.assertIn("`cccc_agent_state` is per-actor recovery state, not chat status", body)
+        self.assertIn("keep runtime-local todo private", body)
+        self.assertIn("not automatically a task switch", body)
+        self.assertIn('tool_name="cccc_project_info"', body)
+        self.assertIn('tool_name="cccc_memory"', body)
+        self.assertIn("invokes hidden tools without exposing the full pack", body)
+        self.assertIn("does not define how you should reason or work", body)
+        self.assertNotIn("## CCCC Creed", body)
+        self.assertNotIn("## Working Stance", body)
+        self.assertNotIn("## Communication Patterns", body)
+        self.assertNotIn("## Memory and Recall", body)
+        self.assertNotIn("### Todo and Scope Discipline", body)
+        self.assertNotIn("### Planning and Scope Gates", body)
 
     def test_mcp_reminder_line_stays_single_purpose(self) -> None:
         from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE
@@ -144,41 +100,42 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertNotIn("cccc_capability_use(...)", body)
         self.assertNotIn("diagnostics", body)
 
-    def test_builtin_help_marks_coordination_interrupts_as_non_switches(self) -> None:
+    def test_builtin_help_scopes_interrupt_recovery_to_durable_state(self) -> None:
         from cccc.kernel.prompt_files import load_builtin_help_markdown
 
         body = str(load_builtin_help_markdown() or "")
-        self.assertIn("`standup` and `help_nudge` are coordination interrupts, not task switches", body)
-        self.assertIn("Do not overwrite `active_task_id`, `focus`, or `next_action`", body)
+        self.assertIn("coordination interrupt is not automatically a task switch", body)
+        self.assertIn("resume the recorded task unless priority actually changed", body)
+        self.assertIn("do not replace active state with the interrupt itself", body)
 
 
 class TestForemanRoleHelpSection(unittest.TestCase):
-    def test_builtin_help_foreman_section_carries_stuck_report_lens(self) -> None:
+    def test_builtin_help_foreman_section_stays_protocol_focused(self) -> None:
         from cccc.kernel.prompt_files import load_builtin_help_markdown
         from cccc.ports.mcp.utils.help_markdown import parse_help_markdown
 
         parsed = parse_help_markdown(str(load_builtin_help_markdown() or ""))
         foreman = str(parsed.get("foreman") or "")
-        peer = str(parsed.get("peer") or "")
-        self.assertIn("repeated failures or a long-unchanged focus", foreman)
-        self.assertIn("question the objective and alternative paths before the details", foreman)
-        self.assertNotIn("repeated failures or a long-unchanged focus", peer)
+        self.assertIn("Own integration and acceptance", foreman)
+        self.assertIn("durable tasks or tracked sends", foreman)
+        self.assertNotIn("repeated failures", foreman)
+        self.assertNotIn("question the objective", foreman)
 
-    def test_builtin_help_foreman_section_scopes_actor_notes_doctrine(self) -> None:
+    def test_builtin_help_does_not_inject_actor_notes_doctrine(self) -> None:
         from cccc.kernel.prompt_files import load_builtin_help_markdown
         from cccc.ports.mcp.utils.help_markdown import parse_help_markdown
 
         parsed = parse_help_markdown(str(load_builtin_help_markdown() or ""))
         foreman = str(parsed.get("foreman") or "")
-        self.assertIn("repeatedly observed collaboration preferences or recurring pitfalls", foreman)
-        self.assertIn("Remove stale notes; never record one-off mistakes", foreman)
+        self.assertNotIn("repeatedly observed collaboration preferences", foreman)
+        self.assertNotIn("never record one-off mistakes", foreman)
 
     def test_builtin_help_chat_section_does_not_duplicate_core_routes_reply_line(self) -> None:
         from cccc.kernel.prompt_files import load_builtin_help_markdown
 
         body = str(load_builtin_help_markdown() or "")
         self.assertNotIn("for new visible coordination messages", body)
-        self.assertEqual(body.count("Use `cccc_message_reply` for replies"), 1)
+        self.assertEqual(body.count("Reply with `cccc_message_reply`"), 1)
 
     def test_role_system_prompt_stays_role_agnostic(self) -> None:
         import inspect
