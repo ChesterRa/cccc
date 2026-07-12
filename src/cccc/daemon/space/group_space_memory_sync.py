@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...contracts.v1 import SpaceMemorySyncSummary
+from ...kernel.group import load_group
 from ...kernel.memory_reme.layout import resolve_memory_layout
 from ...util.fs import atomic_write_json, atomic_write_text, read_json
 from ...util.time import utc_now_iso
@@ -651,6 +652,7 @@ def process_due_memory_space_syncs(*, provider: str = "notebooklm", limit: int =
     processed = 0
     queued = 0
     blocked = 0
+    missing_groups = 0
     for item in bindings[:max_items]:
         if not isinstance(item, dict):
             continue
@@ -658,6 +660,9 @@ def process_due_memory_space_syncs(*, provider: str = "notebooklm", limit: int =
             continue
         group_id = str(item.get("group_id") or "").strip()
         if not group_id:
+            continue
+        if load_group(group_id) is None:
+            missing_groups += 1
             continue
         processed += 1
         result = sync_memory_daily_files(group_id, provider=provider, force=False)
@@ -669,4 +674,5 @@ def process_due_memory_space_syncs(*, provider: str = "notebooklm", limit: int =
         "processed": processed,
         "queued": queued,
         "blocked": blocked,
+        "missing_groups": missing_groups,
     }

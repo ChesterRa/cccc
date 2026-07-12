@@ -278,3 +278,31 @@ class TestGroupSpaceMemorySync(unittest.TestCase):
             self.assertNotIn(today, files)
         finally:
             cleanup()
+
+    def test_periodic_memory_sync_skips_binding_for_deleted_group(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.daemon.space.group_space_memory_sync import process_due_memory_space_syncs
+
+        binding = {
+            "group_id": "g_deleted",
+            "provider": "notebooklm",
+            "lane": "memory",
+            "remote_space_id": "nb_stale",
+            "status": "bound",
+        }
+        with (
+            patch(
+                "cccc.daemon.space.group_space_memory_sync.list_space_bindings",
+                return_value=[binding],
+            ),
+            patch("cccc.daemon.space.group_space_memory_sync.load_group", return_value=None),
+            patch("cccc.daemon.space.group_space_memory_sync.sync_memory_daily_files") as sync_mock,
+        ):
+            result = process_due_memory_space_syncs(provider="notebooklm", limit=20)
+
+        self.assertEqual(result.get("processed"), 0)
+        self.assertEqual(result.get("queued"), 0)
+        self.assertEqual(result.get("blocked"), 0)
+        self.assertEqual(result.get("missing_groups"), 1)
+        sync_mock.assert_not_called()
