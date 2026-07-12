@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.31] — 2026-07-12
+
+### Added
+- **Actor environment variables now have a dedicated management surface** with masked configured keys, staged add/update/remove operations, batch paste, undo, and explicit clear-all handling.
+- **Exited PTY sessions retain bounded terminal snapshots**, allowing terminal tail and history diagnostics to remain available after an actor stops or exits.
+
+### Changed
+- **PTY lifecycle operations are coordinated across actor, group, and global start/stop paths**, reducing duplicate sessions and start/stop races while preserving concurrency between unrelated groups.
+- **Codex PTY state follows the terminal command when profiles, provider overrides, OSS mode, or local-provider flags make app-server state incomplete**. Grok Build and OpenCode default launches now include their autonomous execution flags.
+- **Runtime and Group Bridge documentation is easier to navigate**, with dedicated guides, a generated release hub, a standards index, and refreshed CCCC branding assets.
+
+### Fixed
+- **Derived ledger indexes recover from corruption at every indexed read boundary**, rebuilding from the append-only ledger after explicit `SQLITE_CORRUPT` or `SQLITE_NOTADB` failures without masking lock, permission, or unrelated database errors.
+- **Long Web chat histories preserve the user's visual anchor more reliably** while older messages are prepended and virtualized rows are remeasured.
+- **Actor configuration keeps unfinished environment-variable drafts when switching advanced tabs**, refreshes configured keys across actor/edit sessions, and disables destructive clearing when key metadata cannot be loaded.
+- **Terminal output is drained and preserved more reliably during fast exits and shutdown**, including Windows ConPTY sessions, with clearer exited-session diagnostics.
+- **Agent mention suggestions prioritize concrete actors before broad recipient tokens**, making direct recipients easier to select.
+
+### Tests
+- Expanded backend and frontend coverage for PTY lifecycle concurrency, exited-session snapshots, Windows output draining, runtime-state inference, ledger-index corruption recovery, actor environment-variable drafts, Web history prepend compensation, and mention ordering.
+
 ## [0.4.30] — 2026-07-03
 
 ### Added
