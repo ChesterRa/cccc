@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -45,6 +46,24 @@ class TestLedgerSearchIndex(unittest.TestCase):
             )
             self.assertTrue(sent.ok, getattr(sent, "error", None))
         return group_id
+
+    def _corrupt_index_root_page(self, index_path, index_name: str) -> None:
+        conn = sqlite3.connect(str(index_path))
+        try:
+            page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+            row = conn.execute(
+                "SELECT rootpage FROM sqlite_master WHERE name = ?",
+                (index_name,),
+            ).fetchone()
+            self.assertIsNotNone(row)
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            conn.close()
+        assert row is not None
+
+        with index_path.open("r+b") as handle:
+            handle.seek((int(row[0]) - 1) * page_size)
+            handle.write(b"\x00")
 
     def test_catch_up_ledger_index_waits_for_index_lock(self) -> None:
         _, cleanup = self._with_home()
@@ -132,6 +151,154 @@ class TestLedgerSearchIndex(unittest.TestCase):
 
                 release_lockfile(lock_handle)
             cleanup()
+
+    def test_search_rebuilds_corrupt_derived_index(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import search_messages
+
+            group_id = self._create_group_with_messages("corrupt-search-index")
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            index_path = group.path / "state" / "ledger" / "index.sqlite3"
+            with index_path.open("r+b") as handle:
+                handle.write(b"x")
+
+            events, has_more = search_messages(group, query="", kind_filter="chat", limit=10)
+
+            self.assertFalse(has_more)
+            self.assertEqual(
+                [str((event.get("data") or {}).get("text") or "") for event in events],
+                [f"corrupt-search-index {idx}" for idx in range(3)],
+            )
+            conn = sqlite3.connect(str(index_path))
+            try:
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            finally:
+                conn.close()
+        finally:
+            cleanup()
+
+    def test_search_rebuilds_when_corruption_is_only_reached_by_query(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import search_messages
+
+            title = "query-page-corruption"
+            group_id = self._create_group_with_messages(title, count=250)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            index_path = group.path / "state" / "ledger" / "index.sqlite3"
+            self._corrupt_index_root_page(index_path, "sqlite_autoindex_event_search_1")
+
+            events, has_more = search_messages(group, query=title, kind_filter="chat", limit=10)
+
+            self.assertTrue(has_more)
+            self.assertEqual(len(events), 10)
+            self.assertTrue(
+                all(title in str((event.get("data") or {}).get("text") or "") for event in events)
+            )
+            conn = sqlite3.connect(str(index_path))
+            try:
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            finally:
+                conn.close()
+        finally:
+            cleanup()
+
+    def test_direct_lookups_rebuild_when_corruption_is_only_reached_by_query(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel import ledger_index
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import search_messages
+
+            group_id = self._create_group_with_messages("lookup-page-corruption", count=3)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            events, _ = search_messages(group, query="", kind_filter="chat", limit=10)
+            event_id = str(events[0].get("id") or "")
+            self.assertTrue(event_id)
+
+            index_path = group.path / "state" / "ledger" / "index.sqlite3"
+            self._corrupt_index_root_page(index_path, "sqlite_autoindex_events_1")
+
+            event = ledger_index.lookup_event_by_id(group.ledger_path, event_id)
+
+            self.assertIsNotNone(event)
+            self.assertEqual(str((event or {}).get("id") or ""), event_id)
+            self._corrupt_index_root_page(index_path, "sqlite_autoindex_events_1")
+
+            batch = ledger_index.lookup_events_by_ids(group.ledger_path, [event_id])
+
+            self.assertEqual(len(batch), 1)
+            self.assertEqual(str((batch[0] or {}).get("id") or ""), event_id)
+            conn = sqlite3.connect(str(index_path))
+            try:
+                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+            finally:
+                conn.close()
+        finally:
+            cleanup()
+
+    def test_query_does_not_rebuild_for_non_corruption_error(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel import ledger_index
+            from cccc.kernel.group import load_group
+
+            group_id = self._create_group_with_messages("non-corrupt-query-error", count=1)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            error = sqlite3.OperationalError("database is locked")
+
+            def fail_query(_conn):
+                raise error
+
+            with patch.object(ledger_index, "_discard_index_files") as discard:
+                with self.assertRaisesRegex(sqlite3.OperationalError, "database is locked"):
+                    ledger_index._query_ledger_index(group.ledger_path, fail_query)
+
+            discard.assert_not_called()
+        finally:
+            cleanup()
+
+    def test_catch_up_does_not_discard_index_for_non_corruption_error(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel import ledger_index
+            from cccc.kernel.group import load_group
+
+            group_id = self._create_group_with_messages("non-corrupt-index-error", count=1)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            index_path = group.path / "state" / "ledger" / "index.sqlite3"
+
+            error = sqlite3.OperationalError("unable to open database file")
+            with patch.object(ledger_index, "_connect", side_effect=error):
+                with self.assertRaisesRegex(sqlite3.OperationalError, "unable to open database file"):
+                    ledger_index.catch_up_ledger_index(group.ledger_path)
+
+            self.assertTrue(index_path.exists())
+        finally:
+            cleanup()
+
+    def test_rebuildable_index_error_supports_legacy_sqlite_exceptions(self) -> None:
+        from cccc.kernel.ledger_index import _is_rebuildable_index_error
+
+        self.assertTrue(_is_rebuildable_index_error(sqlite3.DatabaseError("file is not a database")))
+        self.assertTrue(_is_rebuildable_index_error(sqlite3.DatabaseError("database disk image is malformed")))
+        self.assertFalse(_is_rebuildable_index_error(sqlite3.OperationalError("unable to open database file")))
 
     def test_search_messages_without_query_uses_index_path(self) -> None:
         _, cleanup = self._with_home()

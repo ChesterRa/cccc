@@ -57,14 +57,21 @@ export function ActorConfigTabs({ ariaLabel, tabs, activeId, onChange }: ActorCo
           })}
         </div>
       </div>
-      <div
-        id={`${baseId}-panel-${activeTab.id}`}
-        role="tabpanel"
-        aria-labelledby={`${baseId}-tab-${activeTab.id}`}
-        className="min-w-0 pt-4"
-      >
-        {activeTab.panel}
-      </div>
+      {tabs.map((tab) => {
+        const selected = tab.id === activeTab.id;
+        return (
+          <div
+            key={tab.id}
+            id={`${baseId}-panel-${tab.id}`}
+            role="tabpanel"
+            aria-labelledby={`${baseId}-tab-${tab.id}`}
+            className="min-w-0 pt-4"
+            hidden={!selected}
+          >
+            {tab.panel}
+          </div>
+        );
+      })}
     </div>
   );
 }

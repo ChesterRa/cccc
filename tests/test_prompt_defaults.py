@@ -164,6 +164,22 @@ class TestForemanRoleHelpSection(unittest.TestCase):
         self.assertIn("question the objective and alternative paths before the details", foreman)
         self.assertNotIn("repeated failures or a long-unchanged focus", peer)
 
+    def test_builtin_help_foreman_section_scopes_actor_notes_doctrine(self) -> None:
+        from cccc.kernel.prompt_files import load_builtin_help_markdown
+        from cccc.ports.mcp.utils.help_markdown import parse_help_markdown
+
+        parsed = parse_help_markdown(str(load_builtin_help_markdown() or ""))
+        foreman = str(parsed.get("foreman") or "")
+        self.assertIn("repeatedly observed collaboration preferences or recurring pitfalls", foreman)
+        self.assertIn("Remove stale notes; never record one-off mistakes", foreman)
+
+    def test_builtin_help_chat_section_does_not_duplicate_core_routes_reply_line(self) -> None:
+        from cccc.kernel.prompt_files import load_builtin_help_markdown
+
+        body = str(load_builtin_help_markdown() or "")
+        self.assertNotIn("for new visible coordination messages", body)
+        self.assertEqual(body.count("Use `cccc_message_reply` for replies"), 1)
+
     def test_role_system_prompt_stays_role_agnostic(self) -> None:
         import inspect
 

@@ -80,11 +80,10 @@ describe("ActorSecretManager", () => {
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>.*Add variable/s);
   });
 
-  it("allows clearing when the key list failed to load", () => {
+  it("disables clearing when the key list failed to load", () => {
     const markup = renderManager(false, false, true, []);
 
-    expect(clearAllButton(markup)).toBeDefined();
-    expect(clearAllButton(markup)).not.toContain('disabled=""');
+    expect(clearAllButton(markup)).toContain('disabled=""');
   });
 
   it("disables clearing when a successfully loaded key list is empty", () => {

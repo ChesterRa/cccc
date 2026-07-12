@@ -754,7 +754,6 @@ function EditActorConfigModal({
   const [pendingConvertToCustom, setPendingConvertToCustom] = useState(false);
   const [localNotice, setLocalNotice] = useState("");
   const [avatarBusy, setAvatarBusy] = useState<"" | "upload" | "clear">("");
-  const [secretsPrimed, setSecretsPrimed] = useState(true);
   const [capabilitiesPrimed, setCapabilitiesPrimed] = useState(false);
   const [advancedTab, setAdvancedTab] = useState<AdvancedTabId>("environment");
   const secretFetchSeqRef = useRef(0);
@@ -957,13 +956,12 @@ function EditActorConfigModal({
       setSecretMasks({});
       return;
     }
-    if (!effectiveLinked && secretsPrimed) void refreshSecretKeys();
+    if (!effectiveLinked) void refreshSecretKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editMode, effectiveLinked, secretsPrimed]);
+  }, [isOpen, groupId, actorId, editMode, effectiveLinked]);
 
   useEffect(() => {
     if (!isOpen) return;
-    setSecretsPrimed(true);
     setCapabilitiesPrimed(false);
   }, [isOpen, groupId, actorId]);
 
@@ -976,7 +974,6 @@ function EditActorConfigModal({
   const selectAdvancedTab = (id: string) => {
     const next = id as AdvancedTabId;
     setAdvancedTab(next);
-    if (next === "environment") setSecretsPrimed(true);
     if (next === "capabilities") setCapabilitiesPrimed(true);
   };
 

@@ -52,7 +52,6 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 
 ### Chat
 
-- Use `cccc_message_reply` for replies and `cccc_message_send` for new visible coordination messages.
 - Targets: `@all`, `@foreman`, `@peers`, `user`, or one actor.
 - Before sending, verify `reply_to` and `to`; make the audience explicit when it differs. Do not use `@all` for routine status, acknowledgements, or narrow updates.
 - When sending to `user`, you may include `suggested_user_message` to offer an editable next message in CCCC Web. It is only a suggestion; never use it for approvals, permissions, or decisions.
@@ -172,6 +171,7 @@ This user is not generic. Learn their bar and dislikes; let that shape your defa
 - If criteria are unmet, choose one clear next control action: continue, request evidence, hand off, or block.
 - Review peer outputs with explicit basis: what was checked, what remains unverified, and what is still needed.
 - When a report shows repeated failures or a long-unchanged focus, question the objective and alternative paths before the details.
+- Use `cccc_actor_notes` only for repeatedly observed collaboration preferences or recurring pitfalls. Remove stale notes; never record one-off mistakes.
 - Speak steadily and clearly. Do not add managerial ceremony to simple updates.
 - Escalate only when decision impact is high or the blocker is truly external.
 - Some foreman/admin surfaces are capability-backed rather than always listed as core MCP tools. If one seems missing, check `cccc_capability_state` first and probe the known capability directly before assuming it is unavailable.

@@ -223,7 +223,7 @@ export function ActorSecretManager({
 
       <div className="mt-4 flex flex-col gap-3 border-t border-[var(--glass-border-subtle)] pt-3 sm:flex-row sm:items-center sm:justify-between">
         <div><div className="text-[11px] font-semibold text-[var(--color-text-primary)]">{t("secretManager.clearAllTitle")}</div><div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{t("secretManager.clearAllHint")}</div></div>
-        <Button type="button" variant="destructive" size="sm" disabled={controlsDisabled || (!keysLoadFailed && keys.length === 0)} onClick={() => { dispatchDraft({ type: "discardAll" }); onChangesChange(setActorSecretClearAll(changes, true)); }}><Trash2 size={14} aria-hidden="true" />{t("secretManager.clearAllAction")}</Button>
+        <Button type="button" variant="destructive" size="sm" disabled={controlsDisabled || keysLoadFailed || keys.length === 0} onClick={() => { dispatchDraft({ type: "discardAll" }); onChangesChange(setActorSecretClearAll(changes, true)); }}><Trash2 size={14} aria-hidden="true" />{t("secretManager.clearAllAction")}</Button>
       </div>
     </section>
   );

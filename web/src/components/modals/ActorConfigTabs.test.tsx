@@ -11,7 +11,7 @@ const tabs = [
 ];
 
 describe("ActorConfigTabs", () => {
-  it("renders one selected tab and only its associated panel", () => {
+  it("keeps every panel mounted and hides inactive panels", () => {
     const markup = renderToStaticMarkup(
       <ActorConfigTabs
         ariaLabel="Advanced settings"
@@ -25,8 +25,10 @@ describe("ActorConfigTabs", () => {
     expect(markup).toContain('aria-label="Advanced settings"');
     expect(markup).toContain('aria-selected="true"');
     expect(markup).toContain("Capabilities panel");
-    expect(markup).not.toContain("Environment panel");
-    expect(markup).not.toContain("Profile panel");
+    expect(markup).toContain("Environment panel");
+    expect(markup).toContain("Profile panel");
+    expect(markup.match(/role="tabpanel"/g)).toHaveLength(3);
+    expect(markup.match(/role="tabpanel"[^>]*hidden=""/g)).toHaveLength(2);
   });
 
   it.each([
