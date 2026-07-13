@@ -8,11 +8,179 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_web_package_exposes_full_test_and_zero_warning_lint_commands() -> None:
+def _assert_vite_plus_package_contract(package: dict[str, object]) -> None:
+    scripts = package["scripts"]
+    expected_scripts = {
+        "dev": "vp dev",
+        "build": "vp build",
+        "preview": "vp preview",
+        "test": "vp test run",
+        "test:quality": "node --test ../scripts/quality/verify_oxfmt_migration.test.mjs",
+        "check": "vp check && npm run typecheck",
+        "lint": "vp lint src --deny-warnings",
+        "lint:fix": "vp lint src --fix --deny-warnings",
+        "typecheck": "tsc --noEmit -p tsconfig.json",
+    }
+    assert scripts == expected_scripts
+    assert package["engines"] == {"node": "^20.19.0 || ^22.18.0 || >=24.11.0"}
+    assert "devEngines" not in package
+
+    dev_dependencies = package["devDependencies"]
+    expected_toolchain = {
+        "vite-plus": "0.2.4",
+        "typescript": "^5.9.3",
+    }
+    assert {name: dev_dependencies[name] for name in expected_toolchain} == expected_toolchain
+    assert "overrides" not in package
+
+    removed_compatibility_dependencies = {
+        "@eslint/js",
+        "@voidzero-dev/vite-plus-core",
+        "eslint",
+        "eslint-plugin-react-hooks",
+        "eslint-plugin-react-refresh",
+        "globals",
+        "typescript-eslint",
+        "vite",
+        "vitest",
+    }
+    installed = set(package["dependencies"]) | set(dev_dependencies)
+    assert installed.isdisjoint(removed_compatibility_dependencies)
+
+
+def _assert_oxlint_contract(source: str) -> None:
+    assert 'import { defineConfig } from "vite-plus";' in source
+    lint_start = source.index("  lint: {")
+    lint_end = source.index('  base: "/ui/",', lint_start)
+    lint_source = " ".join(source[lint_start:lint_end].split())
+
+    assert 'ignorePatterns: ["dist/**", "node_modules/**"]' in lint_source
+    assert 'plugins: ["typescript", "react"]' in lint_source
+    assert "denyWarnings: true" in lint_source
+    assert "typeAware:" not in lint_source
+    assert "typeCheck:" not in lint_source
+
+    simple_rules = {
+        "react/rules-of-hooks": "error",
+        "react/exhaustive-deps": "error",
+        "typescript/no-explicit-any": "error",
+        "prefer-const": "error",
+        "unicorn/no-useless-length-check": "allow",
+        "unicorn/no-useless-fallback-in-spread": "allow",
+    }
+    for rule, severity in simple_rules.items():
+        assert lint_source.count(f'"{rule}"') == 1
+        assert f'"{rule}": "{severity}"' in lint_source
+
+    assert (
+        '"react/only-export-components": [ "error", '
+        '{ allowConstantExport: true, customHOCs: ["createIcon", "createControlIcon"] }, ]'
+        in lint_source
+    )
+    assert (
+        '"no-unused-vars": ["error", '
+        '{ argsIgnorePattern: "^_", varsIgnorePattern: "^_" }]'
+        in lint_source
+    )
+    assert '"no-console": ["error", { allow: ["warn", "error"] }]' in lint_source
+
+
+def test_web_package_preserves_vite_plus_toolchain_contract() -> None:
     package = json.loads((ROOT / "web/package.json").read_text(encoding="utf-8"))
 
-    assert package["scripts"]["test"] == "vitest run"
-    assert "--max-warnings=0" in package["scripts"]["lint"]
+    _assert_vite_plus_package_contract(package)
+    assert not (ROOT / "web/eslint.config.js").exists()
+
+
+def test_precommit_uses_project_local_vite_plus_composite_check() -> None:
+    source = (ROOT / "scripts/pre_commit_checks.sh").read_text(encoding="utf-8")
+
+    assert ".vite-plus/env" not in source
+    assert "npm -C web run check" in source
+    assert "npm -C web run lint" not in source
+    assert "npm -C web run typecheck" not in source
+
+
+def test_oxfmt_v1_migration_manifest_and_verifier_are_versioned_and_mandatory() -> None:
+    manifest = json.loads(
+        (ROOT / "scripts/quality/oxfmt-migration-v1.json").read_text(encoding="utf-8")
+    )
+    assert manifest["version"] == 1
+    assert manifest["formatter"] == {"name": "oxfmt", "version": "0.57.0"}
+    assert manifest["files"]
+    assert all(
+        set(entry)
+        == {"path", "baseBlobOid", "formattedSha256", "baseLines", "formattedLines"}
+        for entry in manifest["files"]
+    )
+
+    verifier = (ROOT / "scripts/quality/verify_oxfmt_migration.mjs").read_text(encoding="utf-8")
+    assert "web/package-lock.json" in verifier
+    assert "0.57.0" in verifier
+    assert "--base-ref" in verifier
+    assert "mkdtempSync" in verifier
+    assert '"archive"' not in verifier
+    assert '"ls-tree"' in verifier
+    assert '"cat-file", "--batch"' in verifier
+    assert 'run("tar"' not in verifier
+    assert 'process.platform === "win32" ? "junction" : "dir"' in verifier
+    assert '"web/node_modules/vite-plus/bin/vp"' in verifier
+    assert '"web/node_modules/oxfmt/bin/oxfmt"' in verifier
+    assert 'run(process.execPath, [vpBinary, "fmt", "src", "--write"]' in verifier
+    assert 'run(process.execPath, [oxfmtBinary, "--version"]' in verifier
+    assert "process.exit(" not in verifier
+    assert "process.exitCode = 1" in verifier
+    assert (ROOT / "scripts/quality/verify_oxfmt_migration.test.mjs").is_file()
+
+    local_gate = (ROOT / "scripts/quality_gate.sh").read_text(encoding="utf-8")
+    assert local_gate.count("verify_oxfmt_migration.mjs") == 2
+    assert local_gate.count("npm -C web run test:quality") == 2
+
+
+def test_preexisting_reviewed_v1_is_fixed_disjoint_and_excludes_chat_composer() -> None:
+    formatter = json.loads(
+        (ROOT / "scripts/quality/oxfmt-migration-v1.json").read_text(encoding="utf-8")
+    )
+    reviewed = json.loads(
+        (ROOT / "scripts/quality/preexisting-reviewed-v1.json").read_text(encoding="utf-8")
+    )
+    reviewed_paths = {entry["path"] for entry in reviewed["files"]}
+    assert reviewed["version"] == 1
+    assert reviewed_paths == {
+        "web/src/components/AgentTab.tsx",
+        "web/src/components/ContextModal/index.tsx",
+        "web/src/components/browser/ProjectedBrowserSurfacePanel.tsx",
+        "web/src/components/modals/ActorConfigModal.tsx",
+        "web/src/components/modals/settings/GuidanceTab.tsx",
+        "web/src/components/modals/settings/IMBridgeTab.tsx",
+    }
+    assert "web/src/pages/chat/ChatComposer.tsx" not in reviewed_paths
+    assert reviewed_paths.isdisjoint(entry["path"] for entry in formatter["files"])
+
+
+def test_vite_config_preserves_oxlint_rule_parity_contract() -> None:
+    source = (ROOT / "web/vite.config.ts").read_text(encoding="utf-8")
+
+    _assert_oxlint_contract(source)
+    fmt_source = source[source.index("  fmt: {") : source.index("  lint: {")]
+    assert 'ignorePatterns: ["dist/**"]' in fmt_source
+    assert 'objectWrap: "collapse"' in fmt_source
+
+
+def test_web_tsconfig_is_compatible_with_tsgolint() -> None:
+    config = json.loads((ROOT / "web/tsconfig.json").read_text(encoding="utf-8"))
+
+    assert "baseUrl" not in config["compilerOptions"]
+
+
+def test_web_tests_import_from_vite_plus() -> None:
+    test_modules = [*ROOT.glob("web/src/**/*.test.ts"), *ROOT.glob("web/src/**/*.test.tsx")]
+
+    assert test_modules
+    for path in test_modules:
+        source = path.read_text(encoding="utf-8")
+        assert 'from "vitest"' not in source, path
+        assert "from 'vitest'" not in source, path
 
 
 def test_agent_terminal_initial_snapshot_does_not_replace_live_option_updates() -> None:

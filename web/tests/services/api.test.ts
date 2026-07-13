@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const fetchMock = vi.fn();
 
@@ -31,9 +31,7 @@ function makeStorage() {
 const sessionStorageMock = makeStorage();
 
 vi.stubGlobal("fetch", fetchMock);
-vi.stubGlobal("window", {
-  location: { search: "", protocol: "http:", host: "localhost" },
-});
+vi.stubGlobal("window", { location: { search: "", protocol: "http:", host: "localhost" } });
 vi.stubGlobal("sessionStorage", sessionStorageMock);
 
 describe("api error normalization", () => {
@@ -41,21 +39,16 @@ describe("api error normalization", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
     vi.stubGlobal("fetch", fetchMock);
-    vi.stubGlobal("window", {
-      location: { search: "", protocol: "http:", host: "localhost" },
-    });
+    vi.stubGlobal("window", { location: { search: "", protocol: "http:", host: "localhost" } });
     vi.stubGlobal("sessionStorage", sessionStorageMock);
   });
 
   it("keeps regular API errors unchanged", async () => {
     const { formatApiErrorMessage } = await import("../../src/services/api");
 
-    expect(
-      formatApiErrorMessage({
-        code: "permission_denied",
-        message: "permission denied",
-      })
-    ).toBe("permission denied");
+    expect(formatApiErrorMessage({ code: "permission_denied", message: "permission denied" })).toBe(
+      "permission denied",
+    );
   });
 
   it("summarizes daemon transport diagnostics into the message", async () => {
@@ -71,7 +64,7 @@ describe("api error normalization", () => {
           phase: "connect",
           reason: "os_error",
         },
-      })
+      }),
     ).toBe("ccccd unavailable · tcp 127.0.0.1:9001 · connect os error");
   });
 
@@ -79,27 +72,26 @@ describe("api error normalization", () => {
     vi.stubGlobal("window", { location: { search: "" } });
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            ok: false,
-            error: {
-              code: "daemon_unavailable",
-              message: "ccccd unavailable",
-              details: {
-                transport: "unix",
-                endpoint: { path: "/tmp/ccccd.sock" },
-                phase: "read",
-                reason: "timeout",
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(
+            JSON.stringify({
+              ok: false,
+              error: {
+                code: "daemon_unavailable",
+                message: "ccccd unavailable",
+                details: {
+                  transport: "unix",
+                  endpoint: { path: "/tmp/ccccd.sock" },
+                  phase: "read",
+                  reason: "timeout",
+                },
               },
-            },
-          }),
-          {
-            status: 503,
-            headers: { "content-type": "application/json" },
-          }
-        )
-      )
+            }),
+            { status: 503, headers: { "content-type": "application/json" } },
+          ),
+        ),
     );
 
     const { apiJson } = await import("../../src/services/api");
@@ -238,13 +230,7 @@ describe("api.fetchPresentation", () => {
                     card_type: "table",
                     published_by: "peer-1",
                     published_at: "2026-03-21T00:00:00Z",
-                    content: {
-                      mode: "inline",
-                      table: {
-                        columns: ["name"],
-                        rows: [["demo"]],
-                      },
-                    },
+                    content: { mode: "inline", table: { columns: ["name"], rows: [["demo"]] } },
                   },
                 },
               ],
@@ -269,10 +255,10 @@ describe("api.fetchPresentation", () => {
     sessionStorageMock.setItem("cccc_dev_token", "dev-token");
     const api = await import("../../src/services/api");
     expect(api.getPresentationAssetUrl("g-demo", "slot-4")).toBe(
-      "/api/v1/groups/g-demo/presentation/slots/slot-4/asset?token=dev-token"
+      "/api/v1/groups/g-demo/presentation/slots/slot-4/asset?token=dev-token",
     );
     expect(api.getPresentationAssetUrl("g-demo", "slot-4", "tick-2")).toBe(
-      "/api/v1/groups/g-demo/presentation/slots/slot-4/asset?token=dev-token&v=tick-2"
+      "/api/v1/groups/g-demo/presentation/slots/slot-4/asset?token=dev-token&v=tick-2",
     );
   });
 
@@ -280,7 +266,7 @@ describe("api.fetchPresentation", () => {
     sessionStorageMock.setItem("cccc_dev_token", "dev-token");
     const api = await import("../../src/services/api");
     expect(api.getGroupBlobUrl("g-demo", "state/blobs/sha256_demo.jpg")).toBe(
-      "/api/v1/groups/g-demo/blobs/sha256_demo.jpg?token=dev-token"
+      "/api/v1/groups/g-demo/blobs/sha256_demo.jpg?token=dev-token",
     );
     expect(api.getGroupBlobUrl("g-demo", "workspace/demo.jpg")).toBe("");
   });
@@ -339,12 +325,10 @@ describe("api.fetchPresentation", () => {
 
   it("builds a token-aware websocket url for browser-surface streaming", async () => {
     sessionStorageMock.setItem("cccc_dev_token", "dev-token");
-    vi.stubGlobal("window", {
-      location: { search: "", protocol: "https:", host: "cccc.test" },
-    });
+    vi.stubGlobal("window", { location: { search: "", protocol: "https:", host: "cccc.test" } });
     const api = await import("../../src/services/api");
     expect(api.getPresentationBrowserSurfaceWebSocketUrl("g-demo", "slot-3")).toBe(
-      "wss://cccc.test/api/v1/groups/g-demo/presentation/browser_surface/ws?slot=slot-3&token=dev-token"
+      "wss://cccc.test/api/v1/groups/g-demo/presentation/browser_surface/ws?slot=slot-3&token=dev-token",
     );
   });
 
@@ -355,13 +339,7 @@ describe("api.fetchPresentation", () => {
       text: async () =>
         JSON.stringify({
           ok: true,
-          result: {
-            group_id: "g-demo",
-            browser_surface: {
-              active: false,
-              state: "idle",
-            },
-          },
+          result: { group_id: "g-demo", browser_surface: { active: false, state: "idle" } },
         }),
     });
 
@@ -418,10 +396,7 @@ describe("api.fetchPresentation", () => {
     const [url, requestInit] = fetchMock.mock.calls[0] ?? [];
     expect(url).toBe("/api/v1/groups/g-demo/presentation/ref_snapshot");
     expect(requestInit).toEqual(
-      expect.objectContaining({
-        method: "POST",
-        body: expect.any(FormData),
-      }),
+      expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
     );
     const form = requestInit.body as FormData;
     expect(form.get("slot")).toBe("slot-3");
@@ -448,10 +423,7 @@ describe("api.fetchPresentation", () => {
               card_type: "web_preview",
               published_by: "user",
               published_at: "2026-03-21T00:00:00Z",
-              content: {
-                mode: "reference",
-                url: "https://example.com/dashboard",
-              },
+              content: { mode: "reference", url: "https://example.com/dashboard" },
             },
             presentation: {
               v: 1,
@@ -466,10 +438,7 @@ describe("api.fetchPresentation", () => {
                     card_type: "web_preview",
                     published_by: "user",
                     published_at: "2026-03-21T00:00:00Z",
-                    content: {
-                      mode: "reference",
-                      url: "https://example.com/dashboard",
-                    },
+                    content: { mode: "reference", url: "https://example.com/dashboard" },
                   },
                 },
               ],
@@ -520,10 +489,7 @@ describe("api.fetchPresentation", () => {
               card_type: "markdown",
               published_by: "user",
               published_at: "2026-03-21T00:00:00Z",
-              content: {
-                mode: "inline",
-                markdown: "# notes",
-              },
+              content: { mode: "inline", markdown: "# notes" },
             },
             presentation: {
               v: 1,
@@ -538,10 +504,7 @@ describe("api.fetchPresentation", () => {
                     card_type: "markdown",
                     published_by: "user",
                     published_at: "2026-03-21T00:00:00Z",
-                    content: {
-                      mode: "inline",
-                      markdown: "# notes",
-                    },
+                    content: { mode: "inline", markdown: "# notes" },
                   },
                 },
               ],
@@ -552,20 +515,14 @@ describe("api.fetchPresentation", () => {
 
     const api = await import("../../src/services/api");
     const file = new File(["# notes"], "notes.md", { type: "text/markdown" });
-    const resp = await api.publishPresentationUpload("g-demo", {
-      slotId: "slot-1",
-      file,
-    });
+    const resp = await api.publishPresentationUpload("g-demo", { slotId: "slot-1", file });
 
     expect(resp.ok).toBe(true);
     if (!resp.ok) return;
     expect(resp.result.card?.title).toBe("notes.md");
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/groups/g-demo/presentation/publish_upload",
-      expect.objectContaining({
-        method: "POST",
-        body: expect.any(FormData),
-      }),
+      expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
     );
   });
 
@@ -605,10 +562,7 @@ describe("api.fetchPresentation", () => {
                     card_type: "markdown",
                     published_by: "user",
                     published_at: "2026-03-21T00:00:00Z",
-                    content: {
-                      mode: "workspace_link",
-                      workspace_rel_path: "docs/report.md",
-                    },
+                    content: { mode: "workspace_link", workspace_rel_path: "docs/report.md" },
                   },
                 },
               ],
@@ -654,7 +608,12 @@ describe("api.fetchPresentation", () => {
             path: "docs",
             parent: "",
             items: [
-              { name: "report.md", path: "docs/report.md", is_dir: false, mime_type: "text/markdown" },
+              {
+                name: "report.md",
+                path: "docs/report.md",
+                is_dir: false,
+                mime_type: "text/markdown",
+              },
               { name: "assets", path: "docs/assets", is_dir: true },
             ],
           },
@@ -687,11 +646,7 @@ describe("api.fetchPresentation", () => {
           result: {
             group_id: "g-demo",
             cleared_slots: ["slot-4"],
-            presentation: {
-              v: 1,
-              highlight_slot_id: "",
-              slots: [],
-            },
+            presentation: { v: 1, highlight_slot_id: "", slots: [] },
           },
         }),
     });
@@ -707,10 +662,7 @@ describe("api.fetchPresentation", () => {
       "/api/v1/groups/g-demo/presentation/clear",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify({
-          by: "user",
-          slot: "slot-4",
-        }),
+        body: JSON.stringify({ by: "user", slot: "slot-4" }),
       }),
     );
   });
@@ -732,41 +684,38 @@ describe("api assistant voice model helpers", () => {
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
-      text: async () => JSON.stringify({
-        ok: true,
-        result: {
-          group_id: "g-demo",
-          assistant: {
-            assistant_id: "voice_secretary",
-            kind: "voice_secretary",
-            enabled: true,
-            lifecycle: "idle",
-            health: {
-              service: {
-                selected_model_id: "mock_asr",
-                managed_model: {
-                  model_id: "mock_asr",
-                  status: "ready",
-                  command_ready: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            assistant: {
+              assistant_id: "voice_secretary",
+              kind: "voice_secretary",
+              enabled: true,
+              lifecycle: "idle",
+              health: {
+                service: {
+                  selected_model_id: "mock_asr",
+                  managed_model: { model_id: "mock_asr", status: "ready", command_ready: true },
                 },
               },
+              config: {
+                recognition_backend: "assistant_service_local_asr",
+                service_model_id: "mock_asr",
+              },
             },
-            config: {
-              recognition_backend: "assistant_service_local_asr",
-              service_model_id: "mock_asr",
-            },
+            service_models: [
+              {
+                model_id: "mock_asr",
+                title: "Mock ASR",
+                status: "ready",
+                command_ready: true,
+                artifacts: [{ path: "adapter.py", size_bytes: 1234 }],
+              },
+            ],
           },
-          service_models: [
-            {
-              model_id: "mock_asr",
-              title: "Mock ASR",
-              status: "ready",
-              command_ready: true,
-              artifacts: [{ path: "adapter.py", size_bytes: 1234 }],
-            },
-          ],
-        },
-      }),
+        }),
     });
 
     const api = await import("../../src/services/api");
@@ -776,32 +725,35 @@ describe("api assistant voice model helpers", () => {
     if (!resp.ok) throw new Error("expected ok response");
     expect(resp.result.service_models_by_id?.mock_asr?.status).toBe("ready");
     expect(resp.result.service_models?.[0]?.artifacts?.[0]?.size_bytes).toBe(1234);
-    expect((resp.result.assistant?.health?.service as Record<string, unknown>)?.selected_model_id).toBe("mock_asr");
+    expect(
+      (resp.result.assistant?.health?.service as Record<string, unknown>)?.selected_model_id,
+    ).toBe("mock_asr");
   });
 
   it("requests a matching voice prompt draft", async () => {
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
-      text: async () => JSON.stringify({
-        ok: true,
-        result: {
-          group_id: "g-demo",
-          assistant: {
-            assistant_id: "voice_secretary",
-            kind: "voice_secretary",
-            enabled: true,
-            lifecycle: "idle",
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            assistant: {
+              assistant_id: "voice_secretary",
+              kind: "voice_secretary",
+              enabled: true,
+              lifecycle: "idle",
+            },
+            prompt_draft: {
+              request_id: "voice-prompt-1",
+              status: "pending",
+              operation: "replace_with_refined_prompt",
+              draft_text: "请审查当前代码优化方案，并按风险优先级给出可执行修改建议。",
+              composer_snapshot_hash: "snapshot-1",
+            },
           },
-          prompt_draft: {
-            request_id: "voice-prompt-1",
-            status: "pending",
-            operation: "replace_with_refined_prompt",
-            draft_text: "请审查当前代码优化方案，并按风险优先级给出可执行修改建议。",
-            composer_snapshot_hash: "snapshot-1",
-          },
-        },
-      }),
+        }),
     });
 
     const api = await import("../../src/services/api");
@@ -825,26 +777,27 @@ describe("api assistant voice model helpers", () => {
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
-      text: async () => JSON.stringify({
-        ok: true,
-        result: {
-          group_id: "g-demo",
-          assistant: {
-            assistant_id: "voice_secretary",
-            kind: "voice_secretary",
-            enabled: true,
-            lifecycle: "idle",
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            assistant: {
+              assistant_id: "voice_secretary",
+              kind: "voice_secretary",
+              enabled: true,
+              lifecycle: "idle",
+            },
+            model: { model_id: "mock_asr", status: "ready" },
           },
-          model: {
-            model_id: "mock_asr",
-            status: "ready",
-          },
-        },
-      }),
+        }),
     });
 
     const api = await import("../../src/services/api");
-    const resp = await api.installVoiceAssistantModel("g-demo", { modelId: "mock_asr", by: "user" });
+    const resp = await api.installVoiceAssistantModel("g-demo", {
+      modelId: "mock_asr",
+      by: "user",
+    });
 
     expect(resp.ok).toBe(true);
     if (!resp.ok) throw new Error("expected ok response");
@@ -863,27 +816,28 @@ describe("api assistant voice model helpers", () => {
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
-      text: async () => JSON.stringify({
-        ok: true,
-        result: {
-          group_id: "g-demo",
-          assistant: {
-            assistant_id: "voice_secretary",
-            kind: "voice_secretary",
-            enabled: true,
-            lifecycle: "idle",
-          },
-          service_models: [
-            {
-              model_id: "sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8",
-              kind: "asr",
-              status: "not_installed",
-              offline_ready: false,
-              offline: { engine: "sense_voice" },
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            assistant: {
+              assistant_id: "voice_secretary",
+              kind: "voice_secretary",
+              enabled: true,
+              lifecycle: "idle",
             },
-          ],
-        },
-      }),
+            service_models: [
+              {
+                model_id: "sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8",
+                kind: "asr",
+                status: "not_installed",
+                offline_ready: false,
+                offline: { engine: "sense_voice" },
+              },
+            ],
+          },
+        }),
     });
 
     const api = await import("../../src/services/api");
@@ -917,8 +871,19 @@ describe("api.message refs", () => {
     });
 
     const api = await import("../../src/services/api");
-    const refs = [{ kind: "presentation_ref", slot_id: "slot-2", locator: { viewer_scroll_top: 240 } }];
-    await api.sendMessage("g-demo", "please review", ["worker-1"], undefined, "normal", false, "client-1", refs);
+    const refs = [
+      { kind: "presentation_ref", slot_id: "slot-2", locator: { viewer_scroll_top: 240 } },
+    ];
+    await api.sendMessage(
+      "g-demo",
+      "please review",
+      ["worker-1"],
+      undefined,
+      "normal",
+      false,
+      "client-1",
+      refs,
+    );
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/groups/g-demo/send",
@@ -981,11 +946,22 @@ describe("api.message refs", () => {
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
-      text: async () => JSON.stringify({ ok: true, result: { src_event: { id: "src-1" }, dst_event: { id: "dst-1" } } }),
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: { src_event: { id: "src-1" }, dst_event: { id: "dst-1" } },
+        }),
     });
 
     const api = await import("../../src/services/api");
-    await api.sendCrossGroupMessage("g-src", "g-dst", "route this", ["@foreman"], "attention", true);
+    await api.sendCrossGroupMessage(
+      "g-src",
+      "g-dst",
+      "route this",
+      ["@foreman"],
+      "attention",
+      true,
+    );
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/groups/g-src/send_cross_group",
@@ -1011,12 +987,21 @@ describe("api.message refs", () => {
     });
 
     const api = await import("../../src/services/api");
-    await api.sendCrossGroupMessage("g-src", "g-dst", "你好", ["@foreman"], "normal", false, undefined, {
-      replyTo: "evt-original",
-      quoteText: "原消息",
-      clientId: "local-1",
-      remoteReplyToEventId: "evt-remote-original",
-    });
+    await api.sendCrossGroupMessage(
+      "g-src",
+      "g-dst",
+      "你好",
+      ["@foreman"],
+      "normal",
+      false,
+      undefined,
+      {
+        replyTo: "evt-original",
+        quoteText: "原消息",
+        clientId: "local-1",
+        remoteReplyToEventId: "evt-remote-original",
+      },
+    );
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/groups/g-src/send_cross_group",
@@ -1047,18 +1032,25 @@ describe("api.message refs", () => {
 
     const api = await import("../../src/services/api");
     const file = new File(["image"], "shot.png", { type: "image/png" });
-    await api.sendCrossGroupMessage("g-src", "g-dst", "你好", ["@foreman"], "attention", true, [file], {
-      replyTo: "evt-local-source",
-      quoteText: "原消息",
-      clientId: "local-1",
-      remoteReplyToEventId: "evt-remote-original",
-    });
+    await api.sendCrossGroupMessage(
+      "g-src",
+      "g-dst",
+      "你好",
+      ["@foreman"],
+      "attention",
+      true,
+      [file],
+      {
+        replyTo: "evt-local-source",
+        quoteText: "原消息",
+        clientId: "local-1",
+        remoteReplyToEventId: "evt-remote-original",
+      },
+    );
 
     expect(fetchMock).toHaveBeenCalledWith(
       "/api/v1/groups/g-src/send_cross_group_upload",
-      expect.objectContaining({
-        method: "POST",
-      }),
+      expect.objectContaining({ method: "POST" }),
     );
     const body = fetchMock.mock.calls[0]?.[1]?.body;
     expect(body).toBeInstanceOf(FormData);
@@ -1122,17 +1114,26 @@ describe("api.message refs", () => {
     });
 
     const api = await import("../../src/services/api");
-    const refs = [{ kind: "presentation_ref", slot_id: "slot-3", locator: { url: "http://127.0.0.1:3000" } }];
+    const refs = [
+      { kind: "presentation_ref", slot_id: "slot-3", locator: { url: "http://127.0.0.1:3000" } },
+    ];
     const file = new File(["hello"], "note.txt", { type: "text/plain" });
-    await api.replyMessage("g-demo", "see attached", ["worker-2"], "evt-parent", [file], "attention", true, "client-2", refs);
+    await api.replyMessage(
+      "g-demo",
+      "see attached",
+      ["worker-2"],
+      "evt-parent",
+      [file],
+      "attention",
+      true,
+      "client-2",
+      refs,
+    );
 
     const [url, requestInit] = fetchMock.mock.calls[0] ?? [];
     expect(url).toBe("/api/v1/groups/g-demo/reply_upload");
     expect(requestInit).toEqual(
-      expect.objectContaining({
-        method: "POST",
-        body: expect.any(FormData),
-      }),
+      expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
     );
     const form = requestInit.body as FormData;
     expect(form.get("reply_to")).toBe("evt-parent");
@@ -1154,10 +1155,11 @@ describe("api.capability overview", () => {
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
-      text: async () => JSON.stringify({
-        ok: true,
-        result: { items: [], count: 0, total_count: 0, offset: 0, limit: 1, has_more: false },
-      }),
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: { items: [], count: 0, total_count: 0, offset: 0, limit: 1, has_more: false },
+        }),
     });
 
     const api = await import("../../src/services/api");
@@ -1193,7 +1195,10 @@ describe("copy groups api entrypoints", () => {
     fetchMock.mockResolvedValue({
       status: 200,
       ok: true,
-      headers: { get: (name: string) => (name.toLowerCase() === "content-disposition" ? 'attachment; filename="copy.zip"' : null) },
+      headers: {
+        get: (name: string) =>
+          name.toLowerCase() === "content-disposition" ? 'attachment; filename="copy.zip"' : null,
+      },
       blob: async () => blob,
     });
 
@@ -1201,9 +1206,7 @@ describe("copy groups api entrypoints", () => {
     const resp = await api.exportGroupCopy("g-demo");
 
     expect(resp.ok).toBe(true);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/v1/groups/g-demo/copy/export",
-    );
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/groups/g-demo/copy/export");
   });
 
   it("keeps copy preview/import endpoints wired", async () => {
@@ -1222,10 +1225,7 @@ describe("copy groups api entrypoints", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
       "/api/v1/groups/copy/preview_import",
-      expect.objectContaining({
-        method: "POST",
-        body: expect.any(FormData),
-      }),
+      expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
     );
     const previewInit = fetchMock.mock.calls[0][1] as RequestInit;
     const previewForm = previewInit.body as FormData;
@@ -1234,10 +1234,7 @@ describe("copy groups api entrypoints", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
       "/api/v1/groups/copy/import",
-      expect.objectContaining({
-        method: "POST",
-        body: expect.any(FormData),
-      }),
+      expect.objectContaining({ method: "POST", body: expect.any(FormData) }),
     );
     const importInit = fetchMock.mock.calls[1][1] as RequestInit;
     const importForm = importInit.body as FormData;
@@ -1298,7 +1295,11 @@ describe("api bootstrap read cache", () => {
         return Promise.resolve({
           status: 200,
           ok: true,
-          text: async () => JSON.stringify({ ok: true, result: { groups: [{ group_id: `g-${fetchMock.mock.calls.length}` }] } }),
+          text: async () =>
+            JSON.stringify({
+              ok: true,
+              result: { groups: [{ group_id: `g-${fetchMock.mock.calls.length}` }] },
+            }),
         });
       }
       if (path === "/api/v1/groups" && method === "POST") {
@@ -1377,7 +1378,8 @@ describe("api bootstrap read cache", () => {
         const callCount = fetchMock.mock.calls.filter(
           ([calledPath, calledInit]) =>
             calledPath === "/api/v1/groups" &&
-            String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+            String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() ===
+              "GET",
         ).length;
         if (callCount === 1) {
           return staleRead.promise;
@@ -1385,7 +1387,8 @@ describe("api bootstrap read cache", () => {
         return Promise.resolve({
           status: 200,
           ok: true,
-          text: async () => JSON.stringify({ ok: true, result: { groups: [{ group_id: `g-${callCount}` }] } }),
+          text: async () =>
+            JSON.stringify({ ok: true, result: { groups: [{ group_id: `g-${callCount}` }] } }),
         });
       }
       return Promise.reject(new Error(`unexpected request: ${method} ${path}`));
@@ -1427,7 +1430,8 @@ describe("api bootstrap read cache", () => {
         return Promise.resolve({
           status: 200,
           ok: true,
-          text: async () => JSON.stringify({ ok: true, result: { version: "1.0.0", home: "/tmp/cccc" } }),
+          text: async () =>
+            JSON.stringify({ ok: true, result: { version: "1.0.0", home: "/tmp/cccc" } }),
         });
       }
       return Promise.reject(new Error(`unexpected request: GET ${path}`));
@@ -1452,7 +1456,9 @@ describe("api bootstrap read cache", () => {
           text: async () =>
             JSON.stringify({
               ok: true,
-              result: { web_access_session: { can_access_global_settings: fetchMock.mock.calls.length > 1 } },
+              result: {
+                web_access_session: { can_access_global_settings: fetchMock.mock.calls.length > 1 },
+              },
             }),
         });
       }
@@ -1542,7 +1548,8 @@ describe("api.fetchGroupPrompts invalidation", () => {
           fetchMock.mock.calls.filter(
             ([calledPath, calledInit]) =>
               calledPath === "/api/v1/groups/g-demo/prompts" &&
-              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() ===
+                "GET",
           ).length === 1
         ) {
           return firstRead.promise;
@@ -1554,8 +1561,18 @@ describe("api.fetchGroupPrompts invalidation", () => {
             JSON.stringify({
               ok: true,
               result: {
-                preamble: { kind: "preamble", source: "builtin", filename: "AGENTS.md", content: "next-preamble" },
-                help: { kind: "help", source: "builtin", filename: "AGENTS.help.md", content: "next-help" },
+                preamble: {
+                  kind: "preamble",
+                  source: "builtin",
+                  filename: "AGENTS.md",
+                  content: "next-preamble",
+                },
+                help: {
+                  kind: "help",
+                  source: "builtin",
+                  filename: "AGENTS.help.md",
+                  content: "next-help",
+                },
               },
             }),
         });
@@ -1567,7 +1584,12 @@ describe("api.fetchGroupPrompts invalidation", () => {
           text: async () =>
             JSON.stringify({
               ok: true,
-              result: { kind: "help", source: "home", filename: "AGENTS.help.md", content: "updated-help" },
+              result: {
+                kind: "help",
+                source: "home",
+                filename: "AGENTS.help.md",
+                content: "updated-help",
+              },
             }),
         });
       }
@@ -1595,8 +1617,18 @@ describe("api.fetchGroupPrompts invalidation", () => {
         JSON.stringify({
           ok: true,
           result: {
-            preamble: { kind: "preamble", source: "builtin", filename: "AGENTS.md", content: "stale-preamble" },
-            help: { kind: "help", source: "builtin", filename: "AGENTS.help.md", content: "stale-help" },
+            preamble: {
+              kind: "preamble",
+              source: "builtin",
+              filename: "AGENTS.md",
+              content: "stale-preamble",
+            },
+            help: {
+              kind: "help",
+              source: "builtin",
+              filename: "AGENTS.help.md",
+              content: "stale-help",
+            },
           },
         }),
     });
@@ -1617,7 +1649,8 @@ describe("api.fetchGroupPrompts invalidation", () => {
           fetchMock.mock.calls.filter(
             ([calledPath, calledInit]) =>
               calledPath === "/api/v1/groups/g-demo/prompts" &&
-              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() ===
+                "GET",
           ).length === 1
         ) {
           return firstRead.promise;
@@ -1635,7 +1668,12 @@ describe("api.fetchGroupPrompts invalidation", () => {
                   filename: "AGENTS.md",
                   content: "builtin-preamble",
                 },
-                help: { kind: "help", source: "builtin", filename: "AGENTS.help.md", content: "builtin-help" },
+                help: {
+                  kind: "help",
+                  source: "builtin",
+                  filename: "AGENTS.help.md",
+                  content: "builtin-help",
+                },
               },
             }),
         });
@@ -1647,7 +1685,12 @@ describe("api.fetchGroupPrompts invalidation", () => {
           text: async () =>
             JSON.stringify({
               ok: true,
-              result: { kind: "help", source: "builtin", filename: "AGENTS.help.md", content: "builtin-help" },
+              result: {
+                kind: "help",
+                source: "builtin",
+                filename: "AGENTS.help.md",
+                content: "builtin-help",
+              },
             }),
         });
       }
@@ -1675,8 +1718,18 @@ describe("api.fetchGroupPrompts invalidation", () => {
         JSON.stringify({
           ok: true,
           result: {
-            preamble: { kind: "preamble", source: "home", filename: "AGENTS.md", content: "stale-preamble" },
-            help: { kind: "help", source: "home", filename: "AGENTS.help.md", content: "stale-help" },
+            preamble: {
+              kind: "preamble",
+              source: "home",
+              filename: "AGENTS.md",
+              content: "stale-preamble",
+            },
+            help: {
+              kind: "help",
+              source: "home",
+              filename: "AGENTS.help.md",
+              content: "stale-help",
+            },
           },
         }),
     });
@@ -1753,7 +1806,8 @@ describe("api.fetchContext dedupe", () => {
           fetchMock.mock.calls.filter(
             ([calledPath, calledInit]) =>
               calledPath === "/api/v1/groups/g-demo/context" &&
-              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() ===
+                "GET",
           ).length === 1
         ) {
           return firstRead.promise;
@@ -1789,7 +1843,9 @@ describe("api.fetchContext dedupe", () => {
     const staleRead = api.fetchContext("g-demo");
     await Promise.resolve();
 
-    await api.contextSync("g-demo", [{ op: "coordination.brief.update", current_focus: "updated" }]);
+    await api.contextSync("g-demo", [
+      { op: "coordination.brief.update", current_focus: "updated" },
+    ]);
     await api.fetchContext("g-demo");
 
     const getCalls = fetchMock.mock.calls.filter(
@@ -1830,7 +1886,11 @@ describe("api.fetchContext dedupe", () => {
       if (path === "/api/v1/groups/g-demo/context" && method === "GET") {
         return firstRead.promise;
       }
-      if (typeof path === "string" && path.startsWith("/api/v1/groups/g-demo/context?fresh=1") && method === "GET") {
+      if (
+        typeof path === "string" &&
+        path.startsWith("/api/v1/groups/g-demo/context?fresh=1") &&
+        method === "GET"
+      ) {
         return Promise.resolve({
           status: 200,
           ok: true,
@@ -1858,7 +1918,9 @@ describe("api.fetchContext dedupe", () => {
     const freshRead = await api.fetchContext("g-demo", { fresh: true });
     expect(freshRead.ok).toBe(true);
     expect(
-      fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/api/v1/groups/g-demo/context")),
+      fetchMock.mock.calls.filter(([path]) =>
+        String(path).startsWith("/api/v1/groups/g-demo/context"),
+      ),
     ).toHaveLength(2);
 
     firstRead.resolve({
@@ -1894,7 +1956,8 @@ describe("api.fetchContext dedupe", () => {
           fetchMock.mock.calls.filter(
             ([calledPath, calledInit]) =>
               calledPath === "/api/v1/groups/g-demo/context" &&
-              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() ===
+                "GET",
           ).length === 1
         ) {
           return firstRead.promise;
@@ -1973,7 +2036,11 @@ describe("api.fetchContext dedupe", () => {
       if (path === "/api/v1/groups/g-demo/context" && method === "GET") {
         return staleRead.promise;
       }
-      if (typeof path === "string" && path.startsWith("/api/v1/groups/g-demo/context?fresh=1") && method === "GET") {
+      if (
+        typeof path === "string" &&
+        path.startsWith("/api/v1/groups/g-demo/context?fresh=1") &&
+        method === "GET"
+      ) {
         return freshRead.promise;
       }
       return Promise.reject(new Error(`unexpected request: ${method} ${path}`));
@@ -1988,7 +2055,9 @@ describe("api.fetchContext dedupe", () => {
     const followerPromise = api.fetchContext("g-demo");
 
     expect(
-      fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/api/v1/groups/g-demo/context")),
+      fetchMock.mock.calls.filter(([path]) =>
+        String(path).startsWith("/api/v1/groups/g-demo/context"),
+      ),
     ).toHaveLength(2);
 
     freshRead.resolve({
@@ -2057,12 +2126,17 @@ describe("api.fetchContext dedupe", () => {
         const samePathCalls = fetchMock.mock.calls.filter(
           ([calledPath, calledInit]) =>
             calledPath === "/api/v1/groups/g-demo/context" &&
-            String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+            String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() ===
+              "GET",
         ).length;
         if (samePathCalls === 1) return staleRead.promise;
         if (samePathCalls === 2) return postFreshRead.promise;
       }
-      if (typeof path === "string" && path.startsWith("/api/v1/groups/g-demo/context?fresh=1") && method === "GET") {
+      if (
+        typeof path === "string" &&
+        path.startsWith("/api/v1/groups/g-demo/context?fresh=1") &&
+        method === "GET"
+      ) {
         return freshRead.promise;
       }
       return Promise.reject(new Error(`unexpected request: ${method} ${path}`));
@@ -2095,7 +2169,9 @@ describe("api.fetchContext dedupe", () => {
 
     const afterStaleWhileFreshInFlight = api.fetchContext("g-demo");
     expect(
-      fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/api/v1/groups/g-demo/context")),
+      fetchMock.mock.calls.filter(([path]) =>
+        String(path).startsWith("/api/v1/groups/g-demo/context"),
+      ),
     ).toHaveLength(2);
 
     freshRead.resolve({
@@ -2115,7 +2191,10 @@ describe("api.fetchContext dedupe", () => {
         }),
     });
 
-    const [freshResp, followerResp] = await Promise.all([freshPromise, afterStaleWhileFreshInFlight]);
+    const [freshResp, followerResp] = await Promise.all([
+      freshPromise,
+      afterStaleWhileFreshInFlight,
+    ]);
     expect(freshResp.ok).toBe(true);
     expect(followerResp.ok).toBe(true);
     if (followerResp.ok) {
@@ -2124,7 +2203,9 @@ describe("api.fetchContext dedupe", () => {
 
     const postFreshPromise = api.fetchContext("g-demo");
     expect(
-      fetchMock.mock.calls.filter(([path]) => String(path).startsWith("/api/v1/groups/g-demo/context")),
+      fetchMock.mock.calls.filter(([path]) =>
+        String(path).startsWith("/api/v1/groups/g-demo/context"),
+      ),
     ).toHaveLength(3);
 
     postFreshRead.resolve({
@@ -2178,7 +2259,8 @@ describe("api.fetchActors invalidation", () => {
           fetchMock.mock.calls.filter(
             ([calledPath, calledInit]) =>
               calledPath === "/api/v1/groups/g-demo/actors" &&
-              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() ===
+                "GET",
           ).length === 1
         ) {
           return firstRead.promise;
@@ -2235,7 +2317,8 @@ describe("api.fetchActors invalidation", () => {
           fetchMock.mock.calls.filter(
             ([calledPath, calledInit]) =>
               calledPath === "/api/v1/groups/g-demo/actors" &&
-              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
+              String((calledInit as RequestInit | undefined)?.method || "GET").toUpperCase() ===
+                "GET",
           ).length === 1
         ) {
           return firstRead.promise;
@@ -2243,7 +2326,8 @@ describe("api.fetchActors invalidation", () => {
         return Promise.resolve({
           status: 200,
           ok: true,
-          text: async () => JSON.stringify({ ok: true, result: { actors: [{ id: "peer-started" }] } }),
+          text: async () =>
+            JSON.stringify({ ok: true, result: { actors: [{ id: "peer-started" }] } }),
         });
       }
       if (path === "/api/v1/groups/g-demo/start?by=user" && method === "POST") {

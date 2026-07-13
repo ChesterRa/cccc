@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { fetchSlashCommandCapabilityState } from "./context";
 
@@ -10,19 +10,23 @@ describe("capability state API helpers", () => {
 
   it("requests the compact slash-command capability view", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({
-        ok: true,
-        result: {
-          group_id: "g1",
-          actor_id: "user",
-          view: "slash_commands",
-          dynamic_tools: [],
-          active_capsule_skills: [],
-          actor_hidden_capabilities: [],
-        },
-      })),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              group_id: "g1",
+              actor_id: "user",
+              view: "slash_commands",
+              dynamic_tools: [],
+              active_capsule_skills: [],
+              actor_hidden_capabilities: [],
+            },
+          }),
+        ),
+      );
 
     await fetchSlashCommandCapabilityState("g1", "user", { noCache: true });
 

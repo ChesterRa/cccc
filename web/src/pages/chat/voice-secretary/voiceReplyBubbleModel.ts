@@ -37,14 +37,16 @@ export function resolveAutoOpenVoiceReplyBubbleRequestId(
   const previousReplyKey = tracker.replyKeyByRequestId.get(requestId) || "";
   tracker.replyKeyByRequestId.set(requestId, dismissKey);
   const isLocalRequest = tracker.localRequestIds.has(requestId);
-  if (!shouldAutoOpenVoiceReplyBubble({
-    requestId,
-    replyText,
-    dismissKey,
-    previousReplyKey,
-    isLocalRequest,
-    wasDismissed: tracker.dismissedReplyKeys.has(dismissKey),
-  })) {
+  if (
+    !shouldAutoOpenVoiceReplyBubble({
+      requestId,
+      replyText,
+      dismissKey,
+      previousReplyKey,
+      isLocalRequest,
+      wasDismissed: tracker.dismissedReplyKeys.has(dismissKey),
+    })
+  ) {
     return "";
   }
   return requestId;

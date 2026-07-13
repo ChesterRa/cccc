@@ -1,18 +1,10 @@
 export type SseConnectionKind = "ledger" | "headless";
 
-export type SseConnectionToken = {
-  kind: SseConnectionKind;
-  groupId: string;
-  generation: number;
-};
+export type SseConnectionToken = { kind: SseConnectionKind; groupId: string; generation: number };
 
-type Closable = {
-  close: () => void;
-};
+type Closable = { close: () => void };
 
-type RegistryEntry<T extends Closable> = SseConnectionToken & {
-  source: T;
-};
+type RegistryEntry<T extends Closable> = SseConnectionToken & { source: T };
 
 export function createSseConnectionRegistry<T extends Closable>() {
   let generation = 0;

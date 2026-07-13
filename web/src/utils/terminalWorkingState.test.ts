@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   filterTerminalWorkingBannerChunk,
@@ -9,7 +9,11 @@ import {
 
 describe("terminal working state", () => {
   it("detects a prompt when a terminal status line follows it", () => {
-    expect(isTerminalPromptVisible("• Working (4s • esc to interrupt)\n> Use /skills to list available skills\ngpt-5.5 medium")).toBe(true);
+    expect(
+      isTerminalPromptVisible(
+        "• Working (4s • esc to interrupt)\n> Use /skills to list available skills\ngpt-5.5 medium",
+      ),
+    ).toBe(true);
   });
 
   it("prefers a visible Codex prompt over an older working banner", () => {
@@ -33,7 +37,9 @@ describe("terminal working state", () => {
   });
 
   it("hides working banners from display when the actor is not working", () => {
-    expect(stripInactiveTerminalWorkingBanners("\n◦ Working  9m 41s • esc to interrupt)", "idle")).toBe("");
+    expect(
+      stripInactiveTerminalWorkingBanners("\n◦ Working  9m 41s • esc to interrupt)", "idle"),
+    ).toBe("");
   });
 
   it("hides corrupted working banners from display when the actor is not working", () => {
@@ -45,7 +51,9 @@ describe("terminal working state", () => {
   });
 
   it("hides working banners from display while the actor is working", () => {
-    expect(stripInactiveTerminalWorkingBanners("\n◦ Working  9m 41s • esc to interrupt)", "working")).toBe("");
+    expect(
+      stripInactiveTerminalWorkingBanners("\n◦ Working  9m 41s • esc to interrupt)", "working"),
+    ).toBe("");
   });
 
   it("hides working banners split across live terminal chunks", () => {
@@ -53,7 +61,10 @@ describe("terminal working state", () => {
     expect(first.visible).toBe("");
     expect(first.nextTail).toBe("• ");
 
-    const second = filterTerminalWorkingBannerChunk(first.nextTail, "Working  (14h 17m 43s • esc to interrupt)\n> /");
+    const second = filterTerminalWorkingBannerChunk(
+      first.nextTail,
+      "Working  (14h 17m 43s • esc to interrupt)\n> /",
+    );
     expect(second.visible).toBe("> /");
     expect(second.nextTail).toBe("");
   });

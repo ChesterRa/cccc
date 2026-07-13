@@ -37,10 +37,23 @@ export function ActorSecretBulkInput({ disabled, onCancel, onApply }: ActorSecre
     <div className="rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-[11px] font-semibold text-[var(--color-text-primary)]">{t("secretManager.batchPaste")}</div>
-          <div className="mt-1 text-[10px] leading-relaxed text-[var(--color-text-muted)]">{t("secretManager.batchHint")}</div>
+          <div className="text-[11px] font-semibold text-[var(--color-text-primary)]">
+            {t("secretManager.batchPaste")}
+          </div>
+          <div className="mt-1 text-[10px] leading-relaxed text-[var(--color-text-muted)]">
+            {t("secretManager.batchHint")}
+          </div>
         </div>
-        <Button type="button" variant="ghost" size="sm" className="w-9 shrink-0 px-0" disabled={disabled} aria-label={t("common:cancel")} title={t("common:cancel")} onClick={close}>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="w-9 shrink-0 px-0"
+          disabled={disabled}
+          aria-label={t("common:cancel")}
+          title={t("common:cancel")}
+          onClick={close}
+        >
           <X size={15} aria-hidden="true" />
         </Button>
       </div>
@@ -58,7 +71,15 @@ export function ActorSecretBulkInput({ disabled, onCancel, onApply }: ActorSecre
           setError("");
         }}
       />
-      {error ? <div id={errorId} role="alert" className="mt-2 text-[10px] text-rose-600 dark:text-rose-400">{error}</div> : null}
+      {error ? (
+        <div
+          id={errorId}
+          role="alert"
+          className="mt-2 text-[10px] text-rose-600 dark:text-rose-400"
+        >
+          {error}
+        </div>
+      ) : null}
       <div className="mt-2 flex justify-end">
         <Button type="button" size="sm" disabled={disabled || !text.trim()} onClick={apply}>
           {t("secretManager.batchApply")}

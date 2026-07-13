@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildCapabilityCenterUrl,
@@ -14,7 +14,9 @@ describe("CapabilityCenter route", () => {
   });
 
   it("carries the current group id into the new tab URL", () => {
-    expect(buildCapabilityCenterUrl(" g1 ", "http://127.0.0.1:5173")).toBe("/ui/capabilities?group_id=g1");
+    expect(buildCapabilityCenterUrl(" g1 ", "http://127.0.0.1:5173")).toBe(
+      "/ui/capabilities?group_id=g1",
+    );
     expect(capabilityCenterGroupIdFromSearch("?group_id=g1")).toBe("g1");
   });
 });

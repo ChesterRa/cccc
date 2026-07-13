@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "path": "web/src/components/AgentTab.tsx",
+      "baseBlobOid": "6a1fd2e98fb58f1036b7f9289e500315b97bc2cf",
+      "currentSha256": "64756be7476f81825a38bf171e60415b89decff4949ef840e1922bba4e5adb18",
+      "baseLines": 957,
+      "currentLines": 1036,
+      "oldBaseline": 957,
+      "newBaseline": 1036
+    },
+    {
+      "path": "web/src/components/ContextModal/index.tsx",
+      "baseBlobOid": "b1bf382e72ff04bf362bc276c72828a1f303c17f",
+      "currentSha256": "3a17fc8da90ce7b8e14c479f3bb4f39fbb5d8acb77f8052222cc5a6af27479ca",
+      "baseLines": 1109,
+      "currentLines": 1325,
+      "oldBaseline": 1109,
+      "newBaseline": 1325
+    },
+    {
+      "path": "web/src/components/browser/ProjectedBrowserSurfacePanel.tsx",
+      "baseBlobOid": "58dcc3f8d5b061466ab77db3dc8086a002e833d5",
+      "currentSha256": "7d2f3a5654508f53a4d4e4bf082b25819fdf81177c4b9355b264f9f4ec5706e3",
+      "baseLines": 918,
+      "currentLines": 997,
+      "oldBaseline": 918,
+      "newBaseline": 997
+    },
+    {
+      "path": "web/src/components/modals/ActorConfigModal.tsx",
+      "baseBlobOid": "16f371a3bfb5bfd6df8d2c7fcc5b7931694ac8b3",
+      "currentSha256": "722529ee1887076ade562b55fb3482cbecad649513c7fd17cb6b1fb8788c86bf",
+      "baseLines": 1547,
+      "currentLines": 1837,
+      "oldBaseline": 1547,
+      "newBaseline": 1837
+    },
+    {
+      "path": "web/src/components/modals/settings/GuidanceTab.tsx",
+      "baseBlobOid": "50f8ca624b861e8404847e789ec07011958a962f",
+      "currentSha256": "e5e21da704c6857c4a883f7f40f76ce0ac78f2d905a428d3bb5e61ca8bd7df65",
+      "baseLines": 714,
+      "currentLines": 820,
+      "oldBaseline": 714,
+      "newBaseline": 820
+    },
+    {
+      "path": "web/src/components/modals/settings/IMBridgeTab.tsx",
+      "baseBlobOid": "ad903bfbb8002f1a81b6e701b50e0d710c94af80",
+      "currentSha256": "2de8b616b0ac1eb86923af8466cbaca562f13585868d695366785f560a4d7c69",
+      "baseLines": 1084,
+      "currentLines": 1182,
+      "oldBaseline": 1084,
+      "newBaseline": 1182
+    }
+  ]
+}

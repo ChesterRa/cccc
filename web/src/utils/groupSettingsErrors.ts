@@ -2,11 +2,7 @@ import type { TFunction } from "i18next";
 
 type UnknownRecord = Record<string, unknown>;
 
-type SettingsErrorShape = {
-  code?: unknown;
-  message?: unknown;
-  details?: unknown;
-};
+type SettingsErrorShape = { code?: unknown; message?: unknown; details?: unknown };
 
 function asString(value: unknown): string {
   return typeof value === "string" ? value : value == null ? "" : String(value);
@@ -25,7 +21,10 @@ export function formatGroupSettingsUpdateError(
   const details = asRecord(error?.details);
 
   if (code === "permission_denied") {
-    return t("modals:context.settingsPermissionDenied", "You do not have permission to update these settings.");
+    return t(
+      "modals:context.settingsPermissionDenied",
+      "You do not have permission to update these settings.",
+    );
   }
   if (code === "group_not_found") {
     return t("modals:context.settingsGroupNotFound", "Working group not found.");

@@ -4,7 +4,10 @@ import { ActorProfile, ActorProfileUsage, RUNTIME_INFO, SUPPORTED_RUNTIMES } fro
 import * as api from "../../../services/api";
 import { parsePrivateEnvSetText, parsePrivateEnvUnsetText } from "../../../utils/privateEnvInput";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../../utils/capabilityAutoload";
-import { normalizeActorRunner, supportsStandardWebHeadlessRuntime } from "../../../utils/headlessRuntimeSupport";
+import {
+  normalizeActorRunner,
+  supportsStandardWebHeadlessRuntime,
+} from "../../../utils/headlessRuntimeSupport";
 import { useGroupStore } from "../../../stores";
 import {
   inputClass,
@@ -45,7 +48,9 @@ type EditorState = {
 };
 
 function formatCommand(cmd: string[] | undefined): string {
-  const parts = Array.isArray(cmd) ? cmd.filter((item) => typeof item === "string" && item.trim()) : [];
+  const parts = Array.isArray(cmd)
+    ? cmd.filter((item) => typeof item === "string" && item.trim())
+    : [];
   return parts.join(" ");
 }
 
@@ -53,7 +58,8 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   amp: "amp",
   auggie: "auggie",
   claude: "claude --dangerously-skip-permissions",
-  codex: "codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search",
+  codex:
+    "codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search",
   copilot: "copilot --allow-all",
   cursor: "cursor-agent --yolo --approve-mcps",
   devin: "devin --permission-mode dangerous",
@@ -90,7 +96,12 @@ function modeButtonClass(selected: boolean): string {
 
 function buildEditor(profile?: ActorProfile | null): EditorState {
   const runtime = String(profile?.runtime || "codex");
-  const runner = runtime === "web_model" ? "headless" : supportsStandardWebHeadlessRuntime(runtime) ? normalizeActorRunner(profile?.runner) : "pty";
+  const runner =
+    runtime === "web_model"
+      ? "headless"
+      : supportsStandardWebHeadlessRuntime(runtime)
+        ? normalizeActorRunner(profile?.runner)
+        : "pty";
   const command = formatCommand(profile?.command);
   const defaultCommand = defaultCommandForRuntime(runtime);
   const useDefaultCommand =
@@ -104,15 +115,19 @@ function buildEditor(profile?: ActorProfile | null): EditorState {
     runner,
     command,
     useDefaultCommand,
-    submit: (String(profile?.submit || "enter") as "enter" | "newline" | "none"),
-    capabilityAutoloadText: formatCapabilityIdInput(profile?.capability_defaults?.autoload_capabilities),
+    submit: String(profile?.submit || "enter") as "enter" | "newline" | "none",
+    capabilityAutoloadText: formatCapabilityIdInput(
+      profile?.capability_defaults?.autoload_capabilities,
+    ),
     capabilityDefaultScope:
-      String(profile?.capability_defaults?.default_scope || "actor").trim().toLowerCase() === "session"
+      String(profile?.capability_defaults?.default_scope || "actor")
+        .trim()
+        .toLowerCase() === "session"
         ? "session"
         : "actor",
     capabilitySessionTtlSeconds: Math.max(
       60,
-      Number(profile?.capability_defaults?.session_ttl_seconds || 3600)
+      Number(profile?.capability_defaults?.session_ttl_seconds || 3600),
     ),
   };
 }
@@ -143,11 +158,8 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
   const isMyScope = scope === "my";
   const profileScope: api.ProfileScope = isMyScope ? "user" : "global";
   const profileLookup = useMemo(
-    () => ({
-      scope: profileScope,
-      ownerId: isMyScope ? sessionUserId.trim() : "",
-    }),
-    [isMyScope, profileScope, sessionUserId]
+    () => ({ scope: profileScope, ownerId: isMyScope ? sessionUserId.trim() : "" }),
+    [isMyScope, profileScope, sessionUserId],
   );
 
   const filtered = useMemo(() => {
@@ -171,19 +183,19 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
 
   const editorSupportsDefaultCommand = useMemo(
     () => supportsRuntimeDefaultCommand(editor.runtime),
-    [editor.runtime]
+    [editor.runtime],
   );
   const editorSupportsHeadlessRunner = useMemo(
     () => supportsStandardWebHeadlessRuntime(editor.runtime),
-    [editor.runtime]
+    [editor.runtime],
   );
   const editorIsWebModel = useMemo(
     () => String(editor.runtime || "").trim() === "web_model",
-    [editor.runtime]
+    [editor.runtime],
   );
   const editorDefaultCommand = useMemo(
     () => defaultCommandForRuntime(editor.runtime),
-    [editor.runtime]
+    [editor.runtime],
   );
 
   const ensureSessionContext = async () => {
@@ -264,9 +276,18 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
               <SelectCombobox
                 items={[
                   ...(editorIsWebModel
-                    ? [{ value: "web_model", label: `${RUNTIME_INFO.web_model?.label || "ChatGPT Web Model"} (single actor)`, disabled: true }]
+                    ? [
+                        {
+                          value: "web_model",
+                          label: `${RUNTIME_INFO.web_model?.label || "ChatGPT Web Model"} (single actor)`,
+                          disabled: true,
+                        },
+                      ]
                     : []),
-                  ...PROFILE_RUNTIME_OPTIONS.map((rt) => ({ value: rt, label: RUNTIME_INFO[rt]?.label || rt })),
+                  ...PROFILE_RUNTIME_OPTIONS.map((rt) => ({
+                    value: rt,
+                    label: RUNTIME_INFO[rt]?.label || rt,
+                  })),
                 ]}
                 value={editor.runtime}
                 onChange={(value) => {
@@ -276,9 +297,12 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                     return {
                       ...prev,
                       runtime: nextRuntime,
-                      runner: nextRuntime === "web_model"
-                        ? "headless"
-                        : supportsStandardWebHeadlessRuntime(nextRuntime) ? prev.runner : "pty",
+                      runner:
+                        nextRuntime === "web_model"
+                          ? "headless"
+                          : supportsStandardWebHeadlessRuntime(nextRuntime)
+                            ? prev.runner
+                            : "pty",
                       useDefaultCommand: supportsDefault ? prev.useDefaultCommand : false,
                       command: supportsDefault && prev.useDefaultCommand ? "" : prev.command,
                     };
@@ -290,7 +314,8 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
               />
               {editorIsWebModel ? (
                 <div className="mt-1.5 text-[10px] leading-4 text-[var(--color-text-muted)]">
-                  ChatGPT Web Model is managed as one CCCC actor in Settings &gt; ChatGPT Web Model; new Runtime Profiles cannot use this runtime.
+                  ChatGPT Web Model is managed as one CCCC actor in Settings &gt; ChatGPT Web Model;
+                  new Runtime Profiles cannot use this runtime.
                 </div>
               ) : null}
             </div>
@@ -355,8 +380,12 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             ) : null}
             {editorSupportsDefaultCommand && editorDefaultCommand ? (
               <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">
-                {editor.useDefaultCommand ? t("actorProfiles.usingRuntimeDefaultCommand") : t("actorProfiles.default")}{" "}
-                <code className="px-1 rounded bg-[var(--color-bg-secondary)]">{editorDefaultCommand}</code>
+                {editor.useDefaultCommand
+                  ? t("actorProfiles.usingRuntimeDefaultCommand")
+                  : t("actorProfiles.default")}{" "}
+                <code className="px-1 rounded bg-[var(--color-bg-secondary)]">
+                  {editorDefaultCommand}
+                </code>
               </div>
             ) : null}
           </div>
@@ -370,7 +399,9 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                 { value: "none", label: "None" },
               ]}
               value={editor.submit}
-              onChange={(value) => setEditor((prev) => ({ ...prev, submit: (value as "enter" | "newline" | "none") }))}
+              onChange={(value) =>
+                setEditor((prev) => ({ ...prev, submit: value as "enter" | "newline" | "none" }))
+              }
               ariaLabel={t("actorProfiles.submit")}
               className={inputClass()}
             />
@@ -437,8 +468,12 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
           </div>
 
           <div className={settingsWorkspacePanelClass(isDark)}>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("actorProfiles.env")}</div>
-            <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("actorProfiles.envHint")}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("actorProfiles.env")}
+            </div>
+            <div className="text-xs mt-1 text-[var(--color-text-muted)]">
+              {t("actorProfiles.envHint")}
+            </div>
             {duplicateSourceProfileId ? (
               <div className="text-xs mt-1 text-[var(--color-text-tertiary)]">
                 {t("actorProfiles.duplicateSecretsHint", { source: duplicateSourceLabel })}
@@ -457,7 +492,9 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                 ))}
               </div>
             ) : (
-              <div className="mt-2 text-xs text-[var(--color-text-muted)]">{t("actorProfiles.noSecrets")}</div>
+              <div className="mt-2 text-xs text-[var(--color-text-muted)]">
+                {t("actorProfiles.noSecrets")}
+              </div>
             )}
 
             <div className="mt-3">
@@ -479,17 +516,17 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
               />
             </div>
             <label className="mt-3 inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-              <input type="checkbox" checked={secretClear} onChange={(e) => setSecretClear(e.target.checked)} />
+              <input
+                type="checkbox"
+                checked={secretClear}
+                onChange={(e) => setSecretClear(e.target.checked)}
+              />
               {t("actorProfiles.clearSecrets")}
             </label>
           </div>
         </div>
         <div className={settingsDialogFooterClass}>
-          <button
-            type="button"
-            onClick={closeEditor}
-            className={secondaryButtonClass()}
-          >
+          <button type="button" onClick={closeEditor} className={secondaryButtonClass()}>
             {t("common:cancel")}
           </button>
           <button
@@ -519,7 +556,9 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
       if (resp.ok) {
         setProfiles(Array.isArray(resp.result?.profiles) ? resp.result.profiles : []);
       } else {
-        setErr(scopeRequestError(resp.error?.code, resp.error?.message || t("actorProfiles.loadFailed")));
+        setErr(
+          scopeRequestError(resp.error?.code, resp.error?.message || t("actorProfiles.loadFailed")),
+        );
       }
     } catch (e) {
       console.error("Failed to load actor profiles:", e);
@@ -536,8 +575,8 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
       new Set(
         (Array.isArray(latestGroups) ? latestGroups : groups)
           .map((item) => String(item?.group_id || "").trim())
-          .filter((id) => id.length > 0)
-      )
+          .filter((id) => id.length > 0),
+      ),
     );
     await Promise.all(
       ids.map(async (gid) => {
@@ -546,7 +585,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         } catch (e) {
           console.error(`Failed to refresh actors for group=${gid}:`, e);
         }
-      })
+      }),
     );
   };
 
@@ -569,9 +608,10 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
       return;
     }
     const keys = Array.isArray(resp.result?.keys) ? resp.result.keys : [];
-    const masked = (resp.result?.masked_values && typeof resp.result.masked_values === "object")
-      ? resp.result.masked_values
-      : {};
+    const masked =
+      resp.result?.masked_values && typeof resp.result.masked_values === "object"
+        ? resp.result.masked_values
+        : {};
     setSecretKeys(keys);
     setSecretMasks(masked);
   };
@@ -607,8 +647,14 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
   };
 
   const openDuplicate = async (profile: ActorProfile) => {
-    if (String(profile.runtime || "").trim().toLowerCase() === "web_model") {
-      setErr("ChatGPT Web Model is managed as a single actor and cannot be duplicated as a Runtime Profile. Configure it in Settings > ChatGPT Web Model.");
+    if (
+      String(profile.runtime || "")
+        .trim()
+        .toLowerCase() === "web_model"
+    ) {
+      setErr(
+        "ChatGPT Web Model is managed as a single actor and cannot be duplicated as a Runtime Profile. Configure it in Settings > ChatGPT Web Model.",
+      );
       return;
     }
     const sourceId = String(profile.id || "").trim();
@@ -630,7 +676,8 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
   };
 
   const handleDelete = async (profile: ActorProfile) => {
-    if (!window.confirm(t("actorProfiles.deleteConfirm", { name: profile.name || profile.id }))) return;
+    if (!window.confirm(t("actorProfiles.deleteConfirm", { name: profile.name || profile.id })))
+      return;
     const ownerId = isMyScope ? sessionUserId.trim() : "";
     if (isMyScope && !ownerId) {
       setErr(t("actorProfiles.myProfilesLoginRequired"));
@@ -662,12 +709,15 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             })
             .filter((line) => line.length > 0)
             .join("\n");
-          const over = usage.length > 6 ? `\n${t("actorProfiles.deleteInUseMore", { count: usage.length - 6 })}` : "";
+          const over =
+            usage.length > 6
+              ? `\n${t("actorProfiles.deleteInUseMore", { count: usage.length - 6 })}`
+              : "";
           const withUsage = lines ? `\n\n${lines}${over}` : "";
           const forceConfirm = window.confirm(
             `${t("actorProfiles.deleteInUseConfirm", { count: usage.length || Number(profile.usage_count || 0) })}${withUsage}\n\n${t(
-              "actorProfiles.deleteInUseForce"
-            )}`
+              "actorProfiles.deleteInUseForce",
+            )}`,
           );
           if (!forceConfirm) return;
           const forceResp = await api.deleteProfile(String(profile.id || ""), {
@@ -676,14 +726,24 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             forceDetach: true,
           });
           if (!forceResp.ok) {
-            setErr(scopeRequestError(forceResp.error?.code, forceResp.error?.message || t("actorProfiles.deleteFailed")));
+            setErr(
+              scopeRequestError(
+                forceResp.error?.code,
+                forceResp.error?.message || t("actorProfiles.deleteFailed"),
+              ),
+            );
             return;
           }
           await loadProfiles();
           await refreshAllGroupsActors();
           return;
         }
-        setErr(scopeRequestError(resp.error?.code, resp.error?.message || t("actorProfiles.deleteFailed")));
+        setErr(
+          scopeRequestError(
+            resp.error?.code,
+            resp.error?.message || t("actorProfiles.deleteFailed"),
+          ),
+        );
         return;
       }
       await loadProfiles();
@@ -706,7 +766,12 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         ownerId: isMyScope ? sessionUserId.trim() : "",
       });
       if (!resp.ok) {
-        setErr(scopeRequestError(resp.error?.code, resp.error?.message || t("actorProfiles.usageLoadFailed")));
+        setErr(
+          scopeRequestError(
+            resp.error?.code,
+            resp.error?.message || t("actorProfiles.usageLoadFailed"),
+          ),
+        );
         return;
       }
       const usage = Array.isArray(resp.result?.usage) ? resp.result.usage : [];
@@ -714,7 +779,9 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         window.alert(t("actorProfiles.usageEmpty"));
         return;
       }
-      const title = t("actorProfiles.usageDialogTitle", { name: profile.name || profile.id || profileId });
+      const title = t("actorProfiles.usageDialogTitle", {
+        name: profile.name || profile.id || profileId,
+      });
       const lines = usage
         .map((item) => {
           const gid = String(item.group_id || "").trim();
@@ -738,8 +805,14 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
   };
 
   const handleSave = async () => {
-    if (String(editor.runtime || "").trim().toLowerCase() === "web_model") {
-      setEditorErr("ChatGPT Web Model is managed in Settings > ChatGPT Web Model instead of being saved as a Runtime Profile.");
+    if (
+      String(editor.runtime || "")
+        .trim()
+        .toLowerCase() === "web_model"
+    ) {
+      setEditorErr(
+        "ChatGPT Web Model is managed in Settings > ChatGPT Web Model instead of being saved as a Runtime Profile.",
+      );
       return;
     }
     const name = editor.name.trim();
@@ -772,8 +845,13 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         scope: profileScope,
         owner_id: ownerId,
         runtime: editor.runtime,
-        runner: editorIsWebModel ? "headless" : editorSupportsHeadlessRunner ? editor.runner : "pty",
-        command: editorSupportsDefaultCommand && editor.useDefaultCommand ? "" : editor.command.trim(),
+        runner: editorIsWebModel
+          ? "headless"
+          : editorSupportsHeadlessRunner
+            ? editor.runner
+            : "pty",
+        command:
+          editorSupportsDefaultCommand && editor.useDefaultCommand ? "" : editor.command.trim(),
         submit: editor.submit,
         env: {},
         capability_defaults: {
@@ -798,11 +876,19 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
         return;
       }
       const copyFromProfileId = duplicateSourceProfileId.trim();
-      const hasSecretOps = secretClear || Object.keys(setParsed.setVars).length > 0 || unsetParsed.unsetKeys.length > 0;
+      const hasSecretOps =
+        secretClear ||
+        Object.keys(setParsed.setVars).length > 0 ||
+        unsetParsed.unsetKeys.length > 0;
       const expectedRevision = editor.id ? editor.revision : undefined;
       const upsertResp = await api.saveProfile(payload, expectedRevision);
       if (!upsertResp.ok) {
-        setEditorErr(scopeRequestError(upsertResp.error?.code, upsertResp.error?.message || t("actorProfiles.saveFailed")));
+        setEditorErr(
+          scopeRequestError(
+            upsertResp.error?.code,
+            upsertResp.error?.message || t("actorProfiles.saveFailed"),
+          ),
+        );
         return;
       }
       const profile = upsertResp.result?.profile;
@@ -813,7 +899,11 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
       }
 
       if (copyFromProfileId && copyFromProfileId !== profileId) {
-        const copyResp = await api.copyProfilePrivateEnvFromProfile(profileId, copyFromProfileId, profileLookup);
+        const copyResp = await api.copyProfilePrivateEnvFromProfile(
+          profileId,
+          copyFromProfileId,
+          profileLookup,
+        );
         if (!copyResp.ok) {
           setEditorErr(copyResp.error?.message || t("actorProfiles.saveSecretsFailed"));
           return;
@@ -826,7 +916,7 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
           setParsed.setVars,
           unsetParsed.unsetKeys,
           secretClear,
-          profileLookup
+          profileLookup,
         );
         if (!secretResp.ok) {
           setEditorErr(secretResp.error?.message || t("actorProfiles.saveSecretsFailed"));
@@ -852,7 +942,9 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
               {isMyScope ? t("settings:tabs.myProfiles") : t("settings:tabs.actorProfiles")}
             </h3>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              {isMyScope ? t("actorProfiles.myProfilesLoginRequired") : t("actorProfiles.searchPlaceholder")}
+              {isMyScope
+                ? t("actorProfiles.myProfilesLoginRequired")
+                : t("actorProfiles.searchPlaceholder")}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -888,7 +980,9 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                 />
               </div>
               <div className="text-xs leading-6 text-[var(--color-text-muted)] lg:text-right">
-                {busy ? t("common:loading") : t("actorProfiles.usageCount", { count: filtered.length })}
+                {busy
+                  ? t("common:loading")
+                  : t("actorProfiles.usageCount", { count: filtered.length })}
               </div>
             </div>
           </div>
@@ -902,11 +996,13 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                       <div className="truncate text-sm font-semibold text-[var(--color-text-primary)]">
                         {profile.name || profile.id}
                       </div>
-                      <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] ${
-                        isDark
-                          ? "border-white/10 bg-white/[0.04] text-[var(--color-text-secondary)]"
-                          : "border-black/8 bg-black/[0.03] text-[var(--color-text-secondary)]"
-                      }`}>
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] ${
+                          isDark
+                            ? "border-white/10 bg-white/[0.04] text-[var(--color-text-secondary)]"
+                            : "border-black/8 bg-black/[0.03] text-[var(--color-text-secondary)]"
+                        }`}
+                      >
                         {RUNTIME_INFO[String(profile.runtime)]?.label || profile.runtime}
                       </span>
                     </div>
@@ -916,7 +1012,9 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                     <div className="mt-3 flex flex-wrap gap-2">
                       <div className={settingsWorkspaceSoftPanelClass(isDark)}>
                         <div className="text-[11px] text-[var(--color-text-muted)]">
-                          {t("actorProfiles.usageCount", { count: Number(profile.usage_count || 0) })}
+                          {t("actorProfiles.usageCount", {
+                            count: Number(profile.usage_count || 0),
+                          })}
                         </div>
                       </div>
                       <div className={settingsWorkspaceSoftPanelClass(isDark)}>
@@ -935,7 +1033,11 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                     </button>
                     <button
                       onClick={() => void openDuplicate(profile)}
-                      disabled={String(profile.runtime || "").trim().toLowerCase() === "web_model"}
+                      disabled={
+                        String(profile.runtime || "")
+                          .trim()
+                          .toLowerCase() === "web_model"
+                      }
                       className={secondaryButtonClass("sm")}
                     >
                       {t("actorProfiles.duplicate")}
@@ -945,7 +1047,9 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
                       disabled={usageBusyProfileId === String(profile.id || "")}
                       className={secondaryButtonClass("sm")}
                     >
-                      {usageBusyProfileId === String(profile.id || "") ? t("common:loading") : t("actorProfiles.viewUsage")}
+                      {usageBusyProfileId === String(profile.id || "")
+                        ? t("common:loading")
+                        : t("actorProfiles.viewUsage")}
                     </button>
                     <button
                       onClick={() => void handleDelete(profile)}
@@ -959,7 +1063,9 @@ export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabPr
             ))}
             {!busy && filtered.length === 0 ? (
               <div className={settingsWorkspacePanelClass(isDark)}>
-                <div className="text-sm text-[var(--color-text-muted)]">{t("actorProfiles.empty")}</div>
+                <div className="text-sm text-[var(--color-text-muted)]">
+                  {t("actorProfiles.empty")}
+                </div>
               </div>
             ) : null}
           </div>

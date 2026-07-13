@@ -6,17 +6,7 @@
   "background_color": "#0f172a",
   "start_url": "/ui/",
   "icons": [
-    {
-      "src": "/ui/logo.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    },
-    {
-      "src": "/ui/logo.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
-    }
+    { "src": "/ui/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/ui/logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }

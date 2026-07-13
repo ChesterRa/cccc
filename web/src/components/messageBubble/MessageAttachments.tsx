@@ -34,17 +34,17 @@ export function MessageAttachments({
         <div
           className={classNames(
             "max-w-full items-start gap-2",
-            useImageGrid
-              ? "grid w-fit grid-cols-2"
-              : "flex max-w-[min(30rem,82vw)] flex-col gap-3",
+            useImageGrid ? "grid w-fit grid-cols-2" : "flex max-w-[min(30rem,82vw)] flex-col gap-3",
           )}
         >
           {imageAttachments.map((attachment, index) => {
             const parts = String(attachment.path || "").split("/");
             const blobName = parts[parts.length - 1] || "";
-            const href = attachment.local_preview_url || withAuthToken(
-              `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`
-            );
+            const href =
+              attachment.local_preview_url ||
+              withAuthToken(
+                `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`,
+              );
             const label = attachment.title || blobName || "image";
             return (
               <div
@@ -68,13 +68,20 @@ export function MessageAttachments({
         </div>
       )}
       {fileAttachments.length > 0 && (
-        <div className={classNames("flex max-w-full flex-wrap items-start gap-2", imageAttachments.length > 0 && "mt-3")}>
+        <div
+          className={classNames(
+            "flex max-w-full flex-wrap items-start gap-2",
+            imageAttachments.length > 0 && "mt-3",
+          )}
+        >
           {fileAttachments.map((attachment, index) => {
             const parts = String(attachment.path || "").split("/");
             const blobName = parts[parts.length - 1] || "";
-            const href = attachment.local_preview_url || withAuthToken(
-              `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`
-            );
+            const href =
+              attachment.local_preview_url ||
+              withAuthToken(
+                `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`,
+              );
             const label = attachment.title || blobName || "file";
             return (
               <a

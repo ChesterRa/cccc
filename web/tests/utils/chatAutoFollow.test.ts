@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   getChatTailMutationSnapshot,
@@ -24,16 +24,10 @@ describe("chatAutoFollow", () => {
 
   it("does not auto-follow first load or non-growing lists", () => {
     expect(
-      shouldAutoFollowOnTailAppend(
-        getChatTailSnapshot(null, 0),
-        getChatTailSnapshot("m-1", 1),
-      )
+      shouldAutoFollowOnTailAppend(getChatTailSnapshot(null, 0), getChatTailSnapshot("m-1", 1)),
     ).toBe(false);
     expect(
-      shouldAutoFollowOnTailAppend(
-        getChatTailSnapshot("m-2", 2),
-        getChatTailSnapshot("m-3", 2),
-      )
+      shouldAutoFollowOnTailAppend(getChatTailSnapshot("m-2", 2), getChatTailSnapshot("m-3", 2)),
     ).toBe(false);
   });
 

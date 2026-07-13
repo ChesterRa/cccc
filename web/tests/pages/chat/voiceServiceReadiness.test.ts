@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_LIVE_SERVICE_MODEL_ID,
@@ -17,20 +17,11 @@ describe("voiceServiceReadiness", () => {
         kind: "voice_secretary",
         enabled: true,
         lifecycle: "idle",
-        health: {
-          service: {
-            streaming_backend: { ready: true },
-          },
-        },
-        config: {
-          recognition_backend: "assistant_service_local_asr",
-        },
+        health: { service: { streaming_backend: { ready: true } } },
+        config: { recognition_backend: "assistant_service_local_asr" },
       },
       serviceRuntimesById: {
-        sherpa_onnx_streaming: {
-          runtime_id: "sherpa_onnx_streaming",
-          status: "ready",
-        },
+        sherpa_onnx_streaming: { runtime_id: "sherpa_onnx_streaming", status: "ready" },
       },
     });
 
@@ -50,21 +41,14 @@ describe("voiceServiceReadiness", () => {
         kind: "voice_secretary",
         enabled: true,
         lifecycle: "idle",
-        health: {
-          service: {
-            offline_backend: { ready: true },
-          },
-        },
+        health: { service: { offline_backend: { ready: true } } },
         config: {
           recognition_backend: "assistant_service_local_asr",
           service_model_id: "sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8",
         },
       },
       serviceRuntimesById: {
-        sherpa_onnx_streaming: {
-          runtime_id: "sherpa_onnx_streaming",
-          status: "ready",
-        },
+        sherpa_onnx_streaming: { runtime_id: "sherpa_onnx_streaming", status: "ready" },
       },
     });
 
@@ -83,9 +67,7 @@ describe("voiceServiceReadiness", () => {
           kind: "voice_secretary",
           enabled: true,
           lifecycle: "idle",
-          config: {
-            service_model_id: "removed_heavy_asr_model",
-          },
+          config: { service_model_id: "removed_heavy_asr_model" },
         },
         {},
       ),
@@ -94,7 +76,9 @@ describe("voiceServiceReadiness", () => {
 
   it("keeps the live Paraformer model id separate from the final SenseVoice default", () => {
     expect(effectiveServiceModelId("")).toBe(DEFAULT_SERVICE_MODEL_ID);
-    expect(effectiveServiceModelId(DEFAULT_LIVE_SERVICE_MODEL_ID)).toBe(DEFAULT_LIVE_SERVICE_MODEL_ID);
+    expect(effectiveServiceModelId(DEFAULT_LIVE_SERVICE_MODEL_ID)).toBe(
+      DEFAULT_LIVE_SERVICE_MODEL_ID,
+    );
   });
 
   it("uses service model metadata to resolve the streaming runtime", () => {
@@ -105,9 +89,7 @@ describe("voiceServiceReadiness", () => {
           kind: "voice_secretary",
           enabled: true,
           lifecycle: "idle",
-          config: {
-            service_model_id: "custom_sherpa_model",
-          },
+          config: { service_model_id: "custom_sherpa_model" },
         },
         {
           custom_sherpa_model: {
@@ -118,5 +100,4 @@ describe("voiceServiceReadiness", () => {
       ),
     ).toBe("sherpa_onnx_streaming");
   });
-
 });

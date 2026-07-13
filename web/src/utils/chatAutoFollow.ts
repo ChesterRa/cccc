@@ -12,10 +12,7 @@ export function getChatTailSnapshot(
   tailKey: string | number | null,
   count: number,
 ): ChatTailSnapshot {
-  return {
-    count: Math.max(0, Number(count) || 0),
-    tailKey,
-  };
+  return { count: Math.max(0, Number(count) || 0), tailKey };
 }
 
 export function shouldAutoFollowOnTailAppend(
@@ -31,10 +28,7 @@ export function getChatTailMutationSnapshot(
   tailKey: string | number | null,
   signature: string,
 ): ChatTailMutationSnapshot {
-  return {
-    tailKey,
-    signature: String(signature || ""),
-  };
+  return { tailKey, signature: String(signature || "") };
 }
 
 export function shouldAutoFollowOnTailMutation(

@@ -55,10 +55,7 @@ function normalizeGlobalTab(value: unknown): GlobalTabId {
 
 export function readSettingsLastLocation(hasGroupScope: boolean): SettingsLastLocation {
   if (typeof window === "undefined") {
-    return {
-      ...defaultSettingsLastLocation,
-      scope: hasGroupScope ? "group" : "global",
-    };
+    return { ...defaultSettingsLastLocation, scope: hasGroupScope ? "group" : "global" };
   }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -70,10 +67,7 @@ export function readSettingsLastLocation(hasGroupScope: boolean): SettingsLastLo
       globalTab: normalizeGlobalTab(parsed?.globalTab),
     };
   } catch {
-    return {
-      ...defaultSettingsLastLocation,
-      scope: hasGroupScope ? "group" : "global",
-    };
+    return { ...defaultSettingsLastLocation, scope: hasGroupScope ? "group" : "global" };
   }
 }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import type { LedgerEvent } from "../types";
 import { mergeLedgerEvents } from "./mergeLedgerEvents";
@@ -11,11 +11,7 @@ describe("mergeLedgerEvents", () => {
       kind: "chat.message",
       group_id: "g_src",
       by: "user",
-      data: {
-        text: "relay ping",
-        dst_group_id: "g_remote",
-        dst_to: ["@foreman"],
-      },
+      data: { text: "relay ping", dst_group_id: "g_remote", dst_to: ["@foreman"] },
     };
     const receipt: LedgerEvent = {
       id: "evt_receipt",
@@ -47,10 +43,7 @@ describe("mergeLedgerEvents", () => {
       id: "evt_src",
       ts: "2026-01-01T00:00:01.000Z",
       kind: "chat.message",
-      data: {
-        text: "relay ping",
-        dst_group_id: "g_dst",
-      },
+      data: { text: "relay ping", dst_group_id: "g_dst" },
     };
     const receipt: LedgerEvent = {
       id: "evt_receipt",

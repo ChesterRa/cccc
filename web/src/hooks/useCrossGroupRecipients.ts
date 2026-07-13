@@ -105,12 +105,17 @@ export function useCrossGroupRecipients({
   // Recipient-actor source for the `@` menu: the explicit mention target group
   // (when typing `#group @`) takes precedence over the send destination.
   const recipientGid = String(mentionTargetGroupId || "").trim() || sendGid;
-  const canFetchRemoteRecipients = !!recipientGid && !!selectedGid && recipientGid !== selectedGid && composerGid === selectedGid;
+  const canFetchRemoteRecipients =
+    !!recipientGid && !!selectedGid && recipientGid !== selectedGid && composerGid === selectedGid;
 
   // Remote fetch caches (state drives re-render).
   const [remoteActorsByGroup, setRemoteActorsByGroup] = useState<Record<string, Actor[]>>({});
-  const [remoteActorsFetchedAtByGroup, setRemoteActorsFetchedAtByGroup] = useState<Record<string, number>>({});
-  const [remoteGroupDocsByGroup, setRemoteGroupDocsByGroup] = useState<Record<string, GroupDoc>>({});
+  const [remoteActorsFetchedAtByGroup, setRemoteActorsFetchedAtByGroup] = useState<
+    Record<string, number>
+  >({});
+  const [remoteGroupDocsByGroup, setRemoteGroupDocsByGroup] = useState<Record<string, GroupDoc>>(
+    {},
+  );
   const [remoteActorsRefreshTick, setRemoteActorsRefreshTick] = useState(0);
 
   const remoteDocForSend = canFetchRemoteRecipients ? remoteGroupDocsByGroup[sendGid] : undefined;
@@ -131,8 +136,12 @@ export function useCrossGroupRecipients({
     };
   }, [canFetchRemoteRecipients, remoteDocForSend, sendGid]);
 
-  const remoteActorsForSend = canFetchRemoteRecipients ? remoteActorsByGroup[recipientGid] : undefined;
-  const remoteActorsFetchedAtForSend = canFetchRemoteRecipients ? remoteActorsFetchedAtByGroup[recipientGid] : undefined;
+  const remoteActorsForSend = canFetchRemoteRecipients
+    ? remoteActorsByGroup[recipientGid]
+    : undefined;
+  const remoteActorsFetchedAtForSend = canFetchRemoteRecipients
+    ? remoteActorsFetchedAtByGroup[recipientGid]
+    : undefined;
 
   useEffect(() => {
     if (!canFetchRemoteRecipients) return undefined;
@@ -152,26 +161,34 @@ export function useCrossGroupRecipients({
     if (!decision.shouldFetch) return;
 
     let cancelled = false;
-    void api.fetchActors(recipientGid, false, decision.noCache ? { noCache: true } : undefined).then((resp) => {
-      if (cancelled) return;
-      const fetchedAt = Date.now();
-      if (!resp.ok) {
-        setRemoteActorsByGroup((prev) => {
-          if (Object.prototype.hasOwnProperty.call(prev, recipientGid)) return prev;
-          return { ...prev, [recipientGid]: [] };
-        });
+    void api
+      .fetchActors(recipientGid, false, decision.noCache ? { noCache: true } : undefined)
+      .then((resp) => {
+        if (cancelled) return;
+        const fetchedAt = Date.now();
+        if (!resp.ok) {
+          setRemoteActorsByGroup((prev) => {
+            if (Object.prototype.hasOwnProperty.call(prev, recipientGid)) return prev;
+            return { ...prev, [recipientGid]: [] };
+          });
+          setRemoteActorsFetchedAtByGroup((prev) => ({ ...prev, [recipientGid]: fetchedAt }));
+          return;
+        }
+        const next = resp.result.actors || [];
+        setRemoteActorsByGroup((prev) => ({ ...prev, [recipientGid]: next }));
         setRemoteActorsFetchedAtByGroup((prev) => ({ ...prev, [recipientGid]: fetchedAt }));
-        return;
-      }
-      const next = resp.result.actors || [];
-      setRemoteActorsByGroup((prev) => ({ ...prev, [recipientGid]: next }));
-      setRemoteActorsFetchedAtByGroup((prev) => ({ ...prev, [recipientGid]: fetchedAt }));
-    });
+      });
 
     return () => {
       cancelled = true;
     };
-  }, [canFetchRemoteRecipients, remoteActorsFetchedAtForSend, remoteActorsForSend, remoteActorsRefreshTick, recipientGid]);
+  }, [
+    canFetchRemoteRecipients,
+    remoteActorsFetchedAtForSend,
+    remoteActorsForSend,
+    remoteActorsRefreshTick,
+    recipientGid,
+  ]);
 
   const destGroupScopeLabel = useMemo(() => {
     if (!sendGid) return "";
@@ -189,7 +206,14 @@ export function useCrossGroupRecipients({
       sendGroupId: recipientGid,
       selectedGroupActorsHydrating,
     });
-  }, [actors, composerGid, remoteActorsByGroup, selectedGid, recipientGid, selectedGroupActorsHydrating]);
+  }, [
+    actors,
+    composerGid,
+    remoteActorsByGroup,
+    selectedGid,
+    recipientGid,
+    selectedGroupActorsHydrating,
+  ]);
 
   const recipientActorsBusy = useMemo(() => {
     if (selectedGroupActorsHydrating) return true;
@@ -199,7 +223,14 @@ export function useCrossGroupRecipients({
     if (recipientGid === selectedGid) return false;
     if (!canFetchRemoteRecipients) return false;
     return !Object.prototype.hasOwnProperty.call(remoteActorsByGroup, recipientGid);
-  }, [canFetchRemoteRecipients, composerGid, remoteActorsByGroup, selectedGid, recipientGid, selectedGroupActorsHydrating]);
+  }, [
+    canFetchRemoteRecipients,
+    composerGid,
+    remoteActorsByGroup,
+    selectedGid,
+    recipientGid,
+    selectedGroupActorsHydrating,
+  ]);
 
   return { recipientActors, recipientActorsBusy, destGroupScopeLabel };
 }

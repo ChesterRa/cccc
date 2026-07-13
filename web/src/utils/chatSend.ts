@@ -11,7 +11,9 @@ export function shouldBlockLocalCrossGroupAttachments(input: {
   return input.targets.some((target) => Boolean(target.isCrossGroup) && !target.isRemote);
 }
 
-export function supportsChatStreamingPlaceholder(actor: Pick<Actor, "runtime" | "runner" | "runner_effective">): boolean {
+export function supportsChatStreamingPlaceholder(
+  actor: Pick<Actor, "runtime" | "runner" | "runner_effective">,
+): boolean {
   const runtime = String(actor.runtime || "").trim();
   if (!runtime) return false;
   return runtime !== "custom";
@@ -30,12 +32,17 @@ export function getGroupSendBlockedReason({
   runtimeRunning: boolean;
   actorCount: number;
 }): GroupSendBlockedReason | null {
-  const state = String(lifecycleState || "").trim().toLowerCase();
+  const state = String(lifecycleState || "")
+    .trim()
+    .toLowerCase();
   if (state === "paused") return "paused";
   return null;
 }
 
-export function getGroupSendBlockedMessage(reason: GroupSendBlockedReason, t: ChatTFunction): string {
+export function getGroupSendBlockedMessage(
+  reason: GroupSendBlockedReason,
+  t: ChatTFunction,
+): string {
   return t("sendBlockedGroupPaused", {
     defaultValue: "This group is paused. Resume the group before sending a message to agents.",
   });

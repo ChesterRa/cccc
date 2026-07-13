@@ -33,10 +33,7 @@ interface TaskBoardProps {
   assigneeFilter: string;
   assigneeOptions: string[];
   taskFilter: TaskFilterValue;
-  tasksSummary: {
-    total?: number;
-    archived?: number;
-  };
+  tasksSummary: { total?: number; archived?: number };
   attentionCounts: AttentionCounts;
   unassignedCount: number;
   hasArchivedTasks: boolean;
@@ -104,33 +101,94 @@ function TaskGhostCard({
   });
 
   return (
-    <div className={classNames(
-      "w-[320px] rounded-2xl border p-3 shadow-2xl",
-      "glass-panel"
-    )}>
+    <div className={classNames("w-[320px] rounded-2xl border p-3 shadow-2xl", "glass-panel")}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className={classNames("truncate text-sm font-semibold", "text-[var(--color-text-primary)]")}>{taskTitle(task)}</div>
+          <div
+            className={classNames(
+              "truncate text-sm font-semibold",
+              "text-[var(--color-text-primary)]",
+            )}
+          >
+            {taskTitle(task)}
+          </div>
           <div className={classNames("mt-1 text-xs", mutedTextClass)}>{task.id}</div>
         </div>
-        <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(status))}>{status}</span>
+        <span
+          className={classNames(
+            "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+            statusTone(status),
+          )}
+        >
+          {status}
+        </span>
       </div>
-      {taskDisplaySummary(task) ? <div className={classNames("mt-2 line-clamp-3 text-xs", subtleTextClass)}>{taskDisplaySummary(task)}</div> : null}
+      {taskDisplaySummary(task) ? (
+        <div className={classNames("mt-2 line-clamp-3 text-xs", subtleTextClass)}>
+          {taskDisplaySummary(task)}
+        </div>
+      ) : null}
       <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
-        {task.assignee ? <span className={classNames("rounded-full px-2 py-0.5", "glass-panel text-[var(--color-text-secondary)]")}>{task.assignee}</span> : null}
-        {blocked ? <span className={classNames("rounded-full px-2 py-0.5", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")}</span> : null}
+        {task.assignee ? (
+          <span
+            className={classNames(
+              "rounded-full px-2 py-0.5",
+              "glass-panel text-[var(--color-text-secondary)]",
+            )}
+          >
+            {task.assignee}
+          </span>
+        ) : null}
+        {blocked ? (
+          <span
+            className={classNames(
+              "rounded-full px-2 py-0.5",
+              "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+            )}
+          >
+            {tr("context.blocked", "Blocked")}
+          </span>
+        ) : null}
         {workflow.isOptimization && workflow.latestAttemptVerdict ? (
-          <span className={classNames("rounded-full px-2 py-0.5", latestAttemptTone(workflow.latestAttemptVerdict))}>
+          <span
+            className={classNames(
+              "rounded-full px-2 py-0.5",
+              latestAttemptTone(workflow.latestAttemptVerdict),
+            )}
+          >
             {latestAttemptLabel(workflow.latestAttemptVerdict, tr)}
           </span>
         ) : null}
         {showMissingCurrentBest(workflow) ? (
-          <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/12 text-amber-700 dark:text-amber-300")}>
+          <span
+            className={classNames(
+              "rounded-full px-2 py-0.5",
+              "bg-amber-500/12 text-amber-700 dark:text-amber-300",
+            )}
+          >
             {tr("context.noCurrentBestYet", "No best yet")}
           </span>
         ) : null}
-        {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Needs requirements")}</span> : null}
-        {workflow.needsCloseout ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsCloseout", "Needs closeout")}</span> : null}
+        {workflow.needsContract ? (
+          <span
+            className={classNames(
+              "rounded-full px-2 py-0.5",
+              "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+            )}
+          >
+            {tr("context.needsContract", "Needs requirements")}
+          </span>
+        ) : null}
+        {workflow.needsCloseout ? (
+          <span
+            className={classNames(
+              "rounded-full px-2 py-0.5",
+              "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+            )}
+          >
+            {tr("context.needsCloseout", "Needs closeout")}
+          </span>
+        ) : null}
       </div>
     </div>
   );
@@ -172,13 +230,21 @@ function TaskCard({
     data: { type: "task", taskId: task.id, status },
   });
   const style = { transform: CSS.Translate.toString(transform) };
-  const quickAction = status === "planned" ? { label: tr("context.start", "Start"), next: "active" as BoardStatus }
-    : status === "active" ? { label: tr("context.done", "Done"), next: "done" as BoardStatus }
-    : status === "done" ? { label: tr("context.reopen", "Reopen"), next: "active" as BoardStatus }
-    : { label: tr("context.restore", "Restore"), next: "planned" as BoardStatus };
+  const quickAction =
+    status === "planned"
+      ? { label: tr("context.start", "Start"), next: "active" as BoardStatus }
+      : status === "active"
+        ? { label: tr("context.done", "Done"), next: "done" as BoardStatus }
+        : status === "done"
+          ? { label: tr("context.reopen", "Reopen"), next: "active" as BoardStatus }
+          : { label: tr("context.restore", "Restore"), next: "planned" as BoardStatus };
 
   return (
-    <div ref={setNodeRef} style={style} className={classNames("group/task", isDragging && "z-20 opacity-80")}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={classNames("group/task", isDragging && "z-20 opacity-80")}
+    >
       <div
         id={`context-task-${task.id}`}
         data-task-id={task.id}
@@ -190,22 +256,36 @@ function TaskCard({
             ? "border-rose-500/30 bg-rose-500/5"
             : selectedTaskId === task.id
               ? "border-black/10 bg-[rgb(245,245,245)] shadow-[0_0_0_1px_rgba(17,24,39,0.08)] dark:border-white/12 dark:bg-white/[0.08] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.06)]"
-              : "glass-panel hover:border-[var(--glass-border-subtle)]"
+              : "glass-panel hover:border-[var(--glass-border-subtle)]",
         )}
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1 text-left">
-            <div className={classNames("truncate text-sm font-semibold", "text-[var(--color-text-primary)]")}>{taskTitle(task)}</div>
+            <div
+              className={classNames(
+                "truncate text-sm font-semibold",
+                "text-[var(--color-text-primary)]",
+              )}
+            >
+              {taskTitle(task)}
+            </div>
             <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>{task.id}</div>
           </div>
           <div className="flex items-center gap-2">
-            <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(status))}>{status}</span>
+            <span
+              className={classNames(
+                "rounded-full border px-2 py-0.5 text-[11px] font-medium",
+                statusTone(status),
+              )}
+            >
+              {status}
+            </span>
             <button
               type="button"
               {...listeners}
               className={classNames(
                 "rounded-lg px-2 py-1 text-[11px] md:opacity-0 md:group-hover/task:opacity-100",
-                "glass-btn text-[var(--color-text-secondary)]"
+                "glass-btn text-[var(--color-text-secondary)]",
               )}
               onClick={(event) => event.stopPropagation()}
               aria-label={tr("context.dragTask", "Drag task")}
@@ -217,36 +297,137 @@ function TaskCard({
         </div>
 
         {taskDisplaySummary(task) ? (
-          <div className={classNames("mt-2 block w-full text-left line-clamp-3 text-xs", ui.subtleTextClass)}>{taskDisplaySummary(task)}</div>
+          <div
+            className={classNames(
+              "mt-2 block w-full text-left line-clamp-3 text-xs",
+              ui.subtleTextClass,
+            )}
+          >
+            {taskDisplaySummary(task)}
+          </div>
         ) : null}
 
         <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
           {task.assignee ? (
-            <span className={classNames("rounded-full px-2 py-0.5", "glass-panel text-[var(--color-text-secondary)]")}>{task.assignee}</span>
+            <span
+              className={classNames(
+                "rounded-full px-2 py-0.5",
+                "glass-panel text-[var(--color-text-secondary)]",
+              )}
+            >
+              {task.assignee}
+            </span>
           ) : (
-            <span className={classNames("rounded-full px-2 py-0.5", "bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]")}>{tr("context.unassigned", "Unassigned")}</span>
+            <span
+              className={classNames(
+                "rounded-full px-2 py-0.5",
+                "bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]",
+              )}
+            >
+              {tr("context.unassigned", "Unassigned")}
+            </span>
           )}
-          {task.priority ? <span className={classNames("rounded-full px-2 py-0.5", "glass-panel text-[var(--color-text-secondary)]")}>{task.priority}</span> : null}
-          {blocked ? <span className={classNames("rounded-full px-2 py-0.5", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")}</span> : null}
-          {waiting && waiting !== "none" ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{waitingLabel(waiting, tr)}</span> : null}
-          {handoff ? <span className={classNames("rounded-full px-2 py-0.5", "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white")}>{tr("context.handoffTo", "Handoff →")} {handoff}</span> : null}
+          {task.priority ? (
+            <span
+              className={classNames(
+                "rounded-full px-2 py-0.5",
+                "glass-panel text-[var(--color-text-secondary)]",
+              )}
+            >
+              {task.priority}
+            </span>
+          ) : null}
+          {blocked ? (
+            <span
+              className={classNames(
+                "rounded-full px-2 py-0.5",
+                "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+              )}
+            >
+              {tr("context.blocked", "Blocked")}
+            </span>
+          ) : null}
+          {waiting && waiting !== "none" ? (
+            <span
+              className={classNames(
+                "rounded-full px-2 py-0.5",
+                "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+              )}
+            >
+              {waitingLabel(waiting, tr)}
+            </span>
+          ) : null}
+          {handoff ? (
+            <span
+              className={classNames(
+                "rounded-full px-2 py-0.5",
+                "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white",
+              )}
+            >
+              {tr("context.handoffTo", "Handoff →")} {handoff}
+            </span>
+          ) : null}
           {workflow.isOptimization && workflow.latestAttemptVerdict ? (
-            <span className={classNames("rounded-full px-2 py-0.5", latestAttemptTone(workflow.latestAttemptVerdict))}>
+            <span
+              className={classNames(
+                "rounded-full px-2 py-0.5",
+                latestAttemptTone(workflow.latestAttemptVerdict),
+              )}
+            >
               {latestAttemptLabel(workflow.latestAttemptVerdict, tr)}
             </span>
           ) : null}
           {showMissingCurrentBest(workflow) ? (
-            <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/12 text-amber-700 dark:text-amber-300")}>
+            <span
+              className={classNames(
+                "rounded-full px-2 py-0.5",
+                "bg-amber-500/12 text-amber-700 dark:text-amber-300",
+              )}
+            >
               {tr("context.noCurrentBestYet", "No best yet")}
             </span>
           ) : null}
-          {workflow.needsContract ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsContract", "Needs requirements")}</span> : null}
-          {workflow.needsCloseout ? <span className={classNames("rounded-full px-2 py-0.5", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.needsCloseout", "Needs closeout")}</span> : null}
+          {workflow.needsContract ? (
+            <span
+              className={classNames(
+                "rounded-full px-2 py-0.5",
+                "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+              )}
+            >
+              {tr("context.needsContract", "Needs requirements")}
+            </span>
+          ) : null}
+          {workflow.needsCloseout ? (
+            <span
+              className={classNames(
+                "rounded-full px-2 py-0.5",
+                "bg-amber-500/15 text-amber-600 dark:text-amber-400",
+              )}
+            >
+              {tr("context.needsCloseout", "Needs closeout")}
+            </span>
+          ) : null}
         </div>
 
-        <div className="mt-3 flex items-center gap-2 border-t pt-3" onClick={(event) => event.stopPropagation()}>
-          <button type="button" onClick={() => onMoveTaskToStatus(task, quickAction.next)} disabled={syncBusy} className={ui.buttonSecondaryClass}>{quickAction.label}</button>
-          <button type="button" onClick={() => onSelectTask(task)} className={ui.buttonSecondaryClass}>{tr("context.edit", "Edit")}</button>
+        <div
+          className="mt-3 flex items-center gap-2 border-t pt-3"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => onMoveTaskToStatus(task, quickAction.next)}
+            disabled={syncBusy}
+            className={ui.buttonSecondaryClass}
+          >
+            {quickAction.label}
+          </button>
+          <button
+            type="button"
+            onClick={() => onSelectTask(task)}
+            className={ui.buttonSecondaryClass}
+          >
+            {tr("context.edit", "Edit")}
+          </button>
         </div>
       </div>
     </div>
@@ -274,37 +455,61 @@ function ColumnDropZone({
   onSelectTask: (task: Task) => void;
   onMoveTaskToStatus: (task: Task, nextStatus: BoardStatus) => void;
 }) {
-  const { setNodeRef, isOver } = useDroppable({ id: `column:${columnKey}`, data: { type: "column", status: columnKey } });
+  const { setNodeRef, isOver } = useDroppable({
+    id: `column:${columnKey}`,
+    data: { type: "column", status: columnKey },
+  });
 
   return (
-    <section ref={setNodeRef} className={classNames(
-      "rounded-2xl border p-3 transition-all",
-      isOver
-        ? "border-black/10 bg-[rgb(245,245,245)] shadow-[0_0_0_1px_rgba(17,24,39,0.08)] dark:border-white/12 dark:bg-white/[0.08] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.06)]"
-        : "glass-panel"
-    )}>
+    <section
+      ref={setNodeRef}
+      className={classNames(
+        "rounded-2xl border p-3 transition-all",
+        isOver
+          ? "border-black/10 bg-[rgb(245,245,245)] shadow-[0_0_0_1px_rgba(17,24,39,0.08)] dark:border-white/12 dark:bg-white/[0.08] dark:shadow-[0_0_0_1px_rgba(255,255,255,0.06)]"
+          : "glass-panel",
+      )}
+    >
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{label}</div>
-          <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>{items.length} {tr("context.items", "items")}</div>
+          <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>
+            {label}
+          </div>
+          <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>
+            {items.length} {tr("context.items", "items")}
+          </div>
         </div>
-        <span className={classNames("rounded-full px-2 py-0.5 text-[11px]", "glass-panel text-[var(--color-text-tertiary)]")}>{items.length}</span>
+        <span
+          className={classNames(
+            "rounded-full px-2 py-0.5 text-[11px]",
+            "glass-panel text-[var(--color-text-tertiary)]",
+          )}
+        >
+          {items.length}
+        </span>
       </div>
       <div className="mt-3">
         <div className="space-y-2">
-          {items.length > 0 ? items.map((task) => (
-            <TaskCard
-              key={task.id}
-              task={task}
-              tr={tr}
-              ui={ui}
-              syncBusy={syncBusy}
-              selectedTaskId={selectedTaskId}
-              onSelectTask={onSelectTask}
-              onMoveTaskToStatus={onMoveTaskToStatus}
-            />
-          )) : (
-            <div className={classNames("rounded-lg border border-dashed px-3 py-5 text-xs", "border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]")}>
+          {items.length > 0 ? (
+            items.map((task) => (
+              <TaskCard
+                key={task.id}
+                task={task}
+                tr={tr}
+                ui={ui}
+                syncBusy={syncBusy}
+                selectedTaskId={selectedTaskId}
+                onSelectTask={onSelectTask}
+                onMoveTaskToStatus={onMoveTaskToStatus}
+              />
+            ))
+          ) : (
+            <div
+              className={classNames(
+                "rounded-lg border border-dashed px-3 py-5 text-xs",
+                "border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]",
+              )}
+            >
               {tr(`context.empty.${columnKey}`, "No tasks here")}
             </div>
           )}
@@ -351,27 +556,53 @@ export function TaskBoard({
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
           <div>
-            <div className={classNames("text-lg font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.tasks", "Tasks")}</div>
-            <div className={classNames("mt-1 text-sm", ui.subtleTextClass)}>{tr("context.taskBoardHint", "Plan shared work here. Open a card only when you need blockers, handoffs, notes, or checklist detail.")}</div>
+            <div
+              className={classNames("text-lg font-semibold", "text-[var(--color-text-primary)]")}
+            >
+              {tr("context.tasks", "Tasks")}
+            </div>
+            <div className={classNames("mt-1 text-sm", ui.subtleTextClass)}>
+              {tr(
+                "context.taskBoardHint",
+                "Plan shared work here. Open a card only when you need blockers, handoffs, notes, or checklist detail.",
+              )}
+            </div>
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => onOpenCreate("planned")} className={ui.buttonPrimaryClass}>{tr("context.newTask", "New task")}</button>
+            <button
+              type="button"
+              onClick={() => onOpenCreate("planned")}
+              className={ui.buttonPrimaryClass}
+            >
+              {tr("context.newTask", "New task")}
+            </button>
           </div>
         </div>
 
-        <div className={classNames("flex flex-col gap-3 border-t pt-4", "border-[var(--glass-border-subtle)]")}>
+        <div
+          className={classNames(
+            "flex flex-col gap-3 border-t pt-4",
+            "border-[var(--glass-border-subtle)]",
+          )}
+        >
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
             <div className="grid flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
               <input
                 value={taskQuery}
                 onChange={(event) => onTaskQueryChange(event.target.value)}
                 className={ui.inputClass}
-                placeholder={tr("context.searchTasks", "Search tasks by title, id, assignee, or outcome")}
+                placeholder={tr(
+                  "context.searchTasks",
+                  "Search tasks by title, id, assignee, or outcome",
+                )}
               />
               <SelectCombobox
                 items={[
                   { value: "__all__", label: tr("context.allAssignees", "All assignees") },
-                  { value: "__unassigned__", label: tr("context.unassignedOnly", "Unassigned only") },
+                  {
+                    value: "__unassigned__",
+                    label: tr("context.unassignedOnly", "Unassigned only"),
+                  },
                   ...assigneeOptions.map((assignee) => ({ value: assignee, label: assignee })),
                 ]}
                 value={assigneeFilter}
@@ -380,7 +611,9 @@ export function TaskBoard({
                 className={classNames(ui.inputClass, "w-full lg:w-[14rem]")}
                 searchable
               />
-              <button type="button" onClick={onClearFilters} className={ui.buttonSecondaryClass}>{tr("context.clearFilters", "Clear filters")}</button>
+              <button type="button" onClick={onClearFilters} className={ui.buttonSecondaryClass}>
+                {tr("context.clearFilters", "Clear filters")}
+              </button>
             </div>
           </div>
 
@@ -388,8 +621,16 @@ export function TaskBoard({
             {[
               ["all", tr("context.all", "All"), Number(tasksSummary.total || 0)],
               ["blocked", tr("context.blocked", "Blocked"), attentionCounts.blocked],
-              ["waiting_user", tr("context.waitingUser", "Waiting user"), attentionCounts.waitingUser],
-              ["handoff", tr("context.pendingHandoffs", "Pending handoffs"), attentionCounts.pendingHandoffs],
+              [
+                "waiting_user",
+                tr("context.waitingUser", "Waiting user"),
+                attentionCounts.waitingUser,
+              ],
+              [
+                "handoff",
+                tr("context.pendingHandoffs", "Pending handoffs"),
+                attentionCounts.pendingHandoffs,
+              ],
               ["unassigned", tr("context.unassigned", "Unassigned"), unassignedCount],
             ].map(([value, label, count]) => (
               <button
@@ -400,7 +641,7 @@ export function TaskBoard({
                   ui.chipBaseClass,
                   taskFilter === value
                     ? "border-black/10 bg-[rgb(35,36,37)] text-white shadow-[0_10px_24px_-20px_rgba(15,23,42,0.3)] dark:border-white/12 dark:bg-white dark:text-[rgb(20,20,22)]"
-                    : ""
+                    : "",
                 )}
               >
                 {label} · {count}
@@ -408,7 +649,9 @@ export function TaskBoard({
             ))}
             {hasArchivedTasks ? (
               <div className="flex items-center gap-2 sm:ml-auto">
-                <span className={classNames("text-sm font-medium", "text-[var(--color-text-primary)]")}>
+                <span
+                  className={classNames("text-sm font-medium", "text-[var(--color-text-primary)]")}
+                >
                   {tr("context.showArchived", "Show archived")}
                 </span>
                 <button
@@ -423,21 +666,45 @@ export function TaskBoard({
                 </button>
               </div>
             ) : null}
-            {syncBusy ? <span className={classNames("text-xs italic", ui.mutedTextClass)}>{tr("context.applyingChanges", "Applying changes…")}</span> : null}
+            {syncBusy ? (
+              <span className={classNames("text-xs italic", ui.mutedTextClass)}>
+                {tr("context.applyingChanges", "Applying changes…")}
+              </span>
+            ) : null}
           </div>
         </div>
 
         {!hasVisibleTasks && hiddenArchivedMatches === 0 ? (
-          <div className={classNames("rounded-xl border border-dashed px-4 py-6 text-sm", "glass-card text-[var(--color-text-muted)]")}>
+          <div
+            className={classNames(
+              "rounded-xl border border-dashed px-4 py-6 text-sm",
+              "glass-card text-[var(--color-text-muted)]",
+            )}
+          >
             {tr("context.noMatchingTasks", "No tasks match the current filters")}
           </div>
         ) : null}
 
         {!hasVisibleTasks && hiddenArchivedMatches > 0 ? (
-          <div className={classNames("rounded-xl border border-dashed px-4 py-5 text-sm", "glass-card text-[var(--color-text-muted)]")}>
-            <div>{tr("context.archivedHiddenMatchesDetail", "{{count}} archived tasks match the current filters. Show archived to review them.", { count: hiddenArchivedMatches })}</div>
+          <div
+            className={classNames(
+              "rounded-xl border border-dashed px-4 py-5 text-sm",
+              "glass-card text-[var(--color-text-muted)]",
+            )}
+          >
+            <div>
+              {tr(
+                "context.archivedHiddenMatchesDetail",
+                "{{count}} archived tasks match the current filters. Show archived to review them.",
+                { count: hiddenArchivedMatches },
+              )}
+            </div>
             <div className="mt-3">
-              <button type="button" onClick={() => onArchivedExpandedChange(true)} className={ui.buttonSecondaryClass}>
+              <button
+                type="button"
+                onClick={() => onArchivedExpandedChange(true)}
+                className={ui.buttonSecondaryClass}
+              >
                 {tr("context.showArchived", "Show archived")}
               </button>
             </div>
@@ -445,16 +712,75 @@ export function TaskBoard({
         ) : null}
 
         <div className="min-w-0">
-          <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd} onDragCancel={onDragCancel}>
-            <div className={classNames("grid gap-3 md:grid-cols-2", archivedExpanded ? "xl:grid-cols-4" : "xl:grid-cols-3")}>
-              <ColumnDropZone columnKey="planned" label={tr("context.planned", "Planned")} items={filteredBoard.planned} tr={tr} ui={ui} syncBusy={syncBusy} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} onMoveTaskToStatus={onMoveTaskToStatus} />
-              <ColumnDropZone columnKey="active" label={tr("context.active", "Active")} items={filteredBoard.active} tr={tr} ui={ui} syncBusy={syncBusy} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} onMoveTaskToStatus={onMoveTaskToStatus} />
-              <ColumnDropZone columnKey="done" label={tr("context.done", "Done")} items={filteredBoard.done} tr={tr} ui={ui} syncBusy={syncBusy} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} onMoveTaskToStatus={onMoveTaskToStatus} />
+          <DndContext
+            sensors={sensors}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
+            onDragCancel={onDragCancel}
+          >
+            <div
+              className={classNames(
+                "grid gap-3 md:grid-cols-2",
+                archivedExpanded ? "xl:grid-cols-4" : "xl:grid-cols-3",
+              )}
+            >
+              <ColumnDropZone
+                columnKey="planned"
+                label={tr("context.planned", "Planned")}
+                items={filteredBoard.planned}
+                tr={tr}
+                ui={ui}
+                syncBusy={syncBusy}
+                selectedTaskId={selectedTaskId}
+                onSelectTask={onSelectTask}
+                onMoveTaskToStatus={onMoveTaskToStatus}
+              />
+              <ColumnDropZone
+                columnKey="active"
+                label={tr("context.active", "Active")}
+                items={filteredBoard.active}
+                tr={tr}
+                ui={ui}
+                syncBusy={syncBusy}
+                selectedTaskId={selectedTaskId}
+                onSelectTask={onSelectTask}
+                onMoveTaskToStatus={onMoveTaskToStatus}
+              />
+              <ColumnDropZone
+                columnKey="done"
+                label={tr("context.done", "Done")}
+                items={filteredBoard.done}
+                tr={tr}
+                ui={ui}
+                syncBusy={syncBusy}
+                selectedTaskId={selectedTaskId}
+                onSelectTask={onSelectTask}
+                onMoveTaskToStatus={onMoveTaskToStatus}
+              />
               {archivedExpanded ? (
-                <ColumnDropZone columnKey="archived" label={tr("context.archived", "Archived")} items={filteredBoard.archived} tr={tr} ui={ui} syncBusy={syncBusy} selectedTaskId={selectedTaskId} onSelectTask={onSelectTask} onMoveTaskToStatus={onMoveTaskToStatus} />
+                <ColumnDropZone
+                  columnKey="archived"
+                  label={tr("context.archived", "Archived")}
+                  items={filteredBoard.archived}
+                  tr={tr}
+                  ui={ui}
+                  syncBusy={syncBusy}
+                  selectedTaskId={selectedTaskId}
+                  onSelectTask={onSelectTask}
+                  onMoveTaskToStatus={onMoveTaskToStatus}
+                />
               ) : null}
             </div>
-            <DragOverlay>{dragTaskId && taskMap.get(dragTaskId) ? <TaskGhostCard task={taskMap.get(dragTaskId)!} tr={tr} mutedTextClass={ui.mutedTextClass} subtleTextClass={ui.subtleTextClass} /> : null}</DragOverlay>
+            <DragOverlay>
+              {dragTaskId && taskMap.get(dragTaskId) ? (
+                <TaskGhostCard
+                  task={taskMap.get(dragTaskId)!}
+                  tr={tr}
+                  mutedTextClass={ui.mutedTextClass}
+                  subtleTextClass={ui.subtleTextClass}
+                />
+              ) : null}
+            </DragOverlay>
           </DndContext>
         </div>
       </div>

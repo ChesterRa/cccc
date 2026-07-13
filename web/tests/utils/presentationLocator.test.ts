@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   canRestorePresentationRefInViewer,
   getPresentationRefViewerScrollTop,
@@ -44,28 +44,25 @@ describe("presentation locator utils", () => {
       }),
     ).toBeNull();
     expect(
-      getPresentationRefViewerScrollTop({
-        kind: "presentation_ref",
-        slot_id: "slot-2",
-      }),
+      getPresentationRefViewerScrollTop({ kind: "presentation_ref", slot_id: "slot-2" }),
     ).toBeNull();
   });
 
   it("auto-opens interactive mode only when a live browser session is already active", () => {
-    expect(
-      shouldAutoOpenInteractivePresentation(true, { active: true, state: "ready" }),
-    ).toBe(true);
-    expect(
-      shouldAutoOpenInteractivePresentation(true, { active: true, state: "starting" }),
-    ).toBe(true);
-    expect(
-      shouldAutoOpenInteractivePresentation(true, { active: true, state: "failed" }),
-    ).toBe(false);
-    expect(
-      shouldAutoOpenInteractivePresentation(true, { active: false, state: "ready" }),
-    ).toBe(false);
-    expect(
-      shouldAutoOpenInteractivePresentation(false, { active: true, state: "ready" }),
-    ).toBe(false);
+    expect(shouldAutoOpenInteractivePresentation(true, { active: true, state: "ready" })).toBe(
+      true,
+    );
+    expect(shouldAutoOpenInteractivePresentation(true, { active: true, state: "starting" })).toBe(
+      true,
+    );
+    expect(shouldAutoOpenInteractivePresentation(true, { active: true, state: "failed" })).toBe(
+      false,
+    );
+    expect(shouldAutoOpenInteractivePresentation(true, { active: false, state: "ready" })).toBe(
+      false,
+    );
+    expect(shouldAutoOpenInteractivePresentation(false, { active: true, state: "ready" })).toBe(
+      false,
+    );
   });
 });

@@ -1,5 +1,12 @@
 import type { StreamingReplySession } from "../../stores/chatStreamingSessions";
-import type { Actor, ChatMessageData, HeadlessPreviewBlock, HeadlessPreviewSession, LedgerEvent, StreamingActivity } from "../../types";
+import type {
+  Actor,
+  ChatMessageData,
+  HeadlessPreviewBlock,
+  HeadlessPreviewSession,
+  LedgerEvent,
+  StreamingActivity,
+} from "../../types";
 import { isHeadlessActorRunner } from "../../utils/headlessRuntimeSupport";
 
 export type LiveWorkPhase = "pending" | "streaming" | "completed" | "failed";
@@ -43,8 +50,15 @@ function resolvePhase(args: {
   pendingPlaceholder: boolean;
   hasRenderableContent: boolean;
 }): LiveWorkPhase {
-  const sessionPhase = String(args.session?.phase || "").trim().toLowerCase();
-  if (sessionPhase === "pending" || sessionPhase === "streaming" || sessionPhase === "completed" || sessionPhase === "failed") {
+  const sessionPhase = String(args.session?.phase || "")
+    .trim()
+    .toLowerCase();
+  if (
+    sessionPhase === "pending" ||
+    sessionPhase === "streaming" ||
+    sessionPhase === "completed" ||
+    sessionPhase === "failed"
+  ) {
     return sessionPhase;
   }
   if (args.event?._streaming) {
@@ -109,24 +123,29 @@ export function buildLiveWorkCards(args: {
     const previewSessions = Array.isArray(args.previewSessionsByActorId?.[actorId])
       ? (args.previewSessionsByActorId?.[actorId] || []).filter(Boolean)
       : [];
-    const preview = previewSessions.length > 0
-      ? previewSessions[previewSessions.length - 1]
-      : args.latestActorPreviewByActorId?.[actorId];
+    const preview =
+      previewSessions.length > 0
+        ? previewSessions[previewSessions.length - 1]
+        : args.latestActorPreviewByActorId?.[actorId];
 
-    const data = event?.data && typeof event.data === "object"
-      ? event.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown }
-      : undefined;
+    const data =
+      event?.data && typeof event.data === "object"
+        ? (event.data as ChatMessageData & {
+            pending_placeholder?: unknown;
+            pending_event_id?: unknown;
+          })
+        : undefined;
     const transcriptBlocks = Array.isArray(preview?.transcriptBlocks)
       ? preview?.transcriptBlocks.filter((block) => String(block?.text || "").trim())
       : [];
-    const text = String(preview?.latestText || args.latestActorTextByActorId?.[actorId] || data?.text || "").trim();
+    const text = String(
+      preview?.latestText || args.latestActorTextByActorId?.[actorId] || data?.text || "",
+    ).trim();
     const activities = Array.isArray(preview?.activities)
       ? preview.activities
-      : (
-        Array.isArray(args.latestActorActivitiesByActorId?.[actorId])
-          ? args.latestActorActivitiesByActorId[actorId]
-          : normalizeActivities(data?.activities)
-      );
+      : Array.isArray(args.latestActorActivitiesByActorId?.[actorId])
+        ? args.latestActorActivitiesByActorId[actorId]
+        : normalizeActivities(data?.activities);
     const pendingPlaceholder = Boolean(data?.pending_placeholder);
     const phase = resolvePhase({
       session,
@@ -134,21 +153,30 @@ export function buildLiveWorkCards(args: {
       pendingPlaceholder,
       hasRenderableContent: Boolean(text) || transcriptBlocks.length > 0 || activities.length > 0,
     });
-    if (!text && transcriptBlocks.length === 0 && activities.length === 0 && phase === "completed") continue;
+    if (!text && transcriptBlocks.length === 0 && activities.length === 0 && phase === "completed")
+      continue;
 
     cards.push({
       actorId,
       actorLabel: String(actor.title || actorId),
       runtime: String(actor.runtime || "headless").trim() || "headless",
       phase,
-      streamPhase: String(preview?.streamPhase || data?.stream_phase || "").trim().toLowerCase(),
+      streamPhase: String(preview?.streamPhase || data?.stream_phase || "")
+        .trim()
+        .toLowerCase(),
       text,
       transcriptBlocks,
       activities,
       previewSessions,
-      updatedAt: String(preview?.updatedAt || event?.ts || "").trim() || normalizeSessionTime(session?.updatedAt),
-      streamId: String(preview?.currentStreamId || data?.stream_id || session?.currentStreamId || "").trim(),
-      pendingEventId: String(preview?.pendingEventId || session?.pendingEventId || data?.pending_event_id || "").trim(),
+      updatedAt:
+        String(preview?.updatedAt || event?.ts || "").trim() ||
+        normalizeSessionTime(session?.updatedAt),
+      streamId: String(
+        preview?.currentStreamId || data?.stream_id || session?.currentStreamId || "",
+      ).trim(),
+      pendingEventId: String(
+        preview?.pendingEventId || session?.pendingEventId || data?.pending_event_id || "",
+      ).trim(),
     });
   }
 

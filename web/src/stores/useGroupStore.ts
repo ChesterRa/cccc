@@ -1,15 +1,7 @@
 // Group state store (groups, actors, events, context, settings).
 import { create } from "zustand";
-import type {
-  GroupMeta,
-  GroupDoc,
-  GroupRuntimeStatus,
-  HeadlessStreamEvent,
-} from "../types";
-import {
-  normalizeReplySessionTimestamp,
-  upsertReplySession,
-} from "./chatStreamingSessions";
+import type { GroupMeta, GroupDoc, GroupRuntimeStatus, HeadlessStreamEvent } from "../types";
+import { normalizeReplySessionTimestamp, upsertReplySession } from "./chatStreamingSessions";
 import {
   buildChatBucketPatch,
   buildPrimedGroupState,
@@ -68,7 +60,10 @@ function stableSerialize(value: unknown): string {
   if (typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map((item) => stableSerialize(item)).join(",")}]`;
   const record = value as Record<string, unknown>;
-  return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`).join(",")}}`;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableSerialize(record[key])}`)
+    .join(",")}}`;
 }
 
 function buildHeadlessEventSignature(event: HeadlessStreamEvent): string {
@@ -130,7 +125,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     const { groupOrder, archivedGroupIds } = get();
     const archivedSet = new Set(archivedGroupIds);
     const subsetIds = groupOrder.filter((id) =>
-      section === "archived" ? archivedSet.has(id) : !archivedSet.has(id)
+      section === "archived" ? archivedSet.has(id) : !archivedSet.has(id),
     );
     const nextOrder = reorderGroupSubset(groupOrder, subsetIds, fromIndex, toIndex);
     if (nextOrder === groupOrder) return;
@@ -171,12 +166,9 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const patch = computeGroupRuntimePatch({
         group,
         groupDoc: isSelected ? groupDoc : null,
-        actors: isSelected ? actors : (cached?.actors || []),
+        actors: isSelected ? actors : cached?.actors || [],
       });
-      return {
-        ...group,
-        ...patch,
-      };
+      return { ...group, ...patch };
     });
   },
   setSelectedGroupId: (id) => {
@@ -223,17 +215,29 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     set((state) => {
       const gid = String(groupId || "").trim();
       if (!gid) return state;
-      const currentGroup = state.groups.find((group) => String(group.group_id || "").trim() === gid) || null;
-      const currentRuntime = currentGroup?.runtime_status
-        || (state.groupDoc?.group_id === gid ? state.groupDoc.runtime_status : null)
-        || null;
+      const currentGroup =
+        state.groups.find((group) => String(group.group_id || "").trim() === gid) || null;
+      const currentRuntime =
+        currentGroup?.runtime_status ||
+        (state.groupDoc?.group_id === gid ? state.groupDoc.runtime_status : null) ||
+        null;
       const nextRuntime: GroupRuntimeStatus = {
-        lifecycle_state: String(patch.lifecycle_state || currentRuntime?.lifecycle_state || currentGroup?.state || "active"),
-        runtime_running: patch.runtime_running ?? currentRuntime?.runtime_running ?? currentGroup?.running ?? false,
+        lifecycle_state: String(
+          patch.lifecycle_state ||
+            currentRuntime?.lifecycle_state ||
+            currentGroup?.state ||
+            "active",
+        ),
+        runtime_running:
+          patch.runtime_running ??
+          currentRuntime?.runtime_running ??
+          currentGroup?.running ??
+          false,
         running_actor_count: Number.isFinite(Number(patch.running_actor_count))
           ? Number(patch.running_actor_count)
           : Number(currentRuntime?.running_actor_count || 0),
-        has_running_foreman: patch.has_running_foreman ?? currentRuntime?.has_running_foreman ?? false,
+        has_running_foreman:
+          patch.has_running_foreman ?? currentRuntime?.has_running_foreman ?? false,
       };
       const nextGroups = patchGroupRuntimeStatus(state.groups, gid, nextRuntime);
       const nextGroupDoc =
@@ -255,7 +259,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       };
     }),
   setEvents: (events, groupId) =>
-    set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { events }) ?? state),
+    set(
+      (state) =>
+        buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { events }) ?? state,
+    ),
   mergeEventStatuses: (statuses, groupId) =>
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
@@ -269,10 +276,16 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           }
         : bucket.chatWindow;
       if (nextEvents === bucket.events && nextChatWindow === bucket.chatWindow) return state;
-      return buildChatBucketPatch(state, gid, { events: nextEvents, chatWindow: nextChatWindow }) ?? state;
+      return (
+        buildChatBucketPatch(state, gid, { events: nextEvents, chatWindow: nextChatWindow }) ??
+        state
+      );
     }),
   setChatWindow: (chatWindow, groupId) =>
-    set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { chatWindow }) ?? state),
+    set(
+      (state) =>
+        buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { chatWindow }) ?? state,
+    ),
   appendEvent: (event, groupId) =>
     set((state) => {
       const gid = resolveChatGroupId(state, groupId);
@@ -281,12 +294,25 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       if (event.id && bucket.events.some((e) => e.id === event.id)) return state;
       const nextEvents = projectCrossGroupReceipts(bucket.events.concat([event]));
       const patch: Partial<GroupChatBucket> = {
-        events: nextEvents.length > MAX_UI_EVENTS ? nextEvents.slice(nextEvents.length - MAX_UI_EVENTS) : nextEvents,
+        events:
+          nextEvents.length > MAX_UI_EVENTS
+            ? nextEvents.slice(nextEvents.length - MAX_UI_EVENTS)
+            : nextEvents,
       };
-      if (String(event.kind || "").trim() === "chat.message" && String(event.by || "").trim() !== "user") {
-        const data = event.data && typeof event.data === "object"
-          ? event.data as { pending_event_id?: unknown; reply_to?: unknown; text?: unknown; activities?: unknown; stream_id?: unknown }
-          : {};
+      if (
+        String(event.kind || "").trim() === "chat.message" &&
+        String(event.by || "").trim() !== "user"
+      ) {
+        const data =
+          event.data && typeof event.data === "object"
+            ? (event.data as {
+                pending_event_id?: unknown;
+                reply_to?: unknown;
+                text?: unknown;
+                activities?: unknown;
+                stream_id?: unknown;
+              })
+            : {};
         const pendingEventId = String(data.pending_event_id || data.reply_to || "").trim();
         const actorId = String(event.by || "").trim();
         if (pendingEventId && actorId) {
@@ -319,17 +345,22 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const currentByActor = bucket.rawHeadlessEventsByActorId || {};
       const currentEvents = Array.isArray(currentByActor[actorId]) ? currentByActor[actorId] : [];
       const nextSignature = buildHeadlessEventSignature(event);
-      const exists = currentEvents.some((candidate) => buildHeadlessEventSignature(candidate) === nextSignature);
+      const exists = currentEvents.some(
+        (candidate) => buildHeadlessEventSignature(candidate) === nextSignature,
+      );
       if (exists) return state;
       const nextEvents = currentEvents.concat([event]);
-      return buildChatBucketPatch(state, gid, {
-        rawHeadlessEventsByActorId: {
-          ...currentByActor,
-          [actorId]: nextEvents.length > HEADLESS_RAW_EVENT_LIMIT
-            ? nextEvents.slice(nextEvents.length - HEADLESS_RAW_EVENT_LIMIT)
-            : nextEvents,
-        },
-      }) ?? state;
+      return (
+        buildChatBucketPatch(state, gid, {
+          rawHeadlessEventsByActorId: {
+            ...currentByActor,
+            [actorId]:
+              nextEvents.length > HEADLESS_RAW_EVENT_LIMIT
+                ? nextEvents.slice(nextEvents.length - HEADLESS_RAW_EVENT_LIMIT)
+                : nextEvents,
+          },
+        }) ?? state
+      );
     }),
   upsertStreamingEvent: (event, groupId) =>
     set((state) => {
@@ -487,9 +518,11 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const existingIds = new Set(bucket.events.map((event) => event.id).filter(Boolean));
       const uniqueNew = newEvents.filter((event) => event.id && !existingIds.has(event.id));
       const merged = [...uniqueNew, ...bucket.events];
-      return buildChatBucketPatch(state, gid, {
-        events: merged.length > MAX_UI_EVENTS ? merged.slice(0, MAX_UI_EVENTS) : merged,
-      }) ?? state;
+      return (
+        buildChatBucketPatch(state, gid, {
+          events: merged.length > MAX_UI_EVENTS ? merged.slice(0, MAX_UI_EVENTS) : merged,
+        }) ?? state
+      );
     }),
   setActors: (actors) =>
     set((state) => {
@@ -510,11 +543,16 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         const actorId = String(actor.id || "").trim();
         if (!targets.has(actorId)) return actor;
         changed = true;
-        const runtime = String(actor.runtime || "").trim().toLowerCase();
-        const workingState = String(actor.effective_working_state || "").trim().toLowerCase();
-        const webModelQueuedCount = runtime === "web_model" && workingState === "working"
-          ? Math.max(0, Number(actor.web_model_queued_count || 0)) + 1
-          : actor.web_model_queued_count;
+        const runtime = String(actor.runtime || "")
+          .trim()
+          .toLowerCase();
+        const workingState = String(actor.effective_working_state || "")
+          .trim()
+          .toLowerCase();
+        const webModelQueuedCount =
+          runtime === "web_model" && workingState === "working"
+            ? Math.max(0, Number(actor.web_model_queued_count || 0)) + 1
+            : actor.web_model_queued_count;
         return {
           ...actor,
           unread_count: Math.max(0, Number(actor.unread_count || 0)) + 1,
@@ -540,21 +578,28 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         let changed = false;
         const next = actors.map((a) => {
           const u = updateById.get(String(a.id || "").trim());
-          const hasRuntimeSessionStatus = !!u && Object.prototype.hasOwnProperty.call(u, "runtime_session_status");
-          const hasRuntimeSessionResumeEligible = !!u && Object.prototype.hasOwnProperty.call(u, "runtime_session_resume_eligible");
-          const hasRuntimeSessionLastResumeError = !!u && Object.prototype.hasOwnProperty.call(u, "runtime_session_last_resume_error");
+          const hasRuntimeSessionStatus =
+            !!u && Object.prototype.hasOwnProperty.call(u, "runtime_session_status");
+          const hasRuntimeSessionResumeEligible =
+            !!u && Object.prototype.hasOwnProperty.call(u, "runtime_session_resume_eligible");
+          const hasRuntimeSessionLastResumeError =
+            !!u && Object.prototype.hasOwnProperty.call(u, "runtime_session_last_resume_error");
           if (
-            u && (
-              a.idle_seconds !== (u.idle_seconds ?? null)
-              || a.running !== u.running
-              || a.effective_working_state !== u.effective_working_state
-              || a.effective_working_reason !== u.effective_working_reason
-              || a.effective_working_updated_at !== (u.effective_working_updated_at ?? null)
-              || a.effective_active_task_id !== (u.effective_active_task_id ?? null)
-              || (hasRuntimeSessionStatus && (a.runtime_session_status ?? null) !== (u.runtime_session_status ?? null))
-              || (hasRuntimeSessionResumeEligible && (a.runtime_session_resume_eligible ?? null) !== (u.runtime_session_resume_eligible ?? null))
-              || (hasRuntimeSessionLastResumeError && (a.runtime_session_last_resume_error ?? null) !== (u.runtime_session_last_resume_error ?? null))
-            )
+            u &&
+            (a.idle_seconds !== (u.idle_seconds ?? null) ||
+              a.running !== u.running ||
+              a.effective_working_state !== u.effective_working_state ||
+              a.effective_working_reason !== u.effective_working_reason ||
+              a.effective_working_updated_at !== (u.effective_working_updated_at ?? null) ||
+              a.effective_active_task_id !== (u.effective_active_task_id ?? null) ||
+              (hasRuntimeSessionStatus &&
+                (a.runtime_session_status ?? null) !== (u.runtime_session_status ?? null)) ||
+              (hasRuntimeSessionResumeEligible &&
+                (a.runtime_session_resume_eligible ?? null) !==
+                  (u.runtime_session_resume_eligible ?? null)) ||
+              (hasRuntimeSessionLastResumeError &&
+                (a.runtime_session_last_resume_error ?? null) !==
+                  (u.runtime_session_last_resume_error ?? null)))
           ) {
             changed = true;
             return {
@@ -565,11 +610,22 @@ export const useGroupStore = create<GroupState>((set, get) => ({
               effective_working_reason: u.effective_working_reason,
               effective_working_updated_at: u.effective_working_updated_at ?? null,
               effective_active_task_id: u.effective_active_task_id ?? null,
-              ...(hasRuntimeSessionStatus ? { runtime_session_status: u.runtime_session_status ?? null } : {}),
-              ...(hasRuntimeSessionResumeEligible ? { runtime_session_resume_eligible: u.runtime_session_resume_eligible ?? null } : {}),
-              ...(hasRuntimeSessionLastResumeError ? { runtime_session_last_resume_error: u.runtime_session_last_resume_error ?? null } : {}),
-              web_model_queued_count: String(a.runtime || "").trim().toLowerCase() === "web_model"
-                && String(u.effective_working_state || "").trim().toLowerCase() !== "working"
+              ...(hasRuntimeSessionStatus
+                ? { runtime_session_status: u.runtime_session_status ?? null }
+                : {}),
+              ...(hasRuntimeSessionResumeEligible
+                ? { runtime_session_resume_eligible: u.runtime_session_resume_eligible ?? null }
+                : {}),
+              ...(hasRuntimeSessionLastResumeError
+                ? { runtime_session_last_resume_error: u.runtime_session_last_resume_error ?? null }
+                : {}),
+              web_model_queued_count:
+                String(a.runtime || "")
+                  .trim()
+                  .toLowerCase() === "web_model" &&
+                String(u.effective_working_state || "")
+                  .trim()
+                  .toLowerCase() !== "working"
                   ? 0
                   : a.web_model_queued_count,
             };
@@ -634,22 +690,27 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
       const eventIndex = bucket.events.findIndex(
-        (event) => event.kind === "chat.message" && String(event.id || "") === eventId
+        (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
       );
       if (eventIndex < 0 && !bucket.chatWindow) return state;
 
-      const liveResult = eventIndex >= 0
-        ? updateReadThroughIndex(bucket.events, eventIndex, actorId)
-        : { next: bucket.events, changed: false };
+      const liveResult =
+        eventIndex >= 0
+          ? updateReadThroughIndex(bucket.events, eventIndex, actorId)
+          : { next: bucket.events, changed: false };
       let nextWindow = bucket.chatWindow;
       let didChange = liveResult.changed;
 
       if (bucket.chatWindow) {
         const windowIndex = bucket.chatWindow.events.findIndex(
-          (event) => event.kind === "chat.message" && String(event.id || "") === eventId
+          (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
         );
         if (windowIndex >= 0) {
-          const windowResult = updateReadThroughIndex(bucket.chatWindow.events, windowIndex, actorId);
+          const windowResult = updateReadThroughIndex(
+            bucket.chatWindow.events,
+            windowIndex,
+            actorId,
+          );
           if (windowResult.changed) {
             nextWindow = { ...bucket.chatWindow, events: windowResult.next };
             didChange = true;
@@ -658,10 +719,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       }
 
       if (!didChange) return state;
-      return buildChatBucketPatch(state, gid, {
-        events: liveResult.next,
-        chatWindow: nextWindow,
-      }) ?? state;
+      return (
+        buildChatBucketPatch(state, gid, { events: liveResult.next, chatWindow: nextWindow }) ??
+        state
+      );
     }),
 
   updateAckStatus: (eventId, actorId, groupId) =>
@@ -670,19 +731,20 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
       const eventIndex = bucket.events.findIndex(
-        (event) => event.kind === "chat.message" && String(event.id || "") === eventId
+        (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
       );
       if (eventIndex < 0 && !bucket.chatWindow) return state;
 
-      const liveResult = eventIndex >= 0
-        ? updateAckAtIndex(bucket.events, eventIndex, actorId)
-        : { next: bucket.events, changed: false };
+      const liveResult =
+        eventIndex >= 0
+          ? updateAckAtIndex(bucket.events, eventIndex, actorId)
+          : { next: bucket.events, changed: false };
       let nextWindow = bucket.chatWindow;
       let didChange = liveResult.changed;
 
       if (bucket.chatWindow) {
         const windowIndex = bucket.chatWindow.events.findIndex(
-          (event) => event.kind === "chat.message" && String(event.id || "") === eventId
+          (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
         );
         if (windowIndex >= 0) {
           const windowResult = updateAckAtIndex(bucket.chatWindow.events, windowIndex, actorId);
@@ -694,10 +756,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       }
 
       if (!didChange) return state;
-      return buildChatBucketPatch(state, gid, {
-        events: liveResult.next,
-        chatWindow: nextWindow,
-      }) ?? state;
+      return (
+        buildChatBucketPatch(state, gid, { events: liveResult.next, chatWindow: nextWindow }) ??
+        state
+      );
     }),
 
   updateReplyStatus: (eventId, actorId, groupId) =>
@@ -706,19 +768,20 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
       const eventIndex = bucket.events.findIndex(
-        (event) => event.kind === "chat.message" && String(event.id || "") === eventId
+        (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
       );
       if (eventIndex < 0 && !bucket.chatWindow) return state;
 
-      const liveResult = eventIndex >= 0
-        ? updateReplyAtIndex(bucket.events, eventIndex, actorId)
-        : { next: bucket.events, changed: false };
+      const liveResult =
+        eventIndex >= 0
+          ? updateReplyAtIndex(bucket.events, eventIndex, actorId)
+          : { next: bucket.events, changed: false };
       let nextWindow = bucket.chatWindow;
       let didChange = liveResult.changed;
 
       if (bucket.chatWindow) {
         const windowIndex = bucket.chatWindow.events.findIndex(
-          (event) => event.kind === "chat.message" && String(event.id || "") === eventId
+          (event) => event.kind === "chat.message" && String(event.id || "") === eventId,
         );
         if (windowIndex >= 0) {
           const windowResult = updateReplyAtIndex(bucket.chatWindow.events, windowIndex, actorId);
@@ -730,16 +793,31 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       }
 
       if (!didChange) return state;
-      return buildChatBucketPatch(state, gid, {
-        events: liveResult.next,
-        chatWindow: nextWindow,
-      }) ?? state;
+      return (
+        buildChatBucketPatch(state, gid, { events: liveResult.next, chatWindow: nextWindow }) ??
+        state
+      );
     }),
   setHasMoreHistory: (value, groupId) =>
-    set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { hasMoreHistory: value }) ?? state),
+    set(
+      (state) =>
+        buildChatBucketPatch(state, resolveChatGroupId(state, groupId), {
+          hasMoreHistory: value,
+        }) ?? state,
+    ),
   setIsLoadingHistory: (value, groupId) =>
-    set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { isLoadingHistory: value }) ?? state),
+    set(
+      (state) =>
+        buildChatBucketPatch(state, resolveChatGroupId(state, groupId), {
+          isLoadingHistory: value,
+        }) ?? state,
+    ),
   setIsChatWindowLoading: (value, groupId) =>
-    set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { isChatWindowLoading: value }) ?? state),
+    set(
+      (state) =>
+        buildChatBucketPatch(state, resolveChatGroupId(state, groupId), {
+          isChatWindowLoading: value,
+        }) ?? state,
+    ),
   ...createGroupStoreAsyncActions(set, get),
 }));

@@ -49,18 +49,12 @@ function closeAdd(state: ActorSecretDraftState): ActorSecretDraftState {
 }
 
 function closeEdit(state: ActorSecretDraftState): ActorSecretDraftState {
-  return {
-    ...state,
-    editingKey: "",
-    editValue: "",
-    editValueTouched: false,
-    showEditValue: false,
-  };
+  return { ...state, editingKey: "", editValue: "", editValueTouched: false, showEditValue: false };
 }
 
 export function actorSecretDraftReducer(
   state: ActorSecretDraftState,
-  action: ActorSecretDraftAction
+  action: ActorSecretDraftAction,
 ): ActorSecretDraftState {
   switch (action.type) {
     case "openAdd":

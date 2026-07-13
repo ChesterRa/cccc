@@ -36,19 +36,30 @@ export interface GroupState {
 
   setGroups: (groups: GroupMeta[]) => void;
   setGroupOrder: (order: string[]) => void;
-  reorderGroupsInSection: (section: "working" | "archived", fromIndex: number, toIndex: number) => void;
+  reorderGroupsInSection: (
+    section: "working" | "archived",
+    fromIndex: number,
+    toIndex: number,
+  ) => void;
   archiveGroup: (groupId: string) => void;
   restoreGroup: (groupId: string) => void;
   getOrderedGroups: () => GroupMeta[];
   setSelectedGroupId: (id: string) => void;
   setGroupDoc: (doc: GroupDoc | null) => void;
   setEvents: (events: LedgerEvent[], groupId?: string) => void;
-  mergeEventStatuses: (statuses: Record<string, LedgerEventStatusPayload>, groupId?: string) => void;
+  mergeEventStatuses: (
+    statuses: Record<string, LedgerEventStatusPayload>,
+    groupId?: string,
+  ) => void;
   appendEvent: (event: LedgerEvent, groupId?: string) => void;
   appendHeadlessEvent: (event: HeadlessStreamEvent, groupId?: string) => void;
   upsertStreamingEvent: (event: LedgerEvent, groupId?: string) => void;
   upsertStreamingText: (streamId: string, text: string, groupId?: string) => void;
-  upsertStreamingActivities: (streamId: string, activities: StreamingActivity[], groupId?: string) => void;
+  upsertStreamingActivities: (
+    streamId: string,
+    activities: StreamingActivity[],
+    groupId?: string,
+  ) => void;
   upsertStreamingActivity: (
     actorId: string,
     match: { pendingEventId?: string; streamId?: string },
@@ -57,7 +68,11 @@ export interface GroupState {
   ) => void;
   removeStreamingEvent: (streamId: string, groupId?: string) => void;
   removeStreamingEventsByPrefix: (streamIdPrefix: string, groupId?: string) => void;
-  promoteStreamingEventsByPrefix: (streamIdPrefix: string, pendingEventId: string, groupId?: string) => void;
+  promoteStreamingEventsByPrefix: (
+    streamIdPrefix: string,
+    pendingEventId: string,
+    groupId?: string,
+  ) => void;
   promoteStreamingEventToStream: (
     actorId: string,
     pendingEventId: string,
@@ -87,18 +102,20 @@ export interface GroupState {
   setActors: (actors: Actor[]) => void;
   updateGroupRuntimeState: (groupId: string, patch: Partial<GroupRuntimeStatus>) => void;
   incrementActorUnread: (actorIds: string[]) => void;
-  updateActorActivity: (updates: Array<{
-    id: string;
-    idle_seconds?: number | null;
-    running: boolean;
-    effective_working_state?: string;
-    effective_working_reason?: string;
-    effective_working_updated_at?: string | null;
-    effective_active_task_id?: string | null;
-    runtime_session_status?: string | null;
-    runtime_session_resume_eligible?: boolean | null;
-    runtime_session_last_resume_error?: string | null;
-  }>) => void;
+  updateActorActivity: (
+    updates: Array<{
+      id: string;
+      idle_seconds?: number | null;
+      running: boolean;
+      effective_working_state?: string;
+      effective_working_reason?: string;
+      effective_working_updated_at?: string | null;
+      effective_active_task_id?: string | null;
+      runtime_session_status?: string | null;
+      runtime_session_resume_eligible?: boolean | null;
+      runtime_session_last_resume_error?: string | null;
+    }>,
+  ) => void;
   setGroupContext: (ctx: GroupContext | null) => void;
   setGroupSettings: (settings: GroupSettings | null) => void;
   setGroupPresentation: (presentation: GroupPresentation | null) => void;
@@ -123,7 +140,10 @@ export interface GroupState {
 }
 
 export type GroupStoreSet = (
-  partial: GroupState | Partial<GroupState> | ((state: GroupState) => GroupState | Partial<GroupState>),
+  partial:
+    | GroupState
+    | Partial<GroupState>
+    | ((state: GroupState) => GroupState | Partial<GroupState>),
 ) => void;
 
 export type GroupStoreGet = () => GroupState;

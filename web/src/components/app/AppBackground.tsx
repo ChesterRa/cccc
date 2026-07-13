@@ -1,6 +1,4 @@
-type AppBackgroundProps = {
-  isDark: boolean;
-};
+type AppBackgroundProps = { isDark: boolean };
 
 export function AppBackground({ isDark }: AppBackgroundProps) {
   return (
@@ -35,10 +33,9 @@ export function AppBackground({ isDark }: AppBackgroundProps) {
       <div
         className="pointer-events-none absolute inset-0 hidden md:block"
         style={{
-          backgroundImage:
-            isDark
-              ? `radial-gradient(circle at top, rgba(255,255,255,0.035), transparent 52%), linear-gradient(180deg, rgba(17,17,19,0.82) 0%, rgba(10,10,11,0.92) 100%), url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`
-              : `linear-gradient(180deg, rgba(252,250,246,0.96) 0%, rgba(247,245,241,0.92) 100%), url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
+          backgroundImage: isDark
+            ? `radial-gradient(circle at top, rgba(255,255,255,0.035), transparent 52%), linear-gradient(180deg, rgba(17,17,19,0.82) 0%, rgba(10,10,11,0.92) 100%), url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`
+            : `linear-gradient(180deg, rgba(252,250,246,0.96) 0%, rgba(247,245,241,0.92) 100%), url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
           backgroundRepeat: "no-repeat, no-repeat, repeat",
           backgroundSize: "cover, cover, 256px 256px",
           opacity: isDark ? 0.024 : 0.02,

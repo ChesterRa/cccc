@@ -1,9 +1,7 @@
 export function getComposerActionVisibility(isSmallScreen: boolean): {
   showMessageModeSelector: boolean;
 } {
-  return {
-    showMessageModeSelector: !isSmallScreen,
-  };
+  return { showMessageModeSelector: !isSmallScreen };
 }
 
 export function getComposerCanSend({

@@ -25,7 +25,9 @@ function groupCandidateTokens(group: GroupMeta): string[] {
     String(group.group_id || "").trim(),
     String(group.title || "").trim(),
     String(group.topic || "").trim(),
-  ].filter((value, index, list): value is string => Boolean(value) && list.indexOf(value) === index);
+  ].filter(
+    (value, index, list): value is string => Boolean(value) && list.indexOf(value) === index,
+  );
 }
 
 function isTokenBoundary(ch: string): boolean {
@@ -45,7 +47,12 @@ export function createComposerGroupMentionToken({
   const cleanToken = cleanTokenText(token);
   const safeStart = Number.isFinite(start) ? Math.max(0, Math.floor(start)) : 0;
   if (!cleanGroupId || !cleanToken) return null;
-  return { groupId: cleanGroupId, token: cleanToken, start: safeStart, end: safeStart + cleanToken.length };
+  return {
+    groupId: cleanGroupId,
+    token: cleanToken,
+    start: safeStart,
+    end: safeStart + cleanToken.length,
+  };
 }
 
 export function createComposerAgentMentionToken({
@@ -84,7 +91,11 @@ export function pruneComposerGroupMentionTokens({
     const start = Number.isFinite(token.start) ? Math.max(0, Math.floor(token.start)) : -1;
     const end = Number.isFinite(token.end) ? Math.max(start, Math.floor(token.end)) : -1;
     if (start < 0 || end <= start || end > source.length) return false;
-    return source.slice(start, end) === token.token && isTokenBoundary(source[start - 1] || "") && isTokenBoundary(source[end] || "");
+    return (
+      source.slice(start, end) === token.token &&
+      isTokenBoundary(source[start - 1] || "") &&
+      isTokenBoundary(source[end] || "")
+    );
   });
 }
 
@@ -100,7 +111,11 @@ export function pruneComposerAgentMentionTokens({
     const start = Number.isFinite(token.start) ? Math.max(0, Math.floor(token.start)) : -1;
     const end = Number.isFinite(token.end) ? Math.max(start, Math.floor(token.end)) : -1;
     if (start < 0 || end <= start || end > source.length) return false;
-    return source.slice(start, end) === token.token && isTokenBoundary(source[start - 1] || "") && isTokenBoundary(source[end] || "");
+    return (
+      source.slice(start, end) === token.token &&
+      isTokenBoundary(source[start - 1] || "") &&
+      isTokenBoundary(source[end] || "")
+    );
   });
 }
 
@@ -120,7 +135,9 @@ export function resolveSelectedComposerGroupMention({
   let best: ComposerGroupMentionToken | null = null;
   for (const token of liveTokens) {
     if (!token.groupId || token.groupId === selected) continue;
-    const group = (groups || []).find((item) => String(item.group_id || "").trim() === token.groupId);
+    const group = (groups || []).find(
+      (item) => String(item.group_id || "").trim() === token.groupId,
+    );
     if (!group) continue;
     if (!groupCandidateTokens(group).includes(token.token.replace(/^#/, ""))) continue;
     if (!best || token.start >= best.start) best = token;
@@ -191,7 +208,12 @@ export function buildComposerGroupBridgeRouteRefs({
       remote_peer_id: String(group.group_bridge_remote_peer_id || "").trim(),
       trust_id: String(group.group_bridge_trust_id || "").trim(),
       access_level: accessLevel,
-      recipient_identifier: formatRecipientIdentifier({ kind: "remote_group", label, id: groupId, accessLevel }),
+      recipient_identifier: formatRecipientIdentifier({
+        kind: "remote_group",
+        label,
+        id: groupId,
+        accessLevel,
+      }),
       token: token.token,
     });
   }

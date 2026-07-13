@@ -4,13 +4,7 @@ import { useGroupStore, useUIStore } from "../stores";
 import * as api from "../services/api";
 
 export function useGroupActions() {
-  const {
-    selectedGroupId,
-    groupDoc,
-    setGroupDoc,
-    refreshGroups,
-    refreshActors,
-  } = useGroupStore();
+  const { selectedGroupId, groupDoc, setGroupDoc, refreshGroups, refreshActors } = useGroupStore();
 
   const { setBusy, showError } = useUIStore();
 
@@ -59,17 +53,21 @@ export function useGroupActions() {
           showError(`${resp.error.code}: ${resp.error.message}`);
           return;
         }
-        setGroupDoc(groupDoc ? {
-          ...groupDoc,
-          state: s,
-          runtime_status: {
-            runtime_running: groupDoc.runtime_status?.runtime_running ?? false,
-            running_actor_count: groupDoc.runtime_status?.running_actor_count ?? 0,
-            has_running_foreman: groupDoc.runtime_status?.has_running_foreman ?? false,
-            ...groupDoc.runtime_status,
-            lifecycle_state: s,
-          },
-        } : null);
+        setGroupDoc(
+          groupDoc
+            ? {
+                ...groupDoc,
+                state: s,
+                runtime_status: {
+                  runtime_running: groupDoc.runtime_status?.runtime_running ?? false,
+                  running_actor_count: groupDoc.runtime_status?.running_actor_count ?? 0,
+                  has_running_foreman: groupDoc.runtime_status?.has_running_foreman ?? false,
+                  ...groupDoc.runtime_status,
+                  lifecycle_state: s,
+                },
+              }
+            : null,
+        );
         // When resuming to active and no actors are running, also start
         // the group so processes get relaunched (not just the state flag).
         if (s === "active" && groupDoc && !groupDoc.running) {
@@ -84,12 +82,8 @@ export function useGroupActions() {
         setBusy("");
       }
     },
-    [selectedGroupId, groupDoc, setBusy, showError, setGroupDoc, refreshGroups, refreshActors]
+    [selectedGroupId, groupDoc, setBusy, showError, setGroupDoc, refreshGroups, refreshActors],
   );
 
-  return {
-    handleStartGroup,
-    handleStopGroup,
-    handleSetGroupState,
-  };
+  return { handleStartGroup, handleStopGroup, handleSetGroupState };
 }

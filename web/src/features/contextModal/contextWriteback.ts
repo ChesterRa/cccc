@@ -1,13 +1,11 @@
 import type { ApiResponse } from "../../services/api";
 
 function makeReadbackErrorResponse<T>(error: unknown): ApiResponse<T> {
-  const message = error instanceof Error ? error.message : String(error || "context readback failed");
+  const message =
+    error instanceof Error ? error.message : String(error || "context readback failed");
   return {
     ok: false,
-    error: {
-      code: "context_readback_failed",
-      message: message || "context readback failed",
-    },
+    error: { code: "context_readback_failed", message: message || "context readback failed" },
   };
 }
 

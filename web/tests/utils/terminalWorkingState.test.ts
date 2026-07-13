@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   appendTerminalSignalBuffer,
   getActorDisplayWorkingState,
@@ -10,21 +10,27 @@ import {
 describe("terminalWorkingState", () => {
   it("keeps PTY actors idle without a visible working banner", () => {
     expect(
-      getActorDisplayWorkingState({
-        id: "peer-1",
-        title: "Peer 1",
-        enabled: true,
-        running: true,
-        runner: "pty",
-        runner_effective: "pty",
-        effective_working_state: "idle",
-        idle_seconds: 0.8,
-      }, null),
+      getActorDisplayWorkingState(
+        {
+          id: "peer-1",
+          title: "Peer 1",
+          enabled: true,
+          running: true,
+          runner: "pty",
+          runner_effective: "pty",
+          effective_working_state: "idle",
+          idle_seconds: 0.8,
+        },
+        null,
+      ),
     ).toBe("idle");
   });
 
   it("detects codex-style prompt lines after ansi stripping", () => {
-    const buffer = appendTerminalSignalBuffer("", "\u001b[32m> Improve documentation in @filename\u001b[0m\n");
+    const buffer = appendTerminalSignalBuffer(
+      "",
+      "\u001b[32m> Improve documentation in @filename\u001b[0m\n",
+    );
     expect(isTerminalPromptVisible(buffer)).toBe(true);
   });
 
@@ -115,12 +121,7 @@ describe("terminalWorkingState", () => {
   it("lets terminal prompt override stale backend working state for pty actors", () => {
     expect(
       getActorDisplayWorkingState(
-        {
-          id: "peer-1",
-          running: true,
-          runner: "pty",
-          effective_working_state: "working",
-        },
+        { id: "peer-1", running: true, runner: "pty", effective_working_state: "working" },
         { kind: "idle_prompt", updatedAt: Date.now() },
       ),
     ).toBe("idle");
@@ -129,12 +130,7 @@ describe("terminalWorkingState", () => {
   it("does not keep a stale idle prompt elevated forever", () => {
     expect(
       getActorDisplayWorkingState(
-        {
-          id: "peer-1",
-          running: true,
-          runner: "pty",
-          effective_working_state: "waiting",
-        },
+        { id: "peer-1", running: true, runner: "pty", effective_working_state: "waiting" },
         { kind: "idle_prompt", updatedAt: 10_000 },
         14_500,
       ),
@@ -144,12 +140,7 @@ describe("terminalWorkingState", () => {
   it("temporarily upgrades backend idle to working when fresh terminal output is flowing", () => {
     expect(
       getActorDisplayWorkingState(
-        {
-          id: "peer-1",
-          running: true,
-          runner: "pty",
-          effective_working_state: "idle",
-        },
+        { id: "peer-1", running: true, runner: "pty", effective_working_state: "idle" },
         { kind: "working_output", updatedAt: 10_000 },
         12_000,
       ),
@@ -159,12 +150,7 @@ describe("terminalWorkingState", () => {
   it("does not keep working-output overrides forever", () => {
     expect(
       getActorDisplayWorkingState(
-        {
-          id: "peer-1",
-          running: true,
-          runner: "pty",
-          effective_working_state: "idle",
-        },
+        { id: "peer-1", running: true, runner: "pty", effective_working_state: "idle" },
         { kind: "working_output", updatedAt: 10_000 },
         20_500,
       ),

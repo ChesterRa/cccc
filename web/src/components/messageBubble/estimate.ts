@@ -37,15 +37,20 @@ function getEstimatedAttachmentHeight(attachments: MessageAttachment[]): number 
   return total;
 }
 
-export function estimateMessageRowHeight(message: LedgerEvent | undefined, options?: { collapseHeader?: boolean }): number {
+export function estimateMessageRowHeight(
+  message: LedgerEvent | undefined,
+  options?: { collapseHeader?: boolean },
+): number {
   if (!message) return 100;
 
-  const data = message.data as {
-    text?: string;
-    attachments?: MessageAttachment[];
-    quote_text?: string;
-    activities?: Array<{ kind?: string; summary?: string }>;
-  } | undefined;
+  const data = message.data as
+    | {
+        text?: string;
+        attachments?: MessageAttachment[];
+        quote_text?: string;
+        activities?: Array<{ kind?: string; summary?: string }>;
+      }
+    | undefined;
 
   const text = String(data?.text || "");
   const attachments = Array.isArray(data?.attachments) ? data.attachments : [];

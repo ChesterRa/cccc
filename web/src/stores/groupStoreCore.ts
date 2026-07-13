@@ -101,7 +101,10 @@ export const refreshActorsQueued = new Map<string, boolean>();
 export const warmGroupInFlight = new Set<string>();
 export const loadGroupInFlight = new Map<string, Promise<void>>();
 export let loadGroupToken = 0;
-export const deferredUnreadRefreshTimers = new Map<string, ReturnType<typeof globalThis.setTimeout>>();
+export const deferredUnreadRefreshTimers = new Map<
+  string,
+  ReturnType<typeof globalThis.setTimeout>
+>();
 export const settingsRequestEpochByGroup = new Map<string, number>();
 export const presentationRequestEpochByGroup = new Map<string, number>();
 export const chatWindowRequestEpochByGroup = new Map<string, number>();
@@ -122,7 +125,9 @@ export function incrementLoadGroupToken(): number {
   return loadGroupToken;
 }
 
-export function shouldDeferInitialTailRefresh(bucket: Pick<GroupChatBucket, "events"> | null | undefined): boolean {
+export function shouldDeferInitialTailRefresh(
+  bucket: Pick<GroupChatBucket, "events"> | null | undefined,
+): boolean {
   return Array.isArray(bucket?.events) && bucket.events.length > 0;
 }
 
@@ -222,7 +227,12 @@ export function mergeArchivedGroupIds(storedIds: string[], groups: GroupMeta[]):
   return normalizeGroupIdList(storedIds).filter((id) => currentIds.has(id));
 }
 
-export function reorderGroupSubset(globalOrder: string[], subsetIds: string[], fromIndex: number, toIndex: number): string[] {
+export function reorderGroupSubset(
+  globalOrder: string[],
+  subsetIds: string[],
+  fromIndex: number,
+  toIndex: number,
+): string[] {
   if (fromIndex === toIndex) return globalOrder;
   if (fromIndex < 0 || toIndex < 0) return globalOrder;
   if (fromIndex >= subsetIds.length || toIndex >= subsetIds.length) return globalOrder;
@@ -250,7 +260,11 @@ export function beginGroupRequestEpoch(map: Map<string, number>, groupId: string
   return next;
 }
 
-export function isLatestGroupRequestEpoch(map: Map<string, number>, groupId: string, epoch: number): boolean {
+export function isLatestGroupRequestEpoch(
+  map: Map<string, number>,
+  groupId: string,
+  epoch: number,
+): boolean {
   const gid = String(groupId || "").trim();
   if (!gid || epoch <= 0) return false;
   return Number(map.get(gid) || 0) === epoch;
@@ -284,31 +298,33 @@ function cloneGroupSettings(settings: GroupSettings | null | undefined): GroupSe
   return settings ? { ...settings } : null;
 }
 
-function cloneGroupPresentation(presentation: GroupPresentation | null | undefined): GroupPresentation | null {
+function cloneGroupPresentation(
+  presentation: GroupPresentation | null | undefined,
+): GroupPresentation | null {
   if (!presentation) return null;
   return {
     ...presentation,
     slots: Array.isArray(presentation.slots)
       ? presentation.slots.map((slot) => ({
-        ...slot,
-        card: slot.card
-          ? {
-            ...slot.card,
-            content: {
-              ...(slot.card.content || {}),
-              table: slot.card.content?.table
-                ? {
-                  ...slot.card.content.table,
-                  columns: [...(slot.card.content.table.columns || [])],
-                  rows: Array.isArray(slot.card.content.table.rows)
-                    ? slot.card.content.table.rows.map((row) => [...row])
-                    : [],
-                }
-                : null,
-            },
-          }
-          : null,
-      }))
+          ...slot,
+          card: slot.card
+            ? {
+                ...slot.card,
+                content: {
+                  ...(slot.card.content || {}),
+                  table: slot.card.content?.table
+                    ? {
+                        ...slot.card.content.table,
+                        columns: [...(slot.card.content.table.columns || [])],
+                        rows: Array.isArray(slot.card.content.table.rows)
+                          ? slot.card.content.table.rows.map((row) => [...row])
+                          : [],
+                      }
+                    : null,
+                },
+              }
+            : null,
+        }))
       : [],
   };
 }
@@ -331,19 +347,33 @@ export function getCachedGroupView(groupId: string): GroupViewSnapshot | null {
   };
 }
 
-export function saveGroupView(groupId: string, patch: Partial<Omit<GroupViewSnapshot, "cachedAt">>): void {
+export function saveGroupView(
+  groupId: string,
+  patch: Partial<Omit<GroupViewSnapshot, "cachedAt">>,
+): void {
   const gid = String(groupId || "").trim();
   if (!gid) return;
 
   const prev = groupViewCache.get(gid);
   groupViewCache.set(gid, {
-    groupDoc: patch.groupDoc !== undefined ? cloneGroupDoc(patch.groupDoc) : cloneGroupDoc(prev?.groupDoc),
+    groupDoc:
+      patch.groupDoc !== undefined ? cloneGroupDoc(patch.groupDoc) : cloneGroupDoc(prev?.groupDoc),
     events: patch.events !== undefined ? cloneEvents(patch.events) : cloneEvents(prev?.events),
     actors: patch.actors !== undefined ? cloneActors(patch.actors) : cloneActors(prev?.actors),
-    groupContext: patch.groupContext !== undefined ? cloneGroupContext(patch.groupContext) : cloneGroupContext(prev?.groupContext),
-    groupSettings: patch.groupSettings !== undefined ? cloneGroupSettings(patch.groupSettings) : cloneGroupSettings(prev?.groupSettings),
-    groupPresentation: patch.groupPresentation !== undefined ? cloneGroupPresentation(patch.groupPresentation) : cloneGroupPresentation(prev?.groupPresentation),
-    hasMoreHistory: patch.hasMoreHistory !== undefined ? !!patch.hasMoreHistory : !!prev?.hasMoreHistory,
+    groupContext:
+      patch.groupContext !== undefined
+        ? cloneGroupContext(patch.groupContext)
+        : cloneGroupContext(prev?.groupContext),
+    groupSettings:
+      patch.groupSettings !== undefined
+        ? cloneGroupSettings(patch.groupSettings)
+        : cloneGroupSettings(prev?.groupSettings),
+    groupPresentation:
+      patch.groupPresentation !== undefined
+        ? cloneGroupPresentation(patch.groupPresentation)
+        : cloneGroupPresentation(prev?.groupPresentation),
+    hasMoreHistory:
+      patch.hasMoreHistory !== undefined ? !!patch.hasMoreHistory : !!prev?.hasMoreHistory,
     cachedAt: Date.now(),
   });
 }
@@ -369,7 +399,8 @@ export function scheduleDeferredUnreadRefresh(groupId: string, task: () => void)
 }
 
 export function mergeActorUnreadCounts(nextActors: Actor[], previousActors: Actor[]): Actor[] {
-  if (!nextActors.length || !previousActors.length) return reuseEqualActors(nextActors, previousActors);
+  if (!nextActors.length || !previousActors.length)
+    return reuseEqualActors(nextActors, previousActors);
   const unreadByActorId = new Map(
     previousActors
       .filter((actor) => typeof actor?.unread_count === "number")
@@ -403,7 +434,10 @@ function actorValueFingerprint(value: unknown): string {
 function actorShallowEqual(a: Actor, b: Actor): boolean {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   for (const key of keys) {
-    if (actorValueFingerprint((a as Record<string, unknown>)[key]) !== actorValueFingerprint((b as Record<string, unknown>)[key])) {
+    if (
+      actorValueFingerprint((a as Record<string, unknown>)[key]) !==
+      actorValueFingerprint((b as Record<string, unknown>)[key])
+    ) {
       return false;
     }
   }
@@ -426,7 +460,8 @@ export function saveCurrentViewSnapshot(groupId: string, state: GroupStateSnapsh
   const bucket = state.chatByGroup[gid] || EMPTY_CHAT_BUCKET;
   const shellDoc = buildShellGroupDoc(gid, state.groups, null);
   saveGroupView(gid, {
-    groupDoc: state.groupDoc && String(state.groupDoc.group_id || "") === gid ? state.groupDoc : shellDoc,
+    groupDoc:
+      state.groupDoc && String(state.groupDoc.group_id || "") === gid ? state.groupDoc : shellDoc,
     events: bucket.events,
     actors: state.actors,
     groupContext: state.groupContext,
@@ -436,7 +471,10 @@ export function saveCurrentViewSnapshot(groupId: string, state: GroupStateSnapsh
   });
 }
 
-export function getGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>, groupId: string): GroupChatBucket {
+export function getGroupChatBucket(
+  chatByGroup: Record<string, GroupChatBucket>,
+  groupId: string,
+): GroupChatBucket {
   const gid = String(groupId || "").trim();
   if (!gid) return EMPTY_CHAT_BUCKET;
   const stored = chatByGroup[gid];
@@ -448,9 +486,14 @@ export function getGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>,
       replySessionsByPendingEventId: stored.replySessionsByPendingEventId || {},
       pendingEventIdByStreamId: stored.pendingEventIdByStreamId || {},
       rawHeadlessEventsByActorId: stored.rawHeadlessEventsByActorId || {},
-      previewSessionsByActorId: stored.previewSessionsByActorId || Object.fromEntries(
-        Object.entries(stored.latestActorPreviewByActorId || {}).map(([actorId, preview]) => [actorId, [preview]])
-      ),
+      previewSessionsByActorId:
+        stored.previewSessionsByActorId ||
+        Object.fromEntries(
+          Object.entries(stored.latestActorPreviewByActorId || {}).map(([actorId, preview]) => [
+            actorId,
+            [preview],
+          ]),
+        ),
       latestActorPreviewByActorId: stored.latestActorPreviewByActorId || {},
       latestActorTextByActorId: stored.latestActorTextByActorId || {},
       latestActorActivitiesByActorId: stored.latestActorActivitiesByActorId || {},
@@ -477,13 +520,13 @@ export function getGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>,
   };
 }
 
-export function ensureGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>, groupId: string): Record<string, GroupChatBucket> {
+export function ensureGroupChatBucket(
+  chatByGroup: Record<string, GroupChatBucket>,
+  groupId: string,
+): Record<string, GroupChatBucket> {
   const gid = String(groupId || "").trim();
   if (!gid || chatByGroup[gid]) return chatByGroup;
-  return {
-    ...chatByGroup,
-    [gid]: getGroupChatBucket(chatByGroup, gid),
-  };
+  return { ...chatByGroup, [gid]: getGroupChatBucket(chatByGroup, gid) };
 }
 
 export function selectChatBucketState(
@@ -513,22 +556,24 @@ function deriveHeadlessPreviewIndex(
   const latestActorPreviewByActorId: Record<string, HeadlessPreviewSession> = {};
   const latestActorTextByActorId: Record<string, string> = {};
   const latestActorActivitiesByActorId: Record<string, StreamingActivity[]> = {};
-  const fallbackLatestByActorId = new Map<string, {
-    updatedAt: string;
-    text: string;
-    activities: StreamingActivity[];
-  }>();
+  const fallbackLatestByActorId = new Map<
+    string,
+    { updatedAt: string; text: string; activities: StreamingActivity[] }
+  >();
 
-  const sessionEntriesByPendingEventId = new Map<string, Array<{
-    actorId: string;
-    streamId: string;
-    streamPhase: string;
-    updatedAt: string;
-    text: string;
-    activities: StreamingActivity[];
-    completed: boolean;
-    transient: boolean;
-  }>>();
+  const sessionEntriesByPendingEventId = new Map<
+    string,
+    Array<{
+      actorId: string;
+      streamId: string;
+      streamPhase: string;
+      updatedAt: string;
+      text: string;
+      activities: StreamingActivity[];
+      completed: boolean;
+      transient: boolean;
+    }>
+  >();
   const pendingEventIdsByActorId = new Map<string, Set<string>>();
 
   const noteActorSession = (actorId: string, pendingEventId: string) => {
@@ -540,9 +585,14 @@ function deriveHeadlessPreviewIndex(
     pendingEventIdsByActorId.set(actorId, new Set([pendingEventId]));
   };
 
-  const findPreviousPreview = (actorId: string, pendingEventId: string): HeadlessPreviewSession | undefined => {
+  const findPreviousPreview = (
+    actorId: string,
+    pendingEventId: string,
+  ): HeadlessPreviewSession | undefined => {
     const previousSessions = prevPreviewSessionsByActorId[actorId] || [];
-    return previousSessions.find((session) => String(session.pendingEventId || "").trim() === pendingEventId);
+    return previousSessions.find(
+      (session) => String(session.pendingEventId || "").trim() === pendingEventId,
+    );
   };
 
   const normalizePreviewBlockId = (streamId: string, streamPhase: string): string => {
@@ -574,7 +624,10 @@ function deriveHeadlessPreviewIndex(
     previousActivities: StreamingActivity[],
     nextActivities: StreamingActivity[],
   ): StreamingActivity[] => {
-    return dedupeStreamingActivities([...(previousActivities || []), ...(nextActivities || [])]).sort((left, right) => {
+    return dedupeStreamingActivities([
+      ...(previousActivities || []),
+      ...(nextActivities || []),
+    ]).sort((left, right) => {
       const leftTs = String(left.ts || "").trim();
       const rightTs = String(right.ts || "").trim();
       if (leftTs && rightTs && leftTs !== rightTs) return leftTs.localeCompare(rightTs);
@@ -586,33 +639,32 @@ function deriveHeadlessPreviewIndex(
     if (String(event.kind || "").trim() !== "chat.message") continue;
     const actorId = String(event.by || "").trim();
     if (!actorId || actorId === "user") continue;
-    const data = event.data && typeof event.data === "object"
-      ? event.data as {
-        text?: unknown;
-        stream_id?: unknown;
-        activities?: unknown;
-        pending_event_id?: unknown;
-        stream_phase?: unknown;
-        transient_stream?: unknown;
-      }
-      : undefined;
+    const data =
+      event.data && typeof event.data === "object"
+        ? (event.data as {
+            text?: unknown;
+            stream_id?: unknown;
+            activities?: unknown;
+            pending_event_id?: unknown;
+            stream_phase?: unknown;
+            transient_stream?: unknown;
+          })
+        : undefined;
     const streamId = String(data?.stream_id || "").trim();
     const pendingEventId = String(data?.pending_event_id || "").trim();
     const liveText = streamId ? String(streamingTextByStreamId[streamId] || "").trim() : "";
     const eventText = String(data?.text || "").trim();
     const text = liveText || eventText;
-    const liveActivities = streamId ? (streamingActivitiesByStreamId[streamId] || []) : [];
-    const fallbackActivities = Array.isArray(data?.activities) ? data.activities.filter(Boolean) as StreamingActivity[] : [];
+    const liveActivities = streamId ? streamingActivitiesByStreamId[streamId] || [] : [];
+    const fallbackActivities = Array.isArray(data?.activities)
+      ? (data.activities.filter(Boolean) as StreamingActivity[])
+      : [];
     const activities = liveActivities.length > 0 ? liveActivities : fallbackActivities;
     if (!pendingEventId) {
       const candidateUpdatedAt = String(event.ts || "").trim();
       const previousFallback = fallbackLatestByActorId.get(actorId);
       if (!previousFallback || candidateUpdatedAt >= previousFallback.updatedAt) {
-        fallbackLatestByActorId.set(actorId, {
-          updatedAt: candidateUpdatedAt,
-          text,
-          activities,
-        });
+        fallbackLatestByActorId.set(actorId, { updatedAt: candidateUpdatedAt, text, activities });
       }
       continue;
     }
@@ -623,7 +675,9 @@ function deriveHeadlessPreviewIndex(
     const nextEntry = {
       actorId,
       streamId,
-      streamPhase: String(data?.stream_phase || "").trim().toLowerCase(),
+      streamPhase: String(data?.stream_phase || "")
+        .trim()
+        .toLowerCase(),
       updatedAt: String(event.ts || "").trim(),
       text,
       activities,
@@ -635,7 +689,6 @@ function deriveHeadlessPreviewIndex(
     } else {
       sessionEntriesByPendingEventId.set(pendingEventId, [nextEntry]);
     }
-
   }
 
   for (const session of Object.values(replySessionsByPendingEventId || {})) {
@@ -655,41 +708,54 @@ function deriveHeadlessPreviewIndex(
         const previousActivities = previousPreview?.activities || [];
         const nextBlocks = entries
           .filter((entry) => String(entry.text || "").trim())
-          .map((entry) => ({
-            id: normalizePreviewBlockId(entry.streamId || pendingEventId, entry.streamPhase),
-            streamId: entry.streamId,
-            streamPhase: entry.streamPhase,
-            text: entry.text,
-            updatedAt: entry.updatedAt,
-            completed: entry.completed,
-            transient: entry.transient,
-          } satisfies HeadlessPreviewBlock));
+          .map(
+            (entry) =>
+              ({
+                id: normalizePreviewBlockId(entry.streamId || pendingEventId, entry.streamPhase),
+                streamId: entry.streamId,
+                streamPhase: entry.streamPhase,
+                text: entry.text,
+                updatedAt: entry.updatedAt,
+                completed: entry.completed,
+                transient: entry.transient,
+              }) satisfies HeadlessPreviewBlock,
+          );
         const transcriptBlocks = mergePreviewBlocks(previousBlocks, nextBlocks);
-        const activities = mergePreviewActivities(previousActivities, entries.flatMap((entry) => entry.activities || []));
-        const currentStreamId = String(session?.currentStreamId || "").trim() || String(entries[entries.length - 1]?.streamId || "").trim();
+        const activities = mergePreviewActivities(
+          previousActivities,
+          entries.flatMap((entry) => entry.activities || []),
+        );
+        const currentStreamId =
+          String(session?.currentStreamId || "").trim() ||
+          String(entries[entries.length - 1]?.streamId || "").trim();
         const streamPhase = String(
-          entries.find((entry) => String(entry.streamId || "").trim() === currentStreamId)?.streamPhase
-          || entries[entries.length - 1]?.streamPhase
-          || previousPreview?.streamPhase
-          || ""
-        ).trim().toLowerCase();
+          entries.find((entry) => String(entry.streamId || "").trim() === currentStreamId)
+            ?.streamPhase ||
+            entries[entries.length - 1]?.streamPhase ||
+            previousPreview?.streamPhase ||
+            "",
+        )
+          .trim()
+          .toLowerCase();
         const updatedAt = String(
-          entries[entries.length - 1]?.updatedAt
-          || (Number.isFinite(Number(session?.updatedAt)) ? new Date(Number(session?.updatedAt)).toISOString() : "")
-          || previousPreview?.updatedAt
-          || ""
+          entries[entries.length - 1]?.updatedAt ||
+            (Number.isFinite(Number(session?.updatedAt))
+              ? new Date(Number(session?.updatedAt)).toISOString()
+              : "") ||
+            previousPreview?.updatedAt ||
+            "",
         ).trim();
         const latestText = String(
-          transcriptBlocks[transcriptBlocks.length - 1]?.text
-          || previousPreview?.latestText
-          || ""
+          transcriptBlocks[transcriptBlocks.length - 1]?.text || previousPreview?.latestText || "",
         ).trim();
         const phase = String(
-          session?.phase
-          || (entries.some((entry) => !entry.completed) ? "streaming" : "completed")
-          || previousPreview?.phase
-          || ""
-        ).trim().toLowerCase();
+          session?.phase ||
+            (entries.some((entry) => !entry.completed) ? "streaming" : "completed") ||
+            previousPreview?.phase ||
+            "",
+        )
+          .trim()
+          .toLowerCase();
         if (!updatedAt && transcriptBlocks.length <= 0 && activities.length <= 0 && !latestText) {
           return null;
         }
@@ -760,30 +826,41 @@ export function buildChatBucketPatch(
 
   const prev = state.chatByGroup[gid] || EMPTY_CHAT_BUCKET;
   const nextEvents = patch.events !== undefined ? patch.events : prev.events;
-  const nextStreamingEvents = patch.streamingEvents !== undefined ? patch.streamingEvents : prev.streamingEvents;
+  const nextStreamingEvents =
+    patch.streamingEvents !== undefined ? patch.streamingEvents : prev.streamingEvents;
   const prevStreamingTextByStreamId = prev.streamingTextByStreamId || {};
   const prevStreamingActivitiesByStreamId = prev.streamingActivitiesByStreamId || {};
   const prevReplySessionsByPendingEventId = prev.replySessionsByPendingEventId || {};
   const prevPendingEventIdByStreamId = prev.pendingEventIdByStreamId || {};
   const prevRawHeadlessEventsByActorId = prev.rawHeadlessEventsByActorId || {};
-  const prevPreviewSessionsByActorId = prev.previewSessionsByActorId || Object.fromEntries(
-    Object.entries(prev.latestActorPreviewByActorId || {}).map(([actorId, preview]) => [actorId, [preview]])
-  );
-  const nextStreamingTextByStreamId = patch.streamingTextByStreamId !== undefined
-    ? patch.streamingTextByStreamId
-    : prevStreamingTextByStreamId;
-  const nextStreamingActivitiesByStreamId = patch.streamingActivitiesByStreamId !== undefined
-    ? patch.streamingActivitiesByStreamId
-    : prevStreamingActivitiesByStreamId;
-  const nextReplySessionsByPendingEventId = patch.replySessionsByPendingEventId !== undefined
-    ? patch.replySessionsByPendingEventId
-    : prevReplySessionsByPendingEventId;
-  const nextPendingEventIdByStreamId = patch.pendingEventIdByStreamId !== undefined
-    ? patch.pendingEventIdByStreamId
-    : prevPendingEventIdByStreamId;
-  const nextRawHeadlessEventsByActorId = patch.rawHeadlessEventsByActorId !== undefined
-    ? patch.rawHeadlessEventsByActorId
-    : prevRawHeadlessEventsByActorId;
+  const prevPreviewSessionsByActorId =
+    prev.previewSessionsByActorId ||
+    Object.fromEntries(
+      Object.entries(prev.latestActorPreviewByActorId || {}).map(([actorId, preview]) => [
+        actorId,
+        [preview],
+      ]),
+    );
+  const nextStreamingTextByStreamId =
+    patch.streamingTextByStreamId !== undefined
+      ? patch.streamingTextByStreamId
+      : prevStreamingTextByStreamId;
+  const nextStreamingActivitiesByStreamId =
+    patch.streamingActivitiesByStreamId !== undefined
+      ? patch.streamingActivitiesByStreamId
+      : prevStreamingActivitiesByStreamId;
+  const nextReplySessionsByPendingEventId =
+    patch.replySessionsByPendingEventId !== undefined
+      ? patch.replySessionsByPendingEventId
+      : prevReplySessionsByPendingEventId;
+  const nextPendingEventIdByStreamId =
+    patch.pendingEventIdByStreamId !== undefined
+      ? patch.pendingEventIdByStreamId
+      : prevPendingEventIdByStreamId;
+  const nextRawHeadlessEventsByActorId =
+    patch.rawHeadlessEventsByActorId !== undefined
+      ? patch.rawHeadlessEventsByActorId
+      : prevRawHeadlessEventsByActorId;
   const previewIndex = deriveHeadlessPreviewIndex(
     prevPreviewSessionsByActorId,
     nextStreamingEvents,
@@ -791,12 +868,10 @@ export function buildChatBucketPatch(
     nextStreamingActivitiesByStreamId,
     nextReplySessionsByPendingEventId,
   );
-  const nextHasMoreHistory = patch.hasMoreHistory !== undefined ? patch.hasMoreHistory : prev.hasMoreHistory;
+  const nextHasMoreHistory =
+    patch.hasMoreHistory !== undefined ? patch.hasMoreHistory : prev.hasMoreHistory;
   if (patch.events !== undefined || patch.hasMoreHistory !== undefined) {
-    saveGroupView(gid, {
-      events: nextEvents,
-      hasMoreHistory: nextHasMoreHistory,
-    });
+    saveGroupView(gid, { events: nextEvents, hasMoreHistory: nextHasMoreHistory });
   }
   return {
     chatByGroup: {
@@ -816,18 +891,28 @@ export function buildChatBucketPatch(
         chatWindow: patch.chatWindow !== undefined ? patch.chatWindow : prev.chatWindow,
         hasMoreHistory: nextHasMoreHistory,
         hasLoadedTail: patch.hasLoadedTail !== undefined ? patch.hasLoadedTail : prev.hasLoadedTail,
-        isLoadingHistory: patch.isLoadingHistory !== undefined ? patch.isLoadingHistory : prev.isLoadingHistory,
-        isChatWindowLoading: patch.isChatWindowLoading !== undefined ? patch.isChatWindowLoading : prev.isChatWindowLoading,
+        isLoadingHistory:
+          patch.isLoadingHistory !== undefined ? patch.isLoadingHistory : prev.isLoadingHistory,
+        isChatWindowLoading:
+          patch.isChatWindowLoading !== undefined
+            ? patch.isChatWindowLoading
+            : prev.isChatWindowLoading,
       },
     },
   };
 }
 
-export function resolveChatGroupId(state: Pick<GroupStateSnapshot, "selectedGroupId">, groupId?: string): string {
+export function resolveChatGroupId(
+  state: Pick<GroupStateSnapshot, "selectedGroupId">,
+  groupId?: string,
+): string {
   return String(groupId || state.selectedGroupId || "").trim();
 }
 
-export function mergeLedgerEventStatuses(events: LedgerEvent[], statuses: Record<string, LedgerEventStatusPayload>): LedgerEvent[] {
+export function mergeLedgerEventStatuses(
+  events: LedgerEvent[],
+  statuses: Record<string, LedgerEventStatusPayload>,
+): LedgerEvent[] {
   if (!events.length || !Object.keys(statuses).length) return events;
   let changed = false;
   const next = events.map((event) => {
@@ -841,7 +926,8 @@ export function mergeLedgerEventStatuses(events: LedgerEvent[], statuses: Record
       _read_status: patch.read_status ?? event._read_status,
       _ack_status: patch.ack_status ?? event._ack_status,
       _obligation_status: patch.obligation_status ?? event._obligation_status,
-      _web_model_delivery_status: patch.web_model_delivery_status ?? event._web_model_delivery_status,
+      _web_model_delivery_status:
+        patch.web_model_delivery_status ?? event._web_model_delivery_status,
     };
   });
   return changed ? next : events;
@@ -854,7 +940,9 @@ export function updateReadThroughIndex(messages: LedgerEvent[], endIndex: number
     const message = next[i];
     if (!message || message.kind !== "chat.message") continue;
     const readStatus: Record<string, boolean> | null =
-      message._read_status && typeof message._read_status === "object" ? { ...message._read_status } : null;
+      message._read_status && typeof message._read_status === "object"
+        ? { ...message._read_status }
+        : null;
     const obligationStatus =
       message._obligation_status && typeof message._obligation_status === "object"
         ? { ...message._obligation_status }
@@ -883,12 +971,18 @@ export function updateAckAtIndex(messages: LedgerEvent[], index: number, actorId
   if (!message || message.kind !== "chat.message") return { next, changed: false };
 
   const ackStatus: Record<string, boolean> | null =
-    message._ack_status && typeof message._ack_status === "object" ? { ...message._ack_status } : null;
+    message._ack_status && typeof message._ack_status === "object"
+      ? { ...message._ack_status }
+      : null;
   const obligationStatus =
     message._obligation_status && typeof message._obligation_status === "object"
       ? { ...message._obligation_status }
       : null;
-  if (!ackStatus || !Object.prototype.hasOwnProperty.call(ackStatus, actorId) || ackStatus[actorId] === true) {
+  if (
+    !ackStatus ||
+    !Object.prototype.hasOwnProperty.call(ackStatus, actorId) ||
+    ackStatus[actorId] === true
+  ) {
     return { next, changed: false };
   }
 
@@ -912,7 +1006,9 @@ export function updateReplyAtIndex(messages: LedgerEvent[], index: number, actor
   if (!message || message.kind !== "chat.message") return { next, changed: false };
 
   const ackStatus: Record<string, boolean> | null =
-    message._ack_status && typeof message._ack_status === "object" ? { ...message._ack_status } : null;
+    message._ack_status && typeof message._ack_status === "object"
+      ? { ...message._ack_status }
+      : null;
   const obligationStatus =
     message._obligation_status && typeof message._obligation_status === "object"
       ? { ...message._obligation_status }
@@ -940,7 +1036,11 @@ export function updateReplyAtIndex(messages: LedgerEvent[], index: number, actor
   return { next, changed: true };
 }
 
-export function buildShellGroupDoc(groupId: string, groups: GroupMeta[], cached: GroupViewSnapshot | null): GroupDoc | null {
+export function buildShellGroupDoc(
+  groupId: string,
+  groups: GroupMeta[],
+  cached: GroupViewSnapshot | null,
+): GroupDoc | null {
   const gid = String(groupId || "").trim();
   if (!gid) return null;
   const meta = groups.find((group) => String(group.group_id || "") === gid) || null;
@@ -970,14 +1070,22 @@ export function buildShellGroupDoc(groupId: string, groups: GroupMeta[], cached:
   };
 }
 
-export function deriveRuntimeStatusFromActors(actors: Actor[] | undefined, fallback?: GroupRuntimeStatus | null): GroupRuntimeStatus {
+export function deriveRuntimeStatusFromActors(
+  actors: Actor[] | undefined,
+  fallback?: GroupRuntimeStatus | null,
+): GroupRuntimeStatus {
   const actorList = Array.isArray(actors) ? actors : [];
   const runningActors = actorList.filter((actor) => !!actor?.running);
   return {
     lifecycle_state: String(fallback?.lifecycle_state || "active"),
     runtime_running: runningActors.length > 0,
     running_actor_count: runningActors.length,
-    has_running_foreman: runningActors.some((actor) => String(actor.role || "").trim().toLowerCase() === "foreman"),
+    has_running_foreman: runningActors.some(
+      (actor) =>
+        String(actor.role || "")
+          .trim()
+          .toLowerCase() === "foreman",
+    ),
   };
 }
 
@@ -1025,5 +1133,7 @@ export function buildPrimedGroupState(groupId: string, groups: GroupMeta[]) {
 }
 
 export function filterUiEvents(events: LedgerEvent[] | undefined): LedgerEvent[] {
-  return Array.isArray(events) ? events.filter((ev) => ev && !RUNTIME_ONLY_UI_EVENT_KINDS.has(String(ev.kind || ""))) : [];
+  return Array.isArray(events)
+    ? events.filter((ev) => ev && !RUNTIME_ONLY_UI_EVENT_KINDS.has(String(ev.kind || "")))
+    : [];
 }

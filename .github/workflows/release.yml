@@ -21,15 +21,14 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20.19.5'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
       - name: Build Web UI (bundled)
         run: |
           npm ci --prefix web
-          npm -C web run lint
-          npm -C web run typecheck
+          npm -C web run check
           npm -C web run build
           test -f src/cccc/ports/web/dist/index.html
 

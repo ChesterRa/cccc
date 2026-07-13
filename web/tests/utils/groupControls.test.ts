@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { getGroupControlVisual, getLaunchControlMode, resolveGroupControls } from "../../src/utils/groupControls";
+import { describe, expect, it } from "vite-plus/test";
+import {
+  getGroupControlVisual,
+  getLaunchControlMode,
+  resolveGroupControls,
+} from "../../src/utils/groupControls";
 
 describe("groupControls", () => {
   it("treats idle groups as activatable from the launch control", () => {
@@ -23,17 +27,13 @@ describe("groupControls", () => {
   });
 
   it("disables pause only when there is no selectable running context", () => {
-    expect(resolveGroupControls({
-      selectedGroupId: "g1",
-      actorCount: 1,
-      statusKey: "run",
-      busy: "",
-    }).pauseDisabled).toBe(false);
-    expect(resolveGroupControls({
-      selectedGroupId: "g1",
-      actorCount: 1,
-      statusKey: "stop",
-      busy: "",
-    }).pauseDisabled).toBe(true);
+    expect(
+      resolveGroupControls({ selectedGroupId: "g1", actorCount: 1, statusKey: "run", busy: "" })
+        .pauseDisabled,
+    ).toBe(false);
+    expect(
+      resolveGroupControls({ selectedGroupId: "g1", actorCount: 1, statusKey: "stop", busy: "" })
+        .pauseDisabled,
+    ).toBe(true);
   });
 });

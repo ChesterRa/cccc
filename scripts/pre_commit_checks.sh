@@ -51,9 +51,8 @@ run_whitespace_check() {
 }
 
 run_frontend_checks() {
-  echo "Running web lint and typecheck..."
-  npm -C web run lint
-  npm -C web run typecheck
+  echo "Running web format, lint, and type checks..."
+  npm -C web run check
   echo "✓ Web checks passed"
   echo ""
 }

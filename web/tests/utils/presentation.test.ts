@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   isValidPresentationWebUrl,
   normalizePresentationUrlInput,
@@ -26,11 +26,15 @@ describe("presentation utils", () => {
 
   it("normalizes url-like input conservatively before publish", () => {
     expect(normalizePresentationUrlInput("example.com")).toBe("https://example.com");
-    expect(normalizePresentationUrlInput("www.example.com/report")).toBe("https://www.example.com/report");
+    expect(normalizePresentationUrlInput("www.example.com/report")).toBe(
+      "https://www.example.com/report",
+    );
     expect(normalizePresentationUrlInput("localhost:3000")).toBe("http://localhost:3000");
     expect(normalizePresentationUrlInput("127.0.0.1:8848/ui")).toBe("http://127.0.0.1:8848/ui");
     expect(normalizePresentationUrlInput("192.168.1.10:5173")).toBe("http://192.168.1.10:5173");
-    expect(normalizePresentationUrlInput("https://example.com/demo")).toBe("https://example.com/demo");
+    expect(normalizePresentationUrlInput("https://example.com/demo")).toBe(
+      "https://example.com/demo",
+    );
   });
 
   it("does not over-guess inputs that do not look like urls", () => {

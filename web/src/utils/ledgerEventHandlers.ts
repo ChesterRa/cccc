@@ -17,26 +17,32 @@ export function isContextSyncEvent(ev: unknown): ev is BaseLedgerEvent & { kind:
 }
 
 export function isChatReadEvent(
-  ev: unknown
+  ev: unknown,
 ): ev is BaseLedgerEvent & { kind: "chat.read"; data: { actor_id?: string; event_id?: string } } {
   return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "chat.read";
 }
 
 export function isChatAckEvent(
-  ev: unknown
+  ev: unknown,
 ): ev is BaseLedgerEvent & { kind: "chat.ack"; data: { actor_id?: string; event_id?: string } } {
   return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "chat.ack";
 }
 
-export function isChatMessageEvent(ev: unknown): ev is LedgerEvent & { kind: "chat.message"; data: ChatMessageData } {
+export function isChatMessageEvent(
+  ev: unknown,
+): ev is LedgerEvent & { kind: "chat.message"; data: ChatMessageData } {
   return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "chat.message";
 }
 
-export function hasRenderableChatMessageContent(event: { kind?: unknown; data?: unknown }): boolean {
+export function hasRenderableChatMessageContent(event: {
+  kind?: unknown;
+  data?: unknown;
+}): boolean {
   if (String(event.kind || "").trim() !== "chat.message") return false;
-  const data = event.data && typeof event.data === "object"
-    ? event.data as { text?: unknown; attachments?: unknown; refs?: unknown }
-    : null;
+  const data =
+    event.data && typeof event.data === "object"
+      ? (event.data as { text?: unknown; attachments?: unknown; refs?: unknown })
+      : null;
   const text = typeof data?.text === "string" ? data.text.trim() : "";
   if (text) return true;
   const attachments = Array.isArray(data?.attachments) ? data.attachments : [];
@@ -65,15 +71,25 @@ export function isActorActivityEvent(
 }
 
 export function isPresentationPublishEvent(
-  ev: unknown
-): ev is BaseLedgerEvent & { kind: "presentation.publish"; data: { slot_id?: string; title?: string; card_type?: string } } {
-  return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "presentation.publish";
+  ev: unknown,
+): ev is BaseLedgerEvent & {
+  kind: "presentation.publish";
+  data: { slot_id?: string; title?: string; card_type?: string };
+} {
+  return (
+    ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "presentation.publish"
+  );
 }
 
 export function isPresentationClearEvent(
-  ev: unknown
-): ev is BaseLedgerEvent & { kind: "presentation.clear"; data: { slot_id?: string; cleared_slots?: string[] } } {
-  return ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "presentation.clear";
+  ev: unknown,
+): ev is BaseLedgerEvent & {
+  kind: "presentation.clear";
+  data: { slot_id?: string; cleared_slots?: string[] };
+} {
+  return (
+    ev !== null && typeof ev === "object" && (ev as BaseLedgerEvent).kind === "presentation.clear"
+  );
 }
 
 // ============ Recipient Resolution ============
@@ -131,7 +147,8 @@ export function getAckRecipientIdsForEvent(ev: LedgerEvent, actors: Actor[]): st
   const actorIdSet = new Set(actorIds);
 
   const msgData = ev.data as ChatMessageData | undefined;
-  const dst = typeof msgData?.dst_group_id === "string" ? String(msgData.dst_group_id || "").trim() : "";
+  const dst =
+    typeof msgData?.dst_group_id === "string" ? String(msgData.dst_group_id || "").trim() : "";
   if (dst) return [];
   const toRaw = msgData && Array.isArray(msgData.to) ? msgData.to : [];
   const tokens = (toRaw as unknown[])
@@ -251,7 +268,10 @@ export function initializeObligationStatus(ev: LedgerEvent, actors: Actor[]): vo
   const recipients = getAckRecipientIdsForEvent(ev, actors);
   if (recipients.length <= 0) return;
 
-  const status: Record<string, { read: boolean; acked: boolean; replied: boolean; reply_required: boolean }> = {};
+  const status: Record<
+    string,
+    { read: boolean; acked: boolean; replied: boolean; reply_required: boolean }
+  > = {};
   const isAttention = String(msgData?.priority || "normal") === "attention";
   const replyRequired = !!msgData?.reply_required;
 
@@ -273,7 +293,7 @@ export function initializeObligationStatus(ev: LedgerEvent, actors: Actor[]): vo
 export function shouldIncrementUnread(
   ev: LedgerEvent,
   chatActive: boolean,
-  atBottom: boolean
+  atBottom: boolean,
 ): boolean {
   if (!isChatMessageEvent(ev)) return false;
   const by = String(ev.by || "");
@@ -291,10 +311,7 @@ const ACTOR_READONLY_REFRESH_EVENTS = new Set([
   "group.set_state",
 ]);
 
-const ACTOR_UNREAD_REFRESH_EVENTS = new Set([
-  "chat.read",
-  "system.notify",
-]);
+const ACTOR_UNREAD_REFRESH_EVENTS = new Set(["chat.read", "system.notify"]);
 
 export type ActorRefreshMode = "none" | "readonly" | "unread";
 

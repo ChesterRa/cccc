@@ -130,10 +130,7 @@ function normalizeSetStatement(statement: string): { key: string; value: string 
 
   const ps = line.match(/^\$env:([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/i);
   if (ps) {
-    return {
-      key: String(ps[1] || "").trim(),
-      value: unquoteValue(String(ps[2] ?? "")),
-    };
+    return { key: String(ps[1] || "").trim(), value: unquoteValue(String(ps[2] ?? "")) };
   }
 
   if (/^set\s+/i.test(line)) {
@@ -143,10 +140,7 @@ function normalizeSetStatement(statement: string): { key: string; value: string 
 
   const m = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
   if (!m) return null;
-  return {
-    key: String(m[1] || "").trim(),
-    value: unquoteValue(String(m[2] ?? "")),
-  };
+  return { key: String(m[1] || "").trim(), value: unquoteValue(String(m[2] ?? "")) };
 }
 
 function normalizeUnsetStatement(statement: string): string | null {

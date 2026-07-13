@@ -40,15 +40,18 @@ export async function fetchContext(groupId: string, opts?: FetchContextOptions) 
     params.set("fresh", "1");
     params.set("_", String(Date.now()));
     if (opts?.noCache || opts?.signal) {
-      return apiJson<unknown>(`/api/v1/groups/${encodeURIComponent(gid)}/context?${params.toString()}`, {
-        signal: opts?.signal,
-      }).then((resp) => {
+      return apiJson<unknown>(
+        `/api/v1/groups/${encodeURIComponent(gid)}/context?${params.toString()}`,
+        { signal: opts?.signal },
+      ).then((resp) => {
         if (!resp.ok) return resp as ApiResponse<GroupContext>;
         return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
       });
     }
     return reuseSharedReadRequest(contextRequestKey(gid, detail), async () => {
-      const resp = await apiJson<unknown>(`/api/v1/groups/${encodeURIComponent(gid)}/context?${params.toString()}`);
+      const resp = await apiJson<unknown>(
+        `/api/v1/groups/${encodeURIComponent(gid)}/context?${params.toString()}`,
+      );
       if (!resp.ok) return resp as ApiResponse<GroupContext>;
       return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
     });
@@ -74,7 +77,9 @@ export async function fetchContext(groupId: string, opts?: FetchContextOptions) 
 }
 
 export async function fetchTasks(groupId: string) {
-  const resp = await apiJson<{ tasks?: unknown[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/tasks`);
+  const resp = await apiJson<{ tasks?: unknown[] }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/tasks`,
+  );
   if (!resp.ok) return resp as ApiResponse<{ tasks: Task[] }>;
   const tasks = Array.isArray(resp.result?.tasks)
     ? resp.result.tasks.map((item) => normalizeTask(item)).filter((item): item is Task => !!item)
@@ -82,7 +87,11 @@ export async function fetchTasks(groupId: string) {
   return { ok: true, result: { tasks } } as ApiResponse<{ tasks: Task[] }>;
 }
 
-export async function contextSync(groupId: string, ops: Array<Record<string, unknown>>, dryRun: boolean = false) {
+export async function contextSync(
+  groupId: string,
+  ops: Array<Record<string, unknown>>,
+  dryRun: boolean = false,
+) {
   clearContextRequest(groupId);
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/context`, {
     method: "POST",
@@ -94,7 +103,8 @@ export async function updateCoordinationBrief(groupId: string, brief: Coordinati
   const op: Record<string, unknown> = { op: "coordination.brief.update" };
   if (brief.objective !== undefined) op.objective = String(brief.objective || "");
   if (brief.current_focus !== undefined) op.current_focus = String(brief.current_focus || "");
-  if (brief.constraints !== undefined) op.constraints = Array.isArray(brief.constraints) ? brief.constraints : [];
+  if (brief.constraints !== undefined)
+    op.constraints = Array.isArray(brief.constraints) ? brief.constraints : [];
   if (brief.project_brief !== undefined) op.project_brief = String(brief.project_brief || "");
   if (brief.project_brief_stale !== undefined) op.project_brief_stale = !!brief.project_brief_stale;
   return contextSync(groupId, [op]);
@@ -106,14 +116,19 @@ export async function addCoordinationNote(
   summary: string,
   taskId?: string | null,
 ) {
-  const op: Record<string, unknown> = { op: "coordination.note.add", kind, summary: String(summary || "") };
+  const op: Record<string, unknown> = {
+    op: "coordination.note.add",
+    kind,
+    summary: String(summary || ""),
+  };
   if (taskId) op.task_id = String(taskId || "");
   return contextSync(groupId, [op]);
 }
 
 export async function updateCoordinationTask(groupId: string, task: Task) {
   const resolvedTaskType =
-    String(task.task_type || "").trim() || (String(task.parent_id || "").trim() ? "free" : "standard");
+    String(task.task_type || "").trim() ||
+    (String(task.parent_id || "").trim() ? "free" : "standard");
   const updateOp: Record<string, unknown> = {
     op: "task.update",
     task_id: task.id,
@@ -147,7 +162,10 @@ export async function deleteCoordinationTask(groupId: string, taskId: string) {
 }
 
 export async function fetchSettings(groupId: string, init?: RequestInit & { noCache?: boolean }) {
-  return apiJson<{ settings: GroupSettings }>(`/api/v1/groups/${encodeURIComponent(groupId)}/settings`, init);
+  return apiJson<{ settings: GroupSettings }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/settings`,
+    init,
+  );
 }
 
 export async function fetchCapabilityOverview(opts?: {
@@ -240,13 +258,15 @@ export async function updateCapabilityAllowlist(args: {
     policy_source?: string;
     policy_error?: string;
     external_capability_safety_mode?: string;
-  }>(`/api/v1/capabilities/allowlist`, {
-    method: "PUT",
-    body: JSON.stringify(body),
-  });
+  }>(`/api/v1/capabilities/allowlist`, { method: "PUT", body: JSON.stringify(body) });
 }
 
-export async function blockCapabilityGlobal(capabilityId: string, blocked: boolean, reason: string = "", groupId?: string) {
+export async function blockCapabilityGlobal(
+  capabilityId: string,
+  blocked: boolean,
+  reason: string = "",
+  groupId?: string,
+) {
   const body: Record<string, unknown> = {
     by: "user",
     actor_id: "user",
@@ -278,13 +298,17 @@ export async function fetchGroupCapabilityState(
   if (opts?.noCache) params.set("_", String(Date.now()));
   const load = () => {
     const suffix = params.toString() ? `?${params.toString()}` : "";
-    return apiJson<CapabilityStateResult>(`/api/v1/groups/${encodeURIComponent(gid)}/capabilities/state${suffix}`, {
-      signal: opts?.signal,
-    });
+    return apiJson<CapabilityStateResult>(
+      `/api/v1/groups/${encodeURIComponent(gid)}/capabilities/state${suffix}`,
+      { signal: opts?.signal },
+    );
   };
   if (opts?.signal) return load();
   if (opts?.noCache) {
-    return reuseSharedReadRequest(`${capabilityStateRequestKey(gid, aid, capabilityId, view)}:no-cache`, load);
+    return reuseSharedReadRequest(
+      `${capabilityStateRequestKey(gid, aid, capabilityId, view)}:no-cache`,
+      load,
+    );
   }
   return reuseSharedReadRequest(capabilityStateRequestKey(gid, aid, capabilityId, view), load);
 }
@@ -294,10 +318,7 @@ export async function fetchSlashCommandCapabilityState(
   actorId: string = "user",
   opts?: { noCache?: boolean; signal?: AbortSignal },
 ) {
-  return fetchGroupCapabilityState(groupId, actorId, {
-    ...opts,
-    view: "slash_commands",
-  });
+  return fetchGroupCapabilityState(groupId, actorId, { ...opts, view: "slash_commands" });
 }
 
 export async function enableGroupCapability(
@@ -312,38 +333,40 @@ export async function enableGroupCapability(
     cleanup?: boolean;
   },
 ) {
-  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/enable`, {
-    method: "POST",
-    body: JSON.stringify({
-      capability_id: capabilityId,
-      enabled: opts?.enabled ?? true,
-      scope: opts?.scope || "session",
-      actor_id: opts?.actorId || "user",
-      ttl_seconds: opts?.ttlSeconds || 3600,
-      reason: opts?.reason || "",
-      cleanup: opts?.cleanup || false,
-    }),
-  });
+  return apiJson<Record<string, unknown>>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/enable`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        capability_id: capabilityId,
+        enabled: opts?.enabled ?? true,
+        scope: opts?.scope || "session",
+        actor_id: opts?.actorId || "user",
+        ttl_seconds: opts?.ttlSeconds || 3600,
+        reason: opts?.reason || "",
+        cleanup: opts?.cleanup || false,
+      }),
+    },
+  );
 }
 
 export async function updateGroupCapabilityVisibility(
   groupId: string,
   capabilityId: string,
-  opts?: {
-    hidden?: boolean;
-    actorId?: string;
-    reason?: string;
-  },
+  opts?: { hidden?: boolean; actorId?: string; reason?: string },
 ) {
-  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/visibility`, {
-    method: "POST",
-    body: JSON.stringify({
-      capability_id: capabilityId,
-      hidden: opts?.hidden ?? true,
-      actor_id: opts?.actorId || "user",
-      reason: opts?.reason || "",
-    }),
-  });
+  return apiJson<Record<string, unknown>>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/visibility`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        capability_id: capabilityId,
+        hidden: opts?.hidden ?? true,
+        actor_id: opts?.actorId || "user",
+        reason: opts?.reason || "",
+      }),
+    },
+  );
 }
 
 export async function useGroupCapability(
@@ -367,10 +390,10 @@ export async function useGroupCapability(
   };
   if (String(args.toolName || "").trim()) body.tool_name = String(args.toolName || "").trim();
   if (args.toolArguments) body.tool_arguments = args.toolArguments;
-  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/use`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return apiJson<Record<string, unknown>>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/use`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 }
 
 export async function importCapability(
@@ -385,18 +408,21 @@ export async function importCapability(
     reason?: string;
   },
 ) {
-  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/import`, {
-    method: "POST",
-    body: JSON.stringify({
-      record,
-      dry_run: opts?.dryRun || false,
-      enable_after_import: opts?.enableAfterImport || false,
-      scope: opts?.scope || "session",
-      actor_id: opts?.actorId || "user",
-      ttl_seconds: opts?.ttlSeconds || 3600,
-      reason: opts?.reason || "",
-    }),
-  });
+  return apiJson<Record<string, unknown>>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/import`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        record,
+        dry_run: opts?.dryRun || false,
+        enable_after_import: opts?.enableAfterImport || false,
+        scope: opts?.scope || "session",
+        actor_id: opts?.actorId || "user",
+        ttl_seconds: opts?.ttlSeconds || 3600,
+        reason: opts?.reason || "",
+      }),
+    },
+  );
 }
 
 export async function installCapabilityTarget(
@@ -409,39 +435,56 @@ export async function installCapabilityTarget(
     reason?: string;
   },
 ) {
-  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/install`, {
-    method: "POST",
-    body: JSON.stringify({
-      target,
-      scope: opts?.scope || "actor",
-      actor_id: opts?.actorId || "user",
-      ttl_seconds: opts?.ttlSeconds || 3600,
-      reason: opts?.reason || "",
-    }),
-  });
+  return apiJson<Record<string, unknown>>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/install`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        target,
+        scope: opts?.scope || "actor",
+        actor_id: opts?.actorId || "user",
+        ttl_seconds: opts?.ttlSeconds || 3600,
+        reason: opts?.reason || "",
+      }),
+    },
+  );
 }
 
-export async function uninstallCapability(groupId: string, capabilityId: string, opts?: { actorId?: string; reason?: string }) {
-  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/uninstall`, {
-    method: "POST",
-    body: JSON.stringify({
-      capability_id: capabilityId,
-      actor_id: opts?.actorId || "user",
-      reason: opts?.reason || "",
-    }),
-  });
+export async function uninstallCapability(
+  groupId: string,
+  capabilityId: string,
+  opts?: { actorId?: string; reason?: string },
+) {
+  return apiJson<Record<string, unknown>>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/uninstall`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        capability_id: capabilityId,
+        actor_id: opts?.actorId || "user",
+        reason: opts?.reason || "",
+      }),
+    },
+  );
 }
 
-export async function deleteCapabilitySource(groupId: string, sourceId: string, opts?: { actorId?: string; reason?: string; sourceInstanceKey?: string }) {
-  return apiJson<Record<string, unknown>>(`/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/sources/delete`, {
-    method: "POST",
-    body: JSON.stringify({
-      source_id: sourceId,
-      source_instance_key: opts?.sourceInstanceKey || "",
-      actor_id: opts?.actorId || "user",
-      reason: opts?.reason || "",
-    }),
-  });
+export async function deleteCapabilitySource(
+  groupId: string,
+  sourceId: string,
+  opts?: { actorId?: string; reason?: string; sourceInstanceKey?: string },
+) {
+  return apiJson<Record<string, unknown>>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/capabilities/sources/delete`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        source_id: sourceId,
+        source_instance_key: opts?.sourceInstanceKey || "",
+        actor_id: opts?.actorId || "user",
+        reason: opts?.reason || "",
+      }),
+    },
+  );
 }
 
 export async function updateSettings(groupId: string, settings: Partial<GroupSettings>) {
@@ -455,8 +498,16 @@ export async function fetchAutomation(groupId: string) {
   return apiJson<GroupAutomation>(`/api/v1/groups/${encodeURIComponent(groupId)}/automation`);
 }
 
-export async function updateAutomation(groupId: string, ruleset: AutomationRuleSet, expectedVersion?: number) {
-  const body: Record<string, unknown> = { rules: ruleset.rules, snippets: ruleset.snippets, by: "user" };
+export async function updateAutomation(
+  groupId: string,
+  ruleset: AutomationRuleSet,
+  expectedVersion?: number,
+) {
+  const body: Record<string, unknown> = {
+    rules: ruleset.rules,
+    snippets: ruleset.snippets,
+    by: "user",
+  };
   if (typeof expectedVersion === "number" && Number.isFinite(expectedVersion)) {
     body.expected_version = Math.trunc(expectedVersion);
   }
@@ -475,10 +526,10 @@ export async function manageAutomation(
   if (typeof expectedVersion === "number" && Number.isFinite(expectedVersion)) {
     body.expected_version = Math.trunc(expectedVersion);
   }
-  return apiJson<GroupAutomation>(`/api/v1/groups/${encodeURIComponent(groupId)}/automation/manage`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return apiJson<GroupAutomation>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/automation/manage`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 }
 
 export async function resetAutomationBaseline(groupId: string, expectedVersion?: number) {
@@ -486,10 +537,10 @@ export async function resetAutomationBaseline(groupId: string, expectedVersion?:
   if (typeof expectedVersion === "number" && Number.isFinite(expectedVersion)) {
     body.expected_version = Math.trunc(expectedVersion);
   }
-  return apiJson<GroupAutomation>(`/api/v1/groups/${encodeURIComponent(groupId)}/automation/reset_baseline`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return apiJson<GroupAutomation>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/automation/reset_baseline`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
 }
 
 export async function fetchInbox(groupId: string, actorId: string, limit = 200) {
@@ -499,10 +550,10 @@ export async function fetchInbox(groupId: string, actorId: string, limit = 200) 
 }
 
 export async function markInboxRead(groupId: string, actorId: string, eventId: string) {
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/inbox/${encodeURIComponent(actorId)}/read`, {
-    method: "POST",
-    body: JSON.stringify({ event_id: eventId, by: "user" }),
-  });
+  return apiJson(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/inbox/${encodeURIComponent(actorId)}/read`,
+    { method: "POST", body: JSON.stringify({ event_id: eventId, by: "user" }) },
+  );
 }
 
 export async function sendMessage(
@@ -692,7 +743,9 @@ export async function sendCrossGroupMessage(
     ...(options?.replyTo ? { reply_to: options.replyTo } : {}),
     ...(options?.quoteText ? { quote_text: options.quoteText } : {}),
     ...(options?.clientId ? { client_id: options.clientId } : {}),
-    ...(options?.remoteReplyToEventId ? { remote_reply_to_event_id: options.remoteReplyToEventId } : {}),
+    ...(options?.remoteReplyToEventId
+      ? { remote_reply_to_event_id: options.remoteReplyToEventId }
+      : {}),
   };
   if (files && files.length > 0) {
     const form = new FormData();
@@ -705,9 +758,13 @@ export async function sendCrossGroupMessage(
     if (options?.replyTo) form.append("reply_to", options.replyTo);
     if (options?.quoteText) form.append("quote_text", options.quoteText);
     if (options?.clientId) form.append("client_id", options.clientId);
-    if (options?.remoteReplyToEventId) form.append("remote_reply_to_event_id", options.remoteReplyToEventId);
+    if (options?.remoteReplyToEventId)
+      form.append("remote_reply_to_event_id", options.remoteReplyToEventId);
     for (const file of files) form.append("files", file);
-    return apiForm(`/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_cross_group_upload`, form);
+    return apiForm(
+      `/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_cross_group_upload`,
+      form,
+    );
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_cross_group`, {
     method: "POST",

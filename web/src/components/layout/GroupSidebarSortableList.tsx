@@ -50,30 +50,25 @@ export function GroupSidebarSortableList({
   onClose,
 }: GroupSidebarSortableListProps) {
   const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-    useSensor(MouseSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 200, tolerance: 5 },
-    }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    const ids = groups.map((g) => String(g.group_id || ""));
-    const oldIndex = ids.indexOf(String(active.id));
-    const newIndex = ids.indexOf(String(over.id));
-    if (oldIndex !== -1 && newIndex !== -1) {
-      onReorderSection(section, oldIndex, newIndex);
-    }
-  }, [groups, onReorderSection, section]);
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const ids = groups.map((g) => String(g.group_id || ""));
+      const oldIndex = ids.indexOf(String(active.id));
+      const newIndex = ids.indexOf(String(over.id));
+      if (oldIndex !== -1 && newIndex !== -1) {
+        onReorderSection(section, oldIndex, newIndex);
+      }
+    },
+    [groups, onReorderSection, section],
+  );
 
   const sortableIds = groups.map((g) => String(g.group_id || ""));
   const isArchivedSection = section === "archived";
@@ -94,7 +89,9 @@ export function GroupSidebarSortableList({
                 isArchived={isArchivedSection}
                 dragDisabled={!!readOnly}
                 menuActionLabel={menuActionLabel}
-                menuAriaLabel={menuAriaLabel ? `${menuAriaLabel} · ${group.title || gid}` : undefined}
+                menuAriaLabel={
+                  menuAriaLabel ? `${menuAriaLabel} · ${group.title || gid}` : undefined
+                }
                 onMenuAction={onMenuAction ? () => onMenuAction(gid) : undefined}
                 onSelect={() => {
                   onSelectGroup(gid);

@@ -52,10 +52,14 @@ export function PresentationWebPreviewPanel({
           key={`embedded:${href}:${refreshNonce}`}
           title={title || t("presentationTypeWebPreview", { defaultValue: "Web" })}
           src={href}
-          sandbox={useSandboxedPreview ? "allow-scripts allow-forms allow-modals allow-popups allow-downloads" : undefined}
+          sandbox={
+            useSandboxedPreview
+              ? "allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+              : undefined
+          }
           className={classNames(
             viewportClassName || "flex-1 min-h-0",
-            "w-full flex-1 min-h-0 rounded-3xl border border-[var(--glass-border-subtle)] bg-white"
+            "w-full flex-1 min-h-0 rounded-3xl border border-[var(--glass-border-subtle)] bg-white",
           )}
         />
       )}

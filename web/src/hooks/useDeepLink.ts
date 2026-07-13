@@ -100,11 +100,8 @@ export function useDeepLink({
       deepLinkRef.current = { groupId: gid, eventId: eid };
       setSelectedGroupId(gid);
     },
-    [selectedGroupId, setActiveTab, openChatWindow, setSelectedGroupId]
+    [selectedGroupId, setActiveTab, openChatWindow, setSelectedGroupId],
   );
 
-  return {
-    openMessageWindow,
-    parseUrlDeepLink,
-  };
+  return { openMessageWindow, parseUrlDeepLink };
 }

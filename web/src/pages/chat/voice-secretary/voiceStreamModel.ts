@@ -25,9 +25,7 @@ export type VoiceTranscriptPreview = {
   updatedAt: number;
 };
 
-export type VoiceTranscriptItem = VoiceTranscriptPreview & {
-  createdAt: number;
-};
+export type VoiceTranscriptItem = VoiceTranscriptPreview & { createdAt: number };
 
 export type VoiceStreamMetadata = {
   mode: VoiceStreamCaptureMode;
@@ -40,10 +38,7 @@ export type VoiceStreamMetadata = {
   sourceDetail?: string;
 };
 
-export type VoiceStreamTiming = {
-  startMs?: number;
-  endMs?: number;
-};
+export type VoiceStreamTiming = { startMs?: number; endMs?: number };
 
 export function createVoiceTranscriptPreview(params: {
   id: string;
@@ -113,13 +108,15 @@ export function upsertLiveVoiceTranscriptItem(
     phase: preview.phase,
     text,
     documentPath: String(preview.documentPath || "").trim(),
-    createdAt: Number(currentItems.find((existing) => existing.id === preview.id)?.createdAt || preview.updatedAt),
+    createdAt: Number(
+      currentItems.find((existing) => existing.id === preview.id)?.createdAt || preview.updatedAt,
+    ),
     updatedAt: preview.updatedAt,
   };
-  return [
-    item,
-    ...currentItems.filter((existing) => existing.id !== preview.id),
-  ].slice(0, maxItems);
+  return [item, ...currentItems.filter((existing) => existing.id !== preview.id)].slice(
+    0,
+    maxItems,
+  );
 }
 
 export function appendFinalVoiceTranscriptItem(
@@ -131,11 +128,12 @@ export function appendFinalVoiceTranscriptItem(
   if (!item) return currentItems;
   return [
     item,
-    ...currentItems.filter((existing) => (
-      existing.id !== liveItemId
-      && existing.id !== item.id
-      && !voiceTranscriptItemsLookDuplicated(existing, item)
-    )),
+    ...currentItems.filter(
+      (existing) =>
+        existing.id !== liveItemId &&
+        existing.id !== item.id &&
+        !voiceTranscriptItemsLookDuplicated(existing, item),
+    ),
   ].slice(0, maxItems);
 }
 
@@ -144,10 +142,12 @@ export function mergeVoiceTranscriptItems(
   incomingItems: VoiceTranscriptItem[],
   maxItems = 240,
 ): VoiceTranscriptItem[] {
-  return incomingItems.reduce(
-    (items, item) => appendFinalVoiceTranscriptItem(items, item, "", maxItems),
-    currentItems,
-  ).slice(0, maxItems);
+  return incomingItems
+    .reduce(
+      (items, item) => appendFinalVoiceTranscriptItem(items, item, "", maxItems),
+      currentItems,
+    )
+    .slice(0, maxItems);
 }
 
 export function replaceVoiceTranscriptSessionItems(
@@ -155,7 +155,9 @@ export function replaceVoiceTranscriptSessionItems(
   incomingItems: VoiceTranscriptItem[],
   maxItems = 240,
 ): VoiceTranscriptItem[] {
-  const sessionIds = new Set(incomingItems.map((item) => String(item.sessionId || "").trim()).filter(Boolean));
+  const sessionIds = new Set(
+    incomingItems.map((item) => String(item.sessionId || "").trim()).filter(Boolean),
+  );
   const filtered = currentItems.filter((item) => {
     const sessionId = String(item.sessionId || "").trim();
     if (sessionId && sessionIds.has(sessionId)) return false;
@@ -172,7 +174,8 @@ export function replaceVoiceTranscriptProcessingItem(
   const sessionId = String(incomingItem.sessionId || "").trim();
   const nextItems = currentItems.filter((item) => {
     if (item.id === incomingItem.id) return false;
-    if (sessionId && String(item.sessionId || "").trim() === sessionId && item.processingPhase) return false;
+    if (sessionId && String(item.sessionId || "").trim() === sessionId && item.processingPhase)
+      return false;
     return true;
   });
   return [incomingItem, ...nextItems].slice(0, maxItems);
@@ -180,9 +183,9 @@ export function replaceVoiceTranscriptProcessingItem(
 
 export function isDisplayableFinalVoiceTranscriptItem(item: VoiceTranscriptItem): boolean {
   return (
-    item.phase === "final"
-    && !item.processingPhase
-    && !String(item.id || "").startsWith("voice-stream-")
+    item.phase === "final" &&
+    !item.processingPhase &&
+    !String(item.id || "").startsWith("voice-stream-")
   );
 }
 
@@ -193,15 +196,17 @@ export function filterVoiceTranscriptItemsForDocument(
   const targetPath = String(documentPath || "").trim();
   if (!targetPath) return [];
   return items
-    .filter((item) => (
-      item.mode === "document"
-      && String(item.documentPath || "").trim() === targetPath
-      && String(item.text || "").trim()
-    ))
-    .sort((left, right) => (
-      Number(right.updatedAt || 0) - Number(left.updatedAt || 0)
-      || Number(right.createdAt || 0) - Number(left.createdAt || 0)
-    ));
+    .filter(
+      (item) =>
+        item.mode === "document" &&
+        String(item.documentPath || "").trim() === targetPath &&
+        String(item.text || "").trim(),
+    )
+    .sort(
+      (left, right) =>
+        Number(right.updatedAt || 0) - Number(left.updatedAt || 0) ||
+        Number(right.createdAt || 0) - Number(left.createdAt || 0),
+    );
 }
 
 export function annotateVoiceTranscriptItemsWithSpeakers(
@@ -215,19 +220,11 @@ export function annotateVoiceTranscriptItemsWithSpeakers(
     if (!speaker) {
       if (!item.speakerLabel && item.speakerIndex === undefined) return item;
       changed = true;
-      return {
-        ...item,
-        speakerLabel: undefined,
-        speakerIndex: undefined,
-      };
+      return { ...item, speakerLabel: undefined, speakerIndex: undefined };
     }
     if (item.speakerLabel === speaker.label && item.speakerIndex === speaker.index) return item;
     changed = true;
-    return {
-      ...item,
-      speakerLabel: speaker.label,
-      speakerIndex: speaker.index,
-    };
+    return { ...item, speakerLabel: speaker.label, speakerIndex: speaker.index };
   });
   return changed ? next : items;
 }
@@ -246,18 +243,19 @@ function speakerForTranscriptRange(
     if (!label) continue;
     const segmentStart = Number(segment.start_ms);
     const segmentEnd = Number(segment.end_ms);
-    if (!Number.isFinite(segmentStart) || !Number.isFinite(segmentEnd) || segmentEnd <= segmentStart) continue;
+    if (
+      !Number.isFinite(segmentStart) ||
+      !Number.isFinite(segmentEnd) ||
+      segmentEnd <= segmentStart
+    )
+      continue;
     const overlap = Math.max(0, Math.min(end, segmentEnd) - Math.max(start, segmentStart));
     if (overlap <= 0) continue;
     const rawIndex = Number(segment.speaker_index);
     const index = Number.isFinite(rawIndex) ? rawIndex : undefined;
     const key = `${label}\t${index ?? ""}`;
     const existing = overlaps.get(key);
-    overlaps.set(key, {
-      label,
-      index,
-      overlap: (existing?.overlap || 0) + overlap,
-    });
+    overlaps.set(key, { label, index, overlap: (existing?.overlap || 0) + overlap });
   }
   const ranked = Array.from(overlaps.values()).sort((left, right) => right.overlap - left.overlap);
   const best = ranked[0];
@@ -267,9 +265,15 @@ function speakerForTranscriptRange(
   return { label: best.label, index: best.index };
 }
 
-function voiceTranscriptItemsLookDuplicated(left: VoiceTranscriptItem, right: VoiceTranscriptItem): boolean {
+function voiceTranscriptItemsLookDuplicated(
+  left: VoiceTranscriptItem,
+  right: VoiceTranscriptItem,
+): boolean {
   if (left.id && right.id && left.id === right.id) return true;
-  if (normalizedComparableTranscriptText(left.text) !== normalizedComparableTranscriptText(right.text)) return false;
+  if (
+    normalizedComparableTranscriptText(left.text) !== normalizedComparableTranscriptText(right.text)
+  )
+    return false;
   if (left.mode !== right.mode) return false;
   if (String(left.documentPath || "") !== String(right.documentPath || "")) return false;
   if (String(left.language || "") !== String(right.language || "")) return false;
@@ -278,8 +282,10 @@ function voiceTranscriptItemsLookDuplicated(left: VoiceTranscriptItem, right: Vo
   const leftEndMs = Number(left.endMs);
   const rightStartMs = Number(right.startMs);
   const rightEndMs = Number(right.endMs);
-  const leftTimed = Number.isFinite(leftStartMs) && Number.isFinite(leftEndMs) && leftEndMs > leftStartMs;
-  const rightTimed = Number.isFinite(rightStartMs) && Number.isFinite(rightEndMs) && rightEndMs > rightStartMs;
+  const leftTimed =
+    Number.isFinite(leftStartMs) && Number.isFinite(leftEndMs) && leftEndMs > leftStartMs;
+  const rightTimed =
+    Number.isFinite(rightStartMs) && Number.isFinite(rightEndMs) && rightEndMs > rightStartMs;
   if (leftTimed && rightTimed) {
     return Math.abs(leftStartMs - rightStartMs) <= 250 && Math.abs(leftEndMs - rightEndMs) <= 250;
   }
@@ -288,5 +294,7 @@ function voiceTranscriptItemsLookDuplicated(left: VoiceTranscriptItem, right: Vo
 }
 
 function normalizedComparableTranscriptText(value: string): string {
-  return String(value || "").replace(/\s+/g, " ").trim();
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
 }

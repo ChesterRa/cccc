@@ -21,8 +21,7 @@ const CONTROL_ACTIVE_CLASS: Record<GroupControlKey, string> = {
     "bg-emerald-700 text-white shadow-[0_10px_24px_rgba(4,120,87,0.28)] ring-1 ring-black/5 dark:ring-white/10",
   pause:
     "bg-amber-700 text-white shadow-[0_10px_24px_rgba(180,83,9,0.28)] ring-1 ring-black/5 dark:ring-white/10",
-  stop:
-    "bg-rose-700 text-white shadow-[0_10px_24px_rgba(190,24,93,0.28)] ring-1 ring-black/5 dark:ring-white/10",
+  stop: "bg-rose-700 text-white shadow-[0_10px_24px_rgba(190,24,93,0.28)] ring-1 ring-black/5 dark:ring-white/10",
 };
 
 const CONTROL_PENDING_CLASS: Record<GroupControlKey, string> = {
@@ -31,20 +30,21 @@ const CONTROL_PENDING_CLASS: Record<GroupControlKey, string> = {
   stop: "ring-2 ring-rose-300/75 dark:ring-rose-300/35 animate-pulse",
 };
 
-export function getLaunchControlMode(status: GroupStatusKey | null | undefined): "start" | "activate" {
+export function getLaunchControlMode(
+  status: GroupStatusKey | null | undefined,
+): "start" | "activate" {
   return status === "paused" || status === "idle" ? "activate" : "start";
 }
 
 export function getGroupControlVisual(
   status: GroupStatusKey | null | undefined,
   control: GroupControlKey,
-  busy: string
-): {
-  active: boolean;
-  pending: boolean;
-  className: string;
-} {
-  const active = Boolean(status && (CONTROL_ACTIVE_STATUS[control] === status || (control === "launch" && status === "idle")));
+  busy: string,
+): { active: boolean; pending: boolean; className: string } {
+  const active = Boolean(
+    status &&
+    (CONTROL_ACTIVE_STATUS[control] === status || (control === "launch" && status === "idle")),
+  );
   const pending = CONTROL_BUSY_MAP[busy] === control;
 
   if (active || pending) {
@@ -55,7 +55,7 @@ export function getGroupControlVisual(
         "border border-transparent hover:-translate-y-px active:translate-y-0",
         CONTROL_ACTIVE_CLASS[control],
         active && "cursor-default",
-        pending && CONTROL_PENDING_CLASS[control]
+        pending && CONTROL_PENDING_CLASS[control],
       ),
     };
   }

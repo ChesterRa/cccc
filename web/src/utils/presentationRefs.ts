@@ -156,18 +156,26 @@ export function buildPresentationRefForSlot(
 ): PresentationMessageRef | null {
   if (!slot?.card) return null;
   const card: PresentationCard = slot.card;
-  const baseRef = options?.baseRef && isPresentationMessageRef(options.baseRef) ? options.baseRef : null;
+  const baseRef =
+    options?.baseRef && isPresentationMessageRef(options.baseRef) ? options.baseRef : null;
   const slotId = trimString(slot.slot_id);
   if (!slotId) return null;
   const baseLocator = asRecord(baseRef?.locator);
-  const nextLocator = options?.locator ? { ...(baseLocator || {}), ...options.locator } : baseLocator || undefined;
-  const href = trimString(options?.href) || trimString(baseRef?.href) || trimString(card.content.url);
+  const nextLocator = options?.locator
+    ? { ...(baseLocator || {}), ...options.locator }
+    : baseLocator || undefined;
+  const href =
+    trimString(options?.href) || trimString(baseRef?.href) || trimString(card.content.url);
   const locatorLabel =
     trimString(options?.locatorLabel) ||
     trimString(baseRef?.locator_label) ||
     defaultLocatorLabel(card.card_type);
   const excerpt = trimString(options?.excerpt) || trimString(baseRef?.excerpt);
-  const status = options?.status || getPresentationRefStatus(baseRef || ({ slot_id: slotId, kind: "presentation_ref" } as PresentationMessageRef));
+  const status =
+    options?.status ||
+    getPresentationRefStatus(
+      baseRef || ({ slot_id: slotId, kind: "presentation_ref" } as PresentationMessageRef),
+    );
   const snapshot = options?.snapshot || baseRef?.snapshot;
 
   return {

@@ -1,6 +1,8 @@
 import type { AssistantVoiceDocument } from "../../../types";
 
-export function documentNeedsContentLoad(document: AssistantVoiceDocument | null | undefined): boolean {
+export function documentNeedsContentLoad(
+  document: AssistantVoiceDocument | null | undefined,
+): boolean {
   if (!document) return false;
   if (document.content !== undefined) return false;
   return Number(document.content_chars || 0) > 0;

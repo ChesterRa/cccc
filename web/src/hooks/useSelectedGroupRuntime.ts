@@ -24,15 +24,13 @@ export function computeSelectedGroupRuntime({
   groupDoc,
   actors,
 }: UseSelectedGroupRuntimeArgs): SelectedGroupRuntime {
-  const selectedGroupMeta = groups.find((group) => String(group.group_id || "") === selectedGroupId) || null;
+  const selectedGroupMeta =
+    groups.find((group) => String(group.group_id || "") === selectedGroupId) || null;
   const orderedSelectedGroupPatch = selectedGroupMeta
-    ? computeGroupRuntimePatch({
-        group: selectedGroupMeta,
-        groupDoc,
-        actors,
-      })
+    ? computeGroupRuntimePatch({ group: selectedGroupMeta, groupDoc, actors })
     : null;
-  const selectedGroupRuntimeStatus = orderedSelectedGroupPatch?.runtime_status || getGroupRuntimeStatus(groupDoc);
+  const selectedGroupRuntimeStatus =
+    orderedSelectedGroupPatch?.runtime_status || getGroupRuntimeStatus(groupDoc);
 
   return {
     selectedGroupMeta,

@@ -17,7 +17,7 @@ interface HoverTooltipProps {
   label: ReactNode;
   children: (
     getReferenceProps: (userProps?: HTMLAttributes<HTMLElement>) => Record<string, unknown>,
-    setReference: (node: HTMLElement | null) => void
+    setReference: (node: HTMLElement | null) => void,
   ) => ReactNode;
 }
 

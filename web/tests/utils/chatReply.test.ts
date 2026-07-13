@@ -1,11 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { buildReplyComposerState } from "../../src/utils/chatReply";
+
+type ReplyEvent = Parameters<typeof buildReplyComposerState>[0];
+type ReplyGroupSettings = Parameters<typeof buildReplyComposerState>[3];
+
+function typedFixture<T>(value: unknown): T {
+  return value as unknown as T;
+}
 
 describe("buildReplyComposerState", () => {
   it("prefers existing quote_text over message text when building a reply target", () => {
     const state = buildReplyComposerState(
-      {
+      typedFixture<ReplyEvent>({
         id: "evt-1",
         kind: "chat.message",
         by: "user",
@@ -14,7 +21,7 @@ describe("buildReplyComposerState", () => {
           quote_text: "为什么activity 会出现再消失，当前抖动太严重了",
           to: ["reviewer"],
         },
-      } as any,
+      }),
       "g-demo",
       [],
       null,
@@ -25,18 +32,15 @@ describe("buildReplyComposerState", () => {
 
   it("targets the original recipients when replying to a user-authored message", () => {
     const state = buildReplyComposerState(
-      {
+      typedFixture<ReplyEvent>({
         id: "evt-2",
         kind: "chat.message",
         by: "user",
-        data: {
-          text: "问一问对方本周做了什么",
-          to: ["@foreman"],
-        },
-      } as any,
+        data: { text: "问一问对方本周做了什么", to: ["@foreman"] },
+      }),
       "g-demo",
       [],
-      { default_send_to: "foreman" } as any,
+      typedFixture<ReplyGroupSettings>({ default_send_to: "foreman" }),
     );
 
     expect(state?.toText).toBe("@foreman");
@@ -45,7 +49,7 @@ describe("buildReplyComposerState", () => {
 
   it("preserves remote destination routing when replying to a cross-group source message", () => {
     const state = buildReplyComposerState(
-      {
+      typedFixture<ReplyEvent>({
         id: "evt-remote-source",
         kind: "chat.message",
         by: "user",
@@ -55,10 +59,10 @@ describe("buildReplyComposerState", () => {
           dst_group_id: "g_7e3d34fa5b06",
           dst_to: ["@foreman"],
         },
-      } as any,
+      }),
       "g-local",
       [],
-      { default_send_to: "foreman" } as any,
+      typedFixture<ReplyGroupSettings>({ default_send_to: "foreman" }),
     );
 
     expect(state?.destGroupId).toBe("g_7e3d34fa5b06");
@@ -69,7 +73,7 @@ describe("buildReplyComposerState", () => {
 
   it("does not treat the local source event id as a remote reply anchor", () => {
     const state = buildReplyComposerState(
-      {
+      typedFixture<ReplyEvent>({
         id: "evt-local-source-only",
         kind: "chat.message",
         by: "user",
@@ -79,10 +83,10 @@ describe("buildReplyComposerState", () => {
           dst_group_id: "g_remote",
           dst_to: ["@foreman"],
         },
-      } as any,
+      }),
       "g-local",
       [],
-      { default_send_to: "foreman" } as any,
+      typedFixture<ReplyGroupSettings>({ default_send_to: "foreman" }),
     );
 
     expect(state?.replyTarget?.eventId).toBe("evt-local-source-only");

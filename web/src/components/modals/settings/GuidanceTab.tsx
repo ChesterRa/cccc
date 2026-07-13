@@ -2,7 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Trans, useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import type { Actor } from "../../../types";
-import { buildHelpMarkdown, parseHelpMarkdown, type HelpChangedBlock, type ParsedHelpMarkdown } from "../../../utils/helpMarkdown";
+import {
+  buildHelpMarkdown,
+  parseHelpMarkdown,
+  type HelpChangedBlock,
+  type ParsedHelpMarkdown,
+} from "../../../utils/helpMarkdown";
 import { BodyPortal } from "../../ui/BodyPortal";
 import {
   cardClass,
@@ -10,7 +15,6 @@ import {
   labelClass,
   primaryButtonClass,
   secondaryButtonClass,
-  settingsDialogBodyClass,
   settingsDialogPanelClass,
 } from "./types";
 
@@ -44,10 +48,7 @@ function uniqueChangedBlocks(blocks: HelpChangedBlock[]): HelpChangedBlock[] {
   return out;
 }
 
-export function GuidanceTab({ isDark, groupId }: {
-  isDark: boolean;
-  groupId?: string;
-}) {
+export function GuidanceTab({ isDark, groupId }: { isDark: boolean; groupId?: string }) {
   const { t } = useTranslation("settings");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -62,12 +63,15 @@ export function GuidanceTab({ isDark, groupId }: {
 
   const actorIds = useMemo(
     () => actors.map((actor) => String(actor.id || "").trim()).filter(Boolean),
-    [actors]
+    [actors],
   );
   const actorIdSet = useMemo(() => new Set(actorIds), [actorIds]);
   const orphanActorIds = useMemo(
-    () => Object.keys(helpStructured.actorNotes).filter((actorId) => !actorIdSet.has(actorId)).sort(),
-    [helpStructured.actorNotes, actorIdSet]
+    () =>
+      Object.keys(helpStructured.actorNotes)
+        .filter((actorId) => !actorIdSet.has(actorId))
+        .sort(),
+    [helpStructured.actorNotes, actorIdSet],
   );
 
   const syncHelpState = (content: string) => {
@@ -97,7 +101,7 @@ export function GuidanceTab({ isDark, groupId }: {
         setActors([]);
         return;
       }
-      const nextActors = actorsResp.ok ? (actorsResp.result?.actors || []) : [];
+      const nextActors = actorsResp.ok ? actorsResp.result?.actors || [] : [];
       setPrompts({ preamble: p, help: h });
       setActors(nextActors);
       syncHelpState(String(h.content || ""));
@@ -197,7 +201,7 @@ export function GuidanceTab({ isDark, groupId }: {
         prompts.help.content || "",
         helpTouchedRaw
           ? { editorMode: "raw" }
-          : { editorMode: "structured", changedBlocks: helpChangedBlocks }
+          : { editorMode: "structured", changedBlocks: helpChangedBlocks },
       );
       if (!resp.ok) {
         setErr(resp.error?.message || t("guidance.failedToSave", { kind: "help" }));
@@ -235,7 +239,9 @@ export function GuidanceTab({ isDark, groupId }: {
   if (!groupId) {
     return (
       <div className={cardClass(isDark)}>
-        <div className="text-sm text-[var(--color-text-secondary)]">{t("guidance.openFromGroup")}</div>
+        <div className="text-sm text-[var(--color-text-secondary)]">
+          {t("guidance.openFromGroup")}
+        </div>
       </div>
     );
   }
@@ -261,18 +267,22 @@ export function GuidanceTab({ isDark, groupId }: {
       : isDark
         ? "bg-white/[0.04] text-white/68 border border-white/8"
         : "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]";
-  const settingsScrollAreaClass = "overflow-y-auto scrollbar-subtle pr-2 pb-2 [scrollbar-gutter:stable]";
+  const settingsScrollAreaClass =
+    "overflow-y-auto scrollbar-subtle pr-2 pb-2 [scrollbar-gutter:stable]";
   const promptShellClass = `overflow-hidden rounded-[22px] border backdrop-blur-xl ${
     isDark
       ? "border-white/10 bg-[linear-gradient(180deg,rgba(19,20,24,0.88),rgba(10,11,14,0.96))] shadow-[0_28px_100px_rgba(0,0,0,0.36)]"
       : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(246,248,251,0.96))] shadow-[0_28px_100px_rgba(15,23,42,0.06)]"
   }`;
   const promptHeaderClass = `flex items-start justify-between gap-4 px-4 py-4 sm:px-5 sm:py-4 ${
-    isDark ? "border-b border-white/8 bg-white/[0.025]" : "border-b border-black/6 bg-[rgba(18,18,20,0.018)]"
+    isDark
+      ? "border-b border-white/8 bg-white/[0.025]"
+      : "border-b border-black/6 bg-[rgba(18,18,20,0.018)]"
   }`;
   const promptHeaderTextClass = isDark ? "text-white" : "text-[rgb(22,24,29)]";
   const promptHintClass = "text-[var(--color-text-tertiary)]";
-  const promptBodyClass = (expanded = false) => `px-4 py-4 sm:px-5 sm:py-5 ${expanded ? "min-h-0 flex flex-1 flex-col" : "space-y-4"}`;
+  const promptBodyClass = (expanded = false) =>
+    `px-4 py-4 sm:px-5 sm:py-5 ${expanded ? "min-h-0 flex flex-1 flex-col" : "space-y-4"}`;
   const promptPathClass = `inline-flex max-w-full items-center rounded-full border px-3 py-1 text-[11px] font-mono leading-5 ${
     isDark
       ? "border-white/8 bg-white/[0.03] text-white/64"
@@ -283,10 +293,12 @@ export function GuidanceTab({ isDark, groupId }: {
       ? "border-white/8 bg-white/[0.025]"
       : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.94),rgba(246,248,251,0.88))]"
   }`;
-  const editorTextareaClass = `${inputClass(isDark)} min-h-[320px] resize-y border-0 bg-transparent px-0 py-0 shadow-none focus-visible:ring-0`;
+  const editorTextareaClass = `${inputClass(isDark)} border-0 bg-transparent px-0 py-0 shadow-none focus-visible:ring-0`;
   const editorMetaBadgeClass = `inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-medium border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]`;
   const segmentedControlClass = `inline-flex rounded-full border p-1 ${
-    isDark ? "border-white/8 bg-white/[0.025]" : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]"
+    isDark
+      ? "border-white/8 bg-white/[0.025]"
+      : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)]"
   }`;
   const navigationPanelClass = `rounded-[18px] border p-3 ${
     isDark
@@ -309,7 +321,9 @@ export function GuidanceTab({ isDark, groupId }: {
     const badgeClass = kind === "help" ? helpBadge : preambleBadge;
     const source = kind === "help" ? helpSource : preambleSource;
     return (
-      <div className={`inline-flex items-center rounded-full px-3 py-1.5 text-[11px] font-medium ${badgeClass}`}>
+      <div
+        className={`inline-flex items-center rounded-full px-3 py-1.5 text-[11px] font-medium ${badgeClass}`}
+      >
         {source === "home" ? t("guidance.overrideBadge") : t("guidance.builtinBadge")}
       </div>
     );
@@ -322,7 +336,7 @@ export function GuidanceTab({ isDark, groupId }: {
       <div
         className={
           expanded
-            ? "mt-4 flex flex-wrap items-center gap-2"
+            ? "mt-4 flex shrink-0 flex-wrap items-center gap-2 border-t border-[var(--glass-border-subtle)] pt-3"
             : `mt-0 flex flex-wrap items-center gap-2 border-t px-4 py-3 sm:px-5 ${
                 isDark ? "border-white/8 bg-white/[0.02]" : "border-black/6 bg-black/[0.015]"
               }`
@@ -354,10 +368,12 @@ export function GuidanceTab({ isDark, groupId }: {
   };
 
   const renderPreambleCard = (expanded = false) => (
-    <div className={expanded ? "flex h-full min-h-0 flex-col" : promptShellClass}>
+    <div className={expanded ? "flex h-full min-h-0 flex-col overflow-hidden" : promptShellClass}>
       <div className={expanded ? "flex items-start justify-between gap-3" : promptHeaderClass}>
         <div className="min-w-0">
-          <div className={`text-sm font-semibold ${promptHeaderTextClass}`}>{t("guidance.preambleTitle")}</div>
+          <div className={`text-sm font-semibold ${promptHeaderTextClass}`}>
+            {t("guidance.preambleTitle")}
+          </div>
           <div className={`text-[11px] ${promptHintClass}`}>{t("guidance.preambleHint")}</div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -376,20 +392,26 @@ export function GuidanceTab({ isDark, groupId }: {
         </div>
       </div>
 
-      <div className={expanded ? "mt-3 min-h-0 flex flex-1 flex-col" : promptBodyClass(expanded)}>
+      <div
+        className={
+          expanded ? "mt-3 min-h-0 flex flex-1 flex-col overflow-hidden" : promptBodyClass(expanded)
+        }
+      >
         {preamble?.path ? (
           <div className={promptPathClass}>
             <span className="truncate">{preamble.path}</span>
           </div>
         ) : null}
 
-        <div className={`${editorSurfaceSoftClass} ${expanded ? "min-h-0 flex flex-1 flex-col" : ""}`}>
+        <div
+          className={`${editorSurfaceSoftClass} ${expanded ? "min-h-0 flex flex-1 flex-col overflow-hidden" : ""}`}
+        >
           <div className="mb-4 flex items-center justify-between gap-3">
             <label className={labelClass(isDark)}>{t("guidance.markdown")}</label>
             <div className={editorMetaBadgeClass}>Markdown</div>
           </div>
           <textarea
-            className={`${editorTextareaClass} font-mono text-[12px] ${expanded ? "min-h-[440px] flex-1" : ""}`}
+            className={`${editorTextareaClass} font-mono text-[12px] ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
             style={expanded ? undefined : { minHeight: 220 }}
             value={preamble?.content || ""}
             onChange={(e) => setPromptContent("preamble", e.target.value)}
@@ -406,7 +428,10 @@ export function GuidanceTab({ isDark, groupId }: {
     id: "common" as HelpScopeId,
     title: t("guidance.commonNotesTitle", "Common Notes"),
     hint: t("guidance.commonNotesHint", "Untagged help content shared by all actors."),
-    placeholder: t("guidance.commonNotesPlaceholder", "Keep shared guidance, workflow details, and appendices here..."),
+    placeholder: t(
+      "guidance.commonNotesPlaceholder",
+      "Keep shared guidance, workflow details, and appendices here...",
+    ),
     value: helpStructured.common,
     roleLabel: undefined as string | undefined,
     isOrphan: false,
@@ -416,7 +441,10 @@ export function GuidanceTab({ isDark, groupId }: {
     id: "role:foreman" as HelpScopeId,
     title: t("guidance.foremanNotesTitle", "Foreman Notes"),
     hint: t("guidance.foremanNotesHint", "Only foreman actors receive this scoped block."),
-    placeholder: t("guidance.foremanNotesPlaceholder", "Own outcome quality, review peer outputs, and keep shared direction coherent..."),
+    placeholder: t(
+      "guidance.foremanNotesPlaceholder",
+      "Own outcome quality, review peer outputs, and keep shared direction coherent...",
+    ),
     value: helpStructured.foreman,
     roleLabel: undefined as string | undefined,
     isOrphan: false,
@@ -426,7 +454,10 @@ export function GuidanceTab({ isDark, groupId }: {
     id: "role:peer" as HelpScopeId,
     title: t("guidance.peerNotesTitle", "Peer Notes"),
     hint: t("guidance.peerNotesHint", "Only peer actors receive this scoped block."),
-    placeholder: t("guidance.peerNotesPlaceholder", "Report risks early, deliver verifiable outputs, and say when the direction is wrong..."),
+    placeholder: t(
+      "guidance.peerNotesPlaceholder",
+      "Report risks early, deliver verifiable outputs, and say when the direction is wrong...",
+    ),
     value: helpStructured.peer,
     roleLabel: undefined as string | undefined,
     isOrphan: false,
@@ -435,12 +466,20 @@ export function GuidanceTab({ isDark, groupId }: {
   const actorScopes = actors.map((actor) => {
     const actorId = String(actor.id || "").trim();
     const note = String(helpStructured.actorNotes[actorId] || "");
-    const roleLabel = String(actor.role || t("guidance.unknownRole", "Unknown")).trim() || t("guidance.unknownRole", "Unknown");
+    const roleLabel =
+      String(actor.role || t("guidance.unknownRole", "Unknown")).trim() ||
+      t("guidance.unknownRole", "Unknown");
     return {
       id: `actor:${actorId}` as HelpScopeId,
       title: displayActorName(actor),
-      hint: t("guidance.actorNotesHint", "Local notes for specific actors. This is the same source edited from the actor modal shortcut."),
-      placeholder: t("guidance.actorNotePlaceholder", "Describe only this actor's local responsibilities, boundaries, and preferred behavior..."),
+      hint: t(
+        "guidance.actorNotesHint",
+        "Local notes for specific actors. This is the same source edited from the actor modal shortcut.",
+      ),
+      placeholder: t(
+        "guidance.actorNotePlaceholder",
+        "Describe only this actor's local responsibilities, boundaries, and preferred behavior...",
+      ),
       value: note,
       roleLabel,
       isOrphan: false,
@@ -452,17 +491,24 @@ export function GuidanceTab({ isDark, groupId }: {
     return {
       id: `actor:${actorId}` as HelpScopeId,
       title: actorId,
-      hint: t("guidance.actorNotesHint", "Local notes for specific actors. This is the same source edited from the actor modal shortcut."),
-      placeholder: t("guidance.orphanActorNotePlaceholder", "Keep or clean this leftover note for an actor that no longer exists..."),
+      hint: t(
+        "guidance.actorNotesHint",
+        "Local notes for specific actors. This is the same source edited from the actor modal shortcut.",
+      ),
+      placeholder: t(
+        "guidance.orphanActorNotePlaceholder",
+        "Keep or clean this leftover note for an actor that no longer exists...",
+      ),
       value: note,
       roleLabel: t("guidance.orphanActorRole", "No longer in group"),
       isOrphan: true,
     };
   });
 
-  const selectedHelpScopeItem = [commonScope, foremanScope, peerScope, ...actorScopes, ...orphanActorScopes].find(
-    (item) => item.id === selectedHelpScope
-  ) || commonScope;
+  const selectedHelpScopeItem =
+    [commonScope, foremanScope, peerScope, ...actorScopes, ...orphanActorScopes].find(
+      (item) => item.id === selectedHelpScope,
+    ) || commonScope;
 
   const updateSelectedHelpScopeValue = (value: string) => {
     if (selectedHelpScopeItem.id === "common") {
@@ -480,11 +526,7 @@ export function GuidanceTab({ isDark, groupId }: {
     updateActorNote(selectedHelpScopeItem.id.slice("actor:".length), value);
   };
 
-  const renderHelpScopeButton = (item: {
-    id: HelpScopeId;
-    title: string;
-    roleLabel?: string;
-  }) => {
+  const renderHelpScopeButton = (item: { id: HelpScopeId; title: string; roleLabel?: string }) => {
     const active = item.id === selectedHelpScope;
     return (
       <button
@@ -504,7 +546,9 @@ export function GuidanceTab({ isDark, groupId }: {
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="font-medium truncate">{item.title}</span>
           {item.roleLabel ? (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]`}>
+            <span
+              className={`text-[10px] px-1.5 py-0.5 rounded-full shrink-0 border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]`}
+            >
               {item.roleLabel}
             </span>
           ) : null}
@@ -514,10 +558,12 @@ export function GuidanceTab({ isDark, groupId }: {
   };
 
   const renderHelpCard = (expanded = false) => (
-    <div className={expanded ? "flex h-full min-h-0 flex-col" : promptShellClass}>
+    <div className={expanded ? "flex h-full min-h-0 flex-col overflow-hidden" : promptShellClass}>
       <div className={expanded ? "flex items-start justify-between gap-3" : promptHeaderClass}>
         <div className="min-w-0">
-          <div className={`text-sm font-semibold ${promptHeaderTextClass}`}>{t("guidance.helpTitle")}</div>
+          <div className={`text-sm font-semibold ${promptHeaderTextClass}`}>
+            {t("guidance.helpTitle")}
+          </div>
           <div className={`text-[11px] ${promptHintClass}`}>{t("guidance.helpHint")}</div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -536,24 +582,33 @@ export function GuidanceTab({ isDark, groupId }: {
         </div>
       </div>
 
-      <div className={expanded ? "mt-3 min-h-0 flex flex-1 flex-col" : promptBodyClass(expanded)}>
+      <div
+        className={
+          expanded ? "mt-3 min-h-0 flex flex-1 flex-col overflow-hidden" : promptBodyClass(expanded)
+        }
+      >
         {help?.path ? (
           <div className={promptPathClass}>
             <span className="truncate">{help.path}</span>
           </div>
         ) : null}
 
-        <div className={`${expanded ? "min-h-0 flex flex-1 flex-col" : ""}`}>
-          <div className={`flex items-start justify-between gap-4 ${expanded ? "pb-4" : "mb-4"}`}>
-            <div className="min-w-0">
+        <div className={`${expanded ? "min-h-0 flex flex-1 flex-col overflow-hidden" : ""}`}>
+          <div
+            className={`flex shrink-0 flex-col gap-3 sm:flex-row sm:items-center ${expanded ? "pb-4" : "mb-4"}`}
+          >
+            <div className="min-w-0 flex-1">
               <div className="max-w-[54ch] text-[11px] leading-5 text-[var(--color-text-tertiary)]">
-                {t("guidance.helpEditorHint", "Structured mode edits common, role, and actor notes; raw mode keeps full-file control.")}
+                {t(
+                  "guidance.helpEditorHint",
+                  "Structured mode edits common, role, and actor notes; raw mode keeps full-file control.",
+                )}
               </div>
             </div>
-            <div className={`${segmentedControlClass} ${expanded ? "shrink-0" : ""}`}>
+            <div className={`${segmentedControlClass} w-full shrink-0 sm:w-auto`}>
               <button
                 type="button"
-                className={`px-3 py-1.5 text-xs rounded-full transition-colors ${
+                className={`flex-1 whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-colors sm:flex-none ${
                   helpViewMode === "structured"
                     ? "bg-[var(--color-accent-primary)] text-[var(--color-text-inverse)]"
                     : "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
@@ -564,7 +619,7 @@ export function GuidanceTab({ isDark, groupId }: {
               </button>
               <button
                 type="button"
-                className={`px-3 py-1.5 text-xs rounded-full transition-colors ${
+                className={`flex-1 whitespace-nowrap px-3 py-1.5 text-xs rounded-full transition-colors sm:flex-none ${
                   helpViewMode === "raw"
                     ? "bg-[var(--color-accent-primary)] text-[var(--color-text-inverse)]"
                     : "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
@@ -577,11 +632,21 @@ export function GuidanceTab({ isDark, groupId }: {
           </div>
 
           {helpViewMode === "structured" ? (
-            <div className={`mt-5 grid grid-cols-1 gap-5 ${expanded ? "min-h-0 flex-1 xl:grid-cols-[256px_minmax(0,1fr)]" : "items-start xl:grid-cols-[228px_minmax(0,1fr)]"}`}>
-              <div className={`${navigationPanelClass} ${expanded ? "min-h-0 flex flex-col" : "space-y-2.5"}`}>
-                <div className={expanded ? `min-h-0 flex-1 space-y-4 ${settingsScrollAreaClass}` : "space-y-4"}>
+            <div
+              className={`mt-5 grid grid-cols-1 gap-5 ${expanded ? "min-h-0 flex-1 overflow-y-auto xl:overflow-hidden xl:grid-cols-[256px_minmax(0,1fr)]" : "items-start xl:grid-cols-[228px_minmax(0,1fr)]"}`}
+            >
+              <div
+                className={`${navigationPanelClass} ${expanded ? "min-h-0 flex flex-col overflow-hidden" : "space-y-2.5"}`}
+              >
+                <div
+                  className={
+                    expanded ? `min-h-0 flex-1 space-y-4 ${settingsScrollAreaClass}` : "space-y-4"
+                  }
+                >
                   <div className="space-y-2.5">
-                    <div className={navSectionTitleClass}>{t("guidance.commonAndRolesTitle", "Shared Scopes")}</div>
+                    <div className={navSectionTitleClass}>
+                      {t("guidance.commonAndRolesTitle", "Shared Scopes")}
+                    </div>
                     {renderHelpScopeButton(commonScope)}
                     {renderHelpScopeButton(foremanScope)}
                     {renderHelpScopeButton(peerScope)}
@@ -592,22 +657,39 @@ export function GuidanceTab({ isDark, groupId }: {
                       {t("guidance.actorNotesTitle", "Actor Notes")}
                     </div>
                     {actorScopes.length ? (
-                      <div className={expanded ? "space-y-2" : `space-y-2 max-h-[360px] ${settingsScrollAreaClass}`}>
+                      <div
+                        className={
+                          expanded
+                            ? "space-y-2"
+                            : `space-y-2 max-h-[360px] ${settingsScrollAreaClass}`
+                        }
+                      >
                         {actorScopes.map((item) => renderHelpScopeButton(item))}
                       </div>
                     ) : (
                       <div className="rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-3 py-4 text-sm text-[var(--color-text-muted)]">
-                        {t("guidance.noActorsForStructuredHelp", "No actors available in this group yet.")}
+                        {t(
+                          "guidance.noActorsForStructuredHelp",
+                          "No actors available in this group yet.",
+                        )}
                       </div>
                     )}
                   </div>
 
                   {orphanActorScopes.length ? (
-                    <div className={`pt-3 border-t ${isDark ? "border-white/8" : "border-gray-200"}`}>
+                    <div
+                      className={`pt-3 border-t ${isDark ? "border-white/8" : "border-gray-200"}`}
+                    >
                       <div className={navSectionTitleClass}>
                         {t("guidance.orphanActorNotesTitle", "Other actor notes")}
                       </div>
-                      <div className={expanded ? "space-y-2" : `space-y-2 max-h-[220px] ${settingsScrollAreaClass}`}>
+                      <div
+                        className={
+                          expanded
+                            ? "space-y-2"
+                            : `space-y-2 max-h-[220px] ${settingsScrollAreaClass}`
+                        }
+                      >
                         {orphanActorScopes.map((item) => renderHelpScopeButton(item))}
                       </div>
                     </div>
@@ -615,29 +697,41 @@ export function GuidanceTab({ isDark, groupId }: {
                 </div>
               </div>
 
-              <div className={`${workspacePanelClass} ${expanded ? "min-h-0 flex flex-col" : ""}`}>
+              <div
+                className={`${workspacePanelClass} ${expanded ? "min-h-[360px] flex flex-col overflow-hidden xl:min-h-0" : ""}`}
+              >
                 <div className="mb-4 flex items-start gap-4">
                   <div className="min-w-0">
-                    <div className={`text-[11px] font-medium uppercase tracking-[0.16em] ${isDark ? "text-white/44" : "text-gray-500"}`}>
+                    <div
+                      className={`text-[11px] font-medium uppercase tracking-[0.16em] ${isDark ? "text-white/44" : "text-gray-500"}`}
+                    >
                       {t("guidance.editKind", { kind: selectedHelpScopeItem.title })}
                     </div>
-                    <div className={`mt-1 text-sm font-semibold ${isDark ? "text-white" : "text-gray-900"}`}>
+                    <div
+                      className={`mt-1 text-sm font-semibold ${isDark ? "text-white" : "text-gray-900"}`}
+                    >
                       {selectedHelpScopeItem.title}
                     </div>
-                    <div className={`mt-1 text-[11px] ${isDark ? "text-white/40" : "text-gray-500"}`}>
+                    <div
+                      className={`mt-1 text-[11px] ${isDark ? "text-white/40" : "text-gray-500"}`}
+                    >
                       {selectedHelpScopeItem.hint}
                     </div>
                   </div>
                   {selectedHelpScopeItem.roleLabel ? (
-                    <div className={`ml-auto shrink-0 rounded-full px-2.5 py-1 text-[10px] ${isDark ? "bg-white/[0.05] text-white/62" : "bg-black/[0.05] text-gray-600"}`}>
+                    <div
+                      className={`ml-auto shrink-0 rounded-full px-2.5 py-1 text-[10px] ${isDark ? "bg-white/[0.05] text-white/62" : "bg-black/[0.05] text-gray-600"}`}
+                    >
                       {selectedHelpScopeItem.roleLabel}
                     </div>
                   ) : null}
                 </div>
 
-                <div className={`${editorSurfaceSoftClass} ${expanded ? "min-h-0 flex flex-1 flex-col" : ""}`}>
+                <div
+                  className={`${editorSurfaceSoftClass} ${expanded ? "min-h-0 flex flex-1 flex-col overflow-hidden" : ""}`}
+                >
                   <textarea
-                    className={`${editorTextareaClass} font-mono text-[12px] ${expanded ? "min-h-[440px] flex-1" : ""}`}
+                    className={`${editorTextareaClass} font-mono text-[12px] ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
                     style={expanded ? undefined : { minHeight: 320, maxHeight: "44vh" }}
                     value={selectedHelpScopeItem.value}
                     onChange={(e) => updateSelectedHelpScopeValue(e.target.value)}
@@ -648,14 +742,18 @@ export function GuidanceTab({ isDark, groupId }: {
               </div>
             </div>
           ) : (
-            <div className={`mt-5 ${expanded ? "min-h-0 flex flex-1 flex-col" : ""}`}>
-              <div className={`${editorSurfaceSoftClass} ${expanded ? "min-h-0 flex flex-1 flex-col" : ""}`}>
+            <div
+              className={`mt-5 ${expanded ? "min-h-0 flex flex-1 flex-col overflow-hidden" : ""}`}
+            >
+              <div
+                className={`${editorSurfaceSoftClass} ${expanded ? "min-h-0 flex flex-1 flex-col overflow-hidden" : ""}`}
+              >
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <label className={labelClass(isDark)}>{t("guidance.markdown")}</label>
                   <div className={editorMetaBadgeClass}>Raw</div>
                 </div>
                 <textarea
-                  className={`${editorTextareaClass} font-mono text-[12px] ${expanded ? "min-h-[440px] flex-1" : ""}`}
+                  className={`${editorTextareaClass} font-mono text-[12px] ${expanded ? "min-h-0 flex-1 resize-none" : "min-h-[320px] resize-y"}`}
                   style={expanded ? undefined : { minHeight: 320, maxHeight: "44vh" }}
                   value={help?.content || ""}
                   onChange={(e) => setHelpContentRaw(e.target.value)}
@@ -673,42 +771,50 @@ export function GuidanceTab({ isDark, groupId }: {
 
   return (
     <div className="space-y-3">
-      {err ? <div className={`text-sm ${isDark ? "text-rose-300" : "text-red-600"}`}>{err}</div> : null}
+      {err ? (
+        <div className={`text-sm ${isDark ? "text-rose-300" : "text-red-600"}`}>{err}</div>
+      ) : null}
 
       <div className={overridesHintClass}>
-        <Trans i18nKey="guidance.overridesHint" ns="settings" components={[<span className="font-mono" />]} />
+        <Trans
+          i18nKey="guidance.overridesHint"
+          ns="settings"
+          components={[<span key="override" className="font-mono" />]}
+        />
       </div>
 
       {renderPreambleCard()}
       {renderHelpCard()}
 
-      {expandedKind
-        ? (
-          <BodyPortal>
-            <div
-              key={expandedKind}
-              className="fixed inset-0 z-[1000] animate-fade-in"
-              role="dialog"
-              aria-modal="true"
-              onPointerDown={(e) => {
-                if (e.target === e.currentTarget) setExpandedKind(null);
-              }}
-            >
-              <div className="absolute inset-0 glass-overlay" />
-              <div className={settingsDialogPanelClass("xl")}>
-                <div className="flex shrink-0 justify-end border-b border-[var(--glass-border-subtle)] px-3 py-2 sm:px-4 sm:py-3">
-                  <button type="button" className={secondaryButtonClass("sm")} onClick={() => setExpandedKind(null)}>
-                    {t("common:close")}
-                  </button>
-                </div>
-                <div className={settingsDialogBodyClass}>
-                  {expandedKind === "help" ? renderHelpCard(true) : renderPreambleCard(true)}
-                </div>
+      {expandedKind ? (
+        <BodyPortal>
+          <div
+            key={expandedKind}
+            className="fixed inset-0 z-[1000] animate-fade-in"
+            role="dialog"
+            aria-modal="true"
+            onPointerDown={(e) => {
+              if (e.target === e.currentTarget) setExpandedKind(null);
+            }}
+          >
+            <div className="absolute inset-0 glass-overlay" />
+            <div className={settingsDialogPanelClass("xl")}>
+              <div className="flex shrink-0 justify-end border-b border-[var(--glass-border-subtle)] px-3 py-2 sm:px-4 sm:py-3">
+                <button
+                  type="button"
+                  className={secondaryButtonClass("sm")}
+                  onClick={() => setExpandedKind(null)}
+                >
+                  {t("common:close")}
+                </button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-hidden p-4 sm:p-6 lg:p-7">
+                {expandedKind === "help" ? renderHelpCard(true) : renderPreambleCard(true)}
               </div>
             </div>
-          </BodyPortal>
-          )
-        : null}
+          </div>
+        </BodyPortal>
+      ) : null}
     </div>
   );
 }

@@ -1,7 +1,18 @@
-const IMAGE_FILE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp", ".avif"]);
+const IMAGE_FILE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".bmp",
+  ".avif",
+]);
 
 function fileExtension(name: string): string {
-  const clean = String(name || "").trim().toLowerCase();
+  const clean = String(name || "")
+    .trim()
+    .toLowerCase();
   const dot = clean.lastIndexOf(".");
   return dot >= 0 ? clean.slice(dot) : "";
 }
@@ -28,14 +39,15 @@ export function getComposerPreviewPosition({
   const preferredTop = anchor.top - preview.height - gap;
   const fallbackTop = anchor.bottom + gap;
   const maxTop = Math.max(margin, viewport.height - preview.height - margin);
-  const top = preferredTop >= margin
-    ? preferredTop
-    : Math.min(Math.max(fallbackTop, margin), maxTop);
+  const top =
+    preferredTop >= margin ? preferredTop : Math.min(Math.max(fallbackTop, margin), maxTop);
   return { left, top };
 }
 
 export function isPreviewableComposerImageFile(file: File): boolean {
-  const type = String(file.type || "").trim().toLowerCase();
+  const type = String(file.type || "")
+    .trim()
+    .toLowerCase();
   if (type.startsWith("image/")) return true;
   return IMAGE_FILE_EXTENSIONS.has(fileExtension(file.name));
 }

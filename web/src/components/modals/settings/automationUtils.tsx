@@ -7,8 +7,12 @@ import type { AutomationRule, AutomationRuleAction } from "../../../types";
 import { BellIcon as AppBellIcon, SparklesIcon } from "../../Icons";
 import { cardClass, inputClass, labelClass } from "./types";
 
-export const BellIcon = ({ className }: { className?: string }) => <AppBellIcon className={className} />;
-export const SparkIcon = ({ className }: { className?: string }) => <SparklesIcon className={className} />;
+export const BellIcon = ({ className }: { className?: string }) => (
+  <AppBellIcon className={className} />
+);
+export const SparkIcon = ({ className }: { className?: string }) => (
+  <SparklesIcon className={className} />
+);
 
 export const formatDuration = (secondsRaw: number, t?: TFunction): string => {
   const seconds = Number.isFinite(secondsRaw) ? Math.max(0, Math.trunc(secondsRaw)) : 0;
@@ -89,9 +93,7 @@ export const NumberInputRow = ({
           className={inputClass(isDark)}
         />
         {formatValue ? (
-          <div
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono pointer-events-none transition-opacity duration-200 text-[var(--color-text-muted)]"
-          >
+          <div className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono pointer-events-none transition-opacity duration-200 text-[var(--color-text-muted)]">
             {formatDuration(value, t)}
           </div>
         ) : null}
@@ -116,9 +118,7 @@ export const Chip = ({
 }) => {
   const { t } = useTranslation();
   return (
-    <span
-      className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
-    >
+    <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">
       <span className="font-mono">{label}</span>
       {onRemove ? (
         <button
@@ -155,26 +155,30 @@ export function defaultGroupStateAction(): Extract<AutomationRuleAction, { kind:
   return { kind: "group_state", state: "paused" };
 }
 
-export function defaultActorControlAction(): Extract<AutomationRuleAction, { kind: "actor_control" }> {
+export function defaultActorControlAction(): Extract<
+  AutomationRuleAction,
+  { kind: "actor_control" }
+> {
   return { kind: "actor_control", operation: "restart", targets: ["@all"] };
 }
 
-export function actionKind(action: AutomationRule["action"] | undefined): "notify" | "group_state" | "actor_control" {
+export function actionKind(
+  action: AutomationRule["action"] | undefined,
+): "notify" | "group_state" | "actor_control" {
   const kind = String(action?.kind || "notify").trim();
   if (kind === "group_state" || kind === "actor_control") return kind;
   return "notify";
 }
 
-export function getGroupStateCopy(t: TFunction): Record<"active" | "idle" | "paused" | "stopped", { label: string; hint: string }> {
+export function getGroupStateCopy(
+  t: TFunction,
+): Record<"active" | "idle" | "paused" | "stopped", { label: string; hint: string }> {
   return {
     active: {
       label: t("automation.groupStateActiveLabel"),
       hint: t("automation.groupStateActiveHint"),
     },
-    idle: {
-      label: t("automation.groupStateIdleLabel"),
-      hint: t("automation.groupStateIdleHint"),
-    },
+    idle: { label: t("automation.groupStateIdleLabel"), hint: t("automation.groupStateIdleHint") },
     paused: {
       label: t("automation.groupStatePausedLabel"),
       hint: t("automation.groupStatePausedHint"),
@@ -186,16 +190,12 @@ export function getGroupStateCopy(t: TFunction): Record<"active" | "idle" | "pau
   };
 }
 
-export function getActorOperationCopy(t: TFunction): Record<"start" | "stop" | "restart", { label: string; hint: string }> {
+export function getActorOperationCopy(
+  t: TFunction,
+): Record<"start" | "stop" | "restart", { label: string; hint: string }> {
   return {
-    start: {
-      label: t("automation.actorOpStartLabel"),
-      hint: t("automation.actorOpStartHint"),
-    },
-    stop: {
-      label: t("automation.actorOpStopLabel"),
-      hint: t("automation.actorOpStopHint"),
-    },
+    start: { label: t("automation.actorOpStartLabel"), hint: t("automation.actorOpStartHint") },
+    stop: { label: t("automation.actorOpStopLabel"), hint: t("automation.actorOpStopHint") },
     restart: {
       label: t("automation.actorOpRestartLabel"),
       hint: t("automation.actorOpRestartHint"),
@@ -225,16 +225,12 @@ export function getWeekdayOptions(t: TFunction): Array<{ value: number; label: s
   ];
 }
 
-export function getAutomationVarHelp(t: TFunction): Record<string, { description: string; example: string }> {
+export function getAutomationVarHelp(
+  t: TFunction,
+): Record<string, { description: string; example: string }> {
   return {
-    interval_minutes: {
-      description: t("automation.varHelpIntervalMinutes"),
-      example: "15",
-    },
-    group_title: {
-      description: t("automation.varHelpGroupTitle"),
-      example: "Riichi Arena Ops",
-    },
+    interval_minutes: { description: t("automation.varHelpIntervalMinutes"), example: "15" },
+    group_title: { description: t("automation.varHelpGroupTitle"), example: "Riichi Arena Ops" },
     actor_names: {
       description: t("automation.varHelpActorNames"),
       example: "foreman, peer1, peer2",
@@ -246,9 +242,13 @@ export function getAutomationVarHelp(t: TFunction): Record<string, { description
   };
 }
 
-export function parseCronToPreset(
-  cronExpr: string
-): { preset: SchedulePreset; hour: number; minute: number; weekday: number; dayOfMonth: number } {
+export function parseCronToPreset(cronExpr: string): {
+  preset: SchedulePreset;
+  hour: number;
+  minute: number;
+  weekday: number;
+  dayOfMonth: number;
+} {
   const raw = String(cronExpr || "").trim();
   const parts = raw.split(/\s+/).filter(Boolean);
   if (parts.length !== 5) {
@@ -327,8 +327,5 @@ export function parseTimeInput(input: string): { hour: number; minute: number } 
   const raw = String(input || "").trim();
   const m = /^(\d{1,2}):(\d{1,2})$/.exec(raw);
   if (!m) return { hour: 9, minute: 0 };
-  return {
-    hour: clampInt(Number(m[1]), 0, 23),
-    minute: clampInt(Number(m[2]), 0, 59),
-  };
+  return { hour: clampInt(Number(m[1]), 0, 23), minute: clampInt(Number(m[2]), 0, 59) };
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { getTaskMessageRefs, getTaskRefChipLabel } from "../../src/utils/taskRefs";
 
 describe("taskRefs", () => {

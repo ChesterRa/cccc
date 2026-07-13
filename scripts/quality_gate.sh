@@ -7,11 +7,15 @@ cd "$ROOT"
 mode="${1:-fast}"
 case "$mode" in
   fast)
+    node scripts/quality/verify_oxfmt_migration.mjs
+    npm -C web run test:quality
     uv run python scripts/quality/source_size.py
     uvx ruff check src scripts tests
     scripts/pre_commit_checks.sh
     ;;
   full)
+    node scripts/quality/verify_oxfmt_migration.mjs
+    npm -C web run test:quality
     uv run python scripts/quality/source_size.py
     uvx ruff check src scripts tests
     npm -C web test

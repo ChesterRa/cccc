@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const { localStorageMock } = vi.hoisted(() => {
   function makeStorage() {
@@ -39,7 +39,9 @@ describe("computeGroupRuntimeFromActorActivityUpdate", () => {
     expect(shouldStartGroupStreams(false)).toBe(true);
     expect(shouldStartGroupStreams(true)).toBe(false);
     expect(getGroupStreamsHiddenDisconnectDelayMs(false)).toBeNull();
-    expect(getGroupStreamsHiddenDisconnectDelayMs(true)).toBe(GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS);
+    expect(getGroupStreamsHiddenDisconnectDelayMs(true)).toBe(
+      GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS,
+    );
     expect(GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS).toBeGreaterThanOrEqual(60_000);
   });
 
@@ -49,15 +51,13 @@ describe("computeGroupRuntimeFromActorActivityUpdate", () => {
       { id: "peer-2", running: true, effective_working_state: "working" },
     ];
 
-    expect(computeGroupRuntimeFromActorActivityUpdate(actors, {
-      id: "peer-1",
-      running: true,
-      effective_working_state: "idle",
-    })).toMatchObject({
-      lifecycle_state: "active",
-      runtime_running: true,
-      running_actor_count: 2,
-    });
+    expect(
+      computeGroupRuntimeFromActorActivityUpdate(actors, {
+        id: "peer-1",
+        running: true,
+        effective_working_state: "idle",
+      }),
+    ).toMatchObject({ lifecycle_state: "active", runtime_running: true, running_actor_count: 2 });
   });
 
   it("marks the group idle when the completed actor was the only busy actor", () => {
@@ -66,36 +66,30 @@ describe("computeGroupRuntimeFromActorActivityUpdate", () => {
       { id: "peer-2", running: true, effective_working_state: "idle" },
     ];
 
-    expect(computeGroupRuntimeFromActorActivityUpdate(actors, {
-      id: "peer-1",
-      running: true,
-      effective_working_state: "idle",
-    })).toMatchObject({
-      lifecycle_state: "idle",
-      runtime_running: true,
-      running_actor_count: 2,
-    });
+    expect(
+      computeGroupRuntimeFromActorActivityUpdate(actors, {
+        id: "peer-1",
+        running: true,
+        effective_working_state: "idle",
+      }),
+    ).toMatchObject({ lifecycle_state: "idle", runtime_running: true, running_actor_count: 2 });
   });
 
   it("preserves stopped fallback when the last running actor stops", () => {
-    const actors: Actor[] = [
-      { id: "peer-1", running: true, effective_working_state: "working" },
-    ];
+    const actors: Actor[] = [{ id: "peer-1", running: true, effective_working_state: "working" }];
 
-    expect(computeGroupRuntimeFromActorActivityUpdate(actors, {
-      id: "peer-1",
-      running: false,
-      effective_working_state: "stopped",
-    }, {
-      lifecycle_state: "stopped",
-      runtime_running: false,
-      running_actor_count: 0,
-      has_running_foreman: false,
-    })).toMatchObject({
-      lifecycle_state: "stopped",
-      runtime_running: false,
-      running_actor_count: 0,
-    });
+    expect(
+      computeGroupRuntimeFromActorActivityUpdate(
+        actors,
+        { id: "peer-1", running: false, effective_working_state: "stopped" },
+        {
+          lifecycle_state: "stopped",
+          runtime_running: false,
+          running_actor_count: 0,
+          has_running_foreman: false,
+        },
+      ),
+    ).toMatchObject({ lifecycle_state: "stopped", runtime_running: false, running_actor_count: 0 });
   });
 
   it("derives full runtime fields from batched actor.activity updates", () => {
@@ -104,10 +98,12 @@ describe("computeGroupRuntimeFromActorActivityUpdate", () => {
       { id: "peer-1", role: "peer", running: true, effective_working_state: "idle" },
     ];
 
-    expect(computeGroupRuntimeFromActorActivityUpdates(actors, [
-      { id: "foreman", running: false, effective_working_state: "stopped" },
-      { id: "peer-1", running: true, effective_working_state: "idle" },
-    ])).toMatchObject({
+    expect(
+      computeGroupRuntimeFromActorActivityUpdates(actors, [
+        { id: "foreman", running: false, effective_working_state: "stopped" },
+        { id: "peer-1", running: true, effective_working_state: "idle" },
+      ]),
+    ).toMatchObject({
       lifecycle_state: "idle",
       runtime_running: true,
       running_actor_count: 1,

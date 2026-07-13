@@ -1,14 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { CapabilityControlsPanel } from "../../src/components/capabilities/CapabilityControlsPanel";
 import type { CapabilityOverviewItem } from "../../src/types";
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-  }),
-}));
+vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 function row(overrides: Partial<CapabilityOverviewItem> = {}): CapabilityOverviewItem {
   return {

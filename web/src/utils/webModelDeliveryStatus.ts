@@ -1,6 +1,12 @@
 import type { LedgerEvent, WebModelDeliveryStatusPayload } from "../types";
 
-export type WebModelDeliveryState = "submitting" | "submitted" | "bound" | "pending" | "ambiguous" | "failed";
+export type WebModelDeliveryState =
+  | "submitting"
+  | "submitted"
+  | "bound"
+  | "pending"
+  | "ambiguous"
+  | "failed";
 
 export type WebModelDeliveryStatus = {
   state: WebModelDeliveryState;
@@ -66,10 +72,19 @@ const DELIVERY_KIND_TO_STATE: Record<string, WebModelDeliveryState> = {
   "web_model.browser_delivery.failed": "failed",
 };
 
-const DELIVERY_STATES: WebModelDeliveryState[] = ["submitting", "submitted", "bound", "pending", "ambiguous", "failed"];
+const DELIVERY_STATES: WebModelDeliveryState[] = [
+  "submitting",
+  "submitted",
+  "bound",
+  "pending",
+  "ambiguous",
+  "failed",
+];
 
 function eventData(event: LedgerEvent): Record<string, unknown> {
-  return event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
+  return event.data && typeof event.data === "object"
+    ? (event.data as Record<string, unknown>)
+    : {};
 }
 
 function eventIds(data: Record<string, unknown>): string[] {
@@ -82,7 +97,10 @@ function eventIds(data: Record<string, unknown>): string[] {
 }
 
 function browserDetail(data: Record<string, unknown>): string {
-  const browser = data.browser && typeof data.browser === "object" ? data.browser as Record<string, unknown> : {};
+  const browser =
+    data.browser && typeof data.browser === "object"
+      ? (data.browser as Record<string, unknown>)
+      : {};
   const evidence = String(browser.submission_evidence || data.submission_evidence || "").trim();
   if (evidence) return evidence;
   const error = String(data.error || data.commit_error || "").trim();
@@ -105,7 +123,9 @@ function statusFromMessageEvent(event: LedgerEvent): WebModelDeliveryStatus | nu
   };
 }
 
-export function buildWebModelDeliveryStatusByEventId(events: LedgerEvent[] | undefined): Record<string, WebModelDeliveryStatus> {
+export function buildWebModelDeliveryStatusByEventId(
+  events: LedgerEvent[] | undefined,
+): Record<string, WebModelDeliveryStatus> {
   const statuses: Record<string, WebModelDeliveryStatus> = {};
   for (const event of Array.isArray(events) ? events : []) {
     const messageStatus = statusFromMessageEvent(event);

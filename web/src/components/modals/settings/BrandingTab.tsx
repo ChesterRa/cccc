@@ -31,7 +31,7 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
   const refreshBranding = useBrandingStore((s) => s.refreshBranding);
 
   const [productName, setProductName] = useState(branding.product_name);
-  const [busy, setBusy] = useState<"" | "save" | AssetKind>(""); 
+  const [busy, setBusy] = useState<"" | "save" | AssetKind>("");
   const [error, setError] = useState("");
   const [hint, setHint] = useState("");
   const [pendingLogoName, setPendingLogoName] = useState("");
@@ -49,9 +49,18 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
     void refreshBranding();
   }, [isActive, refreshBranding]);
 
-  const previewName = useMemo(() => String(productName || "").trim() || branding.product_name, [branding.product_name, productName]);
-  const logoSrc = useMemo(() => resolveThemeAwareLogoUrl(branding.logo_icon_url, isDark), [branding.logo_icon_url, isDark]);
-  const faviconSrc = useMemo(() => resolveThemeAwareFaviconUrl(branding.favicon_url || branding.logo_icon_url, isDark), [branding.favicon_url, branding.logo_icon_url, isDark]);
+  const previewName = useMemo(
+    () => String(productName || "").trim() || branding.product_name,
+    [branding.product_name, productName],
+  );
+  const logoSrc = useMemo(
+    () => resolveThemeAwareLogoUrl(branding.logo_icon_url, isDark),
+    [branding.logo_icon_url, isDark],
+  );
+  const faviconSrc = useMemo(
+    () => resolveThemeAwareFaviconUrl(branding.favicon_url || branding.logo_icon_url, isDark),
+    [branding.favicon_url, branding.logo_icon_url, isDark],
+  );
 
   const pushHint = (value: string) => {
     setHint(value);
@@ -122,8 +131,12 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
       <div className={settingsWorkspaceShellClass(isDark)}>
         <div className={settingsWorkspaceHeaderClass(isDark)}>
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("branding.title")}</h3>
-            <p className="mt-1 text-xs text-[var(--color-text-muted)]">{t("branding.description")}</p>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("branding.title")}
+            </h3>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              {t("branding.description")}
+            </p>
           </div>
         </div>
 
@@ -142,9 +155,13 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
                   />
                 </div>
                 <div className="min-w-0">
-                  <div className="truncate text-base font-semibold text-[var(--color-text-primary)]">{previewName}</div>
+                  <div className="truncate text-base font-semibold text-[var(--color-text-primary)]">
+                    {previewName}
+                  </div>
                   <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-                    {branding.has_custom_favicon ? t("branding.previewFaviconCustom") : t("branding.previewFaviconFollow")}
+                    {branding.has_custom_favicon
+                      ? t("branding.previewFaviconCustom")
+                      : t("branding.previewFaviconFollow")}
                   </div>
                 </div>
               </div>
@@ -152,8 +169,12 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
           </div>
 
           <div className={settingsWorkspacePanelClass(isDark)}>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("branding.productNameTitle")}</div>
-            <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("branding.productNameHint")}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("branding.productNameTitle")}
+            </div>
+            <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+              {t("branding.productNameHint")}
+            </div>
             <div className="mt-4">
               <label className={labelClass(isDark)}>{t("branding.productNameLabel")}</label>
               <input
@@ -165,7 +186,12 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
               />
             </div>
             <div className="mt-4">
-              <button type="button" onClick={() => void handleSaveName()} disabled={busy !== ""} className={primaryButtonClass(busy !== "")}>
+              <button
+                type="button"
+                onClick={() => void handleSaveName()}
+                disabled={busy !== ""}
+                className={primaryButtonClass(busy !== "")}
+              >
                 {busy === "save" ? t("common:saving") : t("branding.saveName")}
               </button>
             </div>
@@ -173,8 +199,12 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className={settingsWorkspacePanelClass(isDark)}>
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("branding.logoTitle")}</div>
-              <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("branding.logoHint")}</div>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {t("branding.logoTitle")}
+              </div>
+              <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+                {t("branding.logoHint")}
+              </div>
               <div className={`mt-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
                 <div className="flex h-20 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] px-4">
                   <img
@@ -197,11 +227,20 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
               />
               <div className={`mt-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
                 <div className="flex flex-wrap items-center gap-3">
-                  <button type="button" className={secondaryButtonClass()} disabled={busy !== ""} onClick={() => logoInputRef.current?.click()}>
+                  <button
+                    type="button"
+                    className={secondaryButtonClass()}
+                    disabled={busy !== ""}
+                    onClick={() => logoInputRef.current?.click()}
+                  >
                     {busy === "logo_icon" ? t("branding.uploading") : t("branding.uploadLogo")}
                   </button>
-                  <div className={`min-w-0 text-sm ${pendingLogoName ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)]"}`}>
-                    <span className="block truncate">{pendingLogoName || t("common:noFileChosen", "No file chosen")}</span>
+                  <div
+                    className={`min-w-0 text-sm ${pendingLogoName ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)]"}`}
+                  >
+                    <span className="block truncate">
+                      {pendingLogoName || t("common:noFileChosen", "No file chosen")}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -218,11 +257,19 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
             </div>
 
             <div className={settingsWorkspacePanelClass(isDark)}>
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("branding.faviconTitle")}</div>
-              <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("branding.faviconHint")}</div>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {t("branding.faviconTitle")}
+              </div>
+              <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+                {t("branding.faviconHint")}
+              </div>
               <div className={`mt-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
                 <div className="flex h-20 items-center justify-center rounded-2xl border border-dashed border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)]">
-                  <img src={faviconSrc} alt={`${branding.product_name} favicon`} className="h-8 w-8 object-contain" />
+                  <img
+                    src={faviconSrc}
+                    alt={`${branding.product_name} favicon`}
+                    className="h-8 w-8 object-contain"
+                  />
                 </div>
               </div>
               <input
@@ -238,11 +285,20 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
               />
               <div className={`mt-4 ${settingsWorkspaceSoftPanelClass(isDark)}`}>
                 <div className="flex flex-wrap items-center gap-3">
-                  <button type="button" className={secondaryButtonClass()} disabled={busy !== ""} onClick={() => faviconInputRef.current?.click()}>
+                  <button
+                    type="button"
+                    className={secondaryButtonClass()}
+                    disabled={busy !== ""}
+                    onClick={() => faviconInputRef.current?.click()}
+                  >
                     {busy === "favicon" ? t("branding.uploading") : t("branding.uploadFavicon")}
                   </button>
-                  <div className={`min-w-0 text-sm ${pendingFaviconName ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)]"}`}>
-                    <span className="block truncate">{pendingFaviconName || t("common:noFileChosen", "No file chosen")}</span>
+                  <div
+                    className={`min-w-0 text-sm ${pendingFaviconName ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)]"}`}
+                  >
+                    <span className="block truncate">
+                      {pendingFaviconName || t("common:noFileChosen", "No file chosen")}
+                    </span>
                   </div>
                 </div>
               </div>
@@ -261,7 +317,9 @@ export function BrandingTab({ isDark, isActive = true }: BrandingTabProps) {
         </div>
 
         <div className={settingsWorkspaceActionBarClass(isDark)}>
-          {hint ? <div className="text-xs text-emerald-600 dark:text-emerald-400">{hint}</div> : null}
+          {hint ? (
+            <div className="text-xs text-emerald-600 dark:text-emerald-400">{hint}</div>
+          ) : null}
           {error ? <div className="text-xs text-rose-600 dark:text-rose-400">{error}</div> : null}
         </div>
       </div>

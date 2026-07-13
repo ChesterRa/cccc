@@ -14,17 +14,25 @@ export function normalizeRuntimeVisibilityMode(
   value: unknown,
   fallback: RuntimeVisibilityMode,
 ): RuntimeVisibilityMode {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   return normalized === "hidden" || normalized === "visible" ? normalized : fallback;
 }
 
 export function isUnsupportedInternalRuntimeActor(actor: Actor | null | undefined): boolean {
-  const internalKind = String(actor?.internal_kind || "").trim().toLowerCase();
+  const internalKind = String(actor?.internal_kind || "")
+    .trim()
+    .toLowerCase();
   return Boolean(internalKind && internalKind !== "voice_secretary");
 }
 
 export function isAssistantRuntimeActor(actor: Actor | null | undefined): boolean {
-  return String(actor?.internal_kind || "").trim().toLowerCase() === "voice_secretary";
+  return (
+    String(actor?.internal_kind || "")
+      .trim()
+      .toLowerCase() === "voice_secretary"
+  );
 }
 
 export function isRuntimeSurfaceActorVisible(

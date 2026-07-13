@@ -6,10 +6,7 @@ import { LazyMarkdownRenderer } from "../LazyMarkdownRenderer";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { ModalFrame } from "./ModalFrame";
 
-function formatEventLine(
-  ev: LedgerEvent,
-  getDisplayName: (id: string) => string
-): string {
+function formatEventLine(ev: LedgerEvent, getDisplayName: (id: string) => string): string {
   if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
     const d = ev.data as Record<string, unknown>;
     return typeof d.text === "string" ? d.text : "";
@@ -80,7 +77,10 @@ export function InboxModal({
 
   const titleContent = (
     <div className="min-w-0 pr-2">
-      <div id="inbox-title" className="text-lg font-semibold truncate text-[var(--color-text-primary)]">
+      <div
+        id="inbox-title"
+        className="text-lg font-semibold truncate text-[var(--color-text-primary)]"
+      >
         {t("inbox.title", { actorId })}
       </div>
       <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
@@ -103,21 +103,27 @@ export function InboxModal({
     >
       <div className="flex-1 min-h-0 overflow-auto p-4 space-y-2">
         {messages.map((ev, idx) => (
-          <div
-            key={String(ev.id || idx)}
-            className="rounded-xl px-4 py-3 glass-panel"
-          >
+          <div key={String(ev.id || idx)} className="rounded-xl px-4 py-3 glass-panel">
             <div className="flex items-center justify-between gap-3">
-              <div className="text-xs truncate text-[var(--color-text-muted)]" title={formatFullTime(ev.ts)}>
+              <div
+                className="text-xs truncate text-[var(--color-text-muted)]"
+                title={formatFullTime(ev.ts)}
+              >
                 {formatTime(ev.ts)}
               </div>
-              <div className="text-xs font-medium truncate text-[var(--color-text-secondary)]">{getDisplayName(ev.by || "") || "—"}</div>
+              <div className="text-xs font-medium truncate text-[var(--color-text-secondary)]">
+                {getDisplayName(ev.by || "") || "—"}
+              </div>
             </div>
             <div className="mt-2 text-sm break-words">
               <LazyMarkdownRenderer
                 content={formatEventLine(ev, getDisplayName)}
                 className="text-[var(--color-text-primary)]"
-                fallback={<div className="whitespace-pre-wrap break-words">{formatEventLine(ev, getDisplayName)}</div>}
+                fallback={
+                  <div className="whitespace-pre-wrap break-words">
+                    {formatEventLine(ev, getDisplayName)}
+                  </div>
+                }
               />
             </div>
           </div>

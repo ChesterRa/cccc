@@ -47,7 +47,9 @@ export function getTaskRefStateKey(ref: TaskMessageRef, task?: Task | null): Tas
   const status = taskStatusValue(task, ref);
   const waitingOn = taskWaitingValue(task, ref);
   const handoffTo = taskHandoffValue(task, ref);
-  const blockedBy = Array.isArray(task?.blocked_by) ? task?.blocked_by.filter((item) => trimString(item)) : [];
+  const blockedBy = Array.isArray(task?.blocked_by)
+    ? task?.blocked_by.filter((item) => trimString(item))
+    : [];
 
   if (status === "done") return "done";
   if (status === "archived") return "archived";

@@ -1,8 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from "react-i18next";
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { CloseIcon, FolderIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "../Icons";
+import {
+  CloseIcon,
+  FolderIcon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  PlusIcon,
+} from "../Icons";
 import { GroupSidebarItem } from "./GroupSidebarItem";
 import { GroupSidebarSortableList } from "./GroupSidebarSortableList";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "../../stores/useUIStore";
@@ -48,7 +55,7 @@ export function GroupSidebar({
   onArchiveGroup,
   onRestoreGroup,
 }: GroupSidebarProps) {
-  const { t } = useTranslation('layout');
+  const { t } = useTranslation("layout");
   const branding = useBrandingStore((s) => s.branding);
   const logoSrc = resolveThemeAwareLogoUrl(branding.logo_icon_url, isDark);
   const dragStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -56,27 +63,36 @@ export function GroupSidebar({
   const archivedSet = useMemo(() => new Set(archivedGroupIds), [archivedGroupIds]);
   const workingGroups = useMemo(
     () => orderedGroups.filter((g) => !archivedSet.has(String(g.group_id || "").trim())),
-    [archivedSet, orderedGroups]
+    [archivedSet, orderedGroups],
   );
   const archivedGroups = useMemo(
     () => orderedGroups.filter((g) => archivedSet.has(String(g.group_id || "").trim())),
-    [archivedSet, orderedGroups]
+    [archivedSet, orderedGroups],
   );
   const collapsedGroups = useMemo(() => {
     if (!isCollapsed) return workingGroups;
-    const selectedArchived = archivedGroups.find((g) => String(g.group_id || "").trim() === String(selectedGroupId || "").trim());
+    const selectedArchived = archivedGroups.find(
+      (g) => String(g.group_id || "").trim() === String(selectedGroupId || "").trim(),
+    );
     return selectedArchived ? [...workingGroups, selectedArchived] : workingGroups;
   }, [archivedGroups, isCollapsed, selectedGroupId, workingGroups]);
   const [archivedOpen, setArchivedOpen] = useState(
     () =>
-      archivedGroups.some((g) => String(g.group_id || "").trim() === String(selectedGroupId || "").trim()) ||
-      (orderedGroups.length > 0 && workingGroups.length === 0 && archivedGroups.length > 0)
+      archivedGroups.some(
+        (g) => String(g.group_id || "").trim() === String(selectedGroupId || "").trim(),
+      ) ||
+      (orderedGroups.length > 0 && workingGroups.length === 0 && archivedGroups.length > 0),
   );
   const selectedArchived = useMemo(
-    () => archivedGroups.some((g) => String(g.group_id || "").trim() === String(selectedGroupId || "").trim()),
-    [archivedGroups, selectedGroupId]
+    () =>
+      archivedGroups.some(
+        (g) => String(g.group_id || "").trim() === String(selectedGroupId || "").trim(),
+      ),
+    [archivedGroups, selectedGroupId],
   );
-  const autoArchivedOpen = selectedArchived || (orderedGroups.length > 0 && workingGroups.length === 0 && archivedGroups.length > 0);
+  const autoArchivedOpen =
+    selectedArchived ||
+    (orderedGroups.length > 0 && workingGroups.length === 0 && archivedGroups.length > 0);
   const archivedPanelOpen = archivedOpen || autoArchivedOpen;
 
   useEffect(() => {
@@ -106,18 +122,18 @@ export function GroupSidebar({
     };
   }, [isResizing, onResizeWidth]);
 
-  const handleResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (isCollapsed) return;
-    event.preventDefault();
-    event.stopPropagation();
-    dragStateRef.current = {
-      startX: event.clientX,
-      startWidth: sidebarWidth,
-    };
-    setIsResizing(true);
-    document.body.style.setProperty("cursor", "col-resize");
-    document.body.style.setProperty("user-select", "none");
-  }, [isCollapsed, sidebarWidth]);
+  const handleResizeStart = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (isCollapsed) return;
+      event.preventDefault();
+      event.stopPropagation();
+      dragStateRef.current = { startX: event.clientX, startWidth: sidebarWidth };
+      setIsResizing(true);
+      document.body.style.setProperty("cursor", "col-resize");
+      document.body.style.setProperty("user-select", "none");
+    },
+    [isCollapsed, sidebarWidth],
+  );
 
   const renderGroupList = useCallback(
     (groups: GroupMeta[], section: "working" | "archived") => {
@@ -177,7 +193,19 @@ export function GroupSidebar({
         </div>
       );
     },
-    [isCollapsed, isDark, onArchiveGroup, onClose, onReorderSection, onRestoreGroup, onSelectGroup, onWarmGroup, readOnly, selectedGroupId, t]
+    [
+      isCollapsed,
+      isDark,
+      onArchiveGroup,
+      onClose,
+      onReorderSection,
+      onRestoreGroup,
+      onSelectGroup,
+      onWarmGroup,
+      readOnly,
+      selectedGroupId,
+      t,
+    ],
   );
 
   return (
@@ -189,7 +217,7 @@ export function GroupSidebar({
           isResizing ? "transition-none" : "transition-[width,transform] duration-300 ease-out",
           isCollapsed ? "w-[60px]" : "w-[248px] md:w-[var(--sidebar-width)]",
           isOpen ? "translate-x-0" : "-translate-x-full",
-          "md:translate-x-0"
+          "md:translate-x-0",
         )}
       >
         {/* Header */}
@@ -197,22 +225,23 @@ export function GroupSidebar({
           <div
             className={classNames(
               "flex items-center gap-1.5",
-              isCollapsed ? "justify-center" : "justify-between"
+              isCollapsed ? "justify-center" : "justify-between",
             )}
           >
-            <div className={classNames("flex min-w-0 flex-1 items-center", isCollapsed ? "" : "gap-3")}>
-              <div className={classNames(
-                "flex items-center justify-center overflow-hidden rounded-xl bg-transparent",
-                "w-10 h-10 shrink-0",
-                "text-[rgb(35,36,37)] dark:text-white"
-              )}>
+            <div
+              className={classNames("flex min-w-0 flex-1 items-center", isCollapsed ? "" : "gap-3")}
+            >
+              <div
+                className={classNames(
+                  "flex items-center justify-center overflow-hidden rounded-xl bg-transparent",
+                  "w-10 h-10 shrink-0",
+                  "text-[rgb(35,36,37)] dark:text-white",
+                )}
+              >
                 <img
                   src={logoSrc}
                   alt={`${branding.product_name} logo`}
-                  className={classNames(
-                    "object-contain",
-                    isCollapsed ? "w-6 h-6" : "h-8 w-8"
-                  )}
+                  className={classNames("object-contain", isCollapsed ? "w-6 h-6" : "h-8 w-8")}
                 />
               </div>
               {!isCollapsed && (
@@ -230,13 +259,13 @@ export function GroupSidebar({
                   "inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3 text-[13px] font-medium transition-all glass-btn border-0 shadow-none",
                   isDark
                     ? "text-white/88 hover:text-white"
-                    : "text-[rgb(35,36,37)]/88 hover:text-[rgb(35,36,37)]"
+                    : "text-[rgb(35,36,37)]/88 hover:text-[rgb(35,36,37)]",
                 )}
                 onClick={onCreateGroup}
-                title={t('createNewGroup')}
-                aria-label={t('createNewGroup')}
+                title={t("createNewGroup")}
+                aria-label={t("createNewGroup")}
               >
-                {t('newGroup')}
+                {t("newGroup")}
               </button>
             )}
 
@@ -246,11 +275,11 @@ export function GroupSidebar({
                 <button
                   className={classNames(
                     "hidden md:flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-transparent transition-all duration-150",
-                    "text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
+                    "text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
                   )}
                   onClick={onToggleCollapse}
-                  aria-label={t('collapseSidebar')}
-                  title={t('collapseSidebar')}
+                  aria-label={t("collapseSidebar")}
+                  title={t("collapseSidebar")}
                 >
                   <ChevronLeftIcon size={16} />
                 </button>
@@ -258,10 +287,10 @@ export function GroupSidebar({
                 <button
                   className={classNames(
                     "md:hidden p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl transition-all glass-btn",
-                    "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)]"
+                    "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)]",
                   )}
                   onClick={onClose}
-                  aria-label={t('closeSidebar')}
+                  aria-label={t("closeSidebar")}
                 >
                   <CloseIcon size={18} />
                 </button>
@@ -276,11 +305,11 @@ export function GroupSidebar({
             <button
               className={classNames(
                 "w-11 h-11 rounded-xl flex items-center justify-center transition-all glass-btn",
-                "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)]"
+                "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)]",
               )}
               onClick={onToggleCollapse}
-              aria-label={t('expandSidebar')}
-              title={t('expandSidebar')}
+              aria-label={t("expandSidebar")}
+              title={t("expandSidebar")}
             >
               <ChevronRightIcon size={18} />
             </button>
@@ -288,11 +317,11 @@ export function GroupSidebar({
               <button
                 className={classNames(
                   "w-11 h-11 rounded-xl flex items-center justify-center transition-all glass-btn-accent",
-                  "text-[rgb(35,36,37)] dark:text-white"
+                  "text-[rgb(35,36,37)] dark:text-white",
                 )}
                 onClick={onCreateGroup}
-                aria-label={t('createNewGroup')}
-                title={t('createNewGroup')}
+                aria-label={t("createNewGroup")}
+                title={t("createNewGroup")}
               >
                 <PlusIcon size={18} />
               </button>
@@ -301,14 +330,16 @@ export function GroupSidebar({
         )}
 
         {/* Group list */}
-        <div className={classNames(
-          "min-h-0 flex-1 overflow-auto scrollbar-hide",
-          isCollapsed ? "p-2" : "p-3"
-        )}>
+        <div
+          className={classNames(
+            "min-h-0 flex-1 overflow-auto scrollbar-hide",
+            isCollapsed ? "p-2" : "p-3",
+          )}
+        >
           {!isCollapsed && (
             <div className="px-2 pb-2">
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-tertiary)]/85">
-                {t('workingGroups')}
+                {t("workingGroups")}
               </div>
             </div>
           )}
@@ -321,7 +352,7 @@ export function GroupSidebar({
                 type="button"
                 className={classNames(
                   "w-full flex items-center justify-between rounded-xl px-2 py-2 transition-colors",
-                  "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                  "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]",
                 )}
                 onClick={() => setArchivedOpen((prev) => !prev)}
                 aria-expanded={archivedPanelOpen}
@@ -336,13 +367,14 @@ export function GroupSidebar({
                 </div>
                 <ChevronDownIcon
                   size={16}
-                  className={classNames("transition-transform", archivedPanelOpen ? "rotate-180" : "")}
+                  className={classNames(
+                    "transition-transform",
+                    archivedPanelOpen ? "rotate-180" : "",
+                  )}
                 />
               </button>
               {archivedPanelOpen && (
-                <div className="mt-2">
-                  {renderGroupList(archivedGroups, "archived")}
-                </div>
+                <div className="mt-2">{renderGroupList(archivedGroups, "archived")}</div>
               )}
             </div>
           )}
@@ -350,25 +382,29 @@ export function GroupSidebar({
           {/* Empty state */}
           {!orderedGroups.length && !isCollapsed && (
             <div className="p-6 text-center">
-              <div className={classNames(
-                "w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center glass-card",
-                "text-[var(--color-text-tertiary)]"
-              )}>
+              <div
+                className={classNames(
+                  "w-16 h-16 mx-auto mb-4 rounded-2xl flex items-center justify-center glass-card",
+                  "text-[var(--color-text-tertiary)]",
+                )}
+              >
                 <FolderIcon size={32} />
               </div>
-              <div className="text-sm mb-2 font-medium text-[var(--color-text-secondary)]">{t('noGroupsYet')}</div>
+              <div className="text-sm mb-2 font-medium text-[var(--color-text-secondary)]">
+                {t("noGroupsYet")}
+              </div>
               <div className="text-xs mb-5 max-w-[200px] mx-auto leading-relaxed text-[var(--color-text-tertiary)]">
-                {t('noGroupsDescription')}
+                {t("noGroupsDescription")}
               </div>
               {!readOnly && onCreateGroup && (
                 <button
                   className={classNames(
                     "text-sm px-5 py-2.5 rounded-xl font-medium min-h-[44px] transition-all glass-btn-accent",
-                    "text-[rgb(35,36,37)] dark:text-white"
+                    "text-[rgb(35,36,37)] dark:text-white",
                   )}
                   onClick={onCreateGroup}
                 >
-                  {t('createFirstGroup')}
+                  {t("createFirstGroup")}
                 </button>
               )}
             </div>
@@ -381,7 +417,7 @@ export function GroupSidebar({
             onPointerDown={handleResizeStart}
             role="separator"
             aria-orientation="vertical"
-            aria-label={t('resizeSidebar')}
+            aria-label={t("resizeSidebar")}
             aria-valuemin={SIDEBAR_MIN_WIDTH}
             aria-valuemax={SIDEBAR_MAX_WIDTH}
             aria-valuenow={sidebarWidth}
@@ -391,7 +427,7 @@ export function GroupSidebar({
                 "h-14 w-[3px] rounded-full transition-all duration-300 ease-out-expo group-hover/resize-handle:w-[5px] group-hover/resize-handle:h-20",
                 isResizing
                   ? "bg-[rgb(35,36,37)] w-[5px] h-20 shadow-[0_0_12px_rgba(17,24,39,0.25)] dark:bg-white dark:shadow-[0_0_12px_rgba(255,255,255,0.25)]"
-                  : "bg-black/10 dark:bg-white/10 group-hover/resize-handle:bg-black/30 dark:group-hover/resize-handle:bg-white/30 group-hover/resize-handle:shadow-[0_0_8px_rgba(0,0,0,0.05)] dark:group-hover/resize-handle:shadow-[0_0_8px_rgba(255,255,255,0.05)]"
+                  : "bg-black/10 dark:bg-white/10 group-hover/resize-handle:bg-black/30 dark:group-hover/resize-handle:bg-white/30 group-hover/resize-handle:shadow-[0_0_8px_rgba(0,0,0,0.05)] dark:group-hover/resize-handle:shadow-[0_0_8px_rgba(255,255,255,0.05)]",
               )}
             />
           </div>

@@ -80,19 +80,21 @@ export async function searchChatMessages(
   );
 }
 
-export async function fetchLedgerStatuses(groupId: string, eventIds: string[], init?: RequestInit & { noCache?: boolean }) {
-  const normalizedIds = eventIds.map((eventId) => String(eventId || "").trim()).filter((eventId) => eventId);
+export async function fetchLedgerStatuses(
+  groupId: string,
+  eventIds: string[],
+  init?: RequestInit & { noCache?: boolean },
+) {
+  const normalizedIds = eventIds
+    .map((eventId) => String(eventId || "").trim())
+    .filter((eventId) => eventId);
   if (normalizedIds.length === 0) {
     return { ok: true, result: { statuses: {} } } as const;
   }
   const loader = () =>
     apiJson<{ statuses: Record<string, LedgerEventStatusPayload> }>(
       `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/statuses`,
-      {
-        method: "POST",
-        body: JSON.stringify({ event_ids: normalizedIds }),
-        ...init,
-      },
+      { method: "POST", body: JSON.stringify({ event_ids: normalizedIds }), ...init },
     );
   if (init?.noCache || init?.signal) {
     return loader();
@@ -104,7 +106,10 @@ export async function fetchLedgerStatuses(groupId: string, eventIds: string[], i
   );
 }
 
-export async function fetchHeadlessSnapshot(groupId: string, init?: RequestInit & { noCache?: boolean }) {
+export async function fetchHeadlessSnapshot(
+  groupId: string,
+  init?: RequestInit & { noCache?: boolean },
+) {
   return apiJson<{ group_id: string; events: HeadlessStreamEvent[]; count: number }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/headless/snapshot`,
     init,

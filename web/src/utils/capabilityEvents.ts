@@ -1,10 +1,7 @@
 export const CAPABILITY_CHANGED_EVENT = "cccc:capability-changed";
 export const CAPABILITY_CHANGED_STORAGE_KEY = "cccc:capability-changed";
 
-type CapabilityChangedPayload = {
-  group_id: string;
-  nonce?: string;
-};
+type CapabilityChangedPayload = { group_id: string; nonce?: string };
 
 function normalizeGroupId(value: unknown): string {
   return String(value || "").trim();
@@ -36,10 +33,10 @@ export function publishCapabilityChanged(groupId: string): void {
   const detail: CapabilityChangedPayload = { group_id: gid };
   window.dispatchEvent(new CustomEvent(CAPABILITY_CHANGED_EVENT, { detail }));
   try {
-    window.localStorage.setItem(CAPABILITY_CHANGED_STORAGE_KEY, JSON.stringify({
-      group_id: gid,
-      nonce: `${Date.now()}:${Math.random()}`,
-    }));
+    window.localStorage.setItem(
+      CAPABILITY_CHANGED_STORAGE_KEY,
+      JSON.stringify({ group_id: gid, nonce: `${Date.now()}:${Math.random()}` }),
+    );
   } catch {
     void 0;
   }
@@ -54,7 +51,8 @@ export function subscribeCapabilityChanged(groupId: string, listener: () => void
     if (matchesGroup(parsePayload(detail), gid)) listener();
   };
   const handleStorage = (event: StorageEvent) => {
-    if (event.storageArea !== window.localStorage || event.key !== CAPABILITY_CHANGED_STORAGE_KEY) return;
+    if (event.storageArea !== window.localStorage || event.key !== CAPABILITY_CHANGED_STORAGE_KEY)
+      return;
     if (matchesGroup(parsePayload(event.newValue), gid)) listener();
   };
 

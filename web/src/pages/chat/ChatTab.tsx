@@ -1,15 +1,32 @@
 // ChatTab is the main chat page component.
 // Refactored to use useChatTab hook for business logic, reducing prop drilling.
 
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+  type RefObject,
+} from "react";
 import { BookmarkIcon, CompassIcon, InfoIcon } from "../../components/Icons";
-import { Actor, HeadlessPreviewSession, LedgerEvent, PresentationMessageRef, StreamingActivity, TaskMessageRef } from "../../types";
+import {
+  Actor,
+  HeadlessPreviewSession,
+  LedgerEvent,
+  PresentationMessageRef,
+  StreamingActivity,
+  TaskMessageRef,
+} from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
 import { ChatComposer } from "./ChatComposer";
 import { RuntimeDock } from "./RuntimeDock";
 import { useChatTab } from "../../hooks/useChatTab";
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from "react-i18next";
 import { useComposerStore, useGroupStore, useModalStore, useUIStore } from "../../stores";
 import { getChatSession } from "../../stores/useUIStore";
 import { findPresentationSlot } from "../../utils/presentation";
@@ -34,13 +51,17 @@ import { buildLiveWorkCards } from "./liveWorkCards";
 import { getGroupRouteDisplayName, type ComposerMentionKind } from "./chatMentionSuggestions";
 
 const PresentationRail = lazy(() =>
-  import("../../components/presentation/PresentationRail").then((module) => ({ default: module.PresentationRail }))
+  import("../../components/presentation/PresentationRail").then((module) => ({
+    default: module.PresentationRail,
+  })),
 );
 const PresentationViewerSplitPanel = lazy(() =>
-  import("../../components/presentation/PresentationViewerModal").then((module) => ({ default: module.PresentationViewerSplitPanel }))
+  import("../../components/presentation/PresentationViewerModal").then((module) => ({
+    default: module.PresentationViewerSplitPanel,
+  })),
 );
 const SetupChecklist = lazy(() =>
-  import("./SetupChecklist").then((module) => ({ default: module.SetupChecklist }))
+  import("./SetupChecklist").then((module) => ({ default: module.SetupChecklist })),
 );
 
 const EMPTY_PRESENTATION_ATTENTION: Record<string, boolean> = {};
@@ -280,59 +301,82 @@ export function ChatTab({
     return labels;
   }, [groupLabelById, remoteRouteGroups]);
 
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation("chat");
   const groupPresentation = useGroupStore((state) => state.groupPresentation);
   const setGroupPresentation = useGroupStore((state) => state.setGroupPresentation);
   const presentationViewer = useModalStore((state) => state.presentationViewer);
   const setPresentationViewer = useModalStore((state) => state.setPresentationViewer);
   const setPresentationPin = useModalStore((state) => state.setPresentationPin);
-  const clearPresentationSlotAttention = useModalStore((state) => state.clearPresentationSlotAttention);
+  const clearPresentationSlotAttention = useModalStore(
+    (state) => state.clearPresentationSlotAttention,
+  );
   const openContextTask = useModalStore((state) => state.openContextTask);
   const mobileSurface = useUIStore((state) =>
-    selectedGroupId ? getChatSession(selectedGroupId, state.chatSessions).mobileSurface : "messages"
+    selectedGroupId
+      ? getChatSession(selectedGroupId, state.chatSessions).mobileSurface
+      : "messages",
   );
   const presentationDockOpen = useUIStore((state) =>
-    selectedGroupId ? getChatSession(selectedGroupId, state.chatSessions).presentationDockOpen : false
+    selectedGroupId
+      ? getChatSession(selectedGroupId, state.chatSessions).presentationDockOpen
+      : false,
   );
   const presentationDisplayMode = useUIStore((state) =>
-    selectedGroupId ? getChatSession(selectedGroupId, state.chatSessions).presentationDisplayMode : "modal"
+    selectedGroupId
+      ? getChatSession(selectedGroupId, state.chatSessions).presentationDisplayMode
+      : "modal",
   );
   const setChatMobileSurface = useUIStore((state) => state.setChatMobileSurface);
   const setChatPresentationDockOpen = useUIStore((state) => state.setChatPresentationDockOpen);
-  const setChatPresentationDisplayMode = useUIStore((state) => state.setChatPresentationDisplayMode);
+  const setChatPresentationDisplayMode = useUIStore(
+    (state) => state.setChatPresentationDisplayMode,
+  );
   const presentationSplitWidth = useUIStore((state) => state.presentationSplitWidth);
   const setPresentationSplitWidth = useUIStore((state) => state.setPresentationSplitWidth);
   const showError = useUIStore((state) => state.showError);
   const setQuotedPresentationRef = useComposerStore((state) => state.setQuotedPresentationRef);
   const setComposerDestGroupId = useComposerStore((state) => state.setDestGroupId);
-  const liveWorkBucket = useGroupStore((state) => state.chatByGroup[String(selectedGroupId || "").trim()]);
-  const presentationAttention = useModalStore((state) =>
-    selectedGroupId ? (state.presentationAttention[selectedGroupId] || EMPTY_PRESENTATION_ATTENTION) : EMPTY_PRESENTATION_ATTENTION
+  const liveWorkBucket = useGroupStore(
+    (state) => state.chatByGroup[String(selectedGroupId || "").trim()],
   );
-  const previewSessionsByActorId = liveWorkBucket?.previewSessionsByActorId ?? EMPTY_LIVE_WORK_PREVIEW_SESSIONS;
-  const latestActorPreviewByActorId = liveWorkBucket?.latestActorPreviewByActorId ?? EMPTY_LATEST_LIVE_WORK_PREVIEW;
+  const presentationAttention = useModalStore((state) =>
+    selectedGroupId
+      ? state.presentationAttention[selectedGroupId] || EMPTY_PRESENTATION_ATTENTION
+      : EMPTY_PRESENTATION_ATTENTION,
+  );
+  const previewSessionsByActorId =
+    liveWorkBucket?.previewSessionsByActorId ?? EMPTY_LIVE_WORK_PREVIEW_SESSIONS;
+  const latestActorPreviewByActorId =
+    liveWorkBucket?.latestActorPreviewByActorId ?? EMPTY_LATEST_LIVE_WORK_PREVIEW;
   const latestActorTextByActorId = liveWorkBucket?.latestActorTextByActorId || EMPTY_LIVE_WORK_TEXT;
-  const latestActorActivitiesByActorId = liveWorkBucket?.latestActorActivitiesByActorId || EMPTY_LIVE_WORK_ACTIVITIES;
-  const replySessionsByPendingEventId = liveWorkBucket?.replySessionsByPendingEventId || EMPTY_LIVE_WORK_SESSIONS;
+  const latestActorActivitiesByActorId =
+    liveWorkBucket?.latestActorActivitiesByActorId || EMPTY_LIVE_WORK_ACTIVITIES;
+  const replySessionsByPendingEventId =
+    liveWorkBucket?.replySessionsByPendingEventId || EMPTY_LIVE_WORK_SESSIONS;
   const webModelDeliveryStatusByEventId = useMemo(
-    () => buildWebModelDeliveryStatusByEventId([
-      ...(liveWorkBucket?.events || []),
-      ...(liveWorkBucket?.chatWindow?.events || []),
-    ]),
+    () =>
+      buildWebModelDeliveryStatusByEventId([
+        ...(liveWorkBucket?.events || []),
+        ...(liveWorkBucket?.chatWindow?.events || []),
+      ]),
     [liveWorkBucket?.chatWindow?.events, liveWorkBucket?.events],
   );
-  const [appPermissionHintDismissed, setAppPermissionHintDismissed] = useState(readChatGptAppPermissionHintDismissed);
+  const [appPermissionHintDismissed, setAppPermissionHintDismissed] = useState(
+    readChatGptAppPermissionHintDismissed,
+  );
   useEffect(() => {
     if (typeof window === "undefined") return undefined;
     const handleDismissed = () => setAppPermissionHintDismissed(true);
     window.addEventListener(CHATGPT_APP_PERMISSION_HINT_DISMISSED_EVENT, handleDismissed);
-    return () => window.removeEventListener(CHATGPT_APP_PERMISSION_HINT_DISMISSED_EVENT, handleDismissed);
+    return () =>
+      window.removeEventListener(CHATGPT_APP_PERMISSION_HINT_DISMISSED_EVENT, handleDismissed);
   }, []);
   const appPermissionHintStatus = useMemo(
-    () => latestWebModelDeliveryStatusNeedingAppPermissionHint(
-      webModelDeliveryStatusByEventId,
-      appPermissionHintDismissed,
-    ),
+    () =>
+      latestWebModelDeliveryStatusNeedingAppPermissionHint(
+        webModelDeliveryStatusByEventId,
+        appPermissionHintDismissed,
+      ),
     [appPermissionHintDismissed, webModelDeliveryStatusByEventId],
   );
   const showAppPermissionNotice = !readOnly && !!appPermissionHintStatus;
@@ -347,15 +391,16 @@ export function ChatTab({
   const listHasMoreHistory = hasMoreHistory || isHydratingEmptyState;
   const hasPresentationAttention = Object.keys(presentationAttention).length > 0;
   const liveWorkCards = useMemo(
-    () => buildLiveWorkCards({
-      actors: runtimeActors,
-      events: liveWorkEvents,
-      latestActorPreviewByActorId,
-      previewSessionsByActorId,
-      latestActorTextByActorId,
-      latestActorActivitiesByActorId,
-      replySessionsByPendingEventId,
-    }),
+    () =>
+      buildLiveWorkCards({
+        actors: runtimeActors,
+        events: liveWorkEvents,
+        latestActorPreviewByActorId,
+        previewSessionsByActorId,
+        latestActorTextByActorId,
+        latestActorActivitiesByActorId,
+        replySessionsByPendingEventId,
+      }),
     [
       runtimeActors,
       liveWorkEvents,
@@ -364,10 +409,11 @@ export function ChatTab({
       latestActorActivitiesByActorId,
       latestActorTextByActorId,
       replySessionsByPendingEventId,
-    ]
+    ],
   );
 
-  const preferredPresentationSurface = !isSmallScreen && presentationDisplayMode === "split" ? "split" : "modal";
+  const preferredPresentationSurface =
+    !isSmallScreen && presentationDisplayMode === "split" ? "split" : "modal";
   const splitPresentationViewer =
     !isSmallScreen &&
     presentationViewer?.groupId === selectedGroupId &&
@@ -381,7 +427,7 @@ export function ChatTab({
   const [splitLayoutWidth, setSplitLayoutWidth] = useState(0);
   const effectivePresentationSplitWidth = clampPresentationSplitWidth(
     presentationSplitWidth,
-    splitLayoutWidth || undefined
+    splitLayoutWidth || undefined,
   );
 
   useEffect(() => {
@@ -432,124 +478,196 @@ export function ChatTab({
     };
   }, [isSplitResizing, setPresentationSplitWidth, splitLayoutWidth]);
 
-  const openPresentationSlot = useCallback((slotId: string) => {
-    if (!selectedGroupId || !slotId) return;
-    if (preferredPresentationSurface === "split") {
-      setChatPresentationDockOpen(selectedGroupId, true);
-    }
-    setPresentationViewer({ groupId: selectedGroupId, slotId, surface: preferredPresentationSurface });
-  }, [preferredPresentationSurface, selectedGroupId, setChatPresentationDockOpen, setPresentationViewer]);
+  const openPresentationSlot = useCallback(
+    (slotId: string) => {
+      if (!selectedGroupId || !slotId) return;
+      if (preferredPresentationSurface === "split") {
+        setChatPresentationDockOpen(selectedGroupId, true);
+      }
+      setPresentationViewer({
+        groupId: selectedGroupId,
+        slotId,
+        surface: preferredPresentationSurface,
+      });
+    },
+    [
+      preferredPresentationSurface,
+      selectedGroupId,
+      setChatPresentationDockOpen,
+      setPresentationViewer,
+    ],
+  );
 
-  const openPresentationRef = useCallback((ref: PresentationMessageRef, event: LedgerEvent) => {
-    if (!selectedGroupId) return;
-    const slotId = String(ref.slot_id || "").trim();
-    if (!slotId) return;
-    if (preferredPresentationSurface === "split") {
-      setChatPresentationDockOpen(selectedGroupId, true);
-    }
-    setPresentationViewer({
-      groupId: selectedGroupId,
-      slotId,
-      surface: preferredPresentationSurface,
-      focusRef: ref,
-      focusEventId: String(event.id || "").trim() || null,
-    });
-  }, [preferredPresentationSurface, selectedGroupId, setChatPresentationDockOpen, setPresentationViewer]);
+  const openPresentationRef = useCallback(
+    (ref: PresentationMessageRef, event: LedgerEvent) => {
+      if (!selectedGroupId) return;
+      const slotId = String(ref.slot_id || "").trim();
+      if (!slotId) return;
+      if (preferredPresentationSurface === "split") {
+        setChatPresentationDockOpen(selectedGroupId, true);
+      }
+      setPresentationViewer({
+        groupId: selectedGroupId,
+        slotId,
+        surface: preferredPresentationSurface,
+        focusRef: ref,
+        focusEventId: String(event.id || "").trim() || null,
+      });
+    },
+    [
+      preferredPresentationSurface,
+      selectedGroupId,
+      setChatPresentationDockOpen,
+      setPresentationViewer,
+    ],
+  );
 
-  const openTaskRef = useCallback((ref: TaskMessageRef, _event?: LedgerEvent) => {
-    const taskId = String(ref.task_id || "").trim();
-    if (!taskId) return;
-    openContextTask(taskId);
-  }, [openContextTask]);
+  const openTaskRef = useCallback(
+    (ref: TaskMessageRef, _event?: LedgerEvent) => {
+      const taskId = String(ref.task_id || "").trim();
+      if (!taskId) return;
+      openContextTask(taskId);
+    },
+    [openContextTask],
+  );
 
-  const pinPresentationSlot = useCallback((slotId: string) => {
-    if (!selectedGroupId || !slotId || readOnly) return;
-    setPresentationPin({ groupId: selectedGroupId, slotId });
-  }, [readOnly, selectedGroupId, setPresentationPin]);
+  const pinPresentationSlot = useCallback(
+    (slotId: string) => {
+      if (!selectedGroupId || !slotId || readOnly) return;
+      setPresentationPin({ groupId: selectedGroupId, slotId });
+    },
+    [readOnly, selectedGroupId, setPresentationPin],
+  );
 
-  const setPresentationDockOpen = useCallback((next: boolean) => {
-    if (!selectedGroupId) return;
-    setChatPresentationDockOpen(selectedGroupId, next);
-  }, [selectedGroupId, setChatPresentationDockOpen]);
+  const setPresentationDockOpen = useCallback(
+    (next: boolean) => {
+      if (!selectedGroupId) return;
+      setChatPresentationDockOpen(selectedGroupId, next);
+    },
+    [selectedGroupId, setChatPresentationDockOpen],
+  );
 
-  const handleQuotePresentationReference = useCallback((payload: { slotId: string; ref?: PresentationMessageRef | null }) => {
-    const gid = String(selectedGroupId || "").trim();
-    const normalizedSlotId = String(payload.slotId || "").trim();
-    if (!gid || !normalizedSlotId) return;
-    const slot = findPresentationSlot(groupPresentation, normalizedSlotId);
-    const ref = payload.ref || buildPresentationRefForSlot(slot);
-    if (!ref) {
-      showError(t("presentationMissingCard", { defaultValue: "This presentation slot is empty." }));
-      return;
-    }
-    setQuotedPresentationRef(ref);
-    setComposerDestGroupId(gid);
-    setChatMobileSurface(gid, "messages");
-    setPresentationViewer(null);
-    window.setTimeout(() => composerRef.current?.focus(), 0);
-  }, [composerRef, groupPresentation, selectedGroupId, setChatMobileSurface, setComposerDestGroupId, setPresentationViewer, setQuotedPresentationRef, showError, t]);
+  const handleQuotePresentationReference = useCallback(
+    (payload: { slotId: string; ref?: PresentationMessageRef | null }) => {
+      const gid = String(selectedGroupId || "").trim();
+      const normalizedSlotId = String(payload.slotId || "").trim();
+      if (!gid || !normalizedSlotId) return;
+      const slot = findPresentationSlot(groupPresentation, normalizedSlotId);
+      const ref = payload.ref || buildPresentationRefForSlot(slot);
+      if (!ref) {
+        showError(
+          t("presentationMissingCard", { defaultValue: "This presentation slot is empty." }),
+        );
+        return;
+      }
+      setQuotedPresentationRef(ref);
+      setComposerDestGroupId(gid);
+      setChatMobileSurface(gid, "messages");
+      setPresentationViewer(null);
+      window.setTimeout(() => composerRef.current?.focus(), 0);
+    },
+    [
+      composerRef,
+      groupPresentation,
+      selectedGroupId,
+      setChatMobileSurface,
+      setComposerDestGroupId,
+      setPresentationViewer,
+      setQuotedPresentationRef,
+      showError,
+      t,
+    ],
+  );
 
   const handleOpenPresentationWindow = useCallback(() => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid || !splitPresentationViewer) return;
     setChatPresentationDisplayMode(gid, "modal");
     setPresentationViewer({ ...splitPresentationViewer, surface: "modal" });
-  }, [selectedGroupId, setChatPresentationDisplayMode, setPresentationViewer, splitPresentationViewer]);
+  }, [
+    selectedGroupId,
+    setChatPresentationDisplayMode,
+    setPresentationViewer,
+    splitPresentationViewer,
+  ]);
 
-  const handleSplitReplaceSlot = useCallback((slotId: string) => {
-    const gid = String(selectedGroupId || "").trim();
-    if (!gid || !slotId) return;
-    setPresentationViewer(null);
-    setPresentationPin({ groupId: gid, slotId });
-  }, [selectedGroupId, setPresentationPin, setPresentationViewer]);
+  const handleSplitReplaceSlot = useCallback(
+    (slotId: string) => {
+      const gid = String(selectedGroupId || "").trim();
+      if (!gid || !slotId) return;
+      setPresentationViewer(null);
+      setPresentationPin({ groupId: gid, slotId });
+    },
+    [selectedGroupId, setPresentationPin, setPresentationViewer],
+  );
 
-  const handleSplitClearSlot = useCallback(async (slotId: string) => {
-    const gid = String(selectedGroupId || "").trim();
-    const normalized = String(slotId || "").trim();
-    if (!gid || !normalized) return;
-    const confirmed = window.confirm(
-      t("presentationClearConfirm", {
-        index: Number(normalized.replace("slot-", "") || 0) || normalized,
-        defaultValue: `Clear ${normalized}?`,
-      }),
-    );
-    if (!confirmed) return;
-    const resp = await clearPresentationSlot(gid, normalized);
-    if (!resp.ok) {
-      showError(`${resp.error.code}: ${resp.error.message}`);
-      return;
-    }
-    setGroupPresentation(resp.result.presentation);
-    setPresentationViewer(null);
-    setPresentationPin(null);
-    clearPresentationSlotAttention(gid, normalized);
-  }, [clearPresentationSlotAttention, selectedGroupId, setGroupPresentation, setPresentationPin, setPresentationViewer, showError, t]);
+  const handleSplitClearSlot = useCallback(
+    async (slotId: string) => {
+      const gid = String(selectedGroupId || "").trim();
+      const normalized = String(slotId || "").trim();
+      if (!gid || !normalized) return;
+      const confirmed = window.confirm(
+        t("presentationClearConfirm", {
+          index: Number(normalized.replace("slot-", "") || 0) || normalized,
+          defaultValue: `Clear ${normalized}?`,
+        }),
+      );
+      if (!confirmed) return;
+      const resp = await clearPresentationSlot(gid, normalized);
+      if (!resp.ok) {
+        showError(`${resp.error.code}: ${resp.error.message}`);
+        return;
+      }
+      setGroupPresentation(resp.result.presentation);
+      setPresentationViewer(null);
+      setPresentationPin(null);
+      clearPresentationSlotAttention(gid, normalized);
+    },
+    [
+      clearPresentationSlotAttention,
+      selectedGroupId,
+      setGroupPresentation,
+      setPresentationPin,
+      setPresentationViewer,
+      showError,
+      t,
+    ],
+  );
 
-  const handleSplitResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    if (!showDesktopSplitPresentation) return;
-    event.preventDefault();
-    event.stopPropagation();
-    splitResizeRef.current = {
-      startX: event.clientX,
-      startWidth: effectivePresentationSplitWidth,
-    };
-    setIsSplitResizing(true);
-    document.body.style.setProperty("cursor", "col-resize");
-    document.body.style.setProperty("user-select", "none");
-  }, [effectivePresentationSplitWidth, showDesktopSplitPresentation]);
+  const handleSplitResizeStart = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (!showDesktopSplitPresentation) return;
+      event.preventDefault();
+      event.stopPropagation();
+      splitResizeRef.current = {
+        startX: event.clientX,
+        startWidth: effectivePresentationSplitWidth,
+      };
+      setIsSplitResizing(true);
+      document.body.style.setProperty("cursor", "col-resize");
+      document.body.style.setProperty("user-select", "none");
+    },
+    [effectivePresentationSplitWidth, showDesktopSplitPresentation],
+  );
 
   const filterOptions: Array<["all" | "user" | "attention" | "task", string]> = [
-    ["all", t('filterAll')],
-    ["user", t('filterUser')],
-    ["attention", t('filterImportant')],
-    ["task", t('filterNeedReply')],
+    ["all", t("filterAll")],
+    ["user", t("filterUser")],
+    ["attention", t("filterImportant")],
+    ["task", t("filterNeedReply")],
   ];
   const showMessageFilters = !readOnly && !chatWindowProps && hasAnyChatMessages;
   const hasPresentationCards = (groupPresentation?.slots || []).some((slot) => !!slot?.card);
   const showMobilePresentationAction =
-    isSmallScreen && !chatWindowProps && !!selectedGroupId && (hasPresentationCards || hasPresentationAttention);
-  const showMobileFloatingControls = isSmallScreen && (showMessageFilters || showMobilePresentationAction);
-  const mobileMessageTopInsetPx = isSmallScreen ? getMobileMessageTopInsetPx(showMobileFloatingControls) : 0;
+    isSmallScreen &&
+    !chatWindowProps &&
+    !!selectedGroupId &&
+    (hasPresentationCards || hasPresentationAttention);
+  const showMobileFloatingControls =
+    isSmallScreen && (showMessageFilters || showMobilePresentationAction);
+  const mobileMessageTopInsetPx = isSmallScreen
+    ? getMobileMessageTopInsetPx(showMobileFloatingControls)
+    : 0;
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden bg-transparent">
@@ -561,21 +679,31 @@ export function ChatTab({
             <div
               className={classNames(
                 "flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 shadow-sm",
-                isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70"
+                isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70",
               )}
               role="status"
-              aria-label={t('viewingMessage')}
+              aria-label={t("viewingMessage")}
             >
               <div className="min-w-0">
-                <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
-                  {t('viewingMessage')}
+                <div
+                  className={classNames(
+                    "text-sm font-semibold",
+                    isDark ? "text-slate-200" : "text-gray-800",
+                  )}
+                >
+                  {t("viewingMessage")}
                 </div>
-                <div className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}>
+                <div
+                  className={classNames(
+                    "text-xs mt-0.5",
+                    isDark ? "text-slate-400" : "text-gray-600",
+                  )}
+                >
                   {isLoadingHistory
-                    ? t('loadingContext')
+                    ? t("loadingContext")
                     : chatWindowProps.hasMoreBefore || chatWindowProps.hasMoreAfter
-                      ? t('contextTruncated')
-                      : t('contextLoaded')}
+                      ? t("contextTruncated")
+                      : t("contextLoaded")}
                 </div>
               </div>
               {!readOnly && (
@@ -585,11 +713,11 @@ export function ChatTab({
                     "flex-shrink-0 text-xs font-semibold px-3 py-1.5 min-h-[36px] flex items-center rounded-full border transition-colors",
                     isDark
                       ? "border-slate-600 text-slate-200 hover:bg-slate-800/60"
-                      : "border-gray-200 text-gray-800 hover:bg-gray-100"
+                      : "border-gray-200 text-gray-800 hover:bg-gray-100",
                   )}
                   onClick={exitChatWindow}
                 >
-                  {t('returnToLatest')}
+                  {t("returnToLatest")}
                 </button>
               )}
             </div>
@@ -602,13 +730,18 @@ export function ChatTab({
             <div
               className={classNames(
                 "rounded-2xl border p-4 sm:p-5",
-                isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70"
+                isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70",
               )}
               role="region"
-              aria-label={t('setupChecklist')}
+              aria-label={t("setupChecklist")}
             >
-              <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
-                {t('nextSteps')}
+              <div
+                className={classNames(
+                  "text-sm font-semibold",
+                  isDark ? "text-slate-200" : "text-gray-800",
+                )}
+              >
+                {t("nextSteps")}
               </div>
               <Suspense fallback={<ChatLazyFallback />}>
                 <SetupChecklist
@@ -631,7 +764,7 @@ export function ChatTab({
       {/* 2. Body Area: messages stay primary; presentation is a secondary surface */}
       <main className="flex flex-1 min-h-0 flex-col">
         <div ref={splitLayoutRef} className="relative flex min-h-0 flex-1">
-          {(!isSmallScreen || mobileSurface === "messages") ? (
+          {!isSmallScreen || mobileSurface === "messages" ? (
             <section className="relative flex min-h-0 min-w-0 flex-1 flex-col">
               {showMobileFloatingControls && (
                 <div
@@ -643,14 +776,14 @@ export function ChatTab({
                       <div
                         className="pointer-events-auto min-w-0 flex-1 overflow-x-auto scrollbar-hide"
                         role="tablist"
-                        aria-label={t('chatFilters')}
+                        aria-label={t("chatFilters")}
                       >
-                        <div className={classNames(
-                          "inline-flex min-w-max items-center gap-1 rounded-full border p-1 shadow-sm backdrop-blur-xl",
-                          isDark
-                            ? "border-white/10 bg-black/10"
-                            : "border-black/10 bg-white/35"
-                        )}>
+                        <div
+                          className={classNames(
+                            "inline-flex min-w-max items-center gap-1 rounded-full border p-1 shadow-sm backdrop-blur-xl",
+                            isDark ? "border-white/10 bg-black/10" : "border-black/10 bg-white/35",
+                          )}
+                        >
                           {filterOptions.map(([key, label]) => {
                             const active = chatFilter === key;
                             return (
@@ -665,7 +798,7 @@ export function ChatTab({
                                       : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
                                     : isDark
                                       ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
-                                      : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]"
+                                      : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]",
                                 )}
                                 onClick={() => setChatFilter(key)}
                                 aria-pressed={active}
@@ -683,7 +816,9 @@ export function ChatTab({
                     {showMobilePresentationAction ? (
                       <button
                         type="button"
-                        onClick={() => selectedGroupId && setChatMobileSurface(selectedGroupId, "presentation")}
+                        onClick={() =>
+                          selectedGroupId && setChatMobileSurface(selectedGroupId, "presentation")
+                        }
                         className={classNames(
                           "relative flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-full border backdrop-blur-xl transition-all duration-200",
                           isDark
@@ -692,10 +827,14 @@ export function ChatTab({
                           hasPresentationAttention &&
                             (isDark
                               ? "presentation-slot-attention presentation-slot-attention-dark"
-                              : "presentation-slot-attention presentation-slot-attention-light")
+                              : "presentation-slot-attention presentation-slot-attention-light"),
                         )}
-                        aria-label={t("presentationOpenDockAction", { defaultValue: "Open presentation" })}
-                        title={t("presentationOpenDockAction", { defaultValue: "Open presentation" })}
+                        aria-label={t("presentationOpenDockAction", {
+                          defaultValue: "Open presentation",
+                        })}
+                        title={t("presentationOpenDockAction", {
+                          defaultValue: "Open presentation",
+                        })}
                       >
                         <BookmarkIcon size={18} />
                         {hasPresentationAttention ? (
@@ -703,13 +842,13 @@ export function ChatTab({
                             <span
                               className={classNames(
                                 "pointer-events-none absolute right-2 top-2 h-2 w-2 rounded-full animate-ping",
-                                isDark ? "bg-cyan-300/70" : "bg-cyan-500/45"
+                                isDark ? "bg-cyan-300/70" : "bg-cyan-500/45",
                               )}
                             />
                             <span
                               className={classNames(
                                 "pointer-events-none absolute right-2 top-2 h-2 w-2 rounded-full",
-                                isDark ? "bg-cyan-200" : "bg-cyan-500"
+                                isDark ? "bg-cyan-200" : "bg-cyan-500",
                               )}
                             />
                           </>
@@ -730,10 +869,10 @@ export function ChatTab({
                       "inline-flex items-center gap-1 xl:gap-2 rounded-full border p-1 sm:p-1.5 shadow-xl pointer-events-auto backdrop-blur-xl transition-all duration-300",
                       isDark
                         ? "border-white/10 bg-slate-900/60 shadow-black/40 ring-1 ring-white/5"
-                        : "border-black/5 bg-white/70 shadow-gray-200/50 ring-1 ring-black/5"
+                        : "border-black/5 bg-white/70 shadow-gray-200/50 ring-1 ring-black/5",
                     )}
                     role="tablist"
-                    aria-label={t('chatFilters')}
+                    aria-label={t("chatFilters")}
                   >
                     {filterOptions.map(([key, label]) => {
                       const active = chatFilter === key;
@@ -749,7 +888,7 @@ export function ChatTab({
                                 : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
                               : isDark
                                 ? "text-slate-400 hover:text-white hover:bg-white/[0.05]"
-                                : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]"
+                                : "text-gray-500 hover:text-[rgb(35,36,37)] hover:bg-black/[0.04]",
                           )}
                           onClick={() => setChatFilter(key)}
                           aria-pressed={active}
@@ -767,19 +906,37 @@ export function ChatTab({
                   ref={scrollRef}
                   className="flex-1 min-h-0 overflow-auto px-4 py-4 relative"
                   role="log"
-                  aria-label={t('chatMessages')}
+                  aria-label={t("chatMessages")}
                 >
                   <div className="flex h-full flex-col items-center justify-center text-center pb-20">
-                    <div className={classNames("w-full max-w-md", isDark ? "text-slate-200" : "text-gray-800")}>
+                    <div
+                      className={classNames(
+                        "w-full max-w-md",
+                        isDark ? "text-slate-200" : "text-gray-800",
+                      )}
+                    >
                       <div className="mb-4 flex justify-center" aria-hidden="true">
-                        <CompassIcon size={32} className={isDark ? "text-white" : "text-[rgb(35,36,37)]"} />
+                        <CompassIcon
+                          size={32}
+                          className={isDark ? "text-white" : "text-[rgb(35,36,37)]"}
+                        />
                       </div>
-                      <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
-                        {t('nextSteps')}
+                      <div
+                        className={classNames(
+                          "text-sm font-semibold",
+                          isDark ? "text-slate-200" : "text-gray-800",
+                        )}
+                      >
+                        {t("nextSteps")}
                       </div>
                       {readOnly ? (
-                        <div className={classNames("mt-3 text-sm", isDark ? "text-slate-400" : "text-gray-600")}>
-                          {t('noMessagesYet')}
+                        <div
+                          className={classNames(
+                            "mt-3 text-sm",
+                            isDark ? "text-slate-400" : "text-gray-600",
+                          )}
+                        >
+                          {t("noMessagesYet")}
                         </div>
                       ) : (
                         <Suspense fallback={<ChatLazyFallback className="mt-4" />}>
@@ -867,7 +1024,7 @@ export function ChatTab({
                 <div
                   className={classNames(
                     "absolute inset-y-0 left-1/2 w-px -translate-x-1/2",
-                    isDark ? "bg-white/8" : "bg-black/8"
+                    isDark ? "bg-white/8" : "bg-black/8",
                   )}
                 />
                 <div
@@ -879,14 +1036,14 @@ export function ChatTab({
                         : "bg-cyan-500/16"
                       : isDark
                         ? "hover:bg-white/8"
-                        : "hover:bg-black/6"
+                        : "hover:bg-black/6",
                   )}
                 />
               </div>
               <div
                 className={classNames(
                   "hidden min-h-0 flex-shrink-0 overflow-hidden border-l md:flex",
-                  isDark ? "border-white/8 bg-slate-950/20" : "border-black/8 bg-white/40"
+                  isDark ? "border-white/8 bg-slate-950/20" : "border-black/8 bg-white/40",
                 )}
                 style={{ width: `${effectivePresentationSplitWidth}px` }}
               >
@@ -912,7 +1069,9 @@ export function ChatTab({
                     focusEventId={splitPresentationViewer.focusEventId || null}
                     onQuoteInChat={handleQuotePresentationReference}
                     onReplaceSlot={handleSplitReplaceSlot}
-                    onClearSlot={(slotId) => { void handleSplitClearSlot(slotId); }}
+                    onClearSlot={(slotId) => {
+                      void handleSplitClearSlot(slotId);
+                    }}
                     onOpenWindow={handleOpenPresentationWindow}
                     onClose={() => setPresentationViewer(null)}
                   />
@@ -944,7 +1103,10 @@ export function ChatTab({
                   isDark={isDark}
                   readOnly={readOnly}
                   isOpen={mobileSurface === "presentation"}
-                  onOpenChange={(open) => selectedGroupId && setChatMobileSurface(selectedGroupId, open ? "presentation" : "messages")}
+                  onOpenChange={(open) =>
+                    selectedGroupId &&
+                    setChatMobileSurface(selectedGroupId, open ? "presentation" : "messages")
+                  }
                   attentionSlots={presentationAttention}
                   onOpenSlot={openPresentationSlot}
                   onPinSlot={pinPresentationSlot}
@@ -959,10 +1121,7 @@ export function ChatTab({
       {!readOnly && (
         <>
           {showAppPermissionNotice ? (
-            <ChatGptAppPermissionNotice
-              isDark={isDark}
-              onDismiss={dismissAppPermissionNotice}
-            />
+            <ChatGptAppPermissionNotice isDark={isDark} onDismiss={dismissAppPermissionNotice} />
           ) : null}
           <ChatComposer
             isDark={isDark}

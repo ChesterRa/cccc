@@ -72,13 +72,16 @@ function compareEvents(left: HeadlessStreamEvent, right: HeadlessStreamEvent): n
 }
 
 function extractErrorText(data: Record<string, unknown>): string {
-  const errorRecord = data.error && typeof data.error === "object" ? data.error as Record<string, unknown> : null;
+  const errorRecord =
+    data.error && typeof data.error === "object" ? (data.error as Record<string, unknown>) : null;
   if (errorRecord) {
     return [
       normalizeText(errorRecord.message),
       normalizeText(errorRecord.detail),
       normalizeText(errorRecord.code),
-    ].filter(Boolean).join(" | ");
+    ]
+      .filter(Boolean)
+      .join(" | ");
   }
   const direct = normalizeText(data.error);
   if (direct) return direct;
@@ -101,7 +104,8 @@ function mapActivityBadge(rawItemType: string, kind: string): string {
 
 function buildEventEntry(event: HeadlessStreamEvent, order: number): HeadlessRawTraceEntry | null {
   const eventType = normalizeText(event.type);
-  const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
+  const data =
+    event.data && typeof event.data === "object" ? (event.data as Record<string, unknown>) : {};
   if (!eventType || eventType.startsWith("headless.message.")) return null;
 
   const detailLines: string[] = [];
@@ -116,17 +120,22 @@ function buildEventEntry(event: HeadlessStreamEvent, order: number): HeadlessRaw
     const summary = normalizeText(data.summary);
     const detail = normalizeText(data.detail);
     title = command || summary || detail || title;
-    detailLines.push(...[
-      summary && summary !== title ? summary : "",
-      detail,
-      command && command !== title ? `command: ${command}` : "",
-      normalizeText(data.cwd) ? `cwd: ${normalizeText(data.cwd)}` : "",
-      normalizeText(data.query) ? `query: ${normalizeText(data.query)}` : "",
-      normalizeText(data.tool_name) ? `tool: ${normalizeText(data.tool_name)}` : "",
-      normalizeText(data.server_name) ? `server: ${normalizeText(data.server_name)}` : "",
-      normalizeArray(data.file_paths).length > 0 ? `files: ${normalizeArray(data.file_paths).join(", ")}` : "",
-    ].filter(Boolean));
-    const status = normalizeText(data.status).toLowerCase() || eventType.replace("headless.activity.", "");
+    detailLines.push(
+      ...[
+        summary && summary !== title ? summary : "",
+        detail,
+        command && command !== title ? `command: ${command}` : "",
+        normalizeText(data.cwd) ? `cwd: ${normalizeText(data.cwd)}` : "",
+        normalizeText(data.query) ? `query: ${normalizeText(data.query)}` : "",
+        normalizeText(data.tool_name) ? `tool: ${normalizeText(data.tool_name)}` : "",
+        normalizeText(data.server_name) ? `server: ${normalizeText(data.server_name)}` : "",
+        normalizeArray(data.file_paths).length > 0
+          ? `files: ${normalizeArray(data.file_paths).join(", ")}`
+          : "",
+      ].filter(Boolean),
+    );
+    const status =
+      normalizeText(data.status).toLowerCase() || eventType.replace("headless.activity.", "");
     live = status !== "completed";
     tone = status === "completed" ? "success" : "info";
   } else if (eventType.startsWith("headless.turn.") || eventType.startsWith("headless.control.")) {
@@ -136,32 +145,44 @@ function buildEventEntry(event: HeadlessStreamEvent, order: number): HeadlessRaw
     badge = eventType.startsWith("headless.control.") ? "CONTROL" : "TURN";
     title = normalizeText(data.status) || eventType.replace(/^headless\./, "").replace(/\./g, " ");
     const errorText = extractErrorText(data);
-    if (normalizeText(data.control_kind)) detailLines.push(`kind: ${normalizeText(data.control_kind)}`);
+    if (normalizeText(data.control_kind))
+      detailLines.push(`kind: ${normalizeText(data.control_kind)}`);
     if (normalizeText(data.turn_id)) detailLines.push(`turn: ${normalizeText(data.turn_id)}`);
     if (errorText) detailLines.push(errorText);
     tone = isFailed ? "error" : isQueued ? "warning" : isStarted ? "info" : "success";
     live = !eventType.endsWith(".completed") && !eventType.endsWith(".failed");
   } else if (
-    eventType === "headless.thread.started"
-    || eventType === "headless.thread.resumed"
-    || eventType === "headless.thread.resume_failed"
-    || eventType === "headless.session.resume_failed"
-    || eventType === "headless.remote_tui.start_failed"
-    || eventType === "headless.session.stopped"
+    eventType === "headless.thread.started" ||
+    eventType === "headless.thread.resumed" ||
+    eventType === "headless.thread.resume_failed" ||
+    eventType === "headless.session.resume_failed" ||
+    eventType === "headless.remote_tui.start_failed" ||
+    eventType === "headless.session.stopped"
   ) {
     badge = "STATE";
     if (eventType === "headless.thread.started") title = "Thread started";
     else if (eventType === "headless.thread.resumed") title = "Thread resumed";
-    else if (eventType === "headless.thread.resume_failed" || eventType === "headless.session.resume_failed") title = "Resume failed";
+    else if (
+      eventType === "headless.thread.resume_failed" ||
+      eventType === "headless.session.resume_failed"
+    )
+      title = "Resume failed";
     else if (eventType === "headless.remote_tui.start_failed") title = "Terminal start failed";
     else title = "Session stopped";
     if (normalizeText(data.thread_id)) detailLines.push(`thread: ${normalizeText(data.thread_id)}`);
     const errorText = extractErrorText(data);
     if (errorText) detailLines.push(errorText);
-    tone = eventType === "headless.thread.resume_failed" || eventType === "headless.session.resume_failed" || eventType === "headless.session.stopped" || eventType === "headless.remote_tui.start_failed" ? "warning" : "info";
+    tone =
+      eventType === "headless.thread.resume_failed" ||
+      eventType === "headless.session.resume_failed" ||
+      eventType === "headless.session.stopped" ||
+      eventType === "headless.remote_tui.start_failed"
+        ? "warning"
+        : "info";
   } else if (eventType === "headless.item.started") {
     badge = "ITEM";
-    const item = data.item && typeof data.item === "object" ? data.item as Record<string, unknown> : {};
+    const item =
+      data.item && typeof data.item === "object" ? (data.item as Record<string, unknown>) : {};
     title = normalizeText(item.type) || "item started";
     if (normalizeText(item.id)) detailLines.push(`id: ${normalizeText(item.id)}`);
     tone = "info";
@@ -190,18 +211,25 @@ function buildEventEntry(event: HeadlessStreamEvent, order: number): HeadlessRaw
   };
 }
 
-export function buildHeadlessRawTraceEntries(events: HeadlessStreamEvent[]): HeadlessRawTraceEntry[] {
+export function buildHeadlessRawTraceEntries(
+  events: HeadlessStreamEvent[],
+): HeadlessRawTraceEntry[] {
   const sortedEvents = (Array.isArray(events) ? events.slice() : []).sort(compareEvents);
   const entries: HeadlessRawTraceEntry[] = [];
-  const messageEntryByStreamId = new Map<string, Extract<HeadlessRawTraceEntry, { kind: "message" }>>();
+  const messageEntryByStreamId = new Map<
+    string,
+    Extract<HeadlessRawTraceEntry, { kind: "message" }>
+  >();
   const eventEntryById = new Map<string, Extract<HeadlessRawTraceEntry, { kind: "event" }>>();
 
   for (const event of sortedEvents) {
     const eventType = normalizeText(event.type);
-    const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
+    const data =
+      event.data && typeof event.data === "object" ? (event.data as Record<string, unknown>) : {};
     const order = entries.length;
     if (eventType.startsWith("headless.message.")) {
-      const streamId = normalizeText(data.stream_id) || normalizeText(event.id) || `stream:${order}`;
+      const streamId =
+        normalizeText(data.stream_id) || normalizeText(event.id) || `stream:${order}`;
       const streamPhase = normalizeText(data.phase).toLowerCase();
       const delta = String(data.delta || "");
       const text = String(data.text || "");

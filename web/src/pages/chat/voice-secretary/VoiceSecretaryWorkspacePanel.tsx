@@ -2,7 +2,10 @@ import type { TFunction } from "i18next";
 import { useMemo } from "react";
 import { MarkdownDocumentSurface } from "../../../components/document/MarkdownDocumentSurface";
 import { classNames } from "../../../utils/classNames";
-import { isDisplayableFinalVoiceTranscriptItem, type VoiceTranscriptItem } from "./voiceStreamModel";
+import {
+  isDisplayableFinalVoiceTranscriptItem,
+  type VoiceTranscriptItem,
+} from "./voiceStreamModel";
 import { VoiceTranscriptRecordingIndicator } from "./VoiceTranscriptRecordingIndicator";
 import { stripUncertainSpeakerPrefix } from "./voiceComposerUtils";
 
@@ -65,9 +68,18 @@ export function VoiceSecretaryWorkspacePanel({
   formatFullTime,
   normalizeTranscriptText,
 }: VoiceSecretaryWorkspacePanelProps) {
-  const processingRows = useMemo(() => transcriptItems.filter((item) => item.processingPhase === "separating_speakers"), [transcriptItems]);
-  const failedRows = useMemo(() => transcriptItems.filter((item) => item.processingPhase === "failed"), [transcriptItems]);
-  const transcriptRows = useMemo(() => transcriptItems.filter(isDisplayableFinalVoiceTranscriptItem), [transcriptItems]);
+  const processingRows = useMemo(
+    () => transcriptItems.filter((item) => item.processingPhase === "separating_speakers"),
+    [transcriptItems],
+  );
+  const failedRows = useMemo(
+    () => transcriptItems.filter((item) => item.processingPhase === "failed"),
+    [transcriptItems],
+  );
+  const transcriptRows = useMemo(
+    () => transcriptItems.filter(isDisplayableFinalVoiceTranscriptItem),
+    [transcriptItems],
+  );
   const transcriptCount = transcriptRows.length;
   return (
     <section
@@ -78,7 +90,12 @@ export function VoiceSecretaryWorkspacePanel({
     >
       <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-[var(--glass-border-subtle)] px-1 pb-3">
         <div className="min-w-0 flex-1">
-          <div className={classNames("break-words text-xl font-semibold tracking-[-0.02em]", isDark ? "text-slate-100" : "text-gray-900")}>
+          <div
+            className={classNames(
+              "break-words text-xl font-semibold tracking-[-0.02em]",
+              isDark ? "text-slate-100" : "text-gray-900",
+            )}
+          >
             {documentDisplayTitle}
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -88,7 +105,9 @@ export function VoiceSecretaryWorkspacePanel({
                 isDark ? "border-white/10 bg-white/[0.04]" : "border-black/10 bg-white",
               )}
               role="group"
-              aria-label={t("voiceSecretaryWorkspaceViewSelector", { defaultValue: "Voice Secretary workspace view" })}
+              aria-label={t("voiceSecretaryWorkspaceViewSelector", {
+                defaultValue: "Voice Secretary workspace view",
+              })}
             >
               {(["document", "transcript"] as VoiceWorkspaceView[]).map((nextView) => {
                 const active = view === nextView;
@@ -116,30 +135,74 @@ export function VoiceSecretaryWorkspacePanel({
                 );
               })}
             </div>
-            <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-white/10 text-slate-100" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]")}>
+            <span
+              className={classNames(
+                "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                isDark
+                  ? "bg-white/10 text-slate-100"
+                  : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
+              )}
+            >
               {view === "transcript"
-                ? t("voiceSecretaryTranscriptCount", { count: transcriptCount, defaultValue: "{{count}} entries" })
+                ? t("voiceSecretaryTranscriptCount", {
+                    count: transcriptCount,
+                    defaultValue: "{{count}} entries",
+                  })
                 : t("voiceSecretaryMarkdownBadge", { defaultValue: "Markdown" })}
             </span>
             {view === "document" ? (
-              <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", activeDocumentPath ? (isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]") : (isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-600"))}>
+              <span
+                className={classNames(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                  activeDocumentPath
+                    ? isDark
+                      ? "bg-white/10 text-slate-200"
+                      : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"
+                    : isDark
+                      ? "bg-slate-800 text-slate-300"
+                      : "bg-gray-100 text-gray-600",
+                )}
+              >
                 {activeDocumentPath
                   ? t("voiceSecretaryRepoBackedBadge", { defaultValue: "Repo-backed" })
-                  : t("voiceSecretaryWaitingTranscriptBadge", { defaultValue: "Waiting for transcript" })}
+                  : t("voiceSecretaryWaitingTranscriptBadge", {
+                      defaultValue: "Waiting for transcript",
+                    })}
               </span>
             ) : null}
-            {view === "document" && activeDocumentWritePath && activeDocumentWritePath === captureTargetDocumentPath ? (
-              <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]")}>
+            {view === "document" &&
+            activeDocumentWritePath &&
+            activeDocumentWritePath === captureTargetDocumentPath ? (
+              <span
+                className={classNames(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                  isDark
+                    ? "bg-white/10 text-slate-200"
+                    : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
+                )}
+              >
                 {t("voiceSecretaryDefaultDocumentBadge", { defaultValue: "Default document" })}
               </span>
             ) : null}
             {view === "document" && documentHasUnsavedEdits ? (
-              <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-amber-500/10 text-amber-200" : "bg-amber-50 text-amber-700")}>
+              <span
+                className={classNames(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                  isDark ? "bg-amber-500/10 text-amber-200" : "bg-amber-50 text-amber-700",
+                )}
+              >
                 {t("voiceSecretaryUnsavedEditsBadge", { defaultValue: "Unsaved edits" })}
               </span>
             ) : null}
             {view === "document" && documentRemoteChanged ? (
-              <span className={classNames("rounded-full px-2 py-0.5 text-[10px] font-medium", isDark ? "bg-white/10 text-slate-200" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]")}>
+              <span
+                className={classNames(
+                  "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                  isDark
+                    ? "bg-white/10 text-slate-200"
+                    : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
+                )}
+              >
                 {t("voiceSecretaryRemoteChangedBadge", { defaultValue: "Remote update available" })}
               </span>
             ) : null}
@@ -154,7 +217,9 @@ export function VoiceSecretaryWorkspacePanel({
                 <span className="shrink-0">
                   {activeDocumentPath
                     ? t("voiceSecretaryRepoMarkdownLabel", { defaultValue: "Repo markdown" })
-                    : t("voiceSecretaryWorkingDocumentPendingShort", { defaultValue: "Auto-create on transcript" })}
+                    : t("voiceSecretaryWorkingDocumentPendingShort", {
+                        defaultValue: "Auto-create on transcript",
+                      })}
                 </span>
                 {activeDocumentPath ? (
                   <span className="min-w-0 truncate font-normal text-[var(--color-text-muted)]">
@@ -171,12 +236,15 @@ export function VoiceSecretaryWorkspacePanel({
               type="button"
               className={classNames(
                 "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-60",
-                isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
+                isDark
+                  ? "border-white/10 text-slate-300 hover:bg-white/10"
+                  : "border-black/10 text-gray-700 hover:bg-black/5",
               )}
               onClick={onLoadLatestDocument}
               disabled={!activeDocumentPath || documentLoading}
               title={t("voiceSecretaryLoadLatestDocumentHint", {
-                defaultValue: "Load the latest document from the daemon. Unsaved local edits in this panel will be replaced.",
+                defaultValue:
+                  "Load the latest document from the daemon. Unsaved local edits in this panel will be replaced.",
               })}
             >
               {t("voiceSecretaryLoadLatestDocument", { defaultValue: "Load latest" })}
@@ -187,7 +255,9 @@ export function VoiceSecretaryWorkspacePanel({
               type="button"
               className={classNames(
                 "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-60",
-                isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
+                isDark
+                  ? "border-white/10 text-slate-300 hover:bg-white/10"
+                  : "border-black/10 text-gray-700 hover:bg-black/5",
               )}
               onClick={onSaveDocument}
               disabled={!!actionBusy || documentLoading}
@@ -205,7 +275,9 @@ export function VoiceSecretaryWorkspacePanel({
                 disabled={!activeDocumentPath || documentLoading}
                 className={classNames(
                   "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50",
-                  isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
+                  isDark
+                    ? "border-white/10 text-slate-300 hover:bg-white/10"
+                    : "border-black/10 text-gray-700 hover:bg-black/5",
                 )}
               >
                 {t("voiceSecretaryDownloadDocument", { defaultValue: "Download .md" })}
@@ -216,7 +288,9 @@ export function VoiceSecretaryWorkspacePanel({
                 disabled={documentLoading}
                 className={classNames(
                   "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50",
-                  isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
+                  isDark
+                    ? "border-white/10 text-slate-300 hover:bg-white/10"
+                    : "border-black/10 text-gray-700 hover:bg-black/5",
                 )}
               >
                 {documentEditing
@@ -232,11 +306,19 @@ export function VoiceSecretaryWorkspacePanel({
               disabled={!transcriptCount || recording}
               className={classNames(
                 "rounded-full border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:opacity-50",
-                isDark ? "border-white/10 text-slate-300 hover:bg-white/10" : "border-black/10 text-gray-700 hover:bg-black/5",
+                isDark
+                  ? "border-white/10 text-slate-300 hover:bg-white/10"
+                  : "border-black/10 text-gray-700 hover:bg-black/5",
               )}
-              title={recording
-                ? t("voiceSecretaryClearTranscriptDisabledRecording", { defaultValue: "Stop recording before clearing transcript entries." })
-                : t("voiceSecretaryClearTranscriptTitle", { defaultValue: "Clear visible transcript entries for this document." })}
+              title={
+                recording
+                  ? t("voiceSecretaryClearTranscriptDisabledRecording", {
+                      defaultValue: "Stop recording before clearing transcript entries.",
+                    })
+                  : t("voiceSecretaryClearTranscriptTitle", {
+                      defaultValue: "Clear visible transcript entries for this document.",
+                    })
+              }
             >
               {t("voiceSecretaryClearTranscript", { defaultValue: "Clear" })}
             </button>
@@ -250,16 +332,21 @@ export function VoiceSecretaryWorkspacePanel({
           content={documentDraft}
           editValue={documentDraft}
           editing={documentEditing}
-          editAriaLabel={t("voiceSecretaryDocumentEditAriaLabel", { defaultValue: "Edit Voice Secretary working document markdown" })}
+          editAriaLabel={t("voiceSecretaryDocumentEditAriaLabel", {
+            defaultValue: "Edit Voice Secretary working document markdown",
+          })}
           editPlaceholder={t("voiceSecretaryDocumentPlaceholder", {
-            defaultValue: "Voice Secretary will maintain a markdown working document here as transcript arrives. You can edit it directly.",
+            defaultValue:
+              "Voice Secretary will maintain a markdown working document here as transcript arrives. You can edit it directly.",
           })}
           emptyLabel={t("voiceSecretaryDocumentPreviewEmpty", {
             defaultValue: "Transcript and Voice Secretary edits will appear here.",
           })}
           isDark={isDark}
           loading={documentLoading}
-          loadingLabel={t("voiceSecretaryDocumentLoading", { defaultValue: "Loading document content..." })}
+          loadingLabel={t("voiceSecretaryDocumentLoading", {
+            defaultValue: "Loading document content...",
+          })}
           minHeightClassName="min-h-[280px] lg:min-h-0"
           onEditValueChange={onEditDocumentChange}
         />
@@ -269,94 +356,113 @@ export function VoiceSecretaryWorkspacePanel({
             <VoiceTranscriptRecordingIndicator
               compact
               isDark={isDark}
-              label={t("voiceSecretaryTranscriptRecordingIndicator", { defaultValue: "Recording audio. Final transcript appears after Save." })}
+              label={t("voiceSecretaryTranscriptRecordingIndicator", {
+                defaultValue: "Recording audio. Final transcript appears after Save.",
+              })}
               levels={recordingAudioLevels}
             />
           ) : processingRows.length ? (
             <VoiceTranscriptRecordingIndicator
               isDark={isDark}
-              label={t("voiceSecretaryTranscriptAnalyzingAudio", { defaultValue: "Analyzing final audio..." })}
+              label={t("voiceSecretaryTranscriptAnalyzingAudio", {
+                defaultValue: "Analyzing final audio...",
+              })}
               levels={recordingAudioLevels}
             />
           ) : null}
           {!recording && !processingRows.length && failedRows.length ? (
-            <div className={classNames(
-              "rounded-2xl border px-3 py-2.5 text-sm",
-              isDark ? "border-red-300/20 bg-red-300/10 text-red-100" : "border-red-200 bg-red-50 text-red-800",
-            )}>
-              {normalizeTranscriptText(failedRows[0]?.text || t("voiceSecretaryTranscriptFinalFailed", {
-                defaultValue: "Final audio analysis failed.",
-              }))}
+            <div
+              className={classNames(
+                "rounded-2xl border px-3 py-2.5 text-sm",
+                isDark
+                  ? "border-red-300/20 bg-red-300/10 text-red-100"
+                  : "border-red-200 bg-red-50 text-red-800",
+              )}
+            >
+              {normalizeTranscriptText(
+                failedRows[0]?.text ||
+                  t("voiceSecretaryTranscriptFinalFailed", {
+                    defaultValue: "Final audio analysis failed.",
+                  }),
+              )}
             </div>
           ) : null}
-          {transcriptRows.length ? transcriptRows.map((item) => {
-            const itemText = normalizeTranscriptText(stripUncertainSpeakerPrefix(item.text));
-            const timeLabel = formatTime(item.updatedAt);
-            const fullTimeLabel = formatFullTime(item.updatedAt);
-            const sourceLabel = String(item.sourceLabel || "").trim();
-            const sourceDetail = String(item.sourceDetail || "").trim();
-            const rawSpeakerLabel = String(item.speakerLabel || "").trim();
-            const speakerLabel = /^Speaker\s*\?$/i.test(rawSpeakerLabel) ? "" : rawSpeakerLabel;
-            return (
-              <div
-                key={item.id}
-                className={classNames(
-                  "rounded-lg border px-2 py-1.5",
-                  isDark ? "border-white/10 bg-white/[0.04]" : "border-black/[0.08] bg-white",
-                )}
-              >
-                <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  {speakerLabel ? (
-                    <span
-                      className={classNames(
-                        "shrink-0 text-[11px] font-semibold",
-                        isDark ? "text-sky-100" : "text-sky-800",
-                      )}
-                    >
-                      {speakerLabel}
-                    </span>
-                  ) : null}
-                  {itemText ? (
-                    <span className={classNames(
-                      "min-w-[10rem] flex-1 whitespace-pre-wrap break-words text-sm leading-5",
-                      isDark ? "text-slate-100" : "text-gray-900",
-                    )}>
-                      {itemText}
-                    </span>
-                  ) : null}
-                  {sourceLabel ? (
-                    <span
-                      className={classNames(
-                        "shrink-0 text-[10px] font-semibold",
-                        isDark ? "text-emerald-100/85" : "text-emerald-800",
-                      )}
-                      title={sourceDetail || sourceLabel}
-                    >
-                      {sourceLabel}
-                    </span>
-                  ) : null}
-                  {timeLabel ? (
-                    <time
-                      className="ml-auto shrink-0 text-[10px] tabular-nums text-[var(--color-text-muted)]"
-                      dateTime={new Date(item.updatedAt).toISOString()}
-                      title={fullTimeLabel}
-                    >
-                      {timeLabel}
-                    </time>
+          {transcriptRows.length ? (
+            transcriptRows.map((item) => {
+              const itemText = normalizeTranscriptText(stripUncertainSpeakerPrefix(item.text));
+              const timeLabel = formatTime(item.updatedAt);
+              const fullTimeLabel = formatFullTime(item.updatedAt);
+              const sourceLabel = String(item.sourceLabel || "").trim();
+              const sourceDetail = String(item.sourceDetail || "").trim();
+              const rawSpeakerLabel = String(item.speakerLabel || "").trim();
+              const speakerLabel = /^Speaker\s*\?$/i.test(rawSpeakerLabel) ? "" : rawSpeakerLabel;
+              return (
+                <div
+                  key={item.id}
+                  className={classNames(
+                    "rounded-lg border px-2 py-1.5",
+                    isDark ? "border-white/10 bg-white/[0.04]" : "border-black/[0.08] bg-white",
+                  )}
+                >
+                  <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    {speakerLabel ? (
+                      <span
+                        className={classNames(
+                          "shrink-0 text-[11px] font-semibold",
+                          isDark ? "text-sky-100" : "text-sky-800",
+                        )}
+                      >
+                        {speakerLabel}
+                      </span>
+                    ) : null}
+                    {itemText ? (
+                      <span
+                        className={classNames(
+                          "min-w-[10rem] flex-1 whitespace-pre-wrap break-words text-sm leading-5",
+                          isDark ? "text-slate-100" : "text-gray-900",
+                        )}
+                      >
+                        {itemText}
+                      </span>
+                    ) : null}
+                    {sourceLabel ? (
+                      <span
+                        className={classNames(
+                          "shrink-0 text-[10px] font-semibold",
+                          isDark ? "text-emerald-100/85" : "text-emerald-800",
+                        )}
+                        title={sourceDetail || sourceLabel}
+                      >
+                        {sourceLabel}
+                      </span>
+                    ) : null}
+                    {timeLabel ? (
+                      <time
+                        className="ml-auto shrink-0 text-[10px] tabular-nums text-[var(--color-text-muted)]"
+                        dateTime={new Date(item.updatedAt).toISOString()}
+                        title={fullTimeLabel}
+                      >
+                        {timeLabel}
+                      </time>
+                    ) : null}
+                  </div>
+                  {sourceDetail ? (
+                    <div className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
+                      {sourceDetail}
+                    </div>
                   ) : null}
                 </div>
-                {sourceDetail ? (
-                  <div className="mt-0.5 truncate text-[10px] text-[var(--color-text-muted)]">
-                    {sourceDetail}
-                  </div>
-                ) : null}
-              </div>
-            );
-          }) : !recording && !processingRows.length && !failedRows.length ? (
+              );
+            })
+          ) : !recording && !processingRows.length && !failedRows.length ? (
             <div className="flex h-full min-h-[280px] items-center justify-center rounded-2xl border border-dashed border-[var(--glass-border-subtle)] px-4 text-center text-sm text-[var(--color-text-muted)]">
               {activeDocumentPath
-                ? t("voiceSecretaryTranscriptEmpty", { defaultValue: "Document-mode transcript for this document will appear here." })
-                : t("voiceSecretaryTranscriptNeedsDocument", { defaultValue: "Choose or create a document to see its transcript." })}
+                ? t("voiceSecretaryTranscriptEmpty", {
+                    defaultValue: "Document-mode transcript for this document will appear here.",
+                  })
+                : t("voiceSecretaryTranscriptNeedsDocument", {
+                    defaultValue: "Choose or create a document to see its transcript.",
+                  })}
             </div>
           ) : null}
         </div>

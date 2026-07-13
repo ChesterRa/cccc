@@ -5,7 +5,8 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-[rgb(35,36,37)] text-white shadow-lg hover:bg-black dark:bg-white dark:text-[rgb(20,20,22)] dark:hover:bg-white/92",
+        default:
+          "bg-[rgb(35,36,37)] text-white shadow-lg hover:bg-black dark:bg-white dark:text-[rgb(20,20,22)] dark:hover:bg-white/92",
         secondary: "glass-btn text-[var(--color-text-secondary)]",
         destructive:
           "border border-rose-500/30 bg-rose-500/15 text-rose-600 hover:bg-rose-500/25 dark:text-rose-400",
@@ -20,9 +21,6 @@ export const buttonVariants = cva(
         icon: "h-10 w-10",
       },
     },
-    defaultVariants: {
-      variant: "default",
-      size: "default",
-    },
-  }
+    defaultVariants: { variant: "default", size: "default" },
+  },
 );

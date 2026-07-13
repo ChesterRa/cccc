@@ -49,7 +49,10 @@ export function resolveThemeAwareLogoUrl(url: string | null | undefined, isDark:
   return isDark ? DEFAULT_DARK_LOGO_ICON_URL : DEFAULT_LOGO_ICON_URL;
 }
 
-export function resolveThemeAwareFaviconUrl(url: string | null | undefined, isDark: boolean): string {
+export function resolveThemeAwareFaviconUrl(
+  url: string | null | undefined,
+  isDark: boolean,
+): string {
   const normalized = normalizeAssetUrl(url) || DEFAULT_FAVICON_URL;
   if (!isDefaultLogoAsset(normalized) && normalized !== DEFAULT_FAVICON_URL) return normalized;
   return isDark ? DEFAULT_DARK_LOGO_ICON_URL : DEFAULT_FAVICON_URL;
@@ -65,7 +68,9 @@ function ensureLink(rel: string): HTMLLinkElement {
   return el;
 }
 
-export function applyBrandingToDocument(value: Partial<WebBranding> | null | undefined): WebBranding {
+export function applyBrandingToDocument(
+  value: Partial<WebBranding> | null | undefined,
+): WebBranding {
   const branding = normalizeWebBranding(value);
   document.title = resolveDocumentTitle(branding.product_name);
   const isDark = Boolean(document.documentElement?.classList?.contains("dark"));

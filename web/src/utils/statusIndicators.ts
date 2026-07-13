@@ -29,7 +29,9 @@ export function getRuntimeIndicatorState(input: {
   isRunning: boolean;
   workingState: string;
 }): RuntimeIndicatorState {
-  const workingState = String(input.workingState || "").trim().toLowerCase();
+  const workingState = String(input.workingState || "")
+    .trim()
+    .toLowerCase();
   if (!input.isRunning) {
     return {
       tone: "stop",

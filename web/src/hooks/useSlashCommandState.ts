@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import * as api from "../services/api";
-import {
-  buildSlashCommands,
-  type SlashCommandItem,
-} from "../utils/slashCommands";
+import { buildSlashCommands, type SlashCommandItem } from "../utils/slashCommands";
 import { subscribeCapabilityChanged } from "../utils/capabilityEvents";
 
 const slashCommandCache = new Map<string, SlashCommandItem[]>();
@@ -29,9 +26,12 @@ export function useSlashCommandState(selectedGroupId: string) {
     if (!gid) return;
     try {
       const stateResp = await api.fetchSlashCommandCapabilityState(gid, "user", { noCache: true });
-      setSlashCommands(cacheSlashCommands(gid, buildSlashCommands({
-        state: stateResp.ok ? stateResp.result : null,
-      })));
+      setSlashCommands(
+        cacheSlashCommands(
+          gid,
+          buildSlashCommands({ state: stateResp.ok ? stateResp.result : null }),
+        ),
+      );
     } catch {
       setSlashCommands(cachedSlashCommands(gid));
     }
@@ -46,14 +46,20 @@ export function useSlashCommandState(selectedGroupId: string) {
     queueMicrotask(() => {
       if (!cancelled) setSlashCommands(cachedSlashCommands(gid));
     });
-    void api.fetchSlashCommandCapabilityState(gid, "user").then((stateResp) => {
-      if (cancelled) return;
-      setSlashCommands(cacheSlashCommands(gid, buildSlashCommands({
-        state: stateResp.ok ? stateResp.result : null,
-      })));
-    }).catch(() => {
-      if (!cancelled) setSlashCommands(cachedSlashCommands(gid));
-    });
+    void api
+      .fetchSlashCommandCapabilityState(gid, "user")
+      .then((stateResp) => {
+        if (cancelled) return;
+        setSlashCommands(
+          cacheSlashCommands(
+            gid,
+            buildSlashCommands({ state: stateResp.ok ? stateResp.result : null }),
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setSlashCommands(cachedSlashCommands(gid));
+      });
     return () => {
       cancelled = true;
     };

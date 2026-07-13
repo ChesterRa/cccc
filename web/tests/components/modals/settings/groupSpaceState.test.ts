@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveNotebookSpacesAfterLoad,
@@ -20,10 +20,7 @@ describe("groupSpaceState", () => {
 
   it("preserves existing spaces when a non-refresh load does not fetch a new list", () => {
     expect(
-      resolveNotebookSpacesAfterLoad(existingSpaces, {
-        writeReady: true,
-        fetchedSpaces: null,
-      }),
+      resolveNotebookSpacesAfterLoad(existingSpaces, { writeReady: true, fetchedSpaces: null }),
     ).toBe(existingSpaces);
   });
 
@@ -33,19 +30,13 @@ describe("groupSpaceState", () => {
     ];
 
     expect(
-      resolveNotebookSpacesAfterLoad(existingSpaces, {
-        writeReady: true,
-        fetchedSpaces,
-      }),
+      resolveNotebookSpacesAfterLoad(existingSpaces, { writeReady: true, fetchedSpaces }),
     ).toEqual(fetchedSpaces);
   });
 
   it("clears spaces when the provider is no longer write-ready", () => {
     expect(
-      resolveNotebookSpacesAfterLoad(existingSpaces, {
-        writeReady: false,
-        fetchedSpaces: null,
-      }),
+      resolveNotebookSpacesAfterLoad(existingSpaces, { writeReady: false, fetchedSpaces: null }),
     ).toEqual([]);
   });
 });

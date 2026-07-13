@@ -47,10 +47,8 @@ import {
 } from "./base";
 
 export async function fetchGroups() {
-  return reuseRecentReadRequest(
-    groupsRequestKey(),
-    RECENT_BOOTSTRAP_READ_TTL_MS,
-    () => apiJson<{ groups: GroupMeta[] }>("/api/v1/groups"),
+  return reuseRecentReadRequest(groupsRequestKey(), RECENT_BOOTSTRAP_READ_TTL_MS, () =>
+    apiJson<{ groups: GroupMeta[] }>("/api/v1/groups"),
   );
 }
 
@@ -90,7 +88,8 @@ function normalizeAssistantVoiceDocument(value: unknown): AssistantVoiceDocument
   const record = asRecord(value);
   if (!record) return null;
   const documentId = asString(record.document_id).trim();
-  const documentPath = asOptionalString(record.document_path) || asOptionalString(record.workspace_path) || documentId;
+  const documentPath =
+    asOptionalString(record.document_path) || asOptionalString(record.workspace_path) || documentId;
   if (!documentId && !documentPath) return null;
   return {
     document_id: documentId || documentPath,
@@ -103,9 +102,15 @@ function normalizeAssistantVoiceDocument(value: unknown): AssistantVoiceDocument
     workspace_path: asOptionalString(record.workspace_path) || undefined,
     content: asOptionalString(record.content) || undefined,
     content_sha256: asOptionalString(record.content_sha256) || undefined,
-    content_chars: Number.isFinite(Number(record.content_chars)) ? Number(record.content_chars) : undefined,
-    revision_count: Number.isFinite(Number(record.revision_count)) ? Number(record.revision_count) : undefined,
-    source_segment_count: Number.isFinite(Number(record.source_segment_count)) ? Number(record.source_segment_count) : undefined,
+    content_chars: Number.isFinite(Number(record.content_chars))
+      ? Number(record.content_chars)
+      : undefined,
+    revision_count: Number.isFinite(Number(record.revision_count))
+      ? Number(record.revision_count)
+      : undefined,
+    source_segment_count: Number.isFinite(Number(record.source_segment_count))
+      ? Number(record.source_segment_count)
+      : undefined,
     last_source_segment_id: asOptionalString(record.last_source_segment_id) || undefined,
     last_source_path: asOptionalString(record.last_source_path) || undefined,
     created_at: asOptionalString(record.created_at) || undefined,
@@ -161,7 +166,9 @@ function normalizeAssistantVoiceAskFeedback(value: unknown): AssistantVoiceAskFe
   };
 }
 
-function normalizeAssistantVoiceRecordingLease(value: unknown): AssistantVoiceRecordingLease | undefined {
+function normalizeAssistantVoiceRecordingLease(
+  value: unknown,
+): AssistantVoiceRecordingLease | undefined {
   const record = asRecord(value);
   if (!record) return undefined;
   const ownerId = asString(record.owner_id).trim();
@@ -194,7 +201,9 @@ function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel |
             path: asOptionalString(artifact.path) || undefined,
             url: asOptionalString(artifact.url) || undefined,
             sha256: asOptionalString(artifact.sha256) || undefined,
-            size_bytes: Number.isFinite(Number(artifact.size_bytes)) ? Number(artifact.size_bytes) : undefined,
+            size_bytes: Number.isFinite(Number(artifact.size_bytes))
+              ? Number(artifact.size_bytes)
+              : undefined,
             archive: asOptionalString(artifact.archive) || undefined,
           };
         })
@@ -214,23 +223,39 @@ function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel |
     updated_at: asOptionalString(record.updated_at) || undefined,
     command_ready: typeof record.command_ready === "boolean" ? record.command_ready : undefined,
     offline_ready: typeof record.offline_ready === "boolean" ? record.offline_ready : undefined,
-    streaming_ready: typeof record.streaming_ready === "boolean" ? record.streaming_ready : undefined,
-    ...(typeof record.diarization_ready === "boolean" ? { diarization_ready: record.diarization_ready } : {}),
+    streaming_ready:
+      typeof record.streaming_ready === "boolean" ? record.streaming_ready : undefined,
+    ...(typeof record.diarization_ready === "boolean"
+      ? { diarization_ready: record.diarization_ready }
+      : {}),
     offline: asRecord(record.offline) ?? undefined,
     streaming: asRecord(record.streaming) ?? undefined,
     diarization: asRecord(record.diarization) ?? undefined,
     manifest_sha256: asOptionalString(record.manifest_sha256) || undefined,
-    downloaded_bytes: Number.isFinite(Number(record.downloaded_bytes)) ? Number(record.downloaded_bytes) : undefined,
-    total_size_bytes: Number.isFinite(Number(record.total_size_bytes)) ? Number(record.total_size_bytes) : undefined,
-    disk_usage_bytes: Number.isFinite(Number(record.disk_usage_bytes)) ? Number(record.disk_usage_bytes) : undefined,
-    progress_percent: Number.isFinite(Number(record.progress_percent)) ? Number(record.progress_percent) : undefined,
+    downloaded_bytes: Number.isFinite(Number(record.downloaded_bytes))
+      ? Number(record.downloaded_bytes)
+      : undefined,
+    total_size_bytes: Number.isFinite(Number(record.total_size_bytes))
+      ? Number(record.total_size_bytes)
+      : undefined,
+    disk_usage_bytes: Number.isFinite(Number(record.disk_usage_bytes))
+      ? Number(record.disk_usage_bytes)
+      : undefined,
+    progress_percent: Number.isFinite(Number(record.progress_percent))
+      ? Number(record.progress_percent)
+      : undefined,
     current_artifact_path: asOptionalString(record.current_artifact_path) || undefined,
-    artifact_index: Number.isFinite(Number(record.artifact_index)) ? Number(record.artifact_index) : undefined,
-    artifact_count: Number.isFinite(Number(record.artifact_count)) ? Number(record.artifact_count) : undefined,
+    artifact_index: Number.isFinite(Number(record.artifact_index))
+      ? Number(record.artifact_index)
+      : undefined,
+    artifact_count: Number.isFinite(Number(record.artifact_count))
+      ? Number(record.artifact_count)
+      : undefined,
     error: asRecord(record.error) ?? undefined,
     last_update_error: asRecord(record.last_update_error) ?? undefined,
     installed_manifest_sha256: asOptionalString(record.installed_manifest_sha256) || undefined,
-    update_available: typeof record.update_available === "boolean" ? record.update_available : undefined,
+    update_available:
+      typeof record.update_available === "boolean" ? record.update_available : undefined,
     artifacts,
   };
 }
@@ -268,7 +293,9 @@ function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRunti
     installed: typeof record.installed === "boolean" ? record.installed : undefined,
     install_dir: asOptionalString(record.install_dir) || undefined,
     python: asOptionalString(record.python) || undefined,
-    packages: Array.isArray(record.packages) ? record.packages.map((item) => String(item || "")).filter(Boolean) : undefined,
+    packages: Array.isArray(record.packages)
+      ? record.packages.map((item) => String(item || "")).filter(Boolean)
+      : undefined,
     primary_package: asOptionalString(record.primary_package) || undefined,
     package_versions: Object.keys(packageVersions).length > 0 ? packageVersions : undefined,
     installed_version: asOptionalString(record.installed_version) || undefined,
@@ -276,17 +303,22 @@ function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRunti
     latest_versions: Object.keys(latestVersions).length > 0 ? latestVersions : undefined,
     latest_checked_at: asOptionalString(record.latest_checked_at) || undefined,
     latest_check_error: asRecord(record.latest_check_error) ?? undefined,
-    update_available: typeof record.update_available === "boolean" ? record.update_available : undefined,
+    update_available:
+      typeof record.update_available === "boolean" ? record.update_available : undefined,
     modules: Object.keys(modules).length > 0 ? modules : undefined,
     missing_modules: asStringArray(record.missing_modules),
     installed_at: asOptionalString(record.installed_at) || undefined,
     updated_at: asOptionalString(record.updated_at) || undefined,
-    disk_usage_bytes: Number.isFinite(Number(record.disk_usage_bytes)) ? Number(record.disk_usage_bytes) : undefined,
+    disk_usage_bytes: Number.isFinite(Number(record.disk_usage_bytes))
+      ? Number(record.disk_usage_bytes)
+      : undefined,
     error: asRecord(record.error) ?? undefined,
   };
 }
 
-function normalizeAssistantVoiceMeetingSession(value: unknown): AssistantVoiceMeetingSession | undefined {
+function normalizeAssistantVoiceMeetingSession(
+  value: unknown,
+): AssistantVoiceMeetingSession | undefined {
   const record = asRecord(value);
   if (!record) return undefined;
   const sessionId = asString(record.session_id).trim();
@@ -298,16 +330,26 @@ function normalizeAssistantVoiceMeetingSession(value: unknown): AssistantVoiceMe
     status: asOptionalString(record.status) || undefined,
     created_at: asOptionalString(record.created_at) || undefined,
     updated_at: asOptionalString(record.updated_at) || undefined,
-    sample_rate: Number.isFinite(Number(record.sample_rate)) ? Number(record.sample_rate) : undefined,
-    audio_duration_ms: Number.isFinite(Number(record.audio_duration_ms)) ? Number(record.audio_duration_ms) : undefined,
+    sample_rate: Number.isFinite(Number(record.sample_rate))
+      ? Number(record.sample_rate)
+      : undefined,
+    audio_duration_ms: Number.isFinite(Number(record.audio_duration_ms))
+      ? Number(record.audio_duration_ms)
+      : undefined,
     language: asOptionalString(record.language) || undefined,
     capture_mode: asOptionalString(record.capture_mode) || undefined,
     document_path: asOptionalString(record.document_path) || undefined,
     latest_partial: asOptionalString(record.latest_partial) || undefined,
     last_final_text: asOptionalString(record.last_final_text) || undefined,
-    ...(typeof record.diarization_ready === "boolean" ? { diarization_ready: record.diarization_ready } : {}),
+    ...(typeof record.diarization_ready === "boolean"
+      ? { diarization_ready: record.diarization_ready }
+      : {}),
     diarization_artifact_path: asOptionalString(record.diarization_artifact_path) || undefined,
-    segments: Array.isArray(record.segments) ? record.segments.map((item) => asRecord(item)).filter((item): item is Record<string, unknown> => !!item) : [],
+    segments: Array.isArray(record.segments)
+      ? record.segments
+          .map((item) => asRecord(item))
+          .filter((item): item is Record<string, unknown> => !!item)
+      : [],
     diarization: asRecord(record.diarization) ?? undefined,
     error: asRecord(record.error),
   };
@@ -402,10 +444,13 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
     }
   }
   const primaryServiceRuntime = normalizeAssistantServiceRuntime(record.service_runtime);
-  if (primaryServiceRuntime?.runtime_id) serviceRuntimesById[primaryServiceRuntime.runtime_id] = primaryServiceRuntime;
+  if (primaryServiceRuntime?.runtime_id)
+    serviceRuntimesById[primaryServiceRuntime.runtime_id] = primaryServiceRuntime;
   return {
     group_id: asString(record.group_id).trim() || groupId,
-    assistants: Object.values(assistantsById).sort((a, b) => a.assistant_id.localeCompare(b.assistant_id)),
+    assistants: Object.values(assistantsById).sort((a, b) =>
+      a.assistant_id.localeCompare(b.assistant_id),
+    ),
     assistants_by_id: assistantsById,
     assistant: assistant || undefined,
     documents: Object.values(documentsById).sort((a, b) => {
@@ -418,33 +463,41 @@ function normalizeAssistantStateResult(groupId: string, result: unknown): Assist
     documents_by_path: documentsByPath,
     active_document_id: asOptionalString(record.active_document_id) || undefined,
     capture_target_document_id:
-      asOptionalString(record.capture_target_document_id) || asOptionalString(record.active_document_id) || undefined,
+      asOptionalString(record.capture_target_document_id) ||
+      asOptionalString(record.active_document_id) ||
+      undefined,
     active_document_path: asOptionalString(record.active_document_path) || undefined,
     capture_target_document_path:
-      asOptionalString(record.capture_target_document_path) || asOptionalString(record.active_document_path) || undefined,
+      asOptionalString(record.capture_target_document_path) ||
+      asOptionalString(record.active_document_path) ||
+      undefined,
     new_input_available: Boolean(record.new_input_available),
     prompt_draft: normalizeAssistantVoicePromptDraft(record.prompt_draft),
     ask_requests: askRequests,
-    latest_ask_request: normalizeAssistantVoiceAskFeedback(record.latest_ask_request) || askRequests[0],
+    latest_ask_request:
+      normalizeAssistantVoiceAskFeedback(record.latest_ask_request) || askRequests[0],
     service_models: [
       ...serviceModels,
-      ...Object.values(serviceModelsById).filter((model) => !serviceModels.some((item) => item.model_id === model.model_id)),
+      ...Object.values(serviceModelsById).filter(
+        (model) => !serviceModels.some((item) => item.model_id === model.model_id),
+      ),
     ],
     service_models_by_id: serviceModelsById,
     service_runtime: primaryServiceRuntime,
-    service_runtimes: Object.values(serviceRuntimesById).sort((a, b) => a.runtime_id.localeCompare(b.runtime_id)),
+    service_runtimes: Object.values(serviceRuntimesById).sort((a, b) =>
+      a.runtime_id.localeCompare(b.runtime_id),
+    ),
     service_runtimes_by_id: serviceRuntimesById,
     recording_lease: normalizeAssistantVoiceRecordingLease(record.recording_lease),
   };
 }
 
-type AssistantMutationResult = {
-  group_id: string;
-  assistant?: BuiltinAssistant;
-  event?: unknown;
-};
+type AssistantMutationResult = { group_id: string; assistant?: BuiltinAssistant; event?: unknown };
 
-function normalizeAssistantVoiceTranscriptionResult(groupId: string, result: unknown): AssistantVoiceTranscriptionResult {
+function normalizeAssistantVoiceTranscriptionResult(
+  groupId: string,
+  result: unknown,
+): AssistantVoiceTranscriptionResult {
   const record = asRecord(result) ?? {};
   return {
     group_id: asString(record.group_id).trim() || groupId,
@@ -459,7 +512,10 @@ function normalizeAssistantVoiceTranscriptionResult(groupId: string, result: unk
   };
 }
 
-function normalizeAssistantVoiceTranscriptSegmentResult(groupId: string, result: unknown): AssistantVoiceTranscriptSegmentResult {
+function normalizeAssistantVoiceTranscriptSegmentResult(
+  groupId: string,
+  result: unknown,
+): AssistantVoiceTranscriptSegmentResult {
   const record = asRecord(result) ?? {};
   return {
     group_id: asString(record.group_id).trim() || groupId,
@@ -480,7 +536,10 @@ function normalizeAssistantVoiceTranscriptSegmentResult(groupId: string, result:
   };
 }
 
-function normalizeAssistantMutationResult(groupId: string, result: unknown): AssistantMutationResult {
+function normalizeAssistantMutationResult(
+  groupId: string,
+  result: unknown,
+): AssistantMutationResult {
   const record = asRecord(result) ?? {};
   return {
     group_id: asString(record.group_id).trim() || groupId,
@@ -489,7 +548,10 @@ function normalizeAssistantMutationResult(groupId: string, result: unknown): Ass
   };
 }
 
-function normalizeAssistantVoiceRecordingLeaseResult(groupId: string, result: unknown): AssistantVoiceRecordingLeaseResult {
+function normalizeAssistantVoiceRecordingLeaseResult(
+  groupId: string,
+  result: unknown,
+): AssistantVoiceRecordingLeaseResult {
   const record = asRecord(result) ?? {};
   return {
     group_id: asString(record.group_id).trim() || groupId,
@@ -502,7 +564,10 @@ function normalizeAssistantVoiceRecordingLeaseResult(groupId: string, result: un
   };
 }
 
-function normalizeAssistantVoiceDocumentMutationResult(groupId: string, result: unknown): AssistantVoiceDocumentMutationResult {
+function normalizeAssistantVoiceDocumentMutationResult(
+  groupId: string,
+  result: unknown,
+): AssistantVoiceDocumentMutationResult {
   const record = asRecord(result) ?? {};
   return {
     group_id: asString(record.group_id).trim() || groupId,
@@ -521,7 +586,10 @@ function normalizeAssistantVoiceDocumentMutationResult(groupId: string, result: 
   };
 }
 
-function normalizeAssistantVoiceInputResult(groupId: string, result: unknown): AssistantVoiceInputResult {
+function normalizeAssistantVoiceInputResult(
+  groupId: string,
+  result: unknown,
+): AssistantVoiceInputResult {
   const record = asRecord(result) ?? {};
   return {
     group_id: asString(record.group_id).trim() || groupId,
@@ -557,7 +625,9 @@ function clearAssistantStateRequest(groupId: string): void {
   clearSharedReadRequest(assistantStateRequestKey(groupId));
 }
 
-export async function fetchAssistantState(groupId: string): Promise<ApiResponse<AssistantStateResult>> {
+export async function fetchAssistantState(
+  groupId: string,
+): Promise<ApiResponse<AssistantStateResult>> {
   const gid = String(groupId || "").trim();
   return reuseSharedReadRequest(assistantStateRequestKey(gid), async () => {
     const resp = await apiJson<unknown>(`/api/v1/groups/${encodeURIComponent(gid)}/assistants`);
@@ -660,12 +730,7 @@ export async function updateAssistantStatus(
 
 export async function transcribeVoiceAssistantAudio(
   groupId: string,
-  payload: {
-    audioBase64: string;
-    mimeType: string;
-    language?: string;
-    by?: string;
-  },
+  payload: { audioBase64: string; mimeType: string; language?: string; by?: string },
 ): Promise<ApiResponse<AssistantVoiceTranscriptionResult>> {
   const gid = String(groupId || "").trim();
   clearAssistantStateRequest(gid);
@@ -707,7 +772,9 @@ export async function updateVoiceAssistantRecordingLease(
         action: payload.action,
         owner_id: String(payload.ownerId || "").trim(),
         lease_id: String(payload.leaseId || "").trim(),
-        ttl_seconds: Number.isFinite(Number(payload.ttlSeconds)) ? Math.round(Number(payload.ttlSeconds)) : 30,
+        ttl_seconds: Number.isFinite(Number(payload.ttlSeconds))
+          ? Math.round(Number(payload.ttlSeconds))
+          : 30,
         capture_mode: String(payload.captureMode || "").trim(),
         recognition_backend: String(payload.recognitionBackend || "").trim(),
         by: String(payload.by || "user").trim() || "user",
@@ -730,7 +797,8 @@ export async function fetchLatestVoiceAssistantMeetingSession(
   const resp = await apiJson<unknown>(
     `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/sessions/latest${query ? `?${query}` : ""}`,
   );
-  if (!resp.ok) return resp as ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>;
+  if (!resp.ok)
+    return resp as ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>;
   const record = asRecord(resp.result) ?? {};
   return {
     ok: true,
@@ -750,7 +818,8 @@ export async function fetchVoiceAssistantMeetingSession(
   const resp = await apiJson<unknown>(
     `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/sessions/${encodeURIComponent(sid)}`,
   );
-  if (!resp.ok) return resp as ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>;
+  if (!resp.ok)
+    return resp as ApiResponse<{ group_id: string; session?: AssistantVoiceMeetingSession }>;
   const record = asRecord(resp.result) ?? {};
   return {
     ok: true,
@@ -764,7 +833,14 @@ export async function fetchVoiceAssistantMeetingSession(
 export async function installVoiceAssistantModel(
   groupId: string,
   payload: { modelId: string; by?: string; background?: boolean },
-): Promise<ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel; service_runtime?: AssistantServiceRuntime }>> {
+): Promise<
+  ApiResponse<
+    AssistantMutationResult & {
+      model?: AssistantServiceModel;
+      service_runtime?: AssistantServiceRuntime;
+    }
+  >
+> {
   const gid = String(groupId || "").trim();
   clearAssistantStateRequest(gid);
   const resp = await apiJson<unknown>(
@@ -779,7 +855,13 @@ export async function installVoiceAssistantModel(
     },
   );
   clearAssistantStateRequest(gid);
-  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel; service_runtime?: AssistantServiceRuntime }>;
+  if (!resp.ok)
+    return resp as ApiResponse<
+      AssistantMutationResult & {
+        model?: AssistantServiceModel;
+        service_runtime?: AssistantServiceRuntime;
+      }
+    >;
   const normalized = normalizeAssistantMutationResult(gid, resp.result);
   const resultRecord = asRecord(resp.result) ?? {};
   return {
@@ -795,7 +877,14 @@ export async function installVoiceAssistantModel(
 export async function removeVoiceAssistantModel(
   groupId: string,
   payload: { modelId: string; by?: string },
-): Promise<ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel; service_runtime?: AssistantServiceRuntime }>> {
+): Promise<
+  ApiResponse<
+    AssistantMutationResult & {
+      model?: AssistantServiceModel;
+      service_runtime?: AssistantServiceRuntime;
+    }
+  >
+> {
   const gid = String(groupId || "").trim();
   clearAssistantStateRequest(gid);
   const resp = await apiJson<unknown>(
@@ -809,7 +898,13 @@ export async function removeVoiceAssistantModel(
     },
   );
   clearAssistantStateRequest(gid);
-  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult & { model?: AssistantServiceModel; service_runtime?: AssistantServiceRuntime }>;
+  if (!resp.ok)
+    return resp as ApiResponse<
+      AssistantMutationResult & {
+        model?: AssistantServiceModel;
+        service_runtime?: AssistantServiceRuntime;
+      }
+    >;
   const normalized = normalizeAssistantMutationResult(gid, resp.result);
   const resultRecord = asRecord(resp.result) ?? {};
   return {
@@ -840,7 +935,10 @@ export async function installVoiceAssistantRuntime(
     },
   );
   clearAssistantStateRequest(gid);
-  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }>;
+  if (!resp.ok)
+    return resp as ApiResponse<
+      AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }
+    >;
   const normalized = normalizeAssistantMutationResult(gid, resp.result);
   const resultRecord = asRecord(resp.result) ?? {};
   return {
@@ -869,7 +967,10 @@ export async function removeVoiceAssistantRuntime(
     },
   );
   clearAssistantStateRequest(gid);
-  if (!resp.ok) return resp as ApiResponse<AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }>;
+  if (!resp.ok)
+    return resp as ApiResponse<
+      AssistantMutationResult & { service_runtime?: AssistantServiceRuntime }
+    >;
   const normalized = normalizeAssistantMutationResult(gid, resp.result);
   const resultRecord = asRecord(resp.result) ?? {};
   return {
@@ -913,8 +1014,12 @@ export async function appendVoiceAssistantTranscriptSegment(
         is_final: payload.isFinal !== false,
         flush: Boolean(payload.flush),
         trigger: payload.trigger || {},
-        start_ms: Number.isFinite(Number(payload.startMs)) ? Math.max(0, Math.round(Number(payload.startMs))) : null,
-        end_ms: Number.isFinite(Number(payload.endMs)) ? Math.max(0, Math.round(Number(payload.endMs))) : null,
+        start_ms: Number.isFinite(Number(payload.startMs))
+          ? Math.max(0, Math.round(Number(payload.startMs)))
+          : null,
+        end_ms: Number.isFinite(Number(payload.endMs))
+          ? Math.max(0, Math.round(Number(payload.endMs)))
+          : null,
         speaker_label: String(payload.speakerLabel || "").trim(),
         by: String(payload.by || "user").trim() || "user",
       }),
@@ -975,10 +1080,7 @@ export async function saveVoiceAssistantDocument(
   }
   const resp = await apiJson<unknown>(
     `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/documents`,
-    {
-      method: "PUT",
-      body: JSON.stringify(body),
-    },
+    { method: "PUT", body: JSON.stringify(body) },
   );
   clearAssistantStateRequest(gid);
   if (!resp.ok) return resp as ApiResponse<AssistantVoiceDocumentMutationResult>;
@@ -1159,7 +1261,13 @@ type PresentationMutationResult = {
 
 function normalizePresentationMutationResult(
   groupId: string,
-  result: { group_id?: unknown; slot_id?: unknown; cleared_slots?: unknown; card?: unknown; presentation?: unknown },
+  result: {
+    group_id?: unknown;
+    slot_id?: unknown;
+    cleared_slots?: unknown;
+    card?: unknown;
+    presentation?: unknown;
+  },
 ): PresentationMutationResult {
   return {
     group_id: asString(result.group_id).trim() || groupId,
@@ -1248,10 +1356,7 @@ export async function clearPresentationSlot(
     presentation?: unknown;
   }>(`/api/v1/groups/${encodeURIComponent(groupId)}/presentation/clear`, {
     method: "POST",
-    body: JSON.stringify({
-      by: "user",
-      slot: String(slotId || "").trim(),
-    }),
+    body: JSON.stringify({ by: "user", slot: String(slotId || "").trim() }),
   });
   if (!resp.ok) return resp as ApiResponse<PresentationMutationResult>;
   return { ok: true, result: normalizePresentationMutationResult(groupId, resp.result) };
@@ -1263,12 +1368,7 @@ function normalizePresentationWorkspaceItem(value: unknown): PresentationWorkspa
   const name = asString(record.name).trim();
   const path = asString(record.path).trim();
   if (!name || !path) return null;
-  return {
-    name,
-    path,
-    is_dir: !!record.is_dir,
-    mime_type: asOptionalString(record.mime_type),
-  };
+  return { name, path, is_dir: !!record.is_dir, mime_type: asOptionalString(record.mime_type) };
 }
 
 export async function fetchPresentationWorkspaceListing(
@@ -1306,7 +1406,11 @@ export async function fetchPresentationWorkspaceListing(
   };
 }
 
-export function getPresentationAssetUrl(groupId: string, slotId: string, cacheBust?: string | number): string {
+export function getPresentationAssetUrl(
+  groupId: string,
+  slotId: string,
+  cacheBust?: string | number,
+): string {
   const base = withAuthToken(
     `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/slots/${encodeURIComponent(slotId)}/asset`,
   );
@@ -1320,7 +1424,9 @@ export function getGroupBlobUrl(groupId: string, relPath: string): string {
   if (!normalized.startsWith("state/blobs/")) return "";
   const blobName = normalized.split("/").pop() || "";
   if (!blobName) return "";
-  return withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`);
+  return withAuthToken(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`,
+  );
 }
 
 export async function fetchPresentationBrowserSurfaceSession(
@@ -1330,7 +1436,11 @@ export async function fetchPresentationBrowserSurfaceSession(
   const resp = await apiJson<{ group_id?: unknown; browser_surface?: unknown }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/session?slot=${encodeURIComponent(slotId)}`,
   );
-  if (!resp.ok) return resp as ApiResponse<{ group_id: string; browser_surface: PresentationBrowserSurfaceState }>;
+  if (!resp.ok)
+    return resp as ApiResponse<{
+      group_id: string;
+      browser_surface: PresentationBrowserSurfaceState;
+    }>;
   return {
     ok: true,
     result: {
@@ -1357,7 +1467,11 @@ export async function startPresentationBrowserSurfaceSession(
       }),
     },
   );
-  if (!resp.ok) return resp as ApiResponse<{ group_id: string; browser_surface: PresentationBrowserSurfaceState }>;
+  if (!resp.ok)
+    return resp as ApiResponse<{
+      group_id: string;
+      browser_surface: PresentationBrowserSurfaceState;
+    }>;
   return {
     ok: true,
     result: {
@@ -1384,7 +1498,10 @@ export async function uploadPresentationReferenceSnapshot(
   form.append("source", String(payload.source || "").trim() || "browser_surface");
   form.append("captured_at", String(payload.capturedAt || "").trim());
   form.append("width", String(Number.isFinite(Number(payload.width)) ? Number(payload.width) : 0));
-  form.append("height", String(Number.isFinite(Number(payload.height)) ? Number(payload.height) : 0));
+  form.append(
+    "height",
+    String(Number.isFinite(Number(payload.height)) ? Number(payload.height) : 0),
+  );
   form.append("file", payload.file);
   const resp = await apiForm<{ group_id?: unknown; snapshot?: unknown }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/ref_snapshot`,
@@ -1413,16 +1530,23 @@ export async function uploadPresentationReferenceSnapshot(
 export async function closePresentationBrowserSurfaceSession(
   groupId: string,
   slotId: string,
-): Promise<ApiResponse<{ group_id: string; closed: boolean; browser_surface: PresentationBrowserSurfaceState }>> {
+): Promise<
+  ApiResponse<{
+    group_id: string;
+    closed: boolean;
+    browser_surface: PresentationBrowserSurfaceState;
+  }>
+> {
   const resp = await apiJson<{ group_id?: unknown; closed?: unknown; browser_surface?: unknown }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/session/close`,
-    {
-      method: "POST",
-      body: JSON.stringify({ by: "user", slot: String(slotId || "").trim() }),
-    },
+    { method: "POST", body: JSON.stringify({ by: "user", slot: String(slotId || "").trim() }) },
   );
   if (!resp.ok) {
-    return resp as ApiResponse<{ group_id: string; closed: boolean; browser_surface: PresentationBrowserSurfaceState }>;
+    return resp as ApiResponse<{
+      group_id: string;
+      closed: boolean;
+      browser_surface: PresentationBrowserSurfaceState;
+    }>;
   }
   return {
     ok: true,
@@ -1466,10 +1590,7 @@ export type GroupCopyPreview = {
   workspace_root_exists?: boolean;
   group_id_conflict?: boolean;
   target_default_scope_conflict?: boolean;
-  requires_reconnect?: {
-    chatgpt_web_model?: boolean;
-    notebooklm_group_space?: boolean;
-  };
+  requires_reconnect?: { chatgpt_web_model?: boolean; notebooklm_group_space?: boolean };
   workspace_included?: boolean;
   contains_secrets?: boolean;
   runtime_reset?: {
@@ -1495,9 +1616,13 @@ export type GroupCopyImportResult = {
   active_scope_key?: string;
 };
 
-export async function exportGroupCopy(groupId: string): Promise<ApiResponse<{ blob: Blob; filename: string }>> {
+export async function exportGroupCopy(
+  groupId: string,
+): Promise<ApiResponse<{ blob: Blob; filename: string }>> {
   try {
-    const resp = await fetch(withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/copy/export`));
+    const resp = await fetch(
+      withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/copy/export`),
+    );
     if (!resp.ok) {
       let message = `Server returned ${resp.status}`;
       try {
@@ -1531,7 +1656,11 @@ export async function previewGroupCopy(file: File) {
 
 export type GroupCopyImportSource = File | { file?: File | null; uploadId?: string };
 
-export async function importGroupCopy(source: GroupCopyImportSource, workspaceRoot: string, title: string) {
+export async function importGroupCopy(
+  source: GroupCopyImportSource,
+  workspaceRoot: string,
+  title: string,
+) {
   clearGroupsReadRequest();
   const form = new FormData();
   form.append("workspace_root", workspaceRoot);
@@ -1600,17 +1729,13 @@ export async function attachScope(groupId: string, path: string) {
 export async function startGroup(groupId: string) {
   clearActorsReadOnlyRequest(groupId);
   clearGroupsReadRequest();
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/start?by=user`, {
-    method: "POST",
-  });
+  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/start?by=user`, { method: "POST" });
 }
 
 export async function stopGroup(groupId: string) {
   clearActorsReadOnlyRequest(groupId);
   clearGroupsReadRequest();
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/stop?by=user`, {
-    method: "POST",
-  });
+  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/stop?by=user`, { method: "POST" });
 }
 
 export async function setGroupState(groupId: string, state: "active" | "idle" | "paused") {
@@ -1632,21 +1757,14 @@ export type GroupPromptInfo = {
   content: string;
 };
 
-export type GroupPromptsResponse = {
-  preamble: GroupPromptInfo;
-  help: GroupPromptInfo;
-};
+export type GroupPromptsResponse = { preamble: GroupPromptInfo; help: GroupPromptInfo };
 
-export type PromptUpdateOptions = {
-  editorMode?: "structured" | "raw";
-  changedBlocks?: string[];
-};
+export type PromptUpdateOptions = { editorMode?: "structured" | "raw"; changedBlocks?: string[] };
 
 export async function fetchGroupPrompts(groupId: string) {
   const gid = String(groupId || "").trim();
-  return reuseSharedReadRequest(
-    groupPromptsKey(gid),
-    () => apiJson<GroupPromptsResponse>(`/api/v1/groups/${encodeURIComponent(gid)}/prompts`),
+  return reuseSharedReadRequest(groupPromptsKey(gid), () =>
+    apiJson<GroupPromptsResponse>(`/api/v1/groups/${encodeURIComponent(gid)}/prompts`),
   );
 }
 

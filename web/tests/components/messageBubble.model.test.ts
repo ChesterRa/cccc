@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildToLabel,
@@ -8,81 +8,119 @@ import {
   getSenderDisplayName,
 } from "../../src/components/messageBubble/model";
 
+function typedFixture<T>(value: unknown): T {
+  return value as unknown as T;
+}
+
 describe("messageBubble model", () => {
   it("shows remote recipients for cross-group source records", () => {
-    expect(buildToLabel({
-      hasDestination: true,
-      dstGroupId: "g-2",
-      dstTo: ["@foreman", "alice"],
-      groupLabelById: { "g-2": "第二组" },
-      recipients: ["ignored"],
-      displayNameMap: new Map([["alice", "Alice"]]),
-    })).toBe("@foreman, Alice");
+    expect(
+      buildToLabel({
+        hasDestination: true,
+        dstGroupId: "g-2",
+        dstTo: ["@foreman", "alice"],
+        groupLabelById: { "g-2": "第二组" },
+        recipients: ["ignored"],
+        displayNameMap: new Map([["alice", "Alice"]]),
+      }),
+    ).toBe("@foreman, Alice");
   });
 
   it("builds recipient label from display names for local messages", () => {
-    expect(buildToLabel({
-      hasDestination: false,
-      dstGroupId: "",
-      dstTo: [],
-      groupLabelById: {},
-      recipients: ["alice", "bob"],
-      displayNameMap: new Map([["alice", "Alice"], ["bob", "Bob"]]),
-    })).toBe("Alice, Bob");
+    expect(
+      buildToLabel({
+        hasDestination: false,
+        dstGroupId: "",
+        dstTo: [],
+        groupLabelById: {},
+        recipients: ["alice", "bob"],
+        displayNameMap: new Map([
+          ["alice", "Alice"],
+          ["bob", "Bob"],
+        ]),
+      }),
+    ).toBe("Alice, Bob");
   });
 
   it("prefers actor title when computing sender display name", () => {
-    expect(getSenderDisplayName({
-      senderId: "architect",
-      senderActor: { id: "architect", title: "架构设计专家" },
-      displayNameMap: new Map([["architect", "Architect"]]),
-    } as any)).toBe("架构设计专家");
+    expect(
+      getSenderDisplayName(
+        typedFixture<Parameters<typeof getSenderDisplayName>[0]>({
+          senderId: "architect",
+          senderActor: { id: "architect", title: "架构设计专家" },
+          displayNameMap: new Map([["architect", "Architect"]]),
+        }),
+      ),
+    ).toBe("架构设计专家");
   });
 
   it("uses Group Bridge source name instead of peer id for remote messages", () => {
-    expect(getSenderDisplayName({
-      senderId: "group_bridge:12D3KooWAXEk8Zw3BMLku6AGNrctVsC9beZsAAEttE798N5HYf1a",
-      senderActor: null,
-      senderTitle: "",
-      group_bridgeSourceName: "CCCC Cross Test",
-      displayNameMap: new Map(),
-    })).toBe("CCCC Cross Test");
+    expect(
+      getSenderDisplayName({
+        senderId: "group_bridge:12D3KooWAXEk8Zw3BMLku6AGNrctVsC9beZsAAEttE798N5HYf1a",
+        senderActor: null,
+        senderTitle: "",
+        group_bridgeSourceName: "CCCC Cross Test",
+        displayNameMap: new Map(),
+      }),
+    ).toBe("CCCC Cross Test");
   });
 
   it("keeps only actors present in read status", () => {
-    expect(buildVisibleReadStatusEntries(
-      [{ id: "a-1" }, { id: "a-2" }, { id: "a-3" }] as any,
-      { "a-1": true, "a-3": false } as any,
-    )).toEqual([["a-1", true], ["a-3", false]]);
+    expect(
+      buildVisibleReadStatusEntries(
+        typedFixture<Parameters<typeof buildVisibleReadStatusEntries>[0]>([
+          { id: "a-1" },
+          { id: "a-2" },
+          { id: "a-3" },
+        ]),
+        typedFixture<Parameters<typeof buildVisibleReadStatusEntries>[1]>({
+          "a-1": true,
+          "a-3": false,
+        }),
+      ),
+    ).toEqual([
+      ["a-1", true],
+      ["a-3", false],
+    ]);
   });
 
   it("computes ack summary only for attention or reply-required messages", () => {
-    expect(computeAckSummary({
-      hideDirectUserObligationSummary: false,
-      isAttention: true,
-      replyRequired: false,
-      ackStatus: { user: false, peer: true } as any,
-      isUserMessage: false,
-    })).toEqual({ done: 1, total: 2, needsUserAck: true });
+    expect(
+      computeAckSummary(
+        typedFixture<Parameters<typeof computeAckSummary>[0]>({
+          hideDirectUserObligationSummary: false,
+          isAttention: true,
+          replyRequired: false,
+          ackStatus: { user: false, peer: true },
+          isUserMessage: false,
+        }),
+      ),
+    ).toEqual({ done: 1, total: 2, needsUserAck: true });
   });
 
   it("computes reply obligation summary when any recipient requires a reply", () => {
-    expect(computeObligationSummary({
-      hideDirectUserObligationSummary: false,
-      obligationStatus: {
-        alice: { reply_required: true, replied: true },
-        bob: { reply_required: false, replied: false },
-      } as any,
-    })).toEqual({ kind: "reply", done: 1, total: 2 });
+    expect(
+      computeObligationSummary(
+        typedFixture<Parameters<typeof computeObligationSummary>[0]>({
+          hideDirectUserObligationSummary: false,
+          obligationStatus: {
+            alice: { reply_required: true, replied: true },
+            bob: { reply_required: false, replied: false },
+          },
+        }),
+      ),
+    ).toEqual({ kind: "reply", done: 1, total: 2 });
   });
 
   it("computes ack obligation summary when no recipient requires a reply", () => {
-    expect(computeObligationSummary({
-      hideDirectUserObligationSummary: false,
-      obligationStatus: {
-        alice: { acked: true },
-        bob: { acked: false },
-      } as any,
-    })).toEqual({ kind: "ack", done: 1, total: 2 });
+    expect(
+      computeObligationSummary(
+        typedFixture<Parameters<typeof computeObligationSummary>[0]>({
+          hideDirectUserObligationSummary: false,
+          obligationStatus: { alice: { acked: true }, bob: { acked: false } },
+        }),
+      ),
+    ).toEqual({ kind: "ack", done: 1, total: 2 });
   });
 });

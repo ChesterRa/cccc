@@ -13,23 +13,32 @@ export function voiceFinalAsrProgressLabel(payload: FinalAsrPayload, t: TFunctio
     return t("voiceSecretaryFinalAsrStarted", { defaultValue: "Preparing final transcript..." });
   }
   if (type === "final_asr_failed") {
-    return t("voiceSecretaryFinalAsrFallback", { defaultValue: "Final ASR failed; keeping live transcript." });
+    return t("voiceSecretaryFinalAsrFallback", {
+      defaultValue: "Final ASR failed; keeping live transcript.",
+    });
   }
   const stage = String(payload.stage || "").trim();
   if (stage === "vad_fallback") {
-    return t("voiceSecretaryFinalAsrVadFallback", { defaultValue: "Detecting speech with fallback segmentation..." });
+    return t("voiceSecretaryFinalAsrVadFallback", {
+      defaultValue: "Detecting speech with fallback segmentation...",
+    });
   }
   if (stage === "segments_ready") {
     const count = numberField(payload, "segment_count");
     return count > 0
-      ? t("voiceSecretaryFinalAsrSegmentsReady", { count, defaultValue: "Prepared {{count}} speech segments." })
+      ? t("voiceSecretaryFinalAsrSegmentsReady", {
+          count,
+          defaultValue: "Prepared {{count}} speech segments.",
+        })
       : t("voiceSecretaryFinalAsrNoSegments", { defaultValue: "No speech segments detected." });
   }
   if (stage === "model_loading") {
     return t("voiceSecretaryFinalAsrLoadingModel", { defaultValue: "Loading final ASR model..." });
   }
   if (stage === "legacy_fallback") {
-    return t("voiceSecretaryFinalAsrLegacyFallback", { defaultValue: "Using fallback final transcription path..." });
+    return t("voiceSecretaryFinalAsrLegacyFallback", {
+      defaultValue: "Using fallback final transcription path...",
+    });
   }
   if (stage === "transcribing") {
     const index = numberField(payload, "segment_index");

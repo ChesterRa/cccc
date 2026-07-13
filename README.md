@@ -31,7 +31,7 @@ One `pip install`. Zero infrastructure, production-grade power.
 
 <div align="center">
 
-<img src="screenshots/overview.png" alt="CCCC Web UI overview" width="100%">
+<img src="screenshots/overview.webp" alt="CCCC Web UI overview" width="100%">
 
 </div>
 

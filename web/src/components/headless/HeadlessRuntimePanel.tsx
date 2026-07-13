@@ -22,11 +22,12 @@ export function HeadlessRuntimePanel({
   emptyLabel,
   isDark,
 }: HeadlessRuntimePanelProps) {
-  const latestPreview = previewSessions.length > 0 ? previewSessions[previewSessions.length - 1] : null;
+  const latestPreview =
+    previewSessions.length > 0 ? previewSessions[previewSessions.length - 1] : null;
   const hasLiveTrace =
-    previewSessions.length > 0
-    || String(fallbackText || "").trim().length > 0
-    || fallbackActivities.length > 0;
+    previewSessions.length > 0 ||
+    String(fallbackText || "").trim().length > 0 ||
+    fallbackActivities.length > 0;
 
   if (!hasLiveTrace && rawEvents.length > 0) {
     return (
@@ -49,20 +50,20 @@ export function HeadlessRuntimePanel({
       fallbackUpdatedAt={String(latestPreview?.updatedAt || "").trim()}
       fallbackPendingEventId={String(latestPreview?.pendingEventId || `preview:${actorId}`).trim()}
       fallbackStreamId={String(latestPreview?.currentStreamId || "").trim()}
-      fallbackStreamPhase={String(latestPreview?.streamPhase || "").trim().toLowerCase()}
-      fallbackPhase={String(latestPreview?.phase || "").trim().toLowerCase()}
+      fallbackStreamPhase={String(latestPreview?.streamPhase || "")
+        .trim()
+        .toLowerCase()}
+      fallbackPhase={String(latestPreview?.phase || "")
+        .trim()
+        .toLowerCase()}
       emptyLabel={emptyLabel}
       isDark={isDark}
       density="expanded"
       className={classNames(
-        "h-full min-h-[420px] overflow-y-auto scrollbar-hide text-left text-[var(--color-text-secondary)]"
+        "h-full min-h-[420px] overflow-y-auto scrollbar-hide text-left text-[var(--color-text-secondary)]",
       )}
     />
   );
 
-  return (
-    <div className="flex h-full min-h-[420px] flex-col">
-      {liveTrace}
-    </div>
-  );
+  return <div className="flex h-full min-h-[420px] flex-col">{liveTrace}</div>;
 }

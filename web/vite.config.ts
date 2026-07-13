@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vite-plus";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 
@@ -14,6 +14,27 @@ const backendTarget = `http://${backendHost}:${backendPort}`;
 
 export default defineConfig({
   plugins: [react()],
+  fmt: { ignorePatterns: ["dist/**"], objectWrap: "collapse" },
+  lint: {
+    ignorePatterns: ["dist/**", "node_modules/**"],
+    plugins: ["typescript", "react"],
+    options: { denyWarnings: true },
+    rules: {
+      // Preserve the previous ESLint baseline without broad product-code cleanup.
+      "unicorn/no-useless-length-check": "allow",
+      "unicorn/no-useless-fallback-in-spread": "allow",
+      "react/rules-of-hooks": "error",
+      "react/exhaustive-deps": "error",
+      "react/only-export-components": [
+        "error",
+        { allowConstantExport: true, customHOCs: ["createIcon", "createControlIcon"] },
+      ],
+      "no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
+      "typescript/no-explicit-any": "error",
+      "prefer-const": "error",
+      "no-console": ["error", { allow: ["warn", "error"] }],
+    },
+  },
   base: "/ui/",
   resolve: {
     // Prefer the CJS build for xterm to avoid a minification bug that can break
@@ -38,29 +59,37 @@ export default defineConfig({
         manualChunks(id) {
           const normalizedId = id.split(path.sep).join("/");
 
-          if (normalizedId.includes("/src/pages/chat/")
-            || normalizedId.includes("/src/components/messageBubble/")
-            || normalizedId.includes("/src/components/MessageBubble.tsx")
-            || normalizedId.includes("/src/components/VirtualMessageList.tsx")
-            || normalizedId.includes("/src/hooks/useChatTab.ts")
-            || normalizedId.includes("/src/hooks/useChatTab.tsx")) {
+          if (
+            normalizedId.includes("/src/pages/chat/") ||
+            normalizedId.includes("/src/components/messageBubble/") ||
+            normalizedId.includes("/src/components/MessageBubble.tsx") ||
+            normalizedId.includes("/src/components/VirtualMessageList.tsx") ||
+            normalizedId.includes("/src/hooks/useChatTab.ts") ||
+            normalizedId.includes("/src/hooks/useChatTab.tsx")
+          ) {
             return "chat-core";
           }
 
-          if (normalizedId.includes("/src/components/app/AppBackground.tsx")
-            || normalizedId.includes("/src/components/app/AppFeedback.tsx")
-            || normalizedId.includes("/src/components/DropOverlay.tsx")) {
+          if (
+            normalizedId.includes("/src/components/app/AppBackground.tsx") ||
+            normalizedId.includes("/src/components/app/AppFeedback.tsx") ||
+            normalizedId.includes("/src/components/DropOverlay.tsx")
+          ) {
             return "app-chrome";
           }
 
           if (!id.includes("node_modules")) return;
           // React core + libs that import react (must stay in the same chunk
           // to avoid circular cross-chunk dependencies during initialisation)
-          if (/[\\/]node_modules[\\/](react|react-dom|zustand|@tanstack|scheduler)[\\/]/.test(id)) return "react-vendor";
+          if (/[\\/]node_modules[\\/](react|react-dom|zustand|@tanstack|scheduler)[\\/]/.test(id))
+            return "react-vendor";
           // xterm terminal
           if (/[\\/]node_modules[\\/]@xterm[\\/]/.test(id)) return "xterm";
           // Markdown rendering
-          if (/[\\/]node_modules[\\/](markdown-it|mdurl|uc\.micro|entities|linkify-it)[\\/]/.test(id)) return "markdown";
+          if (
+            /[\\/]node_modules[\\/](markdown-it|mdurl|uc\.micro|entities|linkify-it)[\\/]/.test(id)
+          )
+            return "markdown";
           // i18n
           if (/[\\/]node_modules[\\/](i18next|react-i18next)[\\/]/.test(id)) return "i18n";
           // Drag-and-drop
@@ -73,13 +102,5 @@ export default defineConfig({
       },
     },
   },
-  server: {
-    proxy: {
-      "/api": {
-        target: backendTarget,
-        changeOrigin: true,
-        ws: true,
-      },
-    },
-  },
+  server: { proxy: { "/api": { target: backendTarget, changeOrigin: true, ws: true } } },
 });

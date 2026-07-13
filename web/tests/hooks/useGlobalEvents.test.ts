@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   getGlobalEventGroupId,
   shouldRefreshCapabilitiesAfterGlobalEvent,
@@ -33,7 +33,9 @@ describe("useGlobalEvents open refresh policy", () => {
   });
 
   it("extracts group id from nested event data as a fallback", () => {
-    expect(getGlobalEventGroupId({ kind: "group.state_changed", data: { group_id: "g-demo" } })).toBe("g-demo");
+    expect(
+      getGlobalEventGroupId({ kind: "group.state_changed", data: { group_id: "g-demo" } }),
+    ).toBe("g-demo");
   });
 
   it("refreshes selected actors for matching lifecycle events", () => {
@@ -65,10 +67,7 @@ describe("useGlobalEvents open refresh policy", () => {
 
   it("ignores non-lifecycle global events for actor refresh", () => {
     expect(
-      shouldRefreshActorsAfterGlobalEvent(
-        { kind: "group.updated", group_id: "g-demo" },
-        "g-demo",
-      ),
+      shouldRefreshActorsAfterGlobalEvent({ kind: "group.updated", group_id: "g-demo" }, "g-demo"),
     ).toBe(false);
   });
 
@@ -93,7 +92,10 @@ describe("useGlobalEvents open refresh policy", () => {
   it("refreshes selected Group Bridge pairing state after pairing changes", () => {
     expect(
       shouldRefreshGroupBridgePairingAfterGlobalEvent(
-        { kind: "group_bridge.pairing.request_created", data: { group_id: "g-demo", request_id: "preq_1" } },
+        {
+          kind: "group_bridge.pairing.request_created",
+          data: { group_id: "g-demo", request_id: "preq_1" },
+        },
         "g-demo",
       ),
     ).toBe(true);
@@ -114,7 +116,10 @@ describe("useGlobalEvents open refresh policy", () => {
   it("ignores Group Bridge pairing changes for other groups", () => {
     expect(
       shouldRefreshGroupBridgePairingAfterGlobalEvent(
-        { kind: "group_bridge.pairing.request_created", data: { group_id: "g-other", request_id: "preq_1" } },
+        {
+          kind: "group_bridge.pairing.request_created",
+          data: { group_id: "g-other", request_id: "preq_1" },
+        },
         "g-demo",
       ),
     ).toBe(false);

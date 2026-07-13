@@ -375,6 +375,9 @@
     "handoffPlaceholder": "记录一条应长期保留的移交或下一负责人说明……",
     "needsCloseout": "缺少 closeout",
     "needsContract": "缺少要求",
+    "taskDoneGuard": "将任务标记为完成前，请先补齐收尾项：{{items}}。",
+    "taskWorkflowNeedsCloseout": "仍缺少收尾项：{{items}}。",
+    "taskWorkflowNeedsContract": "此任务类型仍缺少：{{items}}。",
     "noRelatedTask": "无关联任务",
     "addDecision": "添加决策",
     "addHandoff": "添加移交",
@@ -400,9 +403,5 @@
     "clear": "清空",
     "notesHint": "备注用于记录实际工作内容；上方展示的内置要求保持只读。"
   },
-  "jumpBar": {
-    "agents": "Agent",
-    "tasks": "任务",
-    "direction": "方向"
-  }
+  "jumpBar": { "agents": "Agent", "tasks": "任务", "direction": "方向" }
 }

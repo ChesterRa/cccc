@@ -29,6 +29,49 @@ def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
     assert any(step.get("uses", "").startswith("actions/download-artifact") for step in jobs["package"]["steps"])
 
 
+def test_web_ci_uses_managed_node_and_composite_vite_plus_check() -> None:
+    web = _workflow()["jobs"]["web"]
+    runs = _runs(web)
+    node_setup = next(step for step in web["steps"] if step.get("uses", "").startswith("actions/setup-node"))
+
+    assert node_setup["with"]["node-version"] == "20.19.5"
+    checkout = next(step for step in web["steps"] if step.get("uses", "").startswith("actions/checkout"))
+    assert checkout["with"]["fetch-depth"] == "0"
+    assert "verify_oxfmt_migration.mjs" in runs
+    assert "npm -C web run test:quality" in runs
+    assert "github.event.pull_request.base.sha" in runs
+    assert "github.event.before" in runs
+    assert "npm -C web run check" in runs
+    assert "npm -C web run typecheck" not in runs
+    assert "npm -C web run lint" not in runs
+
+
+def test_windows_smoke_runs_the_portable_oxfmt_verifier() -> None:
+    windows = _workflow()["jobs"]["windows-smoke"]
+    runs = _runs(windows)
+    checkout = next(
+        step for step in windows["steps"] if step.get("uses", "").startswith("actions/checkout")
+    )
+    node_setup = next(
+        step for step in windows["steps"] if step.get("uses", "").startswith("actions/setup-node")
+    )
+    verifier = next(
+        step for step in windows["steps"] if "verify_oxfmt_migration.mjs" in step.get("run", "")
+    )
+
+    assert checkout["with"]["fetch-depth"] == "0"
+    assert node_setup["with"]["node-version"] == "20.19.5"
+    assert "npm ci --prefix web" in runs
+    assert "verify_oxfmt_migration.mjs" in runs
+    assert "npm -C web run test:quality" in runs
+    assert verifier["env"] == {
+        "EVENT_NAME": "${{ github.event_name }}",
+        "PR_BASE": "${{ github.event.pull_request.base.sha }}",
+        "PUSH_BEFORE": "${{ github.event.before }}",
+        "CURRENT_SHA": "${{ github.sha }}",
+    }
+
+
 def test_source_size_uses_pr_base_push_before_and_explicit_first_push_bootstrap() -> None:
     runs = _runs(_workflow()["jobs"]["quality"])
 

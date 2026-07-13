@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   CHATGPT_APP_PERMISSION_HINT_DISMISSED_EVENT,
@@ -27,10 +27,7 @@ describe("chatGptAppPermissionHint", () => {
   beforeEach(() => {
     localStorageMock.clear();
     dispatchEvent.mockClear();
-    vi.stubGlobal("window", {
-      localStorage: localStorageMock,
-      dispatchEvent,
-    });
+    vi.stubGlobal("window", { localStorage: localStorageMock, dispatchEvent });
   });
 
   it("persists and broadcasts dismissal", () => {
@@ -41,7 +38,8 @@ describe("chatGptAppPermissionHint", () => {
     expect(readChatGptAppPermissionHintDismissed()).toBe(true);
     expect(localStorageMock.getItem(CHATGPT_APP_PERMISSION_HINT_DISMISSED_KEY)).toBe("1");
     expect(dispatchEvent).toHaveBeenCalledTimes(1);
-    expect(dispatchEvent.mock.calls[0]?.[0]).toBeInstanceOf(Event);
-    expect((dispatchEvent.mock.calls[0]?.[0] as Event).type).toBe(CHATGPT_APP_PERMISSION_HINT_DISMISSED_EVENT);
+    const dispatchedEvent = dispatchEvent.mock.calls[0]?.[0];
+    expect(dispatchedEvent).toBeInstanceOf(Event);
+    expect((dispatchedEvent as Event).type).toBe(CHATGPT_APP_PERMISSION_HINT_DISMISSED_EVENT);
   });
 });

@@ -1,12 +1,19 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
-import { buildHelpMarkdown, parseHelpMarkdown, updateActorHelpNote } from "../../src/utils/helpMarkdown";
+import { describe, expect, it } from "vite-plus/test";
+import {
+  buildHelpMarkdown,
+  parseHelpMarkdown,
+  updateActorHelpNote,
+} from "../../src/utils/helpMarkdown";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const roundtripFixturePath = resolve(__dirname, "../../../tests/fixtures/help_markdown_legacy_tag_roundtrip.md");
+const roundtripFixturePath = resolve(
+  __dirname,
+  "../../../tests/fixtures/help_markdown_legacy_tag_roundtrip.md",
+);
 
 describe("helpMarkdown legacy tagged blocks", () => {
   it("parses and rebuilds legacy pet blocks as extra tagged content", () => {

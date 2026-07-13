@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   completeStreamingEventsForActorPatch,
@@ -50,12 +50,8 @@ describe("reconcileStreamingMessagePatch", () => {
           },
         },
       ],
-      streamingActivitiesByStreamId: {
-        "s-1": activities,
-      },
-      pendingEventIdByStreamId: {
-        "s-1": "evt-1",
-      },
+      streamingActivitiesByStreamId: { "s-1": activities },
+      pendingEventIdByStreamId: { "s-1": "evt-1" },
     });
 
     const patch = reconcileStreamingMessagePatch(bucket, "g-1", "coder", {
@@ -72,9 +68,16 @@ describe("reconcileStreamingMessagePatch", () => {
 
     expect(patch).not.toBeNull();
     const nextEvent = (patch?.streamingEvents || [])[0];
-    expect(Array.isArray((nextEvent?.data as { activities?: unknown[] } | undefined)?.activities)).toBe(true);
-    expect(((nextEvent?.data as { activities?: StreamingActivity[] } | undefined)?.activities || [])).toHaveLength(1);
-    expect(((nextEvent?.data as { activities?: StreamingActivity[] } | undefined)?.activities || [])[0]?.summary).toBe("pwd");
+    expect(
+      Array.isArray((nextEvent?.data as { activities?: unknown[] } | undefined)?.activities),
+    ).toBe(true);
+    expect(
+      (nextEvent?.data as { activities?: StreamingActivity[] } | undefined)?.activities || [],
+    ).toHaveLength(1);
+    expect(
+      ((nextEvent?.data as { activities?: StreamingActivity[] } | undefined)?.activities || [])[0]
+        ?.summary,
+    ).toBe("pwd");
     expect((patch?.streamingActivitiesByStreamId || {})["s-1"]).toHaveLength(1);
   });
 
@@ -98,9 +101,7 @@ describe("reconcileStreamingMessagePatch", () => {
           },
         },
       ],
-      streamingTextByStreamId: {
-        "stream-commentary": "Commentary",
-      },
+      streamingTextByStreamId: { "stream-commentary": "Commentary" },
       replySessionsByPendingEventId: {
         "evt-codex": {
           pendingEventId: "evt-codex",
@@ -110,9 +111,7 @@ describe("reconcileStreamingMessagePatch", () => {
           updatedAt: Date.parse("2026-04-09T10:00:00Z"),
         },
       },
-      pendingEventIdByStreamId: {
-        "stream-commentary": "evt-codex",
-      },
+      pendingEventIdByStreamId: { "stream-commentary": "evt-codex" },
     });
 
     const patch = reconcileStreamingMessagePatch(bucket, "g-1", "coder", {
@@ -154,9 +153,7 @@ describe("reconcileStreamingMessagePatch", () => {
           },
         },
       ],
-      streamingTextByStreamId: {
-        "stream-final": "Final answer",
-      },
+      streamingTextByStreamId: { "stream-final": "Final answer" },
       replySessionsByPendingEventId: {
         "evt-codex": {
           pendingEventId: "evt-codex",
@@ -166,9 +163,7 @@ describe("reconcileStreamingMessagePatch", () => {
           updatedAt: Date.parse("2026-04-09T10:00:10Z"),
         },
       },
-      pendingEventIdByStreamId: {
-        "stream-final": "evt-codex",
-      },
+      pendingEventIdByStreamId: { "stream-final": "evt-codex" },
     });
 
     const patch = completeStreamingEventsForActorPatch(bucket, "coder");
@@ -201,9 +196,7 @@ describe("reconcileStreamingMessagePatch", () => {
           },
         },
       ],
-      streamingTextByStreamId: {
-        "stream-final": "Final answer",
-      },
+      streamingTextByStreamId: { "stream-final": "Final answer" },
       replySessionsByPendingEventId: {
         "evt-codex": {
           pendingEventId: "evt-codex",
@@ -213,9 +206,7 @@ describe("reconcileStreamingMessagePatch", () => {
           updatedAt: completedAt,
         },
       },
-      pendingEventIdByStreamId: {
-        "stream-final": "evt-codex",
-      },
+      pendingEventIdByStreamId: { "stream-final": "evt-codex" },
     });
 
     const patch = reconcileStreamingMessagePatch(bucket, "g-1", "coder", {
@@ -287,18 +278,22 @@ describe("upsertStreamingActivityPatch", () => {
           updatedAt: Date.parse("2026-04-06T08:00:00.000Z"),
         },
       },
-      pendingEventIdByStreamId: {
-        "s-1": "evt-1",
-      },
+      pendingEventIdByStreamId: { "s-1": "evt-1" },
     });
 
-    const patch = upsertStreamingActivityPatch(bucket, "g-1", "coder", { streamId: "s-1", pendingEventId: "evt-1" }, {
-      id: "reasoning:1",
-      kind: "thinking",
-      status: "completed",
-      summary: "final",
-      ts: "2026-04-06T08:00:01.000Z",
-    });
+    const patch = upsertStreamingActivityPatch(
+      bucket,
+      "g-1",
+      "coder",
+      { streamId: "s-1", pendingEventId: "evt-1" },
+      {
+        id: "reasoning:1",
+        kind: "thinking",
+        status: "completed",
+        summary: "final",
+        ts: "2026-04-06T08:00:01.000Z",
+      },
+    );
 
     expect(patch).not.toBeNull();
     const nextActivities = (patch?.streamingActivitiesByStreamId || {})["s-1"] || [];
@@ -310,7 +305,9 @@ describe("upsertStreamingActivityPatch", () => {
       summary: "final",
       ts: "2026-04-06T08:00:00.000Z",
     });
-    const nextEventActivities = (((patch?.streamingEvents || [])[0]?.data as { activities?: StreamingActivity[] } | undefined)?.activities || []);
+    const nextEventActivities =
+      ((patch?.streamingEvents || [])[0]?.data as { activities?: StreamingActivity[] } | undefined)
+        ?.activities || [];
     expect(nextEventActivities).toHaveLength(1);
     expect(nextEventActivities[0]).toMatchObject({
       id: "reasoning:1",
@@ -329,9 +326,7 @@ describe("upsertStreamingActivityPatch", () => {
 describe("removeStreamingEventPatch", () => {
   it("clears stale stream caches even when the streaming row is already gone", () => {
     const bucket = makeBucket({
-      streamingTextByStreamId: {
-        "s-stale": "partial text",
-      },
+      streamingTextByStreamId: { "s-stale": "partial text" },
       streamingActivitiesByStreamId: {
         "s-stale": [
           {
@@ -352,9 +347,7 @@ describe("removeStreamingEventPatch", () => {
           updatedAt: Date.parse("2026-04-06T08:00:00.000Z"),
         },
       },
-      pendingEventIdByStreamId: {
-        "s-stale": "evt-1",
-      },
+      pendingEventIdByStreamId: { "s-stale": "evt-1" },
     });
 
     const patch = removeStreamingEventPatch(bucket, "s-stale");

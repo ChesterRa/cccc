@@ -65,16 +65,14 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
   if (!open) return null;
 
   const content = (
-    <div
-      className="fixed inset-0 z-[1000]"
-      role="dialog"
-      aria-modal="true"
-    >
+    <div className="fixed inset-0 z-[1000]" role="dialog" aria-modal="true">
       <div className="absolute inset-0 glass-overlay" onPointerDown={onClose} />
       <div className={settingsDialogPanelClass("lg")}>
         <div className={settingsDialogHeaderClass}>
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("snippetModal.title")}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("snippetModal.title")}
+            </div>
             <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
               {t("snippetModal.description")}
             </div>
@@ -90,8 +88,12 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
 
         <div className={settingsDialogBodyClass}>
           <div className="space-y-4">
-            {templateErr ? <div className="text-xs text-rose-600 dark:text-rose-300">{templateErr}</div> : null}
-            {!templateErr && saveErr ? <div className="text-xs text-rose-600 dark:text-rose-300">{saveErr}</div> : null}
+            {templateErr ? (
+              <div className="text-xs text-rose-600 dark:text-rose-300">{templateErr}</div>
+            ) : null}
+            {!templateErr && saveErr ? (
+              <div className="text-xs text-rose-600 dark:text-rose-300">{saveErr}</div>
+            ) : null}
             <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
               <input
                 value={newSnippetId}
@@ -100,18 +102,16 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
                 placeholder="snippet_name"
                 spellCheck={false}
               />
-              <button
-                type="button"
-                className={secondaryButtonClass()}
-                onClick={onAddSnippet}
-              >
+              <button type="button" className={secondaryButtonClass()} onClick={onAddSnippet}>
                 {t("snippetModal.addSnippet")}
               </button>
             </div>
 
             {supportedVars.length > 0 ? (
               <div className="rounded-lg border border-[var(--glass-border-subtle)] p-2.5 text-[11px] bg-[var(--glass-panel-bg)] text-[var(--color-text-tertiary)]">
-                <div className="font-semibold mb-1 text-[var(--color-text-secondary)]">{t("snippetModal.availablePlaceholders")}</div>
+                <div className="font-semibold mb-1 text-[var(--color-text-secondary)]">
+                  {t("snippetModal.availablePlaceholders")}
+                </div>
                 <div className="space-y-1">
                   {supportedVars.map((v) => {
                     const help = automationVarHelp[v];
@@ -127,7 +127,11 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
               </div>
             ) : null}
 
-            {snippetIds.length === 0 ? <div className="text-sm text-[var(--color-text-tertiary)]">{t("snippetModal.noSnippets")}</div> : null}
+            {snippetIds.length === 0 ? (
+              <div className="text-sm text-[var(--color-text-tertiary)]">
+                {t("snippetModal.noSnippets")}
+              </div>
+            ) : null}
 
             <div className="space-y-3">
               {snippetIds.map((snippetId) => {
@@ -138,10 +142,14 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
                   <div key={snippetId} className={cardClass(isDark)}>
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <div className="min-w-0">
-                        <div className="text-xs font-semibold font-mono text-[var(--color-text-primary)]">{snippetId}</div>
+                        <div className="text-xs font-semibold font-mono text-[var(--color-text-primary)]">
+                          {snippetId}
+                        </div>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-[var(--color-text-tertiary)]">
                           <span className="rounded-full border border-[var(--glass-border-subtle)] px-2 py-0.5">
-                            {isBuiltIn ? t("snippetModal.builtInBadge") : t("snippetModal.customBadge")}
+                            {isBuiltIn
+                              ? t("snippetModal.builtInBadge")
+                              : t("snippetModal.customBadge")}
                           </span>
                           {isOverridden ? (
                             <span className="rounded-full border border-[var(--glass-border-subtle)] px-2 py-0.5">

@@ -10,8 +10,14 @@ import { beginActorAction, endActorAction } from "./actorActionInFlight";
 function latestActorHasResumeFailure(actorId: string): boolean {
   const aid = String(actorId || "").trim();
   if (!aid) return false;
-  const latest = useGroupStore.getState().actors.find((item) => String(item.id || "").trim() === aid);
-  return String(latest?.runtime_session_status || "").trim().toLowerCase() === "resume_failed";
+  const latest = useGroupStore
+    .getState()
+    .actors.find((item) => String(item.id || "").trim() === aid);
+  return (
+    String(latest?.runtime_session_status || "")
+      .trim()
+      .toLowerCase() === "resume_failed"
+  );
 }
 
 export function useActorActions(groupId: string) {
@@ -19,8 +25,13 @@ export function useActorActions(groupId: string) {
   const { setBusy, setActiveTab, showError } = useUIStore();
   const { openModal, setEditingActor } = useModalStore();
   const { setInboxActorId, setInboxMessages } = useInboxStore();
-  const { setEditActorRuntime, setEditActorRunner, setEditActorCommand, setEditActorTitle, setEditActorCapabilityAutoloadText } =
-    useFormStore();
+  const {
+    setEditActorRuntime,
+    setEditActorRunner,
+    setEditActorCommand,
+    setEditActorTitle,
+    setEditActorCapabilityAutoloadText,
+  } = useFormStore();
 
   // Local state: terminal epoch is used to force a terminal re-mount.
   const [termEpochByActor, setTermEpochByActor] = useState<Record<string, number>>({});
@@ -52,7 +63,7 @@ export function useActorActions(groupId: string) {
         setBusy("");
       }
     },
-    [groupId, setBusy, showError, refreshActors, refreshGroups, clearStreamingEventsForActor]
+    [groupId, setBusy, showError, refreshActors, refreshGroups, clearStreamingEventsForActor],
   );
 
   // Restart actor
@@ -72,16 +83,13 @@ export function useActorActions(groupId: string) {
         } else {
           await Promise.all([refreshActors(), refreshGroups()]);
         }
-        setTermEpochByActor((prev) => ({
-          ...prev,
-          [actor.id]: (prev[actor.id] || 0) + 1,
-        }));
+        setTermEpochByActor((prev) => ({ ...prev, [actor.id]: (prev[actor.id] || 0) + 1 }));
       } finally {
         endActorAction(actorActionInFlightRef, actionKey);
         setBusy("");
       }
     },
-    [groupId, setBusy, showError, refreshActors, refreshGroups]
+    [groupId, setBusy, showError, refreshActors, refreshGroups],
   );
 
   // Start a fresh runtime session with the actor's current settings.
@@ -100,16 +108,13 @@ export function useActorActions(groupId: string) {
           clearStreamingEventsForActor(actor.id, groupId);
           await Promise.all([refreshActors(), refreshGroups()]);
         }
-        setTermEpochByActor((prev) => ({
-          ...prev,
-          [actor.id]: (prev[actor.id] || 0) + 1,
-        }));
+        setTermEpochByActor((prev) => ({ ...prev, [actor.id]: (prev[actor.id] || 0) + 1 }));
       } finally {
         endActorAction(actorActionInFlightRef, actionKey);
         setBusy("");
       }
     },
-    [groupId, setBusy, showError, refreshActors, refreshGroups, clearStreamingEventsForActor]
+    [groupId, setBusy, showError, refreshActors, refreshGroups, clearStreamingEventsForActor],
   );
 
   // Edit actor (initialize form state and open modal).
@@ -125,7 +130,14 @@ export function useActorActions(groupId: string) {
       setEditActorCapabilityAutoloadText(formatCapabilityIdInput(actor.capability_autoload));
       setEditingActor(actor);
     },
-    [setEditingActor, setEditActorRuntime, setEditActorRunner, setEditActorCommand, setEditActorTitle, setEditActorCapabilityAutoloadText]
+    [
+      setEditingActor,
+      setEditActorRuntime,
+      setEditActorRunner,
+      setEditActorCommand,
+      setEditActorTitle,
+      setEditActorCapabilityAutoloadText,
+    ],
   );
 
   // Remove actor
@@ -150,7 +162,16 @@ export function useActorActions(groupId: string) {
         setBusy("");
       }
     },
-    [groupId, setBusy, showError, refreshActors, refreshGroups, loadGroup, setActiveTab, clearStreamingEventsForActor]
+    [
+      groupId,
+      setBusy,
+      showError,
+      refreshActors,
+      refreshGroups,
+      loadGroup,
+      setActiveTab,
+      clearStreamingEventsForActor,
+    ],
   );
 
   // Open inbox modal
@@ -172,13 +193,13 @@ export function useActorActions(groupId: string) {
         setBusy("");
       }
     },
-    [groupId, setBusy, showError, setInboxActorId, setInboxMessages, openModal]
+    [groupId, setBusy, showError, setInboxActorId, setInboxMessages, openModal],
   );
 
   // Get actor termEpoch
   const getTermEpoch = useCallback(
     (actorId: string) => termEpochByActor[actorId] || 0,
-    [termEpochByActor]
+    [termEpochByActor],
   );
 
   return {

@@ -2,10 +2,7 @@ import { useCallback } from "react";
 import { useUIStore } from "../stores";
 import { copyTextToClipboard } from "../utils/copy";
 
-type CopyFeedbackOptions = {
-  successMessage?: string;
-  errorMessage?: string;
-};
+type CopyFeedbackOptions = { successMessage?: string; errorMessage?: string };
 
 export function useCopyFeedback() {
   const showNotice = useUIStore((state) => state.showNotice);
@@ -25,6 +22,6 @@ export function useCopyFeedback() {
       }
       return false;
     },
-    [showError, showNotice]
+    [showError, showNotice],
   );
 }

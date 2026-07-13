@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 function makeStorage() {
   const data = new Map<string, string>();
@@ -46,60 +46,58 @@ describe("useUIStore sidebar width", () => {
   it("tracks presentation dock open state per group", async () => {
     const mod = await import("../../src/stores/useUIStore");
     mod.useUIStore.getState().setChatPresentationDockOpen("g-demo", true);
-    expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).presentationDockOpen).toBe(true);
+    expect(
+      mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).presentationDockOpen,
+    ).toBe(true);
 
     mod.useUIStore.getState().setChatPresentationDockOpen("g-demo", false);
-    expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).presentationDockOpen).toBe(false);
+    expect(
+      mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).presentationDockOpen,
+    ).toBe(false);
   });
 
   it("persists detached scroll snapshots across reloads", async () => {
     let mod = await import("../../src/stores/useUIStore");
-    mod.useUIStore.getState().setChatScrollSnapshot("g-demo", {
-      mode: "detached",
-      anchorId: "evt-42",
-      offsetPx: 96,
-      updatedAt: 123456,
-    });
+    mod.useUIStore
+      .getState()
+      .setChatScrollSnapshot("g-demo", {
+        mode: "detached",
+        anchorId: "evt-42",
+        offsetPx: 96,
+        updatedAt: 123456,
+      });
 
     vi.resetModules();
     mod = await import("../../src/stores/useUIStore");
-    expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).scrollSnapshot).toEqual({
-      mode: "detached",
-      anchorId: "evt-42",
-      offsetPx: 96,
-      updatedAt: 123456,
-    });
+    expect(
+      mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).scrollSnapshot,
+    ).toEqual({ mode: "detached", anchorId: "evt-42", offsetPx: 96, updatedAt: 123456 });
   });
 
   it("normalizes follow snapshots to an empty anchor on reload", async () => {
-    localStorageMock.setItem("cccc-chat-sessions", JSON.stringify({
-      "g-demo": {
-        chatFilter: "all",
-        scrollSnapshot: {
-          mode: "follow",
-          anchorId: "evt-stale",
-          offsetPx: 40,
-          updatedAt: 200,
+    localStorageMock.setItem(
+      "cccc-chat-sessions",
+      JSON.stringify({
+        "g-demo": {
+          chatFilter: "all",
+          scrollSnapshot: { mode: "follow", anchorId: "evt-stale", offsetPx: 40, updatedAt: 200 },
         },
-      },
-    }));
+      }),
+    );
 
     const mod = await import("../../src/stores/useUIStore");
-    expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).scrollSnapshot).toEqual({
-      mode: "follow",
-      anchorId: "",
-      offsetPx: 0,
-      updatedAt: 200,
-    });
+    expect(
+      mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).scrollSnapshot,
+    ).toEqual({ mode: "follow", anchorId: "", offsetPx: 0, updatedAt: 200 });
   });
 
   it("ignores obsolete runtime dock payloads on reload", async () => {
-    localStorageMock.setItem("cccc-chat-sessions", JSON.stringify({
-      "g-demo": {
-        runtimeDockExpanded: 1,
-        runtimeDockFocusedActorId: { actor: "coder" },
-      },
-    }));
+    localStorageMock.setItem(
+      "cccc-chat-sessions",
+      JSON.stringify({
+        "g-demo": { runtimeDockExpanded: 1, runtimeDockFocusedActorId: { actor: "coder" } },
+      }),
+    );
 
     const mod = await import("../../src/stores/useUIStore");
     expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions)).toMatchObject({

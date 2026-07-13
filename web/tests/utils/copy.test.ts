@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { copyTextToClipboard } from "../../src/utils/copy";
 
@@ -10,9 +10,7 @@ describe("copyTextToClipboard", () => {
 
   it("uses navigator.clipboard when available", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", {
-      clipboard: { writeText },
-    });
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
 
     await expect(copyTextToClipboard("hello")).resolves.toBe(true);
     expect(writeText).toHaveBeenCalledWith("hello");
@@ -23,27 +21,16 @@ describe("copyTextToClipboard", () => {
     const focus = vi.fn();
     const select = vi.fn();
     const setAttribute = vi.fn();
-    const textarea = {
-      value: "",
-      style: {},
-      focus,
-      select,
-      setAttribute,
-    };
+    const textarea = { value: "", style: {}, focus, select, setAttribute };
     const appendChild = vi.fn();
     const removeChild = vi.fn();
     const execCommand = vi.fn().mockReturnValue(true);
     const prompt = vi.fn();
 
-    vi.stubGlobal("navigator", {
-      clipboard: { writeText },
-    });
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
     vi.stubGlobal("window", { prompt });
     vi.stubGlobal("document", {
-      body: {
-        appendChild,
-        removeChild,
-      },
+      body: { appendChild, removeChild },
       createElement: vi.fn().mockReturnValue(textarea),
       execCommand,
     });

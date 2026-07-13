@@ -1,7 +1,11 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { classNames } from "../utils/classNames";
-import { BUILTIN_ROLE_PRESETS, getRolePresetApplyState, getRolePresetById } from "../utils/rolePresets";
+import {
+  BUILTIN_ROLE_PRESETS,
+  getRolePresetApplyState,
+  getRolePresetById,
+} from "../utils/rolePresets";
 import { Button } from "./ui/button";
 import { GroupCombobox } from "./GroupCombobox";
 
@@ -13,7 +17,11 @@ type RolePresetPickerProps = {
 
 const NO_PRESET_VALUE = "__no_actor_preset__";
 
-export function RolePresetPicker({ draftValue, disabled = false, onChangeDraft }: RolePresetPickerProps) {
+export function RolePresetPicker({
+  draftValue,
+  disabled = false,
+  onChangeDraft,
+}: RolePresetPickerProps) {
   const { t } = useTranslation("actors");
   const [selectedPresetId, setSelectedPresetId] = useState("");
   const [notice, setNotice] = useState<{
@@ -37,10 +45,9 @@ export function RolePresetPicker({ draftValue, disabled = false, onChangeDraft }
   const normalizedDraftValue = String(draftValue || "").trim();
   const visibleNotice =
     notice && notice.presetId === selectedPresetId && notice.draftValue === normalizedDraftValue
-      ? t(
-          notice.kind === "applied" ? "rolePresetAppliedNotice" : "rolePresetAlreadyMatchesDraft",
-          { name: localizedPreset(notice.presetId)?.name || "" }
-        )
+      ? t(notice.kind === "applied" ? "rolePresetAppliedNotice" : "rolePresetAlreadyMatchesDraft", {
+          name: localizedPreset(notice.presetId)?.name || "",
+        })
       : "";
 
   const applyPreset = () => {
@@ -64,7 +71,9 @@ export function RolePresetPicker({ draftValue, disabled = false, onChangeDraft }
   return (
     <div className="space-y-2">
       <div className="min-w-0">
-        <div className="text-xs font-semibold text-[var(--color-text-primary)]">{t("rolePreset")}</div>
+        <div className="text-xs font-semibold text-[var(--color-text-primary)]">
+          {t("rolePreset")}
+        </div>
         <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("rolePresetHint")}</div>
       </div>
 

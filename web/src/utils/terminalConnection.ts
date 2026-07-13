@@ -50,8 +50,10 @@ export const TERMINAL_FRAME_INPUT_ACK = 52; // "4"
 const terminalTextEncoder = new TextEncoder();
 const terminalTextDecoder = new TextDecoder();
 const terminalResponseSuppressionRuntimes = new Set(["codex", "devin", "droid"]);
-const terminalGeneratedInputSequencePattern = /^(?:\x1b\[(?:\?|>)(?:\d+)?(?:;\d+)*c|\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)|\x1b\[[IO])+$/;
-const bareTerminalColorReplyPattern = /^(?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:(?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4})*$/;
+const terminalGeneratedInputSequencePattern =
+  /^(?:\x1b\[(?:\?|>)(?:\d+)?(?:;\d+)*c|\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)|\x1b\[[IO])+$/;
+const bareTerminalColorReplyPattern =
+  /^(?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:(?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4})*$/;
 
 export type TerminalBinaryFrame =
   | { type: "input"; payload: Uint8Array }
@@ -75,19 +77,30 @@ export function encodeTerminalInputFrame(data: string): Uint8Array {
 export function encodeTerminalResizeFrame(cols: number, rows: number): Uint8Array {
   return buildTerminalFrame(
     TERMINAL_FRAME_RESIZE,
-    terminalTextEncoder.encode(JSON.stringify({ cols: Math.max(0, Math.floor(cols)), rows: Math.max(0, Math.floor(rows)) })),
+    terminalTextEncoder.encode(
+      JSON.stringify({ cols: Math.max(0, Math.floor(cols)), rows: Math.max(0, Math.floor(rows)) }),
+    ),
   );
 }
 
-export function shouldSuppressTerminalGeneratedInput(data: string, runtime: string | null | undefined): boolean {
-  const normalizedRuntime = String(runtime || "").trim().toLowerCase();
+export function shouldSuppressTerminalGeneratedInput(
+  data: string,
+  runtime: string | null | undefined,
+): boolean {
+  const normalizedRuntime = String(runtime || "")
+    .trim()
+    .toLowerCase();
   if (!terminalResponseSuppressionRuntimes.has(normalizedRuntime)) return false;
   const text = String(data || "");
   if (!text) return false;
-  return terminalGeneratedInputSequencePattern.test(text) || bareTerminalColorReplyPattern.test(text);
+  return (
+    terminalGeneratedInputSequencePattern.test(text) || bareTerminalColorReplyPattern.test(text)
+  );
 }
 
-export function decodeTerminalJsonFrame<T = Record<string, unknown>>(payload: Uint8Array): T | null {
+export function decodeTerminalJsonFrame<T = Record<string, unknown>>(
+  payload: Uint8Array,
+): T | null {
   try {
     return JSON.parse(terminalTextDecoder.decode(payload)) as T;
   } catch {

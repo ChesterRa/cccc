@@ -4,12 +4,7 @@ import { useCallback, useEffect, useId, useRef } from "react";
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-type BodyStyleSnapshot = {
-  overflow: string;
-  position: string;
-  top: string;
-  width: string;
-};
+type BodyStyleSnapshot = { overflow: string; position: string; top: string; width: string };
 
 const modalStack: string[] = [];
 const modalElements = new Map<string, HTMLDivElement>();
@@ -102,47 +97,51 @@ export function useModalA11y(isOpen: boolean, onClose: () => void) {
       e.stopPropagation();
       onCloseRef.current();
     },
-    [instanceId]
+    [instanceId],
   );
 
-  const handleTab = useCallback((e: KeyboardEvent) => {
-    if (e.key !== "Tab") return;
-    if (!isTopModal(instanceId)) return;
+  const handleTab = useCallback(
+    (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      if (!isTopModal(instanceId)) return;
 
-    const modal = modalRef.current;
-    if (!modal) return;
+      const modal = modalRef.current;
+      if (!modal) return;
 
-    const focusables = Array.from(modal.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
-    if (focusables.length === 0) {
-      e.preventDefault();
-      modal.setAttribute("tabindex", "-1");
-      modal.focus();
-      return;
-    }
-
-    const first = focusables[0];
-    const last = focusables[focusables.length - 1];
-    const active = document.activeElement;
-
-    if (e.shiftKey) {
-      if (active === first || !modal.contains(active)) {
+      const focusables = Array.from(modal.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      if (focusables.length === 0) {
         e.preventDefault();
-        last.focus();
+        modal.setAttribute("tabindex", "-1");
+        modal.focus();
+        return;
       }
-      return;
-    }
 
-    if (active === last || !modal.contains(active)) {
-      e.preventDefault();
-      first.focus();
-    }
-  }, [instanceId]);
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+
+      if (e.shiftKey) {
+        if (active === first || !modal.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+        return;
+      }
+
+      if (active === last || !modal.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    },
+    [instanceId],
+  );
 
   useEffect(() => {
     if (!isOpen || typeof document === "undefined") return;
 
     const id = instanceId;
-    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    previousFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
 
     pushModal(id);
     lockBodyScroll();

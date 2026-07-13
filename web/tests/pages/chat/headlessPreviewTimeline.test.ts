@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
-import { buildHeadlessPreviewRenderGroups, buildHeadlessPreviewTimelineEntries } from "../../../src/pages/chat/headlessPreviewTimeline";
+import {
+  buildHeadlessPreviewRenderGroups,
+  buildHeadlessPreviewTimelineEntries,
+} from "../../../src/pages/chat/headlessPreviewTimeline";
 
 describe("buildHeadlessPreviewTimelineEntries", () => {
   it("merges message and activity rows into one chronological stream across recent sessions", () => {
@@ -35,7 +38,13 @@ describe("buildHeadlessPreviewTimelineEntries", () => {
             },
           ],
           activities: [
-            { id: "tool-1", kind: "tool", status: "completed", summary: "rg -n reducer", ts: "2025-01-01T00:00:02Z" },
+            {
+              id: "tool-1",
+              kind: "tool",
+              status: "completed",
+              summary: "rg -n reducer",
+              ts: "2025-01-01T00:00:02Z",
+            },
           ],
         },
         {
@@ -58,14 +67,32 @@ describe("buildHeadlessPreviewTimelineEntries", () => {
             },
           ],
           activities: [
-            { id: "thinking-2", kind: "thinking", status: "started", summary: "Planning patch", ts: "2025-01-01T00:00:04Z" },
+            {
+              id: "thinking-2",
+              kind: "thinking",
+              status: "started",
+              summary: "Planning patch",
+              ts: "2025-01-01T00:00:04Z",
+            },
           ],
         },
       ],
     });
 
-    expect(entries.map((entry) => entry.kind)).toEqual(["message", "activity", "message", "activity", "message"]);
-    expect(entries.map((entry) => entry.pendingEventId)).toEqual(["evt-1", "evt-1", "evt-1", "evt-2", "evt-2"]);
+    expect(entries.map((entry) => entry.kind)).toEqual([
+      "message",
+      "activity",
+      "message",
+      "activity",
+      "message",
+    ]);
+    expect(entries.map((entry) => entry.pendingEventId)).toEqual([
+      "evt-1",
+      "evt-1",
+      "evt-1",
+      "evt-2",
+      "evt-2",
+    ]);
     expect(entries[3]).toMatchObject({ kind: "activity", live: true, pendingEventId: "evt-2" });
     expect(entries[4]).toMatchObject({ kind: "message", live: true, pendingEventId: "evt-2" });
   });
@@ -73,7 +100,15 @@ describe("buildHeadlessPreviewTimelineEntries", () => {
   it("falls back to synthetic entries when only raw fallback text and activities exist", () => {
     const entries = buildHeadlessPreviewTimelineEntries({
       fallbackText: "Fallback output",
-      fallbackActivities: [{ id: "activity-1", kind: "tool", status: "started", summary: "search docs", ts: "2025-01-01T00:00:00Z" }],
+      fallbackActivities: [
+        {
+          id: "activity-1",
+          kind: "tool",
+          status: "started",
+          summary: "search docs",
+          ts: "2025-01-01T00:00:00Z",
+        },
+      ],
       fallbackUpdatedAt: "2025-01-01T00:00:01Z",
       fallbackPendingEventId: "fallback-1",
       fallbackStreamId: "stream-fallback",
@@ -82,13 +117,25 @@ describe("buildHeadlessPreviewTimelineEntries", () => {
 
     expect(entries).toHaveLength(2);
     expect(entries[0]).toMatchObject({ kind: "activity", pendingEventId: "fallback-1" });
-    expect(entries[1]).toMatchObject({ kind: "message", pendingEventId: "fallback-1", streamPhase: "final_answer" });
+    expect(entries[1]).toMatchObject({
+      kind: "message",
+      pendingEventId: "fallback-1",
+      streamPhase: "final_answer",
+    });
   });
 
   it("keeps fallback entries non-live when the provided fallback phase is completed", () => {
     const entries = buildHeadlessPreviewTimelineEntries({
       fallbackText: "Reply complete",
-      fallbackActivities: [{ id: "activity-1", kind: "tool", status: "completed", summary: "search docs", ts: "2025-01-01T00:00:00Z" }],
+      fallbackActivities: [
+        {
+          id: "activity-1",
+          kind: "tool",
+          status: "completed",
+          summary: "search docs",
+          ts: "2025-01-01T00:00:00Z",
+        },
+      ],
       fallbackUpdatedAt: "2025-01-01T00:00:01Z",
       fallbackPendingEventId: "fallback-1",
       fallbackStreamId: "stream-fallback",
@@ -131,7 +178,13 @@ describe("buildHeadlessPreviewTimelineEntries", () => {
               raw_item_type: "reasoning",
               ts: "2025-01-01T00:00:03Z",
             },
-            { id: "tool-1", kind: "tool", status: "completed", summary: "rg -n runtime", ts: "2025-01-01T00:00:02Z" },
+            {
+              id: "tool-1",
+              kind: "tool",
+              status: "completed",
+              summary: "rg -n runtime",
+              ts: "2025-01-01T00:00:02Z",
+            },
           ],
         },
       ],
@@ -139,7 +192,10 @@ describe("buildHeadlessPreviewTimelineEntries", () => {
 
     expect(entries.map((entry) => entry.kind)).toEqual(["activity", "message"]);
     expect(entries[0]).toMatchObject({ kind: "activity", activity: { id: "tool-1" } });
-    expect(entries[1]).toMatchObject({ kind: "message", text: "I will inspect the runtime output first" });
+    expect(entries[1]).toMatchObject({
+      kind: "message",
+      text: "I will inspect the runtime output first",
+    });
   });
 
   it("groups contiguous activity rows into compact activity bands", () => {
@@ -165,9 +221,27 @@ describe("buildHeadlessPreviewTimelineEntries", () => {
             },
           ],
           activities: [
-            { id: "tool-1", kind: "tool", status: "completed", summary: "rg -n reducer", ts: "2025-01-01T00:00:01Z" },
-            { id: "patch-1", kind: "patch", status: "completed", summary: "edit reducer.ts", ts: "2025-01-01T00:00:02Z" },
-            { id: "plan-1", kind: "plan", status: "updated", summary: "verify fix", ts: "2025-01-01T00:00:03Z" },
+            {
+              id: "tool-1",
+              kind: "tool",
+              status: "completed",
+              summary: "rg -n reducer",
+              ts: "2025-01-01T00:00:01Z",
+            },
+            {
+              id: "patch-1",
+              kind: "patch",
+              status: "completed",
+              summary: "edit reducer.ts",
+              ts: "2025-01-01T00:00:02Z",
+            },
+            {
+              id: "plan-1",
+              kind: "plan",
+              status: "updated",
+              summary: "verify fix",
+              ts: "2025-01-01T00:00:03Z",
+            },
           ],
         },
       ],
@@ -177,11 +251,11 @@ describe("buildHeadlessPreviewTimelineEntries", () => {
 
     expect(groups.map((group) => group.kind)).toEqual(["activity-band", "message"]);
     expect(groups[0]).toMatchObject({ kind: "activity-band", pendingEventId: "evt-1" });
-    expect(groups[0]?.kind === "activity-band" ? groups[0].entries.map((entry) => entry.activity.id) : []).toEqual([
-      "tool-1",
-      "patch-1",
-      "plan-1",
-    ]);
+    expect(
+      groups[0]?.kind === "activity-band"
+        ? groups[0].entries.map((entry) => entry.activity.id)
+        : [],
+    ).toEqual(["tool-1", "patch-1", "plan-1"]);
   });
 
   it("starts a new activity band when the session changes", () => {

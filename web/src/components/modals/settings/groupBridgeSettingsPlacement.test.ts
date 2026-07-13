@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 function readSource(relPath: string): string {
   const url = new URL(relPath, import.meta.url);
@@ -92,12 +92,16 @@ describe("group_bridge settings placement", () => {
     const src = readSource("./GroupBridgePairingSection.tsx");
     expect(src).toContain("normalizeIssuerEndpoint(issuerEndpoint)");
     expect(src).toContain("createGroupBridgePairingConnectionInfo");
-    expect(src.indexOf("createGroupBridgePairingInvite")).toBeLessThan(src.indexOf("createGroupBridgePairingConnectionInfo"));
+    expect(src.indexOf("createGroupBridgePairingInvite")).toBeLessThan(
+      src.indexOf("createGroupBridgePairingConnectionInfo"),
+    );
     expect(src).not.toContain("assertSha256Available();");
     expect(src).not.toContain("crypto.subtle.digest");
     expect(src).toContain('t("group_bridge.issuerEndpointInvalid")');
     expect(src).toContain("userFacingPairingErrorKey");
-    expect(src).not.toContain('setInviteError(infoResp.error.message || t("group_bridge.createInviteFailed"))');
+    expect(src).not.toContain(
+      'setInviteError(infoResp.error.message || t("group_bridge.createInviteFailed"))',
+    );
   });
 
   it("Group Bridge session connection info includes the current group title for remote display", () => {
@@ -120,7 +124,9 @@ describe("group_bridge settings placement", () => {
     expect(revokeStart).toBeGreaterThan(0);
     const revokeSrc = src.slice(revokeStart, src.indexOf("const deleteOutbound", revokeStart));
     expect(revokeSrc).toContain("publishGroupBridgePairingChanged(currentGroupId)");
-    expect(revokeSrc.indexOf("revokeGroupBridgeTrust(tid)")).toBeLessThan(revokeSrc.indexOf("publishGroupBridgePairingChanged(currentGroupId)"));
+    expect(revokeSrc.indexOf("revokeGroupBridgeTrust(tid)")).toBeLessThan(
+      revokeSrc.indexOf("publishGroupBridgePairingChanged(currentGroupId)"),
+    );
   });
 
   it("Group Bridge session pairing section uses the current group without local group selection", () => {
@@ -171,11 +177,21 @@ describe("group_bridge settings placement", () => {
   it("Group Bridge session pairing puts workbench actions before local diagnostics", () => {
     const src = readSource("./GroupBridgePairingSection.tsx");
     expect(src).toContain('t("group_bridge.localDiagnostics")');
-    expect(src.indexOf('t("group_bridge.connectRemoteCcccGroup")')).toBeLessThan(src.indexOf('t("group_bridge.localDiagnostics")'));
-    expect(src.indexOf('t("group_bridge.createConnectionInfo")')).toBeLessThan(src.indexOf('t("group_bridge.localDiagnostics")'));
-    expect(src.indexOf('t("group_bridge.pasteConnectionInfo")')).toBeLessThan(src.indexOf('t("group_bridge.localDiagnostics")'));
-    expect(src.indexOf('t("group_bridge.incomingRequests")')).toBeLessThan(src.indexOf('t("group_bridge.localDiagnostics")'));
-    expect(src.indexOf('t("group_bridge.trustedRemoteGroups")')).toBeLessThan(src.indexOf('t("group_bridge.localDiagnostics")'));
+    expect(src.indexOf('t("group_bridge.connectRemoteCcccGroup")')).toBeLessThan(
+      src.indexOf('t("group_bridge.localDiagnostics")'),
+    );
+    expect(src.indexOf('t("group_bridge.createConnectionInfo")')).toBeLessThan(
+      src.indexOf('t("group_bridge.localDiagnostics")'),
+    );
+    expect(src.indexOf('t("group_bridge.pasteConnectionInfo")')).toBeLessThan(
+      src.indexOf('t("group_bridge.localDiagnostics")'),
+    );
+    expect(src.indexOf('t("group_bridge.incomingRequests")')).toBeLessThan(
+      src.indexOf('t("group_bridge.localDiagnostics")'),
+    );
+    expect(src.indexOf('t("group_bridge.trustedRemoteGroups")')).toBeLessThan(
+      src.indexOf('t("group_bridge.localDiagnostics")'),
+    );
   });
 
   it("Group Bridge session pairing uses local identity as request metadata instead of requester peer input", () => {

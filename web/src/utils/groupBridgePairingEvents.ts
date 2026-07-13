@@ -1,8 +1,6 @@
 export const GROUP_BRIDGE_PAIRING_CHANGED_EVENT = "cccc:group_bridge-pairing-changed";
 
-type GroupBridgePairingChangedPayload = {
-  group_id: string;
-};
+type GroupBridgePairingChangedPayload = { group_id: string };
 
 function normalizeGroupId(value: unknown): string {
   return String(value || "").trim();
@@ -17,12 +15,15 @@ function parsePayload(value: unknown): GroupBridgePairingChangedPayload | null {
 export function publishGroupBridgePairingChanged(groupId: string): void {
   const gid = normalizeGroupId(groupId);
   if (!gid || typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent(GROUP_BRIDGE_PAIRING_CHANGED_EVENT, {
-    detail: { group_id: gid },
-  }));
+  window.dispatchEvent(
+    new CustomEvent(GROUP_BRIDGE_PAIRING_CHANGED_EVENT, { detail: { group_id: gid } }),
+  );
 }
 
-export function subscribeGroupBridgePairingChanged(groupId: string, listener: () => void): () => void {
+export function subscribeGroupBridgePairingChanged(
+  groupId: string,
+  listener: () => void,
+): () => void {
   const gid = normalizeGroupId(groupId);
   if (!gid || typeof window === "undefined") return () => {};
 

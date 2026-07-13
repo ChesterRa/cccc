@@ -1,8 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  dispatchSlashMessageOptimistically,
-} from "../../src/hooks/useSlashCommands";
+import { dispatchSlashMessageOptimistically } from "../../src/hooks/useSlashCommands";
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -44,14 +42,16 @@ describe("dispatchSlashMessageOptimistically", () => {
     };
     const dispatchMessage = vi.fn(async () => true);
 
-    await expect(dispatchSlashMessageOptimistically({
-      dispatchText: "请使用已激活的 /using-superpowers skill 完成以下任务：\n\n开始执行",
-      originalText: "/using-superpowers 开始执行",
-      replyTarget,
-      dispatchMessage,
-      clearComposer: vi.fn(),
-      restoreComposerText: vi.fn(),
-    })).resolves.toMatchObject({ ok: true });
+    await expect(
+      dispatchSlashMessageOptimistically({
+        dispatchText: "请使用已激活的 /using-superpowers skill 完成以下任务：\n\n开始执行",
+        originalText: "/using-superpowers 开始执行",
+        replyTarget,
+        dispatchMessage,
+        clearComposer: vi.fn(),
+        restoreComposerText: vi.fn(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
 
     expect(dispatchMessage).toHaveBeenCalledWith(
       "请使用已激活的 /using-superpowers skill 完成以下任务：\n\n开始执行",
@@ -62,36 +62,37 @@ describe("dispatchSlashMessageOptimistically", () => {
   it("passes slash skill metadata without turning it into visible chat text", async () => {
     const dispatchMessage = vi.fn(async () => true);
 
-    await expect(dispatchSlashMessageOptimistically({
-      dispatchText: "开始执行",
-      originalText: "/using-superpowers 开始执行",
-      command: "/using-superpowers",
-      capabilityId: "skill:agent_self_proposed:using-superpowers",
-      dispatchMessage,
-      clearComposer: vi.fn(),
-      restoreComposerText: vi.fn(),
-    })).resolves.toMatchObject({ ok: true });
-
-    expect(dispatchMessage).toHaveBeenCalledWith(
-      "开始执行",
-      {
-        replyTarget: null,
+    await expect(
+      dispatchSlashMessageOptimistically({
+        dispatchText: "开始执行",
+        originalText: "/using-superpowers 开始执行",
         command: "/using-superpowers",
         capabilityId: "skill:agent_self_proposed:using-superpowers",
-      },
-    );
+        dispatchMessage,
+        clearComposer: vi.fn(),
+        restoreComposerText: vi.fn(),
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(dispatchMessage).toHaveBeenCalledWith("开始执行", {
+      replyTarget: null,
+      command: "/using-superpowers",
+      capabilityId: "skill:agent_self_proposed:using-superpowers",
+    });
   });
 
   it("restores the original slash text when dispatch fails", async () => {
     const calls: string[] = [];
 
-    await expect(dispatchSlashMessageOptimistically({
-      dispatchText: "/install bad-target",
-      originalText: "/install bad-target",
-      dispatchMessage: async () => false,
-      clearComposer: () => calls.push("clear"),
-      restoreComposerText: (text) => calls.push(`restore:${text}`),
-    })).resolves.toMatchObject({ ok: false });
+    await expect(
+      dispatchSlashMessageOptimistically({
+        dispatchText: "/install bad-target",
+        originalText: "/install bad-target",
+        dispatchMessage: async () => false,
+        clearComposer: () => calls.push("clear"),
+        restoreComposerText: (text) => calls.push(`restore:${text}`),
+      }),
+    ).resolves.toMatchObject({ ok: false });
 
     expect(calls).toEqual(["clear", "restore:/install bad-target"]);
   });

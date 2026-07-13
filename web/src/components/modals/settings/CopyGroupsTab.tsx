@@ -114,7 +114,10 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
         setErr(resp.error?.message || t("copyGroups.failedToExport"));
         return;
       }
-      downloadBlobFile(resp.result.filename || `cccc-group--${groupTitle || groupId}.zip`, resp.result.blob);
+      downloadBlobFile(
+        resp.result.filename || `cccc-group--${groupTitle || groupId}.zip`,
+        resp.result.blob,
+      );
       setInfo(t("copyGroups.downloaded"));
       window.setTimeout(() => setInfo(""), 1400);
     } catch {
@@ -133,7 +136,8 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
     setErr("");
     setInfo("");
     try {
-      const uploadId = copyPreview.file === copyFile ? String(copyPreview.upload_id || "").trim() : "";
+      const uploadId =
+        copyPreview.file === copyFile ? String(copyPreview.upload_id || "").trim() : "";
       const resp = await api.importGroupCopy(
         { file: copyFile, uploadId },
         workspaceRoot.trim(),
@@ -168,16 +172,21 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
   const actors = Array.isArray(previewData?.actors) ? previewData?.actors || [] : [];
   const sourceRoot = String(previewData?.source_workspace_root || "").trim();
   const canReset = !!copyFile || !!copyPreview;
-  const sectionTitleClass = "text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-tertiary)]";
+  const sectionTitleClass =
+    "text-xs font-semibold uppercase tracking-[0.16em] text-[var(--color-text-tertiary)]";
   const previewSummaryItems = previewData
     ? [
         t("copyGroups.actors", { count: Number(previewData.actor_count || actors.length || 0) }),
-        previewData.group_id_conflict ? t("copyGroups.conflictCopy") : t("copyGroups.conflictPreserve"),
+        previewData.group_id_conflict
+          ? t("copyGroups.conflictCopy")
+          : t("copyGroups.conflictPreserve"),
         t("copyGroups.runtimeReset"),
         t("copyGroups.workspaceExcluded"),
         t("copyGroups.secretsExcluded"),
         previewData.requires_reconnect?.chatgpt_web_model ? t("copyGroups.reconnectChatGPT") : "",
-        previewData.requires_reconnect?.notebooklm_group_space ? t("copyGroups.reconnectNotebookLM") : "",
+        previewData.requires_reconnect?.notebooklm_group_space
+          ? t("copyGroups.reconnectNotebookLM")
+          : "",
       ].filter((item): item is string => Boolean(item))
     : [];
 
@@ -185,8 +194,12 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
     <div className={settingsWorkspaceShellClass(isDark)}>
       <div className={settingsWorkspaceHeaderClass(isDark)}>
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("copyGroups.title")}</div>
-          <div className="mt-1 max-w-3xl text-xs leading-5 text-[var(--color-text-tertiary)]">{t("copyGroups.description")}</div>
+          <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+            {t("copyGroups.title")}
+          </div>
+          <div className="mt-1 max-w-3xl text-xs leading-5 text-[var(--color-text-tertiary)]">
+            {t("copyGroups.description")}
+          </div>
         </div>
         {info ? (
           <div className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-3 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
@@ -199,14 +212,18 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
       <div className="divide-y divide-[var(--glass-border-subtle)]">
         {err ? (
           <div className="px-4 py-3 sm:px-5">
-            <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">{err}</div>
+            <div className="rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
+              {err}
+            </div>
           </div>
         ) : null}
 
         <section className="grid gap-4 px-4 py-4 sm:px-5 sm:py-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
           <div className="min-w-0">
             <div className={sectionTitleClass}>{t("copyGroups.exportHeading")}</div>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-secondary)]">{t("copyGroups.exportDescription")}</p>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-secondary)]">
+              {t("copyGroups.exportDescription")}
+            </p>
           </div>
           <button
             type="button"
@@ -224,7 +241,9 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
           <div className="grid gap-4 xl:grid-cols-[minmax(0,0.88fr)_minmax(360px,1fr)] xl:items-start">
             <div className="min-w-0">
               <div className={sectionTitleClass}>{t("copyGroups.importHeading")}</div>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-secondary)]">{t("copyGroups.importDescription")}</p>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-secondary)]">
+                {t("copyGroups.importDescription")}
+              </p>
             </div>
 
             <div className="min-w-0 space-y-3">
@@ -236,7 +255,8 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
                 className="sr-only"
                 disabled={busy}
                 onChange={(e) => {
-                  const file = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
+                  const file =
+                    e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
                   cleanupStagedCopy(copyPreview);
                   previewRequestSeqRef.current += 1;
                   setCopyFile(file);
@@ -259,7 +279,9 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
                   {t("common:chooseFile", "Choose File")}
                 </label>
                 <div className="min-w-0 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2.5 text-sm">
-                  <span className={`block truncate ${copyFile ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)]"}`}>
+                  <span
+                    className={`block truncate ${copyFile ? "text-[var(--color-text-primary)]" : "text-[var(--color-text-muted)]"}`}
+                  >
                     {copyFile?.name || t("common:noFileChosen", "No file chosen")}
                   </span>
                 </div>
@@ -276,7 +298,9 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
 
               {canReset || busy ? (
                 <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="text-[var(--color-text-muted)]">{busy ? t("copyGroups.working") : "\u00a0"}</div>
+                  <div className="text-[var(--color-text-muted)]">
+                    {busy ? t("copyGroups.working") : "\u00a0"}
+                  </div>
                   {canReset ? (
                     <button
                       type="button"
@@ -310,7 +334,9 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
                       {String(previewData.source_title || t("copyGroups.untitled"))}
                     </div>
                     <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
-                      {t("copyGroups.sourceId", { groupId: previewData.source_group_id || "unknown" })}
+                      {t("copyGroups.sourceId", {
+                        groupId: previewData.source_group_id || "unknown",
+                      })}
                     </div>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
@@ -333,7 +359,9 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
                       />
                     </div>
                   </div>
-                  <div className="text-xs leading-5 text-[var(--color-text-tertiary)]">{t("copyGroups.workspaceNote")}</div>
+                  <div className="text-xs leading-5 text-[var(--color-text-tertiary)]">
+                    {t("copyGroups.workspaceNote")}
+                  </div>
                 </div>
 
                 <div className="grid content-start gap-2">
@@ -342,7 +370,10 @@ export function CopyGroupsTab({ isDark, groupId, groupTitle }: CopyGroupsTabProp
                       key={item}
                       className="flex items-start gap-2 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-text-secondary)]"
                     >
-                      <CheckIcon size={13} className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-300" />
+                      <CheckIcon
+                        size={13}
+                        className="mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-300"
+                      />
                       <span>{item}</span>
                     </div>
                   ))}
