@@ -35,13 +35,16 @@ pub fn apply(
 }
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {
-    let command = if actor.command.is_empty() {
+    let mut command = if actor.command.is_empty() {
         cccc_runtime::default_command(actor.runtime)
     } else {
         actor.command.clone()
     };
     let mut env = actor.env.clone();
     env.extend(actor_secrets::values(home, &group.group_id, &actor.id)?);
+    if actor.runtime == ActorRuntime::Codex {
+        crate::ops::codex_mcp::configure(home, &mut command, &mut env);
+    }
     cccc_runtime::start(LaunchSpec {
         group_id: group.group_id.clone(),
         actor_id: actor.id.clone(),
@@ -144,6 +147,41 @@ pub fn reconcile(home: &HomeLayout) -> Result<(), OpError> {
         .map_err(OpError::io)?;
     }
     Ok(())
+}
+
+pub fn persist_lifecycle(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    enabled: bool,
+    target_status: Option<&SessionStatus>,
+) -> Result<Actor, OpError> {
+    let running = group.actors.iter().any(|actor| {
+        if actor.id == actor_id {
+            enabled
+                && (actor.runtime == ActorRuntime::WebModel
+                    || target_status.is_some_and(|status| status.running))
+        } else {
+            actor.enabled
+                && (actor.runtime == ActorRuntime::WebModel
+                    || status(&group.group_id, &actor.id).is_some_and(|status| status.running))
+        }
+    });
+    GroupStore::new(home.clone())
+        .map_err(OpError::io)?
+        .mutate(&group.group_id, |doc| {
+            let mut patch = serde_json::Map::new();
+            patch.insert("enabled".into(), serde_json::Value::Bool(enabled));
+            let actor = cccc_core::actors::update(doc, actor_id, &patch)?;
+            doc.running = running;
+            if enabled && doc.state == cccc_contracts::GroupState::Stopped {
+                doc.state = cccc_contracts::GroupState::Active;
+            } else if !running {
+                doc.state = cccc_contracts::GroupState::Stopped;
+            }
+            Ok(actor)
+        })
+        .map_err(OpError::invalid)
 }
 
 fn working_directory(group: &GroupDoc, actor: &Actor) -> PathBuf {

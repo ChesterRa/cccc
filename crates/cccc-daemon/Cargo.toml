@@ -13,6 +13,7 @@ cccc-client = { path = "../cccc-client" }
 cccc-contracts = { path = "../cccc-contracts" }
 cccc-core = { path = "../cccc-core" }
 cccc-runtime = { path = "../cccc-runtime" }
+chrono.workspace = true
 clap.workspace = true
 fs2.workspace = true
 serde.workspace = true

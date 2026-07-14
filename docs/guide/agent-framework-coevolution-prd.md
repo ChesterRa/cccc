@@ -295,8 +295,8 @@ type EvolutionOutcome = {
 持久化位置建议：
 
 ```text
-CCCC_RUST_HOME/groups/<group_id>/state/evolution/candidates.json
-CCCC_RUST_HOME/groups/<group_id>/state/evolution/outcomes.json
+CCCC_HOME/groups/<group_id>/state/evolution/candidates.json
+CCCC_HOME/groups/<group_id>/state/evolution/outcomes.json
 ```
 
 原因：

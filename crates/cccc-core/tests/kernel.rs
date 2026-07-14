@@ -90,6 +90,11 @@ fn inbox_filters_targeted_messages_and_persists_cursor() {
     let group = store.load(&group_id).expect("load");
     let unread = inbox::list_unread(&home, &group, "peer", 50).expect("unread");
     assert_eq!(unread.len(), 1);
+    let unread_many =
+        inbox::list_unread_many(&home, &group, &["lead".to_owned(), "peer".to_owned()], 50)
+            .expect("batch unread");
+    assert!(unread_many["lead"].is_empty());
+    assert_eq!(unread_many["peer"], unread);
     inbox::mark_read(&home, &group_id, "peer", &message.id).expect("mark read");
     assert!(
         inbox::list_unread(&home, &group, "peer", 50)

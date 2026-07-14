@@ -6,12 +6,31 @@ use std::collections::BTreeMap;
 use std::io;
 
 use crate::actors;
+use crate::automation_render::notify_event;
+use crate::automation_schedule::is_due;
 use crate::fs::{read_json, write_json};
-use crate::inbox;
-use crate::ledger;
-use crate::{GroupDoc, GroupStore, HomeLayout};
+use crate::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone)]
+pub enum ScheduledAction {
+    GroupState {
+        group_id: String,
+        state: String,
+    },
+    ActorControl {
+        group_id: String,
+        operation: String,
+        targets: Vec<String>,
+    },
+}
+
+#[derive(Debug, Default)]
+pub struct TickResult {
+    pub notifications: Vec<Event>,
+    pub actions: Vec<ScheduledAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 struct RuntimeState {
     #[serde(default)]
     last_rule: BTreeMap<String, i64>,
@@ -19,75 +38,97 @@ struct RuntimeState {
     last_nudge: BTreeMap<String, i64>,
 }
 
-pub fn tick(home: &HomeLayout) -> io::Result<usize> {
+pub fn tick(home: &HomeLayout) -> io::Result<TickResult> {
     let store = GroupStore::new(home.clone())?;
-    let mut emitted = 0;
+    let mut result = TickResult::default();
     for meta in store.list()? {
-        let group = match store.load(&meta.group_id) {
-            Ok(group) => group,
-            Err(_) => continue,
+        let Ok(group) = store.load(&meta.group_id) else {
+            continue;
         };
         if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
             continue;
         }
         let mut state = load_state(&store, &group.group_id)?;
-        emitted += tick_rules(&store, &group, &mut state)?;
+        let previous = state.clone();
+        tick_rules(&store, &group, &mut state, &mut result)?;
         if group.state == GroupState::Active {
-            emitted += tick_unread(home, &store, &group, &mut state)?;
+            tick_unread(home, &store, &group, &mut state, &mut result)?;
         }
-        save_state(&store, &group.group_id, &state)?;
+        if state != previous {
+            save_state(&store, &group.group_id, &state)?;
+        }
     }
-    Ok(emitted)
+    Ok(result)
 }
 
-fn tick_rules(store: &GroupStore, group: &GroupDoc, state: &mut RuntimeState) -> io::Result<usize> {
+fn tick_rules(
+    store: &GroupStore,
+    group: &GroupDoc,
+    state: &mut RuntimeState,
+    result: &mut TickResult,
+) -> io::Result<()> {
     let Some(rules) = group.automation.get("rules").and_then(Value::as_array) else {
-        return Ok(0);
+        return Ok(());
     };
-    let now = Utc::now().timestamp();
-    let mut emitted = 0;
+    let now = Utc::now();
     for rule in rules.iter().filter_map(Value::as_object) {
         if rule.get("enabled").and_then(Value::as_bool) == Some(false) {
             continue;
         }
         let id = rule.get("id").and_then(Value::as_str).unwrap_or("");
-        if id.is_empty() {
+        let trigger = rule.get("trigger").and_then(Value::as_object);
+        if id.is_empty() || !is_due(trigger, state.last_rule.get(id).copied(), now) {
             continue;
         }
-        let interval = rule
-            .get("interval_seconds")
-            .and_then(Value::as_i64)
-            .or_else(|| {
-                rule.get("interval_minutes")
-                    .and_then(Value::as_i64)
-                    .map(|value| value * 60)
-            })
-            .unwrap_or(0);
-        if interval <= 0 || now - state.last_rule.get(id).copied().unwrap_or(0) < interval {
-            continue;
-        }
-        let text = rule
-            .get("message")
-            .or_else(|| rule.get("text"))
+        let action = rule.get("action").and_then(Value::as_object);
+        let kind = action
+            .and_then(|action| action.get("kind"))
             .and_then(Value::as_str)
-            .unwrap_or("");
-        if text.is_empty() {
-            continue;
+            .unwrap_or("notify");
+        match kind {
+            "notify" => {
+                if let Some(event) = notify_event(group, id, rule, action) {
+                    ledger::append(&store.ledger_path(&group.group_id)?, &event)?;
+                    result.notifications.push(event);
+                }
+            }
+            "group_state" => {
+                if let Some(target) = action
+                    .and_then(|action| action.get("state"))
+                    .and_then(Value::as_str)
+                {
+                    result.actions.push(ScheduledAction::GroupState {
+                        group_id: group.group_id.clone(),
+                        state: target.into(),
+                    });
+                }
+            }
+            "actor_control" => {
+                let operation = action
+                    .and_then(|action| action.get("operation"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let targets = action
+                    .and_then(|action| action.get("targets"))
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect();
+                if !operation.is_empty() {
+                    result.actions.push(ScheduledAction::ActorControl {
+                        group_id: group.group_id.clone(),
+                        operation: operation.into(),
+                        targets,
+                    });
+                }
+            }
+            _ => {}
         }
-        let mut event = Event::new("system.notify", &group.group_id);
-        event.by = "system".into();
-        event.data = json!({
-            "kind": "automation_rule", "rule_id": id, "text": text,
-            "to": rule.get("to").cloned().unwrap_or_else(|| json!(["@all"])),
-        })
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
-        ledger::append(&store.ledger_path(&group.group_id)?, &event)?;
-        state.last_rule.insert(id.into(), now);
-        emitted += 1;
+        state.last_rule.insert(id.into(), now.timestamp());
     }
-    Ok(emitted)
+    Ok(())
 }
 
 fn tick_unread(
@@ -95,27 +136,31 @@ fn tick_unread(
     store: &GroupStore,
     group: &GroupDoc,
     state: &mut RuntimeState,
-) -> io::Result<usize> {
-    let threshold = group
-        .automation
-        .get("unread_nudge_after_seconds")
-        .or_else(|| group.automation.get("nudge_after_seconds"))
+    result: &mut TickResult,
+) -> io::Result<()> {
+    let settings = group.extra.get("settings").and_then(Value::as_object);
+    let threshold = settings
+        .and_then(|settings| settings.get("unread_nudge_after_seconds"))
+        .or_else(|| settings.and_then(|settings| settings.get("nudge_after_seconds")))
         .and_then(Value::as_i64)
-        .unwrap_or(300);
+        .unwrap_or(900);
     if threshold <= 0 {
-        return Ok(0);
+        return Ok(());
     }
     let now = Utc::now().timestamp();
-    let mut emitted = 0;
-    for actor in actors::visible(group).filter(|actor| actor.enabled) {
-        let unread = inbox::list_unread(home, group, &actor.id, 1)?;
-        let Some(message) = unread.first() else {
+    let actor_ids = actors::visible(group)
+        .filter(|actor| actor.enabled)
+        .map(|actor| actor.id.clone())
+        .collect::<Vec<_>>();
+    let unread = inbox::list_unread_many(home, group, &actor_ids, 1)?;
+    for actor_id in actor_ids {
+        let Some(message) = unread.get(&actor_id).and_then(|items| items.first()) else {
             continue;
         };
         let sent = DateTime::parse_from_rfc3339(&message.ts)
             .map(|value| value.timestamp())
             .unwrap_or(now);
-        let key = format!("{}:{}", actor.id, message.id);
+        let key = format!("{actor_id}:{}", message.id);
         if now - sent < threshold
             || now - state.last_nudge.get(&key).copied().unwrap_or(0) < threshold
         {
@@ -124,18 +169,21 @@ fn tick_unread(
         let mut event = Event::new("system.notify", &group.group_id);
         event.by = "system".into();
         event.data = json!({
-            "kind": "unread_nudge", "actor_id": actor.id, "to": [actor.id],
-            "event_id": message.id, "text": "You have an unread collaboration message.",
+            "kind": "unread_nudge",
+            "actor_id": actor_id,
+            "to": [actor_id],
+            "event_id": message.id,
+            "text": "You have an unread collaboration message.",
             "created_at": utc_now(),
         })
         .as_object()
         .cloned()
         .unwrap_or_default();
         ledger::append(&store.ledger_path(&group.group_id)?, &event)?;
+        result.notifications.push(event);
         state.last_nudge.insert(key, now);
-        emitted += 1;
     }
-    Ok(emitted)
+    Ok(())
 }
 
 fn load_state(store: &GroupStore, group_id: &str) -> io::Result<RuntimeState> {
@@ -146,6 +194,7 @@ fn load_state(store: &GroupStore, group_id: &str) -> io::Result<RuntimeState> {
         Ok(RuntimeState::default())
     }
 }
+
 fn save_state(store: &GroupStore, group_id: &str, state: &RuntimeState) -> io::Result<()> {
     write_json(
         &store.state_dir(group_id)?.join("automation-runtime.json"),

@@ -32,12 +32,28 @@ npm -C web run build
 cargo build --workspace --release --locked
 ```
 
+Cargo からビルド済み Rust CLI を起動します。`CCCC_HOME` を使用し、既定値は `~/.cccc` です。
+
+```bash
+cargo run --release -p cccc-cli --bin cccc
+```
+
+サーバーの bind が成功すると、Web のアクセス先と port がターミナルに表示されます。
+
+`--` より後の引数は CCCC に渡されます。例：
+
+```bash
+cargo run --release -p cccc-cli --bin cccc -- doctor
+cargo run --release -p cccc-cli --bin cccc -- groups
+```
+
 ソースビルドには Rust 1.88+ が必要です。Web UI のビルドには Node.js 20+ が必要です。リリース archive の実行に Python や Node.js は不要です。
 
 ## クイックスタート
 
 ```bash
 cd /path/to/project
+cccc daemon start
 cccc group create --title "My team"
 cccc groups
 cccc group use <group_id> .
@@ -50,24 +66,24 @@ cccc
 
 <http://127.0.0.1:8848> を開きます。`cccc setup` は現在の Rust インストール用 MCP Server 設定を出力します。
 
-## データ分離
+## データ互換性
 
-Rust は `CCCC_RUST_HOME` のみを使用します。
+Python と Rust は同じ `CCCC_HOME` を使用します。
 
 ```text
-CCCC_RUST_HOME=${HOME}/.cccc-rust
+CCCC_HOME=${HOME}/.cccc
 ```
 
-既定値は `~/.cccc-rust` です。CCCC は `~/.cccc` とその配下を拒否します。Rust Home には `.cccc-rust-v1` marker が必要で、marker のない非空 custom directory も拒否されます。旧データは自動的に読み込み、変更、移行されません。
+既定値は `~/.cccc` です。Rust は既存の registry、group、非圧縮または gzip 圧縮 ledger、state、および新旧両方の Python access token document をそのまま読み込みます。Rust compact は Python 互換の segment 名と manifest を生成します。初回起動時には `.cccc-rust-v1` 互換 marker のみを追加し、既存データを移動または削除しません。新しい実装を初めて使う前に `CCCC_HOME` をバックアップしてください。
 
 実装は branch で切り替えます。
 
 ```bash
 git switch python  # 旧 Python 実装と ~/.cccc
-git switch rust    # Rust 実装と ~/.cccc-rust
+git switch rust    # Rust 実装と同じ ~/.cccc
 ```
 
-両方の実装を同じ directory に向けないでください。
+branch を切り替える前に現在の daemon を停止してください。Python と Rust の daemon を同じ Home に対して同時に実行しないでください。
 
 ## 主なコマンド
 
@@ -100,7 +116,7 @@ React/TypeScript UI     CLI     MCP     remote connector
                       Rust daemon
           group state / ledger / runtime / memory
                          |
-                  CCCC_RUST_HOME only
+                  CCCC_HOME only
 ```
 
 daemon が状態を書き込みます。CLI、Web API、MCP は同じ操作を呼び出し、独自状態を持ちません。
@@ -120,7 +136,7 @@ docker volume create cccc-data
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-container の Rust state は `CCCC_RUST_HOME=/data` に保存されます。
+container の Rust state は `CCCC_HOME=/data` に保存されます。
 
 ## 検証
 

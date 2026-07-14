@@ -32,12 +32,28 @@ npm -C web run build
 cargo build --workspace --release --locked
 ```
 
+通过 Cargo 启动编译后的 Rust CLI。它使用 `CCCC_HOME`，默认目录是 `~/.cccc`：
+
+```bash
+cargo run --release -p cccc-cli --bin cccc
+```
+
+服务绑定成功后，终端会打印 Web 访问地址和端口。
+
+`--` 后面的参数会传给 CCCC，例如：
+
+```bash
+cargo run --release -p cccc-cli --bin cccc -- doctor
+cargo run --release -p cccc-cli --bin cccc -- groups
+```
+
 源码构建需要 Rust 1.88+；构建 Web UI 需要 Node.js 20+。运行发布归档不需要 Python 或 Node.js。
 
 ## 快速开始
 
 ```bash
 cd /path/to/project
+cccc daemon start
 cccc group create --title "我的团队"
 cccc groups
 cccc group use <group_id> .
@@ -50,24 +66,24 @@ cccc
 
 打开 <http://127.0.0.1:8848>。`cccc setup` 会输出当前 Rust 安装对应的 MCP Server 配置。
 
-## 数据隔离
+## 数据兼容
 
-Rust 只使用 `CCCC_RUST_HOME`：
+Python 和 Rust 使用同一个 `CCCC_HOME`：
 
 ```text
-CCCC_RUST_HOME=${HOME}/.cccc-rust
+CCCC_HOME=${HOME}/.cccc
 ```
 
-默认目录是 `~/.cccc-rust`。CCCC 会拒绝 `~/.cccc` 及其所有子目录。Rust Home 包含 `.cccc-rust-v1` 标记；非空自定义目录如果没有该标记也会被拒绝。Rust 实现不会自动导入、读取或修改旧数据。
+默认目录是 `~/.cccc`。Rust 会原地读取已有 registry、工作组、未压缩或 gzip 压缩的 ledger、状态数据，以及新旧两种 Python 访问令牌文档。Rust compact 生成 Python 可识别的段文件和 manifest。首次启动只会增加 `.cccc-rust-v1` 兼容标记，不会移动或删除已有数据。首次使用新实现前请备份 `CCCC_HOME`。
 
 通过分支切换实现：
 
 ```bash
 git switch python  # 旧 Python 实现，使用 ~/.cccc
-git switch rust    # Rust 实现，使用 ~/.cccc-rust
+git switch rust    # Rust 实现，使用同一个 ~/.cccc
 ```
 
-不要让两个实现指向同一个目录。
+切换分支前先停止当前 daemon，禁止 Python 和 Rust daemon 同时操作这个共享目录。
 
 ## 主要命令
 
@@ -100,7 +116,7 @@ React/TypeScript UI     CLI     MCP     远程连接器
                       Rust daemon
           group 状态 / ledger / runtime / memory
                          |
-                  仅 CCCC_RUST_HOME
+                  仅 CCCC_HOME
 ```
 
 daemon 是状态写入者。CLI、Web API 和 MCP 复用同一组操作，不各自维护状态。
@@ -133,7 +149,7 @@ docker volume create cccc-data
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-容器通过 `CCCC_RUST_HOME=/data` 保存 Rust 状态，默认只把 Web UI 发布到本机地址。
+容器通过 `CCCC_HOME=/data` 保存 Rust 状态，默认只把 Web UI 发布到本机地址。
 
 ## 验证
 
@@ -151,7 +167,7 @@ docker build -f docker/Dockerfile .
 - [CLI 参考](docs/reference/cli.md)
 - [架构](docs/reference/architecture.md)
 - [运维](docs/guide/operations.md)
-- [Rust 迁移与隔离](docs/rust-migration.md)
+- [Rust 迁移与兼容](docs/rust-migration.md)
 
 ## 许可证
 

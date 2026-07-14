@@ -14,7 +14,7 @@ The release archive does not require Python.
 
 ## Where is data stored?
 
-Rust uses `CCCC_RUST_HOME`, default `~/.cccc-rust`. It refuses the legacy `~/.cccc` directory and every child of it. Run `cccc home` to see the effective path.
+Rust uses `CCCC_HOME`, default `~/.cccc`, and reads existing CCCC groups in place. Run `cccc home` to see the effective path.
 
 ## How do I switch back to the old implementation?
 
@@ -22,7 +22,7 @@ Rust uses `CCCC_RUST_HOME`, default `~/.cccc-rust`. It refuses the legacy `~/.cc
 git switch python
 ```
 
-Switch back with `git switch rust`. Each branch uses its own home. No automatic migration occurs.
+Switch back with `git switch rust`. Both branches use the same home; stop the active daemon before switching.
 
 ## How do I check health?
 
@@ -94,7 +94,7 @@ cccc daemon status
 cccc mcp
 ```
 
-Confirm the runtime configuration uses the current `cccc` executable and `CCCC_RUST_HOME`, plus the intended `CCCC_GROUP_ID` and `CCCC_ACTOR_ID`.
+Confirm the runtime configuration uses the current `cccc` executable and `CCCC_HOME`, plus the intended `CCCC_GROUP_ID` and `CCCC_ACTOR_ID`.
 
 ## The ledger is large
 

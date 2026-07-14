@@ -38,7 +38,7 @@ pub fn render(group: &GroupDoc, actor: &Actor) -> String {
         ));
     }
     if runner == "headless" {
-        lines.push("runner: headless (MCP-only, no PTY)".into());
+        lines.push("runner: headless (process transport with structured CCCC state)".into());
     }
     if !group.scopes.is_empty() {
         lines.push(String::new());

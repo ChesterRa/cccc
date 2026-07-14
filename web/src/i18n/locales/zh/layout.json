@@ -90,10 +90,10 @@
   "recoveryBrowserBody": "如果你还有别的浏览器或标签页已经登录，可以在那里打开 Settings > Web Access，并重新创建一个管理员访问令牌。",
   "recoveryLocalTitle": "在本机恢复",
   "recoveryLocalStep1": "在运行 CCCC 的机器上打开终端。",
-  "recoveryLocalStep2": "备份或移除 {{path}}。如果你使用了自定义 CCCC_RUST_HOME，请改为处理 CCCC_RUST_HOME/access_tokens.yaml。",
+  "recoveryLocalStep2": "备份或移除 {{path}}。如果你使用了自定义 CCCC_HOME，请改为处理 CCCC_HOME/access_tokens.yaml。",
   "recoveryLocalStep3": "刷新此页面。如果已经没有任何访问令牌，Web 会恢复到开放访问。",
   "recoveryLocalStep4": "随后立即在 Web Access 中重新创建一个管理员访问令牌。",
   "recoveryRemoteTitle": "如果你当前是远程访问",
-  "recoveryRemoteBody": "请到运行 CCCC 的那台机器上使用本地终端，备份或移除 {{path}}（若自定义了 CCCC_RUST_HOME，则处理 CCCC_RUST_HOME/access_tokens.yaml）。之后刷新当前页面，并重新创建一个管理员访问令牌。",
+  "recoveryRemoteBody": "请到运行 CCCC 的那台机器上使用本地终端，备份或移除 {{path}}（若自定义了 CCCC_HOME，则处理 CCCC_HOME/access_tokens.yaml）。之后刷新当前页面，并重新创建一个管理员访问令牌。",
   "recoverySecurityNote": "这是本机管理员恢复路径，不提供任何网页内的一键重置能力。"
 }

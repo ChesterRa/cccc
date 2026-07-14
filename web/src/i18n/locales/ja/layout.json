@@ -90,10 +90,10 @@
   "recoveryBrowserBody": "別のブラウザやタブがすでにサインイン済みなら、そこで Settings > Web Access を開き、新しい Admin Access Token を作成してください。",
   "recoveryLocalTitle": "このマシン上でのローカル復旧",
   "recoveryLocalStep1": "CCCC を実行しているマシンでターミナルを開きます。",
-  "recoveryLocalStep2": "{{path}} を退避または削除します。カスタム CCCC_RUST_HOME を使っている場合は CCCC_RUST_HOME/access_tokens.yaml を対象にしてください。",
+  "recoveryLocalStep2": "{{path}} を退避または削除します。カスタム CCCC_HOME を使っている場合は CCCC_HOME/access_tokens.yaml を対象にしてください。",
   "recoveryLocalStep3": "このページを再読み込みします。アクセストークンが 1 つも無ければ Web はオープンアクセスに戻ります。",
   "recoveryLocalStep4": "その後すぐに Web Access で新しい Admin Access Token を作成してください。",
   "recoveryRemoteTitle": "リモート URL から見ている場合",
-  "recoveryRemoteBody": "CCCC を実行しているマシン上でローカル端末を使い、{{path}}（カスタム CCCC_RUST_HOME の場合は CCCC_RUST_HOME/access_tokens.yaml）を退避または削除してください。その後このページを再読み込みし、新しい Admin Access Token を作成します。",
+  "recoveryRemoteBody": "CCCC を実行しているマシン上でローカル端末を使い、{{path}}（カスタム CCCC_HOME の場合は CCCC_HOME/access_tokens.yaml）を退避または削除してください。その後このページを再読み込みし、新しい Admin Access Token を作成します。",
   "recoverySecurityNote": "これはローカル管理者向けの復旧手順であり、ページ内リセット機能は提供しません。"
 }

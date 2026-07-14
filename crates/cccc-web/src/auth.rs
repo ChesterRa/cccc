@@ -3,6 +3,7 @@ use axum::http::{Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use cccc_core::access_tokens::{AccessToken, AccessTokenStore};
+use percent_encoding::percent_decode_str;
 use serde_json::json;
 
 use crate::AppState;
@@ -119,7 +120,7 @@ fn request_token(request: &Request) -> String {
                 cookie
                     .trim()
                     .strip_prefix("cccc_access_token=")
-                    .map(str::to_owned)
+                    .map(decode_token)
             })
         });
     cookie.or_else(|| query_token(request)).unwrap_or_default()
@@ -128,8 +129,12 @@ fn request_token(request: &Request) -> String {
 fn query_token(request: &Request) -> Option<String> {
     request.uri().query()?.split('&').find_map(|pair| {
         let (key, value) = pair.split_once('=')?;
-        (key == "token").then(|| value.to_owned())
+        (key == "token").then(|| decode_token(value))
     })
+}
+
+fn decode_token(value: &str) -> String {
+    percent_decode_str(value).decode_utf8_lossy().into_owned()
 }
 
 fn is_public(method: &Method, path: &str) -> bool {

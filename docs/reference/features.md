@@ -218,7 +218,7 @@ Notes:
 
 | Config | Default | Description |
 |--------|---------|-------------|
-| `auto_mark_on_delivery` | `true` | Automatically advance the read cursor after a PTY delivery succeeds |
+| `auto_mark_on_delivery` | `true` | Automatically advance the read cursor after a local runtime delivery succeeds |
 
 Low-level delivery throttling via `min_interval_seconds` remains supported in daemon/API settings for compatibility, but it is no longer exposed in the default Web settings UI.
 
@@ -226,7 +226,7 @@ Low-level delivery throttling via `min_interval_seconds` remains supported in da
 
 CCCC supports per-actor private environment variables for runtime customization (different model/API stacks per actor).
 
-- Stored in group runtime state under `CCCC_RUST_HOME/groups/<group_id>/state/`
+- Stored in group runtime state under `CCCC_HOME/groups/<group_id>/state/`
 - Not written into the group ledger
 - Not included in Copy Groups packages
 - Visible as key metadata only (values are never returned by read APIs)

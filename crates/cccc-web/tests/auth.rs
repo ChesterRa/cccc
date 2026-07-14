@@ -77,6 +77,81 @@ async fn scoped_token_cannot_open_another_group() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
+#[tokio::test]
+async fn legacy_flat_token_document_keeps_authentication_enabled() {
+    let (_temp, home) = home();
+    std::fs::write(
+        home.root().join("access_tokens.yaml"),
+        concat!(
+            "legacy-flat-token:\n",
+            "  user_id: legacy-user\n",
+            "  allowed_groups: []\n",
+            "  is_admin: true\n",
+            "  created_at: '2026-01-01T00:00:00Z'\n",
+            "  updated_at: '2026-01-01T00:00:00Z'\n",
+        ),
+    )
+    .expect("fixture");
+
+    let anonymous = cccc_web::app(home.clone())
+        .oneshot(
+            Request::get("/api/v1/groups")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
+
+    let session = cccc_web::app(home)
+        .oneshot(
+            Request::get("/api/v1/web_access/session?token=legacy-flat-token")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let body = session
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload["result"]["web_access_session"]["current_browser_signed_in"],
+        true
+    );
+}
+
+#[tokio::test]
+async fn encoded_custom_token_authenticates_event_source_queries() {
+    let (_temp, home) = home();
+    AccessTokenStore::new(home.clone())
+        .expect("store")
+        .create("admin", Vec::new(), true, Some("token;+ 含"))
+        .expect("token");
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::get("/api/v1/web_access/session?token=token%3B%2B%20%E5%90%AB")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(
+        payload["result"]["web_access_session"]["current_browser_signed_in"],
+        true
+    );
+}
+
 fn home() -> (tempfile::TempDir, HomeLayout) {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

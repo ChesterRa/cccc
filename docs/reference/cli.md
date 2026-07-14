@@ -116,13 +116,13 @@ cccc mcp
 cccc web
 ```
 
-`setup` prints an MCP configuration whose command is the current executable and whose environment points to `CCCC_RUST_HOME`. `mcp` runs stdio MCP. `web` is equivalent to the default launch.
+`setup` prints an MCP configuration whose command is the current executable and whose environment points to `CCCC_HOME`. `mcp` runs stdio MCP. `web` is equivalent to the default launch.
 
 ## Environment
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CCCC_RUST_HOME` | `~/.cccc-rust` | Rust runtime home |
+| `CCCC_HOME` | `~/.cccc` | Rust runtime home |
 | `CCCC_WEB_HOST` | `127.0.0.1` | Web bind host |
 | `CCCC_WEB_PORT` | `8848` | Web port |
 | `CCCC_DAEMON_TRANSPORT` | platform default | `unix` or `tcp` |
@@ -132,4 +132,4 @@ cccc web
 | `CCCC_ACTOR_ID` | none | MCP actor context |
 | `RUST_LOG` | normal | Rust tracing filter |
 
-`CCCC_HOME` is intentionally ignored by the Rust implementation.
+Python and Rust use the same `CCCC_HOME`. Stop the active daemon before switching implementations.

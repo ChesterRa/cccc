@@ -69,7 +69,7 @@
     "duplicateSecretsHint": "Duplicating from \"{{source}}\": existing variable keys are shown here and will be copied on save.",
     "envPlaceholder": "PUBLIC_KEY=value",
     "secrets": "Secret Environment Variables",
-    "secretsHint": "Write-only and stored locally under CCCC_RUST_HOME/state/secrets. Hover configured keys to preview masked values.",
+    "secretsHint": "Write-only and stored locally under CCCC_HOME/state/secrets. Hover configured keys to preview masked values.",
     "noSecrets": "No variables configured.",
     "setSecrets": "Set / Update variables",
     "setSecretsPlaceholder": "SECRET_KEY=value",
@@ -608,7 +608,7 @@
   "automation": {
     "title": "Automation",
     "description": "Configure built-in automation and scheduled rules. Settings are stored in",
-    "configPathFallback": "CCCC_RUST_HOME/.../group.yaml",
+    "configPathFallback": "CCCC_HOME/.../group.yaml",
     "openFromGroup": "Open this tab from a group.",
     "rulesTitle": "Rules & Snippets",
     "rulesDescription": "Define scheduled reminders, operational actions, and reusable message snippets.",

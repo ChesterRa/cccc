@@ -85,6 +85,7 @@ pub async fn serve(home: HomeLayout, host: &str, port: u16) -> Result<SocketAddr
     home.initialize()?;
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     let address = listener.local_addr()?;
+    println!("CCCC Web listening on http://{address}");
     tracing::info!(%address, "CCCC Rust Web listening");
     axum::serve(listener, app(home)).await?;
     Ok(address)

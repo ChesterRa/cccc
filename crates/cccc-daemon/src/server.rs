@@ -1,21 +1,18 @@
 use anyhow::{Context, Result, bail};
-use cccc_contracts::{DaemonAddress, DaemonRequest, DaemonResponse, Transport, utc_now};
+use cccc_contracts::{DaemonAddress, Transport, utc_now};
 use cccc_core::HomeLayout;
 use cccc_core::fs::write_json;
 use fs2::FileExt;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
 #[cfg(unix)]
 use tokio::net::UnixListener;
 
-use crate::dispatch::dispatch;
 use crate::paths::DaemonPaths;
-
-const MAX_REQUEST_BYTES: usize = 2_000_000;
+use crate::server_connection::{DispatchLock, spawn_connection};
 
 pub async fn run(home: HomeLayout) -> Result<()> {
     home.initialize().context("initialize Rust home")?;
@@ -24,15 +21,25 @@ pub async fn run(home: HomeLayout) -> Result<()> {
     let lock = acquire_daemon_lock(&paths.lock)?;
     cleanup_stale(&paths);
     std::fs::write(&paths.pid, format!("{}\n", std::process::id()))?;
+    crate::ops::runtime_restore::restore_running(&paths.home)
+        .map_err(|error| anyhow::anyhow!(error.message))?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let dispatch_lock: DispatchLock = Default::default();
 
     let result = if use_tcp() {
-        serve_tcp(&paths, shutdown_tx, shutdown_rx).await
+        serve_tcp(&paths, shutdown_tx, shutdown_rx, dispatch_lock).await
     } else {
-        serve_platform_default(&paths, shutdown_tx, shutdown_rx).await
+        serve_platform_default(&paths, shutdown_tx, shutdown_rx, dispatch_lock).await
     };
+    let stop_result = cccc_runtime::stop_all();
     cleanup_stale(&paths);
     drop(lock);
+    if let Err(error) = stop_result {
+        if result.is_ok() {
+            return Err(error.into());
+        }
+        tracing::warn!(%error, "failed to stop every runtime during daemon shutdown");
+    }
     result
 }
 
@@ -40,6 +47,7 @@ async fn serve_tcp(
     paths: &DaemonPaths,
     shutdown_tx: watch::Sender<bool>,
     mut shutdown_rx: watch::Receiver<bool>,
+    dispatch_lock: DispatchLock,
 ) -> Result<()> {
     let host = std::env::var("CCCC_DAEMON_HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let port = std::env::var("CCCC_DAEMON_PORT")
@@ -61,13 +69,16 @@ async fn serve_tcp(
         tokio::select! {
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
-                handle_stream(stream, paths.home.clone(), &shutdown_tx).await?;
+                spawn_connection(stream, paths.home.clone(), shutdown_tx.clone(), dispatch_lock.clone());
             }
             changed = shutdown_rx.changed() => {
                 changed?;
                 if *shutdown_rx.borrow() { break; }
             }
-            _ = automation.tick() => tick_automation(&paths.home),
+            _ = automation.tick() => {
+                let _guard = dispatch_lock.lock().await;
+                tick_automation(&paths.home);
+            },
         }
     }
     Ok(())
@@ -78,6 +89,7 @@ async fn serve_platform_default(
     paths: &DaemonPaths,
     shutdown_tx: watch::Sender<bool>,
     mut shutdown_rx: watch::Receiver<bool>,
+    dispatch_lock: DispatchLock,
 ) -> Result<()> {
     let listener = UnixListener::bind(&paths.socket)?;
     write_address(
@@ -93,13 +105,16 @@ async fn serve_platform_default(
         tokio::select! {
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
-                handle_stream(stream, paths.home.clone(), &shutdown_tx).await?;
+                spawn_connection(stream, paths.home.clone(), shutdown_tx.clone(), dispatch_lock.clone());
             }
             changed = shutdown_rx.changed() => {
                 changed?;
                 if *shutdown_rx.borrow() { break; }
             }
-            _ = automation.tick() => tick_automation(&paths.home),
+            _ = automation.tick() => {
+                let _guard = dispatch_lock.lock().await;
+                tick_automation(&paths.home);
+            },
         }
     }
     Ok(())
@@ -110,37 +125,9 @@ async fn serve_platform_default(
     paths: &DaemonPaths,
     shutdown_tx: watch::Sender<bool>,
     shutdown_rx: watch::Receiver<bool>,
+    dispatch_lock: DispatchLock,
 ) -> Result<()> {
-    serve_tcp(paths, shutdown_tx, shutdown_rx).await
-}
-
-async fn handle_stream<S>(stream: S, home: HomeLayout, shutdown: &watch::Sender<bool>) -> Result<()>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-{
-    let (read, mut write) = tokio::io::split(stream);
-    let mut line = String::new();
-    BufReader::new(read).read_line(&mut line).await?;
-    let response = if line.len() > MAX_REQUEST_BYTES {
-        DaemonResponse::failure("request_too_large", "request exceeds 2 MB")
-    } else {
-        match serde_json::from_str::<DaemonRequest>(&line) {
-            Ok(request) => {
-                let should_shutdown = request.op == "shutdown";
-                let response = dispatch(&home, &request);
-                if should_shutdown && response.ok {
-                    shutdown.send(true).ok();
-                }
-                response
-            }
-            Err(error) => DaemonResponse::failure("invalid_request", error.to_string()),
-        }
-    };
-    let mut payload = serde_json::to_vec(&response)?;
-    payload.push(b'\n');
-    write.write_all(&payload).await?;
-    write.shutdown().await?;
-    Ok(())
+    serve_tcp(paths, shutdown_tx, shutdown_rx, dispatch_lock).await
 }
 
 fn acquire_daemon_lock(path: &Path) -> Result<File> {
@@ -194,10 +181,5 @@ fn use_tcp() -> bool {
 }
 
 fn tick_automation(home: &HomeLayout) {
-    if let Err(error) = crate::ops::actor_runtime::reconcile(home) {
-        tracing::warn!(message = %error.message, "runtime reconciliation failed");
-    }
-    if let Err(error) = cccc_core::automation::tick(home) {
-        tracing::warn!(%error, "automation tick failed");
-    }
+    crate::ops::automation_runtime::tick(home);
 }

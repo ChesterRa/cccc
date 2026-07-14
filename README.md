@@ -32,12 +32,28 @@ npm -C web run build
 cargo build --workspace --release --locked
 ```
 
+Run the compiled Rust CLI through Cargo. It uses `CCCC_HOME`, which defaults to `~/.cccc`:
+
+```bash
+cargo run --release -p cccc-cli --bin cccc
+```
+
+After the server binds successfully, the terminal prints the Web address and port.
+
+Arguments after `--` are passed to CCCC. For example:
+
+```bash
+cargo run --release -p cccc-cli --bin cccc -- doctor
+cargo run --release -p cccc-cli --bin cccc -- groups
+```
+
 Requirements: a supported Rust build uses Rust 1.88+; building the Web UI requires Node.js 20+. Running a release archive does not require Python or Node.js.
 
 ## Quick Start
 
 ```bash
 cd /path/to/project
+cccc daemon start
 cccc group create --title "My team"
 cccc groups
 cccc group use <group_id> .
@@ -50,24 +66,24 @@ cccc
 
 Open <http://127.0.0.1:8848>. `cccc setup` prints the MCP server configuration for the current Rust installation.
 
-## Data Isolation
+## Data Compatibility
 
-Rust uses only `CCCC_RUST_HOME`:
+Python and Rust use the same `CCCC_HOME`:
 
 ```text
-CCCC_RUST_HOME=${HOME}/.cccc-rust
+CCCC_HOME=${HOME}/.cccc
 ```
 
-The default is `~/.cccc-rust`. CCCC refuses `~/.cccc` and every child of that legacy directory. A Rust home contains a `.cccc-rust-v1` marker; a non-empty custom directory without this marker is rejected. The Rust implementation neither imports nor mutates legacy data automatically.
+The default is `~/.cccc`. Rust reads the existing registry, groups, plain or gzip-compressed ledgers, state, and both Python access-token document layouts in place. Rust compaction writes Python-compatible segment names and manifests. On first startup it adds a `.cccc-rust-v1` compatibility marker but does not move or delete existing data. Back up `CCCC_HOME` before first use with a new implementation.
 
 The repository keeps implementation selection explicit:
 
 ```bash
 git switch python  # legacy Python implementation and ~/.cccc
-git switch rust    # Rust implementation and ~/.cccc-rust
+git switch rust    # Rust implementation and the same ~/.cccc
 ```
 
-Do not point both implementations at the same directory.
+Stop the active daemon before switching branches. Never run the Python and Rust daemons against the shared home at the same time.
 
 ## Main Commands
 
@@ -100,7 +116,7 @@ React/TypeScript UI     CLI     MCP     remote connectors
                     Rust daemon
           group state / ledger / runtime / memory
                          |
-                  CCCC_RUST_HOME only
+                  CCCC_HOME only
 ```
 
 The daemon is the state writer. The CLI, Web API, and MCP port call the same operations rather than maintaining parallel state.
@@ -133,7 +149,7 @@ docker volume create cccc-data
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-The container stores Rust state in `/data` through `CCCC_RUST_HOME=/data` and publishes the Web UI to localhost by default.
+The container stores Rust state in `/data` through `CCCC_HOME=/data` and publishes the Web UI to localhost by default.
 
 ## Verification
 
@@ -151,7 +167,7 @@ The standard gate runs Web lint/typecheck/build plus Rust format, Clippy, and wo
 - [CLI reference](docs/reference/cli.md)
 - [Architecture](docs/reference/architecture.md)
 - [Operations](docs/guide/operations.md)
-- [Rust migration and isolation](docs/rust-migration.md)
+- [Rust migration and compatibility](docs/rust-migration.md)
 
 ## License
 

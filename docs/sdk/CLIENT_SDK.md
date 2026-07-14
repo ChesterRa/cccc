@@ -51,7 +51,7 @@ A CCCC daemon must already be running.
 cccc daemon status
 ```
 
-The SDK client then connects to the daemon transport configured by your CCCC runtime (`CCCC_RUST_HOME`, daemon socket/TCP settings).
+The SDK client then connects to the daemon transport configured by your CCCC runtime (`CCCC_HOME`, daemon socket/TCP settings).
 
 ## Integration Model
 

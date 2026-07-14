@@ -21,18 +21,37 @@ pub fn list_unread(
     actor_id: &str,
     limit: usize,
 ) -> io::Result<Vec<Event>> {
+    let mut unread = list_unread_many(home, group, &[actor_id.to_owned()], limit)?;
+    Ok(unread.remove(actor_id).unwrap_or_default())
+}
+
+pub fn list_unread_many(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_ids: &[String],
+    limit: usize,
+) -> io::Result<BTreeMap<String, Vec<Event>>> {
+    if actor_ids.is_empty() {
+        return Ok(BTreeMap::new());
+    }
     let store = GroupStore::new(home.clone())?;
     let events = ledger::read_all(&store.ledger_path(&group.group_id)?)?;
     let state = load(home, &group.group_id)?;
-    let cursor = state.cursors.get(actor_id);
-    let start = cursor
-        .and_then(|id| events.iter().position(|event| &event.id == id))
-        .map_or(0, |index| index + 1);
-    Ok(events[start..]
+    Ok(actor_ids
         .iter()
-        .filter(|event| is_for_actor(group, event, actor_id))
-        .take(limit.min(1000))
-        .cloned()
+        .map(|actor_id| {
+            let cursor = state.cursors.get(actor_id);
+            let start = cursor
+                .and_then(|id| events.iter().position(|event| &event.id == id))
+                .map_or(0, |index| index + 1);
+            let unread = events[start..]
+                .iter()
+                .filter(|event| is_for_actor(group, event, actor_id))
+                .take(limit.min(1000))
+                .cloned()
+                .collect();
+            (actor_id.clone(), unread)
+        })
         .collect())
 }
 
@@ -42,23 +61,39 @@ pub fn mark_read(
     actor_id: &str,
     event_id: &str,
 ) -> io::Result<()> {
+    advance(home, group_id, actor_id, event_id).map(|_| ())
+}
+
+pub fn advance(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    event_id: &str,
+) -> io::Result<bool> {
     let store = GroupStore::new(home.clone())?;
-    let exists = ledger::read_all(&store.ledger_path(group_id)?)?
+    let events = ledger::read_all(&store.ledger_path(group_id)?)?;
+    let next = events
         .iter()
-        .any(|event| event.id == event_id);
-    if !exists {
-        return Err(io::Error::new(io::ErrorKind::NotFound, "event not found"));
-    }
+        .position(|event| event.id == event_id)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "event not found"))?;
     let mut state = load(home, group_id)?;
+    let current = state
+        .cursors
+        .get(actor_id)
+        .and_then(|current| events.iter().position(|event| &event.id == current));
+    if current.is_some_and(|current| current >= next) {
+        return Ok(false);
+    }
     state.cursors.insert(actor_id.into(), event_id.into());
-    write_json(&path(home, group_id)?, &state)
+    write_json(&path(home, group_id)?, &state)?;
+    Ok(true)
 }
 
 pub fn cursor(home: &HomeLayout, group_id: &str, actor_id: &str) -> io::Result<Option<String>> {
     Ok(load(home, group_id)?.cursors.get(actor_id).cloned())
 }
 
-fn is_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
+pub fn is_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
     if event.by == actor_id || !matches!(event.kind.as_str(), "chat.message" | "system.notify") {
         return false;
     }

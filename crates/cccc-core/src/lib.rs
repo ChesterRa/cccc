@@ -2,6 +2,8 @@ pub mod access_tokens;
 pub mod active;
 pub mod actors;
 pub mod automation;
+mod automation_render;
+mod automation_schedule;
 pub mod blobs;
 pub mod branding;
 pub mod capabilities;

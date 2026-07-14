@@ -41,6 +41,13 @@ fn actor_lifecycle_controls_terminal_process() {
         )
         .ok
     );
+    let groups = call(&home, "group_list", json!({}));
+    let summary = groups.result["groups"]
+        .as_array()
+        .and_then(|groups| groups.iter().find(|group| group["group_id"] == group_id))
+        .expect("group summary");
+    assert_eq!(summary["running"], true);
+    assert_eq!(summary["runtime_status"]["running_actor_count"], 1);
     std::thread::sleep(std::time::Duration::from_millis(150));
     let tail = call(
         &home,
@@ -53,6 +60,14 @@ fn actor_lifecycle_controls_terminal_process() {
             .unwrap_or_default()
             .contains("daemon-runtime-ready")
     );
+    let end_cursor = tail.result["end_cursor"].as_u64().expect("end cursor");
+    let since = call(
+        &home,
+        "terminal_since",
+        json!({"group_id":group_id,"actor_id":"peer1","after":end_cursor}),
+    );
+    assert_eq!(since.result["history"]["data"], "");
+    assert_eq!(since.result["history"]["end_cursor"], end_cursor);
     assert!(
         call(
             &home,

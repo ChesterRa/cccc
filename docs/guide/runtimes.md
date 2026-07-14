@@ -110,7 +110,7 @@ Use a mixed group when different agents are good at different roles:
 - Use ChatGPT Web Model when you want a browser-backed GPT-5.x actor with CCCC MCP access.
 - Use `custom` only when the runtime is not first-class yet or needs a special command.
 
-Each actor can have its own runtime, command override, private environment, and runner mode. Runtime state stays in `CCCC_RUST_HOME`, not in your repository.
+Each actor can have its own runtime, command override, private environment, and runner mode. Runtime state stays in `CCCC_HOME`, not in your repository.
 
 ## Verification and Troubleshooting
 

@@ -5,6 +5,8 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize)]
 pub struct RuntimeProbe {
     pub name: String,
+    pub display_name: String,
+    pub recommended_command: String,
     pub command: String,
     pub available: bool,
     pub path: Option<PathBuf>,
@@ -53,27 +55,71 @@ pub fn detect_runtimes() -> Vec<RuntimeProbe> {
         "hermes",
         "kimi",
         "opencode",
-        "web_model"
+        "web_model",
+        "custom"
     ]))
     .unwrap_or_default()
     .into_iter()
     .map(|runtime| {
-        let command = default_command(runtime)
-            .first()
-            .cloned()
-            .unwrap_or_default();
+        let recommended = default_command(runtime);
+        let command = recommended.first().cloned().unwrap_or_default();
         let path = find_executable(&command);
+        let name = runtime_name(runtime).to_owned();
         RuntimeProbe {
-            name: serde_json::to_value(runtime)
-                .ok()
-                .and_then(|value| value.as_str().map(str::to_owned))
-                .unwrap_or_default(),
-            available: runtime == ActorRuntime::WebModel || path.is_some(),
+            display_name: display_name(runtime).to_owned(),
+            recommended_command: recommended.join(" "),
+            name,
+            available: matches!(runtime, ActorRuntime::WebModel | ActorRuntime::Custom)
+                || path.is_some(),
             command,
             path,
         }
     })
     .collect()
+}
+
+const fn runtime_name(runtime: ActorRuntime) -> &'static str {
+    match runtime {
+        ActorRuntime::Amp => "amp",
+        ActorRuntime::Antigravity => "antigravity",
+        ActorRuntime::Auggie => "auggie",
+        ActorRuntime::Claude => "claude",
+        ActorRuntime::Codex => "codex",
+        ActorRuntime::Copilot => "copilot",
+        ActorRuntime::Cursor => "cursor",
+        ActorRuntime::Devin => "devin",
+        ActorRuntime::Kiro => "kiro",
+        ActorRuntime::Kilo => "kilo",
+        ActorRuntime::Droid => "droid",
+        ActorRuntime::Grok => "grok",
+        ActorRuntime::Hermes => "hermes",
+        ActorRuntime::Kimi => "kimi",
+        ActorRuntime::Opencode => "opencode",
+        ActorRuntime::WebModel => "web_model",
+        ActorRuntime::Custom => "custom",
+    }
+}
+
+const fn display_name(runtime: ActorRuntime) -> &'static str {
+    match runtime {
+        ActorRuntime::Amp => "Amp",
+        ActorRuntime::Antigravity => "Antigravity",
+        ActorRuntime::Auggie => "Auggie",
+        ActorRuntime::Claude => "Claude Code",
+        ActorRuntime::Codex => "Codex CLI",
+        ActorRuntime::Copilot => "GitHub Copilot",
+        ActorRuntime::Cursor => "Cursor Agent",
+        ActorRuntime::Devin => "Devin",
+        ActorRuntime::Kiro => "Kiro CLI",
+        ActorRuntime::Kilo => "Kilo Code",
+        ActorRuntime::Droid => "Factory Droid",
+        ActorRuntime::Grok => "Grok",
+        ActorRuntime::Hermes => "Hermes",
+        ActorRuntime::Kimi => "Kimi CLI",
+        ActorRuntime::Opencode => "OpenCode",
+        ActorRuntime::WebModel => "Web Model",
+        ActorRuntime::Custom => "Custom",
+    }
 }
 
 fn find_executable(command: &str) -> Option<PathBuf> {
@@ -98,4 +144,21 @@ fn find_executable(command: &str) -> Option<PathBuf> {
         }
         None
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::detect_runtimes;
+
+    #[test]
+    fn runtime_discovery_returns_frontend_contract() {
+        let runtimes = detect_runtimes();
+        let custom = runtimes
+            .iter()
+            .find(|runtime| runtime.name == "custom")
+            .expect("custom runtime");
+        assert_eq!(custom.display_name, "Custom");
+        assert!(custom.available);
+        assert!(runtimes.iter().any(|runtime| runtime.name == "codex"));
+    }
 }

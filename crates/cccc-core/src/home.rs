@@ -9,11 +9,9 @@ const MARKER: &str = ".cccc-rust-v1";
 pub enum HomeError {
     #[error("cannot determine the current user's home directory")]
     MissingUserHome,
-    #[error("refusing to use legacy Python CCCC home: {0}")]
-    LegacyHomeRefused(PathBuf),
-    #[error("refusing non-empty unmarked Rust home: {0}")]
+    #[error("refusing non-empty directory that is not a CCCC home: {0}")]
     UnmarkedDirectory(PathBuf),
-    #[error("failed to access Rust home {path}: {source}")]
+    #[error("failed to access CCCC home {path}: {source}")]
     Io {
         path: PathBuf,
         #[source]
@@ -29,10 +27,10 @@ pub struct HomeLayout {
 impl HomeLayout {
     pub fn resolve() -> Result<Self, HomeError> {
         let base = BaseDirs::new().ok_or(HomeError::MissingUserHome)?;
-        let configured = std::env::var_os("CCCC_RUST_HOME")
+        let configured = std::env::var_os("CCCC_HOME")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
-            .unwrap_or_else(|| base.home_dir().join(".cccc-rust"));
+            .unwrap_or_else(|| base.home_dir().join(".cccc"));
         Self::from_path_with_user_home(configured, base.home_dir())
     }
 
@@ -43,17 +41,13 @@ impl HomeLayout {
 
     fn from_path_with_user_home(path: PathBuf, user_home: &Path) -> Result<Self, HomeError> {
         let root = absolute(expand_tilde(path, user_home))?;
-        let legacy = absolute(user_home.join(".cccc"))?;
-        if root.starts_with(&legacy) {
-            return Err(HomeError::LegacyHomeRefused(root));
-        }
         Ok(Self { root })
     }
 
     pub fn initialize(&self) -> Result<(), HomeError> {
         if self.root.exists() && !self.marker().exists() {
             let mut entries = fs::read_dir(&self.root).map_err(|source| self.io(source))?;
-            if entries.next().is_some() {
+            if entries.next().is_some() && !self.is_existing_home() {
                 return Err(HomeError::UnmarkedDirectory(self.root.clone()));
             }
         }
@@ -85,6 +79,12 @@ impl HomeLayout {
     #[must_use]
     pub fn marker(&self) -> PathBuf {
         self.root.join(MARKER)
+    }
+
+    fn is_existing_home(&self) -> bool {
+        self.root.join(".initialized").is_file()
+            || self.registry_path().is_file()
+            || self.groups_dir().is_dir()
     }
 
     fn io(&self, source: std::io::Error) -> HomeError {
@@ -121,10 +121,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn refuses_legacy_home_and_descendants() {
-        let user = Path::new("/tmp/cccc-home-guard-user");
-        let result = HomeLayout::from_path_with_user_home(user.join(".cccc/groups"), user);
-        assert!(matches!(result, Err(HomeError::LegacyHomeRefused(_))));
+    fn adopts_existing_python_home_without_changing_existing_data() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join(".cccc");
+        fs::create_dir_all(&root).expect("home");
+        fs::write(root.join(".initialized"), "python home\n").expect("legacy marker");
+        fs::write(root.join("existing-data"), "keep me\n").expect("existing data");
+
+        let home = HomeLayout::from_path_with_user_home(root.clone(), temp.path()).expect("layout");
+        home.initialize().expect("initialize");
+
+        assert_eq!(
+            fs::read_to_string(root.join("existing-data")).expect("existing data"),
+            "keep me\n"
+        );
+        assert!(root.join(MARKER).is_file());
     }
 
     #[test]

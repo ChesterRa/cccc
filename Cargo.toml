@@ -24,13 +24,17 @@ async-stream = "0.3"
 axum = { version = "0.8", features = ["form", "json", "multipart", "ws"] }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+chrono-tz = "0.10"
 chromiumoxide = "0.8"
 clap = { version = "4.5", features = ["derive"] }
+cron = "0.15"
 directories = "6.0"
 fs2 = "0.4"
+flate2 = "1.1"
 futures-util = "0.3"
 http-body-util = "0.1"
 portable-pty = "0.9"
+percent-encoding = "2.3"
 regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rust-embed = "8.7"

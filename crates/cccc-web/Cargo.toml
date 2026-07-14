@@ -15,10 +15,12 @@ cccc-client = { path = "../cccc-client" }
 cccc-contracts = { path = "../cccc-contracts" }
 cccc-core = { path = "../cccc-core" }
 cccc-mcp = { path = "../cccc-mcp" }
+cccc-runtime = { path = "../cccc-runtime" }
 chromiumoxide.workspace = true
 chrono.workspace = true
 futures-util.workspace = true
 mime_guess.workspace = true
+percent-encoding.workspace = true
 reqwest.workspace = true
 rust-embed.workspace = true
 serde.workspace = true

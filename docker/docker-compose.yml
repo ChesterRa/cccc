@@ -16,7 +16,7 @@ services:
       - cccc-data:/data
       - ${WORKSPACE_PATH:-.}:/workspace
     environment:
-      - CCCC_RUST_HOME=/data
+      - CCCC_HOME=/data
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}

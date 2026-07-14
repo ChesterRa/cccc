@@ -1,6 +1,7 @@
 use cccc_contracts::utc_now;
 use fs2::FileExt;
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Serialize, Serializer};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
@@ -13,6 +14,7 @@ use crate::fs::{read_yaml, write_yaml};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccessToken {
+    #[serde(default)]
     pub token: String,
     pub user_id: String,
     #[serde(default)]
@@ -30,10 +32,63 @@ impl AccessToken {
     }
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize)]
 struct TokenDocument {
-    #[serde(default)]
+    #[serde(default, serialize_with = "serialize_tokens")]
     tokens: BTreeMap<String, AccessToken>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum TokenDocumentFormat {
+    Wrapped {
+        tokens: BTreeMap<String, AccessToken>,
+    },
+    Flat(BTreeMap<String, AccessToken>),
+}
+
+impl<'de> Deserialize<'de> for TokenDocument {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let tokens = match TokenDocumentFormat::deserialize(deserializer)? {
+            TokenDocumentFormat::Wrapped { tokens } | TokenDocumentFormat::Flat(tokens) => tokens,
+        };
+        Ok(Self { tokens })
+    }
+}
+
+#[derive(Serialize)]
+struct StoredAccessToken<'a> {
+    user_id: &'a str,
+    allowed_groups: &'a [String],
+    is_admin: bool,
+    created_at: &'a str,
+    updated_at: &'a str,
+}
+
+fn serialize_tokens<S>(
+    tokens: &BTreeMap<String, AccessToken>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut map = serializer.serialize_map(Some(tokens.len()))?;
+    for (raw, entry) in tokens {
+        map.serialize_entry(
+            raw,
+            &StoredAccessToken {
+                user_id: &entry.user_id,
+                allowed_groups: &entry.allowed_groups,
+                is_admin: entry.is_admin,
+                created_at: &entry.created_at,
+                updated_at: &entry.updated_at,
+            },
+        )?;
+    }
+    map.end()
 }
 
 #[derive(Debug, Clone)]
@@ -74,6 +129,11 @@ impl AccessTokenStore {
                 .filter(|value| !value.is_empty())
                 .map(str::to_owned)
                 .unwrap_or_else(|| format!("acc_{}", Uuid::new_v4().simple()));
+            if token.chars().any(char::is_control) {
+                return Err(io::Error::other(
+                    "access token cannot contain control characters",
+                ));
+            }
             if document.tokens.contains_key(&token) {
                 return Err(io::Error::other("access token already exists"));
             }
@@ -131,7 +191,13 @@ impl AccessTokenStore {
     fn load(&self) -> io::Result<TokenDocument> {
         let path = self.path();
         if path.exists() {
-            read_yaml(&path)
+            let mut document: TokenDocument = read_yaml(&path)?;
+            for (raw, entry) in &mut document.tokens {
+                if entry.token.is_empty() {
+                    entry.token.clone_from(raw);
+                }
+            }
+            Ok(document)
         } else {
             Ok(TokenDocument::default())
         }
@@ -193,4 +259,80 @@ fn protect(path: &std::path::Path) -> io::Result<()> {
 #[cfg(not(unix))]
 fn protect(_path: &std::path::Path) -> io::Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn loads_python_token_map_without_rewriting_it() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = AccessTokenStore::new(home).expect("store");
+        let path = temp.path().join("access_tokens.yaml");
+        let fixture = concat!(
+            "tokens:\n",
+            "  legacy-token:\n",
+            "    user_id: legacy-user\n",
+            "    allowed_groups: []\n",
+            "    is_admin: true\n",
+            "    created_at: '2026-01-01T00:00:00Z'\n",
+            "    updated_at: '2026-01-01T00:00:00Z'\n",
+        );
+        std::fs::write(&path, fixture).expect("fixture");
+
+        let token = store
+            .lookup("legacy-token")
+            .expect("lookup")
+            .expect("token");
+        assert_eq!(token.token, "legacy-token");
+        assert_eq!(std::fs::read_to_string(&path).expect("unchanged"), fixture);
+
+        store
+            .update(&token.token_id(), None, Some(false))
+            .expect("update")
+            .expect("updated token");
+        let stored: serde_yaml::Value =
+            serde_yaml::from_reader(File::open(path).expect("stored file")).expect("stored yaml");
+        assert!(stored["tokens"]["legacy-token"]["token"].is_null());
+    }
+
+    #[test]
+    fn loads_legacy_flat_token_map() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = AccessTokenStore::new(home).expect("store");
+        std::fs::write(
+            temp.path().join("access_tokens.yaml"),
+            concat!(
+                "legacy-flat-token:\n",
+                "  user_id: legacy-user\n",
+                "  allowed_groups: []\n",
+                "  is_admin: true\n",
+                "  created_at: '2026-01-01T00:00:00Z'\n",
+                "  updated_at: '2026-01-01T00:00:00Z'\n",
+            ),
+        )
+        .expect("fixture");
+
+        let token = store
+            .lookup("legacy-flat-token")
+            .expect("lookup")
+            .expect("token");
+        assert_eq!(token.user_id, "legacy-user");
+        assert!(token.is_admin);
+    }
+
+    #[test]
+    fn rejects_control_characters_in_custom_tokens() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = AccessTokenStore::new(home).expect("store");
+        assert!(
+            store
+                .create("admin", Vec::new(), true, Some("unsafe\ntoken"))
+                .is_err()
+        );
+    }
 }

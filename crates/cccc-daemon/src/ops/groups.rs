@@ -6,7 +6,7 @@ use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
-use crate::ops::actor_runtime;
+use crate::ops::{actor_runtime, group_runtime};
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -35,15 +35,27 @@ fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         json!({"title": group.title, "topic": group.topic}),
     )?;
     active::set(home, &group.group_id).map_err(OpError::io)?;
-    object(json!({"group": with_roles(group)}))
+    object(json!({"group": group_runtime::group(group)}))
 }
 
 fn list(home: &HomeLayout) -> OpResult {
-    object(json!({"groups": store(home)?.list().map_err(OpError::io)?}))
+    let store = store(home)?;
+    let groups = store
+        .list()
+        .map_err(OpError::io)?
+        .into_iter()
+        .filter_map(|meta| {
+            store
+                .load(&meta.group_id)
+                .ok()
+                .map(|group| group_runtime::summary(meta, &group))
+        })
+        .collect::<Vec<_>>();
+    object(json!({"groups": groups}))
 }
 
 fn show(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    object(json!({"group": with_roles(load(home, request)?)}))
+    object(json!({"group": group_runtime::group(load(home, request)?)}))
 }
 
 fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -64,7 +76,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         request,
         json!({"patch": {"title": title, "topic": topic}}),
     )?;
-    object(json!({"group": with_roles(group)}))
+    object(json!({"group": group_runtime::group(group)}))
 }
 
 fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -92,7 +104,7 @@ fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let group = store(home)?.load(&created.group_id).map_err(OpError::io)?;
     active::set(home, &group.group_id).map_err(OpError::io)?;
-    object(json!({"old_group_id": old.group_id, "group": with_roles(group)}))
+    object(json!({"old_group_id": old.group_id, "group": group_runtime::group(group)}))
 }
 
 fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -113,7 +125,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         request,
         json!({"new_state": updated.state}),
     )?;
-    object(json!({"group": with_roles(updated)}))
+    object(json!({"group": group_runtime::group(updated)}))
 }
 
 fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult {
@@ -127,7 +139,9 @@ fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult 
     let updated = store(home)?
         .mutate(&group.group_id, |doc| {
             doc.running = value;
-            if !value {
+            if value {
+                doc.state = GroupState::Active;
+            } else {
                 doc.state = GroupState::Stopped;
             }
             Ok(doc.clone())
@@ -135,7 +149,7 @@ fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult 
         .map_err(OpError::io)?;
     let kind = if value { "group.start" } else { "group.stop" };
     append_group_event(home, &updated, kind, request, json!({}))?;
-    object(json!({"group": with_roles(updated), "running": value, "runtimes": runtimes}))
+    object(json!({"group": group_runtime::group(updated), "running": value, "runtimes": runtimes}))
 }
 
 fn load(home: &HomeLayout, request: &DaemonRequest) -> Result<GroupDoc, OpError> {
@@ -169,19 +183,4 @@ fn append_group_event(
         &event,
     )
     .map_err(OpError::io)
-}
-
-fn with_roles(mut group: GroupDoc) -> GroupDoc {
-    let first = group
-        .actors
-        .iter()
-        .position(|actor| actor.internal_kind.is_none());
-    for (index, actor) in group.actors.iter_mut().enumerate() {
-        actor.role = Some(if Some(index) == first {
-            cccc_contracts::ActorRole::Foreman
-        } else {
-            cccc_contracts::ActorRole::Peer
-        });
-    }
-    group
 }

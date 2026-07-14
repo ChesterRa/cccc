@@ -10,7 +10,7 @@ cccc home
 cccc doctor
 ```
 
-The release binaries do not require Python. `cccc home` should print `~/.cccc-rust` unless `CCCC_RUST_HOME` is set.
+The release binaries do not require Python. `cccc home` should print `~/.cccc` unless `CCCC_HOME` is set.
 
 ## Build From Source
 
@@ -49,11 +49,11 @@ Run `cccc` and open <http://127.0.0.1:8848>.
 cccc setup
 ```
 
-The output is a JSON MCP server entry using the current `cccc` executable and `CCCC_RUST_HOME`. Apply it to the selected agent runtime according to that runtime's MCP configuration format.
+The output is a JSON MCP server entry using the current `cccc` executable and `CCCC_HOME`. Apply it to the selected agent runtime according to that runtime's MCP configuration format.
 
 ## Data Safety
 
-Rust defaults to `~/.cccc-rust`. It rejects `~/.cccc` and its descendants. Switching to the `python` branch selects the legacy implementation and legacy home; switching to `rust` selects this implementation. No automatic data conversion occurs.
+Rust and Python default to the same `~/.cccc` home and share the registry, group, ledger, and state contracts. Rust adds a compatibility marker on first startup without moving or deleting existing files. Stop the active daemon before switching branches.
 
 ## Next Guides
 

@@ -46,9 +46,13 @@ async fn health(State(state): State<AppState>) -> ApiResult {
     Ok(response)
 }
 async fn runtimes() -> Json<Value> {
-    success(
-        json!({"available":["claude","codex","copilot","cursor","devin","kiro","kilo","antigravity","droid","amp","auggie","grok","hermes","kimi","opencode","web_model","custom"],"runtimes":[]}),
-    )
+    let runtimes = cccc_runtime::detect_runtimes();
+    let available = runtimes
+        .iter()
+        .filter(|runtime| runtime.available)
+        .map(|runtime| runtime.name.clone())
+        .collect::<Vec<_>>();
+    success(json!({"available":available,"runtimes":runtimes}))
 }
 async fn observability_get(State(state): State<AppState>) -> ApiResult {
     call(&state, "observability_get", Default::default()).await

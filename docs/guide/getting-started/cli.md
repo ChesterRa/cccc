@@ -81,9 +81,9 @@ Use daemon restart only after actor/group recovery fails.
 ## Environment
 
 ```bash
-export CCCC_RUST_HOME="$HOME/.cccc-rust"
+export CCCC_HOME="$HOME/.cccc"
 export CCCC_WEB_HOST=127.0.0.1
 export CCCC_WEB_PORT=8848
 ```
 
-The Rust executable ignores `CCCC_HOME` and rejects the legacy default directory even when it is passed through `CCCC_RUST_HOME`.
+Python and Rust use the same `CCCC_HOME`. Stop the active daemon before switching implementations.

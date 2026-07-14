@@ -26,7 +26,7 @@ if (-not $SkipBuild) {
 }
 
 if ($LocalHome) {
-  $env:CCCC_RUST_HOME = (Join-Path $repoRoot '.cccc-rust')
+  $env:CCCC_HOME = (Join-Path $repoRoot '.cccc')
 }
 
 $env:CCCC_WEB_HOST = $WebHost

@@ -3,7 +3,7 @@ use cccc_core::actors;
 use cccc_core::ledger;
 use cccc_core::permissions::{self, ActorAction};
 use cccc_core::{GroupDoc, HomeLayout};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 use crate::ops::{actor_runtime, actor_secrets};
@@ -124,11 +124,8 @@ fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult
     authorize(&group, request, action, &actor_id)?;
     let enabled = kind != "actor.stop";
     let status = actor_runtime::apply(home, &group, &actor_id, kind)?;
-    let mut patch = Map::new();
-    patch.insert("enabled".into(), Value::Bool(enabled));
-    let actor = store(home)?
-        .mutate(&group_id, |doc| actors::update(doc, &actor_id, &patch))
-        .map_err(OpError::invalid)?;
+    let actor =
+        actor_runtime::persist_lifecycle(home, &group, &actor_id, enabled, status.as_ref())?;
     append_event(
         home,
         &group_id,

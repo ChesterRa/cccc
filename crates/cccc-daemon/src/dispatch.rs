@@ -25,12 +25,13 @@ fn dispatch_result(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let core = match request.op.as_str() {
         "ping" => Some(object(json!({
             "pid": std::process::id(), "version": env!("CARGO_PKG_VERSION"), "implementation": "rust",
+            "compatibility": cccc_contracts::RUST_DAEMON_COMPATIBILITY,
         }))),
         "version" => Some(object(
-            json!({"version": env!("CARGO_PKG_VERSION"), "implementation": "rust"}),
+            json!({"version": env!("CARGO_PKG_VERSION"), "implementation": "rust", "compatibility": cccc_contracts::RUST_DAEMON_COMPATIBILITY}),
         )),
         "home_get" => Some(object(
-            json!({"home": home.root(), "environment": "CCCC_RUST_HOME"}),
+            json!({"home": home.root(), "environment": "CCCC_HOME"}),
         )),
         "shutdown" => Some(object(json!({"shutting_down": true}))),
         _ => None,

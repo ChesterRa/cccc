@@ -6,7 +6,7 @@ The Rust structs in `crates/cccc-contracts/src/ipc.rs` are the canonical wire de
 
 ## Transport
 
-- Unix: Unix domain socket under `CCCC_RUST_HOME/daemon`.
+- Unix: Unix domain socket under `CCCC_HOME/daemon`.
 - Windows: loopback TCP.
 - Optional: set `CCCC_DAEMON_TRANSPORT=tcp` for loopback TCP on any platform.
 
@@ -292,7 +292,7 @@ ledger_compact
 
 ## Security Rules
 
-- IPC files and addresses are created only under `CCCC_RUST_HOME`.
-- `CCCC_RUST_HOME` cannot be the legacy `~/.cccc` directory or its descendant.
+- IPC files and addresses are created only under `CCCC_HOME`.
+- Python and Rust implementations use the same `CCCC_HOME`; only one daemon may own it at a time.
 - Remote callers do not connect to daemon IPC directly; Web access tokens, Web Model connector credentials, or Group Bridge credentials enforce their scope first.
 - File and command operations remain confined to an attached scope and their operation-specific policy.

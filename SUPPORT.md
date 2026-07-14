@@ -39,6 +39,6 @@ Please report security vulnerabilities privately. See [SECURITY.md](SECURITY.md)
 
 ## Operational Notes
 
-- CCCC is **local-first**. Rust runtime state lives under `CCCC_RUST_HOME` (default `~/.cccc-rust`), not in your repository.
+- CCCC is **local-first**. Rust runtime state lives under `CCCC_HOME` (default `~/.cccc`), not in your repository.
 - The daemon is the single source of truth. If something looks wrong, check `cccc daemon status` first.
 - For recovery procedures, see the [Operations Runbook](https://chesterra.github.io/cccc/guide/operations).

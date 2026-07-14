@@ -8,6 +8,8 @@ pub use actor::{
 };
 pub use event::Event;
 pub use ipc::{DaemonAddress, DaemonError, DaemonRequest, DaemonResponse, Transport};
+
+pub const RUST_DAEMON_COMPATIBILITY: &str = "cccc-rust-daemon-v2";
 pub use message::{Attachment, ChatMessageData, ChatStreamData, Reference};
 
 pub fn utc_now() -> String {

@@ -147,12 +147,36 @@ impl Session {
             .map(|output| output.page(before, limit))
     }
 
+    pub fn history_since(&self, after: u64, limit: usize) -> Result<HistoryPage, RuntimeError> {
+        self.output
+            .lock()
+            .map_err(|_| RuntimeError::Poisoned)
+            .map(|output| output.page_since(after, limit))
+    }
+
     pub fn clear(&self) -> Result<(), RuntimeError> {
         self.output
             .lock()
             .map_err(|_| RuntimeError::Poisoned)?
             .clear();
         Ok(())
+    }
+
+    pub fn bracketed_paste_enabled(&self) -> Result<bool, RuntimeError> {
+        self.output
+            .lock()
+            .map_err(|_| RuntimeError::Poisoned)
+            .map(|output| output.bracketed_paste_enabled())
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        if self.status.running {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+            self.status.running = false;
+        }
     }
 }
 

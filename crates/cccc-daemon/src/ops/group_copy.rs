@@ -83,7 +83,7 @@ fn package_bytes(home: &HomeLayout, request: &DaemonRequest) -> Result<Vec<u8>, 
     if !path.starts_with(tmp) || !path.is_file() {
         return Err(OpError::new(
             "invalid_args",
-            "package_path must be a staged file under CCCC_RUST_HOME/tmp",
+            "package_path must be a staged file under CCCC_HOME/tmp",
         ));
     }
     fs::read(path).map_err(OpError::io)

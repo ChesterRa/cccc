@@ -3,15 +3,17 @@
 ## Runtime Layout
 
 ```text
-CCCC_RUST_HOME=~/.cccc-rust
-~/.cccc-rust/.cccc-rust-v1
-~/.cccc-rust/daemon/ccccd.addr.json
-~/.cccc-rust/groups/<group_id>/group.yaml
-~/.cccc-rust/groups/<group_id>/ledger.jsonl
-~/.cccc-rust/groups/<group_id>/state/
+CCCC_HOME=~/.cccc
+~/.cccc/.cccc-rust-v1
+~/.cccc/daemon/ccccd.addr.json
+~/.cccc/groups/<group_id>/group.yaml
+~/.cccc/groups/<group_id>/ledger.jsonl
+~/.cccc/groups/<group_id>/state/
 ```
 
-Never set `CCCC_RUST_HOME` to `~/.cccc` or a child of it. The process rejects that configuration before initialization.
+Python and Rust use this same home. Stop the active daemon before switching implementations, and never run both daemons concurrently.
+
+`cccc daemon stop` terminates local actor runtime sessions before releasing the daemon lock. A Web process started by `cccc` observes daemon loss and exits instead of remaining bound with a broken API.
 
 ## Start And Health
 
@@ -47,14 +49,14 @@ Stop writers and archive the complete Rust Home:
 
 ```bash
 cccc daemon stop
-tar -C "$HOME" -czf "cccc-rust-backup-$(date +%Y%m%d-%H%M%S).tar.gz" .cccc-rust
+tar -C "$HOME" -czf "cccc-rust-backup-$(date +%Y%m%d-%H%M%S).tar.gz" .cccc
 ```
 
-Restore only into an empty directory, including `.cccc-rust-v1`. Do not merge a backup into a legacy home.
+Restore the complete archive while all CCCC daemons are stopped. Keep the `.cccc-rust-v1` marker with the rest of the home.
 
 ## Upgrade
 
-1. Back up `CCCC_RUST_HOME`.
+1. Back up `CCCC_HOME`.
 2. Download the new GitHub Release archive for the current platform.
 3. Replace all four binaries together.
 4. Run `cccc version`, `cccc doctor`, and `cccc status`.
@@ -107,4 +109,4 @@ scripts/build_package.sh
 docker build -f docker/Dockerfile .
 ```
 
-For a release candidate, also verify Linux, macOS, and Windows CI jobs and test that a forbidden legacy home fails without changing its modification time.
+For a release candidate, also verify Linux, macOS, and Windows CI jobs and test existing-home adoption without changing existing files.

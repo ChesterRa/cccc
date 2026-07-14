@@ -57,6 +57,11 @@ export function onAuthRequired(handler: () => void): void {
   authRequiredHandler = handler;
 }
 
+export function isAuthRequiredErrorCode(code: unknown): boolean {
+  const normalized = String(code || "").trim().toLowerCase();
+  return normalized === "unauthorized" || normalized === "auth_required";
+}
+
 function clearAllReadRequestCaches(): void {
   globalReadEpoch += 1;
   sharedReadRequests.clear();
@@ -747,7 +752,7 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
 
   try {
     const data = JSON.parse(text);
-    if (!data.ok && data.error?.code === "unauthorized") {
+    if (!data.ok && resp.status === 401 && isAuthRequiredErrorCode(data.error?.code)) {
       authRequiredHandler?.();
     }
     return normalizeApiResponse<T>(data);
@@ -793,7 +798,7 @@ export async function apiForm<T>(path: string, form: FormData, init?: RequestIni
 
   try {
     const data = JSON.parse(text);
-    if (!data.ok && data.error?.code === "unauthorized") {
+    if (!data.ok && resp.status === 401 && isAuthRequiredErrorCode(data.error?.code)) {
       authRequiredHandler?.();
     }
     return normalizeApiResponse<T>(data);

@@ -28,7 +28,7 @@ cccc im reject --key KEY [--group ID]
 cccc im revoke --chat-id ID [--thread-id N] [--group ID]
 ```
 
-Secrets should be supplied through environment variable names rather than literal values. Configuration is isolated per group under `CCCC_RUST_HOME`.
+Secrets should be supplied through environment variable names rather than literal values. Configuration is isolated per group under `CCCC_HOME`.
 
 ## Security
 

@@ -23,7 +23,7 @@ Important variables:
 
 | Variable | Container value | Purpose |
 |---|---|---|
-| `CCCC_RUST_HOME` | `/data` | Rust state volume |
+| `CCCC_HOME` | `/data` | Rust state volume |
 | `CCCC_WEB_HOST` | `0.0.0.0` | Container Web bind |
 | `CCCC_WEB_PORT` | `8848` | Container Web port |
 | `CCCC_DAEMON_TRANSPORT` | `tcp` | Container daemon transport |

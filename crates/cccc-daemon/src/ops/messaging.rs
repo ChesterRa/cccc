@@ -5,7 +5,7 @@ use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
-use crate::ops::messaging_inbox;
+use crate::ops::{actor_delivery, messaging_inbox};
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -175,14 +175,13 @@ fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
         data.entry("reply_required").or_insert(Value::Bool(false));
     }
     let event = append(home, &group.group_id, kind, &by, data)?;
-    object(json!({"event": event}))
+    let delivery = actor_delivery::dispatch(home, &group, &event);
+    object(json!({"event": event, "delivery": delivery}))
 }
 
 fn tracked_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let response = send(home, request, "chat.message")?;
-    object(
-        json!({"event": response.get("event"), "delivery": {"accepted": true, "state": "queued"}}),
-    )
+    object(json!({"event": response.get("event"), "delivery": response.get("delivery")}))
 }
 
 fn slash_skill_dispatch(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

@@ -65,8 +65,6 @@ export default defineConfig({
           if (/[\\/]node_modules[\\/](i18next|react-i18next)[\\/]/.test(id)) return "i18n";
           // Drag-and-drop
           if (/[\\/]node_modules[\\/]@dnd-kit[\\/]/.test(id)) return "dnd";
-          // Floating UI
-          if (/[\\/]node_modules[\\/]@floating-ui[\\/]/.test(id)) return "floating-ui";
           // Remaining third-party deps
           return "vendor";
         },
@@ -74,6 +72,14 @@ export default defineConfig({
     },
   },
   server: {
+    host: "127.0.0.1",
+    port: 5555,
+    strictPort: true,
+    hmr: {
+      host: "127.0.0.1",
+      protocol: "ws",
+      clientPort: 5555,
+    },
     proxy: {
       "/api": {
         target: backendTarget,

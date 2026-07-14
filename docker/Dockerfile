@@ -59,7 +59,7 @@ RUN useradd -m -u 1000 -s /bin/bash cccc \
 USER cccc
 WORKDIR /workspace
 ENV HOME=/home/cccc
-ENV CCCC_RUST_HOME=/data
+ENV CCCC_HOME=/data
 ENV CCCC_DAEMON_TRANSPORT=tcp
 ENV CCCC_DAEMON_HOST=127.0.0.1
 ENV CCCC_DAEMON_PORT=9765

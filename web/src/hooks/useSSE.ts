@@ -899,7 +899,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
     const replay = options?.replay !== false;
     const params = new URLSearchParams();
-    if (!replay) params.set("replay", "0");
+    if (!replay) params.set("replay", "false");
     const headlessPath = `/api/v1/groups/${encodeURIComponent(groupId)}/headless/stream${params.toString() ? `?${params.toString()}` : ""}`;
     const headlessEs = new EventSource(api.withAuthToken(headlessPath));
     const headlessToken = sseRegistryRef.current.set("headless", groupId, headlessEs);

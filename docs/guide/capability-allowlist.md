@@ -24,7 +24,7 @@ capability_allowlist_reset
 
 Global policy mutation requires `by=user`. Group block/unblock follows role permissions. Blocking a capability removes its active group binding.
 
-Policy and imported capability state live under `CCCC_RUST_HOME`; there is no legacy `CCCC_HOME` overlay in the Rust implementation.
+Policy and imported capability state live under the shared `CCCC_HOME`.
 
 ## Recommended Flow
 

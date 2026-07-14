@@ -2,14 +2,22 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use cccc_core::access_tokens::{AccessToken, AccessTokenStore, token_id};
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde_json::{Value, json};
 
 use crate::AppState;
 
 pub fn mask(token: &AccessToken) -> Value {
     let raw = &token.token;
-    let preview = if raw.len() > 8 {
-        format!("{}...{}", &raw[..4], &raw[raw.len() - 4..])
+    let characters = raw.chars().collect::<Vec<_>>();
+    let preview = if characters.len() > 8 {
+        format!(
+            "{}...{}",
+            characters[..4].iter().collect::<String>(),
+            characters[characters.len() - 4..]
+                .iter()
+                .collect::<String>()
+        )
     } else {
         "****".into()
     };
@@ -41,8 +49,17 @@ pub fn cookie(token: &str, secure: bool) -> String {
     } else {
         "SameSite=Lax"
     };
-    format!("cccc_access_token={token}; Path=/; HttpOnly; {policy}")
+    let encoded = utf8_percent_encode(token, COOKIE_VALUE_ENCODE_SET);
+    format!("cccc_access_token={encoded}; Path=/; HttpOnly; {policy}")
 }
+
+const COOKIE_VALUE_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b',')
+    .add(b';')
+    .add(b'\\')
+    .add(b'%');
 
 pub fn server_error(error_value: impl std::fmt::Display) -> Response {
     error(
@@ -58,4 +75,30 @@ pub fn error(status: StatusCode, code: &str, message: &str) -> Response {
         Json(json!({"ok":false,"error":{"code":code,"message":message,"details":{}}})),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cookie, mask};
+    use cccc_core::access_tokens::AccessToken;
+
+    #[test]
+    fn masks_unicode_tokens_by_characters() {
+        let token = AccessToken {
+            token: "令牌甲乙丙丁戊己庚辛壬癸".into(),
+            user_id: "user".into(),
+            allowed_groups: Vec::new(),
+            is_admin: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        assert_eq!(mask(&token)["token_preview"], "令牌甲乙...庚辛壬癸");
+    }
+
+    #[test]
+    fn cookie_percent_encodes_unsafe_token_characters() {
+        let value = cookie("token;含 空格", false);
+        assert!(value.starts_with("cccc_access_token=token%3B"));
+        assert!(!value.contains("含 空格"));
+    }
 }

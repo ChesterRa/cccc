@@ -4,7 +4,10 @@ mod output;
 mod session;
 
 pub use command::{default_command, detect_runtimes};
-pub use manager::{clear, history, reap, resize, start, status, stop, write};
+pub use manager::{
+    bracketed_paste_enabled, clear, history, history_since, reap, resize, start, status, stop,
+    stop_all, write,
+};
 pub use session::{LaunchSpec, SessionStatus};
 
 #[derive(Debug, thiserror::Error)]

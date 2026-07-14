@@ -10,10 +10,6 @@ use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "group_settings_update" => group_settings(home, request),
-        "group_automation_update" => automation_update(home, request),
-        "group_automation_state" => automation_state(home, request),
-        "group_automation_manage" => automation_manage(home, request),
-        "group_automation_reset_baseline" => automation_reset(home, request),
         "observability_get" => global_get(home, "observability"),
         "observability_update" => global_update(home, request, "observability"),
         "branding_get" => global_get(home, "branding"),
@@ -25,7 +21,8 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
 fn group_settings(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load_group(home, request)?;
     authorize(&group, request)?;
-    let patch = patch(request)?;
+    let mut patch = patch(request)?;
+    patch.remove("by");
     let settings_value = store(home)?
         .mutate(&group.group_id, |doc| {
             let value = doc.extra.entry("settings").or_insert_with(|| json!({}));
@@ -44,62 +41,6 @@ fn group_settings(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         json!({"patch": patch}),
     )?;
     object(json!({"settings": settings_value}))
-}
-
-fn automation_update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group = load_group(home, request)?;
-    authorize(&group, request)?;
-    let patch = patch(request)?;
-    let automation = store(home)?
-        .mutate(&group.group_id, |doc| {
-            settings::merge(&mut doc.automation, &patch);
-            Ok(doc.automation.clone())
-        })
-        .map_err(OpError::io)?;
-    append(
-        home,
-        &group.group_id,
-        "group.automation_update",
-        request,
-        json!({"patch": patch}),
-    )?;
-    object(json!({"automation": automation}))
-}
-
-fn automation_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group = load_group(home, request)?;
-    object(json!({"automation": group.automation}))
-}
-
-fn automation_manage(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group = load_group(home, request)?;
-    authorize(&group, request)?;
-    let action = required_arg(request, "action")?;
-    let key = string_arg(request, "key").unwrap_or_else(|| "enabled".into());
-    let value = request
-        .args
-        .get("value")
-        .cloned()
-        .unwrap_or_else(|| Value::Bool(action != "disable"));
-    let automation = store(home)?
-        .mutate(&group.group_id, |doc| {
-            doc.automation.insert(key.clone(), value.clone());
-            Ok(doc.automation.clone())
-        })
-        .map_err(OpError::io)?;
-    object(json!({"automation": automation, "action": action}))
-}
-
-fn automation_reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group = load_group(home, request)?;
-    authorize(&group, request)?;
-    store(home)?
-        .mutate(&group.group_id, |doc| {
-            doc.automation.clear();
-            Ok(())
-        })
-        .map_err(OpError::io)?;
-    object(json!({"automation": {}, "reset": true}))
 }
 
 fn global_get(home: &HomeLayout, key: &str) -> OpResult {

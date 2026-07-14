@@ -15,7 +15,7 @@ browser / CLI / MCP / remote connector
                  |
  group.yaml / ledger.jsonl / state / blobs / memory
                  |
-          CCCC_RUST_HOME only
+          CCCC_HOME only
 ```
 
 `cccc` starts an embedded daemon when needed and serves the Web application. `ccccd`, `cccc-mcp`, and `cccc-web` are also available as independent entrypoints.
@@ -37,10 +37,10 @@ Dependencies point inward toward contracts and core. Ports do not write group fi
 
 ## Rust Home
 
-`HomeLayout` resolves only `CCCC_RUST_HOME`, defaulting to `~/.cccc-rust`.
+`HomeLayout` resolves only `CCCC_HOME`, defaulting to `~/.cccc`.
 
 ```text
-~/.cccc-rust/
+~/.cccc/
   .cccc-rust-v1
   registry.json
   settings.json
@@ -55,7 +55,7 @@ Dependencies point inward toward contracts and core. Ports do not write group fi
   browser-profiles/
 ```
 
-Initialization rejects `~/.cccc`, any descendant of it, and a non-empty unmarked custom home. This is a hard boundary, not a migration hint.
+Initialization adopts an existing CCCC layout in `~/.cccc` and adds the Rust compatibility marker without replacing existing files. A non-empty custom directory that has neither a CCCC marker, registry, nor groups directory is rejected.
 
 ## Group And Ledger
 
@@ -115,7 +115,7 @@ The daemon serializes IPC requests. Core JSON/YAML writers use temporary-file re
 
 ## Security Boundaries
 
-- Rust Home cannot overlap legacy Python data.
+- Python and Rust share the CCCC storage contracts; only one daemon may write `CCCC_HOME` at a time.
 - Scope-local file operations reject absolute paths, `..`, and symlink escapes.
 - Web Model connectors cannot change their bound group.
 - Group Bridge disables HTTP redirects, uses bearer credentials, validates source group identity, and filters MCP tools by trust level.

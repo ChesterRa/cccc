@@ -188,7 +188,7 @@ pub fn import(
         let root = Path::new(workspace_root.trim()).canonicalize()?;
         if root == store.home().root() {
             return Err(io::Error::other(
-                "workspace_root must be a project directory, not CCCC_RUST_HOME",
+                "workspace_root must be a project directory, not CCCC_HOME",
             ));
         }
         let mut detected = scope::detect(&root)?;

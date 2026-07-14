@@ -137,7 +137,7 @@ Embedded browser viewing uses a localhost VNC projection when the session is run
 The login and delivery paths share this profile:
 
 ```text
-CCCC_RUST_HOME/browser-profiles/web-model/<group_id>/<actor_id>
+CCCC_HOME/browser-profiles/web-model/<group_id>/<actor_id>
 ```
 
 Enable browser delivery with:

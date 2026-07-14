@@ -83,7 +83,7 @@
   "enterCommand": "输入命令…",
   "default": "默认：",
   "secretsWriteOnly": "密钥（只写）",
-  "secretsStoredLocally": "存储在本地 <1>CCCC_RUST_HOME/state/…</1> 下（不在组账本中）。值不会再次显示。",
+  "secretsStoredLocally": "存储在本地 <1>CCCC_HOME/state/…</1> 下（不在组账本中）。值不会再次显示。",
   "secretsFormat": "支持 <1>KEY=VALUE</1>，也支持直接粘贴 <2>export / set / $env:</2> 形式（引号/分号/行内注释）。",
   "adding": "添加中…",
   "addAgent": "添加智能体",

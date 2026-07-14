@@ -69,7 +69,7 @@
     "duplicateSecretsHint": "「{{source}}」から複製中: ここに表示される変数キーは保存時に新しいプロファイルへコピーされます。",
     "envPlaceholder": "PUBLIC_KEY=value",
     "secrets": "機密環境変数",
-    "secretsHint": "書き込み専用で、ローカルの CCCC_RUST_HOME/state/secrets に保存されます。キーにホバーするとマスク表示を確認できます。",
+    "secretsHint": "書き込み専用で、ローカルの CCCC_HOME/state/secrets に保存されます。キーにホバーするとマスク表示を確認できます。",
     "noSecrets": "変数は未設定です。",
     "setSecrets": "変数を設定 / 更新",
     "setSecretsPlaceholder": "SECRET_KEY=value",
@@ -608,7 +608,7 @@
   "automation": {
     "title": "自動化",
     "description": "組み込み自動化とスケジュール済みルールを構成します。設定は次の場所に保存されます",
-    "configPathFallback": "CCCC_RUST_HOME/.../group.yaml",
+    "configPathFallback": "CCCC_HOME/.../group.yaml",
     "openFromGroup": "グループからこのタブを開きます。",
     "rulesTitle": "ルールとスニペット",
     "rulesDescription": "スケジュールされたリマインダー、操作アクション、再利用可能なメッセージスニペットを定義します。",

@@ -12,7 +12,7 @@ cccc
 
 Open http://127.0.0.1:8848/ in your browser.
 
-`cccc` owns the default local app session: it starts the Rust daemon and Web together. A daemon is resolved through the selected `CCCC_RUST_HOME`; a second daemon cannot take the same lock.
+`cccc` owns the default local app session: it starts the Rust daemon and Web together. A daemon is resolved through the selected `CCCC_HOME`; a second daemon cannot take the same lock.
 
 ## Interface Overview
 
