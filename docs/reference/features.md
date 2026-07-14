@@ -226,7 +226,7 @@ Low-level delivery throttling via `min_interval_seconds` remains supported in da
 
 CCCC supports per-actor private environment variables for runtime customization (different model/API stacks per actor).
 
-- Stored in runtime state under `CCCC_HOME/state/secrets/actors/`
+- Stored in group runtime state under `CCCC_RUST_HOME/groups/<group_id>/state/`
 - Not written into the group ledger
 - Not included in Copy Groups packages
 - Visible as key metadata only (values are never returned by read APIs)

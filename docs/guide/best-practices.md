@@ -28,79 +28,11 @@ What we're working on right now.
 
 Agents read this via `cccc_project_info` to understand context.
 
-### Customize the Help Playbook
+### Use Project Guidance
 
-The help playbook is the collaboration contract that agents follow. You can customize it per-group.
+The Rust MCP server returns its packaged collaboration playbook through `cccc_help`. Put repository-specific rules in `AGENTS.md`, `CLAUDE.md`, or `PROJECT.md` inside the attached scope. `cccc_project_info` reads the project summary, while the agent runtime applies its native guidance files.
 
-#### File Priority
-
-CCCC loads help content with the following priority:
-
-1. **Group override (CCCC_HOME)**: `CCCC_HOME/groups/<group_id>/prompts/CCCC_HELP.md` (highest priority)
-2. **Built-in default**: `cccc.resources/cccc-help.md` (fallback)
-
-To customize, edit the group prompt override (recommended: Web UI → Settings → Guidance).
-
-You can also locate the file path from the Web UI (it shows the exact override path per group).
-
-#### Conditional Content Markers
-
-You can show different content to different roles using conditional markers:
-
-```markdown
-# My Project Help
-
-## General Rules (all roles see this)
-- Follow the coding standards
-- Write tests for new features
-
-## @role: foreman
-### Foreman-Only Section
-- You are responsible for coordinating the team
-- Make final decisions on architecture
-
-## @role: peer
-### Peer-Only Section
-- Focus on your assigned tasks
-- Report blockers to foreman
-
-## @actor: impl-agent
-### This Section Only Visible to impl-agent
-- You handle the core implementation
-```
-
-**Marker syntax:**
-- `## @role: foreman` - Only foreman sees this section
-- `## @role: peer` - Only peers see this section
-- `## @actor: <actor_id>` - Only the specific actor sees this section
-- Sections without markers are the shared/common content visible to everyone
-
-In the Web structured Help editor, these untagged sections are surfaced as `Common Notes`, while the tagged blocks are surfaced as role sections and actor notes.
-
-#### How Agents Consume Help
-
-Agents access help content through MCP tools:
-
-1. **`cccc_bootstrap`** - Returns the lean recovery packet (`session`, `recovery`, `inbox_preview`, `memory_recall_gate`, `next_calls`)
-2. **`cccc_help`** - Returns help content on demand
-
-The on-demand help payload is returned as:
-```json
-{
-  "markdown": "<filtered content based on role/actor>",
-  "source": "CCCC_HOME/.../prompts/CCCC_HELP.md or cccc.resources/cccc-help.md"
-}
-```
-
-Agents read the markdown and follow the rules semantically. There's no special parsing - the content is written in clear, imperative language that AI understands naturally.
-
-#### Tips for Effective Help Content
-
-- Use imperative language: "MUST use MCP" instead of "should consider using MCP"
-- Be specific: "Reply within 30 seconds" instead of "respond quickly"
-- Structure with clear headings for easy navigation
-- Include examples for complex workflows
-- Keep sections focused - one topic per section
+Keep guidance imperative, scoped, and testable. Avoid duplicating tool documentation or temporary task state in permanent project instructions.
 
 ### Choose the Right Agent Combination
 

@@ -1,99 +1,37 @@
-# Capability Allowlist (A1/A2)
+# Capability Governance
 
-This guide documents the release behavior of capability governance.
+The Rust capability store combines built-in packs, imported capsules, per-group bindings, visibility, and explicit block state.
 
-## 1. Files and Merge Model
+## Operations
 
-Allowlist policy is always composed from two layers:
+```text
+capability_search
+capability_state
+capability_overview
+capability_enable
+capability_visibility
+capability_import
+capability_install_target
+capability_tool_call
+capability_block
+capability_uninstall
+capability_source_delete
+capability_allowlist_get
+capability_allowlist_validate
+capability_allowlist_update
+capability_allowlist_reset
+```
 
-1. packaged default: `src/cccc/resources/capability-allowlist.default.yaml`
-2. user overlay: `CCCC_HOME/config/capability-allowlist.user.yaml`
+Global policy mutation requires `by=user`. Group block/unblock follows role permissions. Blocking a capability removes its active group binding.
 
-Effective policy is deterministic merge:
+Policy and imported capability state live under `CCCC_RUST_HOME`; there is no legacy `CCCC_HOME` overlay in the Rust implementation.
 
-- `effective = merge(default, overlay)`
-- mapping keys are merged recursively
-- non-mapping values (including lists) are replaced by overlay value
+## Recommended Flow
 
-No env/path override compatibility remains. Use overlay APIs only.
+1. Search or inspect capability state.
+2. Validate the intended policy change.
+3. Apply it with the expected revision when provided.
+4. Enable only the capability needed for the current group.
+5. Re-list MCP tools after changing visibility or bindings.
 
-## 2. Policy Levels
-
-Supported level values:
-
-1. `indexed`: kept in local catalog, hidden from normal discovery/exposure
-2. `mounted`: searchable/discoverable, can be enabled on demand
-3. `enabled`: mounted + preferred baseline intent (does not auto-mutate runtime state by itself)
-4. `pinned`: enabled + long-lived baseline intent (typically applied via actor-profile/role defaults)
-
-Runtime mutation still happens only through explicit enable flows (`capability_enable` / `capability_use`) or actor profile default application on actor start.
-
-Release baseline policy:
-
-1. third-party sources are discoverable by default (`mounted`)
-2. external capability sources default to usable path (`mounted`) in normal mode
-3. conservative users can switch external capability sources back to `indexed` through `external_capability_safety_mode`
-4. runtime flow has no approval gate; enable path is one-step when `enable_supported=true`
-5. `blocked` is explicit deny state (policy/source/runtime blocklist), reserved for clear deny signals
-
-Runtime blocklist model:
-
-1. `scope=group`: foreman or user can block/unblock capabilities for this group
-2. `scope=global`: only user can block/unblock capabilities globally
-3. block action immediately revokes bindings and runtime tool visibility (relist/reconnect required)
-
-## 3. Runtime Discovery Model
-
-Runtime path does not run daemon-side periodic source sync loops.
-
-Discovery flow:
-
-1. search local curated catalog first
-2. optionally augment from remote fallback when local results are insufficient:
-   - MCP: official MCP Registry
-   - skill: GitHub / AgentSkills-aligned / SkillsMP / ClawHub remote search
-3. cache accepted remote hits into local catalog
-
-This keeps runtime stable while preserving long-tail discoverability.
-
-## 4. Daemon Ops (Global Overlay)
-
-Use these IPC ops for allowlist governance:
-
-1. `capability_allowlist_get`
-2. `capability_allowlist_validate`
-3. `capability_allowlist_update`
-4. `capability_allowlist_reset`
-
-Update/reset require `by="user"`.
-
-`capability_allowlist_update` supports optimistic concurrency via `expected_revision`.
-
-## 5. Web API Endpoints
-
-Web routes map to daemon ops:
-
-1. `GET /api/v1/capabilities/allowlist`
-2. `POST /api/v1/capabilities/allowlist/validate`
-3. `PUT /api/v1/capabilities/allowlist`
-4. `DELETE /api/v1/capabilities/allowlist`
-
-## 6. External Capability Safety Mode
-
-`capability_allowlist_get` / `validate` / `update` expose `external_capability_safety_mode` as a thin semantic view over the default posture for external capability sources:
-
-1. `normal` => external capability sources default to `mounted`
-2. `conservative` => external capability sources default to `indexed`
-
-Built-in packs are unaffected. Per-source and per-capability overrides can still be stricter.
-
-## 7. Recommended Workflow
-
-1. call `capability_allowlist_get`
-2. inspect `external_capability_safety_mode` and current revision
-3. prepare patch (or full replacement)
-4. call `capability_allowlist_validate`
-5. apply with `capability_allowlist_update(expected_revision=...)`
-6. if mismatch, refetch and retry
-
-Use `capability_allowlist_reset` to drop overlay and return to packaged default.
+Use reset to return to the packaged Rust defaults.

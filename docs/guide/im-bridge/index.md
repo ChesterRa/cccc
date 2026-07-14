@@ -1,89 +1,41 @@
-# IM Bridge Overview
+# IM Bridge
 
-Bridge your CCCC working group to popular IM platforms for mobile access.
+The Rust control plane stores configuration and chat authorization state for Telegram, Slack, Discord, Feishu/Lark, DingTalk, WeCom, and Weixin.
 
-## What is IM Bridge?
+## Status Semantics
 
-The IM Bridge allows you to:
+| State | Meaning |
+|---|---|
+| configured | Required platform fields were accepted and stored in Rust Home |
+| enabled | The group requested the bridge to run |
+| running | A real network adapter is active |
+| authorized | A chat passed the explicit pairing/subscription flow |
 
-- Send messages to agents from your phone
-- Receive updates and notifications
-- Control the group with slash commands
-- Share files and attachments
+The Rust package does not report `running=true` merely because configuration exists. Platform network adapters must be available and validated independently.
 
-## Supported Platforms
-
-| Platform | Status | Best For |
-|----------|--------|----------|
-| [Telegram](./telegram) | ✅ | Personal use, quick setup |
-| [Slack](./slack) | ✅ | Team collaboration |
-| [Discord](./discord) | ✅ | Community/gaming |
-| [Feishu/Lark](./feishu) | ✅ | Enterprise (China/Global) |
-| [DingTalk](./dingtalk) | ✅ | Enterprise (China) — AI Card Streaming supported |
-| [WeCom](./wecom) | ✅ | Enterprise (China) — Long connection Bot ID / Secret flow |
-| Weixin / WeChat | ✅ | Personal and group chat access via the Python Weixin adapter |
-
-## Design Principles
-
-- **1 Group = 1 Bot**: Each working group connects to one bot instance for simplicity and isolation
-- **Explicit subscription**: Users must `/subscribe` before receiving messages
-- **Thin ports**: IM bridges forward messages and commands; the daemon remains the single source of truth
-
-## Common Commands
-
-Once subscribed to any platform, these commands work universally:
-
-| Command | Description |
-|---------|-------------|
-| `/send <message>` | Send to foreman (default) |
-| `/send @<actor> <message>` | Send to specific actor |
-| `/send @all <message>` | Send to all agents |
-| `/send @peers <message>` | Send to non-foreman agents |
-| `/subscribe` | Start receiving messages |
-| `/unsubscribe` | Stop receiving messages |
-| `/status` | Show group status |
-| `/pause` | Pause message delivery |
-| `/resume` | Resume message delivery |
-| `/verbose` | Toggle verbose mode |
-| `/help` | Show help |
-
-::: tip Implicit Send
-On all platforms, @mentioning the bot (in groups) or sending a direct message with plain text is automatically treated as `/send` to the **foreman**. You only need the explicit `/send` command when targeting specific agents.
-:::
-
-Reserve `/send @all <message>` for true broadcasts, announcements, or urgent shared constraints. Use plain text, `/send @foreman <message>`, or a specific actor target for routine coordination.
-
-## CLI Commands
+## CLI
 
 ```bash
-# Configure (platform-specific, see each guide)
-cccc im set <platform> --token-env <ENV_VAR>
-
-# Control
-cccc im start        # Start IM bridge
-cccc im stop         # Stop IM bridge
-cccc im status       # Check bridge status
-cccc im logs         # View logs
-cccc im logs -f      # Follow logs
+cccc im set <platform> [credential options] [--group ID]
+cccc im config [--group ID]
+cccc im start [--group ID]
+cccc im stop [--group ID]
+cccc im status [--group ID]
+cccc im pending [--group ID]
+cccc im bind --key KEY [--group ID]
+cccc im authorized [--group ID]
+cccc im reject --key KEY [--group ID]
+cccc im revoke --chat-id ID [--thread-id N] [--group ID]
 ```
 
-::: tip WeCom Note
-WeCom currently uses the same start/stop/status CLI controls, but credentials are configured through the Web UI rather than `cccc im set`.
-:::
+Secrets should be supplied through environment variable names rather than literal values. Configuration is isolated per group under `CCCC_RUST_HOME`.
 
-## Quick Start
+## Security
 
-1. Choose a platform from the list above
-2. Follow the setup guide to create a bot
-3. Configure CCCC with the bot credentials
-4. Start the bridge and subscribe in your chat
+- One configuration belongs to one group.
+- Pending chats require explicit approval.
+- Revocation removes the chat from the authorized list.
+- The daemon remains the collaboration source of truth; adapters are transport ports.
+- Test both inbound and outbound delivery before using an IM platform for operational control.
 
-## Next Steps
-
-- [Telegram Setup](./telegram) - Quick personal setup
-- [Slack Setup](./slack) - Team collaboration
-- [Discord Setup](./discord) - Community access
-- [Feishu/Lark Setup](./feishu) - Enterprise (China/Global)
-- [DingTalk Setup](./dingtalk) - Enterprise (China)
-- [WeCom Setup](./wecom) - Enterprise (China)
-- Weixin / WeChat setup is configured from the Web IM Bridge settings surface.
+The platform-specific pages in this directory describe provider-side bot creation. Treat any adapter-specific command in an older page as legacy until the Rust status endpoint reports a real worker.

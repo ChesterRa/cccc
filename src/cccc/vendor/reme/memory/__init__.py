@@ -1,1 +1,0 @@
-"""Vendored ReMe memory subset."""

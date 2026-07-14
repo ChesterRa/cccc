@@ -1,0 +1,28 @@
+[package]
+name = "cccc-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cccc-client = { path = "../cccc-client" }
+cccc-contracts = { path = "../cccc-contracts" }
+cccc-core = { path = "../cccc-core" }
+cccc-daemon = { path = "../cccc-daemon" }
+cccc-mcp = { path = "../cccc-mcp" }
+cccc-runtime = { path = "../cccc-runtime" }
+cccc-web = { path = "../cccc-web" }
+clap.workspace = true
+serde_json.workspace = true
+shell-words.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "cccc"
+path = "src/main.rs"

@@ -90,10 +90,10 @@
   "recoveryBrowserBody": "If another browser or tab is already signed in, open Settings > Web Access there and create a new Admin Access Token.",
   "recoveryLocalTitle": "Local recovery on this machine",
   "recoveryLocalStep1": "Open a terminal on the machine that is running CCCC.",
-  "recoveryLocalStep2": "Back up or remove {{path}}. If you use a custom CCCC_HOME, use CCCC_HOME/access_tokens.yaml instead.",
+  "recoveryLocalStep2": "Back up or remove {{path}}. If you use a custom CCCC_RUST_HOME, use CCCC_RUST_HOME/access_tokens.yaml instead.",
   "recoveryLocalStep3": "Refresh this page. Web should return to open access if no Access Tokens remain.",
   "recoveryLocalStep4": "Immediately create a new Admin Access Token in Web Access.",
   "recoveryRemoteTitle": "If you are on a remote URL",
-  "recoveryRemoteBody": "Use a local terminal on the machine running CCCC, then back up or remove {{path}} (or CCCC_HOME/access_tokens.yaml if customized). After that, reload this page and create a new Admin Access Token.",
+  "recoveryRemoteBody": "Use a local terminal on the machine running CCCC, then back up or remove {{path}} (or CCCC_RUST_HOME/access_tokens.yaml if customized). After that, reload this page and create a new Admin Access Token.",
   "recoverySecurityNote": "This is a local administrator recovery path. It does not provide any in-page reset action."
 }

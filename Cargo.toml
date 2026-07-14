@@ -1,0 +1,59 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/cccc-contracts",
+  "crates/cccc-core",
+  "crates/cccc-runtime",
+  "crates/cccc-client",
+  "crates/cccc-daemon",
+  "crates/cccc-mcp",
+  "crates/cccc-web",
+  "crates/cccc-cli",
+]
+
+[workspace.package]
+version = "0.5.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/ChesterRa/cccc"
+rust-version = "1.88"
+
+[workspace.dependencies]
+anyhow = "1.0"
+async-stream = "0.3"
+axum = { version = "0.8", features = ["form", "json", "multipart", "ws"] }
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+chromiumoxide = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+directories = "6.0"
+fs2 = "0.4"
+futures-util = "0.3"
+http-body-util = "0.1"
+portable-pty = "0.9"
+regex = "1.11"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rust-embed = "8.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+sha2 = "0.10"
+shell-words = "1.1"
+tempfile = "3.20"
+thiserror = "2.0"
+tokio = { version = "1.47", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+tower = "0.5"
+mime_guess = "2.0"
+uuid = { version = "1.17", features = ["v4", "serde"] }
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"

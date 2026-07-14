@@ -1,0 +1,28 @@
+[package]
+name = "cccc-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+cccc-contracts = { path = "../cccc-contracts" }
+chrono.workspace = true
+directories.workspace = true
+fs2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+mime_guess.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -69,7 +69,7 @@
     "duplicateSecretsHint": "正在从“{{source}}”复制：这里显示来源变量键，保存后会复制到新配置。",
     "envPlaceholder": "PUBLIC_KEY=value",
     "secrets": "密钥环境变量",
-    "secretsHint": "只写并保存在本机 CCCC_HOME/state/secrets 下。鼠标悬停键名可查看脱敏值。",
+    "secretsHint": "只写并保存在本机 CCCC_RUST_HOME/state/secrets 下。鼠标悬停键名可查看脱敏值。",
     "noSecrets": "未配置变量。",
     "setSecrets": "设置 / 更新变量",
     "setSecretsPlaceholder": "SECRET_KEY=value",
@@ -608,7 +608,7 @@
   "automation": {
     "title": "自动化",
     "description": "配置内建自动化和定时规则。设置存储在",
-    "configPathFallback": "CCCC_HOME/…/group.yaml",
+    "configPathFallback": "CCCC_RUST_HOME/…/group.yaml",
     "openFromGroup": "请从工作组中打开此标签页。",
     "rulesTitle": "规则与模板",
     "rulesDescription": "定义定时提醒、操作动作以及可复用的消息模板。",
@@ -695,7 +695,7 @@
     "copiedLines": "已复制最后 {{n}} 行",
     "failedToLoadTranscript": "加载终端日志失败",
     "failedToClearTranscript": "清除终端日志失败",
-    "resetGuidanceConfirm": "重置 {{kind}}？这将删除 CCCC_HOME 下的 {{filename}} 覆盖文件。此操作无法撤销。",
+    "resetGuidanceConfirm": "重置 {{kind}}？这将删除已绑定项目作用域中的 {{filename}}。此操作无法撤销。",
     "removeRegistryConfirm": "从注册表中移除 {{count}} 个缺失的工作组条目？"
   },
   "policies": {
@@ -985,7 +985,7 @@
   },
   "guidance": {
     "openFromGroup": "请从工作组中打开此标签页。",
-    "overridesHint": "引导覆盖存储在 <0>CCCC_HOME</0> 下（按工作组）。",
+    "overridesHint": "引导文件存储在已绑定的项目作用域中。",
     "preambleTitle": "启动引导（Preamble）",
     "preambleHint": "在启动/重启后的首次投递前自动注入。",
     "helpTitle": "帮助（参考）",
@@ -1003,7 +1003,7 @@
     "failedToSave": "保存 {{kind}} 失败",
     "failedToReset": "重置 {{kind}} 失败",
     "expandTitle": "打开全屏编辑器",
-    "saveOverrideTitle": "保存覆盖到 CCCC_HOME",
+    "saveOverrideTitle": "保存引导文件到已绑定项目作用域",
     "helpEditorTitle": "帮助编辑器",
     "helpEditorHint": "结构化模式编辑通用/角色/actor 提示词，Raw 模式保留整份 Markdown 的完全控制。",
     "structuredView": "结构化",
@@ -1026,7 +1026,7 @@
     "orphanActorNotePlaceholder": "这里是遗留给已不存在 actor 的提示词，你可以保留或清理……",
     "scopedNoteConfigured": "已配置",
     "unknownRole": "未知角色",
-    "noScopeWarning": "这个工作组目前还没有绑定 scope。由于 guidance override 是存放在 CCCC_HOME 下的，所以仍然可以工作；但依赖仓库作用域的功能在绑定 scope 之前可能不可用。"
+    "noScopeWarning": "请先绑定项目作用域，再读取或保存引导文件。"
   },
   "copyGroups": {
     "openFromGroup": "请从工作组中打开此标签页。",

@@ -284,7 +284,7 @@ cccc im start
 CCCC currently supports:
 
 - Outbound messages via REST APIs
-- Inbound messages via persistent connection (Python `lark-oapi`)
+- Inbound messages require an available Rust platform adapter; configuration state alone is not a live connection.
 
 Webhook callbacks (developer server URL), message cards, and encryption settings are not configured through CCCC at the moment.
 

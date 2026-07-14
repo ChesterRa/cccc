@@ -153,7 +153,7 @@ Current limitations:
 
 The adapter implementation lives in:
 
-- `src/cccc/ports/im/adapters/wecom.py`
+- Rust adapter availability is reported by `cccc im status`; configuration alone is not a live connection.
 
 ## Troubleshooting
 

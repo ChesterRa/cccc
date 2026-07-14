@@ -69,7 +69,7 @@
     "duplicateSecretsHint": "Duplicating from \"{{source}}\": existing variable keys are shown here and will be copied on save.",
     "envPlaceholder": "PUBLIC_KEY=value",
     "secrets": "Secret Environment Variables",
-    "secretsHint": "Write-only and stored locally under CCCC_HOME/state/secrets. Hover configured keys to preview masked values.",
+    "secretsHint": "Write-only and stored locally under CCCC_RUST_HOME/state/secrets. Hover configured keys to preview masked values.",
     "noSecrets": "No variables configured.",
     "setSecrets": "Set / Update variables",
     "setSecretsPlaceholder": "SECRET_KEY=value",
@@ -608,7 +608,7 @@
   "automation": {
     "title": "Automation",
     "description": "Configure built-in automation and scheduled rules. Settings are stored in",
-    "configPathFallback": "CCCC_HOME/.../group.yaml",
+    "configPathFallback": "CCCC_RUST_HOME/.../group.yaml",
     "openFromGroup": "Open this tab from a group.",
     "rulesTitle": "Rules & Snippets",
     "rulesDescription": "Define scheduled reminders, operational actions, and reusable message snippets.",
@@ -695,7 +695,7 @@
     "copiedLines": "Copied last {{n}} lines",
     "failedToLoadTranscript": "Failed to load terminal transcript",
     "failedToClearTranscript": "Failed to clear terminal transcript",
-    "resetGuidanceConfirm": "Reset {{kind}}? This will delete {{filename}} override under CCCC_HOME. This cannot be undone.",
+    "resetGuidanceConfirm": "Reset {{kind}}? This will delete {{filename}} from the attached project scope. This cannot be undone.",
     "removeRegistryConfirm": "Remove {{count}} missing group entries from registry?"
   },
   "policies": {
@@ -985,7 +985,7 @@
   },
   "guidance": {
     "openFromGroup": "Open this tab from a group.",
-    "overridesHint": "Guidance overrides are stored under <0>CCCC_HOME</0> (per-group).",
+    "overridesHint": "Guidance files are stored in the attached project scope.",
     "preambleTitle": "Bootstrap (Preamble)",
     "preambleHint": "Injected automatically before the first delivery after start/restart.",
     "helpTitle": "Help (Reference)",
@@ -1003,7 +1003,7 @@
     "failedToSave": "Failed to save {{kind}}",
     "failedToReset": "Failed to reset {{kind}}",
     "expandTitle": "Open full-screen editor",
-    "saveOverrideTitle": "Save override under CCCC_HOME",
+    "saveOverrideTitle": "Save guidance in the attached project scope",
     "helpEditorTitle": "Help editor",
     "helpEditorHint": "Structured mode edits common, role, and actor notes; raw mode keeps full-file control.",
     "structuredView": "Structured",
@@ -1026,7 +1026,7 @@
     "orphanActorNotePlaceholder": "Keep or clean this leftover note for an actor that no longer exists…",
     "scopedNoteConfigured": "Configured",
     "unknownRole": "Unknown",
-    "noScopeWarning": "No scope attached to this group yet. Guidance overrides still work because they are stored under CCCC_HOME, but repo-linked features may stay unavailable until a scope is attached."
+    "noScopeWarning": "Attach a project scope before reading or saving guidance files."
   },
   "copyGroups": {
     "openFromGroup": "Open this tab from a group.",

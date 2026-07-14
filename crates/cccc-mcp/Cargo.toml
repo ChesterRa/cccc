@@ -1,0 +1,32 @@
+[package]
+name = "cccc-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+cccc-client = { path = "../cccc-client" }
+cccc-contracts = { path = "../cccc-contracts" }
+cccc-core = { path = "../cccc-core" }
+cccc-runtime = { path = "../cccc-runtime" }
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+mime_guess.workspace = true
+sha2.workspace = true
+shell-words.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "cccc-mcp"
+path = "src/main.rs"

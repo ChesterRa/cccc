@@ -29,7 +29,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const logoSrc = resolveThemeAwareLogoUrl(branding.logo_icon_url, isDark);
   const hostname = typeof window !== "undefined" ? String(window.location.hostname || "").trim().toLowerCase() : "";
   const isLocalAccess = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
-  const localRecoveryPath = "~/.cccc/access_tokens.yaml";
+  const localRecoveryPath = "~/.cccc-rust/access_tokens.yaml";
 
   // Probe a protected endpoint on startup; 401/403 means token auth is enabled
   // and this browser is not authenticated yet.

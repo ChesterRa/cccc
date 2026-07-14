@@ -137,7 +137,7 @@ Embedded browser viewing uses a localhost VNC projection when the session is run
 The login and delivery paths share this profile:
 
 ```text
-CCCC_HOME/state/web_model_browser/_shared/chatgpt_web/chrome_profile
+CCCC_RUST_HOME/browser-profiles/web-model/<group_id>/<actor_id>
 ```
 
 Enable browser delivery with:

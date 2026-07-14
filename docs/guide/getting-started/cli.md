@@ -1,238 +1,89 @@
 # CLI Quick Start
 
-Get started with CCCC using the command line.
-
-## Step 1: Navigate to Your Project
+## 1. Create And Select A Group
 
 ```bash
-cd /path/to/your/project
-```
-
-## Step 2: Create a Working Group
-
-```bash
-cccc attach .
-```
-
-This binds the current directory as a "scope" and creates a working group.
-
-## Step 3: Configure MCP for Your Runtime
-
-```bash
-cccc setup --runtime claude   # or codex, droid, grok, kimi
-```
-
-This configures the MCP (Model Context Protocol) so agents can interact with CCCC.
-
-## Step 4: Add Your First Agent
-
-```bash
-cccc actor add assistant --runtime claude
-```
-
-The first enabled actor automatically becomes the "foreman" (coordinator).
-
-## Step 5: Start the Agent
-
-```bash
-cccc group start
-```
-
-Or start a specific agent:
-
-```bash
-cccc actor start assistant
-```
-
-## Step 6: Send a Message
-
-```bash
-cccc send "Hello! Please introduce yourself."
-```
-
-## Step 7: View Responses
-
-Watch the ledger in real-time:
-
-```bash
-cccc tail -f
-```
-
-Or check inbox:
-
-```bash
-cccc inbox --actor-id assistant
-```
-
-## Adding More Agents
-
-Add a second agent:
-
-```bash
-cccc actor add reviewer --runtime codex
-cccc actor start reviewer
-```
-
-Send to specific agents:
-
-```bash
-cccc send "Please implement the feature" --to assistant
-cccc send "Please review the code" --to reviewer
-cccc send "Please coordinate the next step" --to @foreman
-cccc send "Team-wide constraint: pause deploys until CI is green" --to @all
-```
-
-Use task-backed delegation when the work should survive chat context switches and needs an owner, outcome, or completion evidence:
-
-```bash
-cccc tracked-send "Please implement the feature and reply with validation evidence." \
-  --to assistant \
-  --title "Implement feature" \
-  --outcome "Feature is implemented and validation evidence is reported"
-```
-
-## Reply to Messages
-
-```bash
-# Find the event ID from cccc tail
-cccc reply evt_abc123 "Thanks, that looks good!"
-```
-
-## Common Commands
-
-### Group Management
-
-```bash
-cccc groups              # List all groups
-cccc use <group_id>      # Switch group
-cccc active              # Show active group
-cccc group show <group_id> # Show group metadata
-cccc group start         # Start all agents
-cccc group stop          # Stop all agents
-```
-
-### Actor Management
-
-```bash
-cccc actor list                    # List actors
-cccc actor add <id> --runtime <r>  # Add actor
-cccc actor start <id>              # Start actor
-cccc actor stop <id>               # Stop actor
-cccc actor restart <id>            # Restart actor
-cccc actor remove <id>             # Remove actor
-```
-
-### Messaging
-
-```bash
-cccc send "message"                # No --to: default recipient policy applies (default: foreman)
-cccc send "msg" --to assistant     # To specific actor
-cccc send "msg" --to @foreman      # Ask the coordinator
-cccc send "msg" --to @all          # Explicit broadcast, not default task dispatch
-cccc tracked-send "work" --to assistant --title "Task title" --outcome "Done criterion"
-cccc reply <event_id> "response"   # Reply to message
-cccc inbox --actor-id assistant    # View unread for one actor
-cccc tail -n 50                    # Recent events
-cccc tail -f                       # Follow events
-```
-
-### Daemon Control
-
-```bash
-cccc daemon status    # Check status
-cccc daemon start     # Start daemon
-cccc daemon stop      # Stop daemon
-```
-
-## Start Web UI (Optional)
-
-While using CLI, you can also open the Web UI:
-
-```bash
-cccc   # Starts daemon + Web UI
-```
-
-Or just the Web UI (if daemon is already running):
-
-```bash
-cccc web
-```
-
-Access at http://127.0.0.1:8848/
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CCCC_HOME` | `~/.cccc` | Runtime directory |
-| `CCCC_WEB_PORT` | `8848` | Web UI port |
-| `CCCC_WEB_READY_TIMEOUT_SECONDS` | `10` | Web startup readiness timeout for slower machines |
-| `CCCC_LOG_LEVEL` | `INFO` | Log verbosity |
-
-## Example Workflow
-
-```bash
-# Setup
-cd ~/projects/my-app
-cccc attach .
-cccc setup --runtime claude
-cccc actor add dev --runtime claude
-
-# Work
-cccc group start
-cccc send "Please plan the smallest safe authentication task." --to @foreman
-cccc tracked-send "Please implement the first authentication task and reply with validation evidence." \
-  --to dev \
-  --title "Implement first authentication slice" \
-  --outcome "Implementation is complete and validation evidence is reported"
-
-# Monitor
-cccc tail -f
-
-# Interact
-cccc reply evt_123 "Use JWT tokens please"
-cccc send "What's the progress?" --to dev
-
-# Cleanup
-cccc group stop
-```
-
-## Troubleshooting
-
-### Daemon not starting?
-
-```bash
-cccc daemon status
-cccc daemon stop      # Stop any stuck instance
-cccc daemon start
-```
-
-### Agent not responding?
-
-```bash
-# Check agent status
-cccc actor list
-
-# Restart the agent
-cccc actor restart <actor_id>
-
-# Check MCP setup
-cccc setup --runtime <name>
-```
-
-### Can't find my group?
-
-```bash
-# List all groups
-cccc groups
-
-# Re-attach if needed
 cd /path/to/project
-cccc attach .
+cccc group create --title "Feature team" --topic "Ship the current milestone"
+cccc groups
+cccc group use <group_id> .
+cccc active
 ```
 
-## Next Steps
+## 2. Add Actors
 
-- [Workflows](/guide/workflows) - Learn collaboration patterns
-- [CLI Reference](/reference/cli) - Complete command reference
-- [IM Bridge](/guide/im-bridge/) - Set up mobile access
+```bash
+cccc actor add foreman --runtime claude --runner pty
+cccc actor add implementer --runtime codex --runner pty
+cccc actor list
+```
+
+Use `--command` for a custom launch command. Use `cccc actor secrets` for private environment values instead of placing secrets in public actor configuration.
+
+## 3. Start Work
+
+```bash
+cccc group start
+cccc send "Break down the approved scope and assign one concrete task." --to foreman
+cccc tracked-send "Implement the assigned task and reply with evidence." --to implementer
+cccc tail -n 50
+```
+
+## 4. Read And Reply
+
+```bash
+cccc inbox --actor-id foreman --limit 20
+cccc read <event_id> --actor-id foreman
+cccc reply <event_id> "Acknowledged; continue with the validated approach."
+```
+
+## 5. Web And MCP
+
+```bash
+cccc setup
+cccc
+```
+
+Open <http://127.0.0.1:8848>. `cccc mcp` starts the stdio MCP server directly.
+
+## Runtime Modes
+
+```bash
+cccc runtime list
+cccc actor add batch-worker --runtime custom --runner headless --command "your-agent-command"
+cccc actor add web-agent --runtime web_model --runner headless
+```
+
+`web_model` actors use an actor-bound remote MCP connector and browser session. They do not launch a local child process.
+
+## Integrations
+
+```bash
+cccc im status
+cccc space status
+cccc space bind --lane work
+cccc space ingest --lane work --payload '{"title":"current context"}'
+cccc space query "current context" --lane work
+```
+
+## Recovery
+
+```bash
+cccc doctor
+cccc daemon status
+cccc actor restart <actor_id>
+cccc group stop
+cccc group start
+```
+
+Use daemon restart only after actor/group recovery fails.
+
+## Environment
+
+```bash
+export CCCC_RUST_HOME="$HOME/.cccc-rust"
+export CCCC_WEB_HOST=127.0.0.1
+export CCCC_WEB_PORT=8848
+```
+
+The Rust executable ignores `CCCC_HOME` and rejects the legacy default directory even when it is passed through `CCCC_RUST_HOME`.

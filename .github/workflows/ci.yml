@@ -1,87 +1,67 @@
-name: CI Build
+name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main, rust]
   pull_request:
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: npm
           cache-dependency-path: web/package-lock.json
-
-      - name: Build Web UI (bundled)
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Build embedded Web UI
         run: |
           npm ci --prefix web
           npm -C web run lint
           npm -C web run typecheck
           npm -C web run build
-          test -f src/cccc/ports/web/dist/index.html
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install build deps
+          test -f web/dist/index.html
+      - name: Rust format
+        run: cargo fmt --all --check
+      - name: Rust lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Rust tests
+        run: cargo test --workspace --locked
+      - name: Release build
+        run: cargo build --workspace --release --locked
+      - name: CLI smoke
         run: |
-          python -m pip install -U pip build twine
-          python -m pip install -e . pytest pytest-timeout
+          target/release/cccc --version
+          target/release/ccccd --version
+          target/release/cccc-mcp --help
+          target/release/cccc-web --help
 
-      - name: Run test suite
-        timeout-minutes: 15
-        run: |
-          python -m pytest -q --timeout=120 --timeout-method=thread --durations=20
-
-      - name: Build
-        run: |
-          python -m compileall -q src/cccc
-          python -m build
-          python -m twine check dist/*
-
-      - name: Smoke test wheel
-        run: |
-          python -m pip install --force-reinstall dist/*.whl
-          cccc version
-          python - <<'PY'
-          import importlib.resources as ir
-
-          web_index = ir.files("cccc.ports.web").joinpath("dist/index.html")
-          help_md = ir.files("cccc.resources").joinpath("cccc-help.md")
-
-          assert web_index.is_file(), f"missing bundled web UI: {web_index}"
-          assert help_md.is_file(), f"missing bundled help playbook: {help_md}"
-
-          print("OK: bundled web UI + help playbook")
-          PY
-
-  windows-smoke:
-    runs-on: windows-latest
+  platform-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          python-version: '3.11'
-
-      - name: Install deps
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build embedded Web UI
+        shell: bash
         run: |
-          python -m pip install -U pip
-          python -m pip install -e . pytest pytest-timeout
-
-      - name: Run Windows PTY smoke tests
-        timeout-minutes: 10
-        run: |
-          python -m pytest -q --timeout=90 --timeout-method=thread tests/test_socket_special_ops.py tests/test_windows_pty_backend.py
+          npm ci --prefix web
+          npm -C web run build
+      - name: Check workspace
+        run: cargo check --workspace --all-targets --locked
+      - name: Test workspace
+        run: cargo test --workspace --locked

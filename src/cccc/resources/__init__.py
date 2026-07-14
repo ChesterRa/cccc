@@ -1,2 +1,0 @@
-"""Package resources for CCCC."""
-

@@ -24,7 +24,7 @@ export default defineConfig({
     ],
   },
   build: {
-    outDir: "../src/cccc/ports/web/dist",
+    outDir: "dist",
     emptyOutDir: true,
     // Keep the warning meaningful after explicit app chunking; 500 kB is the
     // default Vite threshold and is now too noisy for this bundle graph.

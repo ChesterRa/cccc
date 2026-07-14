@@ -451,7 +451,16 @@ export function AgentTab({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [actor.id, groupId, isHeadless, isRunning, activated, canControl]);
+  }, [
+    actor.id,
+    groupId,
+    isHeadless,
+    isRunning,
+    activated,
+    canControl,
+    isDark,
+    terminalScrollbackLines,
+  ]);
 
   const fitTerminalBeforeAttach = useCallback(() => {
     fitTerminalToContainer(fitAddonRef.current, termRef.current);

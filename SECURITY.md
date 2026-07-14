@@ -15,7 +15,7 @@ Security fixes are prioritized for the latest release candidate and the latest s
 Please report security issues privately:
 
 - Open a private security advisory on GitHub (preferred), or
-- Email the maintainer listed in `pyproject.toml`.
+- Contact the maintainers through the repository security advisory.
 
 When reporting, include:
 

@@ -83,7 +83,7 @@
   "enterCommand": "Enter command...",
   "default": "Default:",
   "secretsWriteOnly": "Secrets (write-only)",
-  "secretsStoredLocally": "Stored locally under <1>CCCC_HOME/state/…</1> (not in group ledger). Values are never shown again.",
+  "secretsStoredLocally": "Stored locally under <1>CCCC_RUST_HOME/state/…</1> (not in group ledger). Values are never shown again.",
   "secretsFormat": "Supports <1>KEY=VALUE</1> plus pasted <2>export / set / $env:</2> forms (quotes / semicolons / inline comments).",
   "adding": "Adding...",
   "addAgent": "Add Agent",

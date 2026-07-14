@@ -1,0 +1,143 @@
+use axum::extract::{Extension, Path, Query, State};
+use axum::routing::{delete, get, post};
+use axum::{Json, Router};
+use serde_json::{Map, Value, json};
+use std::collections::HashMap;
+
+use crate::AppState;
+use crate::api::{ApiError, ApiResult, body_object, call, object};
+use crate::auth::Principal;
+
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/api/v1/groups", get(list).post(create))
+        .route(
+            "/api/v1/groups/{group_id}",
+            get(show).put(update).delete(remove),
+        )
+        .route("/api/v1/groups/{group_id}/reset", post(reset))
+        .route("/api/v1/groups/{group_id}/start", post(start))
+        .route("/api/v1/groups/{group_id}/stop", post(stop))
+        .route("/api/v1/groups/{group_id}/state", post(set_state))
+        .route("/api/v1/groups/{group_id}/attach", post(attach))
+        .route(
+            "/api/v1/groups/{group_id}/scopes/{scope_key}",
+            delete(detach),
+        )
+        .merge(super::group_prompts::routes())
+}
+
+async fn list(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+) -> ApiResult {
+    let mut response = call(&state, "groups", Map::new()).await?;
+    if !principal.is_admin
+        && let Some(groups) = response
+            .0
+            .get_mut("result")
+            .and_then(|result| result.get_mut("groups"))
+            .and_then(Value::as_array_mut)
+    {
+        groups.retain(|group| {
+            group
+                .get("group_id")
+                .and_then(Value::as_str)
+                .is_some_and(|group_id| principal.allows(group_id))
+        });
+    }
+    Ok(response)
+}
+
+async fn create(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
+    call(&state, "group_create", body_object(body)?).await
+}
+
+async fn show(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
+    call(&state, "group_show", object(json!({"group_id":group_id}))).await
+}
+
+async fn update(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let mut args = body_object(body)?;
+    args.insert("group_id".into(), Value::String(group_id));
+    call(&state, "group_update", args).await
+}
+
+async fn remove(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> ApiResult {
+    let mut args = object(
+        json!({"group_id":group_id,"by":query.get("by").cloned().unwrap_or_else(||"user".into())}),
+    );
+    if let Some(confirm) = query.get("confirm") {
+        args.insert("confirm".into(), Value::String(confirm.clone()));
+    }
+    call(&state, "group_delete", args).await
+}
+
+async fn reset(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
+    call(
+        &state,
+        "group_reset",
+        object(json!({"group_id":group_id,"by":"user"})),
+    )
+    .await
+}
+async fn start(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
+    call(
+        &state,
+        "group_start",
+        object(json!({"group_id":group_id,"by":"user"})),
+    )
+    .await
+}
+async fn stop(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
+    call(
+        &state,
+        "group_stop",
+        object(json!({"group_id":group_id,"by":"user"})),
+    )
+    .await
+}
+async fn set_state(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> ApiResult {
+    let state_value = query
+        .get("state")
+        .cloned()
+        .ok_or_else(|| ApiError::bad("state is required"))?;
+    call(
+        &state,
+        "group_set_state",
+        object(json!({"group_id":group_id,"state":state_value,"by":"user"})),
+    )
+    .await
+}
+async fn attach(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let mut args = body_object(body)?;
+    args.insert("group_id".into(), Value::String(group_id));
+    call(&state, "attach", args).await
+}
+async fn detach(
+    State(state): State<AppState>,
+    Path((group_id, scope_key)): Path<(String, String)>,
+) -> ApiResult {
+    call(
+        &state,
+        "group_detach_scope",
+        object(json!({"group_id":group_id,"scope_key":scope_key,"by":"user"})),
+    )
+    .await
+}

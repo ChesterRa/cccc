@@ -83,7 +83,7 @@
   "enterCommand": "コマンドを入力してください…",
   "default": "デフォルト：",
   "secretsWriteOnly": "シークレット (書き込み専用)",
-  "secretsStoredLocally": "<1>CCCC_HOME/state/…</1> にローカル保存されます（グループ台帳には含まれません）。値は再表示されません。",
+  "secretsStoredLocally": "<1>CCCC_RUST_HOME/state/…</1> にローカル保存されます（グループ台帳には含まれません）。値は再表示されません。",
   "secretsFormat": "<1>KEY=VALUE</1> に加えて <2>export / set / $env:</2> の貼り付けも使えます（引用符・セミコロン・インラインコメント対応）。",
   "adding": "追加中…",
   "addAgent": "エージェントを追加",

@@ -1,205 +1,110 @@
 # Operations Runbook
 
-This page is for operators who need reliable day-to-day CCCC execution.
+## Runtime Layout
 
-## 1) Runtime Topology
+```text
+CCCC_RUST_HOME=~/.cccc-rust
+~/.cccc-rust/.cccc-rust-v1
+~/.cccc-rust/daemon/ccccd.addr.json
+~/.cccc-rust/groups/<group_id>/group.yaml
+~/.cccc-rust/groups/<group_id>/ledger.jsonl
+~/.cccc-rust/groups/<group_id>/state/
+```
 
-Default runtime home:
-- `CCCC_HOME=~/.cccc`
+Never set `CCCC_RUST_HOME` to `~/.cccc` or a child of it. The process rejects that configuration before initialization.
 
-Key paths:
-- `~/.cccc/registry.json`
-- `~/.cccc/daemon/ccccd.sock`
-- `~/.cccc/daemon/ccccd.log`
-- `~/.cccc/groups/<group_id>/group.yaml`
-- `~/.cccc/groups/<group_id>/ledger.jsonl`
-
-## 2) Startup and Health Checks
-
-### Start
+## Start And Health
 
 ```bash
+cccc daemon start
+cccc daemon status
+cccc status
+cccc doctor
 cccc
 ```
 
-### Health Baseline
+Web health endpoints:
 
 ```bash
-cccc doctor
-cccc daemon status
-cccc groups
+curl -fsS http://127.0.0.1:8848/api/v1/health
+curl -fsS http://127.0.0.1:8848/api/v1/ready
 ```
 
-Expected:
-- daemon reachable
-- runtimes detected
-- active group list loadable
+## Triage Order
 
-## 3) Incident Triage Order
+1. Run `cccc doctor` and `cccc daemon status`.
+2. Inspect the group with `cccc active`, `cccc group show`, and `cccc actor list`.
+3. Inspect the ledger with `cccc tail -n 100`.
+4. Restart only the affected actor with `cccc actor restart <id>`.
+5. Restart the group if multiple actors are stale.
+6. Restart the daemon only after group-level recovery fails.
 
-When a group appears stuck:
+Runtime output is visible through the Web terminal and daemon terminal operations. Terminal output is not a delivered chat message.
 
-1. Check daemon health.
-2. Check group state (`active/idle/paused/stopped`).
-3. Check actor runtime status.
-4. Check message obligations (reply-required/attention ack).
-5. Check automation and delivery policy.
+## Backup
 
-Useful commands:
-
-```bash
-cccc daemon status
-cccc actor list
-cccc inbox --actor-id <actor_id>
-cccc tail -n 100 -f
-```
-
-## 4) Fast Recovery Playbook
-
-### Actor-level recovery (preferred)
-
-```bash
-cccc actor restart <actor_id>
-```
-
-Use this before group-level restart.
-
-### Group-level recovery
-
-```bash
-cccc group stop
-cccc group start
-```
-
-### Daemon-level recovery (last resort)
+Stop writers and archive the complete Rust Home:
 
 ```bash
 cccc daemon stop
-cccc daemon start
+tar -C "$HOME" -czf "cccc-rust-backup-$(date +%Y%m%d-%H%M%S).tar.gz" .cccc-rust
 ```
 
-## 5) Secure Remote Access
+Restore only into an empty directory, including `.cccc-rust-v1`. Do not merge a backup into a legacy home.
 
-Required baseline:
-- Create an **Admin Access Token** in **Settings > Web Access** before any non-local exposure.
-- Use Cloudflare Access or Tailscale for network boundary.
+## Upgrade
 
-Do not:
-- Expose Web UI directly without an access gateway.
-- Store secrets in repo files.
+1. Back up `CCCC_RUST_HOME`.
+2. Download the new GitHub Release archive for the current platform.
+3. Replace all four binaries together.
+4. Run `cccc version`, `cccc doctor`, and `cccc status`.
+5. Start the Web UI and test one message/read cycle.
 
-## 6) Upgrade Playbook (RC-safe)
+There is no in-process self-updater. This keeps release replacement explicit and rollbackable.
 
-### Before upgrade
+## Access Tokens
 
-1. Stop active high-risk sessions.
-2. Backup `CCCC_HOME`.
-3. Record current version and smoke state.
+The first administrator token can bootstrap Web login. Once tokens exist, anonymous API requests are rejected. Bind the Web service to loopback unless a reverse proxy or tunnel provides TLS and access control.
 
-### Upgrade
+Group-scoped tokens cannot access other groups. Administrative endpoints require an administrator token.
+
+## Group Bridge
+
+Pairing flow:
+
+1. Issuer creates an invite in Settings.
+2. Requester submits connection info.
+3. Issuer approves and creates a scoped registration.
+4. Requester synchronizes the outbound and claims the credential using the pairing capability.
+5. Both sides use idempotent delivery receipts.
+
+Credentials are stored only in Rust Home and removed from status/list responses. Use `messages` for ordinary collaboration, `read` for bounded inspection, and `full` only for a trusted peer that may modify the workspace.
+
+## Group Space
 
 ```bash
-python -m pip install -U cccc-pair
+cccc space status
+cccc space auth status
+cccc space sync --lane work
+cccc space query "current blockers" --lane work
 ```
 
-### After upgrade
+Provider health reports its mode. A degraded response means the local source/ledger search path was used; it is not reported as a successful remote NotebookLM query.
+
+## Voice
+
+Browser ASR is the default usable transcription path. Service-local transcription returns `asr_unavailable` when no backend command/runtime is configured. Do not treat that response as an empty transcript.
+
+## IM
+
+`cccc im status` distinguishes configured, enabled, and running. Configuration alone is not evidence that an external platform connection exists. Validate inbound and outbound delivery on the selected platform before relying on it for operations.
+
+## Release Verification
 
 ```bash
-cccc doctor
-cccc daemon status
-cccc mcp
+scripts/pre_commit_checks.sh
+scripts/build_package.sh
+docker build -f docker/Dockerfile .
 ```
 
-Run a small end-to-end smoke:
-- create/attach group
-- add/start actor
-- send/reply
-- verify ledger and inbox behavior
-
-## 7) Backup and Restore
-
-### Backup (minimal)
-
-Backup `CCCC_HOME`:
-- registry
-- daemon logs (optional)
-- all groups (`group.yaml`, ledger, state)
-
-### Restore
-
-1. Stop daemon.
-2. Restore `CCCC_HOME` directory.
-3. Start daemon and verify with `cccc doctor`.
-
-## 8) Operational Guardrails
-
-- Keep one source of truth: decisions should be in CCCC messages.
-- Use `reply_required` for critical asks.
-- Prefer explicit recipients over broad broadcast when scope is narrow.
-- Keep automation focused on objective reminders, not chat noise.
-
-## 9) Escalation Checklist
-
-If an issue repeats:
-
-1. Collect evidence:
-   - group id
-   - actor id
-   - event ids
-   - recent `cccc tail -n 100`
-2. Capture reproducible sequence.
-3. Classify severity (`P0/P1/P2`).
-4. Register fix or risk in release findings.
-
-## 10) Group Space (NotebookLM) Runbook
-
-### Enable real adapter path (opt-in)
-
-```bash
-export CCCC_NOTEBOOKLM_REAL=1
-cccc daemon restart
-```
-
-### Validate control plane
-
-```bash
-cccc space credential status
-cccc space health
-```
-
-### Validate curated context export path
-
-After a `context_sync` update (`vision.update` / `overview.manual.update` / `task.*` / `agent.*`), check queue:
-
-```bash
-cccc space jobs list --state pending
-```
-
-Expected: a `kind=context_sync` job appears for bound groups.
-
-### Validate repo `space/` reconciliation
-
-```bash
-cccc space sync --force
-```
-
-Expected: result reports `converged=true` and `unsynced_count=0` when provider is healthy.
-
-### Safe rollback (core workflows keep running)
-
-```bash
-unset CCCC_NOTEBOOKLM_REAL
-cccc daemon restart
-```
-
-Expected after rollback:
-
-- Group Space operations may return degraded/disabled provider results.
-- Core CCCC chat/task/actor workflows continue normally.
-
-Optional throughput tuning:
-
-```bash
-export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=1   # safer
-export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=4   # faster
-```
+For a release candidate, also verify Linux, macOS, and Windows CI jobs and test that a forbidden legacy home fails without changing its modification time.

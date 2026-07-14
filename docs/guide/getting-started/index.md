@@ -1,118 +1,63 @@
 # Getting Started
 
-Get CCCC running in 10 minutes.
+## Install A Release
 
-## Choose Your Approach
-
-CCCC offers two ways to get started:
-
-<div class="vp-card-container">
-
-### [Web UI Quick Start](./web)
-
-**Recommended for most users**
-
-- Visual interface for managing agents
-- Point-and-click configuration
-- Real-time terminal view
-- Mobile-friendly
-
-### [CLI Quick Start](./cli)
-
-**For terminal enthusiasts**
-
-- Full control via command line
-- Scriptable and automatable
-- Great for CI/CD integration
-- Power user features
-
-### [Docker Deployment](./docker)
-
-**For servers and teams**
-
-- One-command deployment
-- Pre-installed AI agent CLIs
-- Persistent data with volumes
-- Docker Compose and K8s ready
-
-</div>
-
-## Prerequisites
-
-Both approaches require:
-
-- **Python 3.9+** installed
-- At least one AI agent CLI:
-  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended)
-  - [Codex CLI](https://github.com/openai/codex)
-  - [GitHub Copilot CLI](https://docs.github.com/en/copilot/reference/copilot-cli-reference)
-  - [Cursor CLI](https://cursor.com/docs/cli/overview)
-  - [Devin CLI](https://docs.devin.ai/ja/cli)
-  - [Kiro CLI](https://kiro.dev/docs/cli/)
-  - [Kilo Code CLI](https://kilo.ai/docs/code-with-ai/platforms/cli)
-  - [Antigravity CLI](https://antigravity.google/docs/cli-overview)
-  - [Kimi CLI](https://github.com/MoonshotAI/kimi-cli)
-- Or a ChatGPT account with remote MCP connector support for the ChatGPT Web Model runtime
-- Or a custom runtime command if you wire MCP manually
-
-## Installation
-
-### Upgrading from older versions
-
-If you have an older version of cccc-pair installed (e.g., 0.3.x), you must uninstall it first:
+Download the archive matching your platform from GitHub Releases. Put `cccc`, `ccccd`, `cccc-mcp`, and `cccc-web` on `PATH`.
 
 ```bash
-# For pipx users
-pipx uninstall cccc-pair
-
-# For pip users
-pip uninstall cccc-pair
-
-# Remove any leftover binaries if needed
-rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
-```
-
-::: warning Version 0.4.x Breaking Changes
-Version 0.4.x has a completely different command structure from 0.3.x. The old `init`, `run`, `bridge` commands are replaced with `attach`, `daemon`, `mcp`, etc.
-:::
-
-### From PyPI
-
-```bash
-pip install -U cccc-pair
-```
-
-### From TestPyPI (for explicit RC testing)
-
-```bash
-pip install -U --pre \
-  --index-url https://test.pypi.org/simple \
-  --extra-index-url https://pypi.org/simple \
-  cccc-pair
-```
-
-### From Source
-
-```bash
-git clone https://github.com/ChesterRa/cccc
-cd cccc
-pip install -e .
-```
-
-## Verify Installation
-
-```bash
+cccc version
+cccc home
 cccc doctor
 ```
 
-This checks Python version, available runtimes, and system configuration.
+The release binaries do not require Python. `cccc home` should print `~/.cccc-rust` unless `CCCC_RUST_HOME` is set.
 
-## Next Steps
+## Build From Source
 
-- [Web UI Quick Start](./web) - Get started with the visual interface
-- [CLI Quick Start](./cli) - Get started with the command line
-- [Docker Deployment](./docker) - Deploy CCCC in a Docker container
-- [SDK Overview](/sdk/) - Integrate CCCC into external apps/services
-- [Use Cases](/guide/use-cases) - Learn high-ROI real-world patterns
-- [Operations Runbook](/guide/operations) - Run CCCC with operator-grade reliability
-- [Positioning](/reference/positioning) - Decide where CCCC should sit in your stack
+Requirements:
+
+- Rust 1.88+
+- Node.js 20+
+- npm
+
+```bash
+git switch rust
+npm ci --prefix web
+npm -C web run build
+cargo build --workspace --release --locked
+export PATH="$PWD/target/release:$PATH"
+```
+
+## Create A Group
+
+```bash
+cd /path/to/project
+cccc group create --title "Project team"
+cccc groups
+cccc group use <group_id> .
+cccc actor add foreman --runtime claude
+cccc actor add peer1 --runtime codex
+cccc group start
+cccc send "Inspect the project and report the first task." --to foreman
+```
+
+Run `cccc` and open <http://127.0.0.1:8848>.
+
+## Configure MCP
+
+```bash
+cccc setup
+```
+
+The output is a JSON MCP server entry using the current `cccc` executable and `CCCC_RUST_HOME`. Apply it to the selected agent runtime according to that runtime's MCP configuration format.
+
+## Data Safety
+
+Rust defaults to `~/.cccc-rust`. It rejects `~/.cccc` and its descendants. Switching to the `python` branch selects the legacy implementation and legacy home; switching to `rust` selects this implementation. No automatic data conversion occurs.
+
+## Next Guides
+
+- [CLI quick start](./cli.md)
+- [Docker](./docker.md)
+- [Architecture](../../reference/architecture.md)
+- [Operations](../operations.md)
