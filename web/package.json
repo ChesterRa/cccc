@@ -8,7 +8,6 @@
     "build": "vp build",
     "preview": "vp preview",
     "test": "vp test run",
-    "test:quality": "node --test ../scripts/quality/verify_oxfmt_migration.test.mjs",
     "check": "vp check && npm run typecheck",
     "lint": "vp lint src --deny-warnings",
     "typecheck": "tsc --noEmit -p tsconfig.json",

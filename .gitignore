@@ -34,7 +34,6 @@ uv.lock
 .vscode/
 .env
 .tmp
-/.tmp-oxlint-parity/
 graphify-out
 
 # Local dev environments

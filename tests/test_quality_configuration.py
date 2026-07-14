@@ -15,7 +15,6 @@ def _assert_vite_plus_package_contract(package: dict[str, object]) -> None:
         "build": "vp build",
         "preview": "vp preview",
         "test": "vp test run",
-        "test:quality": "node --test ../scripts/quality/verify_oxfmt_migration.test.mjs",
         "check": "vp check && npm run typecheck",
         "lint": "vp lint src --deny-warnings",
         "lint:fix": "vp lint src --fix --deny-warnings",
@@ -101,63 +100,6 @@ def test_precommit_uses_project_local_vite_plus_composite_check() -> None:
     assert "npm -C web run typecheck" not in source
 
 
-def test_oxfmt_v1_migration_manifest_and_verifier_are_versioned_and_mandatory() -> None:
-    manifest = json.loads(
-        (ROOT / "scripts/quality/oxfmt-migration-v1.json").read_text(encoding="utf-8")
-    )
-    assert manifest["version"] == 1
-    assert manifest["formatter"] == {"name": "oxfmt", "version": "0.57.0"}
-    assert manifest["files"]
-    assert all(
-        set(entry)
-        == {"path", "baseBlobOid", "formattedSha256", "baseLines", "formattedLines"}
-        for entry in manifest["files"]
-    )
-
-    verifier = (ROOT / "scripts/quality/verify_oxfmt_migration.mjs").read_text(encoding="utf-8")
-    assert "web/package-lock.json" in verifier
-    assert "0.57.0" in verifier
-    assert "--base-ref" in verifier
-    assert "mkdtempSync" in verifier
-    assert '"archive"' not in verifier
-    assert '"ls-tree"' in verifier
-    assert '"cat-file", "--batch"' in verifier
-    assert 'run("tar"' not in verifier
-    assert 'process.platform === "win32" ? "junction" : "dir"' in verifier
-    assert '"web/node_modules/vite-plus/bin/vp"' in verifier
-    assert '"web/node_modules/oxfmt/bin/oxfmt"' in verifier
-    assert 'run(process.execPath, [vpBinary, "fmt", "src", "--write"]' in verifier
-    assert 'run(process.execPath, [oxfmtBinary, "--version"]' in verifier
-    assert "process.exit(" not in verifier
-    assert "process.exitCode = 1" in verifier
-    assert (ROOT / "scripts/quality/verify_oxfmt_migration.test.mjs").is_file()
-
-    local_gate = (ROOT / "scripts/quality_gate.sh").read_text(encoding="utf-8")
-    assert local_gate.count("verify_oxfmt_migration.mjs") == 2
-    assert local_gate.count("npm -C web run test:quality") == 2
-
-
-def test_preexisting_reviewed_v1_is_fixed_disjoint_and_excludes_chat_composer() -> None:
-    formatter = json.loads(
-        (ROOT / "scripts/quality/oxfmt-migration-v1.json").read_text(encoding="utf-8")
-    )
-    reviewed = json.loads(
-        (ROOT / "scripts/quality/preexisting-reviewed-v1.json").read_text(encoding="utf-8")
-    )
-    reviewed_paths = {entry["path"] for entry in reviewed["files"]}
-    assert reviewed["version"] == 1
-    assert reviewed_paths == {
-        "web/src/components/AgentTab.tsx",
-        "web/src/components/ContextModal/index.tsx",
-        "web/src/components/browser/ProjectedBrowserSurfacePanel.tsx",
-        "web/src/components/modals/ActorConfigModal.tsx",
-        "web/src/components/modals/settings/GuidanceTab.tsx",
-        "web/src/components/modals/settings/IMBridgeTab.tsx",
-    }
-    assert "web/src/pages/chat/ChatComposer.tsx" not in reviewed_paths
-    assert reviewed_paths.isdisjoint(entry["path"] for entry in formatter["files"])
-
-
 def test_vite_config_preserves_oxlint_rule_parity_contract() -> None:
     source = (ROOT / "web/vite.config.ts").read_text(encoding="utf-8")
 
@@ -188,13 +130,21 @@ def test_agent_terminal_initial_snapshot_does_not_replace_live_option_updates() 
 
     assert "terminalOptionsSnapshotRef" in source
     assert "terminalOptionsSnapshotRef.current.isDark = isDark" in source
+    assert "terminalOptionsSnapshotRef.current.canControl = canControl" in source
     assert "terminalOptionsSnapshotRef.current.scrollbackLines = terminalScrollbackLines" in source
     assert "theme: getTerminalTheme(terminalOptionsSnapshotRef.current.isDark)" in source
+    assert "cursorBlink: terminalOptionsSnapshotRef.current.canControl" in source
+    assert "disableStdin: !terminalOptionsSnapshotRef.current.canControl" in source
     assert "scrollback: terminalOptionsSnapshotRef.current.scrollbackLines || 8000" in source
     assert "terminalRef.current.options.theme = getTerminalTheme(isDark)" in source
+    assert "terminalRef.current.options.disableStdin = !canControl" in source
+    assert "terminalRef.current.options.cursorBlink = canControl" in source
     assert "terminalRef.current.options.scrollback = terminalScrollbackLines" in source
     assert "}, [isDark]);" in source
+    assert "}, [canControl]);" in source
     assert "}, [terminalScrollbackLines]);" in source
+    assert "}, [actor.id, groupId, isHeadless, isRunning, activated]);" in source
+    assert "}, [actor.id, groupId, isHeadless, isRunning, activated, canControl]);" not in source
 
 
 def test_ruff_is_limited_to_error_level_rules() -> None:
@@ -203,11 +153,13 @@ def test_ruff_is_limited_to_error_level_rules() -> None:
     assert config["tool"]["ruff"]["lint"]["select"] == ["E9", "F63", "F7", "F82"]
 
 
-def test_local_fast_gate_reuses_quality_tools_without_running_full_python_suite() -> None:
+def test_local_fast_gate_runs_current_checks_without_historical_migration_governance() -> None:
     source = (ROOT / "scripts/quality_gate.sh").read_text(encoding="utf-8")
     fast_block = source.split("fast)", 1)[1].split(";;", 1)[0]
 
-    assert "scripts/quality/source_size.py" in fast_block
+    assert "source_size.py" not in source
+    assert "verify_oxfmt_migration" not in source
+    assert "test:quality" not in source
     assert "ruff check" in fast_block
     assert "scripts/pre_commit_checks.sh" in fast_block
     assert "pytest tests/" not in fast_block

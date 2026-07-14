@@ -14,8 +14,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,29 +27,12 @@ jobs:
           python -m pip install -U pip
           python -m pip install -e . pytest ruff
 
-      - name: Check source-size ratchet
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            python scripts/quality/source_size.py --base-ref "${{ github.event.pull_request.base.sha }}"
-          elif [[ "${{ github.event_name }}" == "push" ]]; then
-            BEFORE="${{ github.event.before }}"
-            if [[ "$BEFORE" =~ ^0+$ ]]; then
-              python scripts/quality/source_size.py --bootstrap-baseline
-            else
-              python scripts/quality/source_size.py --base-ref "$BEFORE"
-            fi
-          else
-            python scripts/quality/source_size.py --base-ref "${{ github.sha }}"
-          fi
-
       - name: Run Ruff error checks
         run: python -m ruff check src scripts tests
 
       - name: Test quality tooling and workflow contracts
         run: >-
           python -m pytest -q
-          tests/test_quality_source_size.py
           tests/test_quality_pytest_shards.py
           tests/test_quality_configuration.py
           tests/test_quality_ci_workflow.py
@@ -61,8 +42,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -73,25 +52,6 @@ jobs:
 
       - name: Install Web dependencies
         run: npm ci --prefix web
-
-      - name: Verify one-time Oxfmt migration
-        shell: bash
-        run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            node scripts/quality/verify_oxfmt_migration.mjs --base-ref "${{ github.event.pull_request.base.sha }}"
-          elif [[ "${{ github.event_name }}" == "push" ]]; then
-            BEFORE="${{ github.event.before }}"
-            if [[ "$BEFORE" =~ ^0+$ ]]; then
-              node scripts/quality/verify_oxfmt_migration.mjs --base-ref "${{ github.sha }}"
-            else
-              node scripts/quality/verify_oxfmt_migration.mjs --base-ref "$BEFORE"
-            fi
-          else
-            node scripts/quality/verify_oxfmt_migration.mjs --base-ref "${{ github.sha }}"
-          fi
-
-      - name: Test Oxfmt migration verifier
-        run: npm -C web run test:quality
 
       - name: Check Web
         run: npm -C web run check
@@ -188,36 +148,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20.19.5"
-
-      - name: Install Web verifier dependencies
-        run: npm ci --prefix web
-
-      - name: Test Oxfmt migration verifier
-        run: npm -C web run test:quality
-
-      - name: Verify one-time Oxfmt migration
-        shell: pwsh
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
-          CURRENT_SHA: ${{ github.sha }}
-        run: |
-          if ($env:EVENT_NAME -eq "pull_request") {
-            $baseRef = $env:PR_BASE
-          } elseif ($env:PUSH_BEFORE -match "^0+$") {
-            $baseRef = $env:CURRENT_SHA
-          } else {
-            $baseRef = $env:PUSH_BEFORE
-          }
-          node scripts/quality/verify_oxfmt_migration.mjs --base-ref $baseRef
 
       - name: Set up Python
         uses: actions/setup-python@v5

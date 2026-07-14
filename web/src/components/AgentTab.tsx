@@ -176,7 +176,11 @@ export function AgentTab({
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   // Initialization snapshot; live option effects below keep it current without recreating xterm.
-  const terminalOptionsSnapshotRef = useRef({ isDark, scrollbackLines: terminalScrollbackLines });
+  const terminalOptionsSnapshotRef = useRef({
+    isDark,
+    canControl,
+    scrollbackLines: terminalScrollbackLines,
+  });
   const [activated, setActivated] = useState(false);
   // Bumped to trigger a fresh WebSocket connection from the reconnect button
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
@@ -355,6 +359,7 @@ export function AgentTab({
   }, [isDark]);
 
   useEffect(() => {
+    terminalOptionsSnapshotRef.current.canControl = canControl;
     if (terminalRef.current) {
       terminalRef.current.options.disableStdin = !canControl;
       terminalRef.current.options.cursorBlink = canControl;
@@ -373,14 +378,14 @@ export function AgentTab({
     if (!termRef.current || isHeadless || !isRunning || !activated) return;
 
     const term = new Terminal({
-      cursorBlink: canControl,
+      cursorBlink: terminalOptionsSnapshotRef.current.canControl,
       // Avoid an extra blinking "outline" cursor when the terminal isn't focused.
       // Some runtimes render their own cursor; xterm's inactive cursor can look like a second cursor.
       cursorInactiveStyle: "none",
       fontSize: 13,
       fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, monospace',
       theme: getTerminalTheme(terminalOptionsSnapshotRef.current.isDark),
-      disableStdin: !canControl,
+      disableStdin: !terminalOptionsSnapshotRef.current.canControl,
       // Bigger scrollback improves history browsing without going "infinite" and hurting perf.
       // Default is 8k lines; the user can override it in Global → Developer settings.
       scrollback: terminalOptionsSnapshotRef.current.scrollbackLines || 8000,
@@ -492,7 +497,7 @@ export function AgentTab({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [actor.id, groupId, isHeadless, isRunning, activated, canControl]);
+  }, [actor.id, groupId, isHeadless, isRunning, activated]);
 
   const fitTerminalBeforeAttach = useCallback(() => {
     fitTerminalToContainer(fitAddonRef.current, termRef.current);

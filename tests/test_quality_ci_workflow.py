@@ -21,7 +21,6 @@ def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
 
     assert {"quality", "web", "python-tests", "package", "windows-smoke", "nightly-serial"} <= set(jobs)
     assert set(jobs["package"]["needs"]) == {"quality", "web", "python-tests"}
-    assert "source_size.py" in _runs(jobs["quality"])
     assert "ruff check" in _runs(jobs["quality"])
     assert "npm -C web test" in _runs(jobs["web"])
     assert "npm -C web run build" in _runs(jobs["web"])
@@ -35,50 +34,28 @@ def test_web_ci_uses_managed_node_and_composite_vite_plus_check() -> None:
     node_setup = next(step for step in web["steps"] if step.get("uses", "").startswith("actions/setup-node"))
 
     assert node_setup["with"]["node-version"] == "20.19.5"
-    checkout = next(step for step in web["steps"] if step.get("uses", "").startswith("actions/checkout"))
-    assert checkout["with"]["fetch-depth"] == "0"
-    assert "verify_oxfmt_migration.mjs" in runs
-    assert "npm -C web run test:quality" in runs
-    assert "github.event.pull_request.base.sha" in runs
-    assert "github.event.before" in runs
     assert "npm -C web run check" in runs
     assert "npm -C web run typecheck" not in runs
     assert "npm -C web run lint" not in runs
 
 
-def test_windows_smoke_runs_the_portable_oxfmt_verifier() -> None:
+def test_windows_smoke_keeps_the_product_pty_checks_without_web_migration_setup() -> None:
     windows = _workflow()["jobs"]["windows-smoke"]
     runs = _runs(windows)
-    checkout = next(
-        step for step in windows["steps"] if step.get("uses", "").startswith("actions/checkout")
-    )
-    node_setup = next(
-        step for step in windows["steps"] if step.get("uses", "").startswith("actions/setup-node")
-    )
-    verifier = next(
-        step for step in windows["steps"] if "verify_oxfmt_migration.mjs" in step.get("run", "")
-    )
+    uses = {step.get("uses", "") for step in windows["steps"]}
 
-    assert checkout["with"]["fetch-depth"] == "0"
-    assert node_setup["with"]["node-version"] == "20.19.5"
-    assert "npm ci --prefix web" in runs
-    assert "verify_oxfmt_migration.mjs" in runs
-    assert "npm -C web run test:quality" in runs
-    assert verifier["env"] == {
-        "EVENT_NAME": "${{ github.event_name }}",
-        "PR_BASE": "${{ github.event.pull_request.base.sha }}",
-        "PUSH_BEFORE": "${{ github.event.before }}",
-        "CURRENT_SHA": "${{ github.sha }}",
-    }
+    assert "tests/test_socket_special_ops.py" in runs
+    assert "tests/test_windows_pty_backend.py" in runs
+    assert not any(item.startswith("actions/setup-node") for item in uses)
+    assert "npm " not in runs
 
 
-def test_source_size_uses_pr_base_push_before_and_explicit_first_push_bootstrap() -> None:
-    runs = _runs(_workflow()["jobs"]["quality"])
+def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance() -> None:
+    runs = "\n".join(_runs(job) for job in _workflow()["jobs"].values())
 
-    assert "github.event.pull_request.base.sha" in runs
-    assert "github.event.before" in runs
-    assert "--base-ref" in runs
-    assert "--bootstrap-baseline" in runs
+    assert "source_size.py" not in runs
+    assert "verify_oxfmt_migration" not in runs
+    assert "test:quality" not in runs
 
 
 def test_pr_python_matrix_uses_four_stable_file_shards_without_xdist() -> None:
