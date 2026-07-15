@@ -88,7 +88,9 @@ cccc im reject --key KEY [--group ID]
 cccc im revoke --chat-id ID [--thread-id N] [--group ID]
 ```
 
-Platforms: `telegram`, `slack`, `discord`, `feishu`, `dingtalk`, `wecom`, `weixin`. Credential options store environment-variable names or platform identifiers in Rust Home. Start fails when configuration is missing and does not fabricate an external adapter.
+Platforms: `telegram`, `slack`, `discord`, `feishu`, `dingtalk`, `wecom`, `weixin`. Credential options store environment-variable names or direct secrets in Rust Home. The Web control plane starts the corresponding Rust network adapter and verifies credentials where the provider supports an explicit validation call. Missing or rejected credentials fail without fabricating a running adapter.
+
+`cccc im ...` controls the long-running Web process at `CCCC_WEB_HOST` / `CCCC_WEB_PORT` (default `127.0.0.1:8848`). Start `cccc` first; the short-lived CLI process does not own persistent IM connections. Global `--host` and `--port` options can target a non-default local Web listener.
 
 ## Group Space
 

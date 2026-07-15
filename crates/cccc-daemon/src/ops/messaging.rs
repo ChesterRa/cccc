@@ -1,6 +1,5 @@
 use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::actors;
-use cccc_core::ledger;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 
@@ -18,7 +17,11 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "stream_emit" => send(home, request, "chat.stream"),
         "system_notify" => send(home, request, "system.notify"),
         "event_append" => append_raw(home, request),
-        "ledger_tail" => tail(home, request),
+        "ledger_tail" => super::messaging_query::tail(home, request),
+        "ledger_search" => super::messaging_query::search(home, request),
+        "ledger_window" => super::messaging_query::window(home, request),
+        "ledger_statuses" => super::messaging_status::statuses(home, request),
+        "message_read_status" => super::messaging_status::read_status(home, request),
         "inbox_list" => messaging_inbox::list(home, request),
         "inbox_mark_read" => messaging_inbox::mark_read(home, request),
         "inbox_mark_all_read" => messaging_inbox::mark_all(home, request),
@@ -32,6 +35,13 @@ fn send_cross_group_remote_record(home: &HomeLayout, request: &DaemonRequest) ->
     let source = load(home, request)?;
     let destination_id = required_arg(request, "dst_group_id")?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    if let Some(event) =
+        super::message_idempotency::find(home, &source.group_id, "chat.message", &by, &request.args)
+    {
+        return object(
+            json!({"source_event":event,"transport":"group_bridge_session","duplicate":true}),
+        );
+    }
     let text = string_arg(request, "text").unwrap_or_default();
     let attachments = request
         .args
@@ -90,22 +100,38 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "text or attachments is required",
         ));
     }
-    let source_event = append(
-        home,
-        &source.group_id,
-        "chat.message",
-        &by,
-        request
-            .args
-            .iter()
-            .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by"))
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .chain([
-                ("to_group_id".into(), json!(destination.group_id)),
-                ("transport".into(), json!("local")),
-            ])
-            .collect(),
-    )?;
+    let source_event = if let Some(existing) =
+        super::message_idempotency::find(home, &source.group_id, "chat.message", &by, &request.args)
+    {
+        existing
+    } else {
+        append(
+            home,
+            &source.group_id,
+            "chat.message",
+            &by,
+            request
+                .args
+                .iter()
+                .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by"))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .chain([
+                    ("to_group_id".into(), json!(destination.group_id)),
+                    ("transport".into(), json!("local")),
+                ])
+                .collect(),
+        )?
+    };
+    if let Some(event) =
+        super::message_idempotency::find_relay(home, &destination.group_id, &source_event.id)
+    {
+        return object(json!({
+            "source_event":source_event,
+            "event":event,
+            "transport":"local",
+            "duplicate":true
+        }));
+    }
     let mut forwarded = request.clone();
     forwarded
         .args
@@ -131,6 +157,15 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
     let group = load(home, request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    if let Some(event) =
+        super::message_idempotency::find(home, &group.group_id, kind, &by, &request.args)
+    {
+        return object(json!({
+            "event":event,
+            "delivery":{"accepted":true,"state":"duplicate","targeted":0,"online":0,"queued":0},
+            "duplicate":true
+        }));
+    }
     let mut data: Map<String, Value> = request
         .args
         .iter()
@@ -173,6 +208,7 @@ fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
         data.entry("priority")
             .or_insert_with(|| Value::String("normal".into()));
         data.entry("reply_required").or_insert(Value::Bool(false));
+        super::message_metadata::add_sender_snapshot(&group, &by, &mut data);
     }
     let event = append(home, &group.group_id, kind, &by, data)?;
     let delivery = actor_delivery::dispatch(home, &group, &event);
@@ -180,7 +216,25 @@ fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
 }
 
 fn tracked_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let response = send(home, request, "chat.message")?;
+    let mut forwarded = request.clone();
+    let idempotency_key = string_arg(request, "idempotency_key").unwrap_or_default();
+    if !idempotency_key.is_empty()
+        && string_arg(request, "client_id")
+            .unwrap_or_default()
+            .is_empty()
+    {
+        let group_id = required_arg(request, "group_id")?;
+        let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+        forwarded.args.insert(
+            "client_id".into(),
+            json!(super::message_idempotency::tracked_client_id(
+                &group_id,
+                &by,
+                &idempotency_key,
+            )),
+        );
+    }
+    let response = send(home, &forwarded, "chat.message")?;
     object(json!({"event": response.get("event"), "delivery": response.get("delivery")}))
 }
 
@@ -215,6 +269,7 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     forwarded
         .args
         .insert("reply_to".into(), Value::String(reply_to));
+    super::message_metadata::add_reply_snapshot(&target, &mut forwarded.args);
     if !forwarded.args.contains_key("to") {
         forwarded.args.insert("to".into(), json!([target.by]));
     }
@@ -233,24 +288,8 @@ fn append_raw(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if !path.exists() {
         return Err(OpError::new("group_not_found", "group not found"));
     }
-    ledger::append(&path, &event).map_err(OpError::io)?;
+    cccc_core::ledger::append(&path, &event).map_err(OpError::io)?;
     object(json!({"event": event}))
-}
-
-fn tail(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let limit = request
-        .args
-        .get("limit")
-        .and_then(Value::as_u64)
-        .unwrap_or(50)
-        .min(1000) as usize;
-    let events = ledger::tail(
-        &store(home)?.ledger_path(&group_id).map_err(OpError::io)?,
-        limit,
-    )
-    .map_err(OpError::io)?;
-    object(json!({"events": events}))
 }
 
 pub(super) fn append(
@@ -263,7 +302,7 @@ pub(super) fn append(
     let mut event = Event::new(kind, group_id);
     event.by = by.into();
     event.data = data;
-    ledger::append(
+    cccc_core::ledger::append(
         &store(home)?.ledger_path(group_id).map_err(OpError::io)?,
         &event,
     )
@@ -282,7 +321,7 @@ pub(super) fn find_event(
     group_id: &str,
     event_id: &str,
 ) -> Result<Event, OpError> {
-    ledger::read_all(&store(home)?.ledger_path(group_id).map_err(OpError::io)?)
+    cccc_core::ledger::read_all(&store(home)?.ledger_path(group_id).map_err(OpError::io)?)
         .map_err(OpError::io)?
         .into_iter()
         .find(|event| event.id == event_id)

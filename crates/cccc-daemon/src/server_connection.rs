@@ -18,14 +18,15 @@ pub fn spawn_connection<S>(
     home: HomeLayout,
     shutdown: watch::Sender<bool>,
     dispatch_lock: DispatchLock,
-) where
+) -> tokio::task::JoinHandle<()>
+where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
         if let Err(error) = handle(stream, home, &shutdown, &dispatch_lock).await {
             tracing::warn!(%error, "daemon connection failed");
         }
-    });
+    })
 }
 
 async fn handle<S>(

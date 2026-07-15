@@ -1,0 +1,25 @@
+# Project Harness Legacy Exceptions
+
+This register covers existing source files that still exceed the 300-line hard limit, plus touched files in the 221-300 split-planning band. New files must remain at or below 300 lines, and these exceptions may not grow or absorb new responsibilities.
+
+| File | Owner | Reason | Allowed scope | Current lines | Expiry / removal condition | Split plan |
+|---|---|---|---|---:|---|---|
+| `web/src/hooks/useChatTab.ts` | CCCC frontend maintainers | Legacy chat orchestration still composes send, recipient, draft, and view hooks. | Wiring and risk-reducing fixes only. | 984 | Remove before the next new chat workflow or by 2026-08-15. | Extract recipient routing, group-bridge state, and send lifecycle orchestration into focused hooks. |
+| `web/src/hooks/useSSE.ts` | CCCC frontend maintainers | Connection lifecycle and headless batching remain coupled to shared browser refs. | Connection lifecycle and reliability fixes only. | 988 | Remove before adding another stream kind or by 2026-08-15. | Extract headless buffers, headless event dispatch, and visibility lifecycle hooks. |
+| `web/src/components/VirtualMessageList.tsx` | CCCC frontend maintainers | Scroll follow, history compensation, and virtualizer lifecycle share ordering-sensitive refs. | Virtual scrolling correctness and measurement fixes only. | 950 | Remove before adding another list interaction or by 2026-08-15. | Extract follow controller and the remaining scroll snapshot lifecycle. |
+| `web/src/components/MessageBubble.tsx` | CCCC frontend maintainers | Legacy message model projection and bubble composition are still colocated. | Message rendering correctness and accessibility fixes only. | 997 | Remove before adding another message presentation type or by 2026-08-15. | Extract the view model hook, bubble shell, and reference/relay sections. |
+| `web/src/components/messageBubble/ImagePreview.tsx` | CCCC frontend maintainers | Existing image loading and preview interaction component predates the file budget. | Image loading, sizing, and accessibility fixes only. | 337 | Remove when image preview behavior next changes or by 2026-08-15. | Extract load-state hook and preview action controls. |
+| `web/src/components/messageBubble/MessageBubbleChrome.tsx` | CCCC frontend maintainers | Existing header and footer chrome share delivery/read status presentation. | Header/footer rendering fixes only. | 370 | Remove when either header or footer next changes or by 2026-08-15. | Split `MessageMetadataHeader` and `MessageFooter` into separate files. |
+| `crates/cccc-core/src/group_copy.rs` | CCCC Rust maintainers | Package creation, secret scrubbing, and import rewriting predate the file budget. | Export security and package correctness fixes only. | 588 | Remove when group package behavior next expands or by 2026-08-15. | Split package codec, scrub policy, and import rewrite into focused modules. |
+| `crates/cccc-daemon/src/ops/actor_runtime.rs` | CCCC Rust maintainers | Actor launch, resume verification, and lifecycle coordination remain colocated. | Runtime lifecycle and concurrency fixes only. | 346 | Remove when actor lifecycle behavior next expands or by 2026-08-15. | Split resume supervision, launch preparation, and lifecycle operations. |
+| `crates/cccc-web/src/routes/im.rs` | CCCC Rust maintainers | IM configuration, authorization, and worker lifecycle routes remain colocated. | IM validation, security, and lifecycle fixes only. | 643 | Remove when another IM route is added or by 2026-08-15. | Split configuration, authorization, and worker lifecycle routes. |
+| `crates/cccc-cli/src/main.rs` | CCCC Rust maintainers | CLI bootstrap, endpoint resolution, and daemon compatibility checks remain colocated. | Bootstrap and endpoint correctness fixes only. | 369 | Remove when CLI bootstrap behavior next expands or by 2026-08-15. | Split endpoint configuration, launch orchestration, and daemon compatibility. |
+| `crates/cccc-web/src/routes/streams.rs` | CCCC Rust maintainers | SSE route composition and replay cursor handling are still colocated. | Stream reliability fixes only. | 282 | Split before adding another stream replay mode or by 2026-08-15. | Extract bounded replay cursor state and move route tests beside the helper. |
+| `crates/cccc-runtime/src/manager.rs` | CCCC Rust maintainers | Session registry, input gating, and lifecycle operations remain colocated. | Runtime lifecycle and concurrency fixes only. | 279 | Split before adding another lifecycle operation or by 2026-08-15. | Split session registry, input gate, and lifecycle operations. |
+
+## Current Refactor Result
+
+- The four named god files are below 1000 lines and no longer contain the extracted single-responsibility modules.
+- All new chat, SSE, virtual-list, and bubble modules are at or below 300 lines.
+- The Rust review fixes add no new responsibility to the registered files; they only close security, concurrency, replay, and endpoint correctness gaps.
+- The exception files must trend downward; this register is not precedent for new oversized files.

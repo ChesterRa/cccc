@@ -226,7 +226,7 @@ async fn upload(
         .map_err(|error| ApiError::bad(error.to_string()))?
     {
         let name = field.name().unwrap_or("").to_owned();
-        if name == "file" {
+        if name == "files" || name == "file" {
             let filename = field.file_name().unwrap_or("attachment").to_owned();
             let content_type = field
                 .content_type()
@@ -236,6 +236,9 @@ async fn upload(
                 .bytes()
                 .await
                 .map_err(|error| ApiError::bad(error.to_string()))?;
+            if data.len() > 10 * 1024 * 1024 {
+                return Err(ApiError::bad("attachment exceeds 10 MiB"));
+            }
             let blob = cccc_core::blobs::store(&state.home, group_id, &data)
                 .map_err(|error| ApiError::bad(error.to_string()))?;
             attachments.push(json!({"kind":"file","path":blob.path,"title":filename,"mime_type":content_type,"bytes":blob.bytes,"sha256":blob.sha256}));
@@ -244,12 +247,38 @@ async fn upload(
                 .text()
                 .await
                 .map_err(|error| ApiError::bad(error.to_string()))?;
-            args.insert(name, Value::String(value));
+            insert_upload_field(&mut args, name, value);
         }
     }
     args.insert("group_id".into(), Value::String(group_id.into()));
     args.insert("attachments".into(), Value::Array(attachments));
     call(state, if is_reply { "reply" } else { "send" }, args).await
+}
+
+fn insert_upload_field(args: &mut serde_json::Map<String, Value>, name: String, value: String) {
+    match name.as_str() {
+        "to_json" => {
+            args.insert(
+                "to".into(),
+                serde_json::from_str(&value).unwrap_or_else(|_| json!([])),
+            );
+        }
+        "refs_json" => {
+            args.insert(
+                "refs".into(),
+                serde_json::from_str(&value).unwrap_or_else(|_| json!([])),
+            );
+        }
+        "reply_required" => {
+            args.insert(
+                name,
+                Value::Bool(matches!(value.as_str(), "true" | "1" | "yes")),
+            );
+        }
+        _ => {
+            args.insert(name, Value::String(value));
+        }
+    }
 }
 
 async fn blob_download(
@@ -259,11 +288,34 @@ async fn blob_download(
     let path = cccc_core::blobs::resolve(&state.home, &group_id, &blob_name)
         .map_err(|error| ApiError::not_found(error.to_string()))?;
     let bytes = std::fs::read(path).map_err(|error| ApiError::not_found(error.to_string()))?;
-    Ok((
-        [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
-        bytes,
-    )
-        .into_response())
+    let content_type = blob_content_type(&blob_name, &bytes);
+    Ok(([(axum::http::header::CONTENT_TYPE, content_type)], bytes).into_response())
+}
+
+fn blob_content_type(blob_name: &str, bytes: &[u8]) -> String {
+    let guessed = mime_guess::from_path(blob_name).first_or_octet_stream();
+    if guessed != mime_guess::mime::APPLICATION_OCTET_STREAM {
+        return guessed.essence_str().to_owned();
+    }
+    let detected = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else if bytes.starts_with(b"\xff\xd8\xff") {
+        "image/jpeg"
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        "image/gif"
+    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else if bytes.starts_with(b"BM") {
+        "image/bmp"
+    } else if bytes.len() >= 12
+        && &bytes[4..8] == b"ftyp"
+        && matches!(&bytes[8..12], b"avif" | b"avis")
+    {
+        "image/avif"
+    } else {
+        "application/octet-stream"
+    };
+    detected.to_owned()
 }
 
 async fn daemon_body(state: &AppState, op: &str, group_id: String, body: Value) -> ApiResult {

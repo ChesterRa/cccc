@@ -36,6 +36,7 @@ pub struct Session {
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
+    input_gate: Arc<Mutex<()>>,
     output: Arc<Mutex<OutputBuffer>>,
 }
 
@@ -94,6 +95,7 @@ impl Session {
             master: pair.master,
             child,
             writer,
+            input_gate: Arc::new(Mutex::new(())),
             output,
         })
     }
@@ -127,6 +129,10 @@ impl Session {
         self.writer.write_all(data)?;
         self.writer.flush()?;
         Ok(())
+    }
+
+    pub(crate) fn input_gate(&self) -> Arc<Mutex<()>> {
+        Arc::clone(&self.input_gate)
     }
 
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), RuntimeError> {

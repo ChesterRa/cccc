@@ -21,7 +21,12 @@ import {
 } from "./modals/settings/settingsLastLocation";
 import { ModalFrame } from "./modals/ModalFrame";
 import { SettingsNavigation } from "./modals/settings/SettingsNavigation";
-import { IMConfigDraft, saveAndStartIMBridge, saveIMConfigDraft } from "./modals/settings/imBridgeConfig";
+import {
+  canStartIMBridge,
+  IMConfigDraft,
+  saveAndStartIMBridge,
+  saveIMConfigDraft,
+} from "./modals/settings/imBridgeConfig";
 import { useModalA11y } from "../hooks/useModalA11y";
 import { copyTextToClipboard } from "../utils/copy";
 
@@ -686,10 +691,16 @@ export function SettingsModal({
 
   const handleStartBridge = async () => {
     if (!groupId) return;
+    if (!canStartIMBridge(imPlatform, !!weixinLoginStatus?.logged_in)) return;
     setImBusy(true);
     try {
       const resp = await saveAndStartIMBridge(getCurrentIMSaveRequest());
-      if (resp.ok) await loadIMStatus();
+      await loadIMStatus();
+      if (!resp.ok && imPlatform === "weixin") {
+        setWeixinLoginStatus(
+          toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStartFailed")),
+        );
+      }
     } catch (e) {
       console.error("Failed to start bridge:", e);
     } finally {

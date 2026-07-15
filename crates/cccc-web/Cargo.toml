@@ -8,7 +8,9 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+aes.workspace = true
 async-stream.workspace = true
+async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
 cccc-client = { path = "../cccc-client" }
@@ -18,19 +20,29 @@ cccc-mcp = { path = "../cccc-mcp" }
 cccc-runtime = { path = "../cccc-runtime" }
 chromiumoxide.workspace = true
 chrono.workspace = true
+cbc.workspace = true
+dingtalk-stream.workspace = true
 futures-util.workspace = true
 mime_guess.workspace = true
+md-5.workspace = true
+lark-channel.workspace = true
+notify.workspace = true
 percent-encoding.workspace = true
 reqwest.workspace = true
 rust-embed.workspace = true
+rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serenity.workspace = true
 sha2.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+teloxide.workspace = true
 uuid.workspace = true
+weixin-agent.workspace = true
 
 [dev-dependencies]
 cccc-daemon = { path = "../cccc-daemon" }

@@ -1,4 +1,5 @@
 pub(crate) mod actor_delivery;
+mod actor_delivery_render;
 mod actor_delivery_worker;
 pub(crate) mod actor_runtime;
 #[cfg(test)]
@@ -20,12 +21,17 @@ mod groups;
 mod im;
 mod maintenance;
 mod memory;
+mod message_idempotency;
+mod message_metadata;
 mod messaging;
 mod messaging_inbox;
+mod messaging_query;
+mod messaging_status;
 mod presentation;
 mod profiles;
 mod remote_access;
 pub(crate) mod runtime_restore;
+mod runtime_session;
 mod runtime_state;
 mod settings;
 mod terminal;

@@ -126,7 +126,8 @@ fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(
         }
     }
     let required: &[&str] = match platform {
-        "telegram" | "discord" | "slack" => &["bot_token_env"],
+        "telegram" | "discord" => &["bot_token_env"],
+        "slack" => &["bot_token_env", "app_token_env"],
         "feishu" => &["feishu_app_id", "feishu_app_secret"],
         "dingtalk" => &["dingtalk_app_key", "dingtalk_app_secret"],
         "wecom" => &["wecom_bot_id", "wecom_secret"],

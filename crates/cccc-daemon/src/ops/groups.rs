@@ -6,7 +6,7 @@ use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
-use crate::ops::{actor_runtime, group_runtime};
+use crate::ops::{actor_delivery, actor_runtime, group_runtime};
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -82,6 +82,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     authorize(&group, request)?;
+    actor_delivery::shutdown_group(&group.group_id);
     actor_runtime::stop_group(&group)?;
     let deleted = store(home)?.delete(&group.group_id).map_err(OpError::io)?;
     if active::get(home).map_err(OpError::io)?.as_deref() == Some(&group.group_id) {
@@ -93,6 +94,7 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let old = load(home, request)?;
     authorize(&old, request)?;
+    actor_delivery::shutdown_group(&old.group_id);
     actor_runtime::stop_group(&old)?;
     store(home)?.delete(&old.group_id).map_err(OpError::io)?;
     let created = store(home)?
@@ -112,6 +114,9 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     authorize(&group, request)?;
     let raw = required_arg(request, "state")?;
     let state: GroupState = serde_json::from_value(Value::String(raw)).map_err(OpError::invalid)?;
+    if matches!(state, GroupState::Paused | GroupState::Stopped) {
+        actor_delivery::shutdown_group(&group.group_id);
+    }
     let updated = store(home)?
         .mutate(&group.group_id, |doc| {
             doc.state = state;
@@ -134,6 +139,7 @@ fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult 
     let runtimes = if value {
         actor_runtime::start_group(home, &group)?
     } else {
+        actor_delivery::shutdown_group(&group.group_id);
         actor_runtime::stop_group(&group)?
     };
     let updated = store(home)?

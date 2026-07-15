@@ -75,28 +75,36 @@ The `chat.stream` event type represents real-time streaming content from agents.
 
 | Platform | Status | Token Config |
 |----------|--------|--------------|
-| Telegram | ✅ Complete | `token_env` |
-| Slack | ✅ Complete | `bot_token_env` + `app_token_env` |
-| Discord | ✅ Complete | `token_env` |
-| Feishu/Lark | ✅ Complete | `feishu_app_id_env` + `feishu_app_secret_env` |
-| DingTalk | ✅ Complete | `dingtalk_app_key_env` + `dingtalk_app_secret_env` (+ optional `dingtalk_robot_code_env`) |
-| WeCom | ✅ Complete | Web-configured Bot ID / Secret flow |
-| Weixin / WeChat | ✅ Complete | Web-configured account/login flow |
+| Telegram | Rust text adapter (`teloxide`) | `bot_token_env` |
+| Slack | Rust text adapter (official Socket Mode/Web API) | `bot_token_env` + `app_token_env` |
+| Discord | Rust text adapter (`serenity`) | `bot_token_env` |
+| Feishu/Lark | Rust text adapter (`lark-channel`) | `feishu_app_id` + `feishu_app_secret` |
+| DingTalk | Rust text adapter with outbound image/file delivery (`dingtalk-stream`) | `dingtalk_app_key` + `dingtalk_app_secret` |
+| WeCom | Built-in Rust adapter with streaming, media upload/download, and official AI Bot long-connection compatibility | Web-configured Bot ID / Secret flow |
+| Weixin / WeChat | Rust text adapter (`weixin-agent`) | SDK QR login and persisted bot token |
+
+No vendor currently publishes an official Rust SDK for these seven platforms. CCCC uses established Rust SDKs that implement the official platform protocols where available; Slack uses the official Socket Mode and Web API directly. The built-in WeCom client follows the wire behavior of WeCom's official Node and Python AI Bot SDKs; it is not presented as an official WeCom Rust SDK.
+
+DingTalk outbound attachments are resolved only from validated `state/blobs/*` paths, limited to 10 MiB, uploaded with the SDK, and delivered through the active session webhook. DingTalk inbound attachments and attachment delivery on the other IM adapters remain outside the current Rust feature set.
 
 ### Configuration
 
 ```yaml
-# group.yaml
-im:
-  platform: telegram
-  token_env: TELEGRAM_BOT_TOKEN
+# group.yaml (normally written by `cccc im set` or Web settings)
+im_bridge:
+  config:
+    platform: telegram
+    bot_token_env: TELEGRAM_BOT_TOKEN
 
 # Slack requires dual tokens
-im:
-  platform: slack
-  bot_token_env: SLACK_BOT_TOKEN    # xoxb-... Web API
-  app_token_env: SLACK_APP_TOKEN    # xapp-... Socket Mode
+im_bridge:
+  config:
+    platform: slack
+    bot_token_env: SLACK_BOT_TOKEN    # xoxb-... Web API
+    app_token_env: SLACK_APP_TOKEN    # xapp-... Socket Mode
 ```
+
+WeCom must have the AI Bot WebSocket subscription enabled in the WeCom administration console. CCCC sends the subscription as the first application frame, starts heartbeat only after the subscription acknowledgement, and reports authentication errors instead of treating a bare WebSocket handshake as a running bot.
 
 ### IM Commands
 
@@ -280,6 +288,15 @@ cccc_automation_manage(op=create|update|enable|disable|delete|replace_all, ...)
 - Context panel (vision/sketch/tasks)
 - Settings panel (automation config)
 - IM Bridge configuration
+
+### Message Reliability
+
+- Chat sends carry a stable `client_id`; the daemon deduplicates retries within the group and sender scope.
+- The Web outbox reconciles immediately from the HTTP response and again from SSE/reconnect catch-up, so a missing SSE frame does not leave a permanent optimistic duplicate.
+- Local runtime delivery submits message text and Enter atomically under a per-session input lock, preventing status probes from interleaving with user messages.
+- Messages for stopped or temporarily unavailable actors remain unread and are replayed after the actor starts.
+- Runtime delivery uses bounded retry for transient failures and suppresses concurrent duplicate delivery of the same event.
+- Actor delivery includes the complete event id, reply/priority requirements, refs, relay origin, and attachment access instructions.
 
 ### Theme System
 

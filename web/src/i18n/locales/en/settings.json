@@ -891,6 +891,7 @@
     "weixinLoginStatus": "Login status",
     "weixinCurrentAccount": "Current account",
     "weixinNotLoggedIn": "Not logged in",
+    "weixinLoginRequired": "Complete Weixin QR login before starting the bridge.",
     "weixinStartLogin": "Start QR Login",
     "weixinRefreshQr": "Regenerate QR Code",
     "weixinLogout": "Logout Weixin",

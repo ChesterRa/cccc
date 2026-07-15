@@ -130,10 +130,12 @@ class ChatMessageData:
 |-------|------|
 | `[]`（空） | 广播 |
 | `user` | 用户本人 |
-| `@all` | 所有 actors |
-| `@peers` | 所有 peer |
+| `@all` | 所有可见协作 actors（不含内部 assistant） |
+| `@peers` | 所有可见 peer（不含 Voice Secretary 等内部 assistant） |
 | `@foreman` | foreman |
 | `<actor_id>` | 指定 actor |
+
+内部 assistant 仅接受显式 actor ID，不参与 `@all`、`@peers` 或 `@foreman` selector。
 
 ## 5. 文件与附件（vNext 方向）
 

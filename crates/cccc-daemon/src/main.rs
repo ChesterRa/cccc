@@ -52,7 +52,7 @@ async fn start(home: HomeLayout) -> Result<()> {
     let error_log = log.try_clone()?;
     let executable = std::env::current_exe()?;
     let mut command = detached_command(&executable);
-    let child = command
+    let mut child = command
         .arg("run")
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
@@ -60,13 +60,19 @@ async fn start(home: HomeLayout) -> Result<()> {
         .current_dir(home.root())
         .spawn()
         .context("spawn Rust daemon")?;
-    for _ in 0..40 {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    loop {
         if ping(&home).await {
             println!("ccccd: started pid={}", child.id());
             return Ok(());
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    let _ = child.kill();
+    let _ = child.wait();
     anyhow::bail!(
         "Rust daemon failed to become ready; see {}",
         paths.log.display()

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
 
-use crate::actors::effective_role;
+use crate::actors::{effective_role, find};
 use crate::fs::{read_json, write_json};
 use crate::ledger;
 use crate::{GroupDoc, GroupStore, HomeLayout};
@@ -93,6 +93,10 @@ pub fn cursor(home: &HomeLayout, group_id: &str, actor_id: &str) -> io::Result<O
     Ok(load(home, group_id)?.cursors.get(actor_id).cloned())
 }
 
+pub fn cursors(home: &HomeLayout, group_id: &str) -> io::Result<BTreeMap<String, String>> {
+    Ok(load(home, group_id)?.cursors)
+}
+
 pub fn is_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
     if event.by == actor_id || !matches!(event.kind.as_str(), "chat.message" | "system.notify") {
         return false;
@@ -103,6 +107,13 @@ pub fn is_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
         .and_then(|value| value.as_array())
         .map(|items| items.iter().filter_map(|item| item.as_str()).collect())
         .unwrap_or_default();
+    if find(group, actor_id).is_some_and(|actor| actor.internal_kind.is_some()) {
+        let direct_notify_target = event.kind == "system.notify"
+            && ["actor_id", "target_actor_id"]
+                .iter()
+                .any(|key| event.data.get(*key).and_then(|value| value.as_str()) == Some(actor_id));
+        return to.contains(&actor_id) || direct_notify_target;
+    }
     if event.kind == "system.notify" && to.is_empty() {
         return event
             .data

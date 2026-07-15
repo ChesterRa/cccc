@@ -28,7 +28,7 @@ fn serializes_delivery_notifies_and_advances_cursor() {
             "runner":"pty",
             "runtime":"custom",
             "submit":"newline",
-            "command":["sh","-c","stty -echo; IFS= read -r first; IFS= read -r second; IFS= read -r third; printf 'FIRST:%s\\nSECOND:%s\\nTHIRD:%s' \"$first\" \"$second\" \"$third\"; sleep 2"],
+            "command":["sh","-c","stty -echo; IFS= read -r first; IFS= read -r second; IFS= read -r third; IFS= read -r fourth; printf 'FIRST:%s\\nSECOND:%s\\nTHIRD:%s\\nFOURTH:%s' \"$first\" \"$second\" \"$third\" \"$fourth\"; sleep 2"],
             "by":"user"
         }),
     );
@@ -53,11 +53,23 @@ fn serializes_delivery_notifies_and_advances_cursor() {
         "system_notify",
         json!({"group_id":group_id,"by":"system","to":["peer1"],"text":"notice"}),
     );
+    let reply = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":group_id,
+            "by":"user",
+            "to":["peer1"],
+            "reply_to":first.result["event"]["id"],
+            "text":"fix it"
+        }),
+    );
     assert_eq!(first.result["delivery"]["state"], "queued");
     assert_eq!(second.result["delivery"]["queued"], 1);
     assert_eq!(notify.result["delivery"]["state"], "queued");
+    assert_eq!(reply.result["delivery"]["state"], "queued");
 
-    wait_for(&home, &group_id, "FIRST:[cccc] user → peer1: one");
+    wait_for(&home, &group_id, "FOURTH:[cccc] user → peer1 (reply:");
     let tail = call(
         &home,
         "terminal_tail",
@@ -65,7 +77,9 @@ fn serializes_delivery_notifies_and_advances_cursor() {
     );
     let text = tail.result["text"].as_str().unwrap_or_default();
     assert!(text.contains("SECOND:[cccc] user → peer1: two"));
-    assert!(text.contains("THIRD:[cccc] system → peer1: notice"));
+    assert!(text.contains("THIRD:[cccc] SYSTEM (info): notice"));
+    assert!(text.contains("FOURTH:[cccc] user → peer1 (reply:"));
+    assert!(text.contains("> \"one\": fix it"));
 
     let inbox = call(
         &home,

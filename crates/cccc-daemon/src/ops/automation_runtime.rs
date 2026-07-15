@@ -6,12 +6,12 @@ use serde_json::json;
 use crate::dispatch::dispatch;
 use crate::ops::{actor_delivery, actor_runtime, group_runtime};
 
-pub fn tick(home: &HomeLayout) {
+pub fn tick(home: &HomeLayout, include_unread: bool) {
     actor_delivery::drain(home);
     if let Err(error) = actor_runtime::reconcile(home) {
         tracing::warn!(message = %error.message, "runtime reconciliation failed");
     }
-    match cccc_core::automation::tick(home) {
+    match cccc_core::automation::tick_scheduled(home, include_unread) {
         Ok(result) => apply(home, result),
         Err(error) => tracing::warn!(%error, "automation tick failed"),
     }

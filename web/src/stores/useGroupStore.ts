@@ -21,7 +21,6 @@ import {
   loadArchivedGroupIds,
   loadGroupOrder,
   loadSelectedGroupId,
-  MAX_UI_EVENTS,
   mergeArchivedGroupIds,
   mergeGroupOrder,
   mergeLedgerEventStatuses,
@@ -60,6 +59,7 @@ import {
   upsertStreamingEventPatch,
   upsertStreamingTextPatch,
 } from "./groupStreamingReducers";
+import { mergeOlderLedgerEvents } from "./groupHistoryMerge";
 import { computeGroupRuntimePatch } from "../utils/groupRuntimeProjection";
 import { projectCrossGroupReceipts } from "../utils/mergeLedgerEvents";
 
@@ -280,9 +280,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
       if (event.id && bucket.events.some((e) => e.id === event.id)) return state;
       const nextEvents = projectCrossGroupReceipts(bucket.events.concat([event]));
-      const patch: Partial<GroupChatBucket> = {
-        events: nextEvents.length > MAX_UI_EVENTS ? nextEvents.slice(nextEvents.length - MAX_UI_EVENTS) : nextEvents,
-      };
+      const patch: Partial<GroupChatBucket> = { events: nextEvents };
       if (String(event.kind || "").trim() === "chat.message" && String(event.by || "").trim() !== "user") {
         const data = event.data && typeof event.data === "object"
           ? event.data as { pending_event_id?: unknown; reply_to?: unknown; text?: unknown; activities?: unknown; stream_id?: unknown }
@@ -484,11 +482,9 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const gid = resolveChatGroupId(state, groupId);
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      const existingIds = new Set(bucket.events.map((event) => event.id).filter(Boolean));
-      const uniqueNew = newEvents.filter((event) => event.id && !existingIds.has(event.id));
-      const merged = [...uniqueNew, ...bucket.events];
+      const merged = mergeOlderLedgerEvents(bucket.events, newEvents);
       return buildChatBucketPatch(state, gid, {
-        events: merged.length > MAX_UI_EVENTS ? merged.slice(0, MAX_UI_EVENTS) : merged,
+        events: merged.events,
       }) ?? state;
     }),
   setActors: (actors) =>

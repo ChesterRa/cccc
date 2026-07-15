@@ -1,0 +1,43 @@
+use cccc_contracts::Event;
+use cccc_core::{GroupStore, HomeLayout, ledger};
+use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
+
+pub fn find(
+    home: &HomeLayout,
+    group_id: &str,
+    kind: &str,
+    by: &str,
+    args: &Map<String, Value>,
+) -> Option<Event> {
+    let client_id = args
+        .get("client_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let path = GroupStore::new(home.clone())
+        .ok()?
+        .ledger_path(group_id)
+        .ok()?;
+    ledger::read_all(&path).ok()?.into_iter().find(|event| {
+        event.kind == kind
+            && event.by == by
+            && event.data.get("client_id").and_then(Value::as_str) == Some(client_id)
+    })
+}
+
+pub fn find_relay(home: &HomeLayout, group_id: &str, source_event_id: &str) -> Option<Event> {
+    let path = GroupStore::new(home.clone())
+        .ok()?
+        .ledger_path(group_id)
+        .ok()?;
+    ledger::read_all(&path).ok()?.into_iter().find(|event| {
+        event.kind == "chat.message"
+            && event.data.get("src_event_id").and_then(Value::as_str) == Some(source_event_id)
+    })
+}
+
+pub fn tracked_client_id(group_id: &str, by: &str, key: &str) -> String {
+    let digest = Sha256::digest(format!("{group_id}\0{by}\0{key}"));
+    format!("tracked:{digest:x}")
+}

@@ -286,6 +286,7 @@ async fn file(
         request.remove("action");
         request.remove("path");
         request.remove("rel_path");
+        crate::mapping::normalize_message_author(&mut request);
         request.insert(
             "attachments".into(),
             json!([{

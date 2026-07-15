@@ -39,6 +39,10 @@ struct RuntimeState {
 }
 
 pub fn tick(home: &HomeLayout) -> io::Result<TickResult> {
+    tick_scheduled(home, true)
+}
+
+pub fn tick_scheduled(home: &HomeLayout, include_unread: bool) -> io::Result<TickResult> {
     let store = GroupStore::new(home.clone())?;
     let mut result = TickResult::default();
     for meta in store.list()? {
@@ -51,7 +55,7 @@ pub fn tick(home: &HomeLayout) -> io::Result<TickResult> {
         let mut state = load_state(&store, &group.group_id)?;
         let previous = state.clone();
         tick_rules(&store, &group, &mut state, &mut result)?;
-        if group.state == GroupState::Active {
+        if include_unread && group.state == GroupState::Active {
             tick_unread(home, &store, &group, &mut state, &mut result)?;
         }
         if state != previous {

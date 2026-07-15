@@ -102,3 +102,58 @@ fn inbox_filters_targeted_messages_and_persists_cursor() {
             .is_empty()
     );
 }
+
+#[test]
+fn internal_assistant_is_not_a_peer_recipient() {
+    let (_temp, _home, store, group_id) = fixture();
+    store
+        .mutate(&group_id, |group| {
+            actors::add(group, Actor::new("lead"))?;
+            actors::add(group, Actor::new("peer"))?;
+            let mut secretary = Actor::new("voice-secretary");
+            secretary.internal_kind = Some("voice_secretary".into());
+            actors::add(group, secretary)?;
+            Ok(())
+        })
+        .expect("actors");
+    let group = store.load(&group_id).expect("load");
+    let message = |to: &[&str]| {
+        let mut event = Event::new("chat.message", &group_id);
+        event.by = "lead".into();
+        event.data = json!({"text":"hello","to":to})
+            .as_object()
+            .cloned()
+            .expect("message data");
+        event
+    };
+
+    assert!(inbox::is_for_actor(&group, &message(&["@peers"]), "peer"));
+    assert!(!inbox::is_for_actor(
+        &group,
+        &message(&["@peers"]),
+        "voice-secretary"
+    ));
+    assert!(!inbox::is_for_actor(
+        &group,
+        &message(&["@all"]),
+        "voice-secretary"
+    ));
+    assert!(!inbox::is_for_actor(
+        &group,
+        &message(&[]),
+        "voice-secretary"
+    ));
+    assert!(inbox::is_for_actor(
+        &group,
+        &message(&["voice-secretary"]),
+        "voice-secretary"
+    ));
+
+    let mut notify = Event::new("system.notify", &group_id);
+    notify.by = "system".into();
+    notify.data = json!({"actor_id":"voice-secretary","text":"wake up"})
+        .as_object()
+        .cloned()
+        .expect("notify data");
+    assert!(inbox::is_for_actor(&group, &notify, "voice-secretary"));
+}

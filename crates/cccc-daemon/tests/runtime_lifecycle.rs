@@ -82,6 +82,40 @@ fn actor_lifecycle_controls_terminal_process() {
         json!({"group_id":group_id,"by":"user"}),
     );
     assert_eq!(actors.result["actors"][0]["running"], false);
+
+    assert!(
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":"peer-remove",
+                "runner":"headless",
+                "runtime":"custom",
+                "command":["sh","-c","sleep 30"],
+                "by":"user"
+            }),
+        )
+        .ok
+    );
+    assert!(
+        call(
+            &home,
+            "actor_start",
+            json!({"group_id":group_id,"actor_id":"peer-remove","by":"user"}),
+        )
+        .ok
+    );
+    assert!(cccc_runtime::status(&group_id, "peer-remove").is_ok());
+    assert!(
+        call(
+            &home,
+            "actor_remove",
+            json!({"group_id":group_id,"actor_id":"peer-remove","by":"user"}),
+        )
+        .ok
+    );
+    assert!(cccc_runtime::status(&group_id, "peer-remove").is_err());
 }
 
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {

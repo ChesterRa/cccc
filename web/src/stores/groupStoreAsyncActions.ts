@@ -23,7 +23,6 @@ import {
   loadGroupInFlight,
   loadGroupToken,
   loadSelectedGroupId,
-  MAX_UI_EVENTS,
   mergeActorUnreadCounts,
   reuseEqualActors,
   patchGroupRuntimeStatus,
@@ -46,6 +45,7 @@ import {
 } from "./groupStoreCore";
 import type { GroupStoreAsyncActions, GroupStoreGet, GroupStoreSet, GroupState } from "./groupStoreTypes";
 import { useComposerStore } from "./useComposerStore";
+import { mergeOlderLedgerEvents } from "./groupHistoryMerge";
 
 function splitFetchedActors(actors: Actor[]): { actors: Actor[]; internalRuntimeActors: Actor[] } {
   const visibleActors: Actor[] = [];
@@ -441,7 +441,7 @@ export function createGroupStoreAsyncActions(
         const mergedEvents = mergeLedgerEvents(
           getGroupChatBucket(get().chatByGroup, gid).events,
           filterUiEvents(tail.result.events || []),
-          MAX_UI_EVENTS,
+          Number.MAX_SAFE_INTEGER,
         );
         commitChatPatch({
           events: mergedEvents,
@@ -611,16 +611,14 @@ export function createGroupStoreAsyncActions(
         if (resp.ok) {
           const olderChatEvents = projectFetchedChatEvents(resp.result.events || []);
           const currentBucket = getGroupChatBucket(get().chatByGroup, gid);
-          const existingIds = new Set(currentBucket.events.map((event) => event.id).filter(Boolean));
-          const uniqueNew = olderChatEvents.filter((event) => event.id && !existingIds.has(event.id));
-          const exhaustedHistory = olderChatEvents.length === 0 || uniqueNew.length === 0;
-          const merged = [...uniqueNew, ...currentBucket.events];
+          const merged = mergeOlderLedgerEvents(currentBucket.events, olderChatEvents);
+          const exhaustedHistory = olderChatEvents.length === 0 || merged.added === 0;
           // Atomic update: merge events + clear isLoadingHistory in a single set()
           // to avoid an intermediate rerender where events changed but isLoadingHistory
           // is still true, which would cause useLayoutEffect to skip scroll compensation
           // while the virtualizer already re-measured with the new (prepended) messages.
           set((state) => buildChatBucketPatch(state, gid, {
-            events: merged.length > MAX_UI_EVENTS ? merged.slice(0, MAX_UI_EVENTS) : merged,
+            events: merged.events,
             hasMoreHistory: exhaustedHistory ? false : !!resp.result.has_more,
             isLoadingHistory: false,
           }) ?? state);

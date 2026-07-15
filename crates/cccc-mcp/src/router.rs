@@ -130,12 +130,19 @@ fn add_runtime_context(home: &HomeLayout, args: &mut Map<String, Value>) {
             args.insert("group_id".into(), Value::String(group));
         }
     }
-    if !args.contains_key("actor_id")
-        && let Ok(actor) = std::env::var("CCCC_ACTOR_ID")
-        && !actor.is_empty()
-    {
-        args.insert("actor_id".into(), Value::String(actor.clone()));
-        args.entry("by").or_insert(Value::String(actor));
+    let actor = std::env::var("CCCC_ACTOR_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    apply_actor_context(args, actor.as_deref());
+}
+
+fn apply_actor_context(args: &mut Map<String, Value>, actor: Option<&str>) {
+    if let Some(actor) = actor.map(str::trim).filter(|actor| !actor.is_empty()) {
+        args.entry("actor_id")
+            .or_insert_with(|| Value::String(actor.to_owned()));
+        // The process environment is set by the runtime and is authoritative.
+        // Tool arguments are model-controlled and must not be able to impersonate user.
+        args.insert("by".into(), Value::String(actor.to_owned()));
     }
 }
 
@@ -158,4 +165,33 @@ fn is_repo_tool(name: &str) -> bool {
             | "cccc_code_wait"
             | "cccc_file"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::apply_actor_context;
+    use serde_json::json;
+
+    #[test]
+    fn runtime_actor_is_authoritative_but_does_not_replace_target_actor() {
+        let mut args = json!({"actor_id":"target-peer","by":"user"})
+            .as_object()
+            .cloned()
+            .expect("args");
+
+        apply_actor_context(&mut args, Some("backend"));
+
+        assert_eq!(args["actor_id"], "target-peer");
+        assert_eq!(args["by"], "backend");
+    }
+
+    #[test]
+    fn runtime_actor_populates_missing_self_context() {
+        let mut args = serde_json::Map::new();
+
+        apply_actor_context(&mut args, Some("backend"));
+
+        assert_eq!(args["actor_id"], "backend");
+        assert_eq!(args["by"], "backend");
+    }
 }

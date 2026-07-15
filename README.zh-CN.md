@@ -140,7 +140,7 @@ cccc-cli        用户命令 cccc
 - Group Bridge 支持双端配对、作用域凭据、幂等消息与附件、投递回执、WebSocket 会话和按访问级别过滤的远程 MCP。
 - Group Space 提供 work/memory lane、幂等 ingest、source、job、本地降级检索以及可选的 NotebookLM 浏览器登录面。
 - Voice Secretary 支持文档、lease、session 和 Browser ASR 转写；未配置本地转写后端时明确返回 `asr_unavailable`。
-- IM 配置与授权状态覆盖 Telegram、Slack、Discord、飞书、钉钉、企业微信和微信。外部网络适配器未真实可用时，Rust 包不会伪报运行成功。
+- IM 网络适配器覆盖 Telegram、Slack、Discord、飞书、钉钉、企业微信和微信，支持授权文本收发、生命周期管理和旧配置迁移。平台增强能力以功能矩阵为准，不会把未迁移的附件或交互能力伪报为可用。
 
 ## Docker
 

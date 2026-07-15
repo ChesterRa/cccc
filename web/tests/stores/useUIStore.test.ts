@@ -52,7 +52,39 @@ describe("useUIStore sidebar width", () => {
     expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).presentationDockOpen).toBe(false);
   });
 
-  it("persists detached scroll snapshots across reloads", async () => {
+  it("does not publish duplicate chat scroll state updates", async () => {
+    const mod = await import("../../src/stores/useUIStore");
+    const listener = vi.fn();
+    const unsubscribe = mod.useUIStore.subscribe(listener);
+
+    mod.useUIStore.getState().setShowScrollButton("g-demo", true);
+    mod.useUIStore.getState().setShowScrollButton("g-demo", true);
+    mod.useUIStore.getState().setChatUnreadCount("g-demo", 3);
+    mod.useUIStore.getState().setChatUnreadCount("g-demo", 3);
+
+    expect(listener).toHaveBeenCalledTimes(2);
+    unsubscribe();
+  });
+
+  it("does not publish the same chat scroll snapshot twice", async () => {
+    const mod = await import("../../src/stores/useUIStore");
+    const listener = vi.fn();
+    const unsubscribe = mod.useUIStore.subscribe(listener);
+    const snapshot = {
+      mode: "detached" as const,
+      anchorId: "event-42",
+      offsetPx: 80,
+      updatedAt: 123,
+    };
+
+    mod.useUIStore.getState().setChatScrollSnapshot("g-demo", snapshot);
+    mod.useUIStore.getState().setChatScrollSnapshot("g-demo", snapshot);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it("keeps detached scroll snapshots only for the current page lifetime", async () => {
     let mod = await import("../../src/stores/useUIStore");
     mod.useUIStore.getState().setChatScrollSnapshot("g-demo", {
       mode: "detached",
@@ -61,17 +93,19 @@ describe("useUIStore sidebar width", () => {
       updatedAt: 123456,
     });
 
-    vi.resetModules();
-    mod = await import("../../src/stores/useUIStore");
     expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).scrollSnapshot).toEqual({
       mode: "detached",
       anchorId: "evt-42",
       offsetPx: 96,
       updatedAt: 123456,
     });
+
+    vi.resetModules();
+    mod = await import("../../src/stores/useUIStore");
+    expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).scrollSnapshot).toBeNull();
   });
 
-  it("normalizes follow snapshots to an empty anchor on reload", async () => {
+  it("ignores legacy persisted scroll snapshots on reload", async () => {
     localStorageMock.setItem("cccc-chat-sessions", JSON.stringify({
       "g-demo": {
         chatFilter: "all",
@@ -85,12 +119,7 @@ describe("useUIStore sidebar width", () => {
     }));
 
     const mod = await import("../../src/stores/useUIStore");
-    expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).scrollSnapshot).toEqual({
-      mode: "follow",
-      anchorId: "",
-      offsetPx: 0,
-      updatedAt: 200,
-    });
+    expect(mod.getChatSession("g-demo", mod.useUIStore.getState().chatSessions).scrollSnapshot).toBeNull();
   });
 
   it("ignores obsolete runtime dock payloads on reload", async () => {

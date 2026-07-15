@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
+use cccc_core::access_tokens::AccessTokenStore;
+use reqwest::Method;
 use serde_json::{Value, json};
 
 use crate::args::{ImAction, ImArgs, ImSetArgs, PromptArgs, SpaceAction, SpaceArgs};
@@ -17,8 +19,8 @@ pub async fn prompt(client: &DaemonClient, home: &HomeLayout, args: PromptArgs) 
     )
 }
 
-pub async fn im(client: &DaemonClient, home: &HomeLayout, args: ImArgs) -> Result<()> {
-    let (op, value) = match args.action {
+pub async fn im(home: &HomeLayout, endpoint: &str, args: ImArgs) -> Result<()> {
+    let (method, path, value) = match args.action {
         ImAction::Set(args) => {
             let ImSetArgs {
                 platform,
@@ -35,7 +37,8 @@ pub async fn im(client: &DaemonClient, home: &HomeLayout, args: ImArgs) -> Resul
                 weixin_account_id,
             } = *args;
             (
-                "im_set",
+                Method::POST,
+                "/api/im/set",
                 json!({
                     "group_id":group(home,group_id)?,"platform":platform,"token_env":token_env,
                     "bot_token_env":bot_token_env,"app_token_env":app_token_env,
@@ -45,19 +48,35 @@ pub async fn im(client: &DaemonClient, home: &HomeLayout, args: ImArgs) -> Resul
                 }),
             )
         }
-        ImAction::Unset { group_id } => ("im_unset", group_value(home, group_id)?),
-        ImAction::Config { group_id } => ("im_config", group_value(home, group_id)?),
-        ImAction::Start { group_id } => ("im_start", group_value(home, group_id)?),
-        ImAction::Stop { group_id } => ("im_stop", group_value(home, group_id)?),
-        ImAction::Status { group_id } => ("im_status", group_value(home, group_id)?),
+        ImAction::Unset { group_id } => {
+            (Method::POST, "/api/im/unset", group_value(home, group_id)?)
+        }
+        ImAction::Config { group_id } => {
+            (Method::GET, "/api/im/config", group_value(home, group_id)?)
+        }
+        ImAction::Start { group_id } => {
+            (Method::POST, "/api/im/start", group_value(home, group_id)?)
+        }
+        ImAction::Stop { group_id } => (Method::POST, "/api/im/stop", group_value(home, group_id)?),
+        ImAction::Status { group_id } => {
+            (Method::GET, "/api/im/status", group_value(home, group_id)?)
+        }
         ImAction::Bind { key, group_id } => (
-            "im_bind_chat",
+            Method::POST,
+            "/api/im/bind",
             json!({"group_id":group(home,group_id)?,"key":key}),
         ),
-        ImAction::Pending { group_id } => ("im_list_pending", group_value(home, group_id)?),
-        ImAction::Authorized { group_id } => ("im_list_authorized", group_value(home, group_id)?),
+        ImAction::Pending { group_id } => {
+            (Method::GET, "/api/im/pending", group_value(home, group_id)?)
+        }
+        ImAction::Authorized { group_id } => (
+            Method::GET,
+            "/api/im/authorized",
+            group_value(home, group_id)?,
+        ),
         ImAction::Reject { key, group_id } => (
-            "im_reject_pending",
+            Method::POST,
+            "/api/im/pending/reject",
             json!({"group_id":group(home,group_id)?,"key":key}),
         ),
         ImAction::Revoke {
@@ -65,11 +84,60 @@ pub async fn im(client: &DaemonClient, home: &HomeLayout, args: ImArgs) -> Resul
             thread_id,
             group_id,
         } => (
-            "im_revoke_chat",
+            Method::POST,
+            "/api/im/revoke",
             json!({"group_id":group(home,group_id)?,"chat_id":chat_id,"thread_id":thread_id}),
         ),
     };
-    print(call(client, op, value).await?)
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&web_call(home, endpoint, method, path, value).await?)?
+    );
+    Ok(())
+}
+
+async fn web_call(
+    home: &HomeLayout,
+    endpoint: &str,
+    method: Method,
+    path: &str,
+    value: Value,
+) -> Result<Value> {
+    let client = reqwest::Client::new();
+    let mut request = client.request(method.clone(), format!("{endpoint}{path}"));
+    if let Some(token) = AccessTokenStore::new(home.clone())?
+        .list()?
+        .into_iter()
+        .find(|token| token.is_admin)
+    {
+        request = request.bearer_auth(token.token);
+    }
+    request = if uses_query(&method, path) {
+        request.query(&value)
+    } else {
+        request.json(&value)
+    };
+    let response = request
+        .send()
+        .await
+        .with_context(|| format!("CCCC Web is not reachable at {endpoint}; run `cccc` first"))?;
+    let status = response.status();
+    let body: Value = response
+        .json()
+        .await
+        .context("invalid response from CCCC Web")?;
+    if status.is_success() && body.get("ok").and_then(Value::as_bool) == Some(true) {
+        return Ok(body.get("result").cloned().unwrap_or(Value::Null));
+    }
+    let message = body
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .unwrap_or("CCCC Web rejected the IM operation");
+    anyhow::bail!("{message} ({status})")
+}
+
+fn uses_query(method: &Method, path: &str) -> bool {
+    *method == Method::GET || matches!(path, "/api/im/revoke" | "/api/im/verbose")
 }
 
 pub async fn space(client: &DaemonClient, home: &HomeLayout, args: SpaceArgs) -> Result<()> {
@@ -161,4 +229,16 @@ fn json_object(value: &str, name: &str) -> Result<Value> {
         anyhow::bail!("{name} must be a JSON object");
     }
     Ok(parsed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn revoke_and_get_requests_use_query_parameters() {
+        assert!(uses_query(&Method::GET, "/api/im/status"));
+        assert!(uses_query(&Method::POST, "/api/im/revoke"));
+        assert!(!uses_query(&Method::POST, "/api/im/start"));
+    }
 }

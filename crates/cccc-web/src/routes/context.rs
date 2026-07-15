@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 
 use crate::AppState;
-use crate::api::{ApiResult, body_object, call, object, success};
+use crate::api::{ApiResult, body_object, call, object};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -19,7 +19,10 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/groups/{group_id}/ledger/search",
             get(ledger_search),
         )
-        .route("/api/v1/groups/{group_id}/ledger/window", get(ledger_tail))
+        .route(
+            "/api/v1/groups/{group_id}/ledger/window",
+            get(ledger_window),
+        )
         .route(
             "/api/v1/groups/{group_id}/ledger/statuses",
             post(ledger_statuses),
@@ -66,7 +69,7 @@ async fn ledger_tail(
     call(
         &state,
         "ledger_tail",
-        object(json!({"group_id":group_id,"limit":limit})),
+        object(json!({"group_id":group_id,"limit":limit,"kind":query.get("kind")})),
     )
     .await
 }
@@ -75,42 +78,59 @@ async fn ledger_search(
     Path(group_id): Path<String>,
     Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult {
-    let term = query
-        .get("q")
-        .or_else(|| query.get("query"))
-        .cloned()
-        .unwrap_or_default()
-        .to_lowercase();
-    let mut response = call(
+    call(
         &state,
-        "ledger_tail",
-        object(json!({"group_id":group_id,"limit":1000})),
+        "ledger_search",
+        object(json!({
+            "group_id":group_id,
+            "q":query.get("q").or_else(|| query.get("query")),
+            "kind":query.get("kind"),
+            "by":query.get("by"),
+            "before":query.get("before"),
+            "after":query.get("after"),
+            "limit":query.get("limit"),
+        })),
     )
-    .await?;
-    let matches: Vec<_> = response
-        .0
-        .get("result")
-        .and_then(|result| result.get("events"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|event| {
-            serde_json::to_string(event)
-                .unwrap_or_default()
-                .to_lowercase()
-                .contains(&term)
-        })
-        .cloned()
-        .collect();
-    response.0 = json!({"ok":true,"result":{"events":matches,"matches":matches}});
-    Ok(response)
+    .await
 }
-async fn ledger_statuses(Path(group_id): Path<String>, Json(body): Json<Value>) -> Json<Value> {
-    let ids = body.get("event_ids").cloned().unwrap_or_else(|| json!([]));
-    success(json!({"group_id":group_id,"statuses":{},"event_ids":ids}))
-}
-async fn read_status(Path((group_id, event_id)): Path<(String, String)>) -> Json<Value> {
-    success(
-        json!({"group_id":group_id,"event_id":event_id,"read_by":[],"acked_by":[],"replied_by":[]}),
+async fn ledger_window(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> ApiResult {
+    call(
+        &state,
+        "ledger_window",
+        object(json!({
+            "group_id":group_id,
+            "center":query.get("center"),
+            "kind":query.get("kind"),
+            "before":query.get("before"),
+            "after":query.get("after"),
+        })),
     )
+    .await
+}
+async fn ledger_statuses(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    call(
+        &state,
+        "ledger_statuses",
+        object(json!({"group_id":group_id,"event_ids":body.get("event_ids")})),
+    )
+    .await
+}
+async fn read_status(
+    State(state): State<AppState>,
+    Path((group_id, event_id)): Path<(String, String)>,
+) -> ApiResult {
+    call(
+        &state,
+        "message_read_status",
+        object(json!({"group_id":group_id,"event_id":event_id})),
+    )
+    .await
 }

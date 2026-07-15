@@ -1,5 +1,6 @@
-use cccc_contracts::{Actor, ActorRuntime, ActorSubmit, Event, GroupState};
+use cccc_contracts::{Actor, ActorRuntime, ActorSubmit, GroupState};
 use cccc_core::{GroupStore, system_prompt};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::ops::actor_delivery::{DeliveryCompletion, DeliveryJob, record_completion};
@@ -9,56 +10,73 @@ const PREAMBLE_DELAY: Duration = Duration::from_millis(500);
 const INPUT_MODE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub fn process(
-    job: DeliveryJob,
+    job: &DeliveryJob,
     preamble_session: &mut String,
     last_delivery: &mut Option<std::time::Instant>,
-) {
+    cancelled: &AtomicBool,
+) -> bool {
+    if cancelled.load(Ordering::Acquire) {
+        return false;
+    }
     let Ok(current_group) =
         GroupStore::new(job.home.clone()).and_then(|store| store.load(&job.group.group_id))
     else {
-        return;
+        return false;
     };
     if matches!(
         current_group.state,
         GroupState::Paused | GroupState::Stopped
     ) {
-        return;
+        return false;
     }
     let Ok(status) = cccc_runtime::status(&job.group.group_id, &job.actor.id) else {
-        return;
+        return false;
     };
     if !status.running {
-        return;
+        return false;
     }
-    apply_throttle(&current_group, last_delivery);
+    if !apply_throttle(&current_group, last_delivery, cancelled) {
+        return false;
+    }
 
     if job.actor.runtime != ActorRuntime::Custom && *preamble_session != status.started_at {
-        wait_for_input_mode(&job.group.group_id, &job.actor.id);
+        if !wait_for_input_mode(&job.group.group_id, &job.actor.id, cancelled) {
+            return false;
+        }
         if !submit_text(
             &job.group.group_id,
             &job.actor,
             &system_prompt::render(&current_group, &job.actor),
+            cancelled,
         ) {
-            return;
+            return false;
         }
         preamble_session.clone_from(&status.started_at);
-        std::thread::sleep(PREAMBLE_DELAY);
+        if !interruptible_sleep(PREAMBLE_DELAY, cancelled) {
+            return false;
+        }
     }
 
-    let Some(payload) = render(&job.event) else {
-        return;
+    let Some(payload) = super::actor_delivery_render::render(&job.event) else {
+        return false;
     };
-    if submit_text(&job.group.group_id, &job.actor, &payload) {
+    if submit_text(&job.group.group_id, &job.actor, &payload, cancelled) {
         *last_delivery = Some(std::time::Instant::now());
         record_completion(DeliveryCompletion {
-            group_id: job.group.group_id,
-            actor_id: job.actor.id,
-            event_id: job.event.id,
+            group_id: job.group.group_id.clone(),
+            actor_id: job.actor.id.clone(),
+            event_id: job.event.id.clone(),
         });
+        return true;
     }
+    false
 }
 
-fn apply_throttle(group: &cccc_core::GroupDoc, last_delivery: &Option<std::time::Instant>) {
+fn apply_throttle(
+    group: &cccc_core::GroupDoc,
+    last_delivery: &Option<std::time::Instant>,
+    cancelled: &AtomicBool,
+) -> bool {
     let seconds = group
         .extra
         .get("settings")
@@ -68,12 +86,12 @@ fn apply_throttle(group: &cccc_core::GroupDoc, last_delivery: &Option<std::time:
     let Some(remaining) =
         last_delivery.and_then(|last| Duration::from_secs(seconds).checked_sub(last.elapsed()))
     else {
-        return;
+        return true;
     };
-    std::thread::sleep(remaining);
+    interruptible_sleep(remaining, cancelled)
 }
 
-fn submit_text(group_id: &str, actor: &Actor, text: &str) -> bool {
+fn submit_text(group_id: &str, actor: &Actor, text: &str, cancelled: &AtomicBool) -> bool {
     let raw = text.trim_end_matches(['\r', '\n']);
     if raw.is_empty() {
         return false;
@@ -87,96 +105,46 @@ fn submit_text(group_id: &str, actor: &Actor, text: &str) -> bool {
     } else {
         raw.to_owned()
     };
-    if cccc_runtime::write(group_id, &actor.id, payload.as_bytes()).is_err() {
-        return false;
-    }
     let submit = match actor.submit {
         ActorSubmit::Enter => b"\r".as_slice(),
         ActorSubmit::Newline => b"\n".as_slice(),
-        ActorSubmit::None => return true,
+        ActorSubmit::None => b"".as_slice(),
     };
-    std::thread::sleep(SUBMIT_DELAY);
-    cccc_runtime::write(group_id, &actor.id, submit).is_ok()
+    let delay = if submit.is_empty() {
+        Duration::ZERO
+    } else {
+        SUBMIT_DELAY
+    };
+    !cancelled.load(Ordering::Acquire)
+        && cccc_runtime::submit(group_id, &actor.id, payload.as_bytes(), submit, delay).is_ok()
 }
 
-fn wait_for_input_mode(group_id: &str, actor_id: &str) {
+fn wait_for_input_mode(group_id: &str, actor_id: &str, cancelled: &AtomicBool) -> bool {
     let deadline = std::time::Instant::now() + INPUT_MODE_TIMEOUT;
     while std::time::Instant::now() < deadline {
         if cccc_runtime::bracketed_paste_enabled(group_id, actor_id).unwrap_or(false) {
-            return;
+            return true;
         }
         if !cccc_runtime::status(group_id, actor_id).is_ok_and(|status| status.running) {
-            return;
+            return false;
         }
-        std::thread::sleep(Duration::from_millis(50));
+        if !interruptible_sleep(Duration::from_millis(50), cancelled) {
+            return false;
+        }
     }
+    !cancelled.load(Ordering::Acquire)
 }
 
-fn render(event: &Event) -> Option<String> {
-    let text = event
-        .data
-        .get("text")
-        .and_then(|value| value.as_str())
-        .unwrap_or("");
-    let targets = event
-        .data
-        .get("to")
-        .and_then(|value| value.as_array())
-        .into_iter()
-        .flatten()
-        .filter_map(|value| value.as_str())
-        .collect::<Vec<_>>();
-    let targets = if targets.is_empty() {
-        "@all".to_owned()
-    } else {
-        targets.join(", ")
-    };
-    let attachments = event
-        .data
-        .get("attachments")
-        .and_then(|value| value.as_array())
-        .into_iter()
-        .flatten()
-        .filter_map(|item| item.get("path").and_then(|value| value.as_str()))
-        .map(|path| format!("[attachment: {path}]"))
-        .collect::<Vec<_>>();
-    let mut body = text.trim_end_matches(['\r', '\n']).to_owned();
-    if !attachments.is_empty() {
-        if !body.is_empty() {
-            body.push('\n');
+fn interruptible_sleep(duration: Duration, cancelled: &AtomicBool) -> bool {
+    let deadline = std::time::Instant::now().checked_add(duration);
+    while !cancelled.load(Ordering::Acquire) {
+        let remaining = deadline.map_or(Duration::from_millis(50), |deadline| {
+            deadline.saturating_duration_since(std::time::Instant::now())
+        });
+        if remaining.is_zero() {
+            return true;
         }
-        body.push_str(&attachments.join("\n"));
+        std::thread::sleep(remaining.min(Duration::from_millis(50)));
     }
-    if body.is_empty() {
-        return None;
-    }
-    Some(if body.contains(['\r', '\n']) {
-        format!("[cccc] {} → {targets}:\n{body}", event.by)
-    } else {
-        format!("[cccc] {} → {targets}: {body}", event.by)
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::render;
-    use cccc_contracts::Event;
-    use serde_json::json;
-
-    #[test]
-    fn renders_text_and_attachments() {
-        let mut event = Event::new("chat.message", "g_test");
-        event.by = "user".into();
-        event.data = json!({
-            "to":["peer1"],"text":"hello",
-            "attachments":[{"path":"state/blobs/report.txt"}]
-        })
-        .as_object()
-        .cloned()
-        .expect("object");
-        assert_eq!(
-            render(&event).as_deref(),
-            Some("[cccc] user → peer1:\nhello\n[attachment: state/blobs/report.txt]")
-        );
-    }
+    false
 }

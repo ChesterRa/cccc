@@ -448,6 +448,8 @@ fn excluded(relative: &str, is_dir: bool) -> bool {
 
 fn scrub_group(group: &mut GroupDoc) {
     group.running = false;
+    group.extra.remove("im_bridge");
+    group.extra.remove("im");
     for actor in &mut group.actors {
         actor.env.retain(|key, _| {
             let key = key.to_ascii_lowercase();

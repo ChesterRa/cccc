@@ -36,6 +36,7 @@ export async function sendSlashSkillMessageRequest(args: {
         args.replyRequired,
         args.localId,
         [],
+        args.replyTarget.text,
       );
     }
     return api.sendMessage(

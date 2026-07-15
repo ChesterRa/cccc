@@ -21,6 +21,10 @@ export type IMConfigSaveRequest = IMConfigDraft & {
   platform: IMPlatform;
 };
 
+export function canStartIMBridge(platform: IMPlatform, weixinLoggedIn: boolean): boolean {
+  return platform !== "weixin" || weixinLoggedIn;
+}
+
 function toIMConfigExtra(config: IMConfigDraft) {
   return {
     feishu_domain: config.feishuDomain,

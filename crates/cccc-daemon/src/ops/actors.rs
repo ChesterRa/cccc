@@ -6,7 +6,7 @@ use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
-use crate::ops::{actor_runtime, actor_secrets};
+use crate::ops::{actor_delivery, actor_runtime, actor_secrets, runtime_session};
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -17,7 +17,8 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "actor_remove" => remove(home, request),
         "actor_start" => lifecycle(home, request, "actor.start"),
         "actor_stop" => lifecycle(home, request, "actor.stop"),
-        "actor_restart" | "actor_new_session" => lifecycle(home, request, "actor.restart"),
+        "actor_restart" => lifecycle(home, request, "actor.restart"),
+        "actor_new_session" => lifecycle(home, request, "actor.new_session"),
         "actor_env_private_keys" => actor_secrets::keys(home, request),
         "actor_env_private_update" => actor_secrets::update(home, request),
         _ => return None,
@@ -42,7 +43,7 @@ fn prompt(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     authorize(&group, request, ActorAction::List, "")?;
-    object(json!({"actors": actors_with_roles(&group)}))
+    object(json!({"actors": actors_with_roles(home, &group)}))
 }
 
 fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -99,9 +100,12 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let actor_id = required_arg(request, "actor_id")?;
     let group = store(home)?.load(&group_id).map_err(OpError::not_found)?;
     authorize(&group, request, ActorAction::Remove, &actor_id)?;
+    actor_delivery::shutdown_actor(&group_id, &actor_id);
+    actor_runtime::apply(home, &group, &actor_id, "actor.stop")?;
     let actor = store(home)?
         .mutate(&group_id, |doc| actors::remove(doc, &actor_id))
         .map_err(OpError::invalid)?;
+    runtime_session::remove(home, &group_id, &actor_id);
     append_event(
         home,
         &group_id,
@@ -122,6 +126,12 @@ fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult
         _ => ActorAction::Restart,
     };
     authorize(&group, request, action, &actor_id)?;
+    if kind == "actor.new_session" {
+        runtime_session::remove(home, &group_id, &actor_id);
+    }
+    if kind != "actor.start" {
+        actor_delivery::shutdown_actor(&group_id, &actor_id);
+    }
     let enabled = kind != "actor.stop";
     let status = actor_runtime::apply(home, &group, &actor_id, kind)?;
     let actor =
@@ -191,7 +201,7 @@ fn append_event(
     .map_err(OpError::io)
 }
 
-fn actors_with_roles(group: &GroupDoc) -> Vec<Value> {
+fn actors_with_roles(home: &HomeLayout, group: &GroupDoc) -> Vec<Value> {
     group
         .actors
         .iter()
@@ -199,8 +209,13 @@ fn actors_with_roles(group: &GroupDoc) -> Vec<Value> {
         .map(|mut actor| {
             actor.role = actors::effective_role(group, &actor.id);
             let status = actor_runtime::status(&group.group_id, &actor.id);
-            let mut value = serde_json::to_value(actor).unwrap_or_else(|_| json!({}));
+            let mut value = serde_json::to_value(&actor).unwrap_or_else(|_| json!({}));
             if let Some(object) = value.as_object_mut() {
+                object.extend(runtime_session::actor_fields(
+                    home,
+                    &group.group_id,
+                    &actor.id,
+                ));
                 object.insert(
                     "running".into(),
                     Value::Bool(status.as_ref().is_some_and(|item| item.running)),

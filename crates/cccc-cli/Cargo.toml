@@ -16,6 +16,7 @@ cccc-mcp = { path = "../cccc-mcp" }
 cccc-runtime = { path = "../cccc-runtime" }
 cccc-web = { path = "../cccc-web" }
 clap.workspace = true
+reqwest.workspace = true
 serde_json.workspace = true
 shell-words.workspace = true
 tokio.workspace = true

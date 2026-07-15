@@ -18,6 +18,7 @@ import {
   settingsWorkspaceSoftPanelClass,
 } from "./types";
 import { copyTextToClipboard } from "../../../utils/copy";
+import { canStartIMBridge } from "./imBridgeConfig";
 
 const IM_PENDING_AUTO_REFRESH_MS = 12000;
 
@@ -179,6 +180,7 @@ export function IMBridgeTab({
   const weixinLoggedIn = !!weixinLoginStatus?.logged_in;
   const weixinHasQr = !!String(weixinLoginStatus?.qrcode_url || "").trim();
   const weixinHasCustomAdvanced = !!String(imWeixinAccountId || "").trim();
+  const bridgeCanStart = canStartIMBridge(imPlatform, weixinLoggedIn);
   const getBotTokenLabel = () => {
     switch (imPlatform) {
       case "telegram": return t("imBridge.botTokenTelegram");
@@ -459,6 +461,11 @@ export function IMBridgeTab({
           {imStatus.configured && (
             <div className="text-xs mt-1 text-[var(--color-text-tertiary)]">
               {t("imBridge.platform")}: {imStatus.platform} • {t("imBridge.subscribers")}: {imStatus.subscribers}
+            </div>
+          )}
+          {imStatus.last_error && (
+            <div className="mt-2 break-words text-xs text-red-600 dark:text-red-400">
+              {imStatus.last_error}
             </div>
           )}
         </div>
@@ -813,8 +820,9 @@ export function IMBridgeTab({
             ) : (
               <button
                 onClick={onStartBridge}
-                disabled={imBusy}
+                disabled={imBusy || !bridgeCanStart}
                 className={primaryButtonClass(imBusy)}
+                title={!bridgeCanStart ? t("imBridge.weixinLoginRequired") : undefined}
               >
                 {t("imBridge.startBridge")}
               </button>

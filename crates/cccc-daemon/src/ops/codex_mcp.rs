@@ -2,11 +2,17 @@ use cccc_core::HomeLayout;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub fn configure(home: &HomeLayout, command: &mut Vec<String>, env: &mut BTreeMap<String, String>) {
+pub fn configure(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    command: &mut Vec<String>,
+    env: &mut BTreeMap<String, String>,
+) {
     let Some(executable) = resolve_cccc_executable() else {
         return;
     };
-    append_overrides(command, home.root(), &executable);
+    append_overrides(command, home.root(), &executable, group_id, actor_id);
     prepend_executable_dir(env, &executable);
     env.insert(
         "CCCC_HOME".into(),
@@ -14,9 +20,17 @@ pub fn configure(home: &HomeLayout, command: &mut Vec<String>, env: &mut BTreeMa
     );
 }
 
-fn append_overrides(command: &mut Vec<String>, home: &Path, executable: &Path) {
+fn append_overrides(
+    command: &mut Vec<String>,
+    home: &Path,
+    executable: &Path,
+    group_id: &str,
+    actor_id: &str,
+) {
     let executable = toml_string(executable);
     let home = toml_string(home);
+    let group_id = serde_json::to_string(group_id).unwrap_or_else(|_| "\"\"".into());
+    let actor_id = serde_json::to_string(actor_id).unwrap_or_else(|_| "\"\"".into());
     command.extend([
         "-c".into(),
         format!("mcp_servers.cccc.command={executable}"),
@@ -24,6 +38,10 @@ fn append_overrides(command: &mut Vec<String>, home: &Path, executable: &Path) {
         "mcp_servers.cccc.args=[\"mcp\"]".into(),
         "-c".into(),
         format!("mcp_servers.cccc.env.CCCC_HOME={home}"),
+        "-c".into(),
+        format!("mcp_servers.cccc.env.CCCC_GROUP_ID={group_id}"),
+        "-c".into(),
+        format!("mcp_servers.cccc.env.CCCC_ACTOR_ID={actor_id}"),
     ]);
 }
 
@@ -91,10 +109,14 @@ mod tests {
             &mut command,
             Path::new("/tmp/cccc home"),
             Path::new("/tmp/cccc bin/cccc"),
+            "g_test",
+            "backend",
         );
         assert!(command.contains(&"mcp_servers.cccc.command=\"/tmp/cccc bin/cccc\"".into()));
         assert!(command.contains(&"mcp_servers.cccc.args=[\"mcp\"]".into()));
         assert!(command.contains(&"mcp_servers.cccc.env.CCCC_HOME=\"/tmp/cccc home\"".into()));
+        assert!(command.contains(&"mcp_servers.cccc.env.CCCC_GROUP_ID=\"g_test\"".into()));
+        assert!(command.contains(&"mcp_servers.cccc.env.CCCC_ACTOR_ID=\"backend\"".into()));
     }
 
     #[test]

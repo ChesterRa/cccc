@@ -9,10 +9,17 @@ pub fn daemon_call(
     normalize_recipients(&mut args);
     let op = match name {
         "cccc_inbox_list" => "inbox_list",
-        "cccc_message_send" => "send",
-        "cccc_tracked_send" => "tracked_send",
+        "cccc_message_send" => {
+            normalize_message_author(&mut args);
+            "send"
+        }
+        "cccc_tracked_send" => {
+            normalize_message_author(&mut args);
+            "tracked_send"
+        }
         "cccc_message_reply" => {
             alias(&mut args, "event_id", "reply_to");
+            normalize_message_author(&mut args);
             "reply"
         }
         "cccc_context_get" => "context_get",
@@ -138,9 +145,28 @@ fn normalize_recipients(args: &mut Map<String, Value>) {
     }
 }
 
+pub(crate) fn normalize_message_author(args: &mut Map<String, Value>) {
+    if args
+        .get("by")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        return;
+    }
+    if let Some(actor_id) = args
+        .get("actor_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+    {
+        args.insert("by".into(), Value::String(actor_id));
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::daemon_call;
+    use super::{daemon_call, normalize_message_author};
     use serde_json::{Map, json};
 
     #[test]
@@ -152,5 +178,35 @@ mod tests {
         let (op, args) = daemon_call("cccc_terminal", args).expect("mapping");
         assert_eq!(op, "terminal_resize");
         assert!(!args.contains_key("action"));
+    }
+
+    #[test]
+    fn message_actor_id_becomes_daemon_author() {
+        for tool in [
+            "cccc_message_send",
+            "cccc_tracked_send",
+            "cccc_message_reply",
+        ] {
+            let mut value = json!({
+                "group_id":"g_test",
+                "actor_id":"backend",
+                "text":"done",
+                "to":["user"],
+                "reply_to":"event-1"
+            });
+            let args = value.as_object_mut().expect("args").clone();
+            let (_, args) = daemon_call(tool, args).expect("mapping");
+            assert_eq!(args["by"], "backend", "tool={tool}");
+        }
+    }
+
+    #[test]
+    fn explicit_message_author_is_preserved_without_runtime_context() {
+        let mut args = json!({"actor_id":"backend","by":"trusted-proxy"})
+            .as_object()
+            .cloned()
+            .expect("args");
+        normalize_message_author(&mut args);
+        assert_eq!(args["by"], "trusted-proxy");
     }
 }

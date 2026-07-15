@@ -140,7 +140,7 @@ cccc-cli        user-facing cccc command
 - Group Bridge pairs two instances, issues scoped credentials, supports idempotent messages and attachments, delivery receipts, WebSocket sessions, and access-filtered remote MCP.
 - Group Space provides work/memory lanes, idempotent ingest, sources, jobs, local fallback search, and an optional NotebookLM browser login surface.
 - Voice Secretary supports documents, leases, sessions, Browser ASR transcripts, and explicit `asr_unavailable` responses when no local transcription backend is configured.
-- IM configuration and authorization state covers Telegram, Slack, Discord, Feishu, DingTalk, WeCom, and Weixin. The Rust package does not report an external network adapter as running unless that adapter is actually available.
+- Rust IM network adapters cover Telegram, Slack, Discord, Feishu, DingTalk, WeCom, and Weixin with authorized text delivery, lifecycle management, and legacy configuration migration. Platform-specific media and interaction capabilities remain explicit in the feature matrix.
 
 ## Docker
 

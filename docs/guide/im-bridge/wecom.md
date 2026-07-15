@@ -12,6 +12,9 @@ WeCom is a good fit for:
 
 CCCC currently integrates with the WeCom **AI bot long-connection** channel:
 
+- the Rust client is built into the CCCC binary and does not require Node.js or Python at runtime
+- its subscription, acknowledgement, heartbeat, reconnect, callback, and active-send behavior follows WeCom's official Node and Python SDKs
+- WeCom does not currently publish an official Rust SDK; CCCC's client is a protocol-compatible implementation, not a vendor SDK
 - inbound messages arrive over a persistent WebSocket connection
 - no public callback URL or domain verification is required
 - the current CCCC bridge only needs **Bot ID** and **Secret**
@@ -140,20 +143,21 @@ If the bridge is connected but no inbound events appear, treat that as a platfor
 The current WeCom adapter supports:
 
 - inbound callback subscription over WebSocket
-- outbound replies bound to the latest inbound callback request
-- plain text messaging
-- streaming replies
-- outbound file/media attachments via the WeCom AI Bot WebSocket chunk upload protocol
-- inbound file/media download with WeCom AES decryption when the callback includes a download URL and AES key
+- stable `msgid` deduplication across callback retries and reconnects
+- active markdown sends and callback-bound passive replies
+- `chat.stream` start/update/end delivery through `aibot_respond_msg`, including final-message deduplication
+- template-card, welcome-message, and template-card update protocol commands
+- outbound image/file attachments through the WebSocket init/chunk/finish upload protocol
+- inbound image/file/voice/video/mixed parsing, download, AES-256-CBC decryption, and storage under `state/blobs/*`
+- bounded reply timeouts, heartbeat recovery, exponential reconnect, and terminal-error reporting
 
 Current limitations:
 
 - non-text inbound messages include text placeholders such as `[image]`, `[file: name]`, `[voice]`, or `[video]` alongside attachment metadata
-- inline stream image replies are limited to PNG/JPEG payloads that fit WeCom's stream item size limit; other attachments use media upload first
+- only PNG/JPEG attachments use WeCom's image message type; other image formats are delivered as files
+- callbacks that contain only a `media_id` and no downloadable URL remain visible as placeholders, because the official AI Bot SDK download path requires the callback URL
 
-The adapter implementation lives in:
-
-- Rust adapter availability is reported by `cccc im status`; configuration alone is not a live connection.
+Rust adapter availability is reported by `cccc im status`; configuration alone is not a live connection.
 
 ## Troubleshooting
 

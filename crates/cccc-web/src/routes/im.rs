@@ -53,7 +53,8 @@ async fn status(
     Query(query): Query<GroupQuery>,
 ) -> ApiResult {
     ensure_access(&principal, &query.group_id)?;
-    let value = load(&state, &query.group_id)?;
+    let mut value = load(&state, &query.group_id)?;
+    reconcile_runtime_state(&state, &query.group_id, &mut value)?;
     Ok(success(status_payload(&query.group_id, &value)))
 }
 
@@ -91,6 +92,7 @@ async fn set(
         state.insert("updated_at".into(), Value::String(utc_now()));
         Ok(())
     })?;
+    state.im_workers.stop(&group_id);
     Ok(success(json!({"configured":true,"platform":platform})))
 }
 
@@ -101,6 +103,7 @@ async fn unset(
 ) -> ApiResult {
     let group_id = required(&body, "group_id")?;
     ensure_access(&principal, &group_id)?;
+    state.im_workers.stop(&group_id);
     update(&state, &group_id, |value| {
         *value = json!({});
         Ok(())
@@ -113,7 +116,7 @@ async fn start(
     Extension(principal): Extension<Principal>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    set_running(&state, &principal, &body, true)
+    set_running(&state, &principal, &body, true).await
 }
 
 async fn stop(
@@ -121,10 +124,15 @@ async fn stop(
     Extension(principal): Extension<Principal>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    set_running(&state, &principal, &body, false)
+    set_running(&state, &principal, &body, false).await
 }
 
-fn set_running(state: &AppState, principal: &Principal, body: &Value, running: bool) -> ApiResult {
+async fn set_running(
+    state: &AppState,
+    principal: &Principal,
+    body: &Value,
+    running: bool,
+) -> ApiResult {
     let group_id = required(body, "group_id")?;
     ensure_access(principal, &group_id)?;
     let current = load(state, &group_id)?;
@@ -132,23 +140,41 @@ fn set_running(state: &AppState, principal: &Principal, body: &Value, running: b
         return Err(ApiError::bad("IM bridge is not configured"));
     }
     if running {
+        let config = current
+            .get("config")
+            .and_then(Value::as_object)
+            .cloned()
+            .ok_or_else(|| ApiError::bad("IM bridge is not configured"))?;
+        if let Err(error) = state
+            .im_workers
+            .start(state.home.clone(), state.client.clone(), &group_id, &config)
+            .await
+        {
+            update(state, &group_id, |value| {
+                let state = object(value);
+                state.insert("enabled".into(), Value::Bool(true));
+                state.insert("running".into(), Value::Bool(false));
+                state.insert("pid".into(), Value::Null);
+                state.insert("adapter_available".into(), Value::Bool(false));
+                state.insert("last_error".into(), json!(error));
+                state.insert("updated_at".into(), Value::String(utc_now()));
+                Ok(())
+            })?;
+            return Err(ApiError::bad(error));
+        }
         update(state, &group_id, |value| {
             let state = object(value);
             state.insert("enabled".into(), Value::Bool(true));
-            state.insert("running".into(), Value::Bool(false));
-            state.insert("pid".into(), Value::Null);
-            state.insert("adapter_available".into(), Value::Bool(false));
-            state.insert(
-                "last_error".into(),
-                json!("Rust network adapter is unavailable"),
-            );
+            state.insert("running".into(), Value::Bool(true));
+            state.insert("pid".into(), json!(std::process::id()));
+            state.insert("adapter_available".into(), Value::Bool(true));
+            state.insert("last_error".into(), Value::Null);
             state.insert("updated_at".into(), Value::String(utc_now()));
             Ok(())
         })?;
-        return Err(ApiError::bad(
-            "Rust network adapter is unavailable for the configured IM platform",
-        ));
+        return Ok(success(status_payload(&group_id, &load(state, &group_id)?)));
     }
+    state.im_workers.stop(&group_id);
     update(state, &group_id, |value| {
         let state = object(value);
         state.insert("enabled".into(), Value::Bool(false));
@@ -161,13 +187,49 @@ fn set_running(state: &AppState, principal: &Principal, body: &Value, running: b
     Ok(success(status_payload(&group_id, &load(state, &group_id)?)))
 }
 
+fn reconcile_runtime_state(
+    state: &AppState,
+    group_id: &str,
+    value: &mut Value,
+) -> Result<(), ApiError> {
+    if !value
+        .get("running")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || state.im_workers.is_running(group_id)
+    {
+        return Ok(());
+    }
+    update(state, group_id, |stored| {
+        mark_worker_stopped(object(stored));
+        Ok(())
+    })?;
+    *value = load(state, group_id)?;
+    Ok(())
+}
+
+fn mark_worker_stopped(stored: &mut Map<String, Value>) {
+    stored.insert("running".into(), Value::Bool(false));
+    stored.insert("pid".into(), Value::Null);
+    stored.insert("adapter_available".into(), Value::Bool(false));
+    if stored.get("last_error").is_none_or(Value::is_null) {
+        stored.insert("last_error".into(), json!("IM network worker stopped"));
+    }
+    stored.insert("updated_at".into(), Value::String(utc_now()));
+}
+
 async fn weixin_status(
     State(state): State<AppState>,
     Extension(principal): Extension<Principal>,
     Query(query): Query<GroupQuery>,
 ) -> ApiResult {
     ensure_access(&principal, &query.group_id)?;
-    Ok(success(weixin_payload(&load(&state, &query.group_id)?)))
+    let status = state
+        .im_workers
+        .weixin_login_status(&state.home, &query.group_id)
+        .await
+        .map_err(ApiError::bad)?;
+    Ok(success(status))
 }
 
 async fn weixin_start(
@@ -177,21 +239,12 @@ async fn weixin_start(
 ) -> ApiResult {
     let group_id = required(&body, "group_id")?;
     ensure_access(&principal, &group_id)?;
-    update(&state, &group_id, |value| {
-        let state = object(value);
-        let account = state
-            .get("config")
-            .and_then(|config| config.get("weixin_account_id"))
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned();
-        state.insert(
-            "weixin_login".into(),
-            json!({"status":if account.is_empty(){"waiting_qr"}else{"logged_in"},"logged_in":!account.is_empty(),"account_id":account,"running":true,"pid":std::process::id(),"updated_at":utc_now()}),
-        );
-        Ok(())
-    })?;
-    Ok(success(weixin_payload(&load(&state, &group_id)?)))
+    let status = state
+        .im_workers
+        .start_weixin_login(&group_id)
+        .await
+        .map_err(ApiError::bad)?;
+    Ok(success(status))
 }
 
 async fn weixin_logout(
@@ -201,14 +254,9 @@ async fn weixin_logout(
 ) -> ApiResult {
     let group_id = required(&body, "group_id")?;
     ensure_access(&principal, &group_id)?;
-    update(&state, &group_id, |value| {
-        object(value).insert(
-            "weixin_login".into(),
-            json!({"status":"logged_out","logged_in":false,"running":false,"pid":null,"updated_at":utc_now()}),
-        );
-        Ok(())
-    })?;
-    Ok(success(weixin_payload(&load(&state, &group_id)?)))
+    Ok(success(
+        state.im_workers.logout_weixin(&state.home, &group_id),
+    ))
 }
 
 async fn authorized(
@@ -228,9 +276,17 @@ async fn pending(
     Query(query): Query<GroupQuery>,
 ) -> ApiResult {
     ensure_access(&principal, &query.group_id)?;
-    Ok(success(
-        json!({"pending":array_field(&load(&state,&query.group_id)?,"pending")}),
-    ))
+    let now = chrono_now() as f64;
+    let pending = update(&state, &query.group_id, |value| {
+        let items = array_mut(object(value), "pending");
+        items.retain(|item| item["expires_at"].as_f64().unwrap_or(0.0) > now);
+        for item in items.iter_mut() {
+            item["expires_in_seconds"] =
+                json!((item["expires_at"].as_f64().unwrap_or(now) - now).max(0.0) as i64);
+        }
+        Ok(items.clone())
+    })?;
+    Ok(success(json!({"pending":pending})))
 }
 
 async fn bind(
@@ -246,11 +302,20 @@ async fn bind(
         let pending = array_mut(state, "pending");
         let index = pending
             .iter()
-            .position(|item| item["key"] == key)
+            .position(|item| {
+                item["key"] == key
+                    && item["expires_at"].as_f64().unwrap_or(0.0) > chrono_now() as f64
+            })
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "pending request not found"))?;
         let mut item = pending.remove(index);
         item["authorized_at"] = json!(chrono_now());
-        array_mut(state, "authorized").push(item.clone());
+        let authorized = array_mut(state, "authorized");
+        authorized.retain(|existing| {
+            existing["chat_id"] != item["chat_id"]
+                || existing["thread_id"].as_i64().unwrap_or(0)
+                    != item["thread_id"].as_i64().unwrap_or(0)
+        });
+        authorized.push(item.clone());
         Ok(item)
     })?;
     Ok(success(bound))
@@ -313,8 +378,32 @@ async fn verbose(
 
 fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(), ApiError> {
     config.insert("platform".into(), Value::String(platform.into()));
+    let aliases: &[(&str, &str)] = match platform {
+        "telegram" | "discord" | "slack" => &[("token_env", "bot_token_env")],
+        "feishu" => &[
+            ("app_key_env", "feishu_app_id"),
+            ("app_secret_env", "feishu_app_secret"),
+            ("domain", "feishu_domain"),
+        ],
+        "dingtalk" => &[
+            ("app_key_env", "dingtalk_app_key"),
+            ("app_secret_env", "dingtalk_app_secret"),
+            ("robot_code_env", "dingtalk_robot_code"),
+        ],
+        _ => &[],
+    };
+    for (from, to) in aliases {
+        if let Some(value) = config
+            .get(*from)
+            .cloned()
+            .filter(|value| value.as_str().is_some_and(|value| !value.trim().is_empty()))
+        {
+            config.entry((*to).to_owned()).or_insert(value);
+        }
+    }
     let required_fields: &[&str] = match platform {
-        "telegram" | "discord" | "slack" => &["bot_token_env"],
+        "telegram" | "discord" => &["bot_token_env"],
+        "slack" => &["bot_token_env", "app_token_env"],
         "feishu" => &["feishu_app_id", "feishu_app_secret"],
         "dingtalk" => &["dingtalk_app_key", "dingtalk_app_secret"],
         "wecom" => &["wecom_bot_id", "wecom_secret"],
@@ -334,8 +423,85 @@ fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(
 
 fn load(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
+    migrate_legacy_im_state(&store, group_id).map_err(io_error)?;
     integration_state::group_get(&store, group_id, STORE_KEY)
         .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))
+}
+
+fn migrate_legacy_im_state(store: &GroupStore, group_id: &str) -> io::Result<()> {
+    let group = store.load(group_id)?;
+    let current = group.extra.get(STORE_KEY).cloned().unwrap_or(Value::Null);
+    let legacy = group.extra.get("im").and_then(Value::as_object).cloned();
+    let needs_config = !current.get("config").is_some_and(Value::is_object);
+    let needs_authorized = current
+        .get("authorized")
+        .and_then(Value::as_array)
+        .is_none_or(Vec::is_empty);
+    let needs_pending = current
+        .get("pending")
+        .and_then(Value::as_array)
+        .is_none_or(Vec::is_empty);
+    if !needs_config && !needs_authorized && !needs_pending {
+        return Ok(());
+    }
+    let state_dir = store.state_dir(group_id)?;
+    let authorized = if needs_authorized {
+        read_legacy_im_items(&state_dir.join("im_authorized_chats.json"), false)
+    } else {
+        Vec::new()
+    };
+    let pending = if needs_pending {
+        read_legacy_im_items(&state_dir.join("im_pending_keys.json"), true)
+    } else {
+        Vec::new()
+    };
+    integration_state::group_update(store, group_id, STORE_KEY, |value| {
+        let state = object(value);
+        if needs_config && let Some(mut config) = legacy.clone() {
+            config.remove("enabled");
+            config.remove("files");
+            if let Some(token) = config.remove("token") {
+                config.entry("bot_token_env").or_insert(token);
+            }
+            state.insert("config".into(), Value::Object(config));
+            state.entry("enabled").or_insert(Value::Bool(false));
+            state.entry("running").or_insert(Value::Bool(false));
+            state
+                .entry("adapter_available")
+                .or_insert(Value::Bool(false));
+        }
+        if needs_authorized && !authorized.is_empty() {
+            state.insert("authorized".into(), Value::Array(authorized.clone()));
+        }
+        if needs_pending && !pending.is_empty() {
+            state.insert("pending".into(), Value::Array(pending.clone()));
+        }
+        Ok(())
+    })
+}
+
+fn read_legacy_im_items(path: &std::path::Path, include_key: bool) -> Vec<Value> {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
+        return Vec::new();
+    };
+    if let Some(items) = value.as_array() {
+        return items.clone();
+    }
+    value
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(key, item)| {
+            let mut item = item.clone();
+            if include_key && let Some(object) = item.as_object_mut() {
+                object.entry("key").or_insert_with(|| json!(key));
+            }
+            item
+        })
+        .collect()
 }
 
 fn update<T>(
@@ -359,13 +525,6 @@ fn status_payload(group_id: &str, value: &Value) -> Value {
         "pid":value.get("pid").cloned().unwrap_or(Value::Null),
         "subscribers":array_field(value,"authorized").len()
     })
-}
-
-fn weixin_payload(value: &Value) -> Value {
-    value
-        .get("weixin_login")
-        .cloned()
-        .unwrap_or_else(|| json!({"status":"idle","logged_in":false,"running":false,"pid":null}))
 }
 
 fn ensure_access(principal: &Principal, group_id: &str) -> Result<(), ApiError> {
@@ -415,4 +574,90 @@ fn chrono_now() -> i64 {
 
 fn io_error(error: io::Error) -> ApiError {
     ApiError::bad(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_legacy_config_and_authorized_chats() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("legacy", "").expect("group");
+        store
+            .mutate(&group.group_id, |group| {
+                group.extra.insert(
+                    "im".into(),
+                    json!({"platform":"telegram","token":"TOKEN_ENV","enabled":true}),
+                );
+                Ok(())
+            })
+            .expect("legacy config");
+        std::fs::write(
+            store
+                .state_dir(&group.group_id)
+                .expect("state dir")
+                .join("im_authorized_chats.json"),
+            r#"{"chat-1":{"chat_id":"chat-1","thread_id":0,"platform":"telegram"}}"#,
+        )
+        .expect("legacy auth");
+
+        migrate_legacy_im_state(&store, &group.group_id).expect("migrate");
+        let state =
+            integration_state::group_get(&store, &group.group_id, STORE_KEY).expect("state");
+        assert_eq!(state["config"]["platform"], "telegram");
+        assert_eq!(state["config"]["bot_token_env"], "TOKEN_ENV");
+        assert_eq!(state["authorized"][0]["chat_id"], "chat-1");
+    }
+
+    #[test]
+    fn normalizes_cli_credential_aliases() {
+        for (platform, input, expected) in [
+            (
+                "telegram",
+                json!({"token_env":"TELEGRAM_TOKEN"}),
+                vec![("bot_token_env", "TELEGRAM_TOKEN")],
+            ),
+            (
+                "feishu",
+                json!({"app_key_env":"APP_ID","app_secret_env":"APP_SECRET"}),
+                vec![
+                    ("feishu_app_id", "APP_ID"),
+                    ("feishu_app_secret", "APP_SECRET"),
+                ],
+            ),
+            (
+                "dingtalk",
+                json!({"app_key_env":"APP_KEY","app_secret_env":"APP_SECRET"}),
+                vec![
+                    ("dingtalk_app_key", "APP_KEY"),
+                    ("dingtalk_app_secret", "APP_SECRET"),
+                ],
+            ),
+        ] {
+            let mut config = input.as_object().cloned().expect("config");
+            normalize_config(platform, &mut config).expect("normalize");
+            for (key, value) in expected {
+                assert_eq!(config[key], value);
+            }
+        }
+    }
+
+    #[test]
+    fn stopped_worker_preserves_specific_terminal_error() {
+        let mut stored = json!({
+            "running":true,
+            "adapter_available":true,
+            "last_error":"WeCom authentication failed: invalid secret"
+        });
+        mark_worker_stopped(stored.as_object_mut().expect("state"));
+        assert_eq!(
+            stored["last_error"],
+            "WeCom authentication failed: invalid secret"
+        );
+        assert_eq!(stored["running"], false);
+    }
 }

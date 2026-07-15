@@ -891,6 +891,7 @@
     "weixinLoginStatus": "登录状态",
     "weixinCurrentAccount": "当前账号",
     "weixinNotLoggedIn": "未登录",
+    "weixinLoginRequired": "请先完成微信扫码登录，再启动桥接。",
     "weixinStartLogin": "开始扫码登录",
     "weixinRefreshQr": "重新生成二维码",
     "weixinLogout": "退出微信登录",

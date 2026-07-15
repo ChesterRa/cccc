@@ -3,7 +3,7 @@ use flate2::read::GzDecoder;
 use fs2::FileExt;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Seek, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -195,9 +195,130 @@ fn logical_segment_path(path: &Path) -> PathBuf {
 }
 
 pub fn tail(path: &Path, limit: usize) -> io::Result<Vec<Event>> {
+    tail_filtered(path, limit, None).map(|(events, _)| events)
+}
+
+pub fn tail_filtered(
+    path: &Path,
+    limit: usize,
+    kind: Option<&str>,
+) -> io::Result<(Vec<Event>, bool)> {
+    if limit == 0 {
+        return Ok((Vec::new(), false));
+    }
+
+    let target = limit.saturating_add(1);
+    let mut newest_first = Vec::with_capacity(target);
+    for source in source_paths(path)?.iter().rev() {
+        let remaining = target.saturating_sub(newest_first.len());
+        if remaining == 0 {
+            break;
+        }
+        newest_first.extend(read_source_reverse(source, remaining, kind)?);
+    }
+
+    let has_more = newest_first.len() > limit;
+    newest_first.truncate(limit);
+    newest_first.reverse();
+    Ok((newest_first, has_more))
+}
+
+pub fn events_after(path: &Path, event_id: &str, limit: usize) -> io::Result<Vec<Event>> {
+    if event_id.trim().is_empty() || limit == 0 {
+        return Ok(Vec::new());
+    }
     let events = read_all(path)?;
-    let start = events.len().saturating_sub(limit);
-    Ok(events[start..].to_vec())
+    let Some(index) = events.iter().position(|event| event.id == event_id) else {
+        return Ok(Vec::new());
+    };
+    Ok(events
+        .into_iter()
+        .skip(index.saturating_add(1))
+        .take(limit)
+        .collect())
+}
+
+fn read_source_reverse(path: &Path, limit: usize, kind: Option<&str>) -> io::Result<Vec<Event>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    if is_gzip(path) {
+        return Ok(read_source(path)?
+            .into_iter()
+            .rev()
+            .filter(|event| event_matches_kind(event, kind))
+            .take(limit)
+            .collect());
+    }
+
+    const CHUNK_SIZE: u64 = 64 * 1024;
+    let mut file = File::open(path)?;
+    FileExt::lock_shared(&file)?;
+    let result: io::Result<Vec<Event>> = (|| {
+        let mut position = file.metadata()?.len();
+        let mut pending = Vec::new();
+        let mut events = Vec::with_capacity(limit);
+
+        while position > 0 && events.len() < limit {
+            let start = position.saturating_sub(CHUNK_SIZE);
+            let chunk_len = usize::try_from(position - start).map_err(io::Error::other)?;
+            let mut buffer = vec![0; chunk_len];
+            file.seek(io::SeekFrom::Start(start))?;
+            file.read_exact(&mut buffer)?;
+            buffer.extend_from_slice(&pending);
+
+            let mut line_end = buffer.len();
+            while line_end > 0 && events.len() < limit {
+                let Some(newline) = buffer[..line_end].iter().rposition(|byte| *byte == b'\n')
+                else {
+                    break;
+                };
+                push_reverse_event(&buffer[newline + 1..line_end], kind, &mut events)?;
+                line_end = newline;
+            }
+            pending = buffer[..line_end].to_vec();
+            position = start;
+        }
+
+        if position == 0 && events.len() < limit {
+            push_reverse_event(&pending, kind, &mut events)?;
+        }
+        Ok(events)
+    })();
+    let unlock_result = FileExt::unlock(&file);
+    let events = result?;
+    unlock_result?;
+    Ok(events)
+}
+
+fn push_reverse_event(line: &[u8], kind: Option<&str>, events: &mut Vec<Event>) -> io::Result<()> {
+    let line = trim_ascii(line);
+    if line.is_empty() {
+        return Ok(());
+    }
+    let event: Event = serde_json::from_slice(line).map_err(io::Error::other)?;
+    if event_matches_kind(&event, kind) {
+        events.push(event);
+    }
+    Ok(())
+}
+
+fn trim_ascii(mut value: &[u8]) -> &[u8] {
+    while value.first().is_some_and(u8::is_ascii_whitespace) {
+        value = &value[1..];
+    }
+    while value.last().is_some_and(u8::is_ascii_whitespace) {
+        value = &value[..value.len() - 1];
+    }
+    value
+}
+
+fn event_matches_kind(event: &Event, kind: Option<&str>) -> bool {
+    match kind.map(str::trim).filter(|value| !value.is_empty()) {
+        None => true,
+        Some("chat") => event.kind == "chat.message",
+        Some(expected) => event.kind == expected,
+    }
 }
 
 #[cfg(test)]
@@ -215,6 +336,66 @@ mod tests {
         let events = tail(&path, 1).expect("tail");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, "chat.message");
+    }
+
+    #[test]
+    fn filtered_tail_reads_from_end_and_reports_more_matches() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        for kind in [
+            "chat.message",
+            "actor.activity",
+            "chat.message",
+            "chat.read",
+            "chat.message",
+        ] {
+            append(&path, &Event::new(kind, "g_test")).expect("append");
+        }
+
+        let (events, has_more) = tail_filtered(&path, 2, Some("chat")).expect("filtered tail");
+
+        assert!(has_more);
+        assert_eq!(events.len(), 2);
+        assert!(events.iter().all(|event| event.kind == "chat.message"));
+        assert!(events[0].ts <= events[1].ts);
+    }
+
+    #[test]
+    fn filtered_tail_only_reads_archives_when_active_file_is_insufficient() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let segments = temp.path().join("state/ledger/segments");
+        std::fs::create_dir_all(&segments).expect("segments");
+        let archived = segments.join("ledger.0001.jsonl");
+        append(&archived, &Event::new("chat.message", "g_test")).expect("append archive");
+        append(&path, &Event::new("actor.activity", "g_test")).expect("append activity");
+        append(&path, &Event::new("chat.message", "g_test")).expect("append active");
+
+        let (events, has_more) = tail_filtered(&path, 2, Some("chat")).expect("filtered tail");
+
+        assert!(!has_more);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].kind, "chat.message");
+        assert_eq!(events[1].kind, "chat.message");
+    }
+
+    #[test]
+    fn events_after_returns_reconnect_replay_in_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let first = Event::new("chat.message", "g_test");
+        let second = Event::new("chat.message", "g_test");
+        let third = Event::new("chat.message", "g_test");
+        append(&path, &first).expect("append first");
+        append(&path, &second).expect("append second");
+        append(&path, &third).expect("append third");
+
+        let replay = events_after(&path, &first.id, 10).expect("events after");
+
+        assert_eq!(
+            replay.iter().map(|event| &event.id).collect::<Vec<_>>(),
+            vec![&second.id, &third.id]
+        );
     }
 
     #[test]

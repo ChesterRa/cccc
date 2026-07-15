@@ -158,25 +158,6 @@ function savePresentationSplitWidth(width: number): void {
   }
 }
 
-function sanitizeChatScrollSnapshot(value: unknown): ChatScrollSnapshot | null {
-  if (!value || typeof value !== "object") return null;
-  const snapshot = value as {
-    mode?: unknown;
-    anchorId?: unknown;
-    offsetPx?: unknown;
-    updatedAt?: unknown;
-  };
-  const mode = snapshot.mode === "detached" ? "detached" : "follow";
-  const anchorId = typeof snapshot.anchorId === "string" ? snapshot.anchorId.trim() : "";
-  const offsetPx = Number.isFinite(Number(snapshot.offsetPx)) ? Math.max(0, Number(snapshot.offsetPx)) : 0;
-  const updatedAt = Number.isFinite(Number(snapshot.updatedAt)) ? Math.max(0, Number(snapshot.updatedAt)) : 0;
-  if (mode === "follow") {
-    return { mode, anchorId: "", offsetPx: 0, updatedAt };
-  }
-  if (!anchorId) return null;
-  return { mode, anchorId, offsetPx, updatedAt };
-}
-
 function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> {
   if (!value || typeof value !== "object") return {};
   const input = value as Record<string, unknown>;
@@ -186,7 +167,6 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
     if (!gid || !raw || typeof raw !== "object") continue;
     const session = raw as {
       chatFilter?: unknown;
-      scrollSnapshot?: unknown;
       mobileSurface?: unknown;
       presentationDockOpen?: unknown;
       presentationDisplayMode?: unknown;
@@ -199,7 +179,7 @@ function sanitizeChatSessions(value: unknown): Record<string, ChatSessionState> 
         session.chatFilter === "task"
           ? session.chatFilter
           : "all",
-      scrollSnapshot: sanitizeChatScrollSnapshot(session.scrollSnapshot),
+      scrollSnapshot: null,
       mobileSurface: session.mobileSurface === "presentation" ? "presentation" : "messages",
       presentationDockOpen: Boolean(session.presentationDockOpen),
       presentationDisplayMode: session.presentationDisplayMode === "split" ? "split" : "modal",
@@ -226,7 +206,6 @@ function saveChatSessions(sessions: Record<string, ChatSessionState>): void {
         groupId,
         {
           chatFilter: session.chatFilter,
-          scrollSnapshot: session.scrollSnapshot,
           mobileSurface: session.mobileSurface,
           presentationDockOpen: session.presentationDockOpen,
           presentationDisplayMode: session.presentationDisplayMode,
@@ -246,13 +225,27 @@ function updateChatSession(
 ): Record<string, ChatSessionState> {
   const gid = String(groupId || "").trim();
   if (!gid) return sessions;
+  const current = sessions[gid] || DEFAULT_CHAT_SESSION;
+  const changed = (Object.keys(patch) as Array<keyof ChatSessionState>).some(
+    (key) => !Object.is(current[key], patch[key]),
+  );
+  if (!changed) return sessions;
   return {
     ...sessions,
     [gid]: {
-      ...(sessions[gid] || DEFAULT_CHAT_SESSION),
+      ...current,
       ...patch,
     },
   };
+}
+
+function updateChatSessionState(
+  state: UIState,
+  groupId: string,
+  patch: Partial<ChatSessionState>,
+): UIState | Pick<UIState, "chatSessions"> {
+  const chatSessions = updateChatSession(state.chatSessions, groupId, patch);
+  return chatSessions === state.chatSessions ? state : { chatSessions };
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -334,13 +327,10 @@ export const useUIStore = create<UIState>((set) => ({
       return { sidebarCollapsed: next };
     }),
   setShowScrollButton: (groupId, v) =>
-    set((state) => {
-      const chatSessions = updateChatSession(state.chatSessions, groupId, { showScrollButton: v });
-      return { chatSessions };
-    }),
+    set((state) => updateChatSessionState(state, groupId, { showScrollButton: v })),
   setChatUnreadCount: (groupId, v) =>
-    set((state) => ({
-      chatSessions: updateChatSession(state.chatSessions, groupId, { chatUnreadCount: Math.max(0, Number(v || 0)) }),
+    set((state) => updateChatSessionState(state, groupId, {
+      chatUnreadCount: Math.max(0, Number(v || 0)),
     })),
   incrementChatUnread: (groupId) =>
     set((state) => {
@@ -366,7 +356,7 @@ export const useUIStore = create<UIState>((set) => ({
   setChatScrollSnapshot: (groupId, snap) =>
     set((state) => {
       const chatSessions = updateChatSession(state.chatSessions, groupId, { scrollSnapshot: snap });
-      saveChatSessions(chatSessions);
+      if (chatSessions === state.chatSessions) return state;
       return { chatSessions };
     }),
   setChatMobileSurface: (groupId, v) =>

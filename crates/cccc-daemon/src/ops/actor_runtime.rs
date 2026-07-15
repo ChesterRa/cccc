@@ -5,7 +5,7 @@ use cccc_runtime::{LaunchSpec, SessionStatus};
 use std::path::PathBuf;
 
 use crate::dispatch::OpError;
-use crate::ops::actor_secrets;
+use crate::ops::{actor_delivery, actor_secrets, runtime_session};
 
 pub fn apply(
     home: &HomeLayout,
@@ -23,7 +23,7 @@ pub fn apply(
     }
     match kind {
         "actor.stop" => stop(group, actor_id),
-        "actor.restart" => {
+        "actor.restart" | "actor.new_session" => {
             let _ = stop(group, actor_id);
             start(home, group, actor).map(Some)
         }
@@ -35,27 +35,167 @@ pub fn apply(
 }
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {
-    let mut command = if actor.command.is_empty() {
+    let base_command = if actor.command.is_empty() {
         cccc_runtime::default_command(actor.runtime)
     } else {
         actor.command.clone()
     };
+    let cwd = working_directory(group, actor);
     let mut env = actor.env.clone();
     env.extend(actor_secrets::values(home, &group.group_id, &actor.id)?);
+    let prepared = if actor.runtime == ActorRuntime::Codex
+        && actor.runner == cccc_contracts::RunnerKind::Pty
+    {
+        runtime_session::prepare_codex_command(
+            home,
+            &group.group_id,
+            &actor.id,
+            &cwd,
+            &base_command,
+            actor.runtime_state_source == RuntimeStateSource::AppServer,
+        )
+    } else {
+        runtime_session::PreparedCommand {
+            command: base_command.clone(),
+            resumed_session_id: None,
+        }
+    };
+    let status = launch(home, group, actor, &cwd, &env, prepared.command)?;
+
+    if prepared.resumed_session_id.is_some() {
+        schedule_resume_verification(
+            home.clone(),
+            group.clone(),
+            actor.clone(),
+            cwd,
+            env,
+            base_command,
+            status.clone(),
+        );
+    } else {
+        schedule_capture(home, group, actor, cwd, base_command, &status);
+    }
+    if status.running {
+        actor_delivery::replay_unread(home, group, &actor.id);
+    }
+    Ok(status)
+}
+
+fn launch(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    cwd: &std::path::Path,
+    env: &std::collections::BTreeMap<String, String>,
+    mut command: Vec<String>,
+) -> Result<SessionStatus, OpError> {
+    let mut launch_env = env.clone();
     if actor.runtime == ActorRuntime::Codex {
-        crate::ops::codex_mcp::configure(home, &mut command, &mut env);
+        crate::ops::codex_mcp::configure(
+            home,
+            &group.group_id,
+            &actor.id,
+            &mut command,
+            &mut launch_env,
+        );
     }
     cccc_runtime::start(LaunchSpec {
         group_id: group.group_id.clone(),
         actor_id: actor.id.clone(),
         runner: actor.runner,
         command,
-        cwd: working_directory(group, actor),
-        env,
+        cwd: cwd.to_path_buf(),
+        env: launch_env,
         cols: 120,
         rows: 40,
     })
     .map_err(runtime_error)
+}
+
+fn schedule_capture(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    cwd: PathBuf,
+    base_command: Vec<String>,
+    status: &SessionStatus,
+) {
+    if actor.runtime == ActorRuntime::Codex
+        && actor.runner == cccc_contracts::RunnerKind::Pty
+        && status.running
+    {
+        runtime_session::schedule_codex_session_capture(
+            home.clone(),
+            group.group_id.clone(),
+            actor.id.clone(),
+            cwd,
+            base_command,
+            status.started_at.clone(),
+        );
+    }
+}
+
+fn schedule_resume_verification(
+    home: HomeLayout,
+    group: GroupDoc,
+    actor: Actor,
+    cwd: PathBuf,
+    env: std::collections::BTreeMap<String, String>,
+    base_command: Vec<String>,
+    resumed_status: SessionStatus,
+) {
+    let _ = std::thread::Builder::new()
+        .name(format!(
+            "cccc-resume-verify:{}:{}",
+            group.group_id, actor.id
+        ))
+        .spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            let mut error = None;
+            while std::time::Instant::now() < deadline {
+                let Ok(current) = cccc_runtime::status(&group.group_id, &actor.id) else {
+                    return;
+                };
+                if current.started_at != resumed_status.started_at {
+                    return;
+                }
+                if !current.running {
+                    error = Some("provider resume process exited early".to_owned());
+                    break;
+                }
+                if let Some(message) = runtime_session::resume_failure(&group.group_id, &actor.id) {
+                    error = Some(message);
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+
+            if let Some(error) = error {
+                let stopped = cccc_runtime::stop_if_started_at(
+                    &group.group_id,
+                    &actor.id,
+                    &resumed_status.started_at,
+                );
+                if !matches!(stopped, Ok(Some(_))) {
+                    return;
+                }
+                runtime_session::mark_resume_failed(&home, &group.group_id, &actor.id, &error);
+                match launch(&home, &group, &actor, &cwd, &env, base_command.clone()) {
+                    Ok(fresh) => {
+                        schedule_capture(&home, &group, &actor, cwd, base_command, &fresh);
+                    }
+                    Err(fallback_error) => tracing::warn!(
+                        group_id = %group.group_id,
+                        actor_id = %actor.id,
+                        message = %fallback_error.message,
+                        "failed to start fresh actor after resume failure"
+                    ),
+                }
+                return;
+            }
+
+            schedule_capture(&home, &group, &actor, cwd, base_command, &resumed_status);
+        });
 }
 
 fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {

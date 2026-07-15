@@ -1385,7 +1385,9 @@ export type IMStatus = {
   enabled: boolean;
   platform?: string;
   running: boolean;
-  pid?: number;
+  adapter_available?: boolean;
+  last_error?: string | null;
+  pid?: number | null;
   subscribers: number;
 };
 

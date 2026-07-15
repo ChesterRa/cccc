@@ -1,9 +1,9 @@
 use cccc_contracts::{Actor, GroupState};
 use cccc_core::group_copy;
 use cccc_core::{GroupStore, HomeLayout, Scope, group_scope};
-use std::io::{Cursor, Write};
+use std::io::{Cursor, Read, Write};
 use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipWriter};
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 #[test]
 fn copy_excludes_secrets_and_imports_with_new_identity_on_conflict() {
@@ -33,6 +33,22 @@ fn copy_excludes_secrets_and_imports_with_new_identity_on_conflict() {
                 .insert("API_TOKEN".into(), "must-not-export".into());
             actor.default_scope_key = "s_original".into();
             doc.actors.push(actor);
+            doc.extra.insert(
+                "im_bridge".into(),
+                serde_json::json!({
+                    "config": {
+                        "platform": "slack",
+                        "bot_token_env": "must-not-export-bot-token",
+                        "app_token_env": "must-not-export-app-token"
+                    },
+                    "enabled": true,
+                    "running": true
+                }),
+            );
+            doc.extra.insert(
+                "im".into(),
+                serde_json::json!({"platform":"telegram","token":"must-not-export-legacy"}),
+            );
             Ok(())
         })
         .expect("actor");
@@ -44,6 +60,26 @@ fn copy_excludes_secrets_and_imports_with_new_identity_on_conflict() {
 
     let (bytes, manifest, _) = group_copy::export(&store, &group.group_id).expect("export");
     assert!(!manifest.contains_secrets);
+    let mut archive = ZipArchive::new(Cursor::new(&bytes)).expect("export archive");
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).expect("archive entry");
+        if entry.is_dir() {
+            continue;
+        }
+        let mut contents = Vec::new();
+        entry.read_to_end(&mut contents).expect("archive contents");
+        for secret in [
+            "must-not-export-bot-token",
+            "must-not-export-app-token",
+            "must-not-export-legacy",
+        ] {
+            assert!(
+                !contents
+                    .windows(secret.len())
+                    .any(|bytes| bytes == secret.as_bytes())
+            );
+        }
+    }
     let preview = group_copy::preview(&store, &bytes).expect("preview");
     assert!(preview.group_id_conflict);
     assert_eq!(preview.actor_count, 1);
@@ -61,6 +97,8 @@ fn copy_excludes_secrets_and_imports_with_new_identity_on_conflict() {
         Some("ok")
     );
     assert!(!doc.actors[0].env.contains_key("API_TOKEN"));
+    assert!(!doc.extra.contains_key("im_bridge"));
+    assert!(!doc.extra.contains_key("im"));
     let imported_state = store.state_dir(&imported.group_id).expect("imported state");
     assert_eq!(
         std::fs::read_to_string(imported_state.join("note.txt")).expect("note"),

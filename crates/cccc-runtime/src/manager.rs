@@ -3,6 +3,7 @@ use crate::output::HistoryPage;
 use crate::session::{LaunchSpec, Session, SessionStatus};
 use std::collections::HashMap;
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::Duration;
 
 type Key = (String, String);
 
@@ -43,6 +44,24 @@ pub fn stop(group_id: &str, actor_id: &str) -> Result<SessionStatus, RuntimeErro
     Ok(status)
 }
 
+pub fn stop_if_started_at(
+    group_id: &str,
+    actor_id: &str,
+    expected_started_at: &str,
+) -> Result<Option<SessionStatus>, RuntimeError> {
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    let mut sessions = lock()?;
+    let Some(current) = sessions.get_mut(&key) else {
+        return Ok(None);
+    };
+    if current.status().started_at != expected_started_at {
+        return Ok(None);
+    }
+    let status = current.stop()?;
+    sessions.remove(&key);
+    Ok(Some(status))
+}
+
 pub fn stop_all() -> Result<Vec<SessionStatus>, RuntimeError> {
     let drained = {
         let mut sessions = lock()?;
@@ -64,6 +83,39 @@ pub fn stop_all() -> Result<Vec<SessionStatus>, RuntimeError> {
 }
 
 pub fn write(group_id: &str, actor_id: &str, data: &[u8]) -> Result<(), RuntimeError> {
+    let gate = input_gate(group_id, actor_id)?;
+    let _guard = gate.lock().map_err(|_| RuntimeError::Poisoned)?;
+    write_locked(group_id, actor_id, data)
+}
+
+pub fn submit(
+    group_id: &str,
+    actor_id: &str,
+    payload: &[u8],
+    submit: &[u8],
+    delay: Duration,
+) -> Result<(), RuntimeError> {
+    let gate = input_gate(group_id, actor_id)?;
+    let _guard = gate.lock().map_err(|_| RuntimeError::Poisoned)?;
+    write_locked(group_id, actor_id, payload)?;
+    if !submit.is_empty() {
+        if !delay.is_zero() {
+            std::thread::sleep(delay);
+        }
+        write_locked(group_id, actor_id, submit)?;
+    }
+    Ok(())
+}
+
+fn input_gate(
+    group_id: &str,
+    actor_id: &str,
+) -> Result<std::sync::Arc<std::sync::Mutex<()>>, RuntimeError> {
+    let mut sessions = lock()?;
+    Ok(session(&mut sessions, group_id, actor_id)?.input_gate())
+}
+
+fn write_locked(group_id: &str, actor_id: &str, data: &[u8]) -> Result<(), RuntimeError> {
     let mut sessions = lock()?;
     session(&mut sessions, group_id, actor_id)?.write(data)
 }
@@ -130,7 +182,7 @@ fn session<'a>(
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{history, start, status, stop, stop_all};
+    use super::{history, start, status, stop, stop_all, stop_if_started_at};
     use crate::LaunchSpec;
     use cccc_contracts::RunnerKind;
     use std::collections::BTreeMap;
@@ -194,5 +246,34 @@ mod tests {
         assert_eq!(stop_all().expect("stop all").len(), 2);
         assert!(status("g_stop_all", "peer1").is_err());
         assert!(status("g_stop_all", "peer2").is_err());
+    }
+
+    #[test]
+    fn conditional_stop_preserves_a_different_session() {
+        let _guard = test_guard();
+        let temp = tempfile::tempdir().expect("tempdir");
+        start(LaunchSpec {
+            group_id: "g_conditional_stop".into(),
+            actor_id: "peer1".into(),
+            runner: RunnerKind::Headless,
+            command: vec!["sh".into(), "-c".into(), "sleep 30".into()],
+            cwd: temp.path().into(),
+            env: BTreeMap::new(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect("start");
+
+        assert!(
+            stop_if_started_at("g_conditional_stop", "peer1", "stale-session")
+                .expect("conditional stop")
+                .is_none()
+        );
+        assert!(
+            status("g_conditional_stop", "peer1")
+                .expect("status")
+                .running
+        );
+        stop("g_conditional_stop", "peer1").expect("cleanup");
     }
 }
