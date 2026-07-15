@@ -19,8 +19,8 @@ cccc send "Hello" --to @all
 cccc reply <event_id> "Reply text"
 
 # MCP
-cccc_message_send(text="Hello", to=["@all"])
-cccc_message_reply(reply_to="evt_xxx", text="Reply")
+cccc_message_send(text="Hello", to=["@all"], insight="This direction may still be framed too narrowly.")
+cccc_message_reply(reply_to="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
 ```
 
 ### 1.3 已读机制

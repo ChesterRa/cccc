@@ -118,6 +118,26 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertIn("UTF-8 text", str((file_props.get("rel_path") or {}).get("description") or ""))
         self.assertIn("active scope", str((file_props.get("path") or {}).get("description") or ""))
 
+    def test_messaging_toolspec_exposes_neutral_optional_insight_without_advertising_the_gate(self) -> None:
+        for tool_name in (
+            "cccc_message_send",
+            "cccc_message_reply",
+            "cccc_tracked_send",
+            "cccc_file",
+        ):
+            spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == tool_name), None)
+            self.assertIsInstance(spec, dict, msg=f"missing toolspec for {tool_name}")
+            schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+            props = schema.get("properties") if isinstance(schema, dict) else {}
+            field = props.get("insight") if isinstance(props, dict) else {}
+            self.assertEqual(field.get("type"), "string")
+            self.assertEqual(field.get("maxLength"), 1200)
+            required = schema.get("required") if isinstance(schema, dict) else []
+            self.assertNotIn("insight", required or [])
+            public_copy = f"{spec.get('description', '')} {field.get('description', '')}".lower()
+            self.assertNotIn("insight is required", public_copy)
+            self.assertNotIn("must include insight", public_copy)
+
     def test_message_toolspec_exposes_suggested_user_message_as_optional_hint(self) -> None:
         for tool_name in ("cccc_message_send", "cccc_message_reply"):
             spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == tool_name), None)

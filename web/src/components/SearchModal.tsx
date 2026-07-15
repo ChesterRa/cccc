@@ -12,6 +12,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Surface } from "./ui/surface";
 import { ModalFrame } from "./modals/ModalFrame";
+import { getMessageInsight } from "../utils/messagePerspective";
 
 type KindFilter = "all" | "chat" | "notify";
 
@@ -301,6 +302,7 @@ export function SearchModal({
 
         {results.map((ev, idx) => {
           const text = formatEventText(ev);
+          const insight = ev.kind === "chat.message" ? getMessageInsight(ev.data) : "";
           const evId = ev.id ? String(ev.id) : "";
           const isChat = ev.kind === "chat.message";
           return (
@@ -345,6 +347,16 @@ export function SearchModal({
                   <div className="mt-2 text-sm whitespace-pre-wrap break-words text-[var(--color-text-primary)]">
                     {highlightText(text, query, isDark)}
                   </div>
+                  {insight ? (
+                    <div className="mt-3 border-t border-[var(--glass-border-subtle)] pt-2">
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                        {t("senderPerspective")}
+                      </div>
+                      <div className="text-sm whitespace-pre-wrap break-words text-[var(--color-text-secondary)]">
+                        {highlightText(insight, query, isDark)}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="flex items-center gap-2 justify-end sm:flex-col sm:items-end">

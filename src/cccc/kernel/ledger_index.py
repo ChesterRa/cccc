@@ -215,7 +215,7 @@ def _searchable_text(event: Dict[str, Any]) -> str:
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
     parts: list[str] = [kind]
     if isinstance(data, dict):
-        for key in ("text", "title", "message", "quote_text"):
+        for key in ("text", "insight", "title", "message", "quote_text"):
             value = data.get(key)
             if isinstance(value, str) and value.strip():
                 parts.append(value.strip())

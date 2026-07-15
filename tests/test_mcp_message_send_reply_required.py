@@ -67,6 +67,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
                     "group_id": "g_test",
                     "actor_id": "peer1",
                     "text": "hello",
+                    "insight": "The referenced artifact may change the decision boundary.",
                     "to": ["user"],
                     "refs": refs,
                 },
@@ -76,6 +77,8 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         req = captured.get("req") or {}
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("refs"), refs)
+        self.assertEqual(args.get("insight"), "The referenced artifact may change the decision boundary.")
+        self.assertTrue(args.get("require_peer_insight"))
 
     def test_message_send_passes_suggested_user_message(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -353,6 +356,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
                     "actor_id": "peer1",
                     "event_id": "ev_1",
                     "text": "reply",
+                    "insight": "The reply may preserve an unexamined frame.",
                     "suggested_user_message": "  Please run the next implementation pass.  ",
                 },
             )
@@ -361,16 +365,14 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         req = captured.get("req") or {}
         args = req.get("args") if isinstance(req.get("args"), dict) else {}
         self.assertEqual(args.get("suggested_user_message"), "Please run the next implementation pass.")
-        hint = out.get("post_reply_hint") if isinstance(out.get("post_reply_hint"), dict) else {}
-        self.assertEqual(hint.get("kind"), "resume_checkpoint")
-        message = str(hint.get("message") or "")
-        self.assertIn("Reply sent.", message)
-        self.assertIn("interrupted longer work", message)
-        self.assertIn("refresh cccc_agent_state", message)
-        self.assertIn("focus/next_action", message)
-        self.assertIn("open_loops", message)
-        self.assertIn("commitments", message)
-        self.assertIn("highest-value unfinished work", message)
+        self.assertEqual(args.get("insight"), "The reply may preserve an unexamined frame.")
+        self.assertTrue(args.get("require_peer_insight"))
+        from cccc.kernel.peer_insight import POST_MESSAGE_NUDGE
+
+        hint = out.get("post_message_nudge") if isinstance(out.get("post_message_nudge"), dict) else {}
+        self.assertEqual(hint.get("kind"), "whole_situation_reconstruction")
+        self.assertEqual(hint.get("message"), POST_MESSAGE_NUDGE)
+        self.assertNotIn("post_reply_hint", out)
 
     def test_message_send_adds_lightweight_tool_boundary_hint(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -393,15 +395,37 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
             )
 
         self.assertEqual(out.get("event_id"), "ev_send")
-        self.assertNotIn("post_reply_hint", out)
-        hint = out.get("post_send_hint") if isinstance(out.get("post_send_hint"), dict) else {}
-        self.assertEqual(hint.get("kind"), "message_tool_boundary")
-        message = str(hint.get("message") or "")
-        self.assertIn("Message sent.", message)
-        self.assertIn("answered an existing delivered message/event", message)
-        self.assertIn("cccc_message_reply(event_id=...)", message)
-        self.assertNotIn("unfinished work", message)
-        self.assertNotIn("resume_hint", message)
+        from cccc.kernel.peer_insight import POST_MESSAGE_NUDGE
+
+        hint = out.get("post_message_nudge") if isinstance(out.get("post_message_nudge"), dict) else {}
+        self.assertEqual(hint.get("kind"), "whole_situation_reconstruction")
+        self.assertEqual(hint.get("message"), POST_MESSAGE_NUDGE)
+        self.assertNotIn("post_send_hint", out)
+
+    def test_post_message_nudge_only_marks_accepted_or_replayed_success(self) -> None:
+        from cccc.kernel.peer_insight import POST_MESSAGE_NUDGE
+        from cccc.ports.mcp.handlers.cccc_messaging import _with_post_message_nudge
+
+        for result in (
+            {"event": {"id": "evt-1"}},
+            {"event_id": "evt-2", "replayed": True},
+            {"message_sent": True, "task_id": "T001"},
+            {"receipt": {"status": "queued"}},
+            {"remote_send": {"receipt": {"status": "sent"}}},
+        ):
+            nudged = _with_post_message_nudge(result)
+            self.assertEqual(
+                nudged.get("post_message_nudge"),
+                {"kind": "whole_situation_reconstruction", "message": POST_MESSAGE_NUDGE},
+            )
+
+        for result in (
+            {"message_sent": False, "partial_failure": True},
+            {"receipt": {"status": "failed"}},
+            {"remote_send": {"receipt": {"status": "failed"}}},
+            {"group_bridge_reply": {"error": {"code": "offline"}}},
+        ):
+            self.assertNotIn("post_message_nudge", _with_post_message_nudge(result))
 
     def test_tracked_send_passes_task_contract_args(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -424,6 +448,7 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
                     "actor_id": "foreman",
                     "title": "Review PR",
                     "text": "Please review this PR and report evidence.",
+                    "insight": "The review should be free to reject the entire approach.",
                     "to": "reviewer",
                     "outcome": "Review findings reported.",
                     "checklist": checklist,
@@ -439,6 +464,8 @@ class TestMcpMessageSendReplyRequired(unittest.TestCase):
         self.assertEqual(args.get("title"), "Review PR")
         self.assertEqual(args.get("checklist"), checklist)
         self.assertTrue(args.get("reply_required"))
+        self.assertEqual(args.get("insight"), "The review should be free to reject the entire approach.")
+        self.assertTrue(args.get("require_peer_insight"))
 
     def test_message_send_allows_codex_headless_actor(self) -> None:
         from cccc.contracts.v1 import DaemonRequest

@@ -43,8 +43,10 @@ from .message import (
     ChatMessageData,
     ChatReactionData,
     ChatStreamData,
+    INSIGHT_MAX_CHARS,
     Reference,
     SUGGESTED_USER_MESSAGE_MAX_CHARS,
+    normalize_insight,
 )
 from .notify import NotifyAckData, NotifyKind, NotifyPriority, SystemNotifyData
 from .presentation import (
@@ -89,6 +91,7 @@ __all__ = [
     "DaemonResponse",
     "DEFAULT_ASYNC_COMPLETION_SIGNAL",
     "Event",
+    "INSIGHT_MAX_CHARS",
     "SpaceBinding",
     "SUGGESTED_USER_MESSAGE_MAX_CHARS",
     "SpaceBindingStatus",
@@ -120,4 +123,5 @@ __all__ = [
     "RunnerKind",
     "RuntimeStateSource",
     "SystemNotifyData",
+    "normalize_insight",
 ]

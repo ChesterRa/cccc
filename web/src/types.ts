@@ -155,6 +155,7 @@ export type HeadlessPreviewSession = {
 // Chat message payload
 export type ChatMessageData = {
   text?: string;
+  insight?: string;
   to?: string[];
   priority?: "normal" | "attention";
   reply_required?: boolean;

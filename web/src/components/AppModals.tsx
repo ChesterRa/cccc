@@ -32,6 +32,7 @@ import { findPresentationSlot } from "../utils/presentation";
 import { buildPresentationRefForSlot } from "../utils/presentationRefs";
 import { formatGroupSettingsUpdateError } from "../utils/groupSettingsErrors";
 import { getEffectiveActorRunner, normalizeActorRunner } from "../utils/headlessRuntimeSupport";
+import { appendQuotedOriginalPerspective, getMessageInsight } from "../utils/messagePerspective";
 import {
   useGroupStore,
   useUIStore,
@@ -1378,9 +1379,11 @@ export function AppModals({
 
     const d = src.data as ChatMessageData | undefined;
     const srcText = typeof d?.text === "string" ? d.text : "";
+    const srcInsight = getMessageInsight(d);
     const srcQuoteText = typeof d?.quote_text === "string" ? d.quote_text.trim() : "";
     const noteText = String(note || "").trim();
-    const relayText = (noteText ? noteText + "\n\n" : "") + String(srcText || "");
+    const relayBody = [noteText, String(srcText || "").trim()].filter(Boolean).join("\n\n");
+    const relayText = appendQuotedOriginalPerspective(relayBody, srcInsight, src.by || "sender");
     if (!relayText.trim()) {
       showError(t("relayTextEmpty"));
       return;

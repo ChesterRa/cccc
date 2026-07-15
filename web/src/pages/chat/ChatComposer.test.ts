@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { getComposerActionVisibility, getComposerCanSend } from "./chatComposerActions";
+import { RECIPIENT_POPOVER_GAP_PX } from "./useRecipientPopover";
 
 const composerSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "ChatComposer.tsx"),
@@ -260,16 +261,26 @@ describe("ChatComposer mention menu navigation", () => {
   });
 
   it("positions recipient hover popovers above their chips", () => {
+    expect(RECIPIENT_POPOVER_GAP_PX).toBe(6);
     expect(recipientPopoverHookSource).toContain("const top = rect.top");
     expect(recipientPopoverHookSource).toContain(
-      'const transform = "translateY(calc(-100% - 6px))"',
+      "const transform = `translateY(calc(-100% - ${RECIPIENT_POPOVER_GAP_PX}px))`",
     );
     expect(recipientPopoverHookSource).toContain("setStyle({ top, left: 8, right: 8, transform })");
     expect(recipientPopoverHookSource).not.toContain("const top = rect.bottom + 6");
   });
 
-  it("does not let recipient hover popovers block chip clicks", () => {
-    expect(recipientPopoverSource).toContain("fixed pointer-events-none z-[1000]");
-    expect(recipientPopoverSource).toContain("pointer-events-auto inline-flex h-6 w-6");
+  it("keeps the whole recipient popover hoverable without covering its chip", () => {
+    expect(recipientPopoverSource).toContain("fixed pointer-events-auto z-[1000]");
+    expect(recipientPopoverSource).not.toContain("fixed pointer-events-none z-[1000]");
+    expect(recipientPopoverSource).toContain('className="absolute inset-x-0 top-full"');
+    expect(recipientPopoverSource).toContain("style={{ height: RECIPIENT_POPOVER_GAP_PX }}");
+    expect(recipientPopoverSource).toContain("onMouseEnter={onCancelHide}");
+    expect(recipientPopoverSource).toContain("onMouseLeave={onScheduleHide}");
+  });
+
+  it("keeps the recipient popover alive while its copy action has focus", () => {
+    expect(recipientPopoverSource).toContain("onFocusCapture={onCancelHide}");
+    expect(recipientPopoverSource).toContain("onBlurCapture={onScheduleHide}");
   });
 });

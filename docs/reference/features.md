@@ -22,9 +22,9 @@ cccc tracked-send "Delegated work" --to assistant --title "Task title" --outcome
 cccc reply <event_id> "Reply text"
 
 # MCP
-cccc_message_send(text="Hello", to=["@foreman"])
-cccc_tracked_send(title="Task title", text="Delegated work", to=["assistant"], outcome="Done criterion")
-cccc_message_reply(reply_to="evt_xxx", text="Reply")
+cccc_message_send(text="Hello", to=["@foreman"], insight="This direction may still be framed too narrowly.")
+cccc_tracked_send(title="Task title", text="Delegated work", to=["assistant"], outcome="Done criterion", insight="The assignee should be free to reject the proposed approach.")
+cccc_message_reply(reply_to="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
 ```
 
 Agents may add `suggested_user_message` when sending to `user`; CCCC Web shows it as an editable next-message suggestion in the composer and never sends it automatically.

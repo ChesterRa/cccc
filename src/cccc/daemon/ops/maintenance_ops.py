@@ -10,12 +10,19 @@ from ..group_bridge.cross_group_receipt_projection import project_remote_send_re
 from ..group_bridge.ops import handle_remote_send
 from ..group_bridge.route_lookup import resolve_remote_group_route
 from ...kernel.actors import resolve_recipient_tokens
+from ...kernel.chat_idempotency import find_existing_reply_result
 from ...kernel.group import load_group
 from ...kernel.inbox import iter_events
 from ...kernel.ledger import append_event
 from ...kernel.ledger_retention import compact as compact_ledger
 from ...kernel.ledger_retention import snapshot as snapshot_ledger
 from ...kernel.permissions import require_group_permission
+from ...kernel.messaging import recipient_actor_ids
+from ...kernel.peer_insight import (
+    normalized_insight_or_error,
+    peer_insight_required_details,
+    remote_recipients_include_peer,
+)
 from ...kernel.recipient_syntax import (
     CROSS_GROUP_HASH_RECIPIENT_MESSAGE,
     cross_group_recipient_tokens_or_default,
@@ -185,6 +192,7 @@ def handle_send_cross_group(
     reply_to = str(args.get("reply_to") or "").strip()
     quote_text = str(args.get("quote_text") or "").strip()
     client_id = str(args.get("client_id") or "").strip()
+    require_peer_insight = coerce_bool(args.get("require_peer_insight"), default=False)
     remote_reply_to_event_id = str(args.get("remote_reply_to_event_id") or "").strip()
     to_raw = args.get("to")
     dst_to_tokens: list[str] = []
@@ -210,12 +218,26 @@ def handle_send_cross_group(
     src_group = load_group(src_group_id)
     if src_group is None:
         return _error("group_not_found", f"group not found: {src_group_id}")
+    source_replay = find_existing_reply_result(src_group, client_id=client_id, by=by) if client_id else None
+    source_event = source_replay.get("event") if isinstance(source_replay, dict) else None
+    source_data = source_event.get("data") if isinstance(source_event, dict) and isinstance(source_event.get("data"), dict) else {}
+    raw_insight = source_data.get("insight") if source_event is not None else args.get("insight")
+    try:
+        insight = normalized_insight_or_error(raw_insight)
+    except ValueError as exc:
+        return _error("invalid_insight", str(exc))
 
     remote_route = resolve_remote_group_route(group_id=src_group_id, remote_group_id=dst_group_id)
     if remote_route is not None:
         dst_to_tokens = cross_group_recipient_tokens_or_default(dst_to_tokens)
         if has_hash_recipient_token(dst_to_tokens):
             return _error("invalid_recipient_syntax", CROSS_GROUP_HASH_RECIPIENT_MESSAGE)
+        if source_event is None and require_peer_insight and remote_recipients_include_peer(dst_to_tokens) and insight is None:
+            return _error(
+                "peer_insight_required",
+                "Not sent: this peer-facing message is missing `insight`.",
+                details=peer_insight_required_details(),
+            )
         src_resp, _ = dispatch_send(
             "send",
             {
@@ -231,6 +253,7 @@ def handle_send_cross_group(
                 "client_id": client_id,
                 "dst_group_id": dst_group_id,
                 "dst_to": dst_to_tokens,
+                "insight": insight,
             },
         )
         if not src_resp.ok:
@@ -247,6 +270,8 @@ def handle_send_cross_group(
                 "idempotency_key": idempotency_key,
                 "source_event_id": src_event_id,
                 "reply_to_remote_event_id": remote_reply_to_event_id,
+                "insight": insight,
+                "require_peer_insight": require_peer_insight,
                 "payload": {
                     "text": text,
                     "to": dst_to_tokens,
@@ -301,8 +326,19 @@ def handle_send_cross_group(
         return _error("invalid_recipient_syntax", CROSS_GROUP_HASH_RECIPIENT_MESSAGE)
     try:
         dst_to_canon = resolve_recipient_tokens(dst_group, dst_to_tokens)
-    except Exception as e:
-        return _error("invalid_recipient", str(e))
+    except Exception as exc:
+        return _error("invalid_recipient", str(exc))
+    target_peer_actor_ids = (
+        recipient_actor_ids(dst_group, dst_to_canon)
+        if source_event is None and require_peer_insight
+        else []
+    )
+    if target_peer_actor_ids and insight is None:
+        return _error(
+            "peer_insight_required",
+            "Not sent: this peer-facing message is missing `insight`.",
+            details=peer_insight_required_details(),
+        )
 
     src_resp, _ = dispatch_send(
         "send",
@@ -318,6 +354,7 @@ def handle_send_cross_group(
             "client_id": client_id,
             "dst_group_id": dst_group_id,
             "dst_to": dst_to_canon,
+            "insight": insight,
         },
     )
     if not src_resp.ok:
@@ -338,6 +375,8 @@ def handle_send_cross_group(
         "client_id": _cross_group_target_client_id(source_event_id=src_event_id, dst_group_id=dst_group_id),
         "src_group_id": src_group_id,
         "src_event_id": src_event_id,
+        "insight": insight,
+        "require_peer_insight": require_peer_insight,
     }
     if remote_reply_to_event_id:
         dst_send_args["reply_to"] = remote_reply_to_event_id

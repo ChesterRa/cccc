@@ -51,7 +51,7 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertIn('tool_name="cccc_project_info"', body)
         self.assertIn('tool_name="cccc_memory"', body)
         self.assertIn("invokes hidden tools without exposing the full pack", body)
-        self.assertIn("does not define how you should reason or work", body)
+        self.assertIn("including the peer collaboration contract", body)
         self.assertNotIn("## CCCC Creed", body)
         self.assertNotIn("## Working Stance", body)
         self.assertNotIn("## Communication Patterns", body)

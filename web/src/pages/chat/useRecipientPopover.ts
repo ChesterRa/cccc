@@ -16,6 +16,8 @@ export interface RecipientPopoverTarget {
   idValue?: string;
 }
 
+export const RECIPIENT_POPOVER_GAP_PX = 6;
+
 export function useRecipientPopover({
   isSmallScreen,
   availableRemoteGroups,
@@ -52,7 +54,7 @@ export function useRecipientPopover({
       const viewportWidth = typeof window === "undefined" ? 1024 : window.innerWidth;
       const tooltipWidth = Math.min(196, Math.max(176, viewportWidth - 16));
       const top = rect.top;
-      const transform = "translateY(calc(-100% - 6px))";
+      const transform = `translateY(calc(-100% - ${RECIPIENT_POPOVER_GAP_PX}px))`;
       if (isSmallScreen) {
         setStyle({ top, left: 8, right: 8, transform });
       } else {

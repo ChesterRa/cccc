@@ -213,6 +213,7 @@ def deliver_appended_chat_message(
     by: str,
     effective_to: list[str],
     text: str,
+    insight: str | None = None,
     priority: str,
     reply_required: bool,
     refs: Optional[list[dict[str, Any]]] = None,
@@ -244,6 +245,7 @@ def deliver_appended_chat_message(
     )
     delivery_text = build_actor_delivery_text(
         text=text,
+        insight=insight,
         priority=priority,
         reply_required=reply_required,
         event_id=event_id,

@@ -26,6 +26,7 @@ import {
   type TaskRefStateKey,
 } from "../utils/taskRefs";
 import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
+import { getMessageInsight } from "../utils/messagePerspective";
 import {
   destinationChipKey,
   getDelegationDisplayText,
@@ -150,12 +151,16 @@ function PlainMessageText({ text, className }: { text: string; className?: strin
 function buildMessageCopyText({
   quoteText,
   messageText,
+  insight,
+  insightLabel,
   presentationRefs,
   taskRefs,
   attachments,
 }: {
   quoteText?: string;
   messageText: string;
+  insight: string;
+  insightLabel: string;
   presentationRefs: PresentationMessageRef[];
   taskRefs: TaskMessageRef[];
   attachments: { title: string; path: string }[];
@@ -169,6 +174,10 @@ function buildMessageCopyText({
   }
   if (trimmedMessage) {
     sections.push(trimmedMessage);
+  }
+  const trimmedInsight = String(insight || "").trim();
+  if (trimmedInsight) {
+    sections.push(`${String(insightLabel || "Sender perspective").trim()}:\n${trimmedInsight}`);
   }
   if (presentationRefs.length > 0) {
     sections.push(
@@ -220,6 +229,7 @@ function MessageBubbleBody({
   taskById,
   messageText,
   bodyText,
+  insight,
   shouldRenderMarkdown,
   blobAttachments,
   blobGroupId,
@@ -251,6 +261,7 @@ function MessageBubbleBody({
   taskById: Map<string, Task>;
   messageText: string;
   bodyText: string;
+  insight: string;
   shouldRenderMarkdown: boolean;
   blobAttachments: Array<{
     kind: string;
@@ -450,6 +461,18 @@ function MessageBubbleBody({
         shouldRenderMarkdown={shouldRenderMarkdown}
         isDark={isDark}
       />
+
+      {insight ? (
+        <div className={supportingSectionClass}>
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] opacity-50">
+            {t("senderPerspective")}
+          </div>
+          <PlainMessageText
+            text={insight}
+            className="max-w-full text-[var(--color-text-secondary)]"
+          />
+        </div>
+      ) : null}
 
       <MessageAttachments
         attachments={blobAttachments}
@@ -682,6 +705,7 @@ export const MessageBubble = memo(
 
     // Treat data as ChatMessageData.
     const msgData = ev.data as ChatMessageData | undefined;
+    const insight = getMessageInsight(msgData);
     const quoteText = msgData?.quote_text;
     const replyToEventId =
       typeof msgData?.reply_to === "string" ? String(msgData.reply_to || "").trim() : "";
@@ -790,6 +814,8 @@ export const MessageBubble = memo(
         buildMessageCopyText({
           quoteText,
           messageText: displayMessageText,
+          insight,
+          insightLabel: t("senderPerspective"),
           presentationRefs,
           taskRefs,
           attachments: blobAttachments.map((attachment) => ({
@@ -797,7 +823,7 @@ export const MessageBubble = memo(
             path: attachment.path || attachment.local_preview_url,
           })),
         }),
-      [blobAttachments, displayMessageText, presentationRefs, quoteText, taskRefs],
+      [blobAttachments, displayMessageText, insight, presentationRefs, quoteText, t, taskRefs],
     );
     const messageTimestamp = formatMessageTimestamp(ev.ts);
     const fullMessageTimestamp = formatFullTime(ev.ts);
@@ -1105,6 +1131,7 @@ export const MessageBubble = memo(
                 taskById={taskById}
                 messageText={displayMessageText}
                 bodyText={bubbleBodyText}
+                insight={insight}
                 shouldRenderMarkdown={shouldRenderMarkdown}
                 blobAttachments={blobAttachments}
                 blobGroupId={blobGroupId}

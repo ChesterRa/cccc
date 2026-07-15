@@ -25,12 +25,14 @@ def relay_group_bridge_reply(
     original_data: Dict[str, Any],
     reply_event_id: str,
     text: str,
+    insight: str | None = None,
     by: str,
     to: list[str],
     priority: str,
     reply_required: bool,
     refs: list[dict[str, Any]],
     to_was_explicit: bool = False,
+    require_peer_insight: bool = False,
 ) -> Optional[DaemonResponse]:
     """Relay a local reply back to a trusted group_bridge source."""
     registration_id = group_bridge_reply_registration_id(group_id=group_id, original_data=original_data)
@@ -59,6 +61,8 @@ def relay_group_bridge_reply(
                 "idempotency_key": f"reply:{reply_event_id}:{registration_id}",
                 "source_event_id": reply_event_id,
                 "reply_to_remote_event_id": str(original_data.get("src_event_id") or "").strip(),
+                "insight": insight,
+                "require_peer_insight": require_peer_insight,
                 "payload": {
                     "text": text,
                     "to": _reply_return_recipients(

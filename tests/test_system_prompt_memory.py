@@ -86,6 +86,32 @@ class TestSystemPromptMemory(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_team_seed_is_one_small_non_solo_activation_not_full_insight_doctrine(self) -> None:
+        from cccc.kernel.actors import add_actor, find_actor
+        from cccc.kernel.group import load_group
+        from cccc.kernel.peer_insight import SUPERVISOR_MAGIC_KERNEL, TEAM_MODE_SEED
+        from cccc.kernel.system_prompt import render_system_prompt
+
+        _, cleanup = self._with_home()
+        try:
+            gid, aid = self._create_group_with_actor(title="team-seed")
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            assert group is not None
+            actor = find_actor(group, aid)
+            self.assertIsNotNone(actor)
+            solo_prompt = render_system_prompt(group=group, actor=actor or {})
+            self.assertNotIn(TEAM_MODE_SEED, solo_prompt)
+
+            add_actor(group, actor_id="agent2", runner="headless", runtime="codex")
+            actor = find_actor(group, aid)
+            team_prompt = render_system_prompt(group=group, actor=actor or {})
+            self.assertEqual(team_prompt.count(TEAM_MODE_SEED), 1)
+            self.assertNotIn(SUPERVISOR_MAGIC_KERNEL, team_prompt)
+            self.assertNotIn("Peer Insight Contract", team_prompt)
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

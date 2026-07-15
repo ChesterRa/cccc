@@ -267,6 +267,66 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertIn("## Actor Notes", markdown)
         self.assertIn("- keep this", markdown)
 
+    def test_peer_insight_contract_is_reserved_once_and_survives_capability_failure(self) -> None:
+        from cccc.kernel.peer_insight import PEER_INSIGHT_RUNTIME_HELP, SUPERVISOR_MAGIC_KERNEL
+        from cccc.ports.mcp.handlers.cccc_core import _append_runtime_help_addenda
+
+        group = SimpleNamespace(
+            doc={"actors": [{"id": "peer-1", "runtime": "codex", "enabled": True}]}
+        )
+        base = (
+            "## Core Routes\n"
+            "- custom actor help\n\n"
+            "## Peer Insight Contract (Runtime)\n"
+            "- stale removable copy\n"
+        )
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_core.load_group",
+            return_value=group,
+        ), patch(
+            "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
+            side_effect=RuntimeError("capability state unavailable"),
+        ):
+            markdown = _append_runtime_help_addenda(base, group_id="g1", actor_id="peer-1")
+
+        self.assertEqual(markdown.count("## Peer Insight Contract (Runtime)"), 1)
+        self.assertNotIn("stale removable copy", markdown)
+        self.assertIn("custom actor help", markdown)
+        self.assertIn("shared thinking space, not a delivery lane", markdown)
+        self.assertIn("provisional peer view", markdown)
+        self.assertIn("independent first pass", markdown)
+        self.assertEqual(markdown.count(SUPERVISOR_MAGIC_KERNEL), 1)
+        self.assertIn(PEER_INSIGHT_RUNTIME_HELP.strip(), markdown)
+
+    def test_peer_insight_contract_excludes_internal_voice_secretary(self) -> None:
+        from cccc.ports.mcp.handlers.cccc_core import _append_runtime_help_addenda
+
+        group = SimpleNamespace(
+            doc={
+                "actors": [
+                    {
+                        "id": "voice-secretary",
+                        "runtime": "codex",
+                        "internal_kind": "voice_secretary",
+                    }
+                ]
+            }
+        )
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_core.load_group",
+            return_value=group,
+        ), patch(
+            "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
+            side_effect=RuntimeError("capability state unavailable"),
+        ):
+            markdown = _append_runtime_help_addenda(
+                "## Core Routes\n- assistant help\n",
+                group_id="g1",
+                actor_id="voice-secretary",
+            )
+
+        self.assertNotIn("## Peer Insight Contract (Runtime)", markdown)
+
     def test_cccc_help_appends_web_model_transport_runtime_note(self) -> None:
         from cccc.ports.mcp.handlers.cccc_core import _append_runtime_help_addenda
 

@@ -26,6 +26,7 @@ from ...kernel.actors import list_actors, resolve_recipient_tokens
 from ...kernel.blobs import resolve_blob_attachment_path
 from ...kernel.group import Group, load_group
 from ...kernel.messaging import disabled_recipient_actor_ids, get_default_send_to
+from ...kernel.peer_insight import append_peer_perspective
 from ...paths import ensure_home
 from ...util.conv import coerce_bool
 from .adapters.base import IMAdapter, IMProcessingOutcome, OutboundStreamHandle
@@ -754,6 +755,9 @@ class IMBridge:
         # Get message details
         data = event.get("data", {})
         text = data.get("text", "")
+        insight = data.get("insight") if is_chat else None
+        projected_text = append_peer_perspective(str(text or ""), insight)
+        perspective_only = append_peer_perspective("", insight)
         to = data.get("to", [])
         attachments = data.get("attachments", [])
 
@@ -769,7 +773,7 @@ class IMBridge:
             if completed:
                 _streamed_targets = set(completed)
 
-        if not text and not attachments:
+        if not projected_text and not attachments:
             return
 
         # Forward to subscribed chats (filtered by platform to avoid cross-platform sends)
@@ -803,7 +807,16 @@ class IMBridge:
                 for t in (to if isinstance(to, list) else [])
                 if str(t or "").strip()
             ]
-            formatted = self.adapter.format_outbound(display_by, display_to, text, is_system) if text else ""
+            formatted = (
+                self.adapter.format_outbound(display_by, display_to, projected_text, is_system)
+                if projected_text
+                else ""
+            )
+            streamed_perspective = (
+                self.adapter.format_outbound(display_by, display_to, perspective_only, is_system)
+                if skip_text_due_to_stream and perspective_only
+                else ""
+            )
             mention_user_ids = self._resolve_outbound_mention_targets(
                 event=event,
                 sub=sub,
@@ -878,6 +891,25 @@ class IMBridge:
                         )
                     )
                 if sent_msg and is_user_facing:
+                    delivered_user_facing = True
+
+            # A completed stream already carried the main text, but not the
+            # canonical peer perspective. Deliver it once as a continuation.
+            if streamed_perspective:
+                if mention_user_ids is None:
+                    sent_perspective = bool(
+                        self.adapter.send_message(sub.chat_id, streamed_perspective, thread_id=sub.thread_id)
+                    )
+                else:
+                    sent_perspective = bool(
+                        self.adapter.send_message(
+                            sub.chat_id,
+                            streamed_perspective,
+                            thread_id=sub.thread_id,
+                            mention_user_ids=mention_user_ids,
+                        )
+                    )
+                if sent_perspective and is_user_facing:
                     delivered_user_facing = True
 
             # Remove typing indicator only after outbound delivery for this event

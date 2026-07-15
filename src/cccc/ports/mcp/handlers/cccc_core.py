@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ....kernel.agent_state_hygiene import build_mind_context_mini, evaluate_agent_state_hygiene
-from ....kernel.actors import find_actor
+from ....kernel.actors import find_actor, is_internal_actor
 from ....kernel.group import load_group
 from ....kernel.group_space import get_group_space_prompt_state
 from ....kernel.prompt_files import load_builtin_help_markdown as _load_builtin_help_markdown
+from ....kernel.peer_insight import PEER_INSIGHT_RUNTIME_HELP
 from ....util.fs import read_json
 from ..common import MCPError, _call_daemon_or_raise
 from . import cccc_group_actor as _group_actor_mod
@@ -22,6 +23,7 @@ _CCCC_HELP_BUILTIN = _load_builtin_help_markdown().strip()
 _RUNTIME_HELP_SECTION_HEADERS = {
     "## Active Skills (Runtime)",
     "## Group Space (Runtime)",
+    "## Peer Insight Contract (Runtime)",
     "## Web Model Transport (Runtime)",
 }
 
@@ -117,6 +119,19 @@ def _actor_runtime_for_help(*, group_id: str, actor_id: str) -> str:
     if not isinstance(actor, dict):
         return ""
     return str(actor.get("runtime") or "").strip().lower()
+
+
+def _normal_peer_help_enabled(*, group_id: str, actor_id: str) -> bool:
+    gid = str(group_id or "").strip()
+    aid = str(actor_id or "").strip()
+    if not gid or not aid or aid == "user":
+        return False
+    try:
+        group = load_group(gid)
+        actor = find_actor(group, aid) if group is not None else None
+    except Exception:
+        return False
+    return isinstance(actor, dict) and not is_internal_actor(actor)
 
 
 def _find_actor_state(*, context: Dict[str, Any], actor_id: str) -> Optional[Dict[str, Any]]:
@@ -575,6 +590,9 @@ def _build_bootstrap_inbox_preview(*, inbox: Dict[str, Any], limit: int) -> Dict
             "reply_required": bool(data.get("reply_required") is True or data.get("requires_ack") is True),
             "text_preview": _trim_text(text_source, max_chars=220),
         }
+        insight_preview = _trim_text(data.get("insight"), max_chars=220)
+        if insight_preview:
+            entry["insight_preview"] = insight_preview
         notify_kind = str(data.get("kind") or "").strip()
         if notify_kind:
             entry["notify_kind"] = notify_kind
@@ -594,6 +612,8 @@ def _append_runtime_help_addenda(markdown: str, *, group_id: str, actor_id: str)
     if not gid or not aid:
         return base
     sections: List[str] = []
+    if _normal_peer_help_enabled(group_id=gid, actor_id=aid):
+        sections.append(PEER_INSIGHT_RUNTIME_HELP.rstrip())
     if _actor_runtime_for_help(group_id=gid, actor_id=aid) == "web_model":
         sections.append(
             "\n".join(

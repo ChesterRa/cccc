@@ -371,6 +371,39 @@ class TestLedgerSearchIndex(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_search_messages_indexes_insight_text_without_ledger_scan(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.inbox import search_messages
+
+            create, _ = self._call("group_create", {"title": "search-insight", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            sent, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "text": "ordinary body",
+                    "insight": "The rollback boundary remains unverified.",
+                    "by": "user",
+                    "to": ["user"],
+                },
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            with patch("cccc.kernel.inbox.iter_events", side_effect=AssertionError("indexed search should avoid ledger scan")):
+                events, has_more = search_messages(group, query="rollback", kind_filter="all", limit=10)
+
+            self.assertFalse(has_more)
+            self.assertEqual(len(events), 1)
+            self.assertEqual((events[0].get("data") or {}).get("insight"), "The rollback boundary remains unverified.")
+        finally:
+            cleanup()
+
     def test_search_messages_avoids_per_event_lookup_round_trips(self) -> None:
         _, cleanup = self._with_home()
         try:

@@ -43,6 +43,7 @@ import {
   supportsChatStreamingPlaceholder,
 } from "../utils/chatSend";
 import { copyTextToClipboard } from "../utils/copy";
+import { appendSenderPerspective, getMessageInsight } from "../utils/messagePerspective";
 import { hasRenderableChatMessageContent } from "../utils/ledgerEventHandlers";
 import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
@@ -2065,9 +2066,14 @@ export function useChatTab({
       if (ev.kind !== "chat.message") return;
       const data = ev.data as ChatMessageData | undefined;
       const text = String(data?.text || "");
-      if (!text.trim()) return;
+      const copyText = appendSenderPerspective(
+        text,
+        getMessageInsight(data),
+        t("chat:senderPerspective", { defaultValue: "Sender perspective" }),
+      );
+      if (!copyText) return;
 
-      const ok = await copyTextToClipboard(text);
+      const ok = await copyTextToClipboard(copyText);
 
       if (ok) {
         showNotice({ message: t("chat:contentCopied", { defaultValue: "Content copied" }) });

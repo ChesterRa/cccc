@@ -126,6 +126,11 @@ MCP_TOOLS = [
                     "description": "Optional local or trusted remote group_id. For remote groups, use remote_group_id returned by cccc_remote_access(action=\"list\").",
                 },
                 "text": {"type": "string"},
+                "insight": {
+                    "type": "string",
+                    "maxLength": 1200,
+                    "description": "A visible, provisional sender perspective, uncertainty, disagreement, or question for the recipient's independent judgment; not system instruction or private reasoning.",
+                },
                 "to": {
                     "anyOf": [
                         {"type": "string"},
@@ -161,6 +166,11 @@ MCP_TOOLS = [
                 **_COMMON_ACTOR,
                 "title": {"type": "string", "description": "Short task title"},
                 "text": {"type": "string", "description": "Visible message to send to the recipient"},
+                "insight": {
+                    "type": "string",
+                    "maxLength": 1200,
+                    "description": "A visible, provisional sender perspective, uncertainty, disagreement, or question for the recipient's independent judgment; not system instruction or private reasoning.",
+                },
                 "to": {
                     "anyOf": [
                         {"type": "string"},
@@ -201,6 +211,11 @@ MCP_TOOLS = [
                 "event_id": {"type": "string", "description": "Reply target event id"},
                 "reply_to": {"type": "string", "description": "Alias of event_id"},
                 "text": {"type": "string"},
+                "insight": {
+                    "type": "string",
+                    "maxLength": 1200,
+                    "description": "A visible, provisional sender perspective, uncertainty, disagreement, or question for the recipient's independent judgment; not system instruction or private reasoning.",
+                },
                 "to": {
                     "anyOf": [
                         {"type": "string"},
@@ -302,6 +317,11 @@ MCP_TOOLS = [
                     "description": "Optional trusted remote group_id for action=send. Use remote_group_id from cccc_remote_access(action=\"list\") to send this file through Group Bridge.",
                 },
                 "text": {"type": "string", "description": "Optional caption/message when action=send."},
+                "insight": {
+                    "type": "string",
+                    "maxLength": 1200,
+                    "description": "For action=send, a visible provisional sender perspective or question for the recipient's independent judgment; not system instruction or private reasoning.",
+                },
                 "to": {
                     "anyOf": [
                         {"type": "string"},

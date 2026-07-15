@@ -88,7 +88,11 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
                         "ts": "2026-03-07T00:00:00Z",
                         "kind": "chat.message",
                         "by": "user",
-                        "data": {"text": "please verify memory lane", "reply_required": True},
+                        "data": {
+                            "text": "please verify memory lane",
+                            "insight": "The current recovery frame may omit a higher-value task.",
+                            "reply_required": True,
+                        },
                     }
                 ]
             },
@@ -140,6 +144,10 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
         self.assertEqual(inbox_preview["messages"][0]["id"], "ev1")
         self.assertTrue(inbox_preview["messages"][0]["reply_required"] is True)
         self.assertEqual(inbox_preview["messages"][0]["text_preview"], "please verify memory lane")
+        self.assertEqual(
+            inbox_preview["messages"][0]["insight_preview"],
+            "The current recovery frame may omit a higher-value task.",
+        )
 
         gate = out["memory_recall_gate"]
         self.assertTrue(bool(gate.get("required")))

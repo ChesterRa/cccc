@@ -947,10 +947,16 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (!lastMessage) return "";
     const data =
       lastMessage.data && typeof lastMessage.data === "object"
-        ? (lastMessage.data as { text?: unknown; attachments?: unknown[]; client_id?: unknown })
+        ? (lastMessage.data as {
+            text?: unknown;
+            insight?: unknown;
+            attachments?: unknown[];
+            client_id?: unknown;
+          })
         : null;
     const attachmentCount = Array.isArray(data?.attachments) ? data.attachments.length : 0;
     const textLength = typeof data?.text === "string" ? data.text.length : 0;
+    const insightLength = typeof data?.insight === "string" ? data.insight.length : 0;
     const clientId = typeof data?.client_id === "string" ? data.client_id.trim() : "";
     return [
       String(lastMessage.id || "").trim(),
@@ -958,6 +964,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       String(lastMessage.ts || "").trim(),
       clientId,
       textLength,
+      insightLength,
       attachmentCount,
     ].join("|");
   }, [displayMessages]);
