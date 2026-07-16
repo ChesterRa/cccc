@@ -21,6 +21,31 @@ pub struct LedgerFollower {
 }
 
 impl LedgerFollower {
+    pub fn at_end(path: &Path) -> io::Result<(Self, Option<String>)> {
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(path)?;
+        FileExt::lock_shared(&file)?;
+        let result = (|| {
+            let sources = revisions(path)?
+                .into_iter()
+                .map(|revision| (revision.path.clone(), revision))
+                .collect();
+            let cursor = tail(path, 1)?.last().map(|event| event.id.clone());
+            Ok((
+                Self {
+                    initialized: true,
+                    sources,
+                },
+                cursor,
+            ))
+        })();
+        let unlock = FileExt::unlock(&file);
+        result.and_then(|value| unlock.map(|()| value))
+    }
+
     pub fn poll(&mut self, path: &Path) -> io::Result<Vec<Event>> {
         let revisions = revisions(path)?;
         let next_sources: BTreeMap<_, _> = revisions

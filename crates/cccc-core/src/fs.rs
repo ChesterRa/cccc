@@ -1,5 +1,7 @@
+use fs2::FileExt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use std::fs::OpenOptions;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::Path;
@@ -33,6 +35,25 @@ pub fn write_yaml<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
 
 pub fn read_yaml<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
     serde_yaml::from_reader(File::open(path)?).map_err(io::Error::other)
+}
+
+pub fn with_exclusive_lock<T>(
+    path: &Path,
+    operation: impl FnOnce() -> io::Result<T>,
+) -> io::Result<T> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)?;
+    file.lock_exclusive()?;
+    let result = operation();
+    let unlock = FileExt::unlock(&file);
+    result.and_then(|value| unlock.map(|()| value))
 }
 
 #[cfg(unix)]

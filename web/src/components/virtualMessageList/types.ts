@@ -1,5 +1,5 @@
 import type { MutableRefObject } from "react";
-import type { ChatFollowMode } from "../../stores/useUIStore";
+import type { ChatScrollSnapshot } from "../../stores/useUIStore";
 import type {
   Actor,
   AgentState,
@@ -24,6 +24,7 @@ export interface VirtualMessageListProps {
   initialScrollTargetId?: string;
   initialScrollAnchorId?: string;
   initialScrollAnchorOffsetPx?: number;
+  initialScrollOffsetPx?: number;
   highlightEventId?: string;
   className?: string;
   topInsetPx?: number;
@@ -41,7 +42,7 @@ export interface VirtualMessageListProps {
   chatUnreadCount: number;
   onScrollChange?: (isAtBottom: boolean) => void;
   onScrollSnapshot?: (
-    snapshot: { mode: ChatFollowMode; anchorId: string; offsetPx: number; updatedAt: number },
+    snapshot: ChatScrollSnapshot,
     groupId?: string,
   ) => void;
   forceStickToBottomToken?: number;

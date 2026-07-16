@@ -39,7 +39,7 @@ enum ClientState {
 struct SendCommand {
     frame: Value,
     req_id: String,
-    timeout: Duration,
+    deadline: tokio::time::Instant,
     result: oneshot::Sender<Result<Value, String>>,
 }
 
@@ -168,11 +168,13 @@ impl WecomClient {
             Ok(Err(error)) => {
                 client.shutdown();
                 task.abort();
+                let _ = task.await;
                 Err(error)
             }
             Err(_) => {
                 client.shutdown();
                 task.abort();
+                let _ = task.await;
                 Err(format!(
                     "WeCom authentication timed out after {:?}",
                     options.connect_timeout
@@ -248,16 +250,20 @@ impl WecomClient {
         let req_id = req_id.unwrap_or_else(|| request_id(cmd));
         let frame = json!({"cmd":cmd,"headers":{"req_id":req_id.clone()},"body":body});
         let (result_tx, result_rx) = oneshot::channel();
-        self.commands
-            .send(SendCommand {
+        let deadline = tokio::time::Instant::now() + timeout;
+        tokio::time::timeout_at(
+            deadline,
+            self.commands.send(SendCommand {
                 frame,
                 req_id,
-                timeout,
+                deadline,
                 result: result_tx,
-            })
-            .await
-            .map_err(|_| "WeCom connection task is not running".to_owned())?;
-        tokio::time::timeout(timeout, result_rx)
+            }),
+        )
+        .await
+        .map_err(|_| "WeCom command queue timed out".to_owned())?
+        .map_err(|_| "WeCom connection task is not running".to_owned())?;
+        tokio::time::timeout_at(deadline, result_rx)
             .await
             .map_err(|_| "WeCom command acknowledgement timed out".to_owned())?
             .map_err(|_| "WeCom command was cancelled".to_owned())?
@@ -422,6 +428,9 @@ async fn run_session(
                 }
             }
             Some(command) = commands.recv() => {
+                if command.result.is_closed() || command.deadline <= tokio::time::Instant::now() {
+                    continue;
+                }
                 if pending.contains_key(&command.req_id) {
                     let _ = command.result.send(Err(format!(
                         "WeCom command already pending for req_id {}", command.req_id
@@ -436,7 +445,7 @@ async fn run_session(
                 }
                 pending.insert(command.req_id, PendingSend {
                     result: command.result,
-                    expires_at: tokio::time::Instant::now() + command.timeout,
+                    expires_at: command.deadline,
                 });
             }
             _ = reply_expiry.tick() => expire_pending(&mut pending),
@@ -566,7 +575,9 @@ async fn wait_backoff(
             _ = &mut timer => return false,
             changed = shutdown.changed() => return changed.is_err() || *shutdown.borrow(),
             Some(command) = commands.recv() => {
-                let _ = command.result.send(Err("WeCom WebSocket is reconnecting".into()));
+                if !command.result.is_closed() && command.deadline > tokio::time::Instant::now() {
+                    let _ = command.result.send(Err("WeCom WebSocket is reconnecting".into()));
+                }
             }
         }
     }
@@ -622,6 +633,28 @@ fn text_message(value: &Value) -> Message {
 mod tests {
     use super::*;
     use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn timed_out_queued_command_is_marked_cancelled_before_dispatch() {
+        let (commands, mut receiver) = mpsc::channel(1);
+        let (shutdown, _) = watch::channel(false);
+        let client = WecomClient {
+            commands,
+            shutdown,
+            authenticated: Arc::new(AtomicBool::new(true)),
+            reply_timeout: Duration::from_millis(10),
+            reply_refs: Arc::new(Mutex::new(ReplyRefs::default())),
+        };
+
+        let error = client
+            .send_command("test", None, json!({}), Duration::from_millis(10))
+            .await
+            .expect_err("command without consumer must time out");
+        assert!(error.contains("timed out"));
+        let command = receiver.recv().await.expect("queued command");
+        assert!(command.result.is_closed());
+        assert!(command.deadline <= tokio::time::Instant::now());
+    }
 
     #[tokio::test]
     async fn subscribes_before_heartbeat_and_handles_callbacks_and_active_sends() {

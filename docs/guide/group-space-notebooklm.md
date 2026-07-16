@@ -10,14 +10,12 @@ The Web UI is intentionally minimal:
 
 Actual NotebookLM operations such as query, ingest, source management, artifacts, and job handling are handled by agents through MCP / CLI surfaces, not by the normal user settings page.
 
-## 1. Enable Real Provider Path
+## 1. Provider Availability
 
-Start CCCC with the real NotebookLM adapter enabled:
-
-```bash
-export CCCC_NOTEBOOKLM_REAL=1
-cccc
-```
+The current Rust build provides local Group Space ingest and query fallback. The
+remote NotebookLM sync and artifact adapter is not bundled yet. Authentication
+state and notebook binding targets can be saved, but they do not make remote
+writes available; sync and artifact requests return `provider_unavailable`.
 
 If you expose Web outside localhost, first create an **Admin Access Token** in **Settings > Web Access** and keep the service behind a network boundary until that token exists.
 
@@ -106,16 +104,7 @@ NotebookLM usage still exists through agent-facing surfaces:
 
 The Web page is now only for account connection and notebook binding.
 
-## 9. Quick Rollback
-
-If NotebookLM is unstable in your environment:
-
-```bash
-unset CCCC_NOTEBOOKLM_REAL
-cccc daemon restart
-```
-
-## 10. Repo Space Sync Notes
+## 9. Repo Space Sync Notes
 
 When a group has a local scope attached, CCCC still uses repo-local `space/` as the work-lane resource source of truth:
 

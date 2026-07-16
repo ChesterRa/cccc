@@ -73,7 +73,7 @@
   "signIn": "Sign In",
   "dropFilesToAttach": "Drop files to attach",
   "dropFilesHint": "Added to the composer. Click Send when ready.",
-  "maxFileSize": "Max {{size}}MB per file.",
+  "maxFileSize": "Up to {{size}} MiB total.",
   "somethingWentWrong": "Something went wrong",
   "unexpectedError": "An unexpected error occurred",
   "tryAgain": "Try Again",

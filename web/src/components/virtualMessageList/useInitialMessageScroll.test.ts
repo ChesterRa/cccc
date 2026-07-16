@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { shouldAcceptLateScrollRestoration } from "./useInitialMessageScroll";
@@ -29,13 +28,5 @@ describe("shouldAcceptLateScrollRestoration", () => {
       reentryDeadline: 2_000,
       now: 2_001,
     })).toBe(false);
-  });
-});
-
-describe("initial scroll timing", () => {
-  it("restores before first paint without a deferred animation frame", () => {
-    const source = readFileSync(new URL("./useInitialMessageScroll.ts", import.meta.url), "utf8");
-    expect(source).toContain("useLayoutEffect(() => {");
-    expect(source).not.toContain("scheduleScroll(() => {");
   });
 });

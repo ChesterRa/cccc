@@ -17,6 +17,8 @@ services:
       - ${WORKSPACE_PATH:-.}:/workspace
     environment:
       - CCCC_HOME=/data
+      # The published host port remains loopback-only above.
+      - CCCC_WEB_ALLOW_UNAUTHENTICATED=1
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}

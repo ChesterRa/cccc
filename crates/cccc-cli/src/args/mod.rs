@@ -10,7 +10,15 @@ pub use messaging::{
     InboxArgs, LedgerAction, LedgerArgs, ReadArgs, ReplyArgs, SendArgs, TailArgs, TrackedSendArgs,
 };
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
+
+#[derive(Debug, Args)]
+pub struct SetupArgs {
+    #[arg(long)]
+    pub runtime: Option<String>,
+    #[arg(long, default_value = ".")]
+    pub path: String,
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -62,7 +70,7 @@ pub enum CommandKind {
     },
     Status,
     Doctor,
-    Setup,
+    Setup(SetupArgs),
     Version,
     Home,
     Mcp,

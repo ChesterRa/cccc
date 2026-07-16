@@ -19,6 +19,10 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Installer and release asset tests
+        run: |
+          scripts/tests/install_unix.sh
+          scripts/tests/release_assets.sh
       - name: Build embedded Web UI
         run: |
           npm ci --prefix web
@@ -34,12 +38,12 @@ jobs:
         run: cargo test --workspace --locked
       - name: Release build
         run: cargo build --workspace --release --locked
+      - name: Test real Unix distribution installer
+        run: scripts/tests/install_real_unix.sh target/release/cccc
       - name: CLI smoke
         run: |
           target/release/cccc --version
-          target/release/ccccd --version
-          target/release/cccc-mcp --help
-          target/release/cccc-web --help
+          target/release/cccc --help | grep -E 'daemon|mcp|web'
 
   platform-check:
     strategy:
@@ -65,3 +69,15 @@ jobs:
         run: cargo check --workspace --all-targets --locked
       - name: Test workspace
         run: cargo test --workspace --locked
+      - name: Build platform distribution for installer test
+        run: cargo build --release --locked -p cccc-cli --bin cccc
+      - name: Test Unix installer
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          scripts/tests/install_unix.sh
+          scripts/tests/install_real_unix.sh target/release/cccc
+      - name: Test Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: scripts/tests/install_windows.ps1

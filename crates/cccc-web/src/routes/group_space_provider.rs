@@ -206,7 +206,7 @@ fn credential_payload(provider: &str, item: &Value) -> Value {
     json!({"provider":provider,"key":format!("{}_auth_json",provider),"configured":!raw.is_empty(),"source":if raw.is_empty(){"none"}else{"store"},"env_configured":false,"store_configured":!raw.is_empty(),"updated_at":item["credential_updated_at"],"masked_value":if raw.is_empty(){""}else{"********"}})
 }
 fn provider_state(provider: &str, ready: bool) -> Value {
-    json!({"provider":provider,"enabled":true,"real_enabled":ready,"mode":if ready{"active"}else{"degraded"},"real_adapter_enabled":ready,"stub_adapter_enabled":!ready,"auth_configured":ready,"write_ready":ready,"readiness_reason":if ready{"ready"}else{"authentication required"}})
+    json!({"provider":provider,"enabled":true,"real_enabled":false,"mode":"local_fallback","real_adapter_enabled":false,"stub_adapter_enabled":true,"auth_configured":ready,"write_ready":false,"readiness_reason":if ready{"authenticated, but the remote Rust adapter is unavailable"}else{"authentication required; the remote Rust adapter is unavailable"}})
 }
 fn provider_url(provider: &str) -> &'static str {
     match provider {

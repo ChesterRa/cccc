@@ -7,18 +7,18 @@ CCCC uses a Rust workspace behind the existing React/TypeScript application. The
 ```text
 browser / CLI / MCP / remote connector
                  |
-          cccc-web / cccc-cli / cccc-mcp
+       cccc (Web / CLI / MCP modes)
                  |
         cccc-client + daemon IPC v1
                  |
-              ccccd
+       cccc daemon run (same executable)
                  |
  group.yaml / ledger.jsonl / state / blobs / memory
                  |
           CCCC_HOME only
 ```
 
-`cccc` starts an embedded daemon when needed and serves the Web application. `ccccd`, `cccc-mcp`, and `cccc-web` are also available as independent entrypoints.
+The public distribution has one executable. `cccc` starts the daemon when needed, serves the Web application, exposes MCP through `cccc mcp`, and provides explicit `cccc daemon` and `cccc web` modes. The workspace keeps focused crates and internal development binaries without making them installation dependencies.
 
 ## Workspace Boundaries
 
@@ -124,4 +124,4 @@ The daemon serializes IPC requests. Core JSON/YAML writers use temporary-file re
 
 ## Build And Release
 
-Vite builds `web/dist`; `rust-embed` includes it in Rust Web binaries. GitHub Releases publish four binaries per supported target. Docker uses Node only in the Web build stage and Rust in the backend build stage; the final image contains no Python backend.
+Vite builds `web/dist`; `rust-embed` includes it in the Rust distribution. GitHub Releases publish one single-executable archive per supported target, a four-archive `SHA256SUMS` manifest, and version-pinned Unix and Windows installers. The installed `cccc` process self-launches its daemon mode, so no sibling helper executable is required. The standalone release requires neither Node nor Python. The Docker image still includes Node-based agent CLIs for its managed runtime environment, but no Python backend.

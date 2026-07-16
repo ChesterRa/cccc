@@ -13,6 +13,7 @@ pub(super) async fn start(
     home: HomeLayout,
     daemon: DaemonClient,
     group_id: &str,
+    ledger_events: crate::ledger_event_hub::LedgerEventHub,
 ) -> Result<(Vec<JoinHandle<()>>, Arc<WeixinClient>), String> {
     let (token, base_url) = load_credentials(&home, group_id)?;
     let mut builder = WeixinConfig::builder().token(token);
@@ -52,6 +53,7 @@ pub(super) async fn start(
     let outbound = spawn_outbound(
         home,
         group_id.to_owned(),
+        ledger_events,
         Arc::clone(&sdk),
         |sdk, targets, event| async move {
             let Some(body) = outbound_text(&event, false) else {

@@ -33,6 +33,7 @@ struct GroupFeed {
     path: PathBuf,
     follower: Mutex<LedgerFollower>,
     sender: broadcast::Sender<Event>,
+    last_event_id: Mutex<Option<String>>,
 }
 
 impl LedgerEventHub {
@@ -54,6 +55,14 @@ impl LedgerEventHub {
     }
 
     pub(crate) fn subscribe_group(&self, group_id: &str) -> io::Result<broadcast::Receiver<Event>> {
+        self.subscribe_group_with_cursor(group_id)
+            .map(|(receiver, _)| receiver)
+    }
+
+    pub(crate) fn subscribe_group_with_cursor(
+        &self,
+        group_id: &str,
+    ) -> io::Result<(broadcast::Receiver<Event>, Option<String>)> {
         prune_deleted_groups(&self.inner);
         let mut feeds = self
             .inner
@@ -62,12 +71,16 @@ impl LedgerEventHub {
             .map_err(|_| io::Error::other("ledger event feeds lock poisoned"))?;
         feeds.retain(|_, feed| feed.sender.receiver_count() > 0);
         if let Some(feed) = feeds.get(group_id) {
-            return Ok(feed.sender.subscribe());
+            let cursor = feed
+                .last_event_id
+                .lock()
+                .map_err(|_| io::Error::other("ledger event cursor lock poisoned"))?;
+            let receiver = feed.sender.subscribe();
+            return Ok((receiver, cursor.clone()));
         }
 
         let path = GroupStore::new(self.inner.home.clone())?.ledger_path(group_id)?;
-        let mut follower = LedgerFollower::default();
-        follower.poll(&path)?;
+        let (follower, cursor) = LedgerFollower::at_end(&path)?;
         let (sender, receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         feeds.insert(
             group_id.to_owned(),
@@ -75,9 +88,10 @@ impl LedgerEventHub {
                 path,
                 follower: Mutex::new(follower),
                 sender,
+                last_event_id: Mutex::new(cursor.clone()),
             }),
         );
-        Ok(receiver)
+        Ok((receiver, cursor))
     }
 
     pub(crate) fn subscribe_global(&self) -> broadcast::Receiver<Event> {
@@ -234,7 +248,10 @@ fn publish_group_changes(inner: &HubInner, group_id: &str) {
             .and_then(|mut follower| follower.poll(&feed.path).ok())
             .unwrap_or_default();
         for event in events {
-            feed.sender.send(event).ok();
+            if let Ok(mut cursor) = feed.last_event_id.lock() {
+                cursor.replace(event.id.clone());
+                feed.sender.send(event).ok();
+            }
         }
     }
     for event in poll_global_events(inner, group_id) {

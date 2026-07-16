@@ -1,6 +1,6 @@
 use cccc_client::DaemonClient;
 use cccc_contracts::Event;
-use cccc_core::{GroupStore, HomeLayout, ledger};
+use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Map, Value, json};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -8,6 +8,9 @@ use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
 mod dingtalk;
+mod dingtalk_outbound;
+mod dingtalk_outbound_media;
+mod dingtalk_outbound_report;
 mod discord;
 mod feishu;
 mod slack;
@@ -20,33 +23,34 @@ mod wecom_message;
 mod wecom_outbound;
 mod weixin;
 mod weixin_login;
+mod worker;
 
 use state::*;
+use worker::{Stopper, WorkerHandles, no_op_stopper};
 
-#[derive(Default)]
 pub(crate) struct ImWorkerRegistry {
     workers: Mutex<HashMap<String, WorkerHandles>>,
     restoring: Mutex<HashSet<String>>,
+    restore_tasks: Mutex<Vec<JoinHandle<()>>>,
+    generations: Arc<Mutex<HashMap<String, u64>>>,
+    next_generation: std::sync::atomic::AtomicU64,
     weixin_logins: weixin_login::LoginRegistry,
-}
-
-struct WorkerHandles {
-    tasks: Vec<JoinHandle<()>>,
-    stoppers: Vec<Box<dyn Fn() + Send + Sync>>,
-}
-
-impl Drop for WorkerHandles {
-    fn drop(&mut self) {
-        for stop in &self.stoppers {
-            stop();
-        }
-        for task in &self.tasks {
-            task.abort();
-        }
-    }
+    ledger_events: crate::ledger_event_hub::LedgerEventHub,
 }
 
 impl ImWorkerRegistry {
+    pub(crate) fn new(ledger_events: crate::ledger_event_hub::LedgerEventHub) -> Self {
+        Self {
+            workers: Mutex::new(HashMap::new()),
+            restoring: Mutex::new(HashSet::new()),
+            restore_tasks: Mutex::new(Vec::new()),
+            generations: Arc::new(Mutex::new(HashMap::new())),
+            next_generation: std::sync::atomic::AtomicU64::new(0),
+            weixin_logins: weixin_login::LoginRegistry::default(),
+            ledger_events,
+        }
+    }
+
     pub(crate) fn restore_enabled(self: &Arc<Self>, home: HomeLayout, client: DaemonClient) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
@@ -59,7 +63,7 @@ impl ImWorkerRegistry {
             let registry = Arc::clone(self);
             let home = home.clone();
             let client = client.clone();
-            runtime.spawn(async move {
+            let task = runtime.spawn(async move {
                 let result = registry
                     .start(home.clone(), client, &group_id, &config)
                     .await;
@@ -106,6 +110,10 @@ impl ImWorkerRegistry {
                     tracing::warn!(%error, %group_id, "failed to restore enabled IM worker");
                 }
             });
+            self.restore_tasks
+                .lock()
+                .expect("IM restore task registry poisoned")
+                .push(task);
         }
     }
 
@@ -121,8 +129,8 @@ impl ImWorkerRegistry {
         self.weixin_logins.status(home, group_id).await
     }
 
-    pub(crate) fn logout_weixin(&self, home: &HomeLayout, group_id: &str) -> Value {
-        self.stop(group_id);
+    pub(crate) async fn logout_weixin(&self, home: &HomeLayout, group_id: &str) -> Value {
+        self.stop(group_id).await;
         self.weixin_logins.clear(group_id);
         weixin_login::remove_credentials(home, group_id);
         json!({
@@ -138,90 +146,167 @@ impl ImWorkerRegistry {
         group_id: &str,
         config: &Map<String, Value>,
     ) -> Result<(), String> {
+        self.stop(group_id).await;
+        let generation = self
+            .next_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
+        self.generations
+            .lock()
+            .expect("IM generation registry poisoned")
+            .insert(group_id.to_owned(), generation);
         let platform = string(config, "platform");
         if platform == "telegram" {
-            let tasks = telegram::start(home, client, group_id, config).await?;
-            self.workers
-                .lock()
-                .expect("IM worker registry poisoned")
-                .insert(group_id.to_owned(), worker(tasks));
-            return Ok(());
+            let tasks =
+                telegram::start(home, client, group_id, config, self.ledger_events.clone()).await?;
+            return self
+                .install(group_id, generation, worker(tasks, no_op_stopper()))
+                .await;
         }
         if platform == "discord" {
-            let tasks = discord::start(home, client, group_id, config).await?;
-            self.workers
-                .lock()
-                .expect("IM worker registry poisoned")
-                .insert(group_id.to_owned(), worker(tasks));
-            return Ok(());
+            let tasks =
+                discord::start(home, client, group_id, config, self.ledger_events.clone()).await?;
+            return self
+                .install(group_id, generation, worker(tasks, no_op_stopper()))
+                .await;
         }
         if platform == "slack" {
-            let tasks = slack::start(home, client, group_id, config).await?;
-            self.workers
-                .lock()
-                .expect("IM worker registry poisoned")
-                .insert(group_id.to_owned(), worker(tasks));
-            return Ok(());
+            let tasks =
+                slack::start(home, client, group_id, config, self.ledger_events.clone()).await?;
+            return self
+                .install(group_id, generation, worker(tasks, no_op_stopper()))
+                .await;
         }
         if platform == "feishu" {
-            let tasks = feishu::start(home, client, group_id, config).await?;
-            self.workers
-                .lock()
-                .expect("IM worker registry poisoned")
-                .insert(group_id.to_owned(), worker(tasks));
-            return Ok(());
+            let tasks =
+                feishu::start(home, client, group_id, config, self.ledger_events.clone()).await?;
+            return self
+                .install(group_id, generation, worker(tasks, no_op_stopper()))
+                .await;
         }
         if platform == "wecom" {
-            let (tasks, sdk) = wecom::start(home, client, group_id, config).await?;
-            self.workers
-                .lock()
-                .expect("IM worker registry poisoned")
-                .insert(
-                    group_id.to_owned(),
-                    WorkerHandles {
-                        tasks,
-                        stoppers: vec![Box::new(move || sdk.shutdown())],
-                    },
-                );
-            return Ok(());
+            let generations = Arc::clone(&self.generations);
+            let status_group = group_id.to_owned();
+            let on_terminal_error = move |home: &HomeLayout, group_id: &str, error: &str| {
+                let current = generations
+                    .lock()
+                    .expect("IM generation registry poisoned")
+                    .get(&status_group)
+                    .copied();
+                if current == Some(generation) {
+                    wecom::persist_terminal_error(home, group_id, error);
+                }
+            };
+            let (tasks, sdk) = wecom::start(
+                home,
+                client,
+                group_id,
+                config,
+                self.ledger_events.clone(),
+                on_terminal_error,
+            )
+            .await?;
+            let stopper: Stopper = Arc::new(move || sdk.shutdown());
+            return self
+                .install(group_id, generation, worker(tasks, stopper))
+                .await;
         }
         if platform == "weixin" {
-            let (tasks, sdk) = weixin::start(home, client, group_id).await?;
-            self.workers
-                .lock()
-                .expect("IM worker registry poisoned")
-                .insert(
-                    group_id.to_owned(),
-                    WorkerHandles {
-                        tasks,
-                        stoppers: vec![Box::new(move || sdk.shutdown())],
-                    },
-                );
-            return Ok(());
+            let (tasks, sdk) =
+                weixin::start(home, client, group_id, self.ledger_events.clone()).await?;
+            let stopper: Stopper = Arc::new(move || sdk.shutdown());
+            return self
+                .install(group_id, generation, worker(tasks, stopper))
+                .await;
         }
         if platform == "dingtalk" {
-            let tasks = dingtalk::start(home, client, group_id, config).await?;
-            self.workers
-                .lock()
-                .expect("IM worker registry poisoned")
-                .insert(group_id.to_owned(), worker(tasks));
-            return Ok(());
+            let tasks =
+                dingtalk::start(home, client, group_id, config, self.ledger_events.clone()).await?;
+            return self
+                .install(group_id, generation, worker(tasks, no_op_stopper()))
+                .await;
         }
         Err(format!(
             "Rust network adapter is not migrated for platform {platform}"
         ))
     }
 
-    pub(crate) fn stop(&self, group_id: &str) -> bool {
-        let Some(_worker) = self
+    async fn install(
+        &self,
+        group_id: &str,
+        generation: u64,
+        worker: WorkerHandles,
+    ) -> Result<(), String> {
+        let current = self
+            .generations
+            .lock()
+            .expect("IM generation registry poisoned")
+            .get(group_id)
+            .copied();
+        if current != Some(generation) {
+            worker.shutdown().await;
+            return Err("IM worker start was superseded by a newer request".into());
+        }
+        let replaced = self
             .workers
             .lock()
             .expect("IM worker registry poisoned")
-            .remove(group_id)
-        else {
+            .insert(group_id.to_owned(), worker);
+        if let Some(replaced) = replaced {
+            replaced.shutdown().await;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn stop(&self, group_id: &str) -> bool {
+        self.generations
+            .lock()
+            .expect("IM generation registry poisoned")
+            .remove(group_id);
+        let worker = self
+            .workers
+            .lock()
+            .expect("IM worker registry poisoned")
+            .remove(group_id);
+        let Some(worker) = worker else {
             return false;
         };
+        worker.shutdown().await;
         true
+    }
+
+    pub(crate) async fn shutdown(&self) {
+        let restore_tasks = {
+            let mut tasks = self
+                .restore_tasks
+                .lock()
+                .expect("IM restore task registry poisoned");
+            std::mem::take(&mut *tasks)
+        };
+        for task in &restore_tasks {
+            task.abort();
+        }
+        for task in restore_tasks {
+            let _ = task.await;
+        }
+        let workers = {
+            let mut workers = self.workers.lock().expect("IM worker registry poisoned");
+            workers
+                .drain()
+                .map(|(_, worker)| worker)
+                .collect::<Vec<_>>()
+        };
+        for worker in workers {
+            worker.shutdown().await;
+        }
+        self.restoring
+            .lock()
+            .expect("IM restore registry poisoned")
+            .clear();
+        self.generations
+            .lock()
+            .expect("IM generation registry poisoned")
+            .clear();
     }
 
     pub(crate) fn is_running(&self, group_id: &str) -> bool {
@@ -236,9 +321,13 @@ impl ImWorkerRegistry {
         let mut workers = self.workers.lock().expect("IM worker registry poisoned");
         let finished = workers
             .get(group_id)
-            .is_some_and(|worker| worker.tasks.iter().any(JoinHandle::is_finished));
+            .is_some_and(WorkerHandles::is_finished);
         if finished {
             workers.remove(group_id);
+            self.generations
+                .lock()
+                .expect("IM generation registry poisoned")
+                .remove(group_id);
             return false;
         }
         workers.contains_key(group_id)
@@ -265,16 +354,14 @@ fn restore_candidates(home: &HomeLayout) -> Vec<(String, Map<String, Value>)> {
         .collect()
 }
 
-fn worker(tasks: Vec<JoinHandle<()>>) -> WorkerHandles {
-    WorkerHandles {
-        tasks,
-        stoppers: Vec::new(),
-    }
+fn worker(tasks: Vec<JoinHandle<()>>, stopper: Stopper) -> WorkerHandles {
+    WorkerHandles::new(tasks, stopper)
 }
 
 pub(super) fn spawn_outbound<S, F, Fut>(
     home: HomeLayout,
     group_id: String,
+    ledger_events: crate::ledger_event_hub::LedgerEventHub,
     sender: S,
     send: F,
 ) -> JoinHandle<()>
@@ -283,12 +370,13 @@ where
     F: Fn(Arc<S>, Vec<String>, Event) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
-    spawn_outbound_matching(home, group_id, sender, is_outbound, send)
+    spawn_outbound_matching(home, group_id, ledger_events, sender, is_outbound, send)
 }
 
 pub(super) fn spawn_outbound_matching<S, P, F, Fut>(
     home: HomeLayout,
     group_id: String,
+    ledger_events: crate::ledger_event_hub::LedgerEventHub,
     sender: S,
     matches: P,
     send: F,
@@ -301,35 +389,93 @@ where
 {
     let sender = Arc::new(sender);
     tokio::spawn(async move {
-        let Ok(store) = GroupStore::new(home.clone()) else {
+        let Ok((mut receiver, cursor)) = ledger_events.subscribe_group_with_cursor(&group_id)
+        else {
             return;
         };
-        let Ok(path) = store.ledger_path(&group_id) else {
-            return;
+        let mut delivery = OutboundDeliveryState {
+            seen: HashSet::new(),
+            cursor,
         };
-        let mut seen: HashSet<String> = ledger::tail(&path, 1000)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|event| event.id)
-            .collect();
         loop {
-            tokio::time::sleep(std::time::Duration::from_millis(750)).await;
-            for event in ledger::tail(&path, 1000).unwrap_or_default() {
-                if !seen.insert(event.id.clone()) || !matches(&event) {
-                    continue;
+            match receiver.recv().await {
+                Ok(event) => {
+                    deliver_outbound(
+                        &home,
+                        &group_id,
+                        &sender,
+                        &matches,
+                        &send,
+                        &mut delivery,
+                        event,
+                    )
+                    .await;
                 }
-                let targets = authorized_chat_ids(&home, &group_id).into_iter().collect();
-                send(Arc::clone(&sender), targets, event).await;
-            }
-            if seen.len() > 4096 {
-                seen = ledger::tail(&path, 1000)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|event| event.id)
-                    .collect();
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                    let Some(mut replay_cursor) = delivery.cursor.clone() else {
+                        continue;
+                    };
+                    loop {
+                        let page = ledger_events
+                            .replay_after(&group_id, &replay_cursor, 2048)
+                            .unwrap_or_default();
+                        let page_len = page.len();
+                        for event in page {
+                            replay_cursor.clone_from(&event.id);
+                            deliver_outbound(
+                                &home,
+                                &group_id,
+                                &sender,
+                                &matches,
+                                &send,
+                                &mut delivery,
+                                event,
+                            )
+                            .await;
+                        }
+                        if page_len < 2048 {
+                            break;
+                        }
+                    }
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
             }
         }
     })
+}
+
+struct OutboundDeliveryState {
+    seen: HashSet<String>,
+    cursor: Option<String>,
+}
+
+async fn deliver_outbound<S, P, F, Fut>(
+    home: &HomeLayout,
+    group_id: &str,
+    sender: &Arc<S>,
+    matches: &P,
+    send: &F,
+    state: &mut OutboundDeliveryState,
+    event: Event,
+) where
+    S: Send + Sync + 'static,
+    P: Fn(&Event) -> bool + Send + Sync + 'static,
+    F: Fn(Arc<S>, Vec<String>, Event) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    if !state.seen.insert(event.id.clone()) {
+        return;
+    }
+    state.cursor.replace(event.id.clone());
+    if !matches(&event) {
+        return;
+    }
+    if state.seen.len() > 8192 {
+        state.seen.clear();
+        state.seen.insert(event.id.clone());
+    }
+    let targets = authorized_chat_ids(home, group_id).into_iter().collect();
+    send(Arc::clone(sender), targets, event).await;
 }
 
 pub(super) fn outbound_text(event: &Event, markdown_bold: bool) -> Option<String> {
@@ -358,25 +504,27 @@ pub(super) fn is_outbound_or_stream(event: &Event) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cccc_core::ledger;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[tokio::test]
     async fn finished_worker_aborts_sibling_tasks_and_runs_stoppers() {
-        let registry = ImWorkerRegistry::default();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let registry = ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(home));
         let finished = tokio::spawn(async {});
         let sibling = tokio::spawn(std::future::pending());
         let sibling_abort = sibling.abort_handle();
         let stopped = Arc::new(AtomicBool::new(false));
         let stopped_on_drop = Arc::clone(&stopped);
-        registry.workers.lock().expect("registry").insert(
-            "g_test".into(),
-            WorkerHandles {
-                tasks: vec![finished, sibling],
-                stoppers: vec![Box::new(move || {
-                    stopped_on_drop.store(true, Ordering::SeqCst);
-                })],
-            },
-        );
+        let stopper: Stopper = Arc::new(move || {
+            stopped_on_drop.store(true, Ordering::SeqCst);
+        });
+        registry
+            .workers
+            .lock()
+            .expect("registry")
+            .insert("g_test".into(), worker(vec![finished, sibling], stopper));
 
         tokio::task::yield_now().await;
         assert!(!registry.is_running("g_test"));
@@ -416,6 +564,41 @@ mod tests {
         assert!(!is_outbound(&actor));
         actor.by = "user".into();
         assert!(!is_outbound(&actor));
+    }
+
+    #[tokio::test]
+    async fn outbound_subscription_replays_broadcast_lag_without_polling_gaps() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("IM events", "").expect("group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        ledger::append(&path, &Event::new("group.create", &group.group_id)).expect("cursor");
+        let hub = crate::ledger_event_hub::LedgerEventHub::new(home.clone());
+        let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
+        let task = spawn_outbound(home, group.group_id.clone(), hub, (), move |_, _, event| {
+            let sent = sent.clone();
+            async move {
+                sent.send(event.id).ok();
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        for index in 0..1_100 {
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.by = "foreman".into();
+            event.data.insert("text".into(), json!(index.to_string()));
+            ledger::append(&path, &event).expect("append");
+        }
+        let mut ids = HashSet::new();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while ids.len() < 1_100 {
+                ids.insert(received.recv().await.expect("outbound event"));
+            }
+        })
+        .await
+        .expect("event-driven outbound timeout");
+        task.abort();
+        assert_eq!(ids.len(), 1_100);
     }
 
     #[test]

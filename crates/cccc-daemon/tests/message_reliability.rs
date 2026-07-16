@@ -154,11 +154,22 @@ fn offline_replay_drains_more_than_the_delivery_queue_capacity() {
     }
     assert!(output.contains("COUNT:300"), "terminal output: {output}");
 
-    let inbox = call(
-        &home,
-        "inbox_list",
-        json!({"group_id":group_id,"actor_id":"peer1","limit":1000,"by":"user"}),
-    );
+    let cursor_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let inbox = loop {
+        let inbox = call(
+            &home,
+            "inbox_list",
+            json!({"group_id":group_id,"actor_id":"peer1","limit":1000,"by":"user"}),
+        );
+        if inbox.result["messages"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+            || std::time::Instant::now() >= cursor_deadline
+        {
+            break inbox;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
     assert_eq!(inbox.result["messages"].as_array().map(Vec::len), Some(0));
     let _ = call(
         &home,

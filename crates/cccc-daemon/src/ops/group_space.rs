@@ -30,12 +30,12 @@ fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let provider = provider(request);
     let value = load(home, &group_id)?;
     object(
-        json!({"group_id":group_id,"provider":{"provider":provider,"enabled":true,"real_enabled":false,"mode":"degraded","write_ready":true},"bindings":value["bindings"],"queue_summary":{"work":summary(&value),"memory":summary(&value)},"sync":value["sync"]}),
+        json!({"group_id":group_id,"provider":{"provider":provider,"enabled":true,"real_enabled":false,"mode":"local_fallback","write_ready":false},"bindings":value["bindings"],"queue_summary":{"work":summary(&value),"memory":summary(&value)},"sync":value.get("sync").cloned().unwrap_or(json!({"available":false,"converged":false,"reason":"provider_unavailable"}))}),
     )
 }
 fn capabilities(request: &DaemonRequest) -> OpResult {
     object(
-        json!({"provider":provider(request),"capabilities":["bind","ingest","query","sources","artifact","jobs","sync"],"mode":"degraded"}),
+        json!({"provider":provider(request),"capabilities":["bind","ingest","query","sources","jobs"],"unavailable_capabilities":["artifact","sync"],"mode":"local_fallback"}),
     )
 }
 fn bind(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -75,13 +75,13 @@ fn ingest(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         {
             return Ok((item.clone(), true));
         }
-        let job = json!({"job_id":format!("gsj_{}",short_id()),"group_id":group_id,"provider":provider,"lane":lane,"remote_space_id":root["bindings"][&lane]["remote_space_id"],"kind":kind,"payload":payload,"idempotency_key":idempotency,"state":"succeeded","attempt":1,"max_attempts":3,"created_at":utc_now(),"updated_at":utc_now()});
+        let job = json!({"job_id":format!("gsj_{}",short_id()),"group_id":group_id,"provider":provider,"lane":lane,"remote_space_id":root["bindings"][&lane]["remote_space_id"],"kind":kind,"payload":payload,"idempotency_key":idempotency,"state":"succeeded","attempt":1,"max_attempts":3,"created_at":utc_now(),"updated_at":utc_now(),"execution_mode":"local_fallback"});
         array_mut(root, "jobs").push(job.clone());
         array_mut(root,"sources").push(json!({"source_id":format!("gss_{}",short_id()),"provider":provider,"lane":lane,"title":payload["title"],"kind":kind,"status":"ready","payload":payload,"created_at":utc_now()}));
         Ok((job, false))
     })?;
     object(
-        json!({"group_id":group_id,"job_id":job["job_id"],"accepted":true,"completed":true,"deduped":deduped,"job":job,"queue_summary":summary(&load(home,&group_id)?),"provider_mode":"degraded"}),
+        json!({"group_id":group_id,"job_id":job["job_id"],"accepted":true,"completed":true,"deduped":deduped,"job":job,"queue_summary":summary(&load(home,&group_id)?),"provider_mode":"local_fallback","degraded":true}),
     )
 }
 fn query(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -118,7 +118,7 @@ fn query(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .collect::<Vec<_>>()
         .join("\n");
     object(
-        json!({"group_id":group_id,"provider":provider(request),"provider_mode":"degraded","degraded":true,"answer":answer,"references":refs,"error":null}),
+        json!({"group_id":group_id,"provider":provider(request),"provider_mode":"local_fallback","degraded":true,"answer":answer,"references":refs,"error":null}),
     )
 }
 fn sources(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -128,7 +128,7 @@ fn sources(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if action == "list" {
         let value = load(home, &group_id)?;
         return object(
-            json!({"group_id":group_id,"provider":provider(request),"provider_mode":"degraded","action":"list","sources":array(&value,"sources").iter().filter(|item|item["lane"]==lane).cloned().collect::<Vec<_>>()}),
+            json!({"group_id":group_id,"provider":provider(request),"provider_mode":"local_fallback","action":"list","sources":array(&value,"sources").iter().filter(|item|item["lane"]==lane).cloned().collect::<Vec<_>>()}),
         );
     }
     let id = required_arg(request, "source_id")?;
@@ -152,17 +152,12 @@ fn sources(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"group_id":group_id,"action":action,"source_id":id,"changed":changed}))
 }
 fn artifact(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let lane = lane(request)?;
-    let kind = required_arg(request, "kind")?;
-    let item = update(home, &group_id, |value| {
-        let item = json!({"artifact_id":format!("gsa_{}",short_id()),"provider":provider(request),"lane":lane,"kind":kind,"title":format!("{kind} artifact"),"status":"completed","created_at":utc_now()});
-        array_mut(root(value), "artifacts").push(item.clone());
-        Ok(item)
-    })?;
-    object(
-        json!({"group_id":group_id,"action":string_arg(request,"action").unwrap_or_else(||"generate".into()),"kind":kind,"accepted":true,"completed":true,"generate_result":item}),
-    )
+    let _ = home;
+    let _ = required_arg(request, "group_id")?;
+    Err(OpError::new(
+        "provider_unavailable",
+        "NotebookLM artifact generation is unavailable; no remote operation was performed",
+    ))
 }
 fn jobs(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
@@ -190,15 +185,12 @@ fn jobs(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"group_id":group_id,"job":job,"queue_summary":summary(&load(home,&group_id)?)}))
 }
 fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let result = json!({"available":true,"group_id":group_id,"provider":provider(request),"last_run_at":utc_now(),"converged":true,"unsynced_count":0});
-    update(home, &group_id, |value| {
-        root(value).insert("sync".into(), result.clone());
-        Ok(())
-    })?;
-    object(
-        json!({"group_id":group_id,"provider":provider(request),"sync":result,"sync_result":result}),
-    )
+    let _ = home;
+    let _ = required_arg(request, "group_id")?;
+    Err(OpError::new(
+        "provider_unavailable",
+        "NotebookLM sync is unavailable; no remote operation was performed",
+    ))
 }
 fn provider_auth(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let provider = provider(request);

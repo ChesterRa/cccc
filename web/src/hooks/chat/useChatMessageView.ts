@@ -166,6 +166,9 @@ export function useChatMessageView(input: {
     chatInitialScrollAnchorOffsetPx: restoreSnapshot
       ? Number(input.scrollSnapshot!.offsetPx || 0)
       : undefined,
+    chatInitialScrollOffsetPx: restoreSnapshot && Number.isFinite(Number(input.scrollSnapshot!.scrollTop))
+      ? Math.max(0, Number(input.scrollSnapshot!.scrollTop))
+      : undefined,
     chatWindowProps:
       inChatWindow && input.chatWindow
         ? {

@@ -25,6 +25,7 @@ Important variables:
 |---|---|---|
 | `CCCC_HOME` | `/data` | Rust state volume |
 | `CCCC_WEB_HOST` | `0.0.0.0` | Container Web bind |
+| `CCCC_WEB_ALLOW_UNAUTHENTICATED` | `1` in the provided Compose file | Allows the container listener because the published host port is loopback-only; remove it before exposing the port remotely and configure an Admin Access Token instead. |
 | `CCCC_WEB_PORT` | `8848` | Container Web port |
 | `CCCC_DAEMON_TRANSPORT` | `tcp` | Container daemon transport |
 | `WORKSPACE_PATH` | host-defined | Project mounted at `/workspace` |

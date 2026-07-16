@@ -7,13 +7,11 @@ VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head 
 NAME="cccc-v${VERSION}-${TARGET}"
 
 "$ROOT_DIR/scripts/build_web.sh"
-cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --release --locked --bins
+cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --release --locked -p cccc-cli --bin cccc
 
 rm -rf "$ROOT_DIR/dist/$NAME"
 mkdir -p "$ROOT_DIR/dist/$NAME"
-for binary in cccc ccccd cccc-mcp cccc-web; do
-  cp "$ROOT_DIR/target/release/$binary" "$ROOT_DIR/dist/$NAME/"
-done
+cp "$ROOT_DIR/target/release/cccc" "$ROOT_DIR/dist/$NAME/"
 cp "$ROOT_DIR/LICENSE" "$ROOT_DIR/README.md" "$ROOT_DIR/docs/rust-migration.md" "$ROOT_DIR/dist/$NAME/"
 tar -C "$ROOT_DIR/dist" -czf "$ROOT_DIR/dist/$NAME.tar.gz" "$NAME"
 echo "OK: built dist/$NAME.tar.gz"

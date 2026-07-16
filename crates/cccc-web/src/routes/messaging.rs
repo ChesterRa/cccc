@@ -1,4 +1,4 @@
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, State};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -8,16 +8,15 @@ use serde_json::{Value, json};
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, body_object, call, object};
 
+const MAX_LOCAL_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
+const MULTIPART_OVERHEAD_BYTES: usize = 1024 * 1024;
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/groups/{group_id}/send", post(send))
         .route(
             "/api/v1/groups/{group_id}/send_cross_group",
             post(send_cross_group),
-        )
-        .route(
-            "/api/v1/groups/{group_id}/send_cross_group_upload",
-            post(send_cross_group_upload),
         )
         .route("/api/v1/groups/{group_id}/tracked_send", post(tracked_send))
         .route(
@@ -34,12 +33,24 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/groups/{group_id}/inbox/{actor_id}/read",
             post(inbox_read),
         )
-        .route("/api/v1/groups/{group_id}/send_upload", post(send_upload))
-        .route("/api/v1/groups/{group_id}/reply_upload", post(reply_upload))
         .route(
             "/api/v1/groups/{group_id}/blobs/{blob_name}",
             get(blob_download),
         )
+        .merge(upload_routes())
+}
+
+fn upload_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/v1/groups/{group_id}/send_cross_group_upload",
+            post(send_cross_group_upload),
+        )
+        .route("/api/v1/groups/{group_id}/send_upload", post(send_upload))
+        .route("/api/v1/groups/{group_id}/reply_upload", post(reply_upload))
+        .layer(DefaultBodyLimit::max(
+            MAX_LOCAL_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES,
+        ))
 }
 
 async fn send(
@@ -220,6 +231,8 @@ async fn upload(
 ) -> ApiResult {
     let mut args = serde_json::Map::new();
     let mut attachments = Vec::new();
+    let mut staged_uploads = Vec::new();
+    let mut uploaded_bytes = 0_usize;
     while let Some(field) = multipart
         .next_field()
         .await
@@ -232,16 +245,23 @@ async fn upload(
                 .content_type()
                 .unwrap_or("application/octet-stream")
                 .to_owned();
-            let data = field
-                .bytes()
+            let mut upload = cccc_core::blobs::BlobUpload::new(&state.home, group_id)
+                .map_err(|error| ApiError::bad(error.to_string()))?;
+            let mut field = field;
+            while let Some(chunk) = field
+                .chunk()
                 .await
-                .map_err(|error| ApiError::bad(error.to_string()))?;
-            if data.len() > 10 * 1024 * 1024 {
-                return Err(ApiError::bad("attachment exceeds 10 MiB"));
+                .map_err(|error| ApiError::bad(error.to_string()))?
+            {
+                uploaded_bytes = uploaded_bytes.saturating_add(chunk.len());
+                if uploaded_bytes > MAX_LOCAL_UPLOAD_BYTES {
+                    return Err(ApiError::bad("attachments exceed 100 MiB in total"));
+                }
+                upload
+                    .write_chunk(&chunk)
+                    .map_err(|error| ApiError::bad(error.to_string()))?;
             }
-            let blob = cccc_core::blobs::store(&state.home, group_id, &data)
-                .map_err(|error| ApiError::bad(error.to_string()))?;
-            attachments.push(json!({"kind":"file","path":blob.path,"title":filename,"mime_type":content_type,"bytes":blob.bytes,"sha256":blob.sha256}));
+            staged_uploads.push((upload, filename, content_type));
         } else {
             let value = field
                 .text()
@@ -249,6 +269,12 @@ async fn upload(
                 .map_err(|error| ApiError::bad(error.to_string()))?;
             insert_upload_field(&mut args, name, value);
         }
+    }
+    for (upload, filename, content_type) in staged_uploads {
+        let blob = upload
+            .finish()
+            .map_err(|error| ApiError::bad(error.to_string()))?;
+        attachments.push(json!({"kind":"file","path":blob.path,"title":filename,"mime_type":content_type,"bytes":blob.bytes,"sha256":blob.sha256}));
     }
     args.insert("group_id".into(), Value::String(group_id.into()));
     args.insert("attachments".into(), Value::Array(attachments));

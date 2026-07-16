@@ -115,6 +115,8 @@ Clients MUST treat unknown kinds as opaque and ignore them unless explicitly sup
 
 Chat message routing uses `to: string[]` with these token types:
 
+When a send request omits recipients or supplies an empty list, the daemon MUST materialize the group's `default_send_to` policy as `@foreman` or `@all` before appending the event.
+
 **Actor IDs**
 - Example: `"peer-1"`, `"claude-1"`
 

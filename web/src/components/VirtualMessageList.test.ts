@@ -124,4 +124,10 @@ describe("virtual message list group switch snapshot", () => {
     const source = readFileSync(new URL("./VirtualMessageList.tsx", import.meta.url), "utf8");
     expect(source).not.toContain("virtualizer.measure();");
   });
+
+  it("seeds a remounted virtualizer from the captured absolute scroll offset", () => {
+    const source = readFileSync(new URL("./VirtualMessageList.tsx", import.meta.url), "utf8");
+    expect(source).toContain("initialOffset: Math.max(0, Number(initialScrollOffsetPx) || 0)");
+    expect(source).toContain("scrollTop: el.scrollTop");
+  });
 });

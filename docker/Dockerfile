@@ -10,7 +10,7 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY --from=web-builder /src/web/dist ./web/dist
-RUN cargo build --release --locked --bins
+RUN cargo build --release --locked -p cccc-cli --bin cccc
 
 FROM debian:bookworm-slim
 ARG HTTP_PROXY
@@ -49,9 +49,6 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && npm install -g @openai/codex @factory/cli
 
 COPY --from=rust-builder /src/target/release/cccc /usr/local/bin/cccc
-COPY --from=rust-builder /src/target/release/ccccd /usr/local/bin/ccccd
-COPY --from=rust-builder /src/target/release/cccc-mcp /usr/local/bin/cccc-mcp
-COPY --from=rust-builder /src/target/release/cccc-web /usr/local/bin/cccc-web
 RUN useradd -m -u 1000 -s /bin/bash cccc \
     && mkdir -p /data /workspace \
     && chown -R cccc:cccc /data /workspace

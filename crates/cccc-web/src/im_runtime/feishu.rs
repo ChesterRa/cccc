@@ -21,6 +21,7 @@ pub(super) async fn start(
     daemon: DaemonClient,
     group_id: &str,
     config: &Map<String, Value>,
+    ledger_events: crate::ledger_event_hub::LedgerEventHub,
 ) -> Result<Vec<JoinHandle<()>>, String> {
     let app_id = resolve_credential(&string(config, "feishu_app_id"))?;
     let app_secret = resolve_credential(&string(config, "feishu_app_secret"))?;
@@ -87,6 +88,7 @@ pub(super) async fn start(
     let outbound = spawn_outbound(
         home,
         group_id.to_owned(),
+        ledger_events,
         sender,
         |sender, targets, event| async move {
             let Some(body) = outbound_text(&event, false) else {

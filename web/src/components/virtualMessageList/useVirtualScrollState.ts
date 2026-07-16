@@ -1,12 +1,13 @@
 import { useCallback, useRef } from "react";
-import type { ChatFollowMode } from "../../stores/useUIStore";
+import type { ChatFollowMode, ChatScrollSnapshot } from "../../stores/useUIStore";
 import type { LedgerEvent } from "../../types";
 import { getChatTailMutationSnapshot, getChatTailSnapshot } from "../../utils/chatAutoFollow";
 import { estimateMessageRowHeight } from "../messageBubble/estimate";
 import { getStableMessageKey } from "../virtualMessageListHelpers";
 import { getMessageRowGrouping } from "./grouping";
+import { getCachedMessageRowHeight } from "./rowHeightCache";
 
-export function useVirtualScrollState(messages: LedgerEvent[]) {
+export function useVirtualScrollState(messages: LedgerEvent[], viewKey: string) {
   const tailKey =
     messages.length > 0
       ? getStableMessageKey(messages[messages.length - 1], messages.length - 1)
@@ -29,19 +30,17 @@ export function useVirtualScrollState(messages: LedgerEvent[]) {
   const isContainerResizingRef = useRef(false);
   const forceStickToBottomUntilRef = useRef(0);
   const prevResetKeyRef = useRef<string>();
-  const latestSnapshotRef = useRef<{
-    mode: ChatFollowMode;
-    anchorId: string;
-    offsetPx: number;
-    updatedAt: number;
-  } | null>(null);
+  const latestSnapshotRef = useRef<ChatScrollSnapshot | null>(null);
   const getEstimatedSize = useCallback((index: number) => {
     const message = messages[index];
+    const messageKey = getStableMessageKey(message, index);
+    const measuredHeight = getCachedMessageRowHeight(viewKey, messageKey);
+    if (measuredHeight !== undefined) return measuredHeight;
     const previous = index > 0 ? messages[index - 1] : undefined;
     return estimateMessageRowHeight(message, {
       collapseHeader: getMessageRowGrouping(previous, message).collapseHeader,
     });
-  }, [messages]);
+  }, [messages, viewKey]);
 
   return {
     isAtBottomRef,

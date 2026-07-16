@@ -85,7 +85,12 @@ The `chat.stream` event type represents real-time streaming content from agents.
 
 No vendor currently publishes an official Rust SDK for these seven platforms. CCCC uses established Rust SDKs that implement the official platform protocols where available; Slack uses the official Socket Mode and Web API directly. The built-in WeCom client follows the wire behavior of WeCom's official Node and Python AI Bot SDKs; it is not presented as an official WeCom Rust SDK.
 
-DingTalk outbound attachments are resolved only from validated `state/blobs/*` paths, limited to 10 MiB, uploaded with the SDK, and delivered through the active session webhook. DingTalk inbound attachments and attachment delivery on the other IM adapters remain outside the current Rust feature set.
+DingTalk outbound attachments are resolved only from validated `state/blobs/*` paths, limited to 10 MiB, uploaded with the SDK, and delivered through the robot OpenAPI to authorized DingTalk conversations. Text replies continue to use the active session webhook. DingTalk inbound attachments and attachment delivery on the other IM adapters remain outside the current Rust feature set.
+
+Local Web chat uploads accept up to 100 MiB total per message. Rust streams
+multipart chunks into content-addressed blob storage instead of buffering the
+whole request in memory. Cross-group remote attachments remain limited to
+10 MiB because that transport currently carries Base64 content.
 
 ### Configuration
 
@@ -355,14 +360,15 @@ cccc setup --runtime droid
 cccc setup --runtime amp
 cccc setup --runtime auggie
 cccc setup --runtime grok
-cccc setup --runtime hermes
 cccc setup --runtime kimi
-cccc setup --runtime opencode
 cccc setup --runtime cursor       # Prompt-assisted setup inside Cursor CLI
 cccc setup --runtime kilo         # Prompt-assisted setup inside Kilo Code CLI
 cccc setup --runtime antigravity  # Prompt-assisted setup inside Antigravity
 cccc setup --runtime custom
 ```
+
+OpenCode is configured in the actor environment. Hermes and custom runtimes
+return the manual stdio configuration in the current Rust build.
 
 `web_model` does not use `cccc setup`; create the single `ChatGPT Web Model` actor from the CCCC Web group, then use Web Settings to sign in to ChatGPT, copy its remote MCP URL, and bind one specific ChatGPT conversation.
 

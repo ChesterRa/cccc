@@ -58,7 +58,7 @@ Restore the complete archive while all CCCC daemons are stopped. Keep the `.cccc
 
 1. Back up `CCCC_HOME`.
 2. Download the new GitHub Release archive for the current platform.
-3. Replace all four binaries together.
+3. Replace the `cccc` executable.
 4. Run `cccc version`, `cccc doctor`, and `cccc status`.
 5. Start the Web UI and test one message/read cycle.
 
@@ -91,7 +91,9 @@ cccc space sync --lane work
 cccc space query "current blockers" --lane work
 ```
 
-Provider health reports its mode. A degraded response means the local source/ledger search path was used; it is not reported as a successful remote NotebookLM query.
+Provider health reports its mode. `local_fallback` means the local source/ledger
+path was used. Remote sync and artifact operations return `provider_unavailable`
+instead of reporting a successful NotebookLM operation.
 
 ## Voice
 

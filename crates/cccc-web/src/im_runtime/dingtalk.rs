@@ -1,3 +1,4 @@
+use super::dingtalk_outbound::{DingTalkAttachmentSender, DingTalkTarget};
 use super::{
     accepts_inbound, dispatch_inbound, outbound_text, resolve_credential, spawn_outbound, string,
 };
@@ -20,9 +21,14 @@ pub(super) async fn start(
     daemon: DaemonClient,
     group_id: &str,
     config: &Map<String, Value>,
+    ledger_events: crate::ledger_event_hub::LedgerEventHub,
 ) -> Result<Vec<JoinHandle<()>>, String> {
     let app_key = resolve_credential(&string(config, "dingtalk_app_key"))?;
     let app_secret = resolve_credential(&string(config, "dingtalk_app_secret"))?;
+    let robot_code = match string(config, "dingtalk_robot_code") {
+        value if value.trim().is_empty() => app_key.clone(),
+        value => resolve_credential(&value)?,
+    };
     let sessions = Arc::new(Mutex::new(load_sessions(&home, group_id)));
     let handler = Handler {
         daemon,
@@ -48,11 +54,10 @@ pub(super) async fn start(
     let outbound = spawn_outbound(
         home.clone(),
         group_id.to_owned(),
+        ledger_events,
         OutboundSender {
-            home,
-            group_id: group_id.to_owned(),
+            attachments: DingTalkAttachmentSender::new(home, group_id, media, robot_code),
             sessions,
-            media,
         },
         |sender, authorized, event| async move {
             send_outbound(&sender, authorized, event).await;
@@ -101,14 +106,27 @@ impl CallbackHandler for Handler {
             let expires_at = message
                 .session_webhook_expired_time
                 .map_or(i64::MAX, normalize_epoch_seconds);
-            if let Err(error) = save_session(&self.home, &self.group_id, &chat_id, &url, expires_at)
-            {
+            let robot_code = message.robot_code.clone().unwrap_or_default();
+            let conversation_type = message.conversation_type.clone().unwrap_or_default();
+            let user_id = message
+                .sender_staff_id
+                .clone()
+                .or_else(|| message.sender_id.clone())
+                .unwrap_or_default();
+            let session = SessionWebhook {
+                url,
+                expires_at,
+                robot_code,
+                conversation_type,
+                user_id,
+            };
+            if let Err(error) = save_session(&self.home, &self.group_id, &chat_id, &session) {
                 tracing::warn!(%error, %chat_id, "failed to persist DingTalk session webhook");
             }
             self.sessions
                 .lock()
                 .expect("DingTalk session registry poisoned")
-                .insert(chat_id.clone(), SessionWebhook { url, expires_at });
+                .insert(chat_id.clone(), session);
         }
         if !accepts_inbound(&self.home, &self.group_id, PLATFORM, &chat_id, text) {
             return (AckMessage::STATUS_OK, "ignored unauthorized chat".into());
@@ -137,13 +155,14 @@ impl CallbackHandler for Handler {
 struct SessionWebhook {
     url: String,
     expires_at: i64,
+    robot_code: String,
+    conversation_type: String,
+    user_id: String,
 }
 
 struct OutboundSender {
-    home: HomeLayout,
-    group_id: String,
+    attachments: DingTalkAttachmentSender,
     sessions: Arc<Mutex<HashMap<String, SessionWebhook>>>,
-    media: DingTalkStreamClient,
 }
 
 async fn send_outbound(sender: &OutboundSender, authorized: Vec<String>, event: Event) {
@@ -157,63 +176,14 @@ async fn send_outbound(sender: &OutboundSender, authorized: Vec<String>, event: 
     if body.is_none() && attachments.is_empty() {
         return;
     }
-    let targets = live_webhooks(&sender.sessions, &authorized.into_iter().collect());
+    let authorized: HashSet<String> = authorized.into_iter().collect();
+    let attachment_targets = known_authorized_chats(&sender.sessions, &authorized);
+    sender
+        .attachments
+        .send(&attachment_targets, &attachments)
+        .await;
+    let targets = live_webhooks(&sender.sessions, &authorized);
     let http = reqwest::Client::new();
-
-    for attachment in attachments {
-        let Some(path) = attachment.get("path").and_then(Value::as_str) else {
-            continue;
-        };
-        let Ok(path) = cccc_core::blobs::resolve(&sender.home, &sender.group_id, path) else {
-            tracing::warn!(attachment = %path, "ignored invalid DingTalk attachment path");
-            continue;
-        };
-        let Ok(metadata) = path.metadata() else {
-            continue;
-        };
-        if metadata.len() > 10 * 1024 * 1024 {
-            tracing::warn!(attachment = %path.display(), "ignored oversized DingTalk attachment");
-            continue;
-        }
-        let Ok(raw) = tokio::fs::read(&path).await else {
-            continue;
-        };
-        let title = attachment
-            .get("title")
-            .and_then(Value::as_str)
-            .and_then(safe_filename)
-            .or_else(|| path.file_name().and_then(|name| name.to_str()))
-            .unwrap_or("file");
-        let mime = attachment
-            .get("mime_type")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_owned)
-            .unwrap_or_else(|| {
-                mime_guess::from_path(&path)
-                    .first_or_octet_stream()
-                    .to_string()
-            });
-        let is_image = mime.starts_with("image/");
-        let file_type = if is_image { "image" } else { "file" };
-        let media_id = match sender
-            .media
-            .upload_to_dingtalk(&raw, file_type, title, &mime)
-            .await
-        {
-            Ok(media_id) => media_id,
-            Err(error) => {
-                tracing::warn!(%error, attachment = %title, "failed to upload DingTalk attachment");
-                continue;
-            }
-        };
-        let payload = attachment_payload(&media_id, title, is_image);
-        for url in &targets {
-            if let Err(error) = post_webhook(&http, url, &payload).await {
-                tracing::warn!(%error, attachment = %title, "failed to send DingTalk attachment");
-            }
-        }
-    }
 
     if let Some(body) = body {
         let payload = json!({
@@ -248,27 +218,6 @@ async fn post_webhook(http: &reqwest::Client, url: &str, payload: &Value) -> Res
     }
 }
 
-fn attachment_payload(media_id: &str, filename: &str, is_image: bool) -> Value {
-    if is_image {
-        json!({"msgtype":"image","image":{"picURL":media_id}})
-    } else {
-        let file_type = std::path::Path::new(filename)
-            .extension()
-            .and_then(|value| value.to_str())
-            .filter(|value| !value.is_empty())
-            .unwrap_or("file");
-        json!({
-            "msgtype":"file",
-            "file":{"mediaId":media_id,"fileType":file_type}
-        })
-    }
-}
-
-fn safe_filename(value: &str) -> Option<&str> {
-    let value = value.trim();
-    (!value.is_empty() && !value.contains(['/', '\\'])).then_some(value)
-}
-
 fn live_webhooks(
     sessions: &Mutex<HashMap<String, SessionWebhook>>,
     authorized: &HashSet<String>,
@@ -280,6 +229,24 @@ fn live_webhooks(
         .iter()
         .filter(|(chat_id, _)| authorized.contains(*chat_id))
         .map(|(_, session)| session.url.clone())
+        .collect()
+}
+
+fn known_authorized_chats(
+    sessions: &Mutex<HashMap<String, SessionWebhook>>,
+    authorized: &HashSet<String>,
+) -> Vec<DingTalkTarget> {
+    sessions
+        .lock()
+        .expect("DingTalk session registry poisoned")
+        .iter()
+        .filter(|(chat_id, _)| authorized.contains(*chat_id))
+        .map(|(chat_id, session)| DingTalkTarget {
+            chat_id: chat_id.clone(),
+            robot_code: session.robot_code.clone(),
+            conversation_type: session.conversation_type.clone(),
+            user_id: session.user_id.clone(),
+        })
         .collect()
 }
 
@@ -312,6 +279,26 @@ fn load_sessions(home: &HomeLayout, group_id: &str) -> HashMap<String, SessionWe
                                 .map(|value| value as i64)
                         },
                     )?,
+                    robot_code: entry
+                        .get("robot_code")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    conversation_type: entry
+                        .get("conversation_type")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .or_else(|| match entry.get("chat_type").and_then(Value::as_str) {
+                            Some("p2p") => Some("1".to_owned()),
+                            Some("group") => Some("2".to_owned()),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                    user_id: entry
+                        .get("user_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
                 },
             ))
         })
@@ -322,8 +309,7 @@ fn save_session(
     home: &HomeLayout,
     group_id: &str,
     chat_id: &str,
-    url: &str,
-    expires_at: i64,
+    session: &SessionWebhook,
 ) -> Result<(), String> {
     let path = home
         .groups_dir()
@@ -336,10 +322,20 @@ fn save_session(
     if !value["conversations"].is_object() {
         value["conversations"] = json!({});
     }
-    value["conversations"][chat_id] = json!({
-        "session_webhook":url,
-        "session_webhook_expires_at":expires_at,
+    let mut entry = json!({
+        "session_webhook":session.url,
+        "session_webhook_expires_at":session.expires_at,
     });
+    if !session.robot_code.is_empty() {
+        entry["robot_code"] = json!(session.robot_code);
+    }
+    if !session.conversation_type.is_empty() {
+        entry["conversation_type"] = json!(session.conversation_type);
+    }
+    if !session.user_id.is_empty() {
+        entry["user_id"] = json!(session.user_id);
+    }
+    value["conversations"][chat_id] = entry;
     cccc_core::fs::write_json(&path, &value).map_err(|error| error.to_string())
 }
 
@@ -367,16 +363,19 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = cccc_core::GroupStore::new(home.clone()).expect("store");
         let group = store.create("dingtalk", "").expect("group");
-        save_session(
-            &home,
-            &group.group_id,
-            "chat-1",
-            "https://example.test/hook",
-            1_800_000_000,
-        )
-        .expect("save");
+        let session = SessionWebhook {
+            url: "https://example.test/hook".into(),
+            expires_at: 1_800_000_000,
+            robot_code: "callback-robot".into(),
+            conversation_type: "1".into(),
+            user_id: "staff-1".into(),
+        };
+        save_session(&home, &group.group_id, "chat-1", &session).expect("save");
         let sessions = load_sessions(&home, &group.group_id);
         assert_eq!(sessions["chat-1"].url, "https://example.test/hook");
+        assert_eq!(sessions["chat-1"].robot_code, "callback-robot");
+        assert_eq!(sessions["chat-1"].conversation_type, "1");
+        assert_eq!(sessions["chat-1"].user_id, "staff-1");
     }
 
     #[test]
@@ -389,6 +388,9 @@ mod tests {
                 SessionWebhook {
                     url: "https://example.test/allowed".into(),
                     expires_at: future,
+                    robot_code: "allowed-robot".into(),
+                    conversation_type: "2".into(),
+                    user_id: String::new(),
                 },
             ),
             (
@@ -396,6 +398,9 @@ mod tests {
                 SessionWebhook {
                     url: "https://example.test/unauthorized".into(),
                     expires_at: future,
+                    robot_code: "unauthorized-robot".into(),
+                    conversation_type: "2".into(),
+                    user_id: String::new(),
                 },
             ),
             (
@@ -403,6 +408,9 @@ mod tests {
                 SessionWebhook {
                     url: "https://example.test/expired".into(),
                     expires_at: past,
+                    robot_code: "expired-robot".into(),
+                    conversation_type: "2".into(),
+                    user_id: String::new(),
                 },
             ),
         ]));
@@ -411,17 +419,17 @@ mod tests {
             &HashSet::from(["allowed".to_owned(), "expired".to_owned()]),
         );
         assert_eq!(urls, vec!["https://example.test/allowed"]);
-    }
-
-    #[test]
-    fn attachment_payloads_match_dingtalk_webhook_contract() {
         assert_eq!(
-            attachment_payload("@media", "logo.png", true),
-            json!({"msgtype":"image","image":{"picURL":"@media"}})
-        );
-        assert_eq!(
-            attachment_payload("@file", "README.md", false),
-            json!({"msgtype":"file","file":{"mediaId":"@file","fileType":"md"}})
+            known_authorized_chats(
+                &sessions,
+                &HashSet::from(["allowed".to_owned(), "weixin-chat".to_owned()])
+            ),
+            vec![DingTalkTarget {
+                chat_id: "allowed".into(),
+                robot_code: "allowed-robot".into(),
+                conversation_type: "2".into(),
+                user_id: String::new(),
+            }]
         );
     }
 }

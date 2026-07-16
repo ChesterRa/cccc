@@ -16,6 +16,7 @@ pub(super) async fn start(
     daemon: DaemonClient,
     group_id: &str,
     config: &Map<String, Value>,
+    ledger_events: crate::ledger_event_hub::LedgerEventHub,
 ) -> Result<Vec<JoinHandle<()>>, String> {
     let bot_token = resolve_credential(&string(config, "bot_token_env"))?;
     let app_token = resolve_credential(&string(config, "app_token_env"))?;
@@ -44,6 +45,7 @@ pub(super) async fn start(
     let outbound = spawn_outbound(
         home,
         group_id.to_owned(),
+        ledger_events,
         (http, bot_token),
         |sender, targets, event| async move {
             let Some(body) = outbound_text(&event, false) else {

@@ -1,14 +1,14 @@
 mod args;
 mod commands;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use args::{Cli, CommandKind, DaemonAction, RuntimeAction};
 use cccc_client::DaemonClient;
 use cccc_core::{HomeLayout, active};
+use cccc_daemon::{DetachedDaemon, StartOutcome};
 use clap::Parser;
 use commands::common::{call, print};
 use serde_json::json;
-use std::process::Command;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
         Some(CommandKind::Runtime { action }) => runtime(action),
         Some(CommandKind::Status) => status(&client).await,
         Some(CommandKind::Doctor) => doctor(&home),
-        Some(CommandKind::Setup) => setup(),
+        Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
     }
 }
 
@@ -172,16 +172,15 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
                 println!("ccccd: already running");
                 return Ok(());
             }
-            let executable = daemon_executable()?;
-            let status = Command::new(&executable)
-                .arg("start")
-                .status()
-                .with_context(|| format!("start {}", executable.display()))?;
-            if status.success() {
-                Ok(())
-            } else {
-                bail!("ccccd start failed with {status}")
+            let executable = std::env::current_exe()?;
+            match DetachedDaemon::new(executable, ["daemon", "run"])
+                .start(&home)
+                .await?
+            {
+                StartOutcome::AlreadyRunning => println!("ccccd: already running"),
+                StartOutcome::Started(pid) => println!("ccccd: started pid={pid}"),
             }
+            Ok(())
         }
     }
 }
@@ -213,17 +212,6 @@ fn doctor(home: &HomeLayout) -> Result<()> {
         "{}",
         serde_json::to_string_pretty(&json!({
             "implementation":"rust","home":home.root(),"runtimes":cccc_runtime::detect_runtimes()
-        }))?
-    );
-    Ok(())
-}
-
-fn setup() -> Result<()> {
-    let executable = std::env::current_exe()?;
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "mcpServers":{"cccc":{"command":executable,"args":["mcp"],"env":{"CCCC_HOME":HomeLayout::resolve()?.root()}}}
         }))?
     );
     Ok(())
@@ -307,16 +295,6 @@ fn is_compatible_daemon(response: &cccc_contracts::DaemonResponse) -> bool {
             .get("compatibility")
             .and_then(serde_json::Value::as_str)
             == Some(cccc_contracts::RUST_DAEMON_COMPATIBILITY)
-}
-
-fn daemon_executable() -> Result<std::path::PathBuf> {
-    let current = std::env::current_exe()?;
-    let name = if cfg!(windows) { "ccccd.exe" } else { "ccccd" };
-    let sibling = current.with_file_name(name);
-    if sibling.is_file() {
-        return Ok(sibling);
-    }
-    Ok(name.into())
 }
 
 #[cfg(test)]

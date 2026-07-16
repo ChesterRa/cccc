@@ -53,7 +53,7 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 
 ## Setup Commands
 
-Most CLI runtimes can be prepared with `cccc setup --runtime <id>`:
+The following CLI runtimes can be configured automatically with `cccc setup --runtime <id>`:
 
 ```bash
 cccc setup --runtime claude
@@ -65,10 +65,12 @@ cccc setup --runtime droid
 cccc setup --runtime amp
 cccc setup --runtime auggie
 cccc setup --runtime grok
-cccc setup --runtime hermes
 cccc setup --runtime kimi
-cccc setup --runtime opencode
 ```
+
+OpenCode receives its MCP configuration from the CCCC actor environment. Hermes
+and custom runtimes print a manual stdio configuration because the Rust build
+does not currently provide a Hermes preparation command.
 
 Prompt-assisted runtimes print an idempotent setup prompt or contract that you run inside that runtime:
 

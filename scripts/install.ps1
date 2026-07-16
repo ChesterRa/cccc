@@ -1,0 +1,292 @@
+[CmdletBinding()]
+param(
+  [string]$Version = $env:CCCC_VERSION,
+  [string]$InstallDir = $env:CCCC_INSTALL_DIR,
+  [switch]$NoModifyPath
+)
+
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$defaultVersion = "@CCCC_VERSION@"
+$repository = if ($env:CCCC_GITHUB_REPOSITORY) { $env:CCCC_GITHUB_REPOSITORY } else { "ChesterRa/cccc" }
+$releaseBaseUrl = if ($env:CCCC_RELEASE_BASE_URL) {
+  $env:CCCC_RELEASE_BASE_URL.TrimEnd("/")
+} else {
+  "https://github.com/$repository/releases"
+}
+$NoModifyPath = $NoModifyPath -or $env:CCCC_NO_MODIFY_PATH -eq "1"
+if (-not $InstallDir) {
+  $InstallDir = Join-Path $env:LOCALAPPDATA "CCCC\bin"
+}
+if ([string]::IsNullOrWhiteSpace($InstallDir) -or $InstallDir.Contains(';') -or
+    -not [IO.Path]::IsPathRooted($InstallDir)) {
+  throw "InstallDir must be an absolute path without semicolons: $InstallDir"
+}
+$InstallDir = [IO.Path]::GetFullPath($InstallDir)
+
+function Get-ResponseUri([object]$Response) {
+  if ($Response.BaseResponse.PSObject.Properties.Name -contains "ResponseUri") {
+    return $Response.BaseResponse.ResponseUri.AbsoluteUri
+  }
+  if ($Response.BaseResponse.PSObject.Properties.Name -contains "RequestMessage") {
+    return $Response.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+  }
+  throw "Could not resolve the latest release URI"
+}
+
+function Receive-File([string]$Uri, [string]$Destination) {
+  $parsed = [Uri]$Uri
+  if ($parsed.IsFile) {
+    Copy-Item -LiteralPath $parsed.LocalPath -Destination $Destination
+    return
+  }
+  $response = Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $Destination -PassThru
+  if (-not $env:CCCC_RELEASE_BASE_URL) {
+    $effectiveUri = [Uri](Get-ResponseUri $response)
+    $trustedHost = $effectiveUri.Host -eq "github.com" -or $effectiveUri.Host.EndsWith(".githubusercontent.com")
+    if ($effectiveUri.Scheme -ne "https" -or -not $trustedHost) {
+      throw "Release asset redirected outside GitHub HTTPS: $effectiveUri"
+    }
+  }
+}
+
+$architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+$isWindowsRuntime = if ($PSVersionTable.PSEdition -eq "Core") { $IsWindows } else { $true }
+if (-not $isWindowsRuntime) {
+  throw "This installer is for Windows. Use install.sh on macOS or Linux."
+}
+if ($architecture -ne "X64") {
+  throw "Unsupported Windows architecture: $architecture"
+}
+
+if (-not $Version -and $defaultVersion -match '^[0-9]+\.[0-9]+\.[0-9]+') {
+  $Version = $defaultVersion
+}
+if (-not $Version) {
+  $latest = Invoke-WebRequest -UseBasicParsing -Uri "$releaseBaseUrl/latest"
+  $latestUri = Get-ResponseUri $latest
+  if (-not $env:CCCC_RELEASE_BASE_URL) {
+    $expectedPrefix = "https://github.com/$repository/releases/tag/v"
+    if (-not $latestUri.StartsWith($expectedPrefix, [StringComparison]::Ordinal)) {
+      throw "Latest release redirected outside $expectedPrefix"
+    }
+  }
+  $tag = $latestUri.TrimEnd("/").Split("/")[-1]
+  if (-not $tag.StartsWith("v")) {
+    throw "Latest release did not resolve to a v-prefixed tag: $tag"
+  }
+  $Version = $tag.Substring(1)
+} else {
+  $Version = $Version.TrimStart("v")
+}
+
+if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$') {
+  throw "Invalid semantic version: $Version"
+}
+
+$target = "x86_64-pc-windows-msvc"
+$package = "cccc-v$Version-$target"
+$archive = "$package.zip"
+$downloadUrl = "$releaseBaseUrl/download/v$Version"
+$tempDir = Join-Path ([IO.Path]::GetTempPath()) ("cccc-install-" + [Guid]::NewGuid().ToString("N"))
+$binaries = @("cccc.exe")
+$staged = @()
+$originals = @()
+$backupDir = Join-Path $InstallDir (".cccc-backup-" + $PID)
+$lockPath = Join-Path $InstallDir ".cccc-install.lock"
+$lockStream = $null
+$transactionStarted = $false
+$transactionCommitted = $false
+$daemonWasRunning = $false
+$rollbackRestoreFailed = $false
+
+try {
+  New-Item -ItemType Directory -Path $tempDir | Out-Null
+  Write-Host "Downloading CCCC v$Version for $target..."
+  $archivePath = Join-Path $tempDir $archive
+  $checksumsPath = Join-Path $tempDir "SHA256SUMS"
+  Receive-File "$downloadUrl/SHA256SUMS" $checksumsPath
+
+  $expectedArchives = @(
+    "cccc-v$Version-x86_64-unknown-linux-gnu.tar.gz",
+    "cccc-v$Version-x86_64-apple-darwin.tar.gz",
+    "cccc-v$Version-aarch64-apple-darwin.tar.gz",
+    "cccc-v$Version-x86_64-pc-windows-msvc.zip"
+  )
+  $checksumEntries = @{}
+  foreach ($line in Get-Content -LiteralPath $checksumsPath) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    if ($line -notmatch '^([0-9A-Fa-f]{64})[ \t]+\*?([^/\\]+)$') {
+      throw "SHA256SUMS must contain four unique, well-formed archive entries"
+    }
+    $name = $Matches[2]
+    if ($expectedArchives -notcontains $name -or $checksumEntries.ContainsKey($name)) {
+      throw "SHA256SUMS must contain four unique, well-formed archive entries"
+    }
+    $checksumEntries[$name] = $Matches[1].ToLowerInvariant()
+  }
+  if ($checksumEntries.Count -ne 4 -or -not $checksumEntries.ContainsKey($archive)) {
+    throw "SHA256SUMS must contain exactly one entry for $archive and four entries total"
+  }
+
+  Receive-File "$downloadUrl/$archive" $archivePath
+  $actualChecksum = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+  if ($actualChecksum -ne $checksumEntries[$archive]) {
+    throw "Checksum mismatch for $archive"
+  }
+
+  Add-Type -AssemblyName System.IO.Compression
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
+  try {
+    $canonicalTempRoot = [IO.Path]::GetFullPath($tempDir + [IO.Path]::DirectorySeparatorChar)
+    foreach ($entry in $zip.Entries) {
+      $entryPath = $entry.FullName.Replace('\', '/')
+      $insidePackage = $entryPath -eq "$package/" -or $entryPath.StartsWith("$package/", [StringComparison]::Ordinal)
+      if ($entryPath.StartsWith('/') -or $entryPath -match '^[A-Za-z]:' -or
+          $entryPath -match '(^|/)\.\.(/|$)' -or -not $insidePackage) {
+        throw "Archive contains an unsafe path: $entryPath"
+      }
+      $canonicalDestination = [IO.Path]::GetFullPath((Join-Path $tempDir $entryPath))
+      $unixType = ($entry.ExternalAttributes -shr 16) -band 0xF000
+      $dosAttributes = $entry.ExternalAttributes -band 0xFFFF
+      $supportedType = $unixType -eq 0 -or $unixType -eq 0x4000 -or $unixType -eq 0x8000
+      $isReparsePoint = ($dosAttributes -band [int][IO.FileAttributes]::ReparsePoint) -ne 0
+      if (-not $canonicalDestination.StartsWith($canonicalTempRoot, [StringComparison]::OrdinalIgnoreCase) -or
+          -not $supportedType -or $isReparsePoint) {
+        throw "Archive contains an unsafe path: $entryPath"
+      }
+    }
+  } finally {
+    $zip.Dispose()
+  }
+  Expand-Archive -LiteralPath $archivePath -DestinationPath $tempDir
+  $packageDir = Join-Path $tempDir $package
+  if (-not (Test-Path -LiteralPath $packageDir -PathType Container)) {
+    throw "Archive is missing its package directory"
+  }
+
+  New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+  foreach ($binary in $binaries) {
+    $source = Join-Path $packageDir $binary
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+      throw "Archive is missing $binary"
+    }
+    $stage = Join-Path $InstallDir (".$binary.cccc-install-" + $PID)
+    Copy-Item -LiteralPath $source -Destination $stage -Force
+    $staged += $stage
+  }
+
+  try {
+    $lockStream = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $lockStream.SetLength(0)
+    $lockBytes = [Text.Encoding]::UTF8.GetBytes("$PID`n")
+    $lockStream.Write($lockBytes, 0, $lockBytes.Length)
+    $lockStream.Flush()
+  } catch {
+    throw "Another installation is using $InstallDir (lock: $lockPath)"
+  }
+
+  foreach ($binary in $binaries) {
+    if (Test-Path -LiteralPath (Join-Path $InstallDir $binary)) {
+      $originals += $binary
+    }
+  }
+  New-Item -ItemType Directory -Path $backupDir | Out-Null
+  $transactionStarted = $true
+  $oldCli = Join-Path $InstallDir "cccc.exe"
+  if (Test-Path -LiteralPath $oldCli -PathType Leaf) {
+    & $oldCli daemon status *> $null
+    $daemonWasRunning = $LASTEXITCODE -eq 0
+    if ($daemonWasRunning) {
+      & $oldCli daemon stop *> $null
+      if ($LASTEXITCODE -ne 0) { throw "Could not stop the running CCCC daemon" }
+      for ($attempt = 0; $attempt -lt 40; $attempt++) {
+        & $oldCli daemon status *> $null
+        if ($LASTEXITCODE -ne 0) { break }
+        Start-Sleep -Milliseconds 250
+      }
+      if ($attempt -eq 40) { throw "The running CCCC daemon did not stop in time" }
+    }
+  }
+
+  foreach ($binary in $originals) {
+    Move-Item -LiteralPath (Join-Path $InstallDir $binary) -Destination (Join-Path $backupDir $binary)
+  }
+  foreach ($binary in $binaries) {
+    $stage = Join-Path $InstallDir (".$binary.cccc-install-" + $PID)
+    Move-Item -LiteralPath $stage -Destination (Join-Path $InstallDir $binary)
+  }
+
+  $installedVersion = (& (Join-Path $InstallDir "cccc.exe") --version | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $installedVersion -ne "cccc $Version") {
+    throw "Installed version mismatch: expected cccc $Version, got $installedVersion"
+  }
+  if ($daemonWasRunning) {
+    & (Join-Path $InstallDir "cccc.exe") daemon start *> $null
+    if ($LASTEXITCODE -ne 0) { throw "The updated CCCC daemon could not restart" }
+  }
+  $transactionCommitted = $true
+  Remove-Item -LiteralPath $backupDir -Recurse -Force
+
+  $pathEntries = @($env:Path.Split(';', [StringSplitOptions]::RemoveEmptyEntries))
+  $pathReady = $pathEntries.Where({ $_.TrimEnd('\') -ieq $InstallDir.TrimEnd('\') }).Count -gt 0
+  if (-not $pathReady -and -not $NoModifyPath) {
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $userEntries = if ($userPath) { @($userPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries)) } else { @() }
+    if (-not $userEntries.Where({ $_.TrimEnd('\') -ieq $InstallDir.TrimEnd('\') })) {
+      [Environment]::SetEnvironmentVariable("Path", ((@($InstallDir) + $userEntries) -join ';'), "User")
+    }
+    $env:Path = "$InstallDir;$env:Path"
+    Write-Host "Added $InstallDir to the user PATH. Open a new terminal if this shell cannot find cccc."
+  } elseif (-not $pathReady) {
+    Write-Host "Add $InstallDir to PATH, then open a new terminal."
+  }
+
+  Write-Host "Installed CCCC v$Version in $InstallDir"
+  Write-Host "Run: cccc doctor"
+} finally {
+  if ($transactionStarted -and -not $transactionCommitted) {
+    foreach ($binary in $binaries) {
+      $destination = Join-Path $InstallDir $binary
+      $backup = Join-Path $backupDir $binary
+      if ($originals -contains $binary) {
+        if (Test-Path -LiteralPath $backup -PathType Leaf) {
+          try {
+            Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
+            Move-Item -LiteralPath $backup -Destination $destination -Force
+          } catch {
+            $rollbackRestoreFailed = $true
+            Write-Error "Rollback failed to restore $destination`: $_" -ErrorAction Continue
+          }
+        }
+      } else {
+        Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
+      }
+    }
+    if ($daemonWasRunning -and (Test-Path -LiteralPath (Join-Path $InstallDir "cccc.exe"))) {
+      try {
+        & (Join-Path $InstallDir "cccc.exe") daemon start *> $null
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Rollback restored the previous binary but failed to restart its daemon" -ErrorAction Continue
+        }
+      } catch {
+        Write-Error "Rollback restored the previous binary but failed to restart its daemon: $_" -ErrorAction Continue
+      }
+    }
+  }
+  foreach ($stage in $staged) {
+    Remove-Item -LiteralPath $stage -Force -ErrorAction SilentlyContinue
+  }
+  if ($rollbackRestoreFailed) {
+    Write-Error "Previous binary backup retained at $backupDir" -ErrorAction Continue
+  } else {
+    Remove-Item -LiteralPath $backupDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+  if ($null -ne $lockStream) {
+    $lockStream.Dispose()
+    Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+  }
+}

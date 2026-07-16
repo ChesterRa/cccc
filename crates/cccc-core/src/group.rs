@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use uuid::Uuid;
 
-use crate::fs::{read_yaml, write_yaml};
+use crate::fs::{read_yaml, with_exclusive_lock, write_yaml};
 use crate::home::HomeLayout;
 use crate::registry::{GroupMeta, Registry};
 
@@ -100,6 +100,12 @@ impl GroupStore {
 
     pub fn save(&self, group: &GroupDoc) -> io::Result<()> {
         validate_group_id(&group.group_id)?;
+        with_exclusive_lock(&self.group_lock_path(&group.group_id)?, || {
+            self.save_unlocked(group)
+        })
+    }
+
+    fn save_unlocked(&self, group: &GroupDoc) -> io::Result<()> {
         let mut stored = group.clone();
         stored.updated_at = utc_now();
         write_yaml(
@@ -118,15 +124,18 @@ impl GroupStore {
         title: Option<&str>,
         topic: Option<&str>,
     ) -> io::Result<GroupDoc> {
-        let mut group = self.load(group_id)?;
-        if let Some(value) = title {
-            group.title = normalized_title(value);
-        }
-        if let Some(value) = topic {
-            group.topic = value.trim().to_owned();
-        }
-        group.updated_at = utc_now();
-        self.save(&group)?;
+        let group = with_exclusive_lock(&self.group_lock_path(group_id)?, || {
+            let mut group = self.load(group_id)?;
+            if let Some(value) = title {
+                group.title = normalized_title(value);
+            }
+            if let Some(value) = topic {
+                group.topic = value.trim().to_owned();
+            }
+            group.updated_at = utc_now();
+            self.save_unlocked(&group)?;
+            Ok(group)
+        })?;
         let mut registry = Registry::load(&self.home)?;
         if let Some(meta) = registry.groups.get_mut(group_id) {
             meta.title.clone_from(&group.title);
@@ -156,10 +165,12 @@ impl GroupStore {
         group_id: &str,
         change: impl FnOnce(&mut GroupDoc) -> io::Result<T>,
     ) -> io::Result<T> {
-        let mut group = self.load(group_id)?;
-        let result = change(&mut group)?;
-        self.save(&group)?;
-        Ok(result)
+        with_exclusive_lock(&self.group_lock_path(group_id)?, || {
+            let mut group = self.load(group_id)?;
+            let result = change(&mut group)?;
+            self.save_unlocked(&group)?;
+            Ok(result)
+        })
     }
 
     pub fn state_dir(&self, group_id: &str) -> io::Result<std::path::PathBuf> {
@@ -174,6 +185,10 @@ impl GroupStore {
     pub fn group_dir(&self, group_id: &str) -> io::Result<std::path::PathBuf> {
         validate_group_id(group_id)?;
         Ok(self.home.groups_dir().join(group_id))
+    }
+
+    fn group_lock_path(&self, group_id: &str) -> io::Result<std::path::PathBuf> {
+        Ok(self.group_dir(group_id)?.join("group.yaml.lock"))
     }
 
     pub fn import(&self, mut group: GroupDoc) -> io::Result<GroupDoc> {
@@ -227,5 +242,50 @@ fn normalized_title(value: &str) -> String {
         "working-group".into()
     } else {
         title.into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Barrier};
+
+    #[test]
+    fn concurrent_mutations_do_not_overwrite_each_other() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("concurrency", "").expect("group");
+        let barrier = Arc::new(Barrier::new(16));
+        let handles = (0..16)
+            .map(|_| {
+                let store = store.clone();
+                let group_id = group.group_id.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store
+                        .mutate(&group_id, |group| {
+                            let count = group
+                                .extra
+                                .get("concurrent_count")
+                                .and_then(Value::as_u64)
+                                .unwrap_or(0);
+                            group
+                                .extra
+                                .insert("concurrent_count".into(), (count + 1).into());
+                            Ok(())
+                        })
+                        .expect("mutate");
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().expect("join");
+        }
+        assert_eq!(
+            store.load(&group.group_id).expect("load").extra["concurrent_count"],
+            16
+        );
     }
 }

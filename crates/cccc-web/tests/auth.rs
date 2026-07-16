@@ -152,6 +152,28 @@ async fn encoded_custom_token_authenticates_event_source_queries() {
     );
 }
 
+#[tokio::test]
+async fn cannot_delete_the_last_admin_while_scoped_tokens_remain() {
+    let (_temp, home) = home();
+    let store = AccessTokenStore::new(home.clone()).expect("store");
+    let admin = store
+        .create("admin", Vec::new(), true, None)
+        .expect("admin");
+    store
+        .create("member", vec!["g_allowed".into()], false, None)
+        .expect("member");
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::delete(format!("/api/v1/access-tokens/{}", admin.token_id()))
+                .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
 fn home() -> (tempfile::TempDir, HomeLayout) {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

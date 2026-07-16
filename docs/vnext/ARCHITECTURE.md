@@ -128,7 +128,7 @@ class ChatMessageData:
 
 | Token | 语义 |
 |-------|------|
-| `[]`（空） | 广播 |
+| `[]`（空） | 发送时按群组 `default_send_to` 物化为 `@foreman` 或 `@all`；历史事件按广播兼容 |
 | `user` | 用户本人 |
 | `@all` | 所有可见协作 actors（不含内部 assistant） |
 | `@peers` | 所有可见 peer（不含 Voice Secretary 等内部 assistant） |

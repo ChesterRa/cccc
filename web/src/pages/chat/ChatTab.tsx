@@ -189,6 +189,7 @@ export function ChatTab({
     chatInitialScrollTargetId,
     chatInitialScrollAnchorId,
     chatInitialScrollAnchorOffsetPx,
+    chatInitialScrollOffsetPx,
     chatHighlightEventId,
     isLoadingHistory,
     hasMoreHistory,
@@ -814,6 +815,7 @@ export function ChatTab({
                   initialScrollTargetId={chatInitialScrollTargetId}
                   initialScrollAnchorId={chatInitialScrollAnchorId}
                   initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
+                  initialScrollOffsetPx={chatInitialScrollOffsetPx}
                   highlightEventId={chatHighlightEventId}
                   scrollRef={scrollRef}
                   topInsetPx={mobileMessageTopInsetPx}

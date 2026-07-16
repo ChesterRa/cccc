@@ -92,7 +92,7 @@ async fn set(
         state.insert("updated_at".into(), Value::String(utc_now()));
         Ok(())
     })?;
-    state.im_workers.stop(&group_id);
+    state.im_workers.stop(&group_id).await;
     Ok(success(json!({"configured":true,"platform":platform})))
 }
 
@@ -103,7 +103,7 @@ async fn unset(
 ) -> ApiResult {
     let group_id = required(&body, "group_id")?;
     ensure_access(&principal, &group_id)?;
-    state.im_workers.stop(&group_id);
+    state.im_workers.stop(&group_id).await;
     update(&state, &group_id, |value| {
         *value = json!({});
         Ok(())
@@ -174,7 +174,7 @@ async fn set_running(
         })?;
         return Ok(success(status_payload(&group_id, &load(state, &group_id)?)));
     }
-    state.im_workers.stop(&group_id);
+    state.im_workers.stop(&group_id).await;
     update(state, &group_id, |value| {
         let state = object(value);
         state.insert("enabled".into(), Value::Bool(false));
@@ -255,7 +255,7 @@ async fn weixin_logout(
     let group_id = required(&body, "group_id")?;
     ensure_access(&principal, &group_id)?;
     Ok(success(
-        state.im_workers.logout_weixin(&state.home, &group_id),
+        state.im_workers.logout_weixin(&state.home, &group_id).await,
     ))
 }
 

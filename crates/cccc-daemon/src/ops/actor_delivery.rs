@@ -242,53 +242,77 @@ pub fn drain(home: &HomeLayout) {
     let Ok(store) = GroupStore::new(home.clone()) else {
         return;
     };
+    let mut grouped = HashMap::<Key, Vec<DeliveryCompletion>>::new();
+    for completion in pending {
+        grouped
+            .entry((completion.group_id.clone(), completion.actor_id.clone()))
+            .or_default()
+            .push(completion);
+    }
     let mut deferred = VecDeque::new();
     let mut refill = HashSet::new();
-    for completion in pending {
-        let Ok(group) = store.load(&completion.group_id) else {
-            clear_in_flight(|item| {
-                item.0 == completion.group_id
-                    && item.1 == completion.actor_id
-                    && item.2 == completion.event_id
-            });
+    for ((group_id, actor_id), batch) in grouped {
+        let Ok(group) = store.load(&group_id) else {
+            clear_in_flight(|item| item.0 == group_id && item.1 == actor_id);
             continue;
         };
         if !auto_mark_on_delivery(&group) {
-            clear_in_flight(|item| {
-                item.0 == completion.group_id
-                    && item.1 == completion.actor_id
-                    && item.2 == completion.event_id
-            });
+            clear_in_flight(|item| item.0 == group_id && item.1 == actor_id);
             continue;
         }
-        let next = first_replayable_unread(home, &group, &completion.actor_id);
-        if next
-            .as_ref()
-            .is_some_and(|event| event.id != completion.event_id)
-        {
-            deferred.push_back(completion);
+        let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
+            clear_in_flight(|item| item.0 == group_id && item.1 == actor_id);
             continue;
+        };
+        let unread = inbox::list_unread(home, &group, &actor_id, 1000)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|event| actor.created_at.is_empty() || event.ts >= actor.created_at)
+            .collect::<Vec<_>>();
+        let unread_ids = unread
+            .iter()
+            .map(|event| event.id.clone())
+            .collect::<HashSet<_>>();
+        let completed_ids = batch
+            .iter()
+            .map(|completion| completion.event_id.clone())
+            .collect::<HashSet<_>>();
+        let delivered = unread
+            .iter()
+            .take_while(|event| completed_ids.contains(&event.id))
+            .map(|event| event.id.clone())
+            .collect::<Vec<_>>();
+        let delivered_ids = delivered.iter().cloned().collect::<HashSet<_>>();
+        let resolved_ids = batch
+            .iter()
+            .filter(|completion| {
+                delivered_ids.contains(&completion.event_id)
+                    || !unread_ids.contains(&completion.event_id)
+            })
+            .map(|completion| completion.event_id.clone())
+            .collect::<HashSet<_>>();
+        for completion in batch {
+            if !resolved_ids.contains(&completion.event_id) {
+                deferred.push_back(completion);
+            }
         }
-        let advanced = next.is_some()
-            && inbox::advance(
-                home,
-                &completion.group_id,
-                &completion.actor_id,
-                &completion.event_id,
-            )
-            .unwrap_or(false);
         clear_in_flight(|item| {
-            item.0 == completion.group_id
-                && item.1 == completion.actor_id
-                && item.2 == completion.event_id
+            item.0 == group_id && item.1 == actor_id && resolved_ids.contains(&item.2)
         });
-        refill.insert((completion.group_id.clone(), completion.actor_id.clone()));
+        if !resolved_ids.is_empty() {
+            refill.insert((group_id.clone(), actor_id.clone()));
+        }
+        let advanced = delivered.last().is_some_and(|event_id| {
+            inbox::advance(home, &group_id, &actor_id, event_id).unwrap_or(false)
+        });
         if advanced {
-            let mut event = Event::new("chat.read", &completion.group_id);
-            event.by.clone_from(&completion.actor_id);
+            let event_id = delivered.last().cloned().unwrap_or_default();
+            let mut event = Event::new("chat.read", &group_id);
+            event.by.clone_from(&actor_id);
             event.data = json!({
-                "actor_id": completion.actor_id,
-                "event_id": completion.event_id,
+                "actor_id": actor_id,
+                "event_id": event_id,
+                "delivered_count": delivered.len(),
                 "source": "runtime_delivery",
             })
             .as_object()
@@ -307,14 +331,6 @@ pub fn drain(home: &HomeLayout) {
             replay_unread(home, &group, &actor_id);
         }
     }
-}
-
-fn first_replayable_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> Option<Event> {
-    let actor = group.actors.iter().find(|actor| actor.id == actor_id)?;
-    inbox::list_unread(home, group, actor_id, 1000)
-        .ok()?
-        .into_iter()
-        .find(|event| actor.created_at.is_empty() || event.ts >= actor.created_at)
 }
 
 fn report(targeted: usize, online: usize, queued: usize) -> DispatchReport {

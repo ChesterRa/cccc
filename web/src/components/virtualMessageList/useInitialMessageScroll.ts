@@ -1,4 +1,4 @@
-import { useLayoutEffect } from "react";
+import { useEffect } from "react";
 import type { MutableRefObject } from "react";
 import type { ChatFollowMode, ChatScrollSnapshot } from "../../stores/useUIStore";
 import type { LedgerEvent } from "../../types";
@@ -13,12 +13,12 @@ type InitialMessageScrollOptions = {
   anchorId?: string;
   anchorOffsetPx?: number;
   shouldVirtualize: boolean;
+  scheduleScroll: (action: () => void) => void;
   scrollToIndex: (index: number) => void;
   scrollToMessageAnchor: (eventId: string, offsetPx?: number) => boolean;
   beginAnchorRestoration: (anchor: { anchorId: string; offsetPx: number }) => boolean;
   setAtBottom: (value: boolean) => void;
   setFollowMode: (mode: ChatFollowMode) => void;
-  scrollToBottomImmediately: () => void;
   scheduleForceStickToBottom: () => void;
   onScrollSnapshot?: (snapshot: ChatScrollSnapshot) => void;
   onRestoreAwayFromBottom?: () => void;
@@ -46,17 +46,17 @@ export function useInitialMessageScroll({
   anchorId,
   anchorOffsetPx,
   shouldVirtualize,
+  scheduleScroll,
   scrollToIndex,
   scrollToMessageAnchor,
   beginAnchorRestoration,
   setAtBottom,
   setFollowMode,
-  scrollToBottomImmediately,
   scheduleForceStickToBottom,
   onScrollSnapshot,
   onRestoreAwayFromBottom,
 }: InitialMessageScrollOptions) {
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (messages.length <= 0) return;
     const requestKey = getScrollRestorationRequestKey({ targetId, anchorId, offsetPx: anchorOffsetPx });
     if (didInitialScrollRef.current) {
@@ -70,35 +70,36 @@ export function useInitialMessageScroll({
     }
     didInitialScrollRef.current = true;
     requestRef.current = requestKey;
-    const markRestoredAwayFromBottom = () => {
-      setAtBottom(false);
-      setFollowMode("detached");
-      onRestoreAwayFromBottom?.();
-    };
-    if (targetId) {
-      if (shouldVirtualize) {
-        const index = messages.findIndex((message) => String(message?.id || "") === String(targetId));
-        if (index >= 0) {
+    scheduleScroll(() => {
+      const markRestoredAwayFromBottom = () => {
+        setAtBottom(false);
+        setFollowMode("detached");
+        onRestoreAwayFromBottom?.();
+      };
+      if (targetId) {
+        if (shouldVirtualize) {
+          const index = messages.findIndex((message) => String(message?.id || "") === String(targetId));
+          if (index >= 0) {
+            markRestoredAwayFromBottom();
+            scrollToIndex(index);
+            return;
+          }
+        } else if (scrollToMessageAnchor(String(targetId), 0)) {
           markRestoredAwayFromBottom();
-          scrollToIndex(index);
           return;
         }
-      } else if (scrollToMessageAnchor(String(targetId), 0)) {
-        markRestoredAwayFromBottom();
-        return;
       }
-    }
-    if (anchorId) {
-      if (beginAnchorRestoration({ anchorId: String(anchorId), offsetPx: Number(anchorOffsetPx || 0) })) {
-        markRestoredAwayFromBottom();
-        return;
+      if (anchorId) {
+        if (beginAnchorRestoration({ anchorId: String(anchorId), offsetPx: Number(anchorOffsetPx || 0) })) {
+          markRestoredAwayFromBottom();
+          return;
+        }
+        onScrollSnapshot?.({ mode: "follow", anchorId: "", offsetPx: 0, updatedAt: Date.now() });
       }
-      onScrollSnapshot?.({ mode: "follow", anchorId: "", offsetPx: 0, updatedAt: Date.now() });
-    }
-    setAtBottom(true);
-    setFollowMode("follow");
-    scrollToBottomImmediately();
-    scheduleForceStickToBottom();
+      setAtBottom(true);
+      setFollowMode("follow");
+      scheduleForceStickToBottom();
+    });
   }, [
     anchorId,
     anchorOffsetPx,
@@ -110,8 +111,8 @@ export function useInitialMessageScroll({
     reentryDeadlineRef,
     requestRef,
     scheduleForceStickToBottom,
+    scheduleScroll,
     scrollToIndex,
-    scrollToBottomImmediately,
     scrollToMessageAnchor,
     setAtBottom,
     setFollowMode,

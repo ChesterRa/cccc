@@ -20,6 +20,7 @@ export interface ChatScrollSnapshot {
   mode: ChatFollowMode;
   anchorId: string;
   offsetPx: number;
+  scrollTop?: number;
   updatedAt: number;
 }
 

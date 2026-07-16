@@ -1,5 +1,5 @@
 import { memo, useRef, useEffect, useLayoutEffect, useCallback } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { measureElement as measureVirtualElement, useVirtualizer } from "@tanstack/react-virtual";
 import { useTranslation } from "react-i18next";
 import { ArrowDownIcon, MessageSquareTextIcon } from "./Icons";
 import { getChatTailMutationSnapshot, getChatTailSnapshot } from "../utils/chatAutoFollow";
@@ -32,6 +32,7 @@ import { useVirtualScrollState } from "./virtualMessageList/useVirtualScrollStat
 import { useScrollAnchorRestoration } from "./virtualMessageList/useScrollAnchorRestoration";
 import { useInitialMessageScroll } from "./virtualMessageList/useInitialMessageScroll";
 import { useMessageTailAutoFollow } from "./virtualMessageList/useMessageTailAutoFollow";
+import { cacheMessageRowHeight } from "./virtualMessageList/rowHeightCache";
 
 export type { VirtualMessageListProps } from "./virtualMessageList/types";
 
@@ -53,6 +54,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   initialScrollTargetId,
   initialScrollAnchorId,
   initialScrollAnchorOffsetPx,
+  initialScrollOffsetPx,
   highlightEventId,
   className,
   topInsetPx = 0,
@@ -114,7 +116,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     prevResetKeyRef,
     latestSnapshotRef,
     getEstimatedSize,
-  } = useVirtualScrollState(displayMessages);
+  } = useVirtualScrollState(displayMessages, resetKey);
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
@@ -123,6 +125,15 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     getScrollElement: () => parentRef.current,
     getItemKey: (index) => getStableMessageKey(displayMessages[index], index),
     estimateSize: getEstimatedSize,
+    measureElement: (element, entry, instance) => {
+      const height = measureVirtualElement(element, entry, instance);
+      const index = Number(element.getAttribute("data-index"));
+      if (Number.isInteger(index) && index >= 0 && index < displayMessages.length) {
+        cacheMessageRowHeight(resetKey, getStableMessageKey(displayMessages[index], index), height);
+      }
+      return height;
+    },
+    initialOffset: Math.max(0, Number(initialScrollOffsetPx) || 0),
     overscan: VIRTUAL_OVERSCAN_ROWS,
     paddingStart: 72 + topInset,
   });
@@ -284,7 +295,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const el = parentRef.current;
     if (!el || displayMessages.length <= 0) return latestSnapshotRef.current;
     if (checkIsAtBottom()) {
-      return { mode: "follow", anchorId: "", offsetPx: 0, updatedAt: Date.now() };
+      return { mode: "follow", anchorId: "", offsetPx: 0, scrollTop: el.scrollTop, updatedAt: Date.now() };
     }
     const anchor = getAnchorSnapshot(el.scrollTop);
     if (!anchor) return latestSnapshotRef.current;
@@ -292,6 +303,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       mode: "detached",
       anchorId: anchor.anchorId,
       offsetPx: anchor.offsetPx,
+      scrollTop: el.scrollTop,
       updatedAt: Date.now(),
     };
   }, [checkIsAtBottom, displayMessages.length, getAnchorSnapshot, latestSnapshotRef]);
@@ -332,13 +344,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       isAtBottomRef,
     ],
   );
-
-  const scrollToBottomImmediately = useCallback(() => {
-    const el = parentRef.current;
-    if (!el || displayMessages.length <= 0) return;
-    el.scrollTop = el.scrollHeight;
-    lastScrollTopRef.current = el.scrollTop;
-  }, [displayMessages.length, lastScrollTopRef]);
 
   const cancelScheduledScroll = useCallback(() => {
     const rid = scrollRafRef.current;
@@ -583,6 +588,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
             mode: atBottom ? ("follow" as const) : followModeRef.current,
             anchorId: atBottom ? "" : anchor.anchorId,
             offsetPx: atBottom ? 0 : anchor.offsetPx,
+            scrollTop: curTop,
             updatedAt: Date.now(),
           };
           latestSnapshotRef.current = snap;
@@ -722,12 +728,12 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     anchorId: initialScrollAnchorId,
     anchorOffsetPx: initialScrollAnchorOffsetPx,
     shouldVirtualize,
+    scheduleScroll,
     scrollToIndex: scrollToIndexStable,
     scrollToMessageAnchor,
     beginAnchorRestoration: anchorRestoration.begin,
     setAtBottom,
     setFollowMode,
-    scrollToBottomImmediately,
     scheduleForceStickToBottom,
     onScrollSnapshot,
     onRestoreAwayFromBottom: notifyRestoredAwayFromBottom,

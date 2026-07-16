@@ -2,7 +2,19 @@
 
 ## How do I install CCCC?
 
-Download the archive for your platform from GitHub Releases and put `cccc`, `ccccd`, `cccc-mcp`, and `cccc-web` on `PATH`. For source builds:
+Starting with v0.5.0, use the release installer:
+
+```bash
+bash -o pipefail -c 'curl -fsSL https://github.com/ChesterRa/cccc/releases/latest/download/install.sh | bash'
+```
+
+On Windows PowerShell:
+
+```powershell
+& { $ErrorActionPreference = "Stop"; irm https://github.com/ChesterRa/cccc/releases/latest/download/install.ps1 | iex }
+```
+
+The installer verifies `SHA256SUMS` and installs one `cccc` executable containing CLI, daemon, Web, and MCP modes. See [Getting Started](./getting-started/) for fixed-version, custom-directory, manual verification, and supported-platform details. For source builds:
 
 ```bash
 npm ci --prefix web
@@ -10,7 +22,7 @@ npm -C web run build
 cargo build --workspace --release --locked
 ```
 
-The release archive does not require Python.
+The release archive does not require Python, Node.js, or Rust.
 
 ## Where is data stored?
 

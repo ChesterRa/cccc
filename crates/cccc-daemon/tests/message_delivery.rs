@@ -89,6 +89,49 @@ fn serializes_delivery_notifies_and_advances_cursor() {
     assert_eq!(inbox.result["messages"].as_array().map(Vec::len), Some(0));
 }
 
+#[test]
+fn empty_recipients_follow_the_group_default_policy() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"default-recipient-test","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["lead", "peer1"] {
+        call(
+            &home,
+            "actor_add",
+            json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
+        );
+    }
+
+    let default_send = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":[],"text":"foreman only"}),
+    );
+    assert_eq!(
+        default_send.result["event"]["data"]["to"],
+        json!(["@foreman"])
+    );
+
+    call(
+        &home,
+        "group_settings_update",
+        json!({"group_id":group_id,"by":"user","patch":{"default_send_to":"broadcast"}}),
+    );
+    let broadcast = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":[],"text":"everyone"}),
+    );
+    assert_eq!(broadcast.result["event"]["data"]["to"], json!(["@all"]));
+}
+
 fn wait_for(home: &HomeLayout, group_id: &str, expected: &str) {
     let deadline = Instant::now() + Duration::from_secs(7);
     loop {

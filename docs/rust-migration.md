@@ -37,8 +37,10 @@ cccc-contracts <- cccc-core <- cccc-daemon
 cccc-contracts <- cccc-client <- cccc-cli
 ```
 
-Ports communicate with the daemon through the versioned IPC contract. The
-daemon is the only writer for group state and ledgers.
+Ports communicate with the daemon through the versioned IPC contract. Ledger
+writes remain daemon-owned. Group documents and global settings use shared
+cross-process transaction locks so daemon operations and Web-owned integration
+lifecycle updates cannot overwrite each other.
 
 ## Runtime recovery and delivery
 

@@ -1,11 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use cccc_client::DaemonClient;
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
+use cccc_daemon::{DetachedDaemon, StartOutcome};
 use clap::{Parser, Subcommand};
 use serde_json::Map;
-use std::fs::OpenOptions;
-use std::process::{Command, Stdio};
 use std::time::Duration;
 
 #[derive(Debug, Parser)]
@@ -39,44 +38,20 @@ async fn main() -> Result<()> {
 }
 
 async fn start(home: HomeLayout) -> Result<()> {
-    home.initialize()?;
-    if ping(&home).await {
-        println!("ccccd: already running");
-        return Ok(());
-    }
-    let paths = cccc_daemon::DaemonPaths::new(home.clone());
-    let log = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&paths.log)?;
-    let error_log = log.try_clone()?;
     let executable = std::env::current_exe()?;
-    let mut command = detached_command(&executable);
-    let mut child = command
-        .arg("run")
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log))
-        .stderr(Stdio::from(error_log))
-        .current_dir(home.root())
-        .spawn()
-        .context("spawn Rust daemon")?;
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-    loop {
-        if ping(&home).await {
-            println!("ccccd: started pid={}", child.id());
-            return Ok(());
-        }
-        if tokio::time::Instant::now() >= deadline {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
+    report_start(
+        DetachedDaemon::new(executable, ["run"])
+            .start(&home)
+            .await?,
+    );
+    Ok(())
+}
+
+fn report_start(outcome: StartOutcome) {
+    match outcome {
+        StartOutcome::AlreadyRunning => println!("ccccd: already running"),
+        StartOutcome::Started(pid) => println!("ccccd: started pid={pid}"),
     }
-    let _ = child.kill();
-    let _ = child.wait();
-    anyhow::bail!(
-        "Rust daemon failed to become ready; see {}",
-        paths.log.display()
-    )
 }
 
 async fn stop(home: HomeLayout) -> Result<()> {
@@ -116,23 +91,4 @@ fn request(op: &str) -> DaemonRequest {
         op: op.into(),
         args: Map::new(),
     }
-}
-
-#[cfg(unix)]
-fn detached_command(executable: &std::path::Path) -> Command {
-    use std::os::unix::process::CommandExt;
-    let mut command = Command::new("nohup");
-    command.arg(executable);
-    command.process_group(0);
-    command
-}
-
-#[cfg(windows)]
-fn detached_command(executable: &std::path::Path) -> Command {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    const DETACHED_PROCESS: u32 = 0x0000_0008;
-    let mut command = Command::new(executable);
-    command.creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS);
-    command
 }

@@ -17,6 +17,8 @@ use uuid::Uuid;
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
 
+mod voice_recording_lease;
+
 const STORE_KEY: &str = "assistants";
 
 #[derive(Debug, Default, Deserialize)]
@@ -117,7 +119,11 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn list(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
-    Ok(success(payload(&group_id, &load(&state, &group_id)?)))
+    Ok(success(payload(
+        &state,
+        &group_id,
+        &load(&state, &group_id)?,
+    )))
 }
 async fn show(
     State(state): State<AppState>,
@@ -126,7 +132,11 @@ async fn show(
     if assistant_id != "voice_secretary" {
         return Err(ApiError::not_found("assistant not found"));
     }
-    Ok(success(payload(&group_id, &load(&state, &group_id)?)))
+    Ok(success(payload(
+        &state,
+        &group_id,
+        &load(&state, &group_id)?,
+    )))
 }
 async fn update_settings(
     State(state): State<AppState>,
@@ -214,50 +224,11 @@ async fn recording_lease(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let action = body["action"].as_str().unwrap_or("status");
-    let owner = body["owner_id"].as_str().unwrap_or("");
-    let requested_id = body["lease_id"].as_str().unwrap_or("");
-    let result = update(&state, &group_id, |value| {
-        let root = root(value);
-        let current = root.get("recording_lease").cloned().unwrap_or(Value::Null);
-        let mut acquired = false;
-        let mut released = false;
-        let mut lost = false;
-        match action {
-            "acquire" => {
-                if current.is_object() && current["owner_id"] != owner {
-                    lost = true;
-                } else {
-                    let lease_id = format!("vrl_{}", short_id());
-                    root.insert("recording_lease".into(),json!({"lease_id":lease_id,"owner_id":owner,"capture_mode":body["capture_mode"],"recognition_backend":body["recognition_backend"],"ttl_seconds":body["ttl_seconds"],"acquired_at":utc_now(),"updated_at":utc_now()}));
-                    acquired = true;
-                }
-            }
-            "heartbeat" => {
-                if current["lease_id"] == requested_id {
-                    let mut lease = current;
-                    lease["updated_at"] = json!(utc_now());
-                    root.insert("recording_lease".into(), lease);
-                } else {
-                    lost = true;
-                }
-            }
-            "release" => {
-                if requested_id.is_empty() || current["lease_id"] == requested_id {
-                    root.remove("recording_lease");
-                    released = true;
-                } else {
-                    lost = true;
-                }
-            }
-            "status" => {}
-            _ => return Err(io::Error::other("unsupported lease action")),
-        }
-        Ok(
-            json!({"action":action,"acquired":acquired,"released":released,"lost":lost,"lease_id":root["recording_lease"]["lease_id"],"lease":root.get("recording_lease").cloned().unwrap_or(Value::Null)}),
-        )
-    })?;
-    Ok(success(merge_group(&group_id, result)))
+    Ok(success(voice_recording_lease::update(
+        &state.home,
+        &group_id,
+        &body,
+    )?))
 }
 
 async fn model_install(
@@ -563,7 +534,11 @@ async fn clear_asks(
         });
         Ok(())
     })?;
-    Ok(success(payload(&group_id, &load(&state, &group_id)?)))
+    Ok(success(payload(
+        &state,
+        &group_id,
+        &load(&state, &group_id)?,
+    )))
 }
 
 fn input_record(
@@ -594,11 +569,11 @@ fn input_record(
         Ok((document, request))
     })
 }
-fn payload(group_id: &str, value: &Value) -> Value {
+fn payload(state: &AppState, group_id: &str, value: &Value) -> Value {
     let assistant = assistant(value);
     let documents = array(value, "documents").to_vec();
     let asks = array(value, "ask_requests").to_vec();
-    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":!asks.is_empty(),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":array(value,"service_models"),"service_runtime":value["service_runtime"],"recording_lease":value["recording_lease"]})
+    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":!asks.is_empty(),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":array(value,"service_models"),"service_runtime":value["service_runtime"],"recording_lease":voice_recording_lease::current(&state.home)})
 }
 fn assistant(value: &Value) -> Value {
     value
@@ -664,11 +639,6 @@ fn document_result_extra(
 }
 fn runtime_payload(installed: bool) -> Value {
     json!({"runtime_id":"sherpa-onnx","installed":installed,"status":if installed{"ready"}else{"unavailable"},"available":installed,"reason":if installed{""}else{"sherpa-onnx runtime is not bundled"}})
-}
-fn merge_group(group_id: &str, value: Value) -> Value {
-    let mut map = value.as_object().cloned().unwrap_or_default();
-    map.insert("group_id".into(), json!(group_id));
-    Value::Object(map)
 }
 fn load(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;

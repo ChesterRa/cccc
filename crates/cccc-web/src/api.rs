@@ -11,6 +11,7 @@ pub struct ApiError {
     status: StatusCode,
     code: String,
     message: String,
+    details: Value,
 }
 
 impl std::fmt::Display for ApiError {
@@ -25,6 +26,7 @@ impl ApiError {
             status: StatusCode::BAD_REQUEST,
             code: "invalid_request".into(),
             message: message.into(),
+            details: json!({}),
         }
     }
     pub fn not_found(message: impl Into<String>) -> Self {
@@ -32,6 +34,7 @@ impl ApiError {
             status: StatusCode::NOT_FOUND,
             code: "not_found".into(),
             message: message.into(),
+            details: json!({}),
         }
     }
     pub fn forbidden(message: impl Into<String>) -> Self {
@@ -39,6 +42,25 @@ impl ApiError {
             status: StatusCode::FORBIDDEN,
             code: "permission_denied".into(),
             message: message.into(),
+            details: json!({}),
+        }
+    }
+
+    pub fn conflict(code: impl Into<String>, message: impl Into<String>, details: Value) -> Self {
+        Self {
+            status: StatusCode::CONFLICT,
+            code: code.into(),
+            message: message.into(),
+            details,
+        }
+    }
+
+    pub fn unavailable(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            code: code.into(),
+            message: message.into(),
+            details: json!({}),
         }
     }
 }
@@ -47,9 +69,7 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         (
             self.status,
-            Json(
-                json!({"ok":false,"error":{"code":self.code,"message":self.message,"details":{}}}),
-            ),
+            Json(json!({"ok":false,"error":{"code":self.code,"message":self.message,"details":self.details}})),
         )
             .into_response()
     }
@@ -70,6 +90,7 @@ pub async fn call(state: &AppState, op: &str, args: Map<String, Value>) -> ApiRe
             status: StatusCode::SERVICE_UNAVAILABLE,
             code: "daemon_unavailable".into(),
             message: error.to_string(),
+            details: json!({}),
         })?;
     if response.ok {
         return Ok(Json(json!({"ok":true,"result":response.result})));
@@ -89,6 +110,7 @@ pub async fn call(state: &AppState, op: &str, args: Map<String, Value>) -> ApiRe
         status,
         code: error.0,
         message: error.1,
+        details: json!({}),
     })
 }
 

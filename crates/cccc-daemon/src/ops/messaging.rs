@@ -1,5 +1,4 @@
 use cccc_contracts::{DaemonRequest, Event};
-use cccc_core::actors;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 
@@ -173,42 +172,7 @@ fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     if kind == "chat.message" {
-        let text = data
-            .get("text")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .trim();
-        let has_files = data
-            .get("attachments")
-            .and_then(Value::as_array)
-            .is_some_and(|files| !files.is_empty());
-        if text.is_empty() && !has_files {
-            return Err(OpError::new(
-                "invalid_args",
-                "text or attachments is required",
-            ));
-        }
-        let raw: Vec<String> = data
-            .get("to")
-            .and_then(Value::as_array)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .unwrap_or_default();
-        data.insert(
-            "to".into(),
-            json!(actors::resolve_recipients(&group, &raw).map_err(OpError::invalid)?),
-        );
-        data.entry("format")
-            .or_insert_with(|| Value::String("plain".into()));
-        data.entry("priority")
-            .or_insert_with(|| Value::String("normal".into()));
-        data.entry("reply_required").or_insert(Value::Bool(false));
-        super::message_metadata::add_sender_snapshot(&group, &by, &mut data);
+        super::messaging_recipients::normalize_chat_data(&group, &by, &mut data)?;
     }
     let event = append(home, &group.group_id, kind, &by, data)?;
     let delivery = actor_delivery::dispatch(home, &group, &event);

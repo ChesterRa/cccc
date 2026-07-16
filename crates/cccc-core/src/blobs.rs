@@ -1,6 +1,6 @@
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 use crate::{GroupStore, HomeLayout};
@@ -29,6 +29,57 @@ pub fn store(home: &HomeLayout, group_id: &str, data: &[u8]) -> io::Result<BlobI
         bytes: data.len(),
         sha256: digest,
     })
+}
+
+pub struct BlobUpload {
+    file: tempfile::NamedTempFile,
+    blobs_dir: PathBuf,
+    hasher: Sha256,
+    bytes: usize,
+}
+
+impl BlobUpload {
+    pub fn new(home: &HomeLayout, group_id: &str) -> io::Result<Self> {
+        let blobs_dir = GroupStore::new(home.clone())?
+            .state_dir(group_id)?
+            .join("blobs");
+        fs::create_dir_all(&blobs_dir)?;
+        Ok(Self {
+            file: tempfile::NamedTempFile::new_in(&blobs_dir)?,
+            blobs_dir,
+            hasher: Sha256::new(),
+            bytes: 0,
+        })
+    }
+
+    pub fn write_chunk(&mut self, data: &[u8]) -> io::Result<()> {
+        self.file.write_all(data)?;
+        self.hasher.update(data);
+        self.bytes += data.len();
+        Ok(())
+    }
+
+    #[must_use]
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    pub fn finish(self) -> io::Result<BlobInfo> {
+        self.file.as_file().sync_all()?;
+        let digest = format!("{:x}", self.hasher.finalize());
+        let path = self.blobs_dir.join(&digest);
+        if !path.exists()
+            && let Err(error) = self.file.persist_noclobber(&path)
+            && error.error.kind() != io::ErrorKind::AlreadyExists
+        {
+            return Err(error.error);
+        }
+        Ok(BlobInfo {
+            path: format!("state/blobs/{digest}"),
+            bytes: self.bytes,
+            sha256: digest,
+        })
+    }
 }
 
 pub fn resolve(home: &HomeLayout, group_id: &str, relative: &str) -> io::Result<PathBuf> {
@@ -101,5 +152,23 @@ mod tests {
         assert!(!valid_blob_name(&format!("{digest}_../secret")));
         assert!(!valid_blob_name(&format!("{digest}_image/name.png")));
         assert!(!valid_blob_name("not-a-digest_image.png"));
+    }
+
+    #[test]
+    fn streamed_upload_hashes_chunks_and_persists_once() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("streamed blob", "").expect("group");
+        let mut upload = BlobUpload::new(&home, &group.group_id).expect("upload");
+        upload.write_chunk(b"hello ").expect("first chunk");
+        upload.write_chunk(b"world").expect("second chunk");
+        assert_eq!(upload.bytes(), 11);
+        let info = upload.finish().expect("finish");
+        assert_eq!(
+            fs::read(resolve(&home, &group.group_id, &info.path).expect("resolve")).expect("read"),
+            b"hello world"
+        );
+        assert_eq!(info.sha256, format!("{:x}", Sha256::digest(b"hello world")));
     }
 }

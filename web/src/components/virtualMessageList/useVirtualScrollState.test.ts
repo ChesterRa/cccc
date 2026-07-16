@@ -5,7 +5,7 @@ describe("virtual scroll message measurements", () => {
   it("binds row estimates to the current render's message collection", () => {
     const source = readFileSync(new URL("./useVirtualScrollState.ts", import.meta.url), "utf8");
     expect(source).toContain("const message = messages[index];");
-    expect(source).toContain("}, [messages]);");
+    expect(source).toContain("}, [messages, viewKey]);");
     expect(source).not.toContain("messagesRef");
   });
 });

@@ -9,6 +9,7 @@ use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 const PLATFORM: &str = "wecom";
@@ -18,13 +19,13 @@ pub(super) async fn start(
     daemon: DaemonClient,
     group_id: &str,
     config: &Map<String, Value>,
+    ledger_events: crate::ledger_event_hub::LedgerEventHub,
+    on_terminal_error: impl Fn(&HomeLayout, &str, &str) + Send + Sync + 'static,
 ) -> Result<(Vec<JoinHandle<()>>, Arc<WecomClient>), String> {
     let bot_id = resolve_credential(&string(config, "wecom_bot_id"))?;
     let secret = resolve_credential(&string(config, "wecom_secret"))?;
-    let callback_home = home.clone();
-    let callback_daemon = daemon.clone();
-    let callback_group = group_id.to_owned();
     let deduper = Arc::new(MessageDeduper::default());
+    let (inbound_tx, mut inbound_rx) = mpsc::channel(128);
     let callback = move |frame: Value| {
         let Some(message) = parse_inbound(&frame) else {
             return;
@@ -32,17 +33,28 @@ pub(super) async fn start(
         if !deduper.accept(&message.chat_id, &message.message_id) {
             return;
         }
-        let home = callback_home.clone();
-        let daemon = callback_daemon.clone();
-        let group_id = callback_group.clone();
-        tokio::spawn(async move {
-            if !accepts_inbound(&home, &group_id, PLATFORM, &message.chat_id, &message.text) {
-                return;
+        if let Err(error) = inbound_tx.try_send(message) {
+            tracing::warn!(%error, "dropped WeCom message because inbound queue is full or closed");
+        }
+    };
+    let inbound_home = home.clone();
+    let inbound_group = group_id.to_owned();
+    let inbound = tokio::spawn(async move {
+        while let Some(message) = inbound_rx.recv().await {
+            if !accepts_inbound(
+                &inbound_home,
+                &inbound_group,
+                PLATFORM,
+                &message.chat_id,
+                &message.text,
+            ) {
+                continue;
             }
-            let attachments = materialize_attachments(&home, &group_id, &message.attachments).await;
+            let attachments =
+                materialize_attachments(&inbound_home, &inbound_group, &message.attachments).await;
             if let Err(error) = dispatch_inbound_with(
                 &daemon,
-                &group_id,
+                &inbound_group,
                 PLATFORM,
                 &message.chat_id,
                 &message.sender,
@@ -56,29 +68,38 @@ pub(super) async fn start(
             {
                 tracing::warn!(%error, "failed to dispatch WeCom IM message");
             }
-        });
-    };
+        }
+    });
     let status_home = home.clone();
     let status_group = group_id.to_owned();
-    let (sdk, connection) =
+    let connection_result =
         WecomClient::connect_with_status(bot_id, secret, callback, move |error| {
-            persist_terminal_error(&status_home, &status_group, &error)
+            on_terminal_error(&status_home, &status_group, &error)
         })
-        .await?;
+        .await;
+    let (sdk, connection) = match connection_result {
+        Ok(connection) => connection,
+        Err(error) => {
+            inbound.abort();
+            let _ = inbound.await;
+            return Err(error);
+        }
+    };
     let outbound_sender = WecomOutbound::new(home.clone(), group_id.to_owned(), Arc::clone(&sdk));
     let outbound = spawn_outbound_matching(
         home,
         group_id.to_owned(),
+        ledger_events,
         outbound_sender,
         is_outbound_or_stream,
         |sender, targets, event| async move {
             sender.send(targets, event).await;
         },
     );
-    Ok((vec![connection, outbound], sdk))
+    Ok((vec![connection, inbound, outbound], sdk))
 }
 
-fn persist_terminal_error(home: &HomeLayout, group_id: &str, error: &str) {
+pub(super) fn persist_terminal_error(home: &HomeLayout, group_id: &str, error: &str) {
     let Ok(store) = cccc_core::GroupStore::new(home.clone()) else {
         return;
     };

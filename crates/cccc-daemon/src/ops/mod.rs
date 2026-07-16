@@ -26,6 +26,7 @@ mod message_metadata;
 mod messaging;
 mod messaging_inbox;
 mod messaging_query;
+mod messaging_recipients;
 mod messaging_status;
 mod presentation;
 mod profiles;

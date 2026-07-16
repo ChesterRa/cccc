@@ -57,6 +57,7 @@ async fn stream(
     Path(group_id): Path<String>,
     Query(query): Query<StreamQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let mut shutdown = state.shutdown.subscribe();
     let output = async_stream::stream! {
         let mut cursors = BTreeMap::<String,u64>::new();
         let mut first = true;
@@ -67,7 +68,10 @@ async fn stream(
                 }
             }
             first=false;
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            tokio::select! {
+                _ = shutdown.recv() => break,
+                _ = tokio::time::sleep(Duration::from_millis(300)) => {},
+            }
         }
     };
     Sse::new(output).keep_alive(KeepAlive::default())

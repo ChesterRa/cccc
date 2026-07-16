@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cccc-install-test.XXXXXX")"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+
+case "$(uname -s):$(uname -m)" in
+  Linux:x86_64|Linux:amd64) target=x86_64-unknown-linux-gnu ;;
+  Darwin:x86_64|Darwin:amd64) target=x86_64-apple-darwin ;;
+  Darwin:arm64|Darwin:aarch64) target=aarch64-apple-darwin ;;
+  *) echo "unsupported test platform" >&2; exit 1 ;;
+esac
+
+checksum() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{ print $1 }'
+  else
+    shasum -a 256 "$1" | awk '{ print $1 }'
+  fi
+}
+
+make_release() {
+  local version=$1
+  local checksum_value=${2:-valid}
+  local reported_version=${3:-$version}
+  local missing_binary=${4:-}
+  local package="cccc-v${version}-${target}"
+  local release_dir="$TMP_ROOT/releases/download/v${version}"
+  mkdir -p "$release_dir" "$TMP_ROOT/package/$package"
+  binary=cccc
+  if [[ "$binary" != "$missing_binary" ]]; then
+    printf '#!/usr/bin/env sh\nif [ "${1:-}" = "--version" ]; then printf "cccc %s\\n"; exit 0; fi\nexit 1\n' "$reported_version" > "$TMP_ROOT/package/$package/$binary"
+    chmod 755 "$TMP_ROOT/package/$package/$binary"
+  fi
+  tar -C "$TMP_ROOT/package" -czf "$release_dir/$package.tar.gz" "$package"
+  if [[ "$checksum_value" == valid ]]; then
+    checksum_value=$(checksum "$release_dir/$package.tar.gz")
+  fi
+  : > "$release_dir/SHA256SUMS"
+  for fixture_target in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+    fixture_name="cccc-v${version}-${fixture_target}"
+    fixture_ext=tar.gz
+    [[ "$fixture_target" == x86_64-pc-windows-msvc ]] && fixture_ext=zip
+    fixture_checksum=$(printf '0%.0s' {1..64})
+    [[ "$fixture_name.$fixture_ext" == "$package.tar.gz" ]] && fixture_checksum=$checksum_value
+    printf '%s  %s.%s\n' "$fixture_checksum" "$fixture_name" "$fixture_ext" >> "$release_dir/SHA256SUMS"
+  done
+  rm -rf "$TMP_ROOT/package"
+}
+
+version=0.0.0-test
+make_release "$version"
+sed "s/@CCCC_VERSION@/$version/g" "$ROOT_DIR/scripts/install.sh" > "$TMP_ROOT/versioned-install.sh"
+HOME="$TMP_ROOT/versioned-home" \
+SHELL=/bin/zsh \
+CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+sh "$TMP_ROOT/versioned-install.sh"
+[[ "$("$TMP_ROOT/versioned-home/.local/bin/cccc" --version)" == "cccc $version" ]]
+
+HOME="$TMP_ROOT/home with space" \
+SHELL=/bin/bash \
+CCCC_VERSION="$version" \
+CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+sh "$ROOT_DIR/scripts/install.sh"
+
+test -x "$TMP_ROOT/home with space/.local/bin/cccc"
+[[ "$("$TMP_ROOT/home with space/.local/bin/cccc" --version)" == "cccc $version" ]]
+test "$(grep -Fc '# CCCC' "$TMP_ROOT/home with space/.bashrc")" -eq 1
+
+profile_before=$(checksum "$TMP_ROOT/home with space/.bashrc")
+rollback_version=0.0.2-test
+make_release "$rollback_version" valid 9.9.9
+if HOME="$TMP_ROOT/home with space" \
+  SHELL=/bin/bash \
+  CCCC_VERSION="$rollback_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  sh "$ROOT_DIR/scripts/install.sh"; then
+  echo "installer accepted a mismatched binary version" >&2
+  exit 1
+fi
+[[ "$("$TMP_ROOT/home with space/.local/bin/cccc" --version)" == "cccc $version" ]]
+[[ "$(checksum "$TMP_ROOT/home with space/.bashrc")" == "$profile_before" ]]
+
+zsh_home="$TMP_ROOT/zsh-home"
+HOME="$zsh_home" \
+SHELL=/bin/zsh \
+CCCC_VERSION="$version" \
+CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+sh "$ROOT_DIR/scripts/install.sh"
+test "$(grep -Fc '# CCCC' "$zsh_home/.zprofile")" -eq 1
+
+missing_version=0.0.3-test
+make_release "$missing_version" valid "$missing_version" cccc
+if HOME="$TMP_ROOT/missing-home" \
+  CCCC_VERSION="$missing_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh"; then
+  echo "installer accepted an archive missing cccc" >&2
+  exit 1
+fi
+test ! -e "$TMP_ROOT/missing-home/.local/bin/cccc"
+
+duplicate_version=0.0.4-test
+make_release "$duplicate_version"
+duplicate_package="cccc-v${duplicate_version}-${target}"
+duplicate_manifest="$TMP_ROOT/releases/download/v${duplicate_version}/SHA256SUMS"
+duplicate_line=$(grep -F "  $duplicate_package.tar.gz" "$duplicate_manifest")
+printf '%s\n' "$duplicate_line" >> "$duplicate_manifest"
+if HOME="$TMP_ROOT/duplicate-home" \
+  CCCC_VERSION="$duplicate_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh"; then
+  echo "installer accepted a duplicate checksum entry" >&2
+  exit 1
+fi
+test ! -e "$TMP_ROOT/duplicate-home/.local/bin/cccc"
+
+unsafe_version=0.0.5-test
+make_release "$unsafe_version"
+unsafe_package="cccc-v${unsafe_version}-${target}"
+unsafe_dir="$TMP_ROOT/releases/download/v${unsafe_version}"
+mkdir -p "$TMP_ROOT/unsafe-root"
+tar -xzf "$unsafe_dir/$unsafe_package.tar.gz" -C "$TMP_ROOT/unsafe-root"
+printf 'outside package\n' > "$TMP_ROOT/unsafe-root/outside.txt"
+tar -C "$TMP_ROOT/unsafe-root" -czf "$unsafe_dir/$unsafe_package.tar.gz" "$unsafe_package" outside.txt
+unsafe_checksum=$(checksum "$unsafe_dir/$unsafe_package.tar.gz")
+awk -v name="$unsafe_package.tar.gz" -v hash="$unsafe_checksum" \
+  '$2 == name { $1 = hash } { print }' "$unsafe_dir/SHA256SUMS" > "$unsafe_dir/SHA256SUMS.new"
+mv "$unsafe_dir/SHA256SUMS.new" "$unsafe_dir/SHA256SUMS"
+if HOME="$TMP_ROOT/unsafe-home" \
+  CCCC_VERSION="$unsafe_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh"; then
+  echo "installer accepted an archive entry outside its package root" >&2
+  exit 1
+fi
+test ! -e "$TMP_ROOT/unsafe-home/.local/bin/cccc"
+
+lock_version=0.0.6-test
+make_release "$lock_version"
+lock_install="$TMP_ROOT/lock-installed"
+mkdir -p "$lock_install/.cccc-install.lock"
+printf 'old binary\n' > "$lock_install/cccc"
+lock_hash=$(checksum "$lock_install/cccc")
+if HOME="$TMP_ROOT/lock-home" \
+  CCCC_VERSION="$lock_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$lock_install" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh"; then
+  echo "installer ignored an existing transaction lock" >&2
+  exit 1
+fi
+[[ "$(checksum "$lock_install/cccc")" == "$lock_hash" ]]
+rm -rf "$lock_install/.cccc-install.lock"
+
+stale_version=0.0.8-test
+make_release "$stale_version"
+failing_version=0.0.9-test
+make_release "$failing_version" valid 9.9.9
+stale_install="$TMP_ROOT/stale-installed"
+stale_signal="$TMP_ROOT/stale-lock-reached"
+stale_release="$TMP_ROOT/stale-lock-release"
+mkdir -p "$TMP_ROOT/stale-bin"
+real_mkdir=$(command -v mkdir)
+cat > "$TMP_ROOT/stale-bin/mkdir" <<EOF
+#!/usr/bin/env sh
+case "\${*}" in
+  *'.cccc-install.lock'*)
+    : > '$stale_signal'
+    while [ ! -e '$stale_release' ]; do sleep 0.01; done
+    ;;
+esac
+exec '$real_mkdir' "\$@"
+EOF
+chmod 755 "$TMP_ROOT/stale-bin/mkdir"
+HOME="$TMP_ROOT/stale-home-b" \
+PATH="$TMP_ROOT/stale-bin:$PATH" \
+CCCC_VERSION="$failing_version" \
+CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+CCCC_INSTALL_DIR="$stale_install" \
+CCCC_NO_MODIFY_PATH=1 \
+sh "$ROOT_DIR/scripts/install.sh" > "$TMP_ROOT/stale-b.out" 2> "$TMP_ROOT/stale-b.err" &
+stale_pid=$!
+for _ in {1..500}; do
+  [[ -e "$stale_signal" ]] && break
+  sleep 0.01
+done
+if [[ ! -e "$stale_signal" ]]; then
+  kill "$stale_pid" 2>/dev/null || true
+  echo "second installer did not reach its transaction lock" >&2
+  exit 1
+fi
+HOME="$TMP_ROOT/stale-home-a" \
+CCCC_VERSION="$stale_version" \
+CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+CCCC_INSTALL_DIR="$stale_install" \
+CCCC_NO_MODIFY_PATH=1 \
+sh "$ROOT_DIR/scripts/install.sh"
+: > "$stale_release"
+if wait "$stale_pid"; then
+  echo "stale installer accepted a mismatched binary version" >&2
+  exit 1
+fi
+test -x "$stale_install/cccc"
+[[ "$($stale_install/cccc --version)" == "cccc $stale_version" ]]
+
+restart_version=0.0.7-test
+make_release "$restart_version" valid 9.9.9
+restart_install="$TMP_ROOT/restart-installed"
+restart_state="$TMP_ROOT/restart-daemon-state"
+mkdir -p "$restart_install"
+printf 'running\n' > "$restart_state"
+cat > "$restart_install/cccc" <<EOF
+#!/usr/bin/env sh
+state_file='$restart_state'
+if [ "\${1:-}" = daemon ] && [ "\${2:-}" = status ]; then
+  [ "\$(cat "\$state_file")" = running ]
+  exit
+fi
+if [ "\${1:-}" = daemon ] && [ "\${2:-}" = stop ]; then
+  printf 'stopped\n' > "\$state_file"
+  exit 0
+fi
+if [ "\${1:-}" = daemon ] && [ "\${2:-}" = start ]; then
+  exit 1
+fi
+if [ "\${1:-}" = --version ]; then
+  printf 'cccc 0.0.0-old\n'
+  exit 0
+fi
+exit 1
+EOF
+chmod 755 "$restart_install/cccc"
+restart_hash=$(checksum "$restart_install/cccc")
+if HOME="$TMP_ROOT/restart-home" \
+  CCCC_VERSION="$restart_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$restart_install" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh" 2> "$TMP_ROOT/restart-error"; then
+  echo "installer accepted a mismatched version during daemon rollback test" >&2
+  exit 1
+fi
+grep -Fq 'rollback restored the previous binary but failed to restart its daemon' "$TMP_ROOT/restart-error"
+[[ "$(checksum "$restart_install/cccc")" == "$restart_hash" ]]
+
+mkdir -p "$TMP_ROOT/fake-bin"
+cat > "$TMP_ROOT/fake-bin/uname" <<'EOF'
+#!/usr/bin/env sh
+case "${1:-}" in
+  -s) printf 'Linux\n' ;;
+  -m) printf 'aarch64\n' ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod 755 "$TMP_ROOT/fake-bin/uname"
+if HOME="$TMP_ROOT/unsupported-home" \
+  PATH="$TMP_ROOT/fake-bin:$PATH" \
+  CCCC_VERSION="$version" \
+  sh "$ROOT_DIR/scripts/install.sh"; then
+  echo "installer accepted unsupported Linux aarch64" >&2
+  exit 1
+fi
+
+HOME="$TMP_ROOT/home with space" \
+SHELL=/bin/bash \
+CCCC_VERSION="$version" \
+CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+sh "$ROOT_DIR/scripts/install.sh"
+test "$(grep -Fc '# CCCC' "$TMP_ROOT/home with space/.bashrc")" -eq 1
+
+bad_version=0.0.1-test
+make_release "$bad_version" "$(printf '0%.0s' {1..64})"
+if HOME="$TMP_ROOT/bad-home" \
+  CCCC_VERSION="$bad_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh"; then
+  echo "installer accepted a bad checksum" >&2
+  exit 1
+fi
+test ! -e "$TMP_ROOT/bad-home/.local/bin/cccc"
+
+echo "OK: Unix installer"

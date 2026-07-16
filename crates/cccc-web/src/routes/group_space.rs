@@ -133,7 +133,7 @@ async fn ingest(
         {
             return Ok((job.clone(), true));
         }
-        let job = json!({"job_id":format!("gsj_{}",short_id()),"group_id":group_id,"provider":provider,"lane":lane,"remote_space_id":binding_id(root,&lane),"kind":kind,"payload":payload,"idempotency_key":idempotency,"state":"succeeded","attempt":1,"max_attempts":3,"created_at":utc_now(),"updated_at":utc_now()});
+        let job = json!({"job_id":format!("gsj_{}",short_id()),"group_id":group_id,"provider":provider,"lane":lane,"remote_space_id":binding_id(root,&lane),"kind":kind,"payload":payload,"idempotency_key":idempotency,"state":"succeeded","attempt":1,"max_attempts":3,"created_at":utc_now(),"updated_at":utc_now(),"execution_mode":"local_fallback"});
         array_field(root, "jobs").push(job.clone());
         let title = payload["title"]
             .as_str()
@@ -143,7 +143,7 @@ async fn ingest(
         Ok((job, false))
     })?;
     Ok(success(
-        json!({"group_id":group_id,"job_id":job["job_id"],"accepted":true,"completed":true,"deduped":deduped,"job":job,"queue_summary":queue_summary(&load(&state,&group_id)?),"provider_mode":"degraded"}),
+        json!({"group_id":group_id,"job_id":job["job_id"],"accepted":true,"completed":true,"deduped":deduped,"job":job,"queue_summary":queue_summary(&load(&state,&group_id)?),"provider_mode":"local_fallback","degraded":true}),
     ))
 }
 
@@ -185,7 +185,7 @@ async fn query(
             .join("\n")
     };
     Ok(success(
-        json!({"group_id":group_id,"provider":provider,"provider_mode":"degraded","degraded":true,"answer":answer,"references":references,"error":null}),
+        json!({"group_id":group_id,"provider":provider,"provider_mode":"local_fallback","degraded":true,"answer":answer,"references":references,"error":null}),
     ))
 }
 
@@ -197,7 +197,7 @@ async fn list_sources(
     let value = load(&state, &group_id)?;
     let sources = filtered(&value, "sources", &query.provider, &query.lane, "");
     Ok(success(
-        json!({"group_id":group_id,"provider":query.provider,"provider_mode":"degraded","binding":value["bindings"][&query.lane],"action":"list","sources":sources}),
+        json!({"group_id":group_id,"provider":query.provider,"provider_mode":"local_fallback","binding":value["bindings"][&query.lane],"action":"list","sources":sources}),
     ))
 }
 async fn source_action(
@@ -226,7 +226,7 @@ async fn source_action(
         Ok(true)
     })?;
     Ok(success(
-        json!({"group_id":group_id,"provider":provider(&body),"provider_mode":"degraded","action":action,"source_id":source_id,"changed":changed}),
+        json!({"group_id":group_id,"provider":provider(&body),"provider_mode":"local_fallback","action":action,"source_id":source_id,"changed":changed}),
     ))
 }
 async fn list_artifacts(
@@ -243,7 +243,7 @@ async fn list_artifacts(
         &query.kind,
     );
     Ok(success(
-        json!({"group_id":group_id,"provider":query.provider,"provider_mode":"degraded","binding":value["bindings"][&query.lane],"action":"list","kind":query.kind,"artifacts":artifacts}),
+        json!({"group_id":group_id,"provider":query.provider,"provider_mode":"local_fallback","binding":value["bindings"][&query.lane],"action":"list","kind":query.kind,"artifacts":artifacts}),
     ))
 }
 async fn artifact_action(
@@ -252,6 +252,12 @@ async fn artifact_action(
     Json(body): Json<Value>,
 ) -> ApiResult {
     let action = body["action"].as_str().unwrap_or("generate").to_owned();
+    if action != "download" {
+        return Err(ApiError::unavailable(
+            "provider_unavailable",
+            "NotebookLM artifact generation is unavailable; no remote operation was performed",
+        ));
+    }
     let kind = required(&body, "kind")?;
     let lane = lane(&body)?;
     let provider = provider(&body);
@@ -273,7 +279,7 @@ async fn artifact_action(
         Ok(item)
     })?;
     Ok(success(
-        json!({"group_id":group_id,"provider":provider,"provider_mode":"degraded","action":action,"kind":kind,"accepted":true,"completed":true,"artifact_id":artifact["artifact_id"],"generate_result":artifact,"download_result":artifact}),
+        json!({"group_id":group_id,"provider":provider,"provider_mode":"local_fallback","action":action,"kind":kind,"accepted":true,"completed":true,"artifact_id":artifact["artifact_id"],"generate_result":artifact,"download_result":artifact}),
     ))
 }
 async fn list_jobs(
@@ -323,15 +329,11 @@ async fn sync(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let provider = provider(&body);
-    let lane = lane(&body)?;
-    let sync = json!({"available":true,"group_id":group_id,"provider":provider,"remote_space_id":load(&state,&group_id)?["bindings"][&lane]["remote_space_id"],"last_run_at":utc_now(),"converged":true,"unsynced_count":0,"uploaded":0,"updated":0,"deleted":0,"reused":0});
-    update(&state, &group_id, |value| {
-        root(value).insert("sync".into(), sync.clone());
-        Ok(())
-    })?;
-    Ok(success(
-        json!({"group_id":group_id,"provider":provider,"sync":sync,"sync_result":sync}),
+    let _ = lane(&body)?;
+    let _ = load(&state, &group_id)?;
+    Err(ApiError::unavailable(
+        "provider_unavailable",
+        "NotebookLM sync is unavailable; no remote operation was performed",
     ))
 }
 
@@ -349,10 +351,10 @@ fn update<T>(
     integration_state::group_update(&store, group_id, STORE_KEY, change).map_err(state_error)
 }
 fn status_payload(group_id: &str, provider: &str, value: &Value) -> Value {
-    json!({"group_id":group_id,"provider":provider_state(provider),"bindings":value.get("bindings").cloned().unwrap_or(json!({})),"queue_summary":{"work":queue_summary(value),"memory":queue_summary(value)},"sync":value.get("sync").cloned().unwrap_or(json!({"available":true}))})
+    json!({"group_id":group_id,"provider":provider_state(provider),"bindings":value.get("bindings").cloned().unwrap_or(json!({})),"queue_summary":{"work":queue_summary(value),"memory":queue_summary(value)},"sync":value.get("sync").cloned().unwrap_or(json!({"available":false,"converged":false,"reason":"provider_unavailable"}))})
 }
 fn provider_state(provider: &str) -> Value {
-    json!({"provider":provider,"enabled":true,"real_enabled":false,"mode":"degraded","real_adapter_enabled":false,"stub_adapter_enabled":true,"auth_configured":false,"write_ready":true,"readiness_reason":"local Rust fallback"})
+    json!({"provider":provider,"enabled":true,"real_enabled":false,"mode":"local_fallback","real_adapter_enabled":false,"stub_adapter_enabled":true,"auth_configured":false,"write_ready":false,"readiness_reason":"remote provider unavailable; local query and ingest only"})
 }
 fn filtered(value: &Value, section: &str, provider: &str, lane: &str, kind: &str) -> Vec<Value> {
     array(value, section)

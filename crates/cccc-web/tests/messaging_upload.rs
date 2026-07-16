@@ -49,13 +49,20 @@ async fn plural_files_field_creates_a_structured_image_attachment() {
         )
         .await
         .expect("response");
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = response
+    let status = response.status();
+    let response_body = response
         .into_body()
         .collect()
         .await
-        .expect("body")
+        .expect("response body")
         .to_bytes();
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "{}",
+        String::from_utf8_lossy(&response_body)
+    );
+    let body = response_body;
     let payload: Value = serde_json::from_slice(&body).expect("json");
     assert_eq!(payload["ok"], true, "{payload}");
 
@@ -92,6 +99,61 @@ async fn plural_files_field_creates_a_structured_image_attachment() {
             .to_bytes(),
         PNG
     );
+
+    let _ = cccc_client::DaemonClient::new(home)
+        .call(&DaemonRequest {
+            v: 1,
+            op: "shutdown".into(),
+            args: Map::new(),
+        })
+        .await;
+    daemon.await.expect("daemon task").expect("daemon");
+}
+
+#[tokio::test]
+async fn upload_larger_than_axum_default_limit_is_streamed_successfully() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups.create("large upload", "").expect("group");
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_address(&home).await;
+
+    let boundary = "cccc-large-boundary";
+    let mut multipart = format!(
+        concat!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nlarge\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"to_json\"\r\n\r\n[\"@all\"]\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"large.bin\"\r\n",
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ),
+        boundary = boundary,
+    )
+    .into_bytes();
+    multipart.extend(std::iter::repeat_n(b'x', 3 * 1024 * 1024));
+    multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    let response = cccc_web::app(home.clone())
+        .oneshot(
+            Request::post(format!("/api/v1/groups/{}/send_upload", group.group_id))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(multipart))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("response body")
+        .to_bytes();
+    assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
 
     let _ = cccc_client::DaemonClient::new(home)
         .call(&DaemonRequest {
