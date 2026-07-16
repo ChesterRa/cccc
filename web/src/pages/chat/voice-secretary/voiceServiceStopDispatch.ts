@@ -2,12 +2,7 @@ import type { VoiceSecretaryCaptureMode } from "./voiceSecretaryTypes";
 
 export type VoiceServiceStopDispatchKind = "" | "prompt" | "instruction";
 
-const LOW_VALUE_VOICE_DISPATCH_CJK_CHARS = new Set([
-  "嗯",
-  "呃",
-  "啊",
-  "哦",
-]);
+const LOW_VALUE_VOICE_DISPATCH_CJK_CHARS = new Set(["嗯", "呃", "啊", "哦"]);
 
 const LOW_VALUE_VOICE_DISPATCH_WORDS = new Set([
   "a",
@@ -50,7 +45,9 @@ function hasMeaningfulCjkText(value: string): boolean {
 }
 
 function hasMeaningfulLatinText(value: string): boolean {
-  const tokens = latinSemanticTokens(value).filter((token) => !LOW_VALUE_VOICE_DISPATCH_WORDS.has(token));
+  const tokens = latinSemanticTokens(value).filter(
+    (token) => !LOW_VALUE_VOICE_DISPATCH_WORDS.has(token),
+  );
   if (!tokens.length) return false;
   return tokens.some((token) => /\d/.test(token) || token.length >= 2);
 }
@@ -68,7 +65,9 @@ export function voiceServiceStopDispatchKind(params: {
   pendingAskRequestId?: string;
 }): VoiceServiceStopDispatchKind {
   if (!isMeaningfulVoiceDispatchText(params.transcriptText)) return "";
-  if (params.mode === "prompt" && !String(params.pendingPromptRequestId || "").trim()) return "prompt";
-  if (params.mode === "instruction" && !String(params.pendingAskRequestId || "").trim()) return "instruction";
+  if (params.mode === "prompt" && !String(params.pendingPromptRequestId || "").trim())
+    return "prompt";
+  if (params.mode === "instruction" && !String(params.pendingAskRequestId || "").trim())
+    return "instruction";
   return "";
 }

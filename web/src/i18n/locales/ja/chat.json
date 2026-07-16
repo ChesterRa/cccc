@@ -394,6 +394,7 @@
   "openMessageContext": "メッセージコンテキストを開く",
   "closeSearchModal": "検索モーダルを閉じる",
   "to": "宛先",
+  "senderPerspective": "送信者の見解",
   "presentationTitle": "Presentation",
   "presentationOpenDockAction": "Presentation を開く",
   "presentationCloseDockAction": "Presentation を閉じる",

@@ -10,7 +10,9 @@ export function capabilityCenterGroupIdFromSearch(search: string): string {
 }
 
 export function buildCapabilityCenterUrl(groupId?: string, origin?: string): string {
-  const baseOrigin = String(origin || (typeof window !== "undefined" ? window.location.origin : "http://localhost")).trim();
+  const baseOrigin = String(
+    origin || (typeof window !== "undefined" ? window.location.origin : "http://localhost"),
+  ).trim();
   const url = new URL(CAPABILITY_CENTER_PATH, baseOrigin);
   const gid = String(groupId || "").trim();
   if (gid) url.searchParams.set("group_id", gid);

@@ -1,127 +1,242 @@
 # Architecture
 
-CCCC uses a Rust workspace behind the existing React/TypeScript application. The daemon owns mutable collaboration state; CLI, Web, and MCP are ports over the same versioned operations.
+> CCCC = Collaborative Code Coordination Center
+>
+> A global AI Agent collaboration hub: a single daemon manages multiple working groups, with Web/CLI/IM as entry points.
 
-## Runtime Topology
+## Core Concepts
 
-```text
-browser / CLI / MCP / remote connector
-                 |
-       cccc (Web / CLI / MCP modes)
-                 |
-        cccc-client + daemon IPC v1
-                 |
-       cccc daemon run (same executable)
-                 |
- group.yaml / ledger.jsonl / state / blobs / memory
-                 |
-          CCCC_HOME only
+### Working Group
+
+- Like an IM group chat, but with execution/delivery capabilities
+- Each group has an append-only ledger (event stream)
+- Can bind multiple Scopes (project directories)
+
+### Actor
+
+- **Foreman**: Coordinator + Executor (the first enabled actor automatically becomes foreman)
+- **Peer**: Independent expert (other actors)
+- Supports PTY (terminal), Headless (MCP-only), and Web Model browser/remote-MCP delivery paths
+
+### Ledger
+
+- Single source of truth: `~/.cccc/groups/<group_id>/ledger.jsonl`
+- All messages, events, and decisions are recorded here
+- Supports snapshot/compaction
+
+## Directory Layout
+
+Default: `CCCC_HOME=~/.cccc`
+
 ```
-
-The public distribution has one executable. `cccc` starts the daemon when needed, serves the Web application, exposes MCP through `cccc mcp`, and provides explicit `cccc daemon` and `cccc web` modes. The workspace keeps focused crates and internal development binaries without making them installation dependencies.
-
-## Workspace Boundaries
-
-| Crate | Responsibility |
-|---|---|
-| `cccc-contracts` | IPC requests/responses, actors, events, enums |
-| `cccc-core` | Rust Home, registry, groups, ledger, scopes, inbox, memory, policy |
-| `cccc-runtime` | PTY and headless child-process sessions |
-| `cccc-client` | Unix-socket or loopback-TCP daemon client |
-| `cccc-daemon` | Single-writer operations and actor lifecycle |
-| `cccc-mcp` | MCP catalog, daemon mapping, scoped repo/shell tools |
-| `cccc-web` | HTTP/WebSocket API, browser surfaces, embedded Web assets |
-| `cccc-cli` | Command parsing and user-facing workflows |
-
-Dependencies point inward toward contracts and core. Ports do not write group files directly except for focused integration stores that use `cccc-core` atomic state APIs.
-
-## Rust Home
-
-`HomeLayout` resolves only `CCCC_HOME`, defaulting to `~/.cccc`.
-
-```text
 ~/.cccc/
-  .cccc-rust-v1
-  registry.json
-  settings.json
-  daemon/
-  groups/<group_id>/
-    group.yaml
-    ledger.jsonl
-    context/
-    scopes/
-    state/
-    state/blobs/
-  browser-profiles/
+├── registry.json                 # Working group index
+├── daemon/
+│   ├── ccccd.pid
+│   ├── ccccd.log
+│   └── ccccd.sock               # IPC socket
+└── groups/<group_id>/
+    ├── group.yaml               # Metadata
+    ├── ledger.jsonl             # Event stream (append-only)
+    ├── context/                 # Context (vision/sketch/tasks)
+    └── state/                   # Runtime state
+        └── blobs/               # Large text/attachments (referenced in ledger)
 ```
 
-Initialization adopts an existing CCCC layout in `~/.cccc` and adds the Rust compatibility marker without replacing existing files. A non-empty custom directory that has neither a CCCC marker, registry, nor groups directory is rejected.
+## Architecture Layers
 
-## Group And Ledger
+```
+┌─────────────────────────────────────────────────────────┐
+│                      Ports (Entry)                       │
+│   Web UI (React)  │  CLI  │  IM Bridge  │  MCP Server   │
+├─────────────────────────────────────────────────────────┤
+│                    Daemon (ccccd)                        │
+│   IPC Server  │  Delivery  │  Automation  │  Runners    │
+│               │            │              │  Browser    │
+├─────────────────────────────────────────────────────────┤
+│                      Kernel                              │
+│   Group  │  Actor  │  Ledger  │  Inbox  │  Permissions  │
+├─────────────────────────────────────────────────────────┤
+│                    Contracts (v1)                        │
+│   Event  │  Message  │  Actor  │  IPC                   │
+└─────────────────────────────────────────────────────────┘
+```
 
-A group contains metadata, scopes, actors, automation policy, and namespaced integration state. Durable events use an append-only JSONL ledger:
+### Contracts Layer
 
-```json
+- Pydantic models define all data structures
+- Versioned: `src/cccc/contracts/v1/`
+- Stable boundary, no business implementation
+
+### Kernel
+
+- Group/Scope/Ledger/Inbox/Permissions
+- Depends on contracts, not on specific ports
+
+### Daemon
+
+- Single-writer principle: all ledger writes go through the daemon
+- IPC + supervision + delivery/automation
+- Manages actor lifecycle, including CLI runtimes and ChatGPT Web Model browser delivery
+
+### Ports (Entry)
+
+- Only interact with daemon via IPC
+- Hold no business state
+- Web Model remote MCP is an actor-bound web port surface; authorization still resolves through the daemon and group actor state
+
+## Ledger Schema (v1)
+
+### Event Envelope
+
+```jsonc
 {
   "v": 1,
   "id": "event-id",
-  "ts": "2026-07-14T00:00:00Z",
+  "ts": "2025-01-01T00:00:00.000000Z",
   "kind": "chat.message",
-  "group_id": "g_example",
-  "scope_key": "scope_example",
+  "group_id": "g_xxx",
+  "scope_key": "s_xxx",
   "by": "user",
-  "data": {"text": "hello", "to": ["@foreman"]}
+  "data": {}
 }
 ```
 
-Inbox read state is a per-actor cursor. A `chat.read` event records the visible read transition. Attention acknowledgements are separate ledger events.
+### Known Kinds
 
-## Actors And Runtime
+| Kind | Description |
+|------|-------------|
+| `group.create` | Create a working group |
+| `group.update` | Update group metadata |
+| `group.attach` | Attach a scope to a working group |
+| `group.detach_scope` | Detach a scope from a working group |
+| `group.set_active_scope` | Select the active scope for a group |
+| `group.start` | Start group runtime actors |
+| `group.stop` | Stop group runtime actors |
+| `group.set_state` | Set group lifecycle state |
+| `group.settings_update` | Update group settings |
+| `group.automation_update` | Update group automation configuration |
+| `actor.add` | Add an actor |
+| `actor.update` | Update actor metadata/configuration |
+| `actor.set_role` | Set actor role |
+| `actor.start` | Start an actor runtime |
+| `actor.stop` | Stop an actor runtime |
+| `actor.restart` | Restart an actor runtime |
+| `actor.remove` | Remove an actor |
+| `actor.activity` | Runtime activity/status snapshot |
+| `context.sync` | Context/control-plane sync event |
+| `chat.message` | Chat message |
+| `chat.cross_group_receipt` | Source-group receipt that links a cross-group send to its destination event |
+| `chat.stream` | Progressive stream chunk/update |
+| `chat.read` / `chat.ack` | Read and acknowledgement events |
+| `chat.reaction` | Chat reaction |
+| `system.notify` / `system.notify_ack` | System notifications and acknowledgement |
+| `assistant.settings_update` | Update built-in assistant settings |
+| `assistant.status_update` | Update built-in assistant lifecycle/health |
+| `assistant.voice.document` | Voice Secretary working document save/update/archive marker |
+| `assistant.voice.input` | Voice Secretary transcript/input ingestion marker |
+| `assistant.voice.prompt_draft` | Voice Secretary composer prompt draft submit/ack marker |
+| `assistant.voice.request` | Voice Secretary structured action request marker |
+| `assistant.voice.session` | Voice Secretary recording session status/artifact marker |
+| `presentation.publish` | Publish a presentation rail card |
+| `presentation.clear` | Clear presentation rail card(s) |
 
-Actors declare a runtime, runner, command, environment, scope, submit behavior, and profile. `cccc-runtime` holds live sessions in process:
+### chat.message Data
 
-- `pty`: terminal-backed interactive process.
-- `headless`: structured process output without an interactive terminal.
-- `web_model`: browser/remote-MCP actor with no local child process.
+```python
+class ChatMessageData:
+    text: str
+    format: "plain" | "markdown"
+    to: list[str]           # Recipients (empty = broadcast)
+    reply_to: str | None    # Reply to which message
+    quote_text: str | None  # Quoted text
+    attachments: list[dict] # Attachment metadata (content stored in CCCC_HOME blobs)
+```
 
-Lifecycle changes update both the process session and the durable actor document. Private actor/profile environment values are stored separately from public actor metadata.
+### Recipient Semantics (to field)
 
-## Ports
+| Token | Semantics |
+|-------|-----------|
+| `[]` (empty) | Broadcast |
+| `user` | The user |
+| `@all` | All actors |
+| `@peers` | All peers |
+| `@foreman` | Foreman |
+| `<actor_id>` | Specific actor |
 
-### CLI
+## Files and Attachments
 
-The CLI resolves an active group, validates local arguments, and delegates to daemon operations. It does not implement alternate persistence.
+### Design Principles
 
-### MCP
+- **Ledger stores only references, not large binaries**: Large text/attachments go to `CCCC_HOME` blobs (e.g., `groups/<group_id>/state/blobs/`).
+- **No automatic writes to repo by default**: Attachments belong to the runtime domain (`CCCC_HOME`); if needed in scope/repo, user/agent explicitly copies/exports.
+- **Content is portable**: Attachments use `sha256` as stable identity, allowing future cross-group/repo copy and reference rewriting.
 
-MCP tool names map to daemon operations or bounded scope-local tools. Web Model connectors inject an immutable group/actor binding. Group Bridge MCP injects the trusted group and filters tools by `messages`, `read`, or `full` access.
+## Roles and Permissions
 
-### Web
+### Role Definitions
 
-Axum serves JSON APIs, terminal and browser WebSockets, SSE headless output, Group Bridge sessions, and embedded Vite assets. Access tokens support administrator and group-scoped principals.
+- **Foreman = Coordinator + Worker**
+  - Does actual work, not just task assignment
+  - Extra coordination duties (receives actor_idle and quiet-review `silence_check` notifications)
+  - Can add/start/stop any actor
 
-## Integrations
+- **Peer = Independent Expert**
+  - Has independent professional judgment
+  - Can challenge foreman decisions
+  - Can only manage self
 
-- Browser profiles and integration state live under Rust Home.
-- Group Bridge credentials never appear in list/status responses.
-- Cross-group delivery is idempotent and records provenance on both sides.
-- Group Space and Assistant state use named atomic namespaces.
-- Browser ASR is the default available voice path. Missing local ASR returns an explicit unavailable state.
-- IM control state never claims a network worker is live unless one is actually running.
+### Permission Matrix
 
-## Concurrency And Atomicity
+| Action | user | foreman | peer |
+|--------|------|---------|------|
+| actor_add | ✓ | ✓ | ✗ |
+| actor_start | ✓ | ✓ (any) | ✗ |
+| actor_stop | ✓ | ✓ (any) | ✓ (self) |
+| actor_restart | ✓ | ✓ (any) | ✓ (self) |
+| actor_remove | ✓ | ✓ (self/peer) | ✓ (self) |
 
-The daemon serializes IPC requests. Core JSON/YAML writers use temporary-file replacement. Ledger writes append complete JSON lines. Integration state updates mutate one namespace through the group/global store instead of using ad hoc files.
+## MCP Server
 
-## Security Boundaries
+MCP is exposed as an action-oriented surface. Tool count is intentionally not hardcoded, because optional capability packs can add more tools when enabled.
 
-- Python and Rust share the CCCC storage contracts; only one daemon may write `CCCC_HOME` at a time.
-- Scope-local file operations reject absolute paths, `..`, and symlink escapes.
-- Web Model connectors cannot change their bound group.
-- Group Bridge disables HTTP redirects, uses bearer credentials, validates source group identity, and filters MCP tools by trust level.
-- Remote Access defaults to loopback and requires explicit configuration.
-- Web access tokens are required once token authentication has been configured.
+The surface is best understood as capability groups instead of a fixed namespace/tool count. Each group can expose one or more MCP tools, and some groups use action-style wrappers rather than one-tool-per-operation naming.
 
-## Build And Release
+### Core Collaboration Capability Groups
 
-Vite builds `web/dist`; `rust-embed` includes it in the Rust distribution. GitHub Releases publish one single-executable archive per supported target, a four-archive `SHA256SUMS` manifest, and version-pinned Unix and Windows installers. The installed `cccc` process self-launches its daemon mode, so no sibling helper executable is required. The standalone release requires neither Node nor Python. The Docker image still includes Node-based agent CLIs for its managed runtime environment, but no Python backend.
+- Session and guidance: `cccc_bootstrap`, `cccc_help`, `cccc_project_info`
+- Messaging and files: `cccc_inbox_list`, `cccc_inbox_mark_read`, `cccc_message_send`, `cccc_message_reply`, `cccc_file`
+- Group and actor control: `cccc_group`, `cccc_actor`
+- Coordination and state: `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state`, `cccc_context_sync`
+- Automation and memory: `cccc_automation`, `cccc_automation_manage`, `cccc_memory`, `cccc_memory_admin`
+
+### Capability-Managed and Optional Groups
+
+- These capability groups expand the surface without hardcoding a fixed namespace count. The current grouped tools include lifecycle and pack control (`cccc_capability_search`, `cccc_capability_enable`, `cccc_capability_block`, `cccc_capability_state`, `cccc_capability_import`, `cccc_capability_uninstall`, `cccc_capability_use`).
+- Space / notebook integrations: `cccc_space`
+- Terminal and diagnostics: `cccc_terminal`, `cccc_terminal_tail`, `cccc_debug_*`
+- IM binding: `cccc_im_bind`
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Kernel/Daemon | Python + Pydantic |
+| Web Port | FastAPI + Uvicorn |
+| Web UI | React + TypeScript + Vite + Tailwind + xterm.js |
+| MCP | stdio mode, JSON-RPC |
+
+## Source Structure
+
+```
+src/cccc/
+├── contracts/v1/          # Contracts layer
+├── kernel/                # Kernel
+├── daemon/                # Daemon process
+├── runners/               # PTY/Headless runner
+├── ports/
+│   ├── web/              # Web port
+│   ├── im/               # IM Bridge
+│   └── mcp/              # MCP Server
+└── resources/            # Built-in resources
+```

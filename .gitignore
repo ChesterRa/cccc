@@ -1,17 +1,33 @@
-# Local runtime homes
+# Local runtime home (vNext uses ~/.cccc; ignore repo-local .cccc if created)
 .cccc/**
 .cccc-rust/**
 
-# Rust build artifacts
-/target/
+# Python bytecode caches
+**/__pycache__/**
+*.pyc
+.pytest_cache/**
+.mypy_cache/**
+.tox/**
+.coverage
+
+# Local virtualenv
+/.venv/
+/.venv-qa/
+
+# uv lock file
+uv.lock
 
 # Build artifacts
 /dist/
+/build/
+/target/
+*.egg-info/
 
 # Web UI build/cache artifacts
 **/node_modules/
 /web/.vite/
 /web/dist/
+/src/cccc/ports/web/dist/
 /space
 
 # Local/editor/platform noise
@@ -21,6 +37,9 @@
 .env
 .tmp
 graphify-out
+
+# Local dev environments
+/venv-publish/
 
 # Docs: VitePress build artifacts
 /docs/.vitepress/cache/
@@ -36,6 +55,8 @@ graphify-out
 /docs/superpowers/
 # Docs: legacy vnext - whitelist only what we ship
 /docs/vnext/*
+
+# Tests
 
 # Local agent guide (not committed)
 AGENTS.md

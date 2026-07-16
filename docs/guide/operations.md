@@ -1,114 +1,225 @@
 # Operations Runbook
 
-## Runtime Layout
+This page is for operators who need reliable day-to-day CCCC execution.
 
-```text
-CCCC_HOME=~/.cccc
-~/.cccc/.cccc-rust-v1
-~/.cccc/daemon/ccccd.addr.json
-~/.cccc/groups/<group_id>/group.yaml
-~/.cccc/groups/<group_id>/ledger.jsonl
-~/.cccc/groups/<group_id>/state/
-```
+## 1) Runtime Topology
 
-Python and Rust use this same home. Stop the active daemon before switching implementations, and never run both daemons concurrently.
+Default runtime home:
+- `CCCC_HOME=~/.cccc`
 
-`cccc daemon stop` terminates local actor runtime sessions before releasing the daemon lock. A Web process started by `cccc` observes daemon loss and exits instead of remaining bound with a broken API.
+Key paths:
+- `~/.cccc/registry.json`
+- `~/.cccc/daemon/ccccd.sock`
+- `~/.cccc/daemon/ccccd.log`
+- `~/.cccc/groups/<group_id>/group.yaml`
+- `~/.cccc/groups/<group_id>/ledger.jsonl`
 
-## Start And Health
+## 2) Startup and Health Checks
+
+### Start
 
 ```bash
-cccc daemon start
-cccc daemon status
-cccc status
-cccc doctor
 cccc
 ```
 
-Web health endpoints:
+### Health Baseline
 
 ```bash
-curl -fsS http://127.0.0.1:8848/api/v1/health
-curl -fsS http://127.0.0.1:8848/api/v1/ready
+cccc doctor
+cccc daemon status
+cccc groups
 ```
 
-## Triage Order
+Expected:
+- daemon reachable
+- runtimes detected
+- active group list loadable
 
-1. Run `cccc doctor` and `cccc daemon status`.
-2. Inspect the group with `cccc active`, `cccc group show`, and `cccc actor list`.
-3. Inspect the ledger with `cccc tail -n 100`.
-4. Restart only the affected actor with `cccc actor restart <id>`.
-5. Restart the group if multiple actors are stale.
-6. Restart the daemon only after group-level recovery fails.
+## 3) Incident Triage Order
 
-Runtime output is visible through the Web terminal and daemon terminal operations. Terminal output is not a delivered chat message.
+When a group appears stuck:
 
-## Backup
+1. Check daemon health.
+2. Check group state (`active/idle/paused/stopped`).
+3. Check actor runtime status.
+4. Check message obligations (reply-required/attention ack).
+5. Check automation and delivery policy.
 
-Stop writers and archive the complete Rust Home:
+Useful commands:
+
+```bash
+cccc daemon status
+cccc actor list
+cccc inbox --actor-id <actor_id>
+cccc tail -n 100 -f
+```
+
+## 4) Fast Recovery Playbook
+
+### Actor-level recovery (preferred)
+
+```bash
+cccc actor restart <actor_id>
+```
+
+Use this before group-level restart.
+
+### Group-level recovery
+
+```bash
+cccc group stop
+cccc group start
+```
+
+### Daemon-level recovery (last resort)
 
 ```bash
 cccc daemon stop
-tar -C "$HOME" -czf "cccc-rust-backup-$(date +%Y%m%d-%H%M%S).tar.gz" .cccc
+cccc daemon start
 ```
 
-Restore the complete archive while all CCCC daemons are stopped. Keep the `.cccc-rust-v1` marker with the rest of the home.
+## 5) Secure Remote Access
 
-## Upgrade
+Required baseline:
+- Create an **Admin Access Token** in **Settings > Web Access** before any non-local exposure.
+- Use Cloudflare Access or Tailscale for network boundary.
 
-1. Back up `CCCC_HOME`.
-2. Download the new GitHub Release archive for the current platform.
-3. Replace the `cccc` executable.
-4. Run `cccc version`, `cccc doctor`, and `cccc status`.
-5. Start the Web UI and test one message/read cycle.
+Do not:
+- Expose Web UI directly without an access gateway.
+- Store secrets in repo files.
 
-There is no in-process self-updater. This keeps release replacement explicit and rollbackable.
+## 6) Upgrade Playbook (RC-safe)
 
-## Access Tokens
+### Before upgrade
 
-The first administrator token can bootstrap Web login. Once tokens exist, anonymous API requests are rejected. Bind the Web service to loopback unless a reverse proxy or tunnel provides TLS and access control.
+1. Stop active high-risk sessions.
+2. Backup `CCCC_HOME`.
+3. Record current version and smoke state.
 
-Group-scoped tokens cannot access other groups. Administrative endpoints require an administrator token.
-
-## Group Bridge
-
-Pairing flow:
-
-1. Issuer creates an invite in Settings.
-2. Requester submits connection info.
-3. Issuer approves and creates a scoped registration.
-4. Requester synchronizes the outbound and claims the credential using the pairing capability.
-5. Both sides use idempotent delivery receipts.
-
-Credentials are stored only in Rust Home and removed from status/list responses. Use `messages` for ordinary collaboration, `read` for bounded inspection, and `full` only for a trusted peer that may modify the workspace.
-
-## Group Space
+### Upgrade
 
 ```bash
-cccc space status
-cccc space auth status
-cccc space sync --lane work
-cccc space query "current blockers" --lane work
+python -m pip install -U cccc-pair
 ```
 
-Provider health reports its mode. `local_fallback` means the local source/ledger
-path was used. Remote sync and artifact operations return `provider_unavailable`
-instead of reporting a successful NotebookLM operation.
-
-## Voice
-
-Browser ASR is the default usable transcription path. Service-local transcription returns `asr_unavailable` when no backend command/runtime is configured. Do not treat that response as an empty transcript.
-
-## IM
-
-`cccc im status` distinguishes configured, enabled, and running. Configuration alone is not evidence that an external platform connection exists. Validate inbound and outbound delivery on the selected platform before relying on it for operations.
-
-## Release Verification
+### After upgrade
 
 ```bash
-scripts/pre_commit_checks.sh
+cccc doctor
+cccc daemon status
+cccc mcp
+```
+
+Run a small end-to-end smoke:
+- create/attach group
+- add/start actor
+- send/reply
+- verify ledger and inbox behavior
+
+## 7) Backup and Restore
+
+### Backup (minimal)
+
+Backup `CCCC_HOME`:
+- registry
+- daemon logs (optional)
+- all groups (`group.yaml`, ledger, state)
+
+### Restore
+
+1. Stop daemon.
+2. Restore `CCCC_HOME` directory.
+3. Start daemon and verify with `cccc doctor`.
+
+## 8) Operational Guardrails
+
+- Keep one source of truth: decisions should be in CCCC messages.
+- Use `reply_required` for critical asks.
+- Prefer explicit recipients over broad broadcast when scope is narrow.
+- Keep automation focused on objective reminders, not chat noise.
+
+## 9) Escalation Checklist
+
+If an issue repeats:
+
+1. Collect evidence:
+   - group id
+   - actor id
+   - event ids
+   - recent `cccc tail -n 100`
+2. Capture reproducible sequence.
+3. Classify severity (`P0/P1/P2`).
+4. Register fix or risk in release findings.
+
+## 10) Group Space (NotebookLM) Runbook
+
+### Enable real adapter path (opt-in)
+
+```bash
+export CCCC_NOTEBOOKLM_REAL=1
+cccc daemon restart
+```
+
+### Validate control plane
+
+```bash
+cccc space credential status
+cccc space health
+```
+
+### Validate curated context export path
+
+After a `context_sync` update (`vision.update` / `overview.manual.update` / `task.*` / `agent.*`), check queue:
+
+```bash
+cccc space jobs list --state pending
+```
+
+Expected: a `kind=context_sync` job appears for bound groups.
+
+### Validate repo `space/` reconciliation
+
+```bash
+cccc space sync --force
+```
+
+Expected: result reports `converged=true` and `unsynced_count=0` when provider is healthy.
+
+### Safe rollback (core workflows keep running)
+
+```bash
+unset CCCC_NOTEBOOKLM_REAL
+cccc daemon restart
+```
+
+Expected after rollback:
+
+- Group Space operations may return degraded/disabled provider results.
+- Core CCCC chat/task/actor workflows continue normally.
+
+Optional throughput tuning:
+
+```bash
+export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=1   # safer
+export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=4   # faster
+```
+
+## 11) Release Verification
+
+Python distribution:
+
+```bash
+scripts/pre_commit_checks.sh --full
 scripts/build_package.sh
 docker build -f docker/Dockerfile .
 ```
 
-For a release candidate, also verify Linux, macOS, and Windows CI jobs and test existing-home adoption without changing existing files.
+Rust distribution:
+
+```bash
+scripts/build_package_rust.sh
+docker build -f docker/Dockerfile.rust .
+```
+
+Python releases use `.github/workflows/release.yml`. Rust releases use
+`.github/workflows/release-rust.yml` and `rust-v<version>` tags.

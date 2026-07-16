@@ -52,14 +52,7 @@ export class ErrorBoundary extends Component<Props, State> {
             color: "var(--text-secondary, #666)",
           }}
         >
-          <div
-            style={{
-              fontSize: "48px",
-              marginBottom: "16px",
-            }}
-          >
-            :(
-          </div>
+          <div style={{ fontSize: "48px", marginBottom: "16px" }}>:(</div>
           <h2
             style={{
               margin: "0 0 8px 0",
@@ -68,16 +61,10 @@ export class ErrorBoundary extends Component<Props, State> {
               color: "var(--text-primary, #333)",
             }}
           >
-            {i18n.t('layout:somethingWentWrong')}
+            {i18n.t("layout:somethingWentWrong")}
           </h2>
-          <p
-            style={{
-              margin: "0 0 24px 0",
-              fontSize: "14px",
-              maxWidth: "400px",
-            }}
-          >
-            {this.state.error?.message || i18n.t('layout:unexpectedError')}
+          <p style={{ margin: "0 0 24px 0", fontSize: "14px", maxWidth: "400px" }}>
+            {this.state.error?.message || i18n.t("layout:unexpectedError")}
           </p>
           <div style={{ display: "flex", gap: "12px" }}>
             <button
@@ -92,7 +79,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 cursor: "pointer",
               }}
             >
-              {i18n.t('layout:tryAgain')}
+              {i18n.t("layout:tryAgain")}
             </button>
             <button
               onClick={this.handleRefresh}
@@ -106,7 +93,7 @@ export class ErrorBoundary extends Component<Props, State> {
                 cursor: "pointer",
               }}
             >
-              {i18n.t('layout:refreshPage')}
+              {i18n.t("layout:refreshPage")}
             </button>
           </div>
         </div>

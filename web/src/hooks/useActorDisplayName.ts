@@ -24,7 +24,7 @@ export function useActorDisplayNameMap(actors: Actor[]): Map<string, string> {
  */
 export function getRecipientDisplayName(
   token: string,
-  displayNameMap: Map<string, string>
+  displayNameMap: Map<string, string>,
 ): string {
   if (token.startsWith("@") || token === "user") {
     return token;

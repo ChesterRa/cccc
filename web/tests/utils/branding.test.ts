@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   applyBrandingToDocument,
@@ -7,10 +7,7 @@ import {
   resolveDocumentTitle,
 } from "../../src/utils/branding";
 
-type FakeLink = {
-  rel: string;
-  href: string;
-};
+type FakeLink = { rel: string; href: string };
 
 describe("branding utils", () => {
   const links = new Map<string, FakeLink>();
@@ -55,7 +52,11 @@ describe("branding utils", () => {
 
     expect(branding.product_name).toBe("Acme Console");
     expect(document.title).toBe("Acme Console");
-    expect((document.querySelector('link[rel="icon"]') as HTMLLinkElement | null)?.href).toContain("/api/v1/branding/assets/favicon?v=test");
-    expect((document.querySelector('link[rel="apple-touch-icon"]') as HTMLLinkElement | null)?.href).toContain("/api/v1/branding/assets/favicon?v=test");
+    expect((document.querySelector('link[rel="icon"]') as HTMLLinkElement | null)?.href).toContain(
+      "/api/v1/branding/assets/favicon?v=test",
+    );
+    expect(
+      (document.querySelector('link[rel="apple-touch-icon"]') as HTMLLinkElement | null)?.href,
+    ).toContain("/api/v1/branding/assets/favicon?v=test");
   });
 });

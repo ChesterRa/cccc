@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { actorSecretDraftReducer, emptyActorSecretDraftState } from "./actorSecretDraftModel";
 
@@ -12,7 +12,7 @@ describe("actorSecretDraftModel", () => {
     state = actorSecretDraftReducer(state, { type: "toggleEditVisibility" });
 
     expect(actorSecretDraftReducer(state, { type: "discardKey", key: "OPENAI_API_KEY" })).toEqual(
-      emptyActorSecretDraftState()
+      emptyActorSecretDraftState(),
     );
   });
 
@@ -23,11 +23,16 @@ describe("actorSecretDraftModel", () => {
     state = actorSecretDraftReducer(state, { type: "startEdit", key: "OLD_KEY" });
     state = actorSecretDraftReducer(state, { type: "setEditValue", value: "replacement-secret" });
 
-    expect(actorSecretDraftReducer(state, { type: "discardAll" })).toEqual(emptyActorSecretDraftState());
+    expect(actorSecretDraftReducer(state, { type: "discardAll" })).toEqual(
+      emptyActorSecretDraftState(),
+    );
   });
 
   it("does not discard another key's edit draft", () => {
-    let state = actorSecretDraftReducer(emptyActorSecretDraftState(), { type: "startEdit", key: "KEEP_KEY" });
+    let state = actorSecretDraftReducer(emptyActorSecretDraftState(), {
+      type: "startEdit",
+      key: "KEEP_KEY",
+    });
     state = actorSecretDraftReducer(state, { type: "setEditValue", value: "replacement-secret" });
 
     expect(actorSecretDraftReducer(state, { type: "discardKey", key: "OTHER_KEY" })).toEqual(state);
@@ -39,7 +44,7 @@ describe("actorSecretDraftModel", () => {
     state = actorSecretDraftReducer(state, { type: "setAddValue", value: "replacement-secret" });
 
     expect(actorSecretDraftReducer(state, { type: "discardKey", key: "OPENAI_API_KEY" })).toEqual(
-      emptyActorSecretDraftState()
+      emptyActorSecretDraftState(),
     );
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveAutoOpenVoiceReplyBubbleRequestId,
@@ -18,13 +18,15 @@ describe("voice reply bubble model", () => {
   it("opens the reply bubble when an observed active request becomes a final reply", () => {
     const tracker = createTracker();
 
-    trackActiveVoiceReplyRequests(tracker, [{
-      request_id: "request-1",
-      status: "working",
-      request_text: "同安还未下雨吗",
-      created_at: "2026-05-03T07:20:00Z",
-      updated_at: "2026-05-03T07:20:01Z",
-    }]);
+    trackActiveVoiceReplyRequests(tracker, [
+      {
+        request_id: "request-1",
+        status: "working",
+        request_text: "同安还未下雨吗",
+        created_at: "2026-05-03T07:20:00Z",
+        updated_at: "2026-05-03T07:20:01Z",
+      },
+    ]);
 
     const requestId = resolveAutoOpenVoiceReplyBubbleRequestId(tracker, {
       request_id: "request-1",

@@ -52,9 +52,10 @@ const ToggleRow = ({
         className={`
           relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors duration-300 ease-spring
           focus:outline-none focus:ring-2 focus:ring-offset-2
-          ${checked
-            ? "border-emerald-500 bg-emerald-500 focus:ring-emerald-500"
-            : "border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] focus:ring-offset-white dark:focus:ring-offset-slate-900"
+          ${
+            checked
+              ? "border-emerald-500 bg-emerald-500 focus:ring-emerald-500"
+              : "border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] focus:ring-offset-white dark:focus:ring-offset-slate-900"
           }
         `}
       >
@@ -88,7 +89,9 @@ export function DeliveryTab(props: DeliveryTabProps) {
       <div className={settingsWorkspaceShellClass(isDark)}>
         <div className={settingsWorkspaceHeaderClass(isDark)}>
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("delivery.title")}</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("delivery.title")}
+            </h3>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
               {t("delivery.description")}
             </p>

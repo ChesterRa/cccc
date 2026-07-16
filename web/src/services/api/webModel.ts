@@ -1,10 +1,6 @@
 import type { PresentationBrowserSurfaceState } from "../../types";
 import type { ApiResponse } from "./base";
-import {
-  apiJson,
-  normalizePresentationBrowserSurfaceState,
-  withAuthToken,
-} from "./base";
+import { apiJson, normalizePresentationBrowserSurfaceState, withAuthToken } from "./base";
 
 export type WebModelConnector = {
   connector_id: string;
@@ -64,10 +60,7 @@ export type NomcpSession = {
   secret_available?: boolean;
 };
 
-export type NomcpSessionCreateResult = {
-  session: NomcpSession;
-  secret: string;
-};
+export type NomcpSessionCreateResult = { session: NomcpSession; secret: string };
 
 export type WebModelBrowserSession = {
   active?: boolean;
@@ -157,11 +150,7 @@ export type WebModelHealthSnapshot = {
     last_error?: string;
     cursor_committed?: boolean;
   };
-  next_action?: {
-    recommended?: string;
-    label?: string;
-    reason?: string;
-  };
+  next_action?: { recommended?: string; label?: string; reason?: string };
 };
 
 export type WebModelDeliveryTarget = {
@@ -230,7 +219,9 @@ export async function createNomcpSession(args: {
     body: JSON.stringify({
       group_id: String(args.groupId || "").trim(),
       title: String(args.title || "No-MCP advisory session").trim(),
-      brief: String(args.brief || "Review the linked CCCC project context and return advisory findings.").trim(),
+      brief: String(
+        args.brief || "Review the linked CCCC project context and return advisory findings.",
+      ).trim(),
       recipient: String(args.recipient || "user").trim() || "user",
       reply_to_event_id: String(args.replyToEventId || "").trim(),
       allowed_paths: Array.isArray(args.allowedPaths) ? args.allowedPaths : [],
@@ -254,8 +245,11 @@ export async function fetchWebModelBrowserSession(
     group_id: String(groupId || "").trim(),
     actor_id: String(actorId || "").trim(),
   });
-  if (typeof options?.inspect === "boolean") params.set("inspect", options.inspect ? "true" : "false");
-  return apiJson<{ browser_session: WebModelBrowserSession }>(`/api/v1/web-model/browser-session?${params.toString()}`);
+  if (typeof options?.inspect === "boolean")
+    params.set("inspect", options.inspect ? "true" : "false");
+  return apiJson<{ browser_session: WebModelBrowserSession }>(
+    `/api/v1/web-model/browser-session?${params.toString()}`,
+  );
 }
 
 export async function fetchWebModelBrowserSurfaceSession(
@@ -267,8 +261,11 @@ export async function fetchWebModelBrowserSurfaceSession(
     group_id: String(groupId || "").trim(),
     actor_id: String(actorId || "").trim(),
   });
-  if (typeof options?.inspect === "boolean") params.set("inspect", options.inspect ? "true" : "false");
-  const resp = await apiJson<WebModelBrowserSurfaceResult>(`/api/v1/web-model/browser-session?${params.toString()}`);
+  if (typeof options?.inspect === "boolean")
+    params.set("inspect", options.inspect ? "true" : "false");
+  const resp = await apiJson<WebModelBrowserSurfaceResult>(
+    `/api/v1/web-model/browser-session?${params.toString()}`,
+  );
   if (!resp.ok) return resp;
   return {
     ok: true,
@@ -285,14 +282,17 @@ export async function openWebModelBrowserSession(args: {
   actorId: string;
   visibility?: "visible" | "background" | "headless" | string;
 }) {
-  return apiJson<{ browser_session: WebModelBrowserSession }>("/api/v1/web-model/browser-session/open", {
-    method: "POST",
-    body: JSON.stringify({
-      group_id: String(args.groupId || "").trim(),
-      actor_id: String(args.actorId || "").trim(),
-      visibility: String(args.visibility || "visible").trim() || "visible",
-    }),
-  });
+  return apiJson<{ browser_session: WebModelBrowserSession }>(
+    "/api/v1/web-model/browser-session/open",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        group_id: String(args.groupId || "").trim(),
+        actor_id: String(args.actorId || "").trim(),
+        visibility: String(args.visibility || "visible").trim() || "visible",
+      }),
+    },
+  );
 }
 
 export async function openWebModelBrowserSurfaceSession(args: {
@@ -305,15 +305,18 @@ export async function openWebModelBrowserSurfaceSession(args: {
   const params = new URLSearchParams();
   if (typeof args.inspect === "boolean") params.set("inspect", args.inspect ? "true" : "false");
   const suffix = params.toString() ? `?${params.toString()}` : "";
-  const resp = await apiJson<WebModelBrowserSurfaceResult>(`/api/v1/web-model/browser-session/open${suffix}`, {
-    method: "POST",
-    body: JSON.stringify({
-      group_id: String(args.groupId || "").trim(),
-      actor_id: String(args.actorId || "").trim(),
-      width: Math.max(640, Math.min(2560, Math.round(Number(args.width || 1366)))),
-      height: Math.max(480, Math.min(1600, Math.round(Number(args.height || 900)))),
-    }),
-  });
+  const resp = await apiJson<WebModelBrowserSurfaceResult>(
+    `/api/v1/web-model/browser-session/open${suffix}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        group_id: String(args.groupId || "").trim(),
+        actor_id: String(args.actorId || "").trim(),
+        width: Math.max(640, Math.min(2560, Math.round(Number(args.width || 1366)))),
+        height: Math.max(480, Math.min(1600, Math.round(Number(args.height || 900)))),
+      }),
+    },
+  );
   if (!resp.ok) return resp;
   return {
     ok: true,
@@ -326,26 +329,32 @@ export async function openWebModelBrowserSurfaceSession(args: {
 }
 
 export async function closeWebModelBrowserSession(groupId: string, actorId: string) {
-  return apiJson<{ browser_session: WebModelBrowserSession }>("/api/v1/web-model/browser-session/close", {
-    method: "POST",
-    body: JSON.stringify({
-      group_id: String(groupId || "").trim(),
-      actor_id: String(actorId || "").trim(),
-    }),
-  });
+  return apiJson<{ browser_session: WebModelBrowserSession }>(
+    "/api/v1/web-model/browser-session/close",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        group_id: String(groupId || "").trim(),
+        actor_id: String(actorId || "").trim(),
+      }),
+    },
+  );
 }
 
 export async function closeWebModelBrowserSurfaceSession(
   groupId: string,
   actorId: string,
 ): Promise<ApiResponse<WebModelBrowserSurfaceResult>> {
-  const resp = await apiJson<WebModelBrowserSurfaceResult>("/api/v1/web-model/browser-session/close", {
-    method: "POST",
-    body: JSON.stringify({
-      group_id: String(groupId || "").trim(),
-      actor_id: String(actorId || "").trim(),
-    }),
-  });
+  const resp = await apiJson<WebModelBrowserSurfaceResult>(
+    "/api/v1/web-model/browser-session/close",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        group_id: String(groupId || "").trim(),
+        actor_id: String(actorId || "").trim(),
+      }),
+    },
+  );
   if (!resp.ok) return resp;
   return {
     ok: true,
@@ -364,16 +373,19 @@ export async function bindCurrentWebModelBrowserConversation(args: {
   newChat?: boolean;
   clear?: boolean;
 }): Promise<ApiResponse<WebModelBrowserSurfaceResult>> {
-  const resp = await apiJson<WebModelBrowserSurfaceResult>("/api/v1/web-model/browser-session/bind-current", {
-    method: "POST",
-    body: JSON.stringify({
-      group_id: String(args.groupId || "").trim(),
-      actor_id: String(args.actorId || "").trim(),
-      conversation_url: String(args.conversationUrl || "").trim(),
-      new_chat: Boolean(args.newChat),
-      clear: Boolean(args.clear),
-    }),
-  });
+  const resp = await apiJson<WebModelBrowserSurfaceResult>(
+    "/api/v1/web-model/browser-session/bind-current",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        group_id: String(args.groupId || "").trim(),
+        actor_id: String(args.actorId || "").trim(),
+        conversation_url: String(args.conversationUrl || "").trim(),
+        new_chat: Boolean(args.newChat),
+        clear: Boolean(args.clear),
+      }),
+    },
+  );
   if (!resp.ok) return resp;
   return {
     ok: true,
@@ -391,5 +403,7 @@ export function getWebModelBrowserSurfaceWebSocketUrl(groupId: string, actorId: 
     group_id: String(groupId || "").trim(),
     actor_id: String(actorId || "").trim(),
   });
-  return withAuthToken(`${protocol}//${window.location.host}/api/v1/web-model/browser-session/ws?${params.toString()}`);
+  return withAuthToken(
+    `${protocol}//${window.location.host}/api/v1/web-model/browser-session/ws?${params.toString()}`,
+  );
 }

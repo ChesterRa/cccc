@@ -1,6 +1,9 @@
 // UI state store (tabs, sidebar, toasts, etc.).
 import { create } from "zustand";
-import { clampPresentationSplitWidth, PRESENTATION_SPLIT_DEFAULT_WIDTH } from "../utils/presentationSplitLayout";
+import {
+  clampPresentationSplitWidth,
+  PRESENTATION_SPLIT_DEFAULT_WIDTH,
+} from "../utils/presentationSplitLayout";
 
 export const SIDEBAR_COLLAPSED_WIDTH = 60;
 export const SIDEBAR_DEFAULT_WIDTH = 248;
@@ -44,7 +47,10 @@ const DEFAULT_CHAT_SESSION: ChatSessionState = {
   presentationDisplayMode: "modal",
 };
 
-export function getChatSession(groupId: string | null | undefined, sessions: Record<string, ChatSessionState>): ChatSessionState {
+export function getChatSession(
+  groupId: string | null | undefined,
+  sessions: Record<string, ChatSessionState>,
+): ChatSessionState {
   const gid = String(groupId || "").trim();
   if (!gid) return DEFAULT_CHAT_SESSION;
   return sessions[gid] || DEFAULT_CHAT_SESSION;
@@ -222,7 +228,7 @@ function saveChatSessions(sessions: Record<string, ChatSessionState>): void {
 function updateChatSession(
   sessions: Record<string, ChatSessionState>,
   groupId: string,
-  patch: Partial<ChatSessionState>
+  patch: Partial<ChatSessionState>,
 ): Record<string, ChatSessionState> {
   const gid = String(groupId || "").trim();
   if (!gid) return sessions;
@@ -231,13 +237,7 @@ function updateChatSession(
     (key) => !Object.is(current[key], patch[key]),
   );
   if (!changed) return sessions;
-  return {
-    ...sessions,
-    [gid]: {
-      ...current,
-      ...patch,
-    },
-  };
+  return { ...sessions, [gid]: { ...current, ...patch } };
 }
 
 function updateChatSessionState(
@@ -330,9 +330,9 @@ export const useUIStore = create<UIState>((set) => ({
   setShowScrollButton: (groupId, v) =>
     set((state) => updateChatSessionState(state, groupId, { showScrollButton: v })),
   setChatUnreadCount: (groupId, v) =>
-    set((state) => updateChatSessionState(state, groupId, {
-      chatUnreadCount: Math.max(0, Number(v || 0)),
-    })),
+    set((state) =>
+      updateChatSessionState(state, groupId, { chatUnreadCount: Math.max(0, Number(v || 0)) }),
+    ),
   incrementChatUnread: (groupId) =>
     set((state) => {
       const current = getChatSession(groupId, state.chatSessions);
@@ -368,13 +368,17 @@ export const useUIStore = create<UIState>((set) => ({
     }),
   setChatPresentationDockOpen: (groupId, v) =>
     set((state) => {
-      const chatSessions = updateChatSession(state.chatSessions, groupId, { presentationDockOpen: v });
+      const chatSessions = updateChatSession(state.chatSessions, groupId, {
+        presentationDockOpen: v,
+      });
       saveChatSessions(chatSessions);
       return { chatSessions };
     }),
   setChatPresentationDisplayMode: (groupId, v) =>
     set((state) => {
-      const chatSessions = updateChatSession(state.chatSessions, groupId, { presentationDisplayMode: v });
+      const chatSessions = updateChatSession(state.chatSessions, groupId, {
+        presentationDisplayMode: v,
+      });
       saveChatSessions(chatSessions);
       return { chatSessions };
     }),

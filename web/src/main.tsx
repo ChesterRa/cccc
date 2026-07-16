@@ -44,7 +44,10 @@ window.addEventListener("unhandledrejection", (event) => {
 //
 // Best-effort cleanup: unregister any legacy SWs scoped to `/ui/` so clients
 // recover automatically after upgrades.
-if ("serviceWorker" in navigator && typeof navigator.serviceWorker.getRegistrations === "function") {
+if (
+  "serviceWorker" in navigator &&
+  typeof navigator.serviceWorker.getRegistrations === "function"
+) {
   void navigator.serviceWorker.getRegistrations().then((registrations) => {
     for (const r of registrations) {
       try {
@@ -66,7 +69,5 @@ void useBrandingStore.getState().refreshBranding();
 const isCapabilityCenterPage = isCapabilityCenterPath(window.location.pathname);
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
-  <AuthGate>
-    {isCapabilityCenterPage ? <CapabilityCenterStandaloneApp /> : <App />}
-  </AuthGate>,
+  <AuthGate>{isCapabilityCenterPage ? <CapabilityCenterStandaloneApp /> : <App />}</AuthGate>,
 );

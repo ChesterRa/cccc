@@ -45,19 +45,19 @@ export async function fetchGroupSpaceSpaces(groupId: string, provider: string = 
     provider_state?: Record<string, unknown>;
     bindings?: Record<string, Record<string, unknown>>;
     spaces: GroupSpaceRemoteSpace[];
-  }>(`/api/v1/groups/${encodeURIComponent(groupId)}/space/spaces?provider=${encodeURIComponent(provider)}`);
+  }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/space/spaces?provider=${encodeURIComponent(provider)}`,
+  );
 }
 
-export async function unbindGroupSpace(groupId: string, provider: string = "notebooklm", lane: "work" | "memory") {
+export async function unbindGroupSpace(
+  groupId: string,
+  provider: string = "notebooklm",
+  lane: "work" | "memory",
+) {
   return apiJson<GroupSpaceStatus>(`/api/v1/groups/${encodeURIComponent(groupId)}/space/bind`, {
     method: "POST",
-    body: JSON.stringify({
-      by: "user",
-      provider,
-      lane,
-      action: "unbind",
-      remote_space_id: "",
-    }),
+    body: JSON.stringify({ by: "user", provider, lane, action: "unbind", remote_space_id: "" }),
   });
 }
 
@@ -138,9 +138,7 @@ export async function fetchGroupSpaceSources(
     action: "list";
     sources: GroupSpaceSource[];
     list_result?: Record<string, unknown>;
-  }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/space/sources?${params.toString()}`,
-  );
+  }>(`/api/v1/groups/${encodeURIComponent(groupId)}/space/sources?${params.toString()}`);
 }
 
 export async function actionGroupSpaceSource(args: {
@@ -186,7 +184,12 @@ export async function fetchGroupSpaceArtifacts(
     lane: String(lane),
   });
   if (String(kind || "").trim()) {
-    params.set("kind", String(kind || "").trim().toLowerCase());
+    params.set(
+      "kind",
+      String(kind || "")
+        .trim()
+        .toLowerCase(),
+    );
   }
   if (opts?.fresh) {
     params.set("fresh", "true");
@@ -243,7 +246,9 @@ export async function actionGroupSpaceArtifact(args: {
       provider: args.provider || "notebooklm",
       lane: args.lane,
       action: args.action,
-      kind: String(args.kind || "").trim().toLowerCase(),
+      kind: String(args.kind || "")
+        .trim()
+        .toLowerCase(),
       options: args.options || {},
       wait: args.wait ?? true,
       save_to_space: args.saveToSpace ?? true,
@@ -361,9 +366,7 @@ export async function checkGroupSpaceProviderHealth(provider: string = "notebook
     error?: { code?: string; message?: string };
     provider_state?: Record<string, unknown>;
     credential?: GroupSpaceProviderCredentialStatus;
-  }>(`/api/v1/space/providers/${encodeURIComponent(provider)}/health?by=user`, {
-    method: "POST",
-  });
+  }>(`/api/v1/space/providers/${encodeURIComponent(provider)}/health?by=user`, { method: "POST" });
 }
 
 export async function controlGroupSpaceProviderAuth(args: {
@@ -380,9 +383,7 @@ export async function controlGroupSpaceProviderAuth(args: {
       provider_state: Record<string, unknown>;
       credential: GroupSpaceProviderCredentialStatus;
       auth: GroupSpaceProviderAuthStatus;
-    }>(`/api/v1/space/providers/${encodeURIComponent(provider)}/auth?by=user`, {
-      method: "GET",
-    });
+    }>(`/api/v1/space/providers/${encodeURIComponent(provider)}/auth?by=user`, { method: "GET" });
   }
   return apiJson<{
     provider: string;
@@ -403,21 +404,33 @@ export async function controlGroupSpaceProviderAuth(args: {
 
 export async function fetchGroupSpaceProviderAuthBrowserSession(
   provider: string = "notebooklm",
-): Promise<ApiResponse<{ provider: string; browser_surface: ReturnType<typeof normalizePresentationBrowserSurfaceState> }>> {
+): Promise<
+  ApiResponse<{
+    provider: string;
+    browser_surface: ReturnType<typeof normalizePresentationBrowserSurfaceState>;
+  }>
+> {
   const resp = await controlGroupSpaceProviderAuth({ provider, action: "status" });
   if (!resp.ok) {
-    return resp as ApiResponse<{ provider: string; browser_surface: ReturnType<typeof normalizePresentationBrowserSurfaceState> }>;
+    return resp as ApiResponse<{
+      provider: string;
+      browser_surface: ReturnType<typeof normalizePresentationBrowserSurfaceState>;
+    }>;
   }
   return {
     ok: true,
     result: {
       provider,
-      browser_surface: normalizePresentationBrowserSurfaceState(resp.result.auth?.projected_browser),
+      browser_surface: normalizePresentationBrowserSurfaceState(
+        resp.result.auth?.projected_browser,
+      ),
     },
   };
 }
 
-export function getGroupSpaceProviderAuthBrowserWebSocketUrl(provider: string = "notebooklm"): string {
+export function getGroupSpaceProviderAuthBrowserWebSocketUrl(
+  provider: string = "notebooklm",
+): string {
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const base = `${protocol}//${window.location.host}/api/v1/space/providers/${encodeURIComponent(provider)}/auth/browser_surface/ws`;
   return withAuthToken(base);

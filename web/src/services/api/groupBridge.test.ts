@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   fetchGroupBridgeDeliveryStatus,
@@ -33,12 +33,16 @@ describe("group_bridge API client", () => {
 
   it("status / delivery-status use the expected routes", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => okResponse({ registrations: [] }));
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async () => okResponse({ registrations: [] }));
     await fetchGroupBridgeStatus("g1");
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/group-bridge/status?group_id=g1");
 
     await fetchGroupBridgeDeliveryStatus("r1", "k1");
-    expect(String(fetchMock.mock.calls[1]?.[0])).toBe("/api/group-bridge/registrations/r1/deliveries/k1");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toBe(
+      "/api/group-bridge/registrations/r1/deliveries/k1",
+    );
 
     await unregisterGroupBridge("r1");
     const [url, init] = fetchMock.mock.calls[2] || [];
@@ -51,10 +55,7 @@ describe("group_bridge API client", () => {
     const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async () => okResponse({}));
 
     await fetchGroupBridgeIdentity();
-    await createGroupBridgePairingInvite({
-      groupId: "g1",
-      ttlSeconds: 600,
-    });
+    await createGroupBridgePairingInvite({ groupId: "g1", ttlSeconds: 600 });
     await createGroupBridgePairingConnectionInfo({
       groupId: "g1",
       inviteId: "pinv_1",
@@ -68,7 +69,11 @@ describe("group_bridge API client", () => {
     });
     await createGroupBridgeRemotePairingRequest({
       localGroupId: "g_remote",
-      payload: { issuer_endpoint: "https://issuer.example", issuer_group_id: "g1", code: "WXYZ-9876" },
+      payload: {
+        issuer_endpoint: "https://issuer.example",
+        issuer_group_id: "g1",
+        code: "WXYZ-9876",
+      },
     });
     await fetchGroupBridgePairingRequests("g1");
     await approveGroupBridgePairingRequest("preq_1", "user-a");
@@ -104,25 +109,51 @@ describe("group_bridge API client", () => {
     expect(JSON.parse(String((fetchMock.mock.calls[4]?.[1] as RequestInit)?.body))).toEqual({
       local_group_id: "g_remote",
       local_group_title: "",
-      payload: { issuer_endpoint: "https://issuer.example", issuer_group_id: "g1", code: "WXYZ-9876" },
+      payload: {
+        issuer_endpoint: "https://issuer.example",
+        issuer_group_id: "g1",
+        code: "WXYZ-9876",
+      },
     });
-    expect(String(fetchMock.mock.calls[5]?.[0])).toBe("/api/group-bridge/pairing/requests?group_id=g1");
-    expect(String(fetchMock.mock.calls[6]?.[0])).toBe("/api/group-bridge/pairing/requests/preq_1/approve");
-    expect(String(fetchMock.mock.calls[7]?.[0])).toBe("/api/group-bridge/pairing/requests/preq_2/reject");
-    expect(String(fetchMock.mock.calls[8]?.[0])).toBe("/api/group-bridge/pairing/trusts?group_id=g1");
-    expect(String(fetchMock.mock.calls[9]?.[0])).toBe("/api/group-bridge/pairing/outbounds?group_id=g_remote");
-    expect(String(fetchMock.mock.calls[10]?.[0])).toBe("/api/group-bridge/pairing/outbounds/pout_1/sync");
+    expect(String(fetchMock.mock.calls[5]?.[0])).toBe(
+      "/api/group-bridge/pairing/requests?group_id=g1",
+    );
+    expect(String(fetchMock.mock.calls[6]?.[0])).toBe(
+      "/api/group-bridge/pairing/requests/preq_1/approve",
+    );
+    expect(String(fetchMock.mock.calls[7]?.[0])).toBe(
+      "/api/group-bridge/pairing/requests/preq_2/reject",
+    );
+    expect(String(fetchMock.mock.calls[8]?.[0])).toBe(
+      "/api/group-bridge/pairing/trusts?group_id=g1",
+    );
+    expect(String(fetchMock.mock.calls[9]?.[0])).toBe(
+      "/api/group-bridge/pairing/outbounds?group_id=g_remote",
+    );
+    expect(String(fetchMock.mock.calls[10]?.[0])).toBe(
+      "/api/group-bridge/pairing/outbounds/pout_1/sync",
+    );
     expect(String((fetchMock.mock.calls[10]?.[1] as RequestInit)?.method)).toBe("POST");
-    expect(String(fetchMock.mock.calls[11]?.[0])).toBe("/api/group-bridge/pairing/outbounds/pout_1/delete");
+    expect(String(fetchMock.mock.calls[11]?.[0])).toBe(
+      "/api/group-bridge/pairing/outbounds/pout_1/delete",
+    );
     expect(String((fetchMock.mock.calls[11]?.[1] as RequestInit)?.method)).toBe("POST");
-    expect(String(fetchMock.mock.calls[12]?.[0])).toBe("/api/group-bridge/pairing/trusts/ptrust_1/access");
+    expect(String(fetchMock.mock.calls[12]?.[0])).toBe(
+      "/api/group-bridge/pairing/trusts/ptrust_1/access",
+    );
     expect(JSON.parse(String((fetchMock.mock.calls[12]?.[1] as RequestInit)?.body))).toEqual({
       access_level: "read",
       updated_by: "user-a",
     });
-    expect(String(fetchMock.mock.calls[13]?.[0])).toBe("/api/group-bridge/pairing/trusts/ptrust_1/refresh");
+    expect(String(fetchMock.mock.calls[13]?.[0])).toBe(
+      "/api/group-bridge/pairing/trusts/ptrust_1/refresh",
+    );
     expect(String((fetchMock.mock.calls[13]?.[1] as RequestInit)?.method)).toBe("POST");
-    expect(String(fetchMock.mock.calls[14]?.[0])).toBe("/api/group-bridge/pairing/trusts/ptrust_1/revoke");
-    expect(JSON.parse(String((fetchMock.mock.calls[14]?.[1] as RequestInit)?.body))).toEqual({ revoked_by: "user-a" });
+    expect(String(fetchMock.mock.calls[14]?.[0])).toBe(
+      "/api/group-bridge/pairing/trusts/ptrust_1/revoke",
+    );
+    expect(JSON.parse(String((fetchMock.mock.calls[14]?.[1] as RequestInit)?.body))).toEqual({
+      revoked_by: "user-a",
+    });
   });
 });

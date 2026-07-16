@@ -3,7 +3,10 @@ import {
   getPresentationBrowserSurfaceWebSocketUrl,
   startPresentationBrowserSurfaceSession,
 } from "../../services/api";
-import { ProjectedBrowserSurfacePanel, type ProjectedBrowserFrame } from "../browser/ProjectedBrowserSurfacePanel";
+import {
+  ProjectedBrowserSurfacePanel,
+  type ProjectedBrowserFrame,
+} from "../browser/ProjectedBrowserSurfacePanel";
 
 type PresentationBrowserSurfacePanelProps = {
   groupId: string;
@@ -37,12 +40,7 @@ export function PresentationBrowserSurfacePanel({
       webSocketUrl={getPresentationBrowserSurfaceWebSocketUrl(groupId, slotId)}
       loadSession={() => fetchPresentationBrowserSurfaceSession(groupId, slotId)}
       startSession={({ width, height }) =>
-        startPresentationBrowserSurfaceSession(groupId, {
-          slotId,
-          url,
-          width,
-          height,
-        })
+        startPresentationBrowserSurfaceSession(groupId, { slotId, url, width, height })
       }
     />
   );

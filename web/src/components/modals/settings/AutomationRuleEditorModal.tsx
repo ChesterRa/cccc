@@ -93,42 +93,87 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
 
   const ruleId = String(ruleDraft.id || "").trim();
   const status = ruleStatus || {};
-  const recipients = Array.isArray(ruleDraft.to) ? ruleDraft.to.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  const recipients = Array.isArray(ruleDraft.to)
+    ? ruleDraft.to.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
   const triggerKind = String(ruleDraft.trigger?.kind || "interval");
   const everySeconds = clampInt(
-    Number(triggerKind === "interval" && ruleDraft.trigger && "every_seconds" in ruleDraft.trigger ? ruleDraft.trigger.every_seconds : 0),
+    Number(
+      triggerKind === "interval" && ruleDraft.trigger && "every_seconds" in ruleDraft.trigger
+        ? ruleDraft.trigger.every_seconds
+        : 0,
+    ),
     1,
-    365 * 24 * 3600
+    365 * 24 * 3600,
   );
-  const cronExpr = String(triggerKind === "cron" && ruleDraft.trigger && "cron" in ruleDraft.trigger ? ruleDraft.trigger.cron : "").trim();
-  const atRaw = String(triggerKind === "at" && ruleDraft.trigger && "at" in ruleDraft.trigger ? ruleDraft.trigger.at : "").trim();
-  const kind = String(ruleDraft.action?.kind || "notify").trim() as "notify" | "group_state" | "actor_control";
+  const cronExpr = String(
+    triggerKind === "cron" && ruleDraft.trigger && "cron" in ruleDraft.trigger
+      ? ruleDraft.trigger.cron
+      : "",
+  ).trim();
+  const atRaw = String(
+    triggerKind === "at" && ruleDraft.trigger && "at" in ruleDraft.trigger
+      ? ruleDraft.trigger.at
+      : "",
+  ).trim();
+  const kind = String(ruleDraft.action?.kind || "notify").trim() as
+    | "notify"
+    | "group_state"
+    | "actor_control";
   const scheduleLockedToOneTime = kind !== "notify";
   const scheduleSelectValue = scheduleLockedToOneTime ? "at" : triggerKind;
   const activeTriggerKind = scheduleLockedToOneTime ? "at" : triggerKind;
   const operationalActionsEnabled = activeTriggerKind === "at";
-  const snippetRef = String(kind === "notify" && ruleDraft.action && "snippet_ref" in ruleDraft.action ? ruleDraft.action.snippet_ref || "" : "").trim();
+  const snippetRef = String(
+    kind === "notify" && ruleDraft.action && "snippet_ref" in ruleDraft.action
+      ? ruleDraft.action.snippet_ref || ""
+      : "",
+  ).trim();
   const selectedSnippetContent = snippetRef ? String(snippets[snippetRef] || "").trim() : "";
   const snippetItems = snippetIds.map((snippetId) => ({
     value: snippetId,
     label: snippetId,
-    description: String(snippets[snippetId] || "").trim().split("\n")[0] || t("ruleEditor.snippetPreviewEmpty", { defaultValue: "This snippet is empty." }),
+    description:
+      String(snippets[snippetId] || "")
+        .trim()
+        .split("\n")[0] ||
+      t("ruleEditor.snippetPreviewEmpty", { defaultValue: "This snippet is empty." }),
   }));
-  const availableRecipientOptions = actorTargetOptions.filter((option) => !recipients.includes(option.value));
-  const message = String(kind === "notify" && ruleDraft.action && "message" in ruleDraft.action ? ruleDraft.action.message || "" : "");
+  const availableRecipientOptions = actorTargetOptions.filter(
+    (option) => !recipients.includes(option.value),
+  );
+  const message = String(
+    kind === "notify" && ruleDraft.action && "message" in ruleDraft.action
+      ? ruleDraft.action.message || ""
+      : "",
+  );
   const contentMode: "snippet" | "custom" = snippetRef ? "snippet" : "custom";
   const groupStateValue = String(
-    kind === "group_state" && ruleDraft.action && "state" in ruleDraft.action ? ruleDraft.action.state || "paused" : "paused"
+    kind === "group_state" && ruleDraft.action && "state" in ruleDraft.action
+      ? ruleDraft.action.state || "paused"
+      : "paused",
   );
   const actorOperation = String(
-    kind === "actor_control" && ruleDraft.action && "operation" in ruleDraft.action ? ruleDraft.action.operation || "restart" : "restart"
+    kind === "actor_control" && ruleDraft.action && "operation" in ruleDraft.action
+      ? ruleDraft.action.operation || "restart"
+      : "restart",
   );
-  const actorTargets = Array.isArray(kind === "actor_control" && ruleDraft.action && "targets" in ruleDraft.action ? ruleDraft.action.targets : [])
-    ? (ruleDraft.action as { targets?: string[] }).targets?.map((item) => String(item || "").trim()).filter(Boolean) || []
+  const actorTargets = Array.isArray(
+    kind === "actor_control" && ruleDraft.action && "targets" in ruleDraft.action
+      ? ruleDraft.action.targets
+      : [],
+  )
+    ? (ruleDraft.action as { targets?: string[] }).targets
+        ?.map((item) => String(item || "").trim())
+        .filter(Boolean) || []
     : [];
-  const availableActorTargetOptions = actorTargetOptions.filter((option) => !actorTargets.includes(option.value));
+  const availableActorTargetOptions = actorTargetOptions.filter(
+    (option) => !actorTargets.includes(option.value),
+  );
   const notifyAction =
-    kind === "notify" && ruleDraft.action && ruleDraft.action.kind === "notify" ? ruleDraft.action : defaultNotifyAction();
+    kind === "notify" && ruleDraft.action && ruleDraft.action.kind === "notify"
+      ? ruleDraft.action
+      : defaultNotifyAction();
   const enabled = ruleDraft.enabled !== false;
   const scope = String(ruleDraft.scope || "group") === "personal" ? "personal" : "group";
   const ownerActorId = String(ruleDraft.owner_actor_id || "").trim();
@@ -150,9 +195,14 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
             </div>
             {!isNewRule ? (
               <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
-                {t("ruleEditor.last")} {status.last_fired_at || "—"} • {t("ruleEditor.next")} {status.next_fire_at || "—"}{" "}
-                {status.completed ? `• ${t("ruleEditor.completed")} ${status.completed_at || status.last_fired_at || "—"}` : ""}{" "}
-                {status.last_error ? `• ${t("ruleEditor.error")} ${status.last_error_at || "—"}` : ""}
+                {t("ruleEditor.last")} {status.last_fired_at || "—"} • {t("ruleEditor.next")}{" "}
+                {status.next_fire_at || "—"}{" "}
+                {status.completed
+                  ? `• ${t("ruleEditor.completed")} ${status.completed_at || status.last_fired_at || "—"}`
+                  : ""}{" "}
+                {status.last_error
+                  ? `• ${t("ruleEditor.error")} ${status.last_error_at || "—"}`
+                  : ""}
               </div>
             ) : null}
           </div>
@@ -172,8 +222,14 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
           </div>
         </div>
 
-        {errorMessage ? <div className="px-4 pt-3 text-xs text-rose-600 dark:text-rose-300">{errorMessage}</div> : null}
-        {status.last_error && !isNewRule ? <div className="px-4 pt-1 text-xs text-rose-600 dark:text-rose-300">{status.last_error}</div> : null}
+        {errorMessage ? (
+          <div className="px-4 pt-3 text-xs text-rose-600 dark:text-rose-300">{errorMessage}</div>
+        ) : null}
+        {status.last_error && !isNewRule ? (
+          <div className="px-4 pt-1 text-xs text-rose-600 dark:text-rose-300">
+            {status.last_error}
+          </div>
+        ) : null}
 
         <div className={settingsDialogBodyClass}>
           <div className="space-y-3">
@@ -195,8 +251,12 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 <label className={labelClass(isDark)}>{t("ruleEditor.scheduleType")}</label>
                 <SelectCombobox
                   items={[
-                    ...(kind === "notify" ? [{ value: "interval", label: t("ruleEditor.intervalSchedule") }] : []),
-                    ...(kind === "notify" ? [{ value: "cron", label: t("ruleEditor.recurringSchedule") }] : []),
+                    ...(kind === "notify"
+                      ? [{ value: "interval", label: t("ruleEditor.intervalSchedule") }]
+                      : []),
+                    ...(kind === "notify"
+                      ? [{ value: "cron", label: t("ruleEditor.recurringSchedule") }]
+                      : []),
                     { value: "at", label: t("ruleEditor.oneTimeSchedule") },
                   ]}
                   value={scheduleSelectValue}
@@ -212,17 +272,18 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                         dayOfMonth: schedule.dayOfMonth,
                       });
                       patchRule({
-                        trigger: {
-                          kind: "cron",
-                          cron: cronExpr || nextCron,
-                          timezone: localTz,
-                        },
+                        trigger: { kind: "cron", cron: cronExpr || nextCron, timezone: localTz },
                       });
                       return;
                     }
                     if (nextKind === "at") {
                       onSetOneShotMode("after");
-                      patchRule({ trigger: { kind: "at", at: atRaw || new Date(Date.now() + 30 * 60 * 1000).toISOString() } });
+                      patchRule({
+                        trigger: {
+                          kind: "at",
+                          at: atRaw || new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+                        },
+                      });
                       return;
                     }
                     patchRule({ trigger: { kind: "interval", every_seconds: everySeconds } });
@@ -242,487 +303,551 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               </div>
             </div>
 
-          {scope === "personal" ? (
-            <div className="text-[11px] text-amber-700 dark:text-amber-300">
-              {t("ruleEditor.personalRule", { owner: ownerActorId || "unknown" })}
-            </div>
-          ) : null}
-
-          {activeTriggerKind === "interval" ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className={labelClass(isDark)}>{t("ruleEditor.repeatEvery")}</label>
-                <input
-                  type="number"
-                  min={1}
-                  value={Math.max(1, Math.round(everySeconds / 60))}
-                  onChange={(e) =>
-                    patchRule({
-                      trigger: {
-                        kind: "interval",
-                        every_seconds: Math.max(1, Number(e.target.value || 1)) * 60,
-                      },
-                    })
-                  }
-                  className={inputClass(isDark)}
-                />
+            {scope === "personal" ? (
+              <div className="text-[11px] text-amber-700 dark:text-amber-300">
+                {t("ruleEditor.personalRule", { owner: ownerActorId || "unknown" })}
               </div>
-              <div className="self-end text-[11px] text-[var(--color-text-muted)]">
-                {t("ruleEditor.currentCadence", { duration: formatDuration(everySeconds, t) })}
-              </div>
-            </div>
-          ) : null}
+            ) : null}
 
-          {activeTriggerKind === "cron" ? (
-            <div className="space-y-3">
+            {activeTriggerKind === "interval" ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className={labelClass(isDark)}>{t("ruleEditor.pattern")}</label>
-                  <SelectCombobox
-                    items={[
-                      { value: "daily", label: t("ruleEditor.daily") },
-                      { value: "weekly", label: t("ruleEditor.weekly") },
-                      { value: "monthly", label: t("ruleEditor.monthly") },
-                    ]}
-                    value={schedule.preset}
-                    onChange={(value) => {
-                      const preset = String(value || "daily") as SchedulePreset;
-                      patchRule({
-                        trigger: {
-                          kind: "cron",
-                          cron: buildCronFromPreset({
-                            preset,
-                            hour: schedule.hour,
-                            minute: schedule.minute,
-                            weekday: schedule.weekday,
-                            dayOfMonth: schedule.dayOfMonth,
-                          }),
-                          timezone: localTz,
-                        },
-                      });
-                    }}
-                    ariaLabel={t("ruleEditor.pattern")}
-                    className={inputClass(isDark)}
-                  />
-                </div>
-                <div>
-                  <label className={labelClass(isDark)}>{t("ruleEditor.time")}</label>
-                  <input
-                    type="time"
-                    value={scheduleTime}
-                    onChange={(e) => {
-                      const parsed = parseTimeInput(e.target.value);
-                      patchRule({
-                        trigger: {
-                          kind: "cron",
-                          cron: buildCronFromPreset({
-                            preset: schedule.preset,
-                            hour: parsed.hour,
-                            minute: parsed.minute,
-                            weekday: schedule.weekday,
-                            dayOfMonth: schedule.dayOfMonth,
-                          }),
-                          timezone: localTz,
-                        },
-                      });
-                    }}
-                    className={inputClass(isDark)}
-                  />
-                </div>
-              </div>
-
-              {schedule.preset === "weekly" ? (
-                <div>
-                  <label className={labelClass(isDark)}>{t("ruleEditor.weekday")}</label>
-                  <SelectCombobox
-                    items={weekdayOptions.map((day) => ({ value: String(day.value), label: day.label }))}
-                    value={String(schedule.weekday)}
-                    onChange={(value) =>
-                      patchRule({
-                        trigger: {
-                          kind: "cron",
-                          cron: buildCronFromPreset({
-                            preset: "weekly",
-                            hour: schedule.hour,
-                            minute: schedule.minute,
-                            weekday: Number(value || 1),
-                            dayOfMonth: schedule.dayOfMonth,
-                          }),
-                          timezone: localTz,
-                        },
-                      })
-                    }
-                    ariaLabel={t("ruleEditor.weekday")}
-                    className={inputClass(isDark)}
-                  />
-                </div>
-              ) : null}
-
-              {schedule.preset === "monthly" ? (
-                <div>
-                  <label className={labelClass(isDark)}>{t("ruleEditor.dayOfMonth")}</label>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.repeatEvery")}</label>
                   <input
                     type="number"
                     min={1}
-                    max={31}
-                    value={schedule.dayOfMonth}
+                    value={Math.max(1, Math.round(everySeconds / 60))}
                     onChange={(e) =>
                       patchRule({
                         trigger: {
-                          kind: "cron",
-                          cron: buildCronFromPreset({
-                            preset: "monthly",
-                            hour: schedule.hour,
-                            minute: schedule.minute,
-                            weekday: schedule.weekday,
-                            dayOfMonth: Number(e.target.value || 1),
-                          }),
-                          timezone: localTz,
+                          kind: "interval",
+                          every_seconds: Math.max(1, Number(e.target.value || 1)) * 60,
                         },
                       })
                     }
                     className={inputClass(isDark)}
                   />
                 </div>
-              ) : null}
-            </div>
-          ) : null}
-
-          {activeTriggerKind === "at" ? (
-            <div className="space-y-3">
-              <div>
-                <label className={labelClass(isDark)}>{t("ruleEditor.oneTimeMode")}</label>
-                <SelectCombobox
-                  items={[
-                    { value: "after", label: t("ruleEditor.afterCountdown") },
-                    { value: "exact", label: t("ruleEditor.exactTime") },
-                  ]}
-                  value={oneShotMode}
-                  onChange={(value) => onSetOneShotMode(String(value || "after") as "after" | "exact")}
-                  ariaLabel={t("ruleEditor.oneTimeMode")}
-                  className={inputClass(isDark)}
-                />
+                <div className="self-end text-[11px] text-[var(--color-text-muted)]">
+                  {t("ruleEditor.currentCadence", { duration: formatDuration(everySeconds, t) })}
+                </div>
               </div>
+            ) : null}
 
-              {oneShotMode === "after" ? (
-                <div className="space-y-2">
-                  <div className="flex flex-wrap gap-2">
-                    {[5, 10, 30, 60, 120].map((minutes) => (
-                      <button
-                        key={minutes}
-                        type="button"
-                        className={secondaryButtonClass("sm")}
-                        onClick={() => onSetOneShotAfterMinutes(minutes)}
-                      >
-                        {minutes >= 60 ? `${Math.round(minutes / 60)}h` : `${minutes}m`}
-                      </button>
-                    ))}
+            {activeTriggerKind === "cron" ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className={labelClass(isDark)}>{t("ruleEditor.pattern")}</label>
+                    <SelectCombobox
+                      items={[
+                        { value: "daily", label: t("ruleEditor.daily") },
+                        { value: "weekly", label: t("ruleEditor.weekly") },
+                        { value: "monthly", label: t("ruleEditor.monthly") },
+                      ]}
+                      value={schedule.preset}
+                      onChange={(value) => {
+                        const preset = String(value || "daily") as SchedulePreset;
+                        patchRule({
+                          trigger: {
+                            kind: "cron",
+                            cron: buildCronFromPreset({
+                              preset,
+                              hour: schedule.hour,
+                              minute: schedule.minute,
+                              weekday: schedule.weekday,
+                              dayOfMonth: schedule.dayOfMonth,
+                            }),
+                            timezone: localTz,
+                          },
+                        });
+                      }}
+                      ariaLabel={t("ruleEditor.pattern")}
+                      className={inputClass(isDark)}
+                    />
                   </div>
                   <div>
-                    <label className={labelClass(isDark)}>{t("ruleEditor.remindMeIn")}</label>
+                    <label className={labelClass(isDark)}>{t("ruleEditor.time")}</label>
                     <input
-                      type="number"
-                      min={1}
-                      max={10080}
-                      value={oneShotAfterMinutes}
-                      onChange={(e) => onSetOneShotAfterMinutes(clampInt(Number(e.target.value || 1), 1, 7 * 24 * 60))}
+                      type="time"
+                      value={scheduleTime}
+                      onChange={(e) => {
+                        const parsed = parseTimeInput(e.target.value);
+                        patchRule({
+                          trigger: {
+                            kind: "cron",
+                            cron: buildCronFromPreset({
+                              preset: schedule.preset,
+                              hour: parsed.hour,
+                              minute: parsed.minute,
+                              weekday: schedule.weekday,
+                              dayOfMonth: schedule.dayOfMonth,
+                            }),
+                            timezone: localTz,
+                          },
+                        });
+                      }}
                       className={inputClass(isDark)}
                     />
                   </div>
                 </div>
-              ) : (
+
+                {schedule.preset === "weekly" ? (
+                  <div>
+                    <label className={labelClass(isDark)}>{t("ruleEditor.weekday")}</label>
+                    <SelectCombobox
+                      items={weekdayOptions.map((day) => ({
+                        value: String(day.value),
+                        label: day.label,
+                      }))}
+                      value={String(schedule.weekday)}
+                      onChange={(value) =>
+                        patchRule({
+                          trigger: {
+                            kind: "cron",
+                            cron: buildCronFromPreset({
+                              preset: "weekly",
+                              hour: schedule.hour,
+                              minute: schedule.minute,
+                              weekday: Number(value || 1),
+                              dayOfMonth: schedule.dayOfMonth,
+                            }),
+                            timezone: localTz,
+                          },
+                        })
+                      }
+                      ariaLabel={t("ruleEditor.weekday")}
+                      className={inputClass(isDark)}
+                    />
+                  </div>
+                ) : null}
+
+                {schedule.preset === "monthly" ? (
+                  <div>
+                    <label className={labelClass(isDark)}>{t("ruleEditor.dayOfMonth")}</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={31}
+                      value={schedule.dayOfMonth}
+                      onChange={(e) =>
+                        patchRule({
+                          trigger: {
+                            kind: "cron",
+                            cron: buildCronFromPreset({
+                              preset: "monthly",
+                              hour: schedule.hour,
+                              minute: schedule.minute,
+                              weekday: schedule.weekday,
+                              dayOfMonth: Number(e.target.value || 1),
+                            }),
+                            timezone: localTz,
+                          },
+                        })
+                      }
+                      className={inputClass(isDark)}
+                    />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {activeTriggerKind === "at" ? (
+              <div className="space-y-3">
                 <div>
-                  <label className={labelClass(isDark)}>{t("ruleEditor.dateTime")}</label>
-                  <input
-                    type="datetime-local"
-                    value={atInput}
-                    onChange={(e) => patchRule({ trigger: { kind: "at", at: localDatetimeInputToIso(e.target.value) } })}
+                  <label className={labelClass(isDark)}>{t("ruleEditor.oneTimeMode")}</label>
+                  <SelectCombobox
+                    items={[
+                      { value: "after", label: t("ruleEditor.afterCountdown") },
+                      { value: "exact", label: t("ruleEditor.exactTime") },
+                    ]}
+                    value={oneShotMode}
+                    onChange={(value) =>
+                      onSetOneShotMode(String(value || "after") as "after" | "exact")
+                    }
+                    ariaLabel={t("ruleEditor.oneTimeMode")}
                     className={inputClass(isDark)}
                   />
                 </div>
-              )}
 
-              <div className="text-[11px] text-[var(--color-text-muted)]">
-                {t("automation.savedSendTime")} <span className="font-mono break-all">{atRaw || "—"}</span>
-              </div>
-            </div>
-          ) : null}
-
-          <div>
-            <label className={labelClass(isDark)}>{t("ruleEditor.action")}</label>
-            <SelectCombobox
-              items={[
-                { value: "notify", label: t("ruleEditor.sendReminder") },
-                {
-                  value: "group_state",
-                  label: `${t("ruleEditor.setGroupStatus")}${operationalActionsEnabled ? "" : t("automation.oneTimeOnlySuffix")}`,
-                  disabled: !operationalActionsEnabled,
-                },
-                {
-                  value: "actor_control",
-                  label: `${t("ruleEditor.controlActorRuntimes")}${operationalActionsEnabled ? "" : t("automation.oneTimeOnlySuffix")}`,
-                  disabled: !operationalActionsEnabled,
-                },
-              ]}
-              value={kind}
-              onChange={(value) => {
-                const next = String(value || "notify");
-                if (next !== "notify" && !operationalActionsEnabled) {
-                  onSetRulesErr(t("automation.operationalActionsHint"));
-                  return;
-                }
-                onSetRulesErr("");
-                if (next === "group_state") {
-                  onSetOneShotMode("after");
-                  patchRule({
-                    action: defaultGroupStateAction(),
-                    trigger: { kind: "at", at: atRaw || buildDefaultOneShotAt() },
-                  });
-                  return;
-                }
-                if (next === "actor_control") {
-                  onSetOneShotMode("after");
-                  patchRule({
-                    action: defaultActorControlAction(),
-                    trigger: { kind: "at", at: atRaw || buildDefaultOneShotAt() },
-                  });
-                  return;
-                }
-                patchRule({
-                  action: defaultNotifyAction(),
-                  to: recipients.length > 0 ? recipients : ["@foreman"],
-                });
-              }}
-              ariaLabel={t("ruleEditor.action")}
-              className={inputClass(isDark)}
-            />
-            {!operationalActionsEnabled ? (
-              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{t("automation.operationalActionsOnly")}</div>
-            ) : null}
-          </div>
-
-          {kind === "notify" ? (
-            <>
-              <div>
-                <label className={labelClass(isDark)}>{t("ruleEditor.sendTo")}</label>
-                <div className="flex flex-wrap gap-2">
-                  {recipients.map((token) => (
-                    <Chip
-                      key={token}
-                      label={token}
-                      isDark={isDark}
-                      onRemove={() => patchRule({ to: recipients.filter((item) => item !== token) })}
+                {oneShotMode === "after" ? (
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap gap-2">
+                      {[5, 10, 30, 60, 120].map((minutes) => (
+                        <button
+                          key={minutes}
+                          type="button"
+                          className={secondaryButtonClass("sm")}
+                          onClick={() => onSetOneShotAfterMinutes(minutes)}
+                        >
+                          {minutes >= 60 ? `${Math.round(minutes / 60)}h` : `${minutes}m`}
+                        </button>
+                      ))}
+                    </div>
+                    <div>
+                      <label className={labelClass(isDark)}>{t("ruleEditor.remindMeIn")}</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={10080}
+                        value={oneShotAfterMinutes}
+                        onChange={(e) =>
+                          onSetOneShotAfterMinutes(
+                            clampInt(Number(e.target.value || 1), 1, 7 * 24 * 60),
+                          )
+                        }
+                        className={inputClass(isDark)}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <label className={labelClass(isDark)}>{t("ruleEditor.dateTime")}</label>
+                    <input
+                      type="datetime-local"
+                      value={atInput}
+                      onChange={(e) =>
+                        patchRule({
+                          trigger: { kind: "at", at: localDatetimeInputToIso(e.target.value) },
+                        })
+                      }
+                      className={inputClass(isDark)}
                     />
-                  ))}
-                  <GroupCombobox
-                    items={availableRecipientOptions.map((option) => ({
-                      value: option.value,
-                      label: option.label,
-                    }))}
-                    value=""
-                    onChange={(value) => {
-                      if (!value || recipients.includes(value)) return;
-                      patchRule({ to: [...recipients, value] });
-                    }}
-                    placeholder={t("automation.addRecipient")}
-                    searchPlaceholder={t("automation.addRecipient")}
-                    emptyText={t("automation.noRecipientsAvailable", { defaultValue: "No recipients available." })}
-                    ariaLabel={t("automation.addRecipient")}
-                    triggerClassName="glass-input min-h-[44px] min-w-[17rem] px-3 py-2 text-sm text-[var(--color-text-primary)]"
-                    contentClassName="min-w-[18rem]"
-                    matchTriggerWidth
-                  />
+                  </div>
+                )}
+
+                <div className="text-[11px] text-[var(--color-text-muted)]">
+                  {t("automation.savedSendTime")}{" "}
+                  <span className="font-mono break-all">{atRaw || "—"}</span>
                 </div>
               </div>
+            ) : null}
 
-              <div>
-                <label className={labelClass(isDark)}>{t("ruleEditor.notificationSource")}</label>
-                <SelectCombobox
-                  items={[
-                    { value: "snippet", label: t("ruleEditor.messageSnippet") },
-                    { value: "custom", label: t("ruleEditor.typeText") },
-                  ]}
-                  value={contentMode}
-                  onChange={(value) => {
-                    const nextMode = String(value || "custom");
-                    if (nextMode === "snippet") {
-                      if (snippetIds.length === 0) {
-                        onSetRulesErr(t("automation.createSnippetFirst"));
+            <div>
+              <label className={labelClass(isDark)}>{t("ruleEditor.action")}</label>
+              <SelectCombobox
+                items={[
+                  { value: "notify", label: t("ruleEditor.sendReminder") },
+                  {
+                    value: "group_state",
+                    label: `${t("ruleEditor.setGroupStatus")}${operationalActionsEnabled ? "" : t("automation.oneTimeOnlySuffix")}`,
+                    disabled: !operationalActionsEnabled,
+                  },
+                  {
+                    value: "actor_control",
+                    label: `${t("ruleEditor.controlActorRuntimes")}${operationalActionsEnabled ? "" : t("automation.oneTimeOnlySuffix")}`,
+                    disabled: !operationalActionsEnabled,
+                  },
+                ]}
+                value={kind}
+                onChange={(value) => {
+                  const next = String(value || "notify");
+                  if (next !== "notify" && !operationalActionsEnabled) {
+                    onSetRulesErr(t("automation.operationalActionsHint"));
+                    return;
+                  }
+                  onSetRulesErr("");
+                  if (next === "group_state") {
+                    onSetOneShotMode("after");
+                    patchRule({
+                      action: defaultGroupStateAction(),
+                      trigger: { kind: "at", at: atRaw || buildDefaultOneShotAt() },
+                    });
+                    return;
+                  }
+                  if (next === "actor_control") {
+                    onSetOneShotMode("after");
+                    patchRule({
+                      action: defaultActorControlAction(),
+                      trigger: { kind: "at", at: atRaw || buildDefaultOneShotAt() },
+                    });
+                    return;
+                  }
+                  patchRule({
+                    action: defaultNotifyAction(),
+                    to: recipients.length > 0 ? recipients : ["@foreman"],
+                  });
+                }}
+                ariaLabel={t("ruleEditor.action")}
+                className={inputClass(isDark)}
+              />
+              {!operationalActionsEnabled ? (
+                <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                  {t("automation.operationalActionsOnly")}
+                </div>
+              ) : null}
+            </div>
+
+            {kind === "notify" ? (
+              <>
+                <div>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.sendTo")}</label>
+                  <div className="flex flex-wrap gap-2">
+                    {recipients.map((token) => (
+                      <Chip
+                        key={token}
+                        label={token}
+                        isDark={isDark}
+                        onRemove={() =>
+                          patchRule({ to: recipients.filter((item) => item !== token) })
+                        }
+                      />
+                    ))}
+                    <GroupCombobox
+                      items={availableRecipientOptions.map((option) => ({
+                        value: option.value,
+                        label: option.label,
+                      }))}
+                      value=""
+                      onChange={(value) => {
+                        if (!value || recipients.includes(value)) return;
+                        patchRule({ to: [...recipients, value] });
+                      }}
+                      placeholder={t("automation.addRecipient")}
+                      searchPlaceholder={t("automation.addRecipient")}
+                      emptyText={t("automation.noRecipientsAvailable", {
+                        defaultValue: "No recipients available.",
+                      })}
+                      ariaLabel={t("automation.addRecipient")}
+                      triggerClassName="glass-input min-h-[44px] min-w-[17rem] px-3 py-2 text-sm text-[var(--color-text-primary)]"
+                      contentClassName="min-w-[18rem]"
+                      matchTriggerWidth
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.notificationSource")}</label>
+                  <SelectCombobox
+                    items={[
+                      { value: "snippet", label: t("ruleEditor.messageSnippet") },
+                      { value: "custom", label: t("ruleEditor.typeText") },
+                    ]}
+                    value={contentMode}
+                    onChange={(value) => {
+                      const nextMode = String(value || "custom");
+                      if (nextMode === "snippet") {
+                        if (snippetIds.length === 0) {
+                          onSetRulesErr(t("automation.createSnippetFirst"));
+                          return;
+                        }
+                        onSetRulesErr("");
+                        patchRule({
+                          action: {
+                            ...notifyAction,
+                            snippet_ref: snippetRef || snippetIds[0] || null,
+                          },
+                        });
                         return;
                       }
                       onSetRulesErr("");
-                      patchRule({ action: { ...notifyAction, snippet_ref: snippetRef || snippetIds[0] || null } });
-                      return;
-                    }
-                    onSetRulesErr("");
-                    patchRule({ action: { ...notifyAction, snippet_ref: null } });
-                  }}
-                  ariaLabel={t("ruleEditor.notificationSource")}
-                  className={inputClass(isDark)}
-                />
-              </div>
-
-              {contentMode === "snippet" ? (
-                <div>
-                  <label className={labelClass(isDark)}>{t("ruleEditor.selectSnippet")}</label>
-                  <GroupCombobox
-                    items={snippetItems}
-                    value={snippetRef}
-                    onChange={(value) => patchRule({ action: { ...notifyAction, snippet_ref: value || null } })}
-                    placeholder={t("ruleEditor.selectSnippetPlaceholder", { defaultValue: "Select snippet" })}
-                    searchPlaceholder={t("ruleEditor.searchSnippetPlaceholder", { defaultValue: "Search snippets..." })}
-                    emptyText={t("automation.noSnippetsYet")}
-                    ariaLabel={t("ruleEditor.selectSnippet")}
-                    triggerClassName={`${inputClass(isDark)} font-mono justify-between`}
-                    contentClassName="w-[min(36rem,calc(100vw-1.5rem))]"
-                    descriptionClassName="font-sans"
-                    matchTriggerWidth
-                  />
-                  {snippetIds.length === 0 ? (
-                    <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">{t("automation.noSnippetsYet")}</div>
-                  ) : null}
-                  {snippetRef ? (
-                    <div className="mt-3">
-                      <div className="mb-2 flex items-center justify-between gap-2">
-                        <div className="text-[11px] font-medium text-[var(--color-text-secondary)]">
-                          {t("ruleEditor.snippetPreview", { defaultValue: "Snippet Preview" })}
-                        </div>
-                        <div className="rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2 py-0.5 text-[10px] font-mono text-[var(--color-text-secondary)]">
-                          {snippetRef}
-                        </div>
-                      </div>
-                      <div className={`${inputClass(isDark)} min-h-[120px] whitespace-pre-wrap font-mono text-[12px] leading-6`}>
-                        {selectedSnippetContent || t("ruleEditor.snippetPreviewEmpty", { defaultValue: "This snippet is empty." })}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ) : (
-                <div>
-                  <label className={labelClass(isDark)}>{t("ruleEditor.messageLabel")}</label>
-                  <textarea
-                    value={message}
-                    onChange={(e) => patchRule({ action: { ...notifyAction, message: e.target.value } })}
-                    className={`${inputClass(isDark)} font-mono text-[12px]`}
-                    style={{ minHeight: 140 }}
-                    placeholder={t("automation.messagePlaceholder")}
-                    spellCheck={false}
+                      patchRule({ action: { ...notifyAction, snippet_ref: null } });
+                    }}
+                    ariaLabel={t("ruleEditor.notificationSource")}
+                    className={inputClass(isDark)}
                   />
                 </div>
-              )}
-            </>
-          ) : null}
 
-          {kind === "group_state" ? (
-            <div>
-              <label className={labelClass(isDark)}>{t("ruleEditor.groupStatusTarget")}</label>
-              <SelectCombobox
-                items={[
-                  { value: "active", label: groupStateCopy.active.label },
-                  { value: "idle", label: groupStateCopy.idle.label },
-                  { value: "paused", label: groupStateCopy.paused.label },
-                  { value: "stopped", label: groupStateCopy.stopped.label },
-                ]}
-                value={groupStateValue}
-                onChange={(value) =>
-                  patchRule({
-                    action: {
-                      kind: "group_state",
-                      state: String(value || "paused") as "active" | "idle" | "paused" | "stopped",
-                    },
-                  })
-                }
-                ariaLabel={t("ruleEditor.groupStatusTarget")}
-                className={inputClass(isDark)}
-              />
-              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                {groupStateCopy[(groupStateValue as "active" | "idle" | "paused" | "stopped") || "paused"].hint}
-              </div>
-            </div>
-          ) : null}
+                {contentMode === "snippet" ? (
+                  <div>
+                    <label className={labelClass(isDark)}>{t("ruleEditor.selectSnippet")}</label>
+                    <GroupCombobox
+                      items={snippetItems}
+                      value={snippetRef}
+                      onChange={(value) =>
+                        patchRule({ action: { ...notifyAction, snippet_ref: value || null } })
+                      }
+                      placeholder={t("ruleEditor.selectSnippetPlaceholder", {
+                        defaultValue: "Select snippet",
+                      })}
+                      searchPlaceholder={t("ruleEditor.searchSnippetPlaceholder", {
+                        defaultValue: "Search snippets...",
+                      })}
+                      emptyText={t("automation.noSnippetsYet")}
+                      ariaLabel={t("ruleEditor.selectSnippet")}
+                      triggerClassName={`${inputClass(isDark)} font-mono justify-between`}
+                      contentClassName="w-[min(36rem,calc(100vw-1.5rem))]"
+                      descriptionClassName="font-sans"
+                      matchTriggerWidth
+                    />
+                    {snippetIds.length === 0 ? (
+                      <div className="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
+                        {t("automation.noSnippetsYet")}
+                      </div>
+                    ) : null}
+                    {snippetRef ? (
+                      <div className="mt-3">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="text-[11px] font-medium text-[var(--color-text-secondary)]">
+                            {t("ruleEditor.snippetPreview", { defaultValue: "Snippet Preview" })}
+                          </div>
+                          <div className="rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-2 py-0.5 text-[10px] font-mono text-[var(--color-text-secondary)]">
+                            {snippetRef}
+                          </div>
+                        </div>
+                        <div
+                          className={`${inputClass(isDark)} min-h-[120px] whitespace-pre-wrap font-mono text-[12px] leading-6`}
+                        >
+                          {selectedSnippetContent ||
+                            t("ruleEditor.snippetPreviewEmpty", {
+                              defaultValue: "This snippet is empty.",
+                            })}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div>
+                    <label className={labelClass(isDark)}>{t("ruleEditor.messageLabel")}</label>
+                    <textarea
+                      value={message}
+                      onChange={(e) =>
+                        patchRule({ action: { ...notifyAction, message: e.target.value } })
+                      }
+                      className={`${inputClass(isDark)} font-mono text-[12px]`}
+                      style={{ minHeight: 140 }}
+                      placeholder={t("automation.messagePlaceholder")}
+                      spellCheck={false}
+                    />
+                  </div>
+                )}
+              </>
+            ) : null}
 
-          {kind === "actor_control" ? (
-            <div className="space-y-3">
+            {kind === "group_state" ? (
               <div>
-                <label className={labelClass(isDark)}>{t("ruleEditor.runtimeOperation")}</label>
+                <label className={labelClass(isDark)}>{t("ruleEditor.groupStatusTarget")}</label>
                 <SelectCombobox
                   items={[
-                    { value: "start", label: actorOperationCopy.start.label },
-                    { value: "stop", label: actorOperationCopy.stop.label },
-                    { value: "restart", label: actorOperationCopy.restart.label },
+                    { value: "active", label: groupStateCopy.active.label },
+                    { value: "idle", label: groupStateCopy.idle.label },
+                    { value: "paused", label: groupStateCopy.paused.label },
+                    { value: "stopped", label: groupStateCopy.stopped.label },
                   ]}
-                  value={actorOperation}
+                  value={groupStateValue}
                   onChange={(value) =>
                     patchRule({
                       action: {
-                        kind: "actor_control",
-                        operation: String(value || "restart") as "start" | "stop" | "restart",
-                        targets: actorTargets.length > 0 ? actorTargets : ["@all"],
+                        kind: "group_state",
+                        state: String(value || "paused") as
+                          | "active"
+                          | "idle"
+                          | "paused"
+                          | "stopped",
                       },
                     })
                   }
-                  ariaLabel={t("ruleEditor.runtimeOperation")}
+                  ariaLabel={t("ruleEditor.groupStatusTarget")}
                   className={inputClass(isDark)}
                 />
                 <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                  {actorOperationCopy[(actorOperation as "start" | "stop" | "restart") || "restart"].hint}
+                  {
+                    groupStateCopy[
+                      (groupStateValue as "active" | "idle" | "paused" | "stopped") || "paused"
+                    ].hint
+                  }
                 </div>
               </div>
+            ) : null}
 
-              <div>
-                <label className={labelClass(isDark)}>{t("ruleEditor.targetActors")}</label>
-                <div className="flex flex-wrap gap-2">
-                  {actorTargets.map((token) => (
-                    <Chip
-                      key={token}
-                      label={token}
-                      isDark={isDark}
-                      onRemove={() =>
+            {kind === "actor_control" ? (
+              <div className="space-y-3">
+                <div>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.runtimeOperation")}</label>
+                  <SelectCombobox
+                    items={[
+                      { value: "start", label: actorOperationCopy.start.label },
+                      { value: "stop", label: actorOperationCopy.stop.label },
+                      { value: "restart", label: actorOperationCopy.restart.label },
+                    ]}
+                    value={actorOperation}
+                    onChange={(value) =>
+                      patchRule({
+                        action: {
+                          kind: "actor_control",
+                          operation: String(value || "restart") as "start" | "stop" | "restart",
+                          targets: actorTargets.length > 0 ? actorTargets : ["@all"],
+                        },
+                      })
+                    }
+                    ariaLabel={t("ruleEditor.runtimeOperation")}
+                    className={inputClass(isDark)}
+                  />
+                  <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                    {
+                      actorOperationCopy[
+                        (actorOperation as "start" | "stop" | "restart") || "restart"
+                      ].hint
+                    }
+                  </div>
+                </div>
+
+                <div>
+                  <label className={labelClass(isDark)}>{t("ruleEditor.targetActors")}</label>
+                  <div className="flex flex-wrap gap-2">
+                    {actorTargets.map((token) => (
+                      <Chip
+                        key={token}
+                        label={token}
+                        isDark={isDark}
+                        onRemove={() =>
+                          patchRule({
+                            action: {
+                              kind: "actor_control",
+                              operation: actorOperation as "start" | "stop" | "restart",
+                              targets: actorTargets.filter((item) => item !== token),
+                            },
+                          })
+                        }
+                      />
+                    ))}
+                    <GroupCombobox
+                      items={availableActorTargetOptions.map((option) => ({
+                        value: option.value,
+                        label: option.label,
+                      }))}
+                      value=""
+                      onChange={(value) => {
+                        if (!value || actorTargets.includes(value)) return;
                         patchRule({
                           action: {
                             kind: "actor_control",
                             operation: actorOperation as "start" | "stop" | "restart",
-                            targets: actorTargets.filter((item) => item !== token),
+                            targets: [...actorTargets, value],
                           },
-                        })
-                      }
+                        });
+                      }}
+                      placeholder={t("automation.addTarget")}
+                      searchPlaceholder={t("automation.addTarget")}
+                      emptyText={t("automation.noTargetsAvailable", {
+                        defaultValue: "No targets available.",
+                      })}
+                      ariaLabel={t("automation.addTarget")}
+                      triggerClassName="glass-input min-h-[44px] min-w-[17rem] px-3 py-2 text-sm text-[var(--color-text-primary)]"
+                      contentClassName="min-w-[18rem]"
+                      matchTriggerWidth
                     />
-                  ))}
-                  <GroupCombobox
-                    items={availableActorTargetOptions.map((option) => ({
-                      value: option.value,
-                      label: option.label,
-                    }))}
-                    value=""
-                    onChange={(value) => {
-                      if (!value || actorTargets.includes(value)) return;
-                      patchRule({
-                        action: {
-                          kind: "actor_control",
-                          operation: actorOperation as "start" | "stop" | "restart",
-                          targets: [...actorTargets, value],
-                        },
-                      });
-                    }}
-                    placeholder={t("automation.addTarget")}
-                    searchPlaceholder={t("automation.addTarget")}
-                    emptyText={t("automation.noTargetsAvailable", { defaultValue: "No targets available." })}
-                    ariaLabel={t("automation.addTarget")}
-                    triggerClassName="glass-input min-h-[44px] min-w-[17rem] px-3 py-2 text-sm text-[var(--color-text-primary)]"
-                    contentClassName="min-w-[18rem]"
-                    matchTriggerWidth
-                  />
+                  </div>
                 </div>
               </div>
-            </div>
             ) : null}
           </div>
         </div>
         <div className={settingsDialogFooterClass}>
-          <button type="button" className={secondaryButtonClass()} onClick={onClose} disabled={saveBusy}>
+          <button
+            type="button"
+            className={secondaryButtonClass()}
+            onClick={onClose}
+            disabled={saveBusy}
+          >
             {t("common:cancel")}
           </button>
-          <button type="button" className={primaryButtonClass(saveBusy)} onClick={() => void onSave()} disabled={saveBusy}>
+          <button
+            type="button"
+            className={primaryButtonClass(saveBusy)}
+            onClick={() => void onSave()}
+            disabled={saveBusy}
+          >
             {saveBusy ? t("common:saving") : t("common:save")}
           </button>
         </div>

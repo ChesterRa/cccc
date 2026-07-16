@@ -31,7 +31,9 @@ export function MessagingTab(props: MessagingTabProps) {
       <div className={settingsWorkspaceShellClass(isDark)}>
         <div className={settingsWorkspaceHeaderClass(isDark)}>
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("messaging.title")}</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("messaging.title")}
+            </h3>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
               {t("messaging.description")}
             </p>
@@ -44,10 +46,16 @@ export function MessagingTab(props: MessagingTabProps) {
               <div className="rounded-xl bg-emerald-500/15 p-1.5 text-emerald-700 dark:text-emerald-400">
                 <MessageSquareIcon className="h-4 w-4" />
               </div>
-              <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("messaging.defaultRecipient")}</h3>
+              <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {t("messaging.defaultRecipient")}
+              </h3>
             </div>
             <p className="mb-5 ml-9 text-xs text-[var(--color-text-muted)]">
-              <Trans i18nKey="messaging.defaultRecipientDescription" ns="settings" components={[<span className="font-mono" />]} />
+              <Trans
+                i18nKey="messaging.defaultRecipientDescription"
+                ns="settings"
+                components={[<span key="recipient" className="font-mono" />]}
+              />
             </p>
 
             <div className="ml-1 space-y-2.5">
@@ -58,7 +66,9 @@ export function MessagingTab(props: MessagingTabProps) {
                   { value: "broadcast", label: t("messaging.broadcastAll") },
                 ]}
                 value={defaultSendTo}
-                onChange={(value) => setDefaultSendTo((value as "foreman" | "broadcast") || "foreman")}
+                onChange={(value) =>
+                  setDefaultSendTo((value as "foreman" | "broadcast") || "foreman")
+                }
                 ariaLabel={t("messaging.whenNoRecipients")}
                 className={inputClass(isDark)}
               />

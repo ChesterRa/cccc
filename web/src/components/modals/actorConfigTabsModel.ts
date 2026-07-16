@@ -1,4 +1,8 @@
-export function nextActorConfigTabId(tabIds: readonly string[], activeId: string, key: string): string {
+export function nextActorConfigTabId(
+  tabIds: readonly string[],
+  activeId: string,
+  key: string,
+): string {
   if (tabIds.length === 0) return activeId;
   const activeIndex = Math.max(0, tabIds.indexOf(activeId));
 

@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { ActorConfigTabs } from "./ActorConfigTabs";
 import { nextActorConfigTabId } from "./actorConfigTabsModel";
@@ -18,7 +18,7 @@ describe("ActorConfigTabs", () => {
         tabs={tabs}
         activeId="capabilities"
         onChange={() => undefined}
-      />
+      />,
     );
 
     expect(markup).toContain('role="tablist"');
@@ -39,6 +39,12 @@ describe("ActorConfigTabs", () => {
     ["environment", "End", "profile"],
     ["environment", "Enter", "environment"],
   ])("moves from %s with %s to %s", (activeId, key, expected) => {
-    expect(nextActorConfigTabId(tabs.map((tab) => tab.id), activeId, key)).toBe(expected);
+    expect(
+      nextActorConfigTabId(
+        tabs.map((tab) => tab.id),
+        activeId,
+        key,
+      ),
+    ).toBe(expected);
   });
 });

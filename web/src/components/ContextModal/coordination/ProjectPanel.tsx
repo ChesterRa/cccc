@@ -53,19 +53,25 @@ export function ProjectPanel({
   const contentClass = expanded ? "mt-4 min-h-0 flex flex-1 flex-col" : "mt-4";
   const textAreaClass = classNames(
     ui.textareaClass,
-    expanded ? "min-h-[520px] flex-1" : "min-h-[320px]"
+    expanded ? "min-h-[520px] flex-1" : "min-h-[320px]",
   );
   const markdownContainerClass = classNames(
-    expanded ? "min-h-0 flex-1 overflow-y-auto rounded-xl border p-4" : "max-h-[36rem] overflow-y-auto rounded-xl border p-3",
-    "glass-card"
+    expanded
+      ? "min-h-0 flex-1 overflow-y-auto rounded-xl border p-4"
+      : "max-h-[36rem] overflow-y-auto rounded-xl border p-3",
+    "glass-card",
   );
 
   return (
     <section className={shellClass}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.projectMd", "PROJECT.md")}</div>
-          <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>{projectBusy ? tr("common:loading", "Loading…") : projectPathLabel}</div>
+          <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>
+            {tr("context.projectMd", "PROJECT.md")}
+          </div>
+          <div className={classNames("mt-1 text-xs", ui.mutedTextClass)}>
+            {projectBusy ? tr("common:loading", "Loading…") : projectPathLabel}
+          </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           {!expanded ? (
@@ -89,13 +95,44 @@ export function ProjectPanel({
             </button>
           ) : null}
           <button type="button" onClick={onEditProject} className={ui.buttonPrimaryClass}>
-            {editingProject ? tr("context.editing", "Editing") : (projectMd?.found ? tr("context.editButton", "Edit") : tr("context.createButton", "Create"))}
+            {editingProject
+              ? tr("context.editing", "Editing")
+              : projectMd?.found
+                ? tr("context.editButton", "Edit")
+                : tr("context.createButton", "Create")}
           </button>
         </div>
       </div>
-      {projectError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{projectError}</div> : null}
-      {notifyError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{notifyError}</div> : null}
-      {projectNotice ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400")}>{projectNotice}</div> : null}
+      {projectError ? (
+        <div
+          className={classNames(
+            "mt-3 rounded-lg border px-3 py-2 text-sm",
+            "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400",
+          )}
+        >
+          {projectError}
+        </div>
+      ) : null}
+      {notifyError ? (
+        <div
+          className={classNames(
+            "mt-3 rounded-lg border px-3 py-2 text-sm",
+            "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400",
+          )}
+        >
+          {notifyError}
+        </div>
+      ) : null}
+      {projectNotice ? (
+        <div
+          className={classNames(
+            "mt-3 rounded-lg border px-3 py-2 text-sm",
+            "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+          )}
+        >
+          {projectNotice}
+        </div>
+      ) : null}
       <div className={contentClass}>
         {editingProject ? (
           <>
@@ -105,13 +142,29 @@ export function ProjectPanel({
               className={textAreaClass}
               placeholder={tr("context.writePlaceholder", "Write your project constitution here…")}
             />
-            <label className={classNames("mt-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm", "glass-card text-[var(--color-text-primary)]")}>
-              <input type="checkbox" checked={notifyAgents} onChange={(event) => onNotifyAgentsChange(event.target.checked)} />
+            <label
+              className={classNames(
+                "mt-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm",
+                "glass-card text-[var(--color-text-primary)]",
+              )}
+            >
+              <input
+                type="checkbox"
+                checked={notifyAgents}
+                onChange={(event) => onNotifyAgentsChange(event.target.checked)}
+              />
               {tr("context.notifyAgents", "Notify the team in chat (@all) after save")}
             </label>
             <div className="mt-3 flex items-center gap-2">
-              <button type="button" onClick={onSaveProject} disabled={projectBusy} className={ui.buttonPrimaryClass}>
-                {projectBusy ? tr("context.saving", "Saving…") : tr("context.saveProject", "Save PROJECT.md")}
+              <button
+                type="button"
+                onClick={onSaveProject}
+                disabled={projectBusy}
+                className={ui.buttonPrimaryClass}
+              >
+                {projectBusy
+                  ? tr("context.saving", "Saving…")
+                  : tr("context.saveProject", "Save PROJECT.md")}
               </button>
             </div>
           </>
@@ -121,11 +174,25 @@ export function ProjectPanel({
               content={String(projectMd.content)}
               isDark={isDark}
               className={classNames("text-sm", ui.subtleTextClass)}
-              fallback={<div className={classNames("whitespace-pre-wrap break-words text-sm", ui.subtleTextClass)}>{String(projectMd.content)}</div>}
+              fallback={
+                <div
+                  className={classNames(
+                    "whitespace-pre-wrap break-words text-sm",
+                    ui.subtleTextClass,
+                  )}
+                >
+                  {String(projectMd.content)}
+                </div>
+              }
             />
           </div>
         ) : (
-          <div className={classNames("rounded-xl border border-dashed px-3 py-4 text-sm", "border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]")}>
+          <div
+            className={classNames(
+              "rounded-xl border border-dashed px-3 py-4 text-sm",
+              "border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]",
+            )}
+          >
             {tr("context.noProjectMd", "No PROJECT.md found")}
           </div>
         )}

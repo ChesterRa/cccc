@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
-import { buildHeadlessRawTraceEntries, buildHeadlessRawTraceRenderGroups } from "../../src/utils/headlessRawTimeline";
+import {
+  buildHeadlessRawTraceEntries,
+  buildHeadlessRawTraceRenderGroups,
+} from "../../src/utils/headlessRawTimeline";
 
 describe("buildHeadlessRawTraceEntries", () => {
   it("moves a streaming message forward when later deltas arrive", () => {
@@ -15,7 +18,13 @@ describe("buildHeadlessRawTraceEntries", () => {
         actor_id: "coder",
         type: "headless.activity.updated",
         ts: "2026-04-23T10:00:01Z",
-        data: { activity_id: "cmd-1", summary: "git status", kind: "command", raw_item_type: "commandExecution", status: "updated" },
+        data: {
+          activity_id: "cmd-1",
+          summary: "git status",
+          kind: "command",
+          raw_item_type: "commandExecution",
+          status: "updated",
+        },
       },
       {
         actor_id: "coder",
@@ -27,7 +36,11 @@ describe("buildHeadlessRawTraceEntries", () => {
 
     expect(entries.map((entry) => entry.kind)).toEqual(["event", "message"]);
     expect(entries[0]).toMatchObject({ kind: "event", badge: "RUN" });
-    expect(entries[1]).toMatchObject({ kind: "message", ts: "2026-04-23T10:00:02Z", text: "Still working" });
+    expect(entries[1]).toMatchObject({
+      kind: "message",
+      ts: "2026-04-23T10:00:02Z",
+      text: "Still working",
+    });
   });
 
   it("keeps message text accumulated across deltas and completion", () => {
@@ -84,7 +97,9 @@ describe("buildHeadlessRawTraceEntries", () => {
       tone: "error",
       title: "error",
     });
-    expect(entries[0]?.kind === "event" ? entries[0].detailLines : []).toContain("tool crashed | exit code 1");
+    expect(entries[0]?.kind === "event" ? entries[0].detailLines : []).toContain(
+      "tool crashed | exit code 1",
+    );
   });
 
   it("groups consecutive non-error trace events into one reasoning band", () => {
@@ -93,7 +108,13 @@ describe("buildHeadlessRawTraceEntries", () => {
         actor_id: "coder",
         type: "headless.activity.updated",
         ts: "2026-04-23T10:00:00Z",
-        data: { activity_id: "cmd-1", summary: "rg -n foo", kind: "tool", raw_item_type: "commandExecution", status: "updated" },
+        data: {
+          activity_id: "cmd-1",
+          summary: "rg -n foo",
+          kind: "tool",
+          raw_item_type: "commandExecution",
+          status: "updated",
+        },
       },
       {
         actor_id: "coder",
@@ -111,15 +132,11 @@ describe("buildHeadlessRawTraceEntries", () => {
 
     const groups = buildHeadlessRawTraceRenderGroups(entries);
     expect(groups).toHaveLength(2);
-    expect(groups[0]).toMatchObject({
-      kind: "event-band",
-      live: true,
-    });
-    expect(groups[0]?.kind === "event-band" ? groups[0].entries.map((entry) => entry.badge) : []).toEqual(["RUN", "CONTROL"]);
-    expect(groups[1]).toMatchObject({
-      kind: "message",
-      live: true,
-    });
+    expect(groups[0]).toMatchObject({ kind: "event-band", live: true });
+    expect(
+      groups[0]?.kind === "event-band" ? groups[0].entries.map((entry) => entry.badge) : [],
+    ).toEqual(["RUN", "CONTROL"]);
+    expect(groups[1]).toMatchObject({ kind: "message", live: true });
   });
 
   it("keeps error events outside the reasoning band", () => {
@@ -128,7 +145,13 @@ describe("buildHeadlessRawTraceEntries", () => {
         actor_id: "coder",
         type: "headless.activity.updated",
         ts: "2026-04-23T10:00:00Z",
-        data: { activity_id: "cmd-1", summary: "rg -n foo", kind: "tool", raw_item_type: "commandExecution", status: "updated" },
+        data: {
+          activity_id: "cmd-1",
+          summary: "rg -n foo",
+          kind: "tool",
+          raw_item_type: "commandExecution",
+          status: "updated",
+        },
       },
       {
         actor_id: "coder",
@@ -151,11 +174,7 @@ describe("buildHeadlessRawTraceEntries", () => {
         actor_id: "coder",
         type: "headless.thread.resume_failed",
         ts: "2026-04-23T10:00:00Z",
-        data: {
-          thread_id: "thr-stale",
-          status: "failed",
-          error: "thread not found",
-        },
+        data: { thread_id: "thr-stale", status: "failed", error: "thread not found" },
       },
     ]);
 
@@ -189,6 +208,8 @@ describe("buildHeadlessRawTraceEntries", () => {
       tone: "warning",
       title: "Resume failed",
     });
-    expect(entries[0]?.kind === "event" ? entries[0].detailLines : []).toEqual(["No conversation found"]);
+    expect(entries[0]?.kind === "event" ? entries[0].detailLines : []).toEqual([
+      "No conversation found",
+    ]);
   });
 });

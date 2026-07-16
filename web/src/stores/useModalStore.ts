@@ -83,10 +83,7 @@ export const useModalStore = create<ModalState>((set) => ({
   editingActor: null,
   settingsTarget: null,
 
-  openModal: (name) =>
-    set((state) => ({
-      modals: { ...state.modals, [name]: true },
-    })),
+  openModal: (name) => set((state) => ({ modals: { ...state.modals, [name]: true } })),
 
   closeModal: (name) =>
     set((state) => ({
@@ -99,7 +96,8 @@ export const useModalStore = create<ModalState>((set) => ({
     set((state) => ({
       modals: { ...state.modals, settings: true },
       settingsTarget: {
-        scope: target.scope === "global" ? "global" : target.scope === "group" ? "group" : undefined,
+        scope:
+          target.scope === "global" ? "global" : target.scope === "group" ? "group" : undefined,
         tab: typeof target.tab === "string" ? target.tab : undefined,
         nonce: Date.now(),
       },
@@ -155,11 +153,7 @@ export const useModalStore = create<ModalState>((set) => ({
       const normalizedSlotId = String(slotId || "").trim();
       if (!normalizedGroupId || !normalizedSlotId) return {};
       const viewer = state.presentationViewer;
-      if (
-        viewer &&
-        viewer.groupId === normalizedGroupId &&
-        viewer.slotId === normalizedSlotId
-      ) {
+      if (viewer && viewer.groupId === normalizedGroupId && viewer.slotId === normalizedSlotId) {
         return {};
       }
       return {

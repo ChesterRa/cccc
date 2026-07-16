@@ -22,17 +22,16 @@ export function VoiceTranscriptRecordingIndicator({
     <div
       className={classNames(
         "flex items-center justify-center border",
-        compact ? "gap-2 rounded-xl px-2.5 py-1.5" : "min-h-[280px] flex-col gap-4 rounded-2xl px-4 py-8",
+        compact
+          ? "gap-2 rounded-xl px-2.5 py-1.5"
+          : "min-h-[280px] flex-col gap-4 rounded-2xl px-4 py-8",
         isDark ? "border-white/10 bg-white/[0.035]" : "border-black/[0.08] bg-white/75",
       )}
       role="status"
       aria-live="polite"
     >
       <div
-        className={classNames(
-          "flex items-center justify-center gap-1.5",
-          compact ? "h-5" : "h-14",
-        )}
+        className={classNames("flex items-center justify-center gap-1.5", compact ? "h-5" : "h-14")}
         aria-hidden="true"
       >
         {BAR_HEIGHTS.map((height, index) => {
@@ -47,10 +46,7 @@ export function VoiceTranscriptRecordingIndicator({
                 "block w-1.5 rounded-full transition-[height,opacity] duration-75 motion-reduce:transition-none",
                 isDark ? "bg-emerald-200/85" : "bg-emerald-700/85",
               )}
-              style={{
-                height: visibleHeight,
-                opacity: 0.36 + level * 0.5,
-              }}
+              style={{ height: visibleHeight, opacity: 0.36 + level * 0.5 }}
             />
           );
         })}

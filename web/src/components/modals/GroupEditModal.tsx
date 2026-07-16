@@ -167,7 +167,7 @@ export function GroupEditModal({
         </div>
       }
     >
-      <div className="scrollbar-hide flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_28%),linear-gradient(180deg,rgb(251,250,247),rgb(245,244,241))] px-6 pb-6 pt-4 dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),rgba(255,255,255,0)_32%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))] sm:px-7 sm:pb-7 sm:pt-5">
+      <div className="scrollbar-hide flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_28%),linear-gradient(180deg,var(--color-bg-primary),var(--color-sidebar-bg))] px-6 pb-6 pt-4 dark:bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),rgba(255,255,255,0)_32%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))] sm:px-7 sm:pb-7 sm:pt-5">
         <div className="space-y-5">
           <div>
             <label className="mb-2 block text-xs font-medium uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
@@ -195,13 +195,17 @@ export function GroupEditModal({
               placeholder={t("groupEdit.descriptionPlaceholder")}
             />
           </div>
-          <Surface className="overflow-hidden border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(250,248,245,0.96))] shadow-[0_24px_60px_-40px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(24,26,31,0.9),rgba(13,14,18,0.98))]" padding="none">
+          <Surface
+            className="overflow-hidden border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.995),rgba(250,248,245,0.96))] shadow-[0_24px_60px_-40px_rgba(15,23,42,0.18)] dark:border-white/10 dark:bg-[linear-gradient(180deg,rgba(24,26,31,0.9),rgba(13,14,18,0.98))]"
+            padding="none"
+          >
             <div className="border-b border-[var(--glass-border-subtle)] px-5 py-4 sm:px-6 bg-[rgba(18,18,20,0.018)] dark:bg-white/[0.03]">
               <div className="text-sm font-semibold text-[var(--color-text-primary)]">
                 {t("groupEdit.projectRoot")}
               </div>
               <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-                {t("groupEdit.groupDataDirectory")} / {t("groupEdit.groupConfigFile")} / {t("groupEdit.groupLedgerFile")}
+                {t("groupEdit.groupDataDirectory")} / {t("groupEdit.groupConfigFile")} /{" "}
+                {t("groupEdit.groupLedgerFile")}
               </div>
             </div>
             <div className="divide-y divide-[var(--glass-border-subtle)]">

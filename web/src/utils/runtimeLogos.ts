@@ -22,7 +22,9 @@ export const RUNTIME_LOGO_FILE_BY_RUNTIME: Partial<Record<RuntimeLogoRuntime, st
 };
 
 function normalizeRuntime(runtime: string | null | undefined): RuntimeLogoRuntime {
-  return String(runtime || "").trim().toLowerCase() as RuntimeLogoRuntime;
+  return String(runtime || "")
+    .trim()
+    .toLowerCase() as RuntimeLogoRuntime;
 }
 
 export function getRuntimeLogoSrc(runtime: string | null | undefined): string | null {

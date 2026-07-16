@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 const { localStorageMock } = vi.hoisted(() => {
   function makeStorage() {
@@ -42,12 +42,8 @@ import {
   shouldRestoreDetachedScrollSnapshot,
   toVisibleConversationEvent,
 } from "../../src/hooks/useChatTab";
-import {
-  useComposerStore,
-} from "../../src/stores/useComposerStore";
-import {
-  useGroupStore,
-} from "../../src/stores/useGroupStore";
+import { useComposerStore } from "../../src/stores/useComposerStore";
+import { useGroupStore } from "../../src/stores/useGroupStore";
 import {
   formatSendMessageError,
   getGroupSendBlockedMessage,
@@ -181,7 +177,8 @@ describe("dedupeStreamingEvents", () => {
     ]);
 
     expect(events).toHaveLength(1);
-    expect(String((events[0]?.data as { pending_event_id?: string }).pending_event_id || "")).toBe("evt-1");
+    const eventData = events[0]?.data as { pending_event_id?: string } | undefined;
+    expect(String(eventData?.pending_event_id || "")).toBe("evt-1");
   });
 
   it("keeps a real stream separate from its queued placeholder before later collapse", () => {
@@ -281,21 +278,25 @@ describe("buildComposerTrustFetchGroupId", () => {
 
 describe("buildComposerSendRecipientTokens", () => {
   it("keeps current-group actor tokens for same-group sends", () => {
-    expect(buildComposerSendRecipientTokens({
-      toText: "peer-architect, @foreman, missing",
-      isCrossGroup: false,
-      validRecipientSet: new Set(["peer-architect", "@foreman"]),
-      crossGroupValidRecipientSet: new Set(["@foreman"]),
-    })).toEqual(["peer-architect", "@foreman"]);
+    expect(
+      buildComposerSendRecipientTokens({
+        toText: "peer-architect, @foreman, missing",
+        isCrossGroup: false,
+        validRecipientSet: new Set(["peer-architect", "@foreman"]),
+        crossGroupValidRecipientSet: new Set(["@foreman"]),
+      }),
+    ).toEqual(["peer-architect", "@foreman"]);
   });
 
   it("filters current-group actor tokens from cross-group sends", () => {
-    expect(buildComposerSendRecipientTokens({
-      toText: "peer-architect, @foreman, target-peer",
-      isCrossGroup: true,
-      validRecipientSet: new Set(["peer-architect", "@foreman", "target-peer"]),
-      crossGroupValidRecipientSet: new Set(["@foreman", "target-peer"]),
-    })).toEqual(["@foreman", "target-peer"]);
+    expect(
+      buildComposerSendRecipientTokens({
+        toText: "peer-architect, @foreman, target-peer",
+        isCrossGroup: true,
+        validRecipientSet: new Set(["peer-architect", "@foreman", "target-peer"]),
+        crossGroupValidRecipientSet: new Set(["@foreman", "target-peer"]),
+      }),
+    ).toEqual(["@foreman", "target-peer"]);
   });
 });
 
@@ -307,21 +308,14 @@ describe("buildUnfilteredLiveChatMessages", () => {
         kind: "chat.message",
         ts: "2026-06-15T00:00:01Z",
         by: "agent-1",
-        data: {
-          text: "Done.",
-          to: ["user"],
-          suggested_user_message: "Please continue.",
-        },
+        data: { text: "Done.", to: ["user"], suggested_user_message: "Please continue." },
       },
       {
         id: "evt-user",
         kind: "chat.message",
         ts: "2026-06-15T00:00:02Z",
         by: "user",
-        data: {
-          text: "I already continued.",
-          to: ["agent-1"],
-        },
+        data: { text: "I already continued.", to: ["agent-1"] },
       },
     ];
 
@@ -372,11 +366,7 @@ describe("restoreFailedSendComposerState", () => {
       composerFiles: [file],
       toText: "@foreman",
       replyTarget: { eventId: "evt-a", by: "peer-a", text: "prior a" },
-      quotedPresentationRef: {
-        kind: "presentation_ref",
-        slot_id: "slot-1",
-        title: "Deck",
-      },
+      quotedPresentationRef: { kind: "presentation_ref", slot_id: "slot-1", title: "Deck" },
       priority: "attention",
       replyRequired: true,
     });
@@ -389,11 +379,7 @@ describe("restoreFailedSendComposerState", () => {
       composerFiles: [file],
       toText: "@foreman",
       replyTarget: { eventId: "evt-a", by: "peer-a", text: "prior a" },
-      quotedPresentationRef: {
-        kind: "presentation_ref",
-        slot_id: "slot-1",
-        title: "Deck",
-      },
+      quotedPresentationRef: { kind: "presentation_ref", slot_id: "slot-1", title: "Deck" },
       priority: "attention",
       replyRequired: true,
     });
@@ -402,79 +388,78 @@ describe("restoreFailedSendComposerState", () => {
 
 describe("parseComposerRecipientTokens", () => {
   it("deduplicates recipient tokens from the same composer snapshot", () => {
-    expect(parseComposerRecipientTokens("@foreman, @, peer-1, peer-1, missing", new Set(["@foreman", "peer-1"]))).toEqual([
-      "@foreman",
-      "peer-1",
-    ]);
+    expect(
+      parseComposerRecipientTokens(
+        "@foreman, @, peer-1, peer-1, missing",
+        new Set(["@foreman", "peer-1"]),
+      ),
+    ).toEqual(["@foreman", "peer-1"]);
   });
 });
 
 describe("isFormalChatMessageEvent", () => {
   it("keeps headless streaming events out of the standard chat message list", () => {
-    expect(isFormalChatMessageEvent({
-      id: "stream:commentary-1",
-      kind: "chat.message",
-      by: "coder",
-      _streaming: true,
-      data: {
-        text: "正在排查",
-        stream_id: "commentary-1",
-        to: ["user"],
-      },
-    })).toBe(false);
+    expect(
+      isFormalChatMessageEvent({
+        id: "stream:commentary-1",
+        kind: "chat.message",
+        by: "coder",
+        _streaming: true,
+        data: { text: "正在排查", stream_id: "commentary-1", to: ["user"] },
+      }),
+    ).toBe(false);
 
-    expect(isFormalChatMessageEvent({
-      id: "evt-formal-1",
-      kind: "chat.message",
-      by: "coder",
-      data: {
-        text: "正式回复",
-        to: ["user"],
-      },
-    })).toBe(true);
+    expect(
+      isFormalChatMessageEvent({
+        id: "evt-formal-1",
+        kind: "chat.message",
+        by: "coder",
+        data: { text: "正式回复", to: ["user"] },
+      }),
+    ).toBe(true);
   });
 });
 
 describe("group send blocked state", () => {
   it("blocks only explicit paused lifecycle states before optimistic send feedback", () => {
-    expect(getGroupSendBlockedReason({
-      lifecycleState: "paused",
-      runtimeRunning: true,
-      actorCount: 2,
-    })).toBe("paused");
-    expect(getGroupSendBlockedReason({
-      lifecycleState: "active",
-      runtimeRunning: false,
-      actorCount: 2,
-    })).toBeNull();
-    expect(getGroupSendBlockedReason({
-      lifecycleState: "stopped",
-      runtimeRunning: false,
-      actorCount: 2,
-    })).toBeNull();
-    expect(getGroupSendBlockedReason({
-      lifecycleState: "idle",
-      runtimeRunning: true,
-      actorCount: 2,
-    })).toBeNull();
+    expect(
+      getGroupSendBlockedReason({ lifecycleState: "paused", runtimeRunning: true, actorCount: 2 }),
+    ).toBe("paused");
+    expect(
+      getGroupSendBlockedReason({ lifecycleState: "active", runtimeRunning: false, actorCount: 2 }),
+    ).toBeNull();
+    expect(
+      getGroupSendBlockedReason({
+        lifecycleState: "stopped",
+        runtimeRunning: false,
+        actorCount: 2,
+      }),
+    ).toBeNull();
+    expect(
+      getGroupSendBlockedReason({ lifecycleState: "idle", runtimeRunning: true, actorCount: 2 }),
+    ).toBeNull();
   });
 
   it("maps recipient-resolution failures to group-state recovery copy", () => {
     expect(getGroupSendBlockedMessage("paused", t)).toBe(
       "This group is paused. Resume the group before sending a message to agents.",
     );
-    expect(formatSendMessageError({
-      code: "no_enabled_recipients",
-      message: "No enabled recipients after excluding sender.",
-      groupSendBlockedReason: "paused",
-      t,
-    })).toBe("This group is paused. Resume the group before sending a message to agents.");
-    expect(formatSendMessageError({
-      code: "invalid_recipient",
-      message: "unknown recipient",
-      groupSendBlockedReason: "paused",
-      t,
-    })).toBe("invalid_recipient: unknown recipient");
+    expect(
+      formatSendMessageError({
+        code: "no_enabled_recipients",
+        message: "No enabled recipients after excluding sender.",
+        groupSendBlockedReason: "paused",
+        t,
+      }),
+    ).toBe("This group is paused. Resume the group before sending a message to agents.");
+    expect(
+      formatSendMessageError({
+        code: "invalid_recipient",
+        message: "unknown recipient",
+        groupSendBlockedReason: "paused",
+        t,
+      }),
+    ).toBe("invalid_recipient: unknown recipient");
   });
 });
 
@@ -498,7 +483,14 @@ describe("collapseActorStreamingPlaceholders", () => {
           stream_id: "pending:evt-1:claude-1",
           pending_event_id: "evt-1",
           pending_placeholder: true,
-          activities: [{ id: "tool-1", kind: "tool", status: "started", summary: "chrome-devtools:take_snapshot" }],
+          activities: [
+            {
+              id: "tool-1",
+              kind: "tool",
+              status: "started",
+              summary: "chrome-devtools:take_snapshot",
+            },
+          ],
         },
       },
     ]);
@@ -597,12 +589,7 @@ describe("sortChatMessages", () => {
         kind: "chat.message",
         by: "backend-expert",
         _streaming: true,
-        data: {
-          text: "",
-          pending_event_id: "user-msg-1",
-          stream_id: "stream-a",
-          to: ["user"],
-        },
+        data: { text: "", pending_event_id: "user-msg-1", stream_id: "stream-a", to: ["user"] },
       },
       {
         id: "stream:b",
@@ -610,12 +597,7 @@ describe("sortChatMessages", () => {
         kind: "chat.message",
         by: "project-director",
         _streaming: true,
-        data: {
-          text: "",
-          pending_event_id: "user-msg-2",
-          stream_id: "stream-b",
-          to: ["user"],
-        },
+        data: { text: "", pending_event_id: "user-msg-2", stream_id: "stream-b", to: ["user"] },
       },
     ];
     const canonical: LedgerEvent[] = [
@@ -624,24 +606,14 @@ describe("sortChatMessages", () => {
         ts: "2026-04-04T15:29:03.000Z",
         kind: "chat.message",
         by: "project-director",
-        data: {
-          text: "第二条先完成",
-          reply_to: "user-msg-2",
-          stream_id: "stream-b",
-          to: ["user"],
-        },
+        data: { text: "第二条先完成", reply_to: "user-msg-2", stream_id: "stream-b", to: ["user"] },
       },
       {
         id: "evt-a",
         ts: "2026-04-04T15:29:04.000Z",
         kind: "chat.message",
         by: "backend-expert",
-        data: {
-          text: "第一条后完成",
-          reply_to: "user-msg-1",
-          stream_id: "stream-a",
-          to: ["user"],
-        },
+        data: { text: "第一条后完成", reply_to: "user-msg-1", stream_id: "stream-a", to: ["user"] },
       },
     ];
 
@@ -684,7 +656,10 @@ describe("sortChatMessages", () => {
       buildReplyAnchorTsMap([pendingUserMessage], [assistantPlaceholder]),
     );
 
-    expect(ordered.map((event) => String(event.id || ""))).toEqual(["local-user-1", "stream:queued-1"]);
+    expect(ordered.map((event) => String(event.id || ""))).toEqual([
+      "local-user-1",
+      "stream:queued-1",
+    ]);
   });
 });
 
@@ -695,35 +670,24 @@ describe("mergeLiveChatMessageEvents", () => {
       ts: "2026-04-05T02:00:00.000Z",
       kind: "chat.message",
       by: "user",
-      data: {
-        text: "马上发出去",
-        to: ["@foreman"],
-        client_id: "local-1",
-        _optimistic: true,
-      },
+      data: { text: "马上发出去", to: ["@foreman"], client_id: "local-1", _optimistic: true },
     };
     const nonRenderableCanonical: LedgerEvent = {
       id: "evt-1",
       ts: "2026-04-05T02:00:01.000Z",
       kind: "chat.message",
       by: "user",
-      data: {
-        text: "",
-        to: ["@foreman"],
-        client_id: "local-1",
-      },
+      data: { text: "", to: ["@foreman"], client_id: "local-1" },
     };
 
-    const merged = mergeVisibleChatMessages(
-      [nonRenderableCanonical],
-      [],
-      [optimisticEvent],
-      { map: new Map(), next: 0 },
-    );
+    const merged = mergeVisibleChatMessages([nonRenderableCanonical], [], [optimisticEvent], {
+      map: new Map(),
+      next: 0,
+    });
 
     expect(merged).toHaveLength(1);
     expect(String(merged[0]?.id || "")).toBe("local-1");
-    expect(String(((merged[0]?.data as { text?: string })?.text) || "")).toBe("马上发出去");
+    expect(String((merged[0]?.data as { text?: string })?.text || "")).toBe("马上发出去");
   });
 
   it("does not collapse multiple canonical replies from the same actor to the same parent", () => {
@@ -734,22 +698,14 @@ describe("mergeLiveChatMessageEvents", () => {
           ts: "2026-04-04T16:28:01.000Z",
           kind: "chat.message",
           by: "requirements-expert",
-          data: {
-            text: "我先查",
-            reply_to: "user-msg-1",
-            to: ["user"],
-          },
+          data: { text: "我先查", reply_to: "user-msg-1", to: ["user"] },
         },
         {
           id: "evt-2",
           ts: "2026-04-04T16:28:05.000Z",
           kind: "chat.message",
           by: "requirements-expert",
-          data: {
-            text: "查到了，继续给结论",
-            reply_to: "user-msg-1",
-            to: ["user"],
-          },
+          data: { text: "查到了，继续给结论", reply_to: "user-msg-1", to: ["user"] },
         },
       ],
       [],
@@ -768,12 +724,7 @@ describe("mergeLiveChatMessageEvents", () => {
           ts: "2026-04-04T15:29:03.000Z",
           kind: "chat.message",
           by: "claude-1",
-          data: {
-            text: "",
-            reply_to: "user-msg-1",
-            stream_id: "stream-commentary",
-            to: ["user"],
-          },
+          data: { text: "", reply_to: "user-msg-1", stream_id: "stream-commentary", to: ["user"] },
         },
       ],
       [
@@ -797,7 +748,9 @@ describe("mergeLiveChatMessageEvents", () => {
 
     expect(merged).toHaveLength(1);
     expect(merged.map((event) => String(event.id || ""))).toEqual(["stream:commentary"]);
-    expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe("我先检查 commentary 合并");
+    expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe(
+      "我先检查 commentary 合并",
+    );
   });
 
   it("drops streaming commentary once canonical message with the same stream id has renderable content", () => {
@@ -848,11 +801,7 @@ describe("mergeLiveChatMessageEvents", () => {
           ts: "2026-04-04T15:29:03.000Z",
           kind: "chat.message",
           by: "claude-1",
-          data: {
-            text: "上一轮已经回复过",
-            reply_to: "user-msg-0",
-            to: ["user"],
-          },
+          data: { text: "上一轮已经回复过", reply_to: "user-msg-0", to: ["user"] },
         },
       ],
       [
@@ -930,11 +879,7 @@ describe("mergeLiveChatMessageEvents", () => {
           ts: "2026-04-04T15:29:01.000Z",
           kind: "chat.message",
           by: "claude-1",
-          data: {
-            text: "",
-            reply_to: "user-msg-1",
-            to: ["user"],
-          },
+          data: { text: "", reply_to: "user-msg-1", to: ["user"] },
         },
       ],
       [
@@ -1088,7 +1033,9 @@ describe("mergeVisibleChatMessages", () => {
 
     expect(merged).toHaveLength(1);
     expect(String(merged[0]?.id || "")).toBe("evt-final-assistant");
-    expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe("这是最终 canonical reply");
+    expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe(
+      "这是最终 canonical reply",
+    );
   });
 
   it("does not collapse multiple stream-backed replies from the same actor to the same parent", () => {
@@ -1099,12 +1046,7 @@ describe("mergeVisibleChatMessages", () => {
           ts: "2026-04-04T16:28:01.000Z",
           kind: "chat.message",
           by: "requirements-expert",
-          data: {
-            text: "我先查",
-            reply_to: "user-msg-1",
-            stream_id: "stream-1",
-            to: ["user"],
-          },
+          data: { text: "我先查", reply_to: "user-msg-1", stream_id: "stream-1", to: ["user"] },
         },
         {
           id: "evt-stream-2",
@@ -1136,12 +1078,7 @@ describe("mergeVisibleChatMessages", () => {
           ts: "2026-04-04T16:40:02.000Z",
           kind: "chat.message",
           by: "user",
-          data: {
-            text: "",
-            client_id: localId,
-            reply_to: "agent-msg-1",
-            to: ["@assistant"],
-          },
+          data: { text: "", client_id: localId, reply_to: "agent-msg-1", to: ["@assistant"] },
         },
       ],
       [],
@@ -1165,7 +1102,9 @@ describe("mergeVisibleChatMessages", () => {
 
     expect(merged).toHaveLength(1);
     expect(String(merged[0]?.id || "")).toBe(localId);
-    expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe("这是 optimistic reply");
+    expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe(
+      "这是 optimistic reply",
+    );
   });
 
   it("replaces the optimistic user reply once the canonical event has renderable content", () => {
@@ -1206,7 +1145,9 @@ describe("mergeVisibleChatMessages", () => {
 
     expect(merged).toHaveLength(1);
     expect(String(merged[0]?.id || "")).toBe("evt-user-final");
-    expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe("这是最终 canonical reply");
+    expect(String((merged[0]?.data as { text?: unknown })?.text || "")).toBe(
+      "这是最终 canonical reply",
+    );
   });
 
   it("can be re-sorted by reply slot ts so a resumed streaming reply stays in its original slot after refresh", () => {
@@ -1231,22 +1172,17 @@ describe("mergeVisibleChatMessages", () => {
         ts: "2026-04-04T16:42:00.000Z",
         kind: "chat.message",
         by: "user",
-        data: {
-          text: "后来的用户消息",
-          to: ["project-director"],
-        },
+        data: { text: "后来的用户消息", to: ["project-director"] },
       },
     ];
 
-    const merged = mergeVisibleChatMessages(
-      canonical,
-      streaming,
-      [],
-      { map: new Map(), next: 0 },
-    );
+    const merged = mergeVisibleChatMessages(canonical, streaming, [], { map: new Map(), next: 0 });
     const ordered = sortChatMessages(merged, buildReplySlotTsMap(streaming));
 
-    expect(ordered.map((event) => String(event.id || ""))).toEqual(["stream:old-slot", "evt-later"]);
+    expect(ordered.map((event) => String(event.id || ""))).toEqual([
+      "stream:old-slot",
+      "evt-later",
+    ]);
   });
 
   it("keeps a non-queued activity bubble visible after the canonical reply for the same slot arrives", () => {
@@ -1278,7 +1214,9 @@ describe("mergeVisibleChatMessages", () => {
             stream_id: "pending:user-msg-1:project-director",
             pending_placeholder: true,
             to: ["user"],
-            activities: [{ id: "cmd-1", kind: "command", status: "started", summary: "rg -n activity" }],
+            activities: [
+              { id: "cmd-1", kind: "command", status: "started", summary: "rg -n activity" },
+            ],
           },
         },
       ],
@@ -1297,29 +1235,31 @@ describe("mergeVisibleChatMessages", () => {
 describe("shouldRestoreDetachedScrollSnapshot", () => {
   it("restores only fresh detached snapshots with anchors", () => {
     const now = 1_700_000_000_000;
-    expect(shouldRestoreDetachedScrollSnapshot({
-      mode: "detached",
-      anchorId: "evt-1",
-      updatedAt: now - 1000,
-    }, now)).toBe(true);
+    expect(
+      shouldRestoreDetachedScrollSnapshot(
+        { mode: "detached", anchorId: "evt-1", updatedAt: now - 1000 },
+        now,
+      ),
+    ).toBe(true);
 
-    expect(shouldRestoreDetachedScrollSnapshot({
-      mode: "follow",
-      anchorId: "",
-      updatedAt: now,
-    }, now)).toBe(false);
+    expect(
+      shouldRestoreDetachedScrollSnapshot({ mode: "follow", anchorId: "", updatedAt: now }, now),
+    ).toBe(false);
 
-    expect(shouldRestoreDetachedScrollSnapshot({
-      mode: "detached",
-      anchorId: "evt-1",
-      updatedAt: now - CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS - 1,
-    }, now)).toBe(false);
+    expect(
+      shouldRestoreDetachedScrollSnapshot(
+        {
+          mode: "detached",
+          anchorId: "evt-1",
+          updatedAt: now - CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS - 1,
+        },
+        now,
+      ),
+    ).toBe(false);
 
-    expect(shouldRestoreDetachedScrollSnapshot({
-      mode: "detached",
-      anchorId: "",
-      updatedAt: now,
-    }, now)).toBe(false);
+    expect(
+      shouldRestoreDetachedScrollSnapshot({ mode: "detached", anchorId: "", updatedAt: now }, now),
+    ).toBe(false);
   });
 });
 
@@ -1327,94 +1267,106 @@ describe("shouldLockChatToBottomForSend", () => {
   it("locks to bottom only when the current chat is cleanly following", () => {
     const now = 1_700_000_000_000;
 
-    expect(shouldLockChatToBottomForSend({
-      currentAtBottom: true,
-      showScrollButton: false,
-      chatUnreadCount: 0,
-      scrollSnapshot: null,
-      now,
-    })).toBe(true);
+    expect(
+      shouldLockChatToBottomForSend({
+        currentAtBottom: true,
+        showScrollButton: false,
+        chatUnreadCount: 0,
+        scrollSnapshot: null,
+        now,
+      }),
+    ).toBe(true);
 
-    expect(shouldLockChatToBottomForSend({
-      currentAtBottom: false,
-      showScrollButton: false,
-      chatUnreadCount: 0,
-      scrollSnapshot: null,
-      now,
-    })).toBe(false);
+    expect(
+      shouldLockChatToBottomForSend({
+        currentAtBottom: false,
+        showScrollButton: false,
+        chatUnreadCount: 0,
+        scrollSnapshot: null,
+        now,
+      }),
+    ).toBe(false);
   });
 
   it("does not force bottom while the user is browsing detached history", () => {
     const now = 1_700_000_000_000;
 
-    expect(shouldLockChatToBottomForSend({
-      currentAtBottom: true,
-      showScrollButton: true,
-      chatUnreadCount: 0,
-      scrollSnapshot: null,
-      now,
-    })).toBe(false);
+    expect(
+      shouldLockChatToBottomForSend({
+        currentAtBottom: true,
+        showScrollButton: true,
+        chatUnreadCount: 0,
+        scrollSnapshot: null,
+        now,
+      }),
+    ).toBe(false);
 
-    expect(shouldLockChatToBottomForSend({
-      currentAtBottom: true,
-      showScrollButton: false,
-      chatUnreadCount: 2,
-      scrollSnapshot: null,
-      now,
-    })).toBe(false);
+    expect(
+      shouldLockChatToBottomForSend({
+        currentAtBottom: true,
+        showScrollButton: false,
+        chatUnreadCount: 2,
+        scrollSnapshot: null,
+        now,
+      }),
+    ).toBe(false);
 
-    expect(shouldLockChatToBottomForSend({
-      currentAtBottom: true,
-      showScrollButton: false,
-      chatUnreadCount: 0,
-      scrollSnapshot: {
-        mode: "detached",
-        anchorId: "evt-older",
-        updatedAt: now - 1000,
-      },
-      now,
-    })).toBe(false);
+    expect(
+      shouldLockChatToBottomForSend({
+        currentAtBottom: true,
+        showScrollButton: false,
+        chatUnreadCount: 0,
+        scrollSnapshot: { mode: "detached", anchorId: "evt-older", updatedAt: now - 1000 },
+        now,
+      }),
+    ).toBe(false);
   });
 });
 
 describe("supportsChatStreamingPlaceholder", () => {
   it("returns true for codex headless actors", () => {
-    expect(supportsChatStreamingPlaceholder({
-      runtime: "codex",
-      runner: "pty",
-      runner_effective: "headless",
-    })).toBe(true);
+    expect(
+      supportsChatStreamingPlaceholder({
+        runtime: "codex",
+        runner: "pty",
+        runner_effective: "headless",
+      }),
+    ).toBe(true);
   });
 
   it("returns true for codex pty actors", () => {
-    expect(supportsChatStreamingPlaceholder({
-      runtime: "codex",
-      runner: "pty",
-      runner_effective: "pty",
-    })).toBe(true);
+    expect(
+      supportsChatStreamingPlaceholder({
+        runtime: "codex",
+        runner: "pty",
+        runner_effective: "pty",
+      }),
+    ).toBe(true);
   });
 
   it("returns true for non-codex known runtimes", () => {
-    expect(supportsChatStreamingPlaceholder({
-      runtime: "claude",
-      runner: "headless",
-      runner_effective: "headless",
-    })).toBe(true);
+    expect(
+      supportsChatStreamingPlaceholder({
+        runtime: "claude",
+        runner: "headless",
+        runner_effective: "headless",
+      }),
+    ).toBe(true);
   });
 
   it("returns false for custom runtime", () => {
-    expect(supportsChatStreamingPlaceholder({
-      runtime: "custom",
-      runner: "pty",
-      runner_effective: "pty",
-    })).toBe(false);
+    expect(
+      supportsChatStreamingPlaceholder({
+        runtime: "custom",
+        runner: "pty",
+        runner_effective: "pty",
+      }),
+    ).toBe(false);
   });
 
   it("returns false for empty runtime", () => {
-    expect(supportsChatStreamingPlaceholder({
-      runtime: "",
-      runner: "pty",
-      runner_effective: "pty",
-    })).toBe(false);
+    expect(
+      supportsChatStreamingPlaceholder({ runtime: "", runner: "pty", runner_effective: "pty" }),
+    ).toBe(false);
   });
 });

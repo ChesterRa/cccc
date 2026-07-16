@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import type { LedgerEvent } from "../../src/types";
 import {
@@ -9,11 +9,7 @@ import {
 } from "../../src/utils/webModelDeliveryStatus";
 
 function deliveryEvent(kind: string, data: Record<string, unknown>, ts: string): LedgerEvent {
-  return {
-    kind,
-    ts,
-    data,
-  };
+  return { kind, ts, data };
 }
 
 describe("buildWebModelDeliveryStatusByEventId", () => {
@@ -36,7 +32,12 @@ describe("buildWebModelDeliveryStatusByEventId", () => {
       ),
       deliveryEvent(
         "web_model.browser_delivery.failed",
-        { trigger_event_id: "evt-1", actor_id: "web-1", delivery_id: "del-1", error: "submit failed" },
+        {
+          trigger_event_id: "evt-1",
+          actor_id: "web-1",
+          delivery_id: "del-1",
+          error: "submit failed",
+        },
         "2026-05-08T00:00:03Z",
       ),
     ]);
@@ -202,11 +203,10 @@ describe("buildWebModelDeliveryStatusByEventId", () => {
       nowMs: Date.parse("2026-05-08T00:00:20Z"),
     });
 
-    expect(latest).toMatchObject({
-      state: "bound",
-      deliveryId: "del-3",
-    });
-    expect(latestWebModelDeliveryStatusNeedingAppPermissionHint({ "evt-bound": latest! }, true)).toBeNull();
+    expect(latest).toMatchObject({ state: "bound", deliveryId: "del-3" });
+    expect(
+      latestWebModelDeliveryStatusNeedingAppPermissionHint({ "evt-bound": latest! }, true),
+    ).toBeNull();
   });
 
   it("does not select stale delivery statuses for the ChatGPT app permission hint", () => {
@@ -218,16 +218,16 @@ describe("buildWebModelDeliveryStatusByEventId", () => {
       detail: "",
     };
 
-    expect(webModelDeliveryStatusIsFreshForAppPermissionHint(
-      status,
-      Date.parse("2026-05-08T00:10:00Z"),
-    )).toBe(true);
-    expect(webModelDeliveryStatusIsFreshForAppPermissionHint(
-      status,
-      Date.parse("2026-05-08T01:00:00Z"),
-    )).toBe(false);
-    expect(latestWebModelDeliveryStatusNeedingAppPermissionHint({ "evt-old": status }, false, {
-      nowMs: Date.parse("2026-05-08T01:00:00Z"),
-    })).toBeNull();
+    expect(
+      webModelDeliveryStatusIsFreshForAppPermissionHint(status, Date.parse("2026-05-08T00:10:00Z")),
+    ).toBe(true);
+    expect(
+      webModelDeliveryStatusIsFreshForAppPermissionHint(status, Date.parse("2026-05-08T01:00:00Z")),
+    ).toBe(false);
+    expect(
+      latestWebModelDeliveryStatusNeedingAppPermissionHint({ "evt-old": status }, false, {
+        nowMs: Date.parse("2026-05-08T01:00:00Z"),
+      }),
+    ).toBeNull();
   });
 });

@@ -138,7 +138,10 @@ export async function unregisterGroupBridge(registrationId: string) {
   });
 }
 
-export async function fetchGroupBridgeDeliveryStatus(registrationId: string, idempotencyKey: string) {
+export async function fetchGroupBridgeDeliveryStatus(
+  registrationId: string,
+  idempotencyKey: string,
+) {
   return apiJson<{ receipt: GroupBridgeDeliveryReceipt | null }>(
     `/api/group-bridge/registrations/${encodeURIComponent(registrationId)}/deliveries/${encodeURIComponent(idempotencyKey)}`,
   );
@@ -161,15 +164,18 @@ export async function createGroupBridgePairingInvite(input: PairingInviteInput) 
 }
 
 export async function createGroupBridgePairingConnectionInfo(input: PairingConnectionInfoInput) {
-  return apiJson<{ payload: Record<string, unknown> }>("/api/group-bridge/pairing/connection-info", {
-    method: "POST",
-    body: JSON.stringify({
-      group_id: input.groupId,
-      invite_id: input.inviteId,
-      issuer_endpoint: input.issuerEndpoint,
-      issuer_group_title: input.issuerGroupTitle ?? "",
-    }),
-  });
+  return apiJson<{ payload: Record<string, unknown> }>(
+    "/api/group-bridge/pairing/connection-info",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        group_id: input.groupId,
+        invite_id: input.inviteId,
+        issuer_endpoint: input.issuerEndpoint,
+        issuer_group_title: input.issuerGroupTitle ?? "",
+      }),
+    },
+  );
 }
 
 export async function createGroupBridgePairingRequest(input: PairingRequestInput) {
@@ -188,38 +194,45 @@ export async function createGroupBridgePairingRequest(input: PairingRequestInput
 }
 
 export async function createGroupBridgeRemotePairingRequest(input: RemotePairingRequestInput) {
-  return apiJson<{ outbound: Record<string, unknown> }>("/api/group-bridge/pairing/remote-requests", {
-    method: "POST",
-    body: JSON.stringify({
-      local_group_id: input.localGroupId,
-      local_group_title: input.localGroupTitle ?? "",
-      payload: input.payload,
-    }),
-  });
-}
-
-export async function fetchGroupBridgePairingRequests(groupId?: string) {
-  const suffix = groupId ? `?group_id=${encodeURIComponent(groupId)}` : "";
-  return apiJson<{ requests: GroupBridgePairingRequest[] }>(`/api/group-bridge/pairing/requests${suffix}`);
-}
-
-export async function approveGroupBridgePairingRequest(requestId: string, approverUserId = "") {
-  return apiJson<{ request: GroupBridgePairingRequest; registration: GroupBridgeRegistration; trust: GroupBridgeTrust | null }>(
-    `/api/group-bridge/pairing/requests/${encodeURIComponent(requestId)}/approve`,
+  return apiJson<{ outbound: Record<string, unknown> }>(
+    "/api/group-bridge/pairing/remote-requests",
     {
       method: "POST",
-      body: JSON.stringify({ approver_user_id: approverUserId }),
+      body: JSON.stringify({
+        local_group_id: input.localGroupId,
+        local_group_title: input.localGroupTitle ?? "",
+        payload: input.payload,
+      }),
     },
   );
 }
 
-export async function rejectGroupBridgePairingRequest(requestId: string, rejectedBy = "", reason = "") {
+export async function fetchGroupBridgePairingRequests(groupId?: string) {
+  const suffix = groupId ? `?group_id=${encodeURIComponent(groupId)}` : "";
+  return apiJson<{ requests: GroupBridgePairingRequest[] }>(
+    `/api/group-bridge/pairing/requests${suffix}`,
+  );
+}
+
+export async function approveGroupBridgePairingRequest(requestId: string, approverUserId = "") {
+  return apiJson<{
+    request: GroupBridgePairingRequest;
+    registration: GroupBridgeRegistration;
+    trust: GroupBridgeTrust | null;
+  }>(`/api/group-bridge/pairing/requests/${encodeURIComponent(requestId)}/approve`, {
+    method: "POST",
+    body: JSON.stringify({ approver_user_id: approverUserId }),
+  });
+}
+
+export async function rejectGroupBridgePairingRequest(
+  requestId: string,
+  rejectedBy = "",
+  reason = "",
+) {
   return apiJson<{ request: GroupBridgePairingRequest }>(
     `/api/group-bridge/pairing/requests/${encodeURIComponent(requestId)}/reject`,
-    {
-      method: "POST",
-      body: JSON.stringify({ rejected_by: rejectedBy, reason }),
-    },
+    { method: "POST", body: JSON.stringify({ rejected_by: rejectedBy, reason }) },
   );
 }
 
@@ -231,20 +244,18 @@ export async function fetchGroupBridgeTrusts(groupId?: string) {
 export async function revokeGroupBridgeTrust(trustId: string, revokedBy = "") {
   return apiJson<{ trust: GroupBridgeTrust }>(
     `/api/group-bridge/pairing/trusts/${encodeURIComponent(trustId)}/revoke`,
-    {
-      method: "POST",
-      body: JSON.stringify({ revoked_by: revokedBy }),
-    },
+    { method: "POST", body: JSON.stringify({ revoked_by: revokedBy }) },
   );
 }
 
-export async function updateGroupBridgeTrustAccess(trustId: string, accessLevel: GroupBridgeAccessLevel, updatedBy = "") {
+export async function updateGroupBridgeTrustAccess(
+  trustId: string,
+  accessLevel: GroupBridgeAccessLevel,
+  updatedBy = "",
+) {
   return apiJson<{ trust: GroupBridgeTrust }>(
     `/api/group-bridge/pairing/trusts/${encodeURIComponent(trustId)}/access`,
-    {
-      method: "POST",
-      body: JSON.stringify({ access_level: accessLevel, updated_by: updatedBy }),
-    },
+    { method: "POST", body: JSON.stringify({ access_level: accessLevel, updated_by: updatedBy }) },
   );
 }
 
@@ -257,7 +268,9 @@ export async function refreshGroupBridgeTrustRemoteInfo(trustId: string) {
 
 export async function fetchGroupBridgePairingOutbounds(groupId?: string) {
   const suffix = groupId ? `?group_id=${encodeURIComponent(groupId)}` : "";
-  return apiJson<{ outbounds: GroupBridgePairingOutbound[] }>(`/api/group-bridge/pairing/outbounds${suffix}`);
+  return apiJson<{ outbounds: GroupBridgePairingOutbound[] }>(
+    `/api/group-bridge/pairing/outbounds${suffix}`,
+  );
 }
 
 export async function syncGroupBridgePairingOutbound(outboundId: string) {

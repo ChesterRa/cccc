@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { fetchVoiceAssistantStatus, fetchVoiceAssistantWorkspace } from "./groups";
 import { fetchVoiceAssistantDocumentContent } from "./voiceSecretary";
@@ -11,16 +11,24 @@ describe("assistant API helpers", () => {
 
   it("requests the compact Voice Secretary status view", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({
-        ok: true,
-        result: {
-          group_id: "g1",
-          assistant: { assistant_id: "voice_secretary", kind: "voice_secretary", enabled: true },
-          service_runtimes_by_id: {},
-        },
-      })),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              group_id: "g1",
+              assistant: {
+                assistant_id: "voice_secretary",
+                kind: "voice_secretary",
+                enabled: true,
+              },
+              service_runtimes_by_id: {},
+            },
+          }),
+        ),
+      );
 
     await fetchVoiceAssistantStatus("g1", { promptRequestId: "r1" });
 
@@ -32,17 +40,25 @@ describe("assistant API helpers", () => {
 
   it("requests the Voice Secretary workspace view", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({
-        ok: true,
-        result: {
-          group_id: "g1",
-          assistant: { assistant_id: "voice_secretary", kind: "voice_secretary", enabled: true },
-          documents: [],
-          service_runtimes_by_id: {},
-        },
-      })),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              group_id: "g1",
+              assistant: {
+                assistant_id: "voice_secretary",
+                kind: "voice_secretary",
+                enabled: true,
+              },
+              documents: [],
+              service_runtimes_by_id: {},
+            },
+          }),
+        ),
+      );
 
     await fetchVoiceAssistantWorkspace("g1", { promptRequestId: "r2" });
 
@@ -54,21 +70,27 @@ describe("assistant API helpers", () => {
 
   it("requests one Voice Secretary document with content", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({
-        ok: true,
-        result: {
-          group_id: "g1",
-          documents: [{
-            document_id: "d1",
-            document_path: "docs/voice-secretary/a.md",
-            title: "A",
-            status: "active",
-            content: "body",
-          }],
-        },
-      })),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              group_id: "g1",
+              documents: [
+                {
+                  document_id: "d1",
+                  document_path: "docs/voice-secretary/a.md",
+                  title: "A",
+                  status: "active",
+                  content: "body",
+                },
+              ],
+            },
+          }),
+        ),
+      );
 
     const resp = await fetchVoiceAssistantDocumentContent("g1", "docs/voice-secretary/a.md");
 

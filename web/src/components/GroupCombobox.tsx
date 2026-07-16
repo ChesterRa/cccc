@@ -59,7 +59,7 @@ export function GroupCombobox({
 
   const selectedItem = useMemo(
     () => items.find((item) => item.value === value) ?? null,
-    [items, value]
+    [items, value],
   );
   const triggerLabel = selectedItem?.label || placeholder;
   const isDisabled = disabled || items.length === 0;
@@ -95,7 +95,7 @@ export function GroupCombobox({
             "flex items-center justify-between gap-2 rounded-xl transition-colors outline-none",
             "disabled:cursor-not-allowed disabled:opacity-60",
             "focus-visible:ring-2 focus-visible:ring-[var(--color-accent-primary)]/40 focus-visible:ring-offset-0",
-            triggerClassName
+            triggerClassName,
           )}
         >
           <span className="min-w-0 truncate text-left">{triggerLabel}</span>
@@ -109,7 +109,7 @@ export function GroupCombobox({
           matchTriggerWidth
             ? "max-w-[min(100vw-1rem,48rem)] p-0"
             : "w-[var(--radix-popover-trigger-width)] min-w-[14rem] max-w-[min(22rem,calc(100vw-1rem))] p-0",
-          contentClassName
+          contentClassName,
         )}
       >
         <Command>
@@ -131,14 +131,16 @@ export function GroupCombobox({
                       setOpen(false);
                     }}
                   >
-                    <Check className={cn("h-4 w-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />
+                    <Check
+                      className={cn("h-4 w-4 shrink-0", selected ? "opacity-100" : "opacity-0")}
+                    />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm">{item.label}</div>
                       {item.description ? (
                         <div
                           className={cn(
                             "truncate text-[11px] text-[var(--color-text-muted)]",
-                            descriptionClassName
+                            descriptionClassName,
                           )}
                         >
                           {item.description}

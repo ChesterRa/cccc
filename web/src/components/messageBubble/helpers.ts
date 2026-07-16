@@ -11,8 +11,14 @@ function containsMarkdownTable(text: string): boolean {
     const separator = String(lines[index + 1] || "").trim();
     if (!header || !separator || !header.includes("|") || !separator.includes("-")) continue;
 
-    const headerCells = header.split("|").map((cell) => cell.trim()).filter(Boolean);
-    const separatorCells = separator.split("|").map((cell) => cell.trim()).filter(Boolean);
+    const headerCells = header
+      .split("|")
+      .map((cell) => cell.trim())
+      .filter(Boolean);
+    const separatorCells = separator
+      .split("|")
+      .map((cell) => cell.trim())
+      .filter(Boolean);
     if (headerCells.length < 2) continue;
     if (separatorCells.length !== headerCells.length) continue;
     if (separatorCells.every(isMarkdownTableSeparatorCell)) return true;
@@ -27,7 +33,9 @@ export function mayContainMarkdown(text: string): boolean {
   // picking up prose list spacing from Markdown rendering.
   if (/^\[cccc\]\s+(Attachments|References):/m.test(value)) return false;
   if (containsMarkdownTable(value)) return true;
-  return /(```|`[^`\n]+`|\[[^\]]+\]\([^)]+\)|^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\s*>\s)/m.test(value);
+  return /(```|`[^`\n]+`|\[[^\]]+\]\([^)]+\)|^#{1,6}\s|^\s*[-*+]\s|^\s*\d+\.\s|^\s*>\s)/m.test(
+    value,
+  );
 }
 
 export function formatStreamingActivityKind(kind: string): string {
@@ -93,7 +101,9 @@ export function getMessageBubbleMotionClass({
   isUserMessage?: boolean;
   streamPhase?: string;
 }): string {
-  const phase = String(streamPhase || "").trim().toLowerCase();
+  const phase = String(streamPhase || "")
+    .trim()
+    .toLowerCase();
   if (!isStreaming && !isOptimistic) {
     if (!isNewlyArrived) return "";
     return isUserMessage

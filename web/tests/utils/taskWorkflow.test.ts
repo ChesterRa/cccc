@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   TASK_TYPES,
   evaluateTaskWorkflow,
@@ -11,21 +11,21 @@ import {
 
 describe("taskWorkflow", () => {
   it("ships the compact task-type roster", () => {
-    expect(TASK_TYPES.map((item) => item.id)).toEqual([
-      "free",
-      "standard",
-      "optimization",
-    ]);
+    expect(TASK_TYPES.map((item) => item.id)).toEqual(["free", "standard", "optimization"]);
   });
 
   it("exposes built-in type definitions without hidden seed behavior", () => {
     const standard = getTaskTypeDefinition("standard");
-    expect(standard.requirements).toContain("Capture the goal, success criteria, and required evidence.");
+    expect(standard.requirements).toContain(
+      "Capture the goal, success criteria, and required evidence.",
+    );
     expect(standard.starterNotes).toContain("Goal:");
     expect(standard.starterChecklist).toContain("Define success criteria");
 
     const optimization = getTaskTypeDefinition("optimization");
-    expect(optimization.requirements).toContain("Capture the baseline, primary metric, and verifier boundary.");
+    expect(optimization.requirements).toContain(
+      "Capture the baseline, primary metric, and verifier boundary.",
+    );
     expect(optimization.starterNotes).toContain("Baseline:");
     expect(optimization.starterNotes).toContain("Attempt Decision:");
     expect(optimization.starterChecklist).toContain("Record keep or discard");
@@ -39,17 +39,13 @@ describe("taskWorkflow", () => {
   });
 
   it("prefers explicit persisted task types over structure defaults", () => {
-    expect(resolveTaskType({
-      parent_id: "T001",
-      task_type: "optimization",
-      notes: "",
-    })).toBe("optimization");
+    expect(resolveTaskType({ parent_id: "T001", task_type: "optimization", notes: "" })).toBe(
+      "optimization",
+    );
 
-    expect(resolveTaskType({
-      parent_id: "T001",
-      task_type: "standard",
-      notes: "Baseline:\n- 120 ms",
-    })).toBe("standard");
+    expect(
+      resolveTaskType({ parent_id: "T001", task_type: "standard", notes: "Baseline:\n- 120 ms" }),
+    ).toBe("standard");
   });
 
   it("collapses legacy task-type aliases into the new taxonomy", () => {
@@ -60,32 +56,36 @@ describe("taskWorkflow", () => {
   });
 
   it("does not infer specialist types from notes or checklist alone", () => {
-    expect(resolveTaskType({
-      notes: [
-        "Goal:",
-        "- Ship v0.4.7",
-        "",
-        "Success Criteria:",
-        "- Smoke and version drift line up",
-        "",
-        "Required Evidence:",
-        "- Smoke verification",
-      ].join("\n"),
-      checklist: [
-        "[x] Update the release note",
-        "[x] Check version and docs drift",
-        "[ ] Run smoke verification",
-      ].join("\n"),
-    })).toBe("standard");
+    expect(
+      resolveTaskType({
+        notes: [
+          "Goal:",
+          "- Ship v0.4.7",
+          "",
+          "Success Criteria:",
+          "- Smoke and version drift line up",
+          "",
+          "Required Evidence:",
+          "- Smoke verification",
+        ].join("\n"),
+        checklist: [
+          "[x] Update the release note",
+          "[x] Check version and docs drift",
+          "[ ] Run smoke verification",
+        ].join("\n"),
+      }),
+    ).toBe("standard");
 
-    expect(resolveTaskType({
-      notes: "",
-      checklist: [
-        "[x] Capture the baseline",
-        "[x] Name the primary metric",
-        "[ ] Freeze the verifier boundary",
-      ].join("\n"),
-    })).toBe("standard");
+    expect(
+      resolveTaskType({
+        notes: "",
+        checklist: [
+          "[x] Capture the baseline",
+          "[x] Name the primary metric",
+          "[ ] Freeze the verifier boundary",
+        ].join("\n"),
+      }),
+    ).toBe("standard");
   });
 
   it("treats free tasks as lightweight work with no contract gate", () => {
@@ -274,87 +274,94 @@ describe("taskWorkflow", () => {
   });
 
   it("uses outcome, then current best, then goal as the display summary fallback chain", () => {
-    expect(getTaskDisplaySummary({
-      task_type: "standard",
-      notes: "Goal:\n- Ship the 0.4.7 release cleanly",
-      outcome: "",
-    })).toContain("Ship the 0.4.7 release cleanly");
+    expect(
+      getTaskDisplaySummary({
+        task_type: "standard",
+        notes: "Goal:\n- Ship the 0.4.7 release cleanly",
+        outcome: "",
+      }),
+    ).toContain("Ship the 0.4.7 release cleanly");
 
-    expect(getTaskDisplaySummary({
-      task_type: "standard",
-      notes: "Goal:\n- Ship the 0.4.7 release cleanly",
-      outcome: "Release shipped with smoke verification.",
-    })).toBe("Release shipped with smoke verification.");
+    expect(
+      getTaskDisplaySummary({
+        task_type: "standard",
+        notes: "Goal:\n- Ship the 0.4.7 release cleanly",
+        outcome: "Release shipped with smoke verification.",
+      }),
+    ).toBe("Release shipped with smoke verification.");
 
-    expect(getTaskDisplaySummary({
-      task_type: "optimization",
-      notes: [
-        "Goal:",
-        "- Reduce cold-start latency",
-        "",
-        "Current Best:",
-        "- Tightened parser cache invalidation and held cache freshness stable",
-      ].join("\n"),
-      outcome: "",
-    })).toContain("Tightened parser cache invalidation");
+    expect(
+      getTaskDisplaySummary({
+        task_type: "optimization",
+        notes: [
+          "Goal:",
+          "- Reduce cold-start latency",
+          "",
+          "Current Best:",
+          "- Tightened parser cache invalidation and held cache freshness stable",
+        ].join("\n"),
+        outcome: "",
+      }),
+    ).toContain("Tightened parser cache invalidation");
   });
 
   it("blocks done transition only when closeout is incomplete for standard or optimization work", () => {
-    expect(getTaskDoneTransitionBlockers({
-      taskType: "free",
-      parentId: "T001",
-      outcome: "",
-      notes: "",
-    })).toEqual([]);
+    expect(
+      getTaskDoneTransitionBlockers({ taskType: "free", parentId: "T001", outcome: "", notes: "" }),
+    ).toEqual([]);
 
-    expect(getTaskDoneTransitionBlockers({
-      taskType: "standard",
-      assignee: "foreman",
-      outcome: "Shipped the panel refresh.",
-      notes: [
-        "Goal:",
-        "- Refresh the panel",
-        "",
-        "Success Criteria:",
-        "- Users can switch reachability modes clearly",
-        "",
-        "Required Evidence:",
-        "- Manual smoke checks",
-        "",
-        "Closeout Verdict:",
-        "- DONE",
-      ].join("\n"),
-    })).toEqual(["Verification summary"]);
+    expect(
+      getTaskDoneTransitionBlockers({
+        taskType: "standard",
+        assignee: "foreman",
+        outcome: "Shipped the panel refresh.",
+        notes: [
+          "Goal:",
+          "- Refresh the panel",
+          "",
+          "Success Criteria:",
+          "- Users can switch reachability modes clearly",
+          "",
+          "Required Evidence:",
+          "- Manual smoke checks",
+          "",
+          "Closeout Verdict:",
+          "- DONE",
+        ].join("\n"),
+      }),
+    ).toEqual(["Verification summary"]);
 
-    expect(getTaskDoneTransitionBlockers({
-      taskType: "optimization",
-      assignee: "peer1",
-      outcome: "Reduced cold-start time from 410 ms to 290 ms.",
-      notes: [
-        "Goal:",
-        "- Reduce cold-start latency",
-        "",
-        "Success Criteria:",
-        "- Median latency drops without regression",
-        "",
-        "Required Evidence:",
-        "- Bench output and smoke checks",
-        "",
-        "Baseline:",
-        "- 410 ms median",
-        "",
-        "Primary Metric:",
-        "- Median cold-start latency",
-        "",
-        "Verifier Boundary:",
-        "- Same browser profile",
-        "",
-        "Closeout Verdict:",
-        "- DONE",
-        "",
-        "Verification Summary:",
-        "- Bench output captured",
-      ].join("\n"),
-    })).toEqual(["Attempt decision"]);
+    expect(
+      getTaskDoneTransitionBlockers({
+        taskType: "optimization",
+        assignee: "peer1",
+        outcome: "Reduced cold-start time from 410 ms to 290 ms.",
+        notes: [
+          "Goal:",
+          "- Reduce cold-start latency",
+          "",
+          "Success Criteria:",
+          "- Median latency drops without regression",
+          "",
+          "Required Evidence:",
+          "- Bench output and smoke checks",
+          "",
+          "Baseline:",
+          "- 410 ms median",
+          "",
+          "Primary Metric:",
+          "- Median cold-start latency",
+          "",
+          "Verifier Boundary:",
+          "- Same browser profile",
+          "",
+          "Closeout Verdict:",
+          "- DONE",
+          "",
+          "Verification Summary:",
+          "- Bench output captured",
+        ].join("\n"),
+      }),
+    ).toEqual(["Attempt decision"]);
   });
 });

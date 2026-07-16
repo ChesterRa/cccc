@@ -22,13 +22,17 @@ function isLiveWorkCardActive(card: LiveWorkCard | null | undefined): boolean {
 }
 
 function hasTickerTranscript(previewSessions: HeadlessPreviewSession[]): boolean {
-  return previewSessions.some((session) =>
-    Array.isArray(session.transcriptBlocks)
-    && session.transcriptBlocks.some((block) => normalizeTickerText(block?.text))
+  return previewSessions.some(
+    (session) =>
+      Array.isArray(session.transcriptBlocks) &&
+      session.transcriptBlocks.some((block) => normalizeTickerText(block?.text)),
   );
 }
 
-function shouldIncludeTickerPreview(card: LiveWorkCard, previewSessions: HeadlessPreviewSession[]): boolean {
+function shouldIncludeTickerPreview(
+  card: LiveWorkCard,
+  previewSessions: HeadlessPreviewSession[],
+): boolean {
   if (isLiveWorkCardActive(card)) return true;
   if (card.phase !== "completed" && card.phase !== "failed") return false;
   return hasTickerTranscript(previewSessions);
@@ -36,7 +40,9 @@ function shouldIncludeTickerPreview(card: LiveWorkCard, previewSessions: Headles
 
 function isSubstantiveActivity(activity: StreamingActivity): boolean {
   const summary = String(activity.summary || "").trim();
-  const kind = String(activity.kind || "").trim().toLowerCase();
+  const kind = String(activity.kind || "")
+    .trim()
+    .toLowerCase();
   return Boolean(summary) && !(kind === "queued" && summary.toLowerCase() === "queued");
 }
 
@@ -54,8 +60,13 @@ function getPreviewSessionKey(session: HeadlessPreviewSession, fallback: string)
   return String(session.pendingEventId || session.currentStreamId || fallback || "").trim();
 }
 
-function getTickerPreviewSessions(item: RuntimeDockItem, card: LiveWorkCard): HeadlessPreviewSession[] {
-  const previewSessions = Array.isArray(card.previewSessions) ? card.previewSessions.filter(Boolean) : [];
+function getTickerPreviewSessions(
+  item: RuntimeDockItem,
+  card: LiveWorkCard,
+): HeadlessPreviewSession[] {
+  const previewSessions = Array.isArray(card.previewSessions)
+    ? card.previewSessions.filter(Boolean)
+    : [];
   if (previewSessions.length > 0) return previewSessions;
 
   const text = normalizeTickerText(card.text);
@@ -66,29 +77,38 @@ function getTickerPreviewSessions(item: RuntimeDockItem, card: LiveWorkCard): He
   if (!text && transcriptBlocks.length <= 0 && activities.length <= 0) return [];
 
   const sessionKey = String(card.pendingEventId || card.streamId || item.actorId || "").trim();
-  const fallbackBlock = text && transcriptBlocks.length <= 0
-    ? [{
-        id: "latest",
-        streamId: String(card.streamId || sessionKey || "").trim(),
-        streamPhase: String(card.streamPhase || "").trim().toLowerCase(),
-        text,
-        updatedAt: String(card.updatedAt || "").trim(),
-        completed: card.phase === "completed",
-        transient: card.phase !== "completed",
-      } satisfies HeadlessPreviewBlock]
-    : [];
+  const fallbackBlock =
+    text && transcriptBlocks.length <= 0
+      ? [
+          {
+            id: "latest",
+            streamId: String(card.streamId || sessionKey || "").trim(),
+            streamPhase: String(card.streamPhase || "")
+              .trim()
+              .toLowerCase(),
+            text,
+            updatedAt: String(card.updatedAt || "").trim(),
+            completed: card.phase === "completed",
+            transient: card.phase !== "completed",
+          } satisfies HeadlessPreviewBlock,
+        ]
+      : [];
 
-  return [{
-    actorId: item.actorId,
-    pendingEventId: sessionKey || item.actorId,
-    currentStreamId: String(card.streamId || sessionKey || "").trim(),
-    phase: card.phase,
-    streamPhase: String(card.streamPhase || "").trim().toLowerCase(),
-    updatedAt: String(card.updatedAt || "").trim(),
-    latestText: text,
-    transcriptBlocks: transcriptBlocks.length > 0 ? transcriptBlocks : fallbackBlock,
-    activities,
-  }];
+  return [
+    {
+      actorId: item.actorId,
+      pendingEventId: sessionKey || item.actorId,
+      currentStreamId: String(card.streamId || sessionKey || "").trim(),
+      phase: card.phase,
+      streamPhase: String(card.streamPhase || "")
+        .trim()
+        .toLowerCase(),
+      updatedAt: String(card.updatedAt || "").trim(),
+      latestText: text,
+      transcriptBlocks: transcriptBlocks.length > 0 ? transcriptBlocks : fallbackBlock,
+      activities,
+    },
+  ];
 }
 
 function buildMessageEntry(args: {
@@ -151,7 +171,10 @@ function buildActivityEntry(args: {
   };
 }
 
-function compareTickerEntriesDescending(left: RuntimeDockTickerEntry, right: RuntimeDockTickerEntry): number {
+function compareTickerEntriesDescending(
+  left: RuntimeDockTickerEntry,
+  right: RuntimeDockTickerEntry,
+): number {
   const leftTs = String(left.updatedAt || "").trim();
   const rightTs = String(right.updatedAt || "").trim();
   if (leftTs && rightTs && leftTs !== rightTs) return rightTs.localeCompare(leftTs);
@@ -173,9 +196,14 @@ export function buildRuntimeDockTickerEntries(
     if (!shouldIncludeTickerPreview(card, previewSessions)) continue;
     const includeActivities = isLiveWorkCardActive(card);
     for (const session of previewSessions) {
-      const sessionKey = getPreviewSessionKey(session, card.pendingEventId || card.streamId || item.actorId);
+      const sessionKey = getPreviewSessionKey(
+        session,
+        card.pendingEventId || card.streamId || item.actorId,
+      );
       const latestBlock = getLatestTranscriptBlock(session);
-      const messageEntry = latestBlock ? buildMessageEntry({ item, session, block: latestBlock, sessionKey }) : null;
+      const messageEntry = latestBlock
+        ? buildMessageEntry({ item, session, block: latestBlock, sessionKey })
+        : null;
       if (messageEntry && !seen.has(messageEntry.id)) {
         seen.add(messageEntry.id);
         entries.push(messageEntry);
@@ -191,7 +219,5 @@ export function buildRuntimeDockTickerEntries(
     }
   }
 
-  return entries
-    .sort(compareTickerEntriesDescending)
-    .slice(0, Math.max(0, limit));
+  return entries.sort(compareTickerEntriesDescending).slice(0, Math.max(0, limit));
 }

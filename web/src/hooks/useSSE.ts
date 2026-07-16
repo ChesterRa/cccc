@@ -979,10 +979,5 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     disconnectGroupStreams({ resetConnected: true });
   }
 
-  return {
-    connectStream,
-    fetchContext,
-    cleanup,
-    contextRefreshTimerRef,
-  };
+  return { connectStream, fetchContext, cleanup, contextRefreshTimerRef };
 }

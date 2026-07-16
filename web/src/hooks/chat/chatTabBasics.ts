@@ -53,7 +53,9 @@ export function shouldShowInConversation(event: LedgerEvent): boolean {
   return !isDelegationSourceOutboundEvent(event.data);
 }
 
-function isSlashSkillDispatchRef(ref: unknown): ref is {
+function isSlashSkillDispatchRef(
+  ref: unknown,
+): ref is {
   hidden?: unknown;
   control_kind?: unknown;
   title?: unknown;
@@ -84,15 +86,7 @@ export function toVisibleConversationEvent(event: LedgerEvent): LedgerEvent {
   const visibleText = [command, taskText].filter(Boolean).join(" ").trim();
   if (!visibleText) return event;
   const data = event.data && typeof event.data === "object" ? (event.data as ChatMessageData) : {};
-  return {
-    ...event,
-    data: {
-      ...data,
-      text: visibleText,
-      refs: [],
-      attachments: [],
-    },
-  };
+  return { ...event, data: { ...data, text: visibleText, refs: [], attachments: [] } };
 }
 
 export function mergeStreamingCandidates(

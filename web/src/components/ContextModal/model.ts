@@ -50,7 +50,11 @@ export type BoardStatus = keyof BoardColumns;
 export type ContextModalView = "coordination" | "agents" | "self_evolving_skills";
 export type SteeringTab = "summary" | "project" | "log";
 export type TaskFilterValue = "all" | "blocked" | "waiting_user" | "handoff" | "unassigned";
-export type ContextTranslator = (key: string, defaultValue: string, options?: Record<string, unknown>) => string;
+export type ContextTranslator = (
+  key: string,
+  defaultValue: string,
+  options?: Record<string, unknown>,
+) => string;
 export type TaskDeleteBlockReason = "" | "self_history" | "subtree_history";
 export type TaskDeleteInfo = { allowed: boolean; total: number; reason: TaskDeleteBlockReason };
 
@@ -61,7 +65,9 @@ export const WAITING_ON_VALUES: readonly TaskWaitingOn[] = [
   "external",
 ] as const;
 
-export function getWaitingOnOptions(tr: ContextTranslator): Array<{ value: TaskWaitingOn; label: string }> {
+export function getWaitingOnOptions(
+  tr: ContextTranslator,
+): Array<{ value: TaskWaitingOn; label: string }> {
   return [
     { value: "none", label: tr("context.none", "None") },
     { value: "user", label: tr("context.waitingOnUser", "Waiting on user") },
@@ -99,14 +105,18 @@ export function taskStatus(task: Task | null | undefined): string {
 }
 
 export function taskArchivedFrom(task: Task | null | undefined): string {
-  return String(task?.archived_from || "").trim().toLowerCase();
+  return String(task?.archived_from || "")
+    .trim()
+    .toLowerCase();
 }
 
 export function taskIsUnexecuted(task: Task | null | undefined): boolean {
   if (!task) return false;
   const status = taskStatus(task);
   const archivedFrom = taskArchivedFrom(task);
-  return status === "planned" || (status === "archived" && (!archivedFrom || archivedFrom === "planned"));
+  return (
+    status === "planned" || (status === "archived" && (!archivedFrom || archivedFrom === "planned"))
+  );
 }
 
 export function getTaskDeleteInfo(task: Task | null | undefined, allTasks: Task[]): TaskDeleteInfo {
@@ -173,7 +183,10 @@ export function checklistToText(items: TaskChecklistItem[] | null | undefined): 
     .join("\n");
 }
 
-export function parseChecklist(text: string, previous: TaskChecklistItem[] | null | undefined): TaskChecklistItem[] {
+export function parseChecklist(
+  text: string,
+  previous: TaskChecklistItem[] | null | undefined,
+): TaskChecklistItem[] {
   const prior = Array.isArray(previous) ? previous : [];
   return text
     .split("\n")
@@ -189,11 +202,7 @@ export function parseChecklist(text: string, previous: TaskChecklistItem[] | nul
             : "pending"
         : "pending";
       const textValue = (match ? match[2] : line.replace(/^[-*]\s*/, "")).trim();
-      return {
-        id: String(prior[index]?.id || `item-${index + 1}`),
-        text: textValue,
-        status,
-      };
+      return { id: String(prior[index]?.id || `item-${index + 1}`), text: textValue, status };
     });
 }
 
@@ -265,18 +274,18 @@ export function alignTaskDraftTaskType(
 export function taskDraftDirty(draft: TaskDraft | null | undefined): boolean {
   if (!draft) return false;
   return !!(
-    draft.title.trim()
-    || draft.outcome.trim()
-    || draft.taskType !== "standard"
-    || draft.assignee.trim()
-    || draft.priority.trim()
-    || draft.parentId.trim()
-    || draft.blockedBy.trim()
-    || (draft.waitingOn && draft.waitingOn !== "none")
-    || draft.handoffTo.trim()
-    || draft.notes.trim()
-    || draft.checklist.trim()
-    || String(draft.status || "planned") !== "planned"
+    draft.title.trim() ||
+    draft.outcome.trim() ||
+    draft.taskType !== "standard" ||
+    draft.assignee.trim() ||
+    draft.priority.trim() ||
+    draft.parentId.trim() ||
+    draft.blockedBy.trim() ||
+    (draft.waitingOn && draft.waitingOn !== "none") ||
+    draft.handoffTo.trim() ||
+    draft.notes.trim() ||
+    draft.checklist.trim() ||
+    String(draft.status || "planned") !== "planned"
   );
 }
 
@@ -308,20 +317,12 @@ export function agentWarm(agent: AgentState | null | undefined) {
 
 export function hasMindContext(agent: AgentState | null | undefined): boolean {
   const warm = agentWarm(agent);
-  return !!(
-    warm.environmentSummary
-    || warm.userModel
-    || warm.personaNotes
-  );
+  return !!(warm.environmentSummary || warm.userModel || warm.personaNotes);
 }
 
 export function hasRecoveryCues(agent: AgentState | null | undefined): boolean {
   const warm = agentWarm(agent);
-  return !!(
-    warm.whatChanged
-    || warm.openLoops.length
-    || warm.commitments.length
-  );
+  return !!(warm.whatChanged || warm.openLoops.length || warm.commitments.length);
 }
 
 export function agentUpdatedAtTimestamp(agent: AgentState | null | undefined): number {
@@ -334,17 +335,21 @@ export function agentUpdatedAtTimestamp(agent: AgentState | null | undefined): n
 export function isAgentStale(agent: AgentState | null | undefined): boolean {
   const timestamp = agentUpdatedAtTimestamp(agent);
   if (!timestamp) return false;
-  return (Date.now() - timestamp) > 20 * 60 * 1000;
+  return Date.now() - timestamp > 20 * 60 * 1000;
 }
 
 export function recoverySummary(agent: AgentState, tr: ContextTranslator): string {
   const warm = agentWarm(agent);
   const parts: string[] = [];
   if (warm.openLoops.length > 0) {
-    parts.push(tr("context.openLoopsCount", "{{count}} open loops", { count: warm.openLoops.length }));
+    parts.push(
+      tr("context.openLoopsCount", "{{count}} open loops", { count: warm.openLoops.length }),
+    );
   }
   if (warm.commitments.length > 0) {
-    parts.push(tr("context.commitmentsCount", "{{count}} commitments", { count: warm.commitments.length }));
+    parts.push(
+      tr("context.commitmentsCount", "{{count}} commitments", { count: warm.commitments.length }),
+    );
   }
   if (parts.length === 0 && warm.whatChanged) {
     parts.push(tr("context.changeCaptured", "change captured"));
@@ -363,10 +368,22 @@ function sortTasks(tasks: Task[], mode: "created" | "updated"): Task[] {
 
 function boardFallback(tasks: Task[]): BoardColumns {
   return {
-    planned: sortTasks(tasks.filter((task) => taskStatus(task) === "planned"), "created"),
-    active: sortTasks(tasks.filter((task) => taskStatus(task) === "active"), "updated"),
-    done: sortTasks(tasks.filter((task) => taskStatus(task) === "done"), "updated"),
-    archived: sortTasks(tasks.filter((task) => taskStatus(task) === "archived"), "updated"),
+    planned: sortTasks(
+      tasks.filter((task) => taskStatus(task) === "planned"),
+      "created",
+    ),
+    active: sortTasks(
+      tasks.filter((task) => taskStatus(task) === "active"),
+      "updated",
+    ),
+    done: sortTasks(
+      tasks.filter((task) => taskStatus(task) === "done"),
+      "updated",
+    ),
+    archived: sortTasks(
+      tasks.filter((task) => taskStatus(task) === "archived"),
+      "updated",
+    ),
   };
 }
 
@@ -385,7 +402,9 @@ function coerceBoardTask(entry: TaskBoardEntry, taskMap: Map<string, Task>): Tas
       assignee: typeof entry.assignee === "string" ? entry.assignee : null,
       priority: typeof entry.priority === "string" ? entry.priority : null,
       parent_id: typeof entry.parent_id === "string" ? entry.parent_id : null,
-      blocked_by: Array.isArray(entry.blocked_by) ? entry.blocked_by.map((item) => String(item)) : [],
+      blocked_by: Array.isArray(entry.blocked_by)
+        ? entry.blocked_by.map((item) => String(item))
+        : [],
       waiting_on: typeof entry.waiting_on === "string" ? entry.waiting_on : undefined,
       handoff_to: typeof entry.handoff_to === "string" ? entry.handoff_to : null,
       task_type: typeof entry.task_type === "string" ? entry.task_type : null,
@@ -398,13 +417,19 @@ function coerceBoardTask(entry: TaskBoardEntry, taskMap: Map<string, Task>): Tas
   );
 }
 
-export function buildBoard(tasks: Task[], board: GroupContext["board"] | null | undefined): BoardColumns {
+export function buildBoard(
+  tasks: Task[],
+  board: GroupContext["board"] | null | undefined,
+): BoardColumns {
   const fallback = boardFallback(tasks);
   if (!board) return fallback;
 
   const taskMap = new Map(tasks.map((task) => [task.id, task] as const));
   const seen = new Set<string>();
-  const resolve = (entries: TaskBoardEntry[] | undefined, statusKey: keyof BoardColumns): Task[] => {
+  const resolve = (
+    entries: TaskBoardEntry[] | undefined,
+    statusKey: keyof BoardColumns,
+  ): Task[] => {
     const projected = Array.isArray(entries)
       ? entries
           .map((entry) => coerceBoardTask(entry, taskMap))
@@ -424,9 +449,12 @@ export function buildBoard(tasks: Task[], board: GroupContext["board"] | null | 
 }
 
 export function statusTone(status: string): string {
-  if (status === "active") return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30";
-  if (status === "done") return "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white";
-  if (status === "archived") return "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border-[var(--glass-border-subtle)]";
+  if (status === "active")
+    return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30";
+  if (status === "done")
+    return "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white";
+  if (status === "archived")
+    return "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border-[var(--glass-border-subtle)]";
   return "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30";
 }
 
@@ -444,15 +472,20 @@ export function emptyNoteDraft(): NoteDraft {
   return { summary: "", taskId: "" };
 }
 
-export function briefDraftMatches(brief: CoordinationBrief | null | undefined, draft: BriefDraft): boolean {
-  const currentConstraints = Array.isArray(brief?.constraints) ? brief.constraints.map((item) => String(item || "").trim()).filter(Boolean) : [];
+export function briefDraftMatches(
+  brief: CoordinationBrief | null | undefined,
+  draft: BriefDraft,
+): boolean {
+  const currentConstraints = Array.isArray(brief?.constraints)
+    ? brief.constraints.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
   const draftConstraints = parseLineList(draft.constraints);
   return (
-    String(brief?.objective || "") === draft.objective
-    && String(brief?.current_focus || "") === draft.currentFocus
-    && JSON.stringify(currentConstraints) === JSON.stringify(draftConstraints)
-    && String(brief?.project_brief || "") === draft.projectBrief
-    && !!brief?.project_brief_stale === !!draft.projectBriefStale
+    String(brief?.objective || "") === draft.objective &&
+    String(brief?.current_focus || "") === draft.currentFocus &&
+    JSON.stringify(currentConstraints) === JSON.stringify(draftConstraints) &&
+    String(brief?.project_brief || "") === draft.projectBrief &&
+    !!brief?.project_brief_stale === !!draft.projectBriefStale
   );
 }
 
@@ -461,13 +494,16 @@ export function taskOptionLabel(task: Task): string {
   return title ? `${task.id} · ${title}` : task.id;
 }
 
-export function taskDraftMatches(task: Task | null | undefined, draft: TaskDraft | null | undefined): boolean {
+export function taskDraftMatches(
+  task: Task | null | undefined,
+  draft: TaskDraft | null | undefined,
+): boolean {
   if (!task || !draft) return false;
   return (
-    taskTitle(task) === draft.title
-    && taskOutcome(task) === draft.outcome
-    && taskStatus(task) === draft.status
-    && resolveTaskType({
+    taskTitle(task) === draft.title &&
+    taskOutcome(task) === draft.outcome &&
+    taskStatus(task) === draft.status &&
+    resolveTaskType({
       parent_id: task.parent_id,
       task_type: task.task_type,
       status: task.status,
@@ -475,14 +511,14 @@ export function taskDraftMatches(task: Task | null | undefined, draft: TaskDraft
       outcome: task.outcome,
       notes: task.notes,
       checklist: task.checklist,
-    }) === draft.taskType
-    && String(task.assignee || "") === draft.assignee
-    && String(task.priority || "") === draft.priority
-    && String(task.parent_id || "") === draft.parentId
-    && listToText(task.blocked_by) === draft.blockedBy
-    && String(task.waiting_on || "none") === draft.waitingOn
-    && String(task.handoff_to || "") === draft.handoffTo
-    && String(task.notes || "") === draft.notes
-    && checklistToText(task.checklist) === draft.checklist
+    }) === draft.taskType &&
+    String(task.assignee || "") === draft.assignee &&
+    String(task.priority || "") === draft.priority &&
+    String(task.parent_id || "") === draft.parentId &&
+    listToText(task.blocked_by) === draft.blockedBy &&
+    String(task.waiting_on || "none") === draft.waitingOn &&
+    String(task.handoff_to || "") === draft.handoffTo &&
+    String(task.notes || "") === draft.notes &&
+    checklistToText(task.checklist) === draft.checklist
   );
 }

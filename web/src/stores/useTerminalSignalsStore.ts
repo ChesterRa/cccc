@@ -2,10 +2,7 @@ import { create } from "zustand";
 
 export type TerminalSignalKind = "idle_prompt" | "working_output";
 
-export type TerminalSignal = {
-  kind: TerminalSignalKind;
-  updatedAt: number;
-};
+export type TerminalSignal = { kind: TerminalSignalKind; updatedAt: number };
 
 type TerminalSignalsState = {
   signals: Record<string, TerminalSignal>;
@@ -29,19 +26,10 @@ export const useTerminalSignalsStore = create<TerminalSignalsState>((set) => ({
       const key = buildSignalKey(groupId, actorId);
       if (!key || key === "::") return state;
       const previous = state.signals[key];
-      if (
-        previous
-        && previous.kind === signal.kind
-        && previous.updatedAt === signal.updatedAt
-      ) {
+      if (previous && previous.kind === signal.kind && previous.updatedAt === signal.updatedAt) {
         return state;
       }
-      return {
-        signals: {
-          ...state.signals,
-          [key]: signal,
-        },
-      };
+      return { signals: { ...state.signals, [key]: signal } };
     }),
 
   clearSignal: (groupId, actorId) =>

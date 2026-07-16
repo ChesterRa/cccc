@@ -7,7 +7,14 @@ import { ModalFrame } from "../modals/ModalFrame";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { ActorTab } from "../../pages/ActorTab";
 import { ChatTab } from "../../pages/chat";
-import type { Actor, GroupContext, GroupDoc, GroupMeta, GroupRuntimeStatus, TextScale } from "../../types";
+import type {
+  Actor,
+  GroupContext,
+  GroupDoc,
+  GroupMeta,
+  GroupRuntimeStatus,
+  TextScale,
+} from "../../types";
 import { SIDEBAR_COLLAPSED_WIDTH } from "../../stores/useUIStore";
 import { resolveRuntimeInspectorActor } from "./appShellRuntimeActors";
 import type { ComposerMentionKind } from "../../pages/chat/chatMentionSuggestions";
@@ -58,7 +65,11 @@ type AppShellProps = {
   onCloseSidebar: () => void;
   onToggleSidebar: () => void;
   onResizeSidebar: (width: number) => void;
-  onReorderGroupsInSection: (section: "working" | "archived", fromIndex: number, toIndex: number) => void;
+  onReorderGroupsInSection: (
+    section: "working" | "archived",
+    fromIndex: number,
+    toIndex: number,
+  ) => void;
   onArchiveGroup: (groupId: string) => void;
   onRestoreGroup: (groupId: string) => void;
   onOpenSidebar: () => void;
@@ -90,10 +101,7 @@ type AppShellProps = {
   onTouchEnd: (event: React.TouchEvent) => void;
 };
 
-type MountedRuntimeActorSnapshot = {
-  groupId: string | null;
-  actorsById: Record<string, Actor>;
-};
+type MountedRuntimeActorSnapshot = { groupId: string | null; actorsById: Record<string, Actor> };
 
 function areMountedRuntimeActorSnapshotsEqual(
   left: MountedRuntimeActorSnapshot,
@@ -222,10 +230,8 @@ export function AppShell({
   const shellStyle = {
     "--sidebar-width": `${sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth}px`,
   } as CSSProperties;
-  const [mountedRuntimeActorsSnapshot, setMountedRuntimeActorsSnapshot] = useState<MountedRuntimeActorSnapshot>({
-    groupId: null,
-    actorsById: {},
-  });
+  const [mountedRuntimeActorsSnapshot, setMountedRuntimeActorsSnapshot] =
+    useState<MountedRuntimeActorSnapshot>({ groupId: null, actorsById: {} });
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -235,10 +241,7 @@ export function AppShell({
           const actorId = String(actor.id || "").trim();
           if (actorId) nextActorsById[actorId] = actor;
         }
-        const nextSnapshot = {
-          groupId: selectedGroupId || null,
-          actorsById: nextActorsById,
-        };
+        const nextSnapshot = { groupId: selectedGroupId || null, actorsById: nextActorsById };
         return areMountedRuntimeActorSnapshotsEqual(current, nextSnapshot) ? current : nextSnapshot;
       });
     }, 0);
@@ -270,9 +273,7 @@ export function AppShell({
         onRestoreGroup={onRestoreGroup}
       />
 
-      <main
-        className="absolute inset-0 flex h-full min-h-0 flex-col overflow-hidden md:relative md:inset-auto bg-transparent md:bg-[var(--color-chat-bg)] md:backdrop-blur-md"
-      >
+      <main className="absolute inset-0 flex h-full min-h-0 flex-col overflow-hidden md:relative md:inset-auto bg-transparent md:bg-[var(--color-chat-bg)] md:backdrop-blur-md">
         <AppHeader
           isDark={isDark}
           theme={theme}
@@ -346,11 +347,18 @@ export function AppShell({
 
           {renderedActorIds.map((actorId) => {
             const mountedRuntimeActors =
-              mountedRuntimeActorsSnapshot.groupId === selectedGroupId ? mountedRuntimeActorsSnapshot.actorsById : {};
-            const actor = resolveRuntimeInspectorActor(actorId, runtimeActors, mountedRuntimeActors);
+              mountedRuntimeActorsSnapshot.groupId === selectedGroupId
+                ? mountedRuntimeActorsSnapshot.actorsById
+                : {};
+            const actor = resolveRuntimeInspectorActor(
+              actorId,
+              runtimeActors,
+              mountedRuntimeActors,
+            );
             const isVisible = activeTab === actorId && activeTab !== "chat";
             const agentState =
-              (groupContext?.agent_states || []).find((item) => item.id === (actor?.id || "")) || null;
+              (groupContext?.agent_states || []).find((item) => item.id === (actor?.id || "")) ||
+              null;
 
             return (
               <RuntimeInspectorModal
@@ -359,7 +367,9 @@ export function AppShell({
                 isDark={isDark}
                 onClose={() => onTabChange("chat")}
                 titleId={`runtime-inspector-${actorId}`}
-                closeAriaLabel={t("runtimeInspectorClose", { defaultValue: "Close runtime inspector" })}
+                closeAriaLabel={t("runtimeInspectorClose", {
+                  defaultValue: "Close runtime inspector",
+                })}
               >
                 <div className="min-h-0 flex-1 overflow-hidden">
                   <ErrorBoundary>

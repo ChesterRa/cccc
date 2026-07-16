@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { assembleVoiceFinalTranscriptSegments } from "../../../src/pages/chat/voice-secretary/voiceFinalTranscriptAssembler";
 
@@ -20,10 +20,13 @@ describe("voice final transcript assembler", () => {
   });
 
   it("starts a new utterance after a long pause", () => {
-    const utterances = assembleVoiceFinalTranscriptSegments([
-      { text: "第一句已经讲完了", startMs: 0, endMs: 1200 },
-      { text: "第二句隔了很久才开始", startMs: 4800, endMs: 6200 },
-    ], { minChars: 6 });
+    const utterances = assembleVoiceFinalTranscriptSegments(
+      [
+        { text: "第一句已经讲完了", startMs: 0, endMs: 1200 },
+        { text: "第二句隔了很久才开始", startMs: 4800, endMs: 6200 },
+      ],
+      { minChars: 6 },
+    );
 
     expect(utterances.map((item) => item.text)).toEqual([
       "第一句已经讲完了",
@@ -32,10 +35,13 @@ describe("voice final transcript assembler", () => {
   });
 
   it("respects terminal punctuation when the current utterance is long enough", () => {
-    const utterances = assembleVoiceFinalTranscriptSegments([
-      { text: "这里先讲完一个完整观点。", startMs: 0, endMs: 1600 },
-      { text: "然后再开始下一个观点", startMs: 1800, endMs: 3200 },
-    ], { minChars: 8 });
+    const utterances = assembleVoiceFinalTranscriptSegments(
+      [
+        { text: "这里先讲完一个完整观点。", startMs: 0, endMs: 1600 },
+        { text: "然后再开始下一个观点", startMs: 1800, endMs: 3200 },
+      ],
+      { minChars: 8 },
+    );
 
     expect(utterances.map((item) => item.text)).toEqual([
       "这里先讲完一个完整观点。",

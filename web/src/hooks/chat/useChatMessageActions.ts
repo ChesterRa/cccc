@@ -5,6 +5,7 @@ import type { ChatScrollSnapshot } from "../../stores/useUIStore";
 import type { Actor, GroupMeta, LedgerEvent } from "../../types";
 import { buildReplyComposerState } from "../../utils/chatReply";
 import { copyTextToClipboard } from "../../utils/copy";
+import { appendSenderPerspective, getMessageInsight } from "../../utils/messagePerspective";
 import { canOpenSourceMessageLocally } from "./chatTabBasics";
 
 export function useChatMessageActions(input: {
@@ -66,8 +67,13 @@ export function useChatMessageActions(input: {
     async (event: LedgerEvent) => {
       if (event.kind !== "chat.message") return;
       const text = String(event.data && "text" in event.data ? event.data.text || "" : "");
-      if (!text.trim()) return;
-      if (await copyTextToClipboard(text)) {
+      const copyText = appendSenderPerspective(
+        text,
+        getMessageInsight(event.data),
+        input.t("chat:senderPerspective", { defaultValue: "Sender perspective" }),
+      );
+      if (!copyText) return;
+      if (await copyTextToClipboard(copyText)) {
         input.showNotice({
           message: input.t("chat:contentCopied", { defaultValue: "Content copied" }),
         });

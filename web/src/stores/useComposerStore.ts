@@ -5,7 +5,7 @@ import type { PresentationMessageRef, ReplyTarget } from "../types";
 export function getEffectiveComposerDestGroupId(
   destGroupId: string,
   activeGroupId: string,
-  selectedGroupId: string
+  selectedGroupId: string,
 ): string {
   const selected = String(selectedGroupId || "").trim();
   const active = String(activeGroupId || "").trim();
@@ -25,7 +25,7 @@ export function isComposerGroupSettled(activeGroupId: string, selectedGroupId: s
 export function getComposerDestGroupDisplayValue(
   destGroupId: string,
   selectedGroupId: string,
-  composerGroupSettled: boolean
+  composerGroupSettled: boolean,
 ): string {
   const selected = String(selectedGroupId || "").trim();
   if (!composerGroupSettled) return selected;
@@ -73,10 +73,7 @@ interface ComposerState {
 
   // Group switching: save current draft and load new group's draft
   switchGroup: (fromGroupId: string | null, toGroupId: string | null) => void;
-  upsertDraft: (
-    groupId: string,
-    updater: (draft: GroupDraft | null) => GroupDraft | null,
-  ) => void;
+  upsertDraft: (groupId: string, updater: (draft: GroupDraft | null) => GroupDraft | null) => void;
   // Clear draft for a specific group
   clearDraft: (groupId: string) => void;
 }
@@ -123,10 +120,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       }
       return {
         toText: nextText,
-        normalToTextByGroup: {
-          ...state.normalToTextByGroup,
-          [state.activeGroupId]: nextText,
-        },
+        normalToTextByGroup: { ...state.normalToTextByGroup, [state.activeGroupId]: nextText },
       };
     }),
   setReplyToText: (text) =>
@@ -134,15 +128,9 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       const activeGroupId = String(state.activeGroupId || "").trim();
       const normalToTextByGroup =
         activeGroupId && !state.replyTarget
-          ? {
-              ...state.normalToTextByGroup,
-              [activeGroupId]: state.toText,
-            }
+          ? { ...state.normalToTextByGroup, [activeGroupId]: state.toText }
           : state.normalToTextByGroup;
-      return {
-        toText: String(text || ""),
-        normalToTextByGroup,
-      };
+      return { toText: String(text || ""), normalToTextByGroup };
     }),
   setReplyTarget: (target) =>
     set((state) => {
@@ -151,10 +139,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       }
       const activeGroupId = String(state.activeGroupId || "").trim();
       const normalToText = activeGroupId ? state.normalToTextByGroup[activeGroupId] : undefined;
-      return {
-        replyTarget: null,
-        toText: normalToText ?? state.toText,
-      };
+      return { replyTarget: null, toText: normalToText ?? state.toText };
     }),
   setQuotedPresentationRef: (ref) => set({ quotedPresentationRef: ref }),
   setPriority: (priority) => set({ priority }),
@@ -176,10 +161,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
         replyRequired: false,
         destGroupId: activeGroupId,
         normalToTextByGroup: activeGroupId
-          ? {
-              ...state.normalToTextByGroup,
-              [activeGroupId]: nextToText,
-            }
+          ? { ...state.normalToTextByGroup, [activeGroupId]: nextToText }
           : state.normalToTextByGroup,
       };
     }),
@@ -222,7 +204,9 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
     const normalizedDestGroupId = normalizedToGroupId;
 
     const nextToText =
-      draft?.toText ?? (normalizedToGroupId ? state.normalToTextByGroup[normalizedToGroupId] : undefined) ?? "";
+      draft?.toText ??
+      (normalizedToGroupId ? state.normalToTextByGroup[normalizedToGroupId] : undefined) ??
+      "";
 
     set({
       activeGroupId: normalizedDestGroupId,

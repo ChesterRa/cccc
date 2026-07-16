@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { CloseIcon, FolderIcon, GlobeIcon, PlusIcon, PowerIcon, RefreshIcon, TrashIcon } from "../../Icons";
+import {
+  CloseIcon,
+  FolderIcon,
+  GlobeIcon,
+  PlusIcon,
+  PowerIcon,
+  RefreshIcon,
+  TrashIcon,
+} from "../../Icons";
 import type {
   GroupSpaceBinding,
   GroupSpaceProviderAuthStatus,
@@ -36,7 +44,9 @@ const NOTEBOOK_LANES: NotebookLane[] = ["work", "memory"];
 function normalizeNotebookSpaces(raw: unknown): GroupSpaceRemoteSpace[] {
   if (!Array.isArray(raw)) return [];
   return raw
-    .filter((item) => Boolean(String((item as GroupSpaceRemoteSpace | null)?.remote_space_id || "").trim()))
+    .filter((item) =>
+      Boolean(String((item as GroupSpaceRemoteSpace | null)?.remote_space_id || "").trim()),
+    )
     .map((item) => ({
       remote_space_id: String((item as GroupSpaceRemoteSpace | null)?.remote_space_id || "").trim(),
       title: String((item as GroupSpaceRemoteSpace | null)?.title || "").trim(),
@@ -48,7 +58,7 @@ function normalizeNotebookSpaces(raw: unknown): GroupSpaceRemoteSpace[] {
 function resolveDraftNotebookId(
   previousDraft: string,
   boundRemoteId: string,
-  options: GroupSpaceRemoteSpace[]
+  options: GroupSpaceRemoteSpace[],
 ): string {
   const bound = String(boundRemoteId || "").trim();
   if (bound) return bound;
@@ -61,7 +71,7 @@ function resolveDraftNotebookId(
 
 function mergeNotebookOptions(
   spaces: GroupSpaceRemoteSpace[],
-  extraIds: Array<string | undefined>
+  extraIds: Array<string | undefined>,
 ): GroupSpaceRemoteSpace[] {
   const byId = new Map<string, GroupSpaceRemoteSpace>();
   for (const item of spaces) {
@@ -85,7 +95,7 @@ function hasLaneTarget(binding: GroupSpaceBinding | null | undefined): boolean {
 
 function laneVisualState(
   binding: GroupSpaceBinding | null | undefined,
-  { providerUsable }: { providerUsable: boolean }
+  { providerUsable }: { providerUsable: boolean },
 ): LaneVisualState {
   if (!hasLaneTarget(binding)) return "unbound";
   return providerUsable ? "active" : "saved";
@@ -143,11 +153,17 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
 
   const notebookOptions = useMemo(
     () => mergeNotebookOptions(spaces, [workBoundRemoteId, memoryBoundRemoteId]),
-    [spaces, workBoundRemoteId, memoryBoundRemoteId]
+    [spaces, workBoundRemoteId, memoryBoundRemoteId],
   );
 
-  const workBoundNotebook = notebookOptions.find((item) => String(item.remote_space_id || "").trim() === workBoundRemoteId) || null;
-  const memoryBoundNotebook = notebookOptions.find((item) => String(item.remote_space_id || "").trim() === memoryBoundRemoteId) || null;
+  const workBoundNotebook =
+    notebookOptions.find(
+      (item) => String(item.remote_space_id || "").trim() === workBoundRemoteId,
+    ) || null;
+  const memoryBoundNotebook =
+    notebookOptions.find(
+      (item) => String(item.remote_space_id || "").trim() === memoryBoundRemoteId,
+    ) || null;
   const workLaneState = laneVisualState(workBinding, { providerUsable });
   const memoryLaneState = laneVisualState(memoryBinding, { providerUsable });
 
@@ -232,10 +248,18 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
       });
       setSpaces(nextSpaces);
 
-      const nextWorkBoundRemoteId = String(nextStatus?.bindings?.work?.remote_space_id || "").trim();
-      const nextMemoryBoundRemoteId = String(nextStatus?.bindings?.memory?.remote_space_id || "").trim();
-      setWorkBindRemoteId((prev) => resolveDraftNotebookId(prev, nextWorkBoundRemoteId, nextSpaces));
-      setMemoryBindRemoteId((prev) => resolveDraftNotebookId(prev, nextMemoryBoundRemoteId, nextSpaces));
+      const nextWorkBoundRemoteId = String(
+        nextStatus?.bindings?.work?.remote_space_id || "",
+      ).trim();
+      const nextMemoryBoundRemoteId = String(
+        nextStatus?.bindings?.memory?.remote_space_id || "",
+      ).trim();
+      setWorkBindRemoteId((prev) =>
+        resolveDraftNotebookId(prev, nextWorkBoundRemoteId, nextSpaces),
+      );
+      setMemoryBindRemoteId((prev) =>
+        resolveDraftNotebookId(prev, nextMemoryBoundRemoteId, nextSpaces),
+      );
     } catch (e) {
       if (loadSeqRef.current !== loadSeq) return;
       setErr(e instanceof Error ? e.message : t("groupSpace.loadFailed"));
@@ -269,7 +293,9 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
         if (nextState && nextState !== "running") {
           await loadAll({ refreshSpaces: nextState === "succeeded" });
           if (nextState === "succeeded") {
-            const flowKey = String(nextAuth?.session_id || nextAuth?.started_at || "succeeded").trim();
+            const flowKey = String(
+              nextAuth?.session_id || nextAuth?.started_at || "succeeded",
+            ).trim();
             if (flowKey && connectHintedFlowRef.current !== flowKey) {
               connectHintedFlowRef.current = flowKey;
               setHintWithTimeout(t("groupSpace.googleConnectSuccess"));
@@ -304,7 +330,7 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
       if (!resp.ok) {
         setErr(
           resp.error?.message ||
-            t(forceReauth ? "groupSpace.switchStartFailed" : "groupSpace.connectStartFailed")
+            t(forceReauth ? "groupSpace.switchStartFailed" : "groupSpace.connectStartFailed"),
         );
         return;
       }
@@ -408,7 +434,9 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
   const handleUnbind = async (lane: NotebookLane) => {
     const gid = String(groupId || "").trim();
     if (!gid) return;
-    const confirmText = t(lane === "work" ? "groupSpace.workUnbindConfirm" : "groupSpace.memoryUnbindConfirm");
+    const confirmText = t(
+      lane === "work" ? "groupSpace.workUnbindConfirm" : "groupSpace.memoryUnbindConfirm",
+    );
     if (!window.confirm(confirmText)) return;
     setActionBusy(true);
     setErr("");
@@ -443,42 +471,55 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
     const notebookStateText = laneStatusText(laneState, t);
     const canBind = providerUsable && !actionBusy;
     const canUnbind = !actionBusy && Boolean(boundRemoteId);
-    const laneTitleLabel = laneState === "saved" ? t("groupSpace.savedNotebookTarget") : t("groupSpace.currentNotebook");
+    const laneTitleLabel =
+      laneState === "saved" ? t("groupSpace.savedNotebookTarget") : t("groupSpace.currentNotebook");
     const boundNotebookTitle = String(boundNotebook?.title || "").trim();
-    const showRemoteIdLine = Boolean(boundRemoteId && boundNotebookTitle && boundNotebookTitle !== boundRemoteId);
+    const showRemoteIdLine = Boolean(
+      boundRemoteId && boundNotebookTitle && boundNotebookTitle !== boundRemoteId,
+    );
     const notebookActionsHint =
       laneState === "saved"
         ? t("groupSpace.savedTargetHint")
         : !connectionConnected
           ? t("groupSpace.connectGoogleFirst")
           : !writeReady
-            ? (String(providerState?.last_error || "").trim() || t("groupSpace.adapterNotReady"))
+            ? String(providerState?.last_error || "").trim() || t("groupSpace.adapterNotReady")
             : "";
     const selectedNotebook =
-      notebookOptions.find((item) => String(item.remote_space_id || "").trim() === String(selectedRemoteId || "").trim()) || null;
-    const headerTone: "good" | "neutral" | "warn" = laneState === "active" ? "good" : laneState === "saved" ? "warn" : "neutral";
+      notebookOptions.find(
+        (item) =>
+          String(item.remote_space_id || "").trim() === String(selectedRemoteId || "").trim(),
+      ) || null;
+    const headerTone: "good" | "neutral" | "warn" =
+      laneState === "active" ? "good" : laneState === "saved" ? "warn" : "neutral";
 
     return (
       <div key={lane} className={settingsWorkspacePanelClass(_isDark)}>
         <div>
-          <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t(titleKey)}</div>
+          <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+            {t(titleKey)}
+          </div>
           <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">{t(hintKey)}</div>
         </div>
 
         <div className={`mt-3 ${settingsWorkspaceSoftPanelClass(_isDark)}`}>
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">{laneTitleLabel}</div>
+              <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                {laneTitleLabel}
+              </div>
               <div className="mt-1 text-sm font-semibold break-all text-[var(--color-text-primary)]">
-                {boundRemoteId
-                  ? (boundNotebookTitle || boundRemoteId)
-                  : t("groupSpace.notBound")}
+                {boundRemoteId ? boundNotebookTitle || boundRemoteId : t("groupSpace.notBound")}
               </div>
               {showRemoteIdLine ? (
-                <div className="mt-1 text-[11px] font-mono break-all text-[var(--color-text-muted)]">{boundRemoteId}</div>
+                <div className="mt-1 text-[11px] font-mono break-all text-[var(--color-text-muted)]">
+                  {boundRemoteId}
+                </div>
               ) : null}
             </div>
-            <div className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusChipClass(headerTone)}`}>
+            <div
+              className={`shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium ${statusChipClass(headerTone)}`}
+            >
               {notebookStateText}
             </div>
           </div>
@@ -498,7 +539,9 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
         </div>
 
         <div className="mt-3">
-          <label className="block text-[11px] mb-1 text-[var(--color-text-tertiary)]">{t("groupSpace.chooseNotebook")}</label>
+          <label className="block text-[11px] mb-1 text-[var(--color-text-tertiary)]">
+            {t("groupSpace.chooseNotebook")}
+          </label>
           <SelectCombobox
             items={
               notebookOptions.length
@@ -517,9 +560,13 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
             searchable
           />
           {notebookActionsHint ? (
-            <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">{notebookActionsHint}</div>
+            <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">
+              {notebookActionsHint}
+            </div>
           ) : connectionConnected && !notebookOptions.length ? (
-            <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">{t("groupSpace.noNotebookOptionsHint")}</div>
+            <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
+              {t("groupSpace.noNotebookOptionsHint")}
+            </div>
           ) : null}
         </div>
 
@@ -546,7 +593,9 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
         {selectedNotebook ? (
           <div className="mt-2 text-[11px] text-[var(--color-text-tertiary)]">
             {t("groupSpace.bindSelectedHintWithTarget", {
-              target: String(selectedNotebook.title || "").trim() || String(selectedNotebook.remote_space_id || "").trim(),
+              target:
+                String(selectedNotebook.title || "").trim() ||
+                String(selectedNotebook.remote_space_id || "").trim(),
             })}
           </div>
         ) : null}
@@ -555,7 +604,11 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
   };
 
   if (!groupId) {
-    return <div className="text-sm text-[var(--color-text-tertiary)]">{t("groupSpace.openFromGroup")}</div>;
+    return (
+      <div className="text-sm text-[var(--color-text-tertiary)]">
+        {t("groupSpace.openFromGroup")}
+      </div>
+    );
   }
 
   return (
@@ -563,8 +616,12 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
       <section className={settingsWorkspaceShellClass(_isDark)}>
         <div className={settingsWorkspaceHeaderClass(_isDark)}>
           <div>
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("groupSpace.title")}</h3>
-            <p className="mt-1 max-w-3xl text-xs text-[var(--color-text-muted)]">{t("groupSpace.description")}</p>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("groupSpace.title")}
+            </h3>
+            <p className="mt-1 max-w-3xl text-xs text-[var(--color-text-muted)]">
+              {t("groupSpace.description")}
+            </p>
           </div>
           <button
             type="button"
@@ -581,10 +638,16 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
           <div className={settingsWorkspacePanelClass(_isDark)}>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("groupSpace.accountTitle")}</div>
-                <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">{t("groupSpace.accountHint")}</div>
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  {t("groupSpace.accountTitle")}
+                </div>
+                <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
+                  {t("groupSpace.accountHint")}
+                </div>
               </div>
-              <div className={`text-xs font-medium ${connectionStatusTone}`}>{connectionStatusText}</div>
+              <div className={`text-xs font-medium ${connectionStatusTone}`}>
+                {connectionStatusText}
+              </div>
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
@@ -639,10 +702,14 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
             ) : null}
 
             {authFlow?.message ? (
-              <div className="mt-3 text-xs text-[var(--color-text-tertiary)]">{String(authFlow.message)}</div>
+              <div className="mt-3 text-xs text-[var(--color-text-tertiary)]">
+                {String(authFlow.message)}
+              </div>
             ) : null}
             {authFlow?.error?.message ? (
-              <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">{String(authFlow.error.message)}</div>
+              <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+                {String(authFlow.error.message)}
+              </div>
             ) : null}
             {connectionRunning &&
             String(authFlow?.delivery || "").trim() === "projected_browser" &&
@@ -679,21 +746,35 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
               </div>
 
               <div className={settingsWorkspacePanelClass(_isDark)}>
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("groupSpace.summaryTitle")}</div>
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  {t("groupSpace.summaryTitle")}
+                </div>
                 <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
                   <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                    <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">{t("groupSpace.summaryGoogle")}</div>
-                    <div className={`mt-1 text-sm font-medium ${connectionStatusTone}`}>{connectionStatusText}</div>
+                    <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                      {t("groupSpace.summaryGoogle")}
+                    </div>
+                    <div className={`mt-1 text-sm font-medium ${connectionStatusTone}`}>
+                      {connectionStatusText}
+                    </div>
                   </div>
                   <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                    <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">{t("groupSpace.summaryWork")}</div>
-                    <div className={`mt-1 text-sm font-medium ${workLaneState === "active" ? "text-emerald-600 dark:text-emerald-400" : workLaneState === "saved" ? "text-amber-600 dark:text-amber-400" : "text-[var(--color-text-primary)]"}`}>
+                    <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                      {t("groupSpace.summaryWork")}
+                    </div>
+                    <div
+                      className={`mt-1 text-sm font-medium ${workLaneState === "active" ? "text-emerald-600 dark:text-emerald-400" : workLaneState === "saved" ? "text-amber-600 dark:text-amber-400" : "text-[var(--color-text-primary)]"}`}
+                    >
                       {laneStatusText(workLaneState, t)}
                     </div>
                   </div>
                   <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                    <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">{t("groupSpace.summaryMemory")}</div>
-                    <div className={`mt-1 text-sm font-medium ${memoryLaneState === "active" ? "text-emerald-600 dark:text-emerald-400" : memoryLaneState === "saved" ? "text-amber-600 dark:text-amber-400" : "text-[var(--color-text-primary)]"}`}>
+                    <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">
+                      {t("groupSpace.summaryMemory")}
+                    </div>
+                    <div
+                      className={`mt-1 text-sm font-medium ${memoryLaneState === "active" ? "text-emerald-600 dark:text-emerald-400" : memoryLaneState === "saved" ? "text-amber-600 dark:text-amber-400" : "text-[var(--color-text-primary)]"}`}
+                    >
                       {laneStatusText(memoryLaneState, t)}
                     </div>
                   </div>
@@ -707,7 +788,9 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
             </>
           ) : (
             <div className={settingsWorkspacePanelClass(_isDark)}>
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("groupSpace.notebookSectionLockedTitle")}</div>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {t("groupSpace.notebookSectionLockedTitle")}
+              </div>
               <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">
                 {connectionRunning
                   ? t("groupSpace.notebookSectionLockedConnecting")
@@ -717,7 +800,9 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
           )}
 
           {err ? <div className="text-xs text-rose-600 dark:text-rose-400">{err}</div> : null}
-          {hint ? <div className="text-xs text-emerald-600 dark:text-emerald-400">{hint}</div> : null}
+          {hint ? (
+            <div className="text-xs text-emerald-600 dark:text-emerald-400">{hint}</div>
+          ) : null}
         </div>
       </section>
     </div>

@@ -19,11 +19,7 @@ import {
   type ApiResponse,
 } from "../../services/api";
 import { reloadContextAfterWrite } from "../../features/contextModal/contextWriteback";
-import type {
-  GroupContext,
-  ProjectMdInfo,
-  Task,
-} from "../../types";
+import type { GroupContext, ProjectMdInfo, Task } from "../../types";
 import {
   evaluateTaskWorkflow,
   getTaskDoneTransitionBlockers,
@@ -89,8 +85,11 @@ export function ContextModal({
   isDark,
 }: ContextModalProps) {
   const { t } = useTranslation("modals");
-  const tr = useCallback((key: string, fallback: string, vars?: Record<string, unknown>) =>
-    String(t(key as never, { defaultValue: fallback, ...(vars || {}) } as never)), [t]);
+  const tr = useCallback(
+    (key: string, fallback: string, vars?: Record<string, unknown>) =>
+      String(t(key as never, { defaultValue: fallback, ...(vars || {}) } as never)),
+    [t],
+  );
 
   const ui = useMemo(() => createContextModalUi(isDark), [isDark]);
 
@@ -106,7 +105,10 @@ export function ContextModal({
   const [taskEditorMode, setTaskEditorMode] = useState<"none" | "create" | "edit">("none");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
-  const [pendingTaskReadback, setPendingTaskReadback] = useState<{ taskId: string; previousUpdatedAt: string } | null>(null);
+  const [pendingTaskReadback, setPendingTaskReadback] = useState<{
+    taskId: string;
+    previousUpdatedAt: string;
+  } | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncError, setSyncError] = useState("");
 
@@ -127,16 +129,22 @@ export function ContextModal({
   const lastOpenedGroupRef = useRef("");
 
   const brief = context?.coordination?.brief || null;
-  const tasks = useMemo(() => (Array.isArray(context?.coordination?.tasks) ? context.coordination.tasks : []), [context]);
+  const tasks = useMemo(
+    () => (Array.isArray(context?.coordination?.tasks) ? context.coordination.tasks : []),
+    [context],
+  );
   const agents = useMemo(
-    () => (Array.isArray(context?.agent_states) ? context.agent_states.filter((agent) => isVisibleContextAgent(agent)) : []),
-    [context]
+    () =>
+      Array.isArray(context?.agent_states)
+        ? context.agent_states.filter((agent) => isVisibleContextAgent(agent))
+        : [],
+    [context],
   );
   const board = useMemo(() => buildBoard(tasks, context?.board), [context?.board, tasks]);
 
   const allBoardTasks = useMemo(
     () => [...board.active, ...board.planned, ...board.done, ...board.archived],
-    [board.active, board.archived, board.done, board.planned]
+    [board.active, board.archived, board.done, board.planned],
   );
   const taskMap = useMemo(() => {
     const map = new Map<string, Task>();
@@ -146,20 +154,21 @@ export function ContextModal({
 
   const selectedTask = selectedTaskId ? taskMap.get(selectedTaskId) || null : null;
   const taskWorkflowCoverage = useMemo(
-    () => evaluateTaskWorkflow({
-      parentId: taskDraft?.parentId,
-      taskType: taskDraft?.taskType,
-      status: taskDraft?.status,
-      assignee: taskDraft?.assignee,
-      outcome: taskDraft?.outcome,
-      notes: taskDraft?.notes,
-      checklist: taskDraft?.checklist,
-    }),
-    [taskDraft]
+    () =>
+      evaluateTaskWorkflow({
+        parentId: taskDraft?.parentId,
+        taskType: taskDraft?.taskType,
+        status: taskDraft?.status,
+        assignee: taskDraft?.assignee,
+        outcome: taskDraft?.outcome,
+        notes: taskDraft?.notes,
+        checklist: taskDraft?.checklist,
+      }),
+    [taskDraft],
   );
   const selectedTaskType = useMemo(
     () => getTaskTypeDefinition(taskDraft?.taskType || "standard"),
-    [taskDraft?.taskType]
+    [taskDraft?.taskType],
   );
 
   const tasksSummary = useMemo(() => {
@@ -171,12 +180,28 @@ export function ContextModal({
       archived: board.archived.length,
     };
     return context?.tasks_summary || fallback;
-  }, [board.active.length, board.archived.length, board.done.length, board.planned.length, context?.tasks_summary, tasks.length]);
+  }, [
+    board.active.length,
+    board.archived.length,
+    board.done.length,
+    board.planned.length,
+    context?.tasks_summary,
+    tasks.length,
+  ]);
 
   const attentionCounts = useMemo(() => {
-    const blockedFallback = tasks.filter((task) => taskStatus(task) === "active" && Array.isArray(task.blocked_by) && task.blocked_by.length > 0).length;
-    const waitingUserFallback = tasks.filter((task) => String(task.waiting_on || "none") === "user").length;
-    const handoffFallback = tasks.filter((task) => !!String(task.handoff_to || "").trim() && taskStatus(task) !== "archived").length;
+    const blockedFallback = tasks.filter(
+      (task) =>
+        taskStatus(task) === "active" &&
+        Array.isArray(task.blocked_by) &&
+        task.blocked_by.length > 0,
+    ).length;
+    const waitingUserFallback = tasks.filter(
+      (task) => String(task.waiting_on || "none") === "user",
+    ).length;
+    const handoffFallback = tasks.filter(
+      (task) => !!String(task.handoff_to || "").trim() && taskStatus(task) !== "archived",
+    ).length;
     return {
       blocked: countLike(context?.attention?.blocked, blockedFallback),
       waitingUser: countLike(context?.attention?.waiting_user, waitingUserFallback),
@@ -185,41 +210,57 @@ export function ContextModal({
   }, [context?.attention, tasks]);
 
   const recentDecisions = useMemo(
-    () => (Array.isArray(context?.coordination?.recent_decisions) ? context.coordination.recent_decisions : []),
-    [context]
+    () =>
+      Array.isArray(context?.coordination?.recent_decisions)
+        ? context.coordination.recent_decisions
+        : [],
+    [context],
   );
   const recentHandoffs = useMemo(
-    () => (Array.isArray(context?.coordination?.recent_handoffs) ? context.coordination.recent_handoffs : []),
-    [context]
+    () =>
+      Array.isArray(context?.coordination?.recent_handoffs)
+        ? context.coordination.recent_handoffs
+        : [],
+    [context],
   );
   const projectPathLabel = useMemo(() => {
     const path = String(projectMd?.path || "").trim();
     return path || "PROJECT.md";
   }, [projectMd?.path]);
   const notifyMessage = useMemo(
-    () => tr("context.projectUpdatedNotify", "PROJECT.md updated. Please re-read and realign. ({{path}})", { path: projectPathLabel }),
-    [projectPathLabel, tr]
+    () =>
+      tr(
+        "context.projectUpdatedNotify",
+        "PROJECT.md updated. Please re-read and realign. ({{path}})",
+        { path: projectPathLabel },
+      ),
+    [projectPathLabel, tr],
   );
 
   const assigneeOptions = useMemo(
-    () => Array.from(new Set(tasks.map((task) => String(task.assignee || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [tasks]
+    () =>
+      Array.from(
+        new Set(tasks.map((task) => String(task.assignee || "").trim()).filter(Boolean)),
+      ).sort((a, b) => a.localeCompare(b)),
+    [tasks],
   );
   const unassignedCount = useMemo(
-    () => tasks.filter((task) => taskStatus(task) !== "archived" && !String(task.assignee || "").trim()).length,
-    [tasks]
+    () =>
+      tasks.filter((task) => taskStatus(task) !== "archived" && !String(task.assignee || "").trim())
+        .length,
+    [tasks],
   );
   const activeTaskOptions = useMemo(
     () => tasks.filter((task) => taskStatus(task) !== "archived"),
-    [tasks]
+    [tasks],
   );
   const hasBriefUnsaved = useMemo(
     () => editingBrief && !briefDraftMatches(brief, briefDraft),
-    [brief, briefDraft, editingBrief]
+    [brief, briefDraft, editingBrief],
   );
   const hasProjectUnsaved = useMemo(
     () => editingProject && projectText !== String(projectMd?.content || ""),
-    [editingProject, projectMd?.content, projectText]
+    [editingProject, projectMd?.content, projectText],
   );
   const hasSteeringUnsaved = hasBriefUnsaved || hasProjectUnsaved;
   const hasTaskUnsaved = useMemo(() => {
@@ -227,27 +268,37 @@ export function ContextModal({
     if (taskEditorMode === "create") return taskDraftDirty(taskDraft);
     return !!selectedTask && !taskDraftMatches(selectedTask, taskDraft);
   }, [selectedTask, taskDraft, taskEditorMode]);
-  const selectedTaskDeleteInfo = useMemo(() => getTaskDeleteInfo(selectedTask, tasks), [selectedTask, tasks]);
+  const selectedTaskDeleteInfo = useMemo(
+    () => getTaskDeleteInfo(selectedTask, tasks),
+    [selectedTask, tasks],
+  );
   const taskEditorVisible = taskEditorMode !== "none" && !!taskDraft;
 
-  const loadProjectMd = useCallback(async (force: boolean = false): Promise<ProjectMdInfo | null> => {
-    if (!groupId) return null;
-    if (!force && projectMd !== null) return projectMd;
-    setProjectBusy(true);
-    setProjectError("");
-    try {
-      const resp = await apiJson<ProjectMdInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/project_md`);
-      if (!resp.ok) {
-        setProjectMd(null);
-        setProjectError(resp.error?.message || tr("context.failedToLoadProject", "Failed to load PROJECT.md"));
-        return null;
+  const loadProjectMd = useCallback(
+    async (force: boolean = false): Promise<ProjectMdInfo | null> => {
+      if (!groupId) return null;
+      if (!force && projectMd !== null) return projectMd;
+      setProjectBusy(true);
+      setProjectError("");
+      try {
+        const resp = await apiJson<ProjectMdInfo>(
+          `/api/v1/groups/${encodeURIComponent(groupId)}/project_md`,
+        );
+        if (!resp.ok) {
+          setProjectMd(null);
+          setProjectError(
+            resp.error?.message || tr("context.failedToLoadProject", "Failed to load PROJECT.md"),
+          );
+          return null;
+        }
+        setProjectMd(resp.result);
+        return resp.result ?? null;
+      } finally {
+        setProjectBusy(false);
       }
-      setProjectMd(resp.result);
-      return resp.result ?? null;
-    } finally {
-      setProjectBusy(false);
-    }
-  }, [groupId, projectMd, tr]);
+    },
+    [groupId, projectMd, tr],
+  );
 
   useEffect(() => {
     if (!isOpen || !groupId) return;
@@ -291,8 +342,7 @@ export function ContextModal({
   }, [groupId, isOpen, onOpenContext]);
 
   const applyContextWriteback = useCallback(
-    async <T,>(response: ApiResponse<T>) =>
-      reloadContextAfterWrite(response, onSyncContext),
+    async <T,>(response: ApiResponse<T>) => reloadContextAfterWrite(response, onSyncContext),
     [onSyncContext],
   );
 
@@ -331,12 +381,14 @@ export function ContextModal({
           assignee,
           String(task.priority || ""),
           String(task.handoff_to || ""),
-        ].join(" ").toLowerCase();
+        ]
+          .join(" ")
+          .toLowerCase();
         if (!haystack.includes(query)) return false;
       }
       return true;
     },
-    [assigneeFilter, taskFilter, taskQuery]
+    [assigneeFilter, taskFilter, taskQuery],
   );
 
   const filteredBoard = useMemo(
@@ -346,18 +398,26 @@ export function ContextModal({
       done: board.done.filter(taskMatches),
       archived: board.archived.filter(taskMatches),
     }),
-    [board, taskMatches]
+    [board, taskMatches],
   );
 
-  const hasTaskFilters = taskFilter !== "all" || assigneeFilter !== "__all__" || taskQuery.trim().length > 0;
+  const hasTaskFilters =
+    taskFilter !== "all" || assigneeFilter !== "__all__" || taskQuery.trim().length > 0;
   const hiddenArchivedMatches = archivedExpanded ? 0 : filteredBoard.archived.length;
   const visibleTaskTotal = useMemo(
-    () => filteredBoard.planned.length + filteredBoard.active.length + filteredBoard.done.length + (archivedExpanded ? filteredBoard.archived.length : 0),
-    [archivedExpanded, filteredBoard]
+    () =>
+      filteredBoard.planned.length +
+      filteredBoard.active.length +
+      filteredBoard.done.length +
+      (archivedExpanded ? filteredBoard.archived.length : 0),
+    [archivedExpanded, filteredBoard],
   );
   const hasVisibleTasks = visibleTaskTotal > 0;
-  const archivedToggleCount = hasTaskFilters ? filteredBoard.archived.length : Number(tasksSummary.archived || 0);
-  const hasArchivedTasks = archivedExpanded || archivedToggleCount > 0 || Number(tasksSummary.archived || 0) > 0;
+  const archivedToggleCount = hasTaskFilters
+    ? filteredBoard.archived.length
+    : Number(tasksSummary.archived || 0);
+  const hasArchivedTasks =
+    archivedExpanded || archivedToggleCount > 0 || Number(tasksSummary.archived || 0) > 0;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -399,127 +459,158 @@ export function ContextModal({
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } })
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
   );
 
   const formatDoneTransitionGuardMessage = useCallback(
-    (missing: string[]) => tr(
-      "context.taskDoneGuard",
-      "Complete closeout before marking this task done: {{items}}.",
-      { items: missing.join(", ") }
-    ),
-    [tr]
+    (missing: string[]) =>
+      tr("context.taskDoneGuard", "Complete closeout before marking this task done: {{items}}.", {
+        items: missing.join(", "),
+      }),
+    [tr],
   );
   const selectedTaskDeleteHint = useMemo(() => {
-    if (!selectedTask || selectedTaskDeleteInfo.allowed || !selectedTaskDeleteInfo.reason) return "";
+    if (!selectedTask || selectedTaskDeleteInfo.allowed || !selectedTaskDeleteInfo.reason)
+      return "";
     if (selectedTaskDeleteInfo.reason === "subtree_history") {
-      return tr("context.deleteTaskBlockedSubtree", "This task has child tasks with execution history, so delete is blocked.");
+      return tr(
+        "context.deleteTaskBlockedSubtree",
+        "This task has child tasks with execution history, so delete is blocked.",
+      );
     }
-    return tr("context.deleteTaskBlockedSelf", "Only tasks that never moved past planned can be deleted.");
+    return tr(
+      "context.deleteTaskBlockedSelf",
+      "Only tasks that never moved past planned can be deleted.",
+    );
   }, [selectedTask, selectedTaskDeleteInfo, tr]);
 
   const confirmDiscardTaskChanges = useCallback(() => {
     if (!hasTaskUnsaved || typeof window === "undefined") return true;
-    return window.confirm(tr("context.unsavedTaskConfirm", "You have unsaved task edits. Discard them and continue?"));
+    return window.confirm(
+      tr("context.unsavedTaskConfirm", "You have unsaved task edits. Discard them and continue?"),
+    );
   }, [hasTaskUnsaved, tr]);
 
-  const openTaskEditorForTask = useCallback((task: Task, options?: { draft?: TaskDraft; error?: string }): boolean => {
-    const sameTask = selectedTaskId === task.id && taskEditorMode === "edit";
-    if (!sameTask && !confirmDiscardTaskChanges()) return false;
-    const nextDraft = options?.draft ?? taskToDraft(task);
-    if (!sameTask) {
-      setPendingTaskReadback(null);
-    }
-    setSelectedTaskId(task.id);
-    setTaskDraft(nextDraft);
-    setTaskEditorMode("edit");
-    setSyncError(options?.error || "");
-    setActiveView("coordination");
-    return true;
-  }, [confirmDiscardTaskChanges, selectedTaskId, taskEditorMode]);
+  const openTaskEditorForTask = useCallback(
+    (task: Task, options?: { draft?: TaskDraft; error?: string }): boolean => {
+      const sameTask = selectedTaskId === task.id && taskEditorMode === "edit";
+      if (!sameTask && !confirmDiscardTaskChanges()) return false;
+      const nextDraft = options?.draft ?? taskToDraft(task);
+      if (!sameTask) {
+        setPendingTaskReadback(null);
+      }
+      setSelectedTaskId(task.id);
+      setTaskDraft(nextDraft);
+      setTaskEditorMode("edit");
+      setSyncError(options?.error || "");
+      setActiveView("coordination");
+      return true;
+    },
+    [confirmDiscardTaskChanges, selectedTaskId, taskEditorMode],
+  );
 
-  const moveTaskToStatus = useCallback(async (task: Task, nextStatus: BoardStatus) => {
-    if (!groupId) return;
-    if (taskStatus(task) === nextStatus) return;
-    if (nextStatus === "done") {
-      const guardSource = selectedTaskId === task.id && taskEditorMode === "edit" && taskDraft
-        ? taskDraft
-        : taskToDraft(task);
-      const blockers = getTaskDoneTransitionBlockers({
-        parentId: guardSource.parentId,
-        taskType: guardSource.taskType,
-        assignee: guardSource.assignee,
-        outcome: guardSource.outcome,
-        notes: guardSource.notes,
-        checklist: guardSource.checklist,
-      });
-      if (blockers.length > 0) {
-        openTaskEditorForTask(task, {
-          draft: { ...guardSource, status: "done" },
-          error: formatDoneTransitionGuardMessage(blockers),
+  const moveTaskToStatus = useCallback(
+    async (task: Task, nextStatus: BoardStatus) => {
+      if (!groupId) return;
+      if (taskStatus(task) === nextStatus) return;
+      if (nextStatus === "done") {
+        const guardSource =
+          selectedTaskId === task.id && taskEditorMode === "edit" && taskDraft
+            ? taskDraft
+            : taskToDraft(task);
+        const blockers = getTaskDoneTransitionBlockers({
+          parentId: guardSource.parentId,
+          taskType: guardSource.taskType,
+          assignee: guardSource.assignee,
+          outcome: guardSource.outcome,
+          notes: guardSource.notes,
+          checklist: guardSource.checklist,
         });
-        return;
+        if (blockers.length > 0) {
+          openTaskEditorForTask(task, {
+            draft: { ...guardSource, status: "done" },
+            error: formatDoneTransitionGuardMessage(blockers),
+          });
+          return;
+        }
       }
-    }
 
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      const resp = await updateCoordinationTask(groupId, {
-        ...task,
-        status: nextStatus,
-      });
-      const nextResp = await applyContextWriteback(resp);
-      if (!nextResp.ok) {
-        setSyncError(nextResp.error?.message || resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
-        return;
+      setSyncBusy(true);
+      setSyncError("");
+      try {
+        const resp = await updateCoordinationTask(groupId, { ...task, status: nextStatus });
+        const nextResp = await applyContextWriteback(resp);
+        if (!nextResp.ok) {
+          setSyncError(
+            nextResp.error?.message ||
+              resp.error?.message ||
+              tr("context.failedToApplyChanges", "Failed to apply changes"),
+          );
+          return;
+        }
+        if (selectedTaskId === task.id && taskEditorMode === "edit") {
+          setPendingTaskReadback({
+            taskId: task.id,
+            previousUpdatedAt: String(task.updated_at || ""),
+          });
+        }
+      } finally {
+        setSyncBusy(false);
       }
-      if (selectedTaskId === task.id && taskEditorMode === "edit") {
-        setPendingTaskReadback({
-          taskId: task.id,
-          previousUpdatedAt: String(task.updated_at || ""),
-        });
-      }
-    } finally {
-      setSyncBusy(false);
-    }
-  }, [applyContextWriteback, formatDoneTransitionGuardMessage, groupId, openTaskEditorForTask, selectedTaskId, taskDraft, taskEditorMode, tr]);
+    },
+    [
+      applyContextWriteback,
+      formatDoneTransitionGuardMessage,
+      groupId,
+      openTaskEditorForTask,
+      selectedTaskId,
+      taskDraft,
+      taskEditorMode,
+      tr,
+    ],
+  );
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     const id = String(event.active.id || "");
     if (id.startsWith("task:")) setDragTaskId(id.slice(5));
   }, []);
 
-  const handleDragEnd = useCallback((event: DragEndEvent) => {
-    setDragTaskId("");
-    const activeId = String(event.active.id || "");
-    if (!activeId.startsWith("task:")) return;
-    const task = taskMap.get(activeId.slice(5));
-    if (!task || !event.over) return;
-    const overId = String(event.over.id || "");
-    let nextStatus: BoardStatus | null = null;
-    if (overId.startsWith("column:")) {
-      nextStatus = overId.slice(7) as BoardStatus;
-    } else if (overId.startsWith("task:")) {
-      const overTask = taskMap.get(overId.slice(5));
-      if (overTask) nextStatus = taskStatus(overTask) as BoardStatus;
-    }
-    if (nextStatus && nextStatus !== taskStatus(task)) {
-      void moveTaskToStatus(task, nextStatus);
-    }
-  }, [moveTaskToStatus, taskMap]);
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      setDragTaskId("");
+      const activeId = String(event.active.id || "");
+      if (!activeId.startsWith("task:")) return;
+      const task = taskMap.get(activeId.slice(5));
+      if (!task || !event.over) return;
+      const overId = String(event.over.id || "");
+      let nextStatus: BoardStatus | null = null;
+      if (overId.startsWith("column:")) {
+        nextStatus = overId.slice(7) as BoardStatus;
+      } else if (overId.startsWith("task:")) {
+        const overTask = taskMap.get(overId.slice(5));
+        if (overTask) nextStatus = taskStatus(overTask) as BoardStatus;
+      }
+      if (nextStatus && nextStatus !== taskStatus(task)) {
+        void moveTaskToStatus(task, nextStatus);
+      }
+    },
+    [moveTaskToStatus, taskMap],
+  );
 
-  const selectTask = useCallback((task: Task) => {
-    if (selectedTaskId === task.id && taskEditorMode === "edit") return;
-    if (!confirmDiscardTaskChanges()) return;
-    const nextDraft = taskToDraft(task);
-    setPendingTaskReadback(null);
-    setSelectedTaskId(task.id);
-    setTaskDraft(nextDraft);
-    setTaskEditorMode("edit");
-    setSyncError("");
-    setActiveView("coordination");
-  }, [confirmDiscardTaskChanges, selectedTaskId, taskEditorMode]);
+  const selectTask = useCallback(
+    (task: Task) => {
+      if (selectedTaskId === task.id && taskEditorMode === "edit") return;
+      if (!confirmDiscardTaskChanges()) return;
+      const nextDraft = taskToDraft(task);
+      setPendingTaskReadback(null);
+      setSelectedTaskId(task.id);
+      setTaskDraft(nextDraft);
+      setTaskEditorMode("edit");
+      setSyncError("");
+      setActiveView("coordination");
+    },
+    [confirmDiscardTaskChanges, selectedTaskId, taskEditorMode],
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -536,7 +627,15 @@ export function ContextModal({
     setTaskQuery("");
     selectTask(task);
     onInitialTaskHandled?.();
-  }, [initialTaskId, isOpen, onInitialTaskHandled, selectTask, selectedTaskId, taskEditorMode, taskMap]);
+  }, [
+    initialTaskId,
+    isOpen,
+    onInitialTaskHandled,
+    selectTask,
+    selectedTaskId,
+    taskEditorMode,
+    taskMap,
+  ]);
 
   const closeTaskEditor = useCallback(() => {
     if (!confirmDiscardTaskChanges()) return;
@@ -547,45 +646,66 @@ export function ContextModal({
     setSyncError("");
   }, [confirmDiscardTaskChanges]);
 
-  const openSteeringTab = useCallback((tab: SteeringTab) => {
-    if (!confirmDiscardTaskChanges()) return;
-    setPendingTaskReadback(null);
-    setTaskEditorMode("none");
-    setActiveView("coordination");
-    setSteeringTab(tab);
-    setSelectedTaskId("");
-    setTaskDraft(null);
-    setSyncError("");
-    setProjectNotice("");
-    setProjectError("");
-    setNotifyError("");
-    setActivityError("");
-    if (tab === "project") {
-      void loadProjectMd();
-    }
-  }, [confirmDiscardTaskChanges, loadProjectMd]);
-
-  const handleSwitchActiveView = useCallback((next: ContextModalView) => {
-    if (next !== "coordination") {
+  const openSteeringTab = useCallback(
+    (tab: SteeringTab) => {
       if (!confirmDiscardTaskChanges()) return;
       setPendingTaskReadback(null);
       setTaskEditorMode("none");
+      setActiveView("coordination");
+      setSteeringTab(tab);
       setSelectedTaskId("");
       setTaskDraft(null);
-    }
-    setActiveView(next);
-  }, [confirmDiscardTaskChanges]);
+      setSyncError("");
+      setProjectNotice("");
+      setProjectError("");
+      setNotifyError("");
+      setActivityError("");
+      if (tab === "project") {
+        void loadProjectMd();
+      }
+    },
+    [confirmDiscardTaskChanges, loadProjectMd],
+  );
+
+  const handleSwitchActiveView = useCallback(
+    (next: ContextModalView) => {
+      if (next !== "coordination") {
+        if (!confirmDiscardTaskChanges()) return;
+        setPendingTaskReadback(null);
+        setTaskEditorMode("none");
+        setSelectedTaskId("");
+        setTaskDraft(null);
+      }
+      setActiveView(next);
+    },
+    [confirmDiscardTaskChanges],
+  );
 
   const handleModalClose = useCallback(() => {
     if (typeof window !== "undefined") {
       if (hasSteeringUnsaved && hasTaskUnsaved) {
-        const ok = window.confirm(tr("context.unsavedCloseConfirm", "You have unsaved project and task changes. Discard them and close?"));
+        const ok = window.confirm(
+          tr(
+            "context.unsavedCloseConfirm",
+            "You have unsaved project and task changes. Discard them and close?",
+          ),
+        );
         if (!ok) return;
       } else if (hasSteeringUnsaved) {
-        const ok = window.confirm(tr("context.unsavedChangesConfirm", "You have unsaved changes in project steering. Discard them and close?"));
+        const ok = window.confirm(
+          tr(
+            "context.unsavedChangesConfirm",
+            "You have unsaved changes in project steering. Discard them and close?",
+          ),
+        );
         if (!ok) return;
       } else if (hasTaskUnsaved) {
-        const ok = window.confirm(tr("context.unsavedTaskConfirm", "You have unsaved task edits. Discard them and continue?"));
+        const ok = window.confirm(
+          tr(
+            "context.unsavedTaskConfirm",
+            "You have unsaved task edits. Discard them and continue?",
+          ),
+        );
         if (!ok) return;
       }
     }
@@ -610,7 +730,11 @@ export function ContextModal({
       });
       const nextResp = await applyContextWriteback(resp);
       if (!nextResp.ok) {
-        setSyncError(nextResp.error?.message || resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
+        setSyncError(
+          nextResp.error?.message ||
+            resp.error?.message ||
+            tr("context.failedToApplyChanges", "Failed to apply changes"),
+        );
         return;
       }
       setEditingBrief(false);
@@ -626,7 +750,11 @@ export function ContextModal({
       setSyncError(tr("context.taskTitleRequired", "Task title is required."));
       return;
     }
-    if (String(taskDraft.status || "").trim().toLowerCase() === "done") {
+    if (
+      String(taskDraft.status || "")
+        .trim()
+        .toLowerCase() === "done"
+    ) {
       const blockers = getTaskDoneTransitionBlockers({
         parentId: taskDraft.parentId,
         taskType: taskDraft.taskType,
@@ -645,24 +773,30 @@ export function ContextModal({
     setSyncError("");
     try {
       if (taskEditorMode === "create") {
-        const resp = await contextSync(groupId, [{
-          op: "task.create",
-          title,
-          outcome: taskDraft.outcome,
-          status: taskDraft.status || "planned",
-          assignee: taskDraft.assignee.trim() || null,
-          priority: taskDraft.priority.trim() || null,
-          parent_id: taskDraft.parentId.trim() || null,
-          blocked_by: parseLineList(taskDraft.blockedBy),
-          waiting_on: taskDraft.waitingOn,
-          handoff_to: taskDraft.handoffTo.trim() || null,
-          task_type: taskDraft.taskType,
-          notes: taskDraft.notes,
-          checklist: parseChecklist(taskDraft.checklist, []),
-        }]);
+        const resp = await contextSync(groupId, [
+          {
+            op: "task.create",
+            title,
+            outcome: taskDraft.outcome,
+            status: taskDraft.status || "planned",
+            assignee: taskDraft.assignee.trim() || null,
+            priority: taskDraft.priority.trim() || null,
+            parent_id: taskDraft.parentId.trim() || null,
+            blocked_by: parseLineList(taskDraft.blockedBy),
+            waiting_on: taskDraft.waitingOn,
+            handoff_to: taskDraft.handoffTo.trim() || null,
+            task_type: taskDraft.taskType,
+            notes: taskDraft.notes,
+            checklist: parseChecklist(taskDraft.checklist, []),
+          },
+        ]);
         const nextResp = await applyContextWriteback(resp);
         if (!nextResp.ok) {
-          setSyncError(nextResp.error?.message || resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
+          setSyncError(
+            nextResp.error?.message ||
+              resp.error?.message ||
+              tr("context.failedToApplyChanges", "Failed to apply changes"),
+          );
           return;
         }
         setTaskEditorMode("none");
@@ -689,7 +823,11 @@ export function ContextModal({
       });
       const nextResp = await applyContextWriteback(resp);
       if (!nextResp.ok) {
-        setSyncError(nextResp.error?.message || resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
+        setSyncError(
+          nextResp.error?.message ||
+            resp.error?.message ||
+            tr("context.failedToApplyChanges", "Failed to apply changes"),
+        );
         return;
       }
       setPendingTaskReadback({
@@ -699,45 +837,61 @@ export function ContextModal({
     } finally {
       setSyncBusy(false);
     }
-  }, [applyContextWriteback, formatDoneTransitionGuardMessage, groupId, selectedTask, taskDraft, taskEditorMode, tr]);
+  }, [
+    applyContextWriteback,
+    formatDoneTransitionGuardMessage,
+    groupId,
+    selectedTask,
+    taskDraft,
+    taskEditorMode,
+    tr,
+  ]);
 
-  const handleDeleteTask = useCallback(async (task: Task) => {
-    if (!groupId) return;
-    const deleteInfo = getTaskDeleteInfo(task, tasks);
-    if (!deleteInfo.allowed) return;
-    if (!confirmDiscardTaskChanges()) return;
-    if (typeof window !== "undefined") {
-      const confirmed = window.confirm(
-        deleteInfo.total > 1
-          ? tr("context.deleteTaskCascadeConfirm", "Delete task \"{{title}}\" and its {{count}} unexecuted tasks?", {
-              title: taskTitle(task) || task.id,
-              count: deleteInfo.total,
-            })
-          : tr("context.deleteTaskConfirm", "Delete task \"{{title}}\" permanently?", {
-              title: taskTitle(task) || task.id,
-            })
-      );
-      if (!confirmed) return;
-    }
+  const handleDeleteTask = useCallback(
+    async (task: Task) => {
+      if (!groupId) return;
+      const deleteInfo = getTaskDeleteInfo(task, tasks);
+      if (!deleteInfo.allowed) return;
+      if (!confirmDiscardTaskChanges()) return;
+      if (typeof window !== "undefined") {
+        const confirmed = window.confirm(
+          deleteInfo.total > 1
+            ? tr(
+                "context.deleteTaskCascadeConfirm",
+                'Delete task "{{title}}" and its {{count}} unexecuted tasks?',
+                { title: taskTitle(task) || task.id, count: deleteInfo.total },
+              )
+            : tr("context.deleteTaskConfirm", 'Delete task "{{title}}" permanently?', {
+                title: taskTitle(task) || task.id,
+              }),
+        );
+        if (!confirmed) return;
+      }
 
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      const resp = await deleteCoordinationTask(groupId, task.id);
-      const nextResp = await applyContextWriteback(resp);
-      if (!nextResp.ok) {
-        setSyncError(nextResp.error?.message || resp.error?.message || tr("context.failedToDeleteTask", "Failed to delete task"));
-        return;
+      setSyncBusy(true);
+      setSyncError("");
+      try {
+        const resp = await deleteCoordinationTask(groupId, task.id);
+        const nextResp = await applyContextWriteback(resp);
+        if (!nextResp.ok) {
+          setSyncError(
+            nextResp.error?.message ||
+              resp.error?.message ||
+              tr("context.failedToDeleteTask", "Failed to delete task"),
+          );
+          return;
+        }
+        if (selectedTaskId === task.id) {
+          setTaskEditorMode("none");
+          setSelectedTaskId("");
+          setTaskDraft(null);
+        }
+      } finally {
+        setSyncBusy(false);
       }
-      if (selectedTaskId === task.id) {
-        setTaskEditorMode("none");
-        setSelectedTaskId("");
-        setTaskDraft(null);
-      }
-    } finally {
-      setSyncBusy(false);
-    }
-  }, [applyContextWriteback, confirmDiscardTaskChanges, groupId, selectedTaskId, tasks, tr]);
+    },
+    [applyContextWriteback, confirmDiscardTaskChanges, groupId, selectedTaskId, tasks, tr],
+  );
 
   const handleResetTask = useCallback(() => {
     if (taskEditorMode === "create") {
@@ -751,15 +905,18 @@ export function ContextModal({
     setSyncError("");
   }, [selectedTask, taskEditorMode]);
 
-  const handleOpenCreate = useCallback((status: BoardStatus = "planned") => {
-    if (!confirmDiscardTaskChanges()) return;
-    setPendingTaskReadback(null);
-    setTaskEditorMode("create");
-    setSelectedTaskId("");
-    setTaskDraft(emptyTaskDraft(status));
-    setSyncError("");
-    setActiveView("coordination");
-  }, [confirmDiscardTaskChanges]);
+  const handleOpenCreate = useCallback(
+    (status: BoardStatus = "planned") => {
+      if (!confirmDiscardTaskChanges()) return;
+      setPendingTaskReadback(null);
+      setTaskEditorMode("create");
+      setSelectedTaskId("");
+      setTaskDraft(emptyTaskDraft(status));
+      setSyncError("");
+      setActiveView("coordination");
+    },
+    [confirmDiscardTaskChanges],
+  );
 
   const handleEditProject = useCallback(async () => {
     openSteeringTab("project");
@@ -775,13 +932,17 @@ export function ContextModal({
     setProjectNotice("");
     setNotifyError("");
     try {
-      const resp = await apiJson<ProjectMdInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/project_md`, {
-        method: "PUT",
-        body: JSON.stringify({ content: projectText, by: "user" }),
-      });
+      const resp = await apiJson<ProjectMdInfo>(
+        `/api/v1/groups/${encodeURIComponent(groupId)}/project_md`,
+        { method: "PUT", body: JSON.stringify({ content: projectText, by: "user" }) },
+      );
       const nextResp = await applyContextWriteback(resp);
       if (!nextResp.ok) {
-        setProjectError(nextResp.error?.message || resp.error?.message || tr("context.failedToSaveProject", "Failed to save PROJECT.md"));
+        setProjectError(
+          nextResp.error?.message ||
+            resp.error?.message ||
+            tr("context.failedToSaveProject", "Failed to save PROJECT.md"),
+        );
         return;
       }
       setProjectMd(nextResp.result);
@@ -794,10 +955,18 @@ export function ContextModal({
           body: JSON.stringify({ text: notifyMessage, by: "user", to: ["@all"], path: "" }),
         });
         if (!notifyResp.ok) {
-          setNotifyError(notifyResp.error?.message || tr("context.failedToNotify", "Failed to notify agents"));
-          notice = tr("context.projectSavedNotifyFailed", "PROJECT.md saved, but chat notification failed.");
+          setNotifyError(
+            notifyResp.error?.message || tr("context.failedToNotify", "Failed to notify agents"),
+          );
+          notice = tr(
+            "context.projectSavedNotifyFailed",
+            "PROJECT.md saved, but chat notification failed.",
+          );
         } else {
-          notice = tr("context.projectSavedAndNotified", "PROJECT.md saved and the team was notified in chat.");
+          notice = tr(
+            "context.projectSavedAndNotified",
+            "PROJECT.md saved and the team was notified in chat.",
+          );
         }
       }
       setProjectNotice(notice);
@@ -807,32 +976,44 @@ export function ContextModal({
     }
   }, [applyContextWriteback, groupId, notifyAgents, notifyMessage, projectText, tr]);
 
-  const handleAddCoordinationNote = useCallback(async (kind: "decision" | "handoff") => {
-    if (!groupId) return;
-    const draft = kind === "decision" ? decisionDraft : handoffDraft;
-    const summary = String(draft.summary || "").trim();
-    if (!summary) {
-      setActivityError(tr("context.noteSummaryRequired", "Summary is required."));
-      return;
-    }
-    setActivityBusyKind(kind);
-    setActivityError("");
-    try {
-      const resp = await addCoordinationNote(groupId, kind, summary, String(draft.taskId || "").trim() || null);
-      const nextResp = await applyContextWriteback(resp);
-      if (!nextResp.ok) {
-        setActivityError(nextResp.error?.message || resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
+  const handleAddCoordinationNote = useCallback(
+    async (kind: "decision" | "handoff") => {
+      if (!groupId) return;
+      const draft = kind === "decision" ? decisionDraft : handoffDraft;
+      const summary = String(draft.summary || "").trim();
+      if (!summary) {
+        setActivityError(tr("context.noteSummaryRequired", "Summary is required."));
         return;
       }
-      if (kind === "decision") {
-        setDecisionDraft(emptyNoteDraft());
-      } else {
-        setHandoffDraft(emptyNoteDraft());
+      setActivityBusyKind(kind);
+      setActivityError("");
+      try {
+        const resp = await addCoordinationNote(
+          groupId,
+          kind,
+          summary,
+          String(draft.taskId || "").trim() || null,
+        );
+        const nextResp = await applyContextWriteback(resp);
+        if (!nextResp.ok) {
+          setActivityError(
+            nextResp.error?.message ||
+              resp.error?.message ||
+              tr("context.failedToApplyChanges", "Failed to apply changes"),
+          );
+          return;
+        }
+        if (kind === "decision") {
+          setDecisionDraft(emptyNoteDraft());
+        } else {
+          setHandoffDraft(emptyNoteDraft());
+        }
+      } finally {
+        setActivityBusyKind(null);
       }
-    } finally {
-      setActivityBusyKind(null);
-    }
-  }, [applyContextWriteback, decisionDraft, groupId, handoffDraft, tr]);
+    },
+    [applyContextWriteback, decisionDraft, groupId, handoffDraft, tr],
+  );
 
   const startBriefEdit = useCallback(() => {
     openSteeringTab("summary");
@@ -874,12 +1055,13 @@ export function ContextModal({
 
   if (!isOpen) return null;
 
-  const viewButtonClass = (active: boolean) => classNames(
-    "rounded-xl px-3 py-2 text-sm font-medium transition-colors",
-    active
-      ? "border border-black/10 bg-[rgb(35,36,37)] text-white shadow-[0_10px_24px_-20px_rgba(15,23,42,0.34)] dark:border-white/12 dark:bg-white dark:text-[rgb(20,20,22)]"
-      : "text-[var(--color-text-secondary)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06]"
-  );
+  const viewButtonClass = (active: boolean) =>
+    classNames(
+      "rounded-xl px-3 py-2 text-sm font-medium transition-colors",
+      active
+        ? "border border-black/10 bg-[rgb(35,36,37)] text-white shadow-[0_10px_24px_-20px_rgba(15,23,42,0.34)] dark:border-white/12 dark:bg-white dark:text-[rgb(20,20,22)]"
+        : "text-[var(--color-text-secondary)] hover:bg-black/[0.04] dark:hover:bg-white/[0.06]",
+    );
 
   return (
     <>
@@ -897,11 +1079,20 @@ export function ContextModal({
             "min-h-0 flex-1 overflow-y-auto",
             isDark
               ? "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_34%),linear-gradient(180deg,rgba(17,18,22,0.98),rgba(11,12,15,1))]"
-              : "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_30%),linear-gradient(180deg,rgb(251,250,247),rgb(245,244,241))]"
+              : "bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.92),rgba(255,255,255,0)_30%),linear-gradient(180deg,var(--color-bg-primary),var(--color-sidebar-bg))]",
           )}
         >
           <div className="flex min-h-full flex-col gap-4 p-4 sm:p-5">
-            {syncError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{syncError}</div> : null}
+            {syncError ? (
+              <div
+                className={classNames(
+                  "rounded-xl border px-3 py-2 text-sm",
+                  "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400",
+                )}
+              >
+                {syncError}
+              </div>
+            ) : null}
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div
@@ -909,12 +1100,30 @@ export function ContextModal({
                   "inline-flex w-fit rounded-[22px] border p-1.5 shadow-[0_14px_40px_-28px_rgba(15,23,42,0.18)]",
                   isDark
                     ? "border-white/10 bg-[linear-gradient(180deg,rgba(24,26,31,0.92),rgba(14,15,19,0.96))]"
-                    : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,246,242,0.94))]"
+                    : "border-black/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,246,242,0.94))]",
                 )}
               >
-                <button type="button" onClick={() => handleSwitchActiveView("coordination")} className={viewButtonClass(activeView === "coordination")}>{tr("context.coordination", "Coordination")}</button>
-                <button type="button" onClick={() => handleSwitchActiveView("agents")} className={viewButtonClass(activeView === "agents")}>{tr("context.agents", "Agents")}</button>
-                <button type="button" onClick={() => handleSwitchActiveView("self_evolving_skills")} className={viewButtonClass(activeView === "self_evolving_skills")}>{tr("context.selfEvolvingSkillsTab", "Self-Evolving Skills")}</button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchActiveView("coordination")}
+                  className={viewButtonClass(activeView === "coordination")}
+                >
+                  {tr("context.coordination", "Coordination")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchActiveView("agents")}
+                  className={viewButtonClass(activeView === "agents")}
+                >
+                  {tr("context.agents", "Agents")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchActiveView("self_evolving_skills")}
+                  className={viewButtonClass(activeView === "self_evolving_skills")}
+                >
+                  {tr("context.selfEvolvingSkillsTab", "Self-Evolving Skills")}
+                </button>
               </div>
             </div>
 
@@ -1013,7 +1222,9 @@ export function ContextModal({
                 <div className="h-full w-full sm:w-[min(860px,calc(100vw-1.5rem))]">
                   <div className="flex h-full flex-col border-l border-[var(--glass-border-subtle)] shadow-2xl glass-modal">
                     <div className="sr-only" id="context-task-drawer-title">
-                      {taskEditorMode === "create" ? tr("context.newTask", "New task") : tr("context.taskDetails", "Task editor")}
+                      {taskEditorMode === "create"
+                        ? tr("context.newTask", "New task")
+                        : tr("context.taskDetails", "Task editor")}
                     </div>
                     <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
                       <TaskEditorPanel
@@ -1030,10 +1241,11 @@ export function ContextModal({
                         taskTypeId={taskDraft?.taskType || "standard"}
                         selectedTaskType={selectedTaskType}
                         setTaskDraft={setTaskDraft}
-                        onTaskTypeChange={(nextTaskTypeId) => setTaskDraft((prev) => (prev ? {
-                          ...prev,
-                          taskType: nextTaskTypeId,
-                        } : prev))}
+                        onTaskTypeChange={(nextTaskTypeId) =>
+                          setTaskDraft((prev) =>
+                            prev ? { ...prev, taskType: nextTaskTypeId } : prev,
+                          )
+                        }
                         onResetTask={handleResetTask}
                         onClose={closeTaskEditor}
                         onDeleteSelectedTask={() => {
@@ -1046,7 +1258,7 @@ export function ContextModal({
                 </div>
               </div>
             </div>,
-            document.body
+            document.body,
           )
         : null}
 
@@ -1063,7 +1275,11 @@ export function ContextModal({
               <div className="absolute inset-0 glass-overlay" />
               <div ref={projectExpandedRef} className={settingsDialogPanelClass("xl")}>
                 <div className="flex shrink-0 justify-end border-b border-[var(--glass-border-subtle)] px-3 py-2 sm:px-4 sm:py-3">
-                  <button type="button" className={ui.buttonSecondaryClass} onClick={() => setProjectExpanded(false)}>
+                  <button
+                    type="button"
+                    className={ui.buttonSecondaryClass}
+                    onClick={() => setProjectExpanded(false)}
+                  >
                     {tr("common:close", "Close")}
                   </button>
                 </div>
@@ -1096,7 +1312,7 @@ export function ContextModal({
                 </div>
               </div>
             </div>,
-            document.body
+            document.body,
           )
         : null}
     </>

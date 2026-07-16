@@ -1,8 +1,4 @@
-type VoiceCaptureLock = {
-  ownerId: string;
-  groupId: string;
-  updatedAt: number;
-};
+type VoiceCaptureLock = { ownerId: string; groupId: string; updatedAt: number };
 
 export type VoiceCaptureChannelMessage = {
   type?: "probe" | "alive";
@@ -103,7 +99,10 @@ function probeVoiceCaptureOwner(lock: VoiceCaptureLock): Promise<boolean> {
   });
 }
 
-export async function claimVoiceCaptureLock(ownerId: string, groupId: string): Promise<VoiceCaptureLock | null> {
+export async function claimVoiceCaptureLock(
+  ownerId: string,
+  groupId: string,
+): Promise<VoiceCaptureLock | null> {
   const active = readVoiceCaptureLock();
   if (active && active.ownerId !== ownerId) {
     const ownerAlive = await probeVoiceCaptureOwner(active);

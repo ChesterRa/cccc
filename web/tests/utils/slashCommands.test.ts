@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildCapsuleSkillDispatchText,
@@ -21,9 +21,9 @@ describe("slashCommands", () => {
       capabilityId: "skill:cccc:install",
       sourceType: "builtin_command",
     });
-    expect(parseSlashCommandInput("/install https://github.com/obra/superpowers", commands)?.argsText).toBe(
-      "https://github.com/obra/superpowers",
-    );
+    expect(
+      parseSlashCommandInput("/install https://github.com/obra/superpowers", commands)?.argsText,
+    ).toBe("https://github.com/obra/superpowers");
     expect(filterSlashCommands(commands, "/ins").map((item) => item.command)).toContain("/install");
   });
 
@@ -51,7 +51,9 @@ describe("slashCommands", () => {
     });
 
     expect(commands.map((item) => item.command)).toEqual(["/install", "/active-review"]);
-    expect(commands.find((item) => item.command === "/active-review")?.sourceType).toBe("capsule_skill");
+    expect(commands.find((item) => item.command === "/active-review")?.sourceType).toBe(
+      "capsule_skill",
+    );
   });
 
   it("does not build slash commands for actor-hidden runtime skills", () => {
@@ -126,7 +128,9 @@ describe("slashCommands", () => {
 
     expect(parseSlashCommandInput("/writer make this concise", commands)).toBeNull();
     expect(tool?.item.sourceType).toBe("dynamic_tool");
-    expect(buildSlashCommandToolArgumentsForItem(tool!.item, tool!.argsText)).toEqual({ query: "capability use" });
+    expect(buildSlashCommandToolArgumentsForItem(tool!.item, tool!.argsText)).toEqual({
+      query: "capability use",
+    });
   });
 
   it("excludes dynamic tools that cannot be called from a single text argument", () => {
@@ -141,10 +145,7 @@ describe("slashCommands", () => {
             name: "deploy_app",
             real_tool_name: "deploy_app",
             inputSchema: {
-              properties: {
-                app: { type: "string" },
-                environment: { type: "string" },
-              },
+              properties: { app: { type: "string" }, environment: { type: "string" } },
               required: ["app", "environment"],
               additionalProperties: false,
             },
@@ -170,7 +171,9 @@ describe("slashCommands", () => {
         group_id: "g1",
         actor_id: "user",
         enabled: [],
-        active_capsule_skills: [{ capability_id: "skill:agent_self_proposed:writer", name: "writer" }],
+        active_capsule_skills: [
+          { capability_id: "skill:agent_self_proposed:writer", name: "writer" },
+        ],
         dynamic_tools: [],
       },
     });
@@ -187,7 +190,9 @@ describe("slashCommands", () => {
         group_id: "g1",
         actor_id: "user",
         enabled: [],
-        active_capsule_skills: [{ capability_id: "skill:agent_self_proposed:writer", name: "writer" }],
+        active_capsule_skills: [
+          { capability_id: "skill:agent_self_proposed:writer", name: "writer" },
+        ],
         dynamic_tools: [],
       },
     });
@@ -205,18 +210,19 @@ describe("slashCommands", () => {
         group_id: "g1",
         actor_id: "user",
         enabled: [],
-        active_capsule_skills: [{ capability_id: "skill:agent_self_proposed:writer", name: "writer" }],
+        active_capsule_skills: [
+          { capability_id: "skill:agent_self_proposed:writer", name: "writer" },
+        ],
         dynamic_tools: [],
       },
     });
     const parsed = parseSlashCommandInput("/writer", commands);
 
-    expect(resolveCapsuleSkillSlashCommand(parsed!.item, parsed!.argsText, {
-      missingArgs: (command) => `请在 ${command} 后输入任务。`,
-    })).toEqual({
-      kind: "missing_args",
-      message: "请在 /writer 后输入任务。",
-    });
+    expect(
+      resolveCapsuleSkillSlashCommand(parsed!.item, parsed!.argsText, {
+        missingArgs: (command) => `请在 ${command} 后输入任务。`,
+      }),
+    ).toEqual({ kind: "missing_args", message: "请在 /writer 后输入任务。" });
     expect(resolveCapsuleSkillSlashCommand(parsed!.item, "make this concise")).toEqual({
       kind: "dispatch",
       dispatchText: "请使用已激活的 /writer skill 完成以下任务：\n\nmake this concise",
@@ -231,46 +237,68 @@ describe("slashCommands", () => {
       crossGroupUnsupported: "跨工作组发送不能用于斜杠命令。",
     };
 
-    expect(resolveSlashCommandGuard({
-      composerFilesCount: 1,
-      hasReplyTarget: false,
-      hasQuotedPresentationRef: false,
-      sendGroupId: "g1",
-      selectedGroupId: "g1",
-    }, messages)).toEqual({ ok: false, message: "附件不能用于斜杠命令。" });
+    expect(
+      resolveSlashCommandGuard(
+        {
+          composerFilesCount: 1,
+          hasReplyTarget: false,
+          hasQuotedPresentationRef: false,
+          sendGroupId: "g1",
+          selectedGroupId: "g1",
+        },
+        messages,
+      ),
+    ).toEqual({ ok: false, message: "附件不能用于斜杠命令。" });
 
-    expect(resolveSlashCommandGuard({
-      composerFilesCount: 0,
-      hasReplyTarget: true,
-      sourceType: "dynamic_tool",
-      hasQuotedPresentationRef: false,
-      sendGroupId: "g1",
-      selectedGroupId: "g1",
-    }, messages)).toEqual({ ok: false, message: "不能回复某条消息。" });
+    expect(
+      resolveSlashCommandGuard(
+        {
+          composerFilesCount: 0,
+          hasReplyTarget: true,
+          sourceType: "dynamic_tool",
+          hasQuotedPresentationRef: false,
+          sendGroupId: "g1",
+          selectedGroupId: "g1",
+        },
+        messages,
+      ),
+    ).toEqual({ ok: false, message: "不能回复某条消息。" });
 
-    expect(resolveSlashCommandGuard({
-      composerFilesCount: 0,
-      hasReplyTarget: false,
-      hasQuotedPresentationRef: true,
-      sendGroupId: "g1",
-      selectedGroupId: "g1",
-    }, messages)).toEqual({ ok: false, message: "引用演示不能用于斜杠命令。" });
+    expect(
+      resolveSlashCommandGuard(
+        {
+          composerFilesCount: 0,
+          hasReplyTarget: false,
+          hasQuotedPresentationRef: true,
+          sendGroupId: "g1",
+          selectedGroupId: "g1",
+        },
+        messages,
+      ),
+    ).toEqual({ ok: false, message: "引用演示不能用于斜杠命令。" });
 
-    expect(resolveSlashCommandGuard({
-      composerFilesCount: 0,
-      hasReplyTarget: false,
-      hasQuotedPresentationRef: false,
-      sendGroupId: "g2",
-      selectedGroupId: "g1",
-    }, messages)).toEqual({ ok: false, message: "跨工作组发送不能用于斜杠命令。" });
+    expect(
+      resolveSlashCommandGuard(
+        {
+          composerFilesCount: 0,
+          hasReplyTarget: false,
+          hasQuotedPresentationRef: false,
+          sendGroupId: "g2",
+          selectedGroupId: "g1",
+        },
+        messages,
+      ),
+    ).toEqual({ ok: false, message: "跨工作组发送不能用于斜杠命令。" });
 
-    expect(resolveSlashCommandGuard({
-      composerFilesCount: 0,
-      hasReplyTarget: false,
-      hasQuotedPresentationRef: false,
-      sendGroupId: "g1",
-      selectedGroupId: "g1",
-    })).toEqual({ ok: true });
+    expect(
+      resolveSlashCommandGuard({
+        composerFilesCount: 0,
+        hasReplyTarget: false,
+        hasQuotedPresentationRef: false,
+        sendGroupId: "g1",
+        selectedGroupId: "g1",
+      }),
+    ).toEqual({ ok: true });
   });
 
   it("allows reply targets for message-backed slash commands only", () => {
@@ -282,8 +310,12 @@ describe("slashCommands", () => {
       selectedGroupId: "g1",
     };
 
-    expect(resolveSlashCommandGuard({ ...base, sourceType: "builtin_command" })).toEqual({ ok: true });
-    expect(resolveSlashCommandGuard({ ...base, sourceType: "capsule_skill" })).toEqual({ ok: true });
+    expect(resolveSlashCommandGuard({ ...base, sourceType: "builtin_command" })).toEqual({
+      ok: true,
+    });
+    expect(resolveSlashCommandGuard({ ...base, sourceType: "capsule_skill" })).toEqual({
+      ok: true,
+    });
     expect(resolveSlashCommandGuard({ ...base, sourceType: "dynamic_tool" })).toEqual({
       ok: false,
       message: "Slash command does not support replying to a specific message yet.",
@@ -291,14 +323,16 @@ describe("slashCommands", () => {
   });
 
   it("allows slash commands when the message only requires recipients to reply", () => {
-    expect(resolveSlashCommandGuard({
-      composerFilesCount: 0,
-      hasReplyTarget: false,
-      replyRequired: true,
-      hasQuotedPresentationRef: false,
-      sendGroupId: "g1",
-      selectedGroupId: "g1",
-    })).toEqual({ ok: true });
+    expect(
+      resolveSlashCommandGuard({
+        composerFilesCount: 0,
+        hasReplyTarget: false,
+        replyRequired: true,
+        hasQuotedPresentationRef: false,
+        sendGroupId: "g1",
+        selectedGroupId: "g1",
+      }),
+    ).toEqual({ ok: true });
   });
 
   it("shows every available slash command for an empty slash query", () => {
@@ -347,7 +381,9 @@ describe("slashCommands", () => {
   it("allows longer description searches after name matches", () => {
     const commands = buildSlashCommands({ state: null });
 
-    expect(filterSlashCommands(commands, "/repo").map((item) => item.command)).toEqual(["/install"]);
+    expect(filterSlashCommands(commands, "/repo").map((item) => item.command)).toEqual([
+      "/install",
+    ]);
   });
 
   it("paginates visible slash commands without changing the cached command list", () => {
@@ -375,7 +411,9 @@ describe("slashCommands", () => {
         group_id: "g1",
         actor_id: "user",
         enabled: [],
-        active_capsule_skills: [{ capability_id: "skill:agent_self_proposed:writer", name: "writer" }],
+        active_capsule_skills: [
+          { capability_id: "skill:agent_self_proposed:writer", name: "writer" },
+        ],
         dynamic_tools: [],
       },
     });

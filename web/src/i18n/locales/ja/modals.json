@@ -375,6 +375,9 @@
     "handoffPlaceholder": "長く残すべき引き継ぎや次の担当メモを書いてください…",
     "needsCloseout": "closeout 不足",
     "needsContract": "要件不足",
+    "taskDoneGuard": "このタスクを完了にする前に、クローズアウトを完了してください：{{items}}。",
+    "taskWorkflowNeedsCloseout": "クローズアウトに {{items}} が不足しています。",
+    "taskWorkflowNeedsContract": "このタスクタイプには {{items}} が不足しています。",
     "noRelatedTask": "関連タスクなし",
     "addDecision": "決定を追加",
     "addHandoff": "引き継ぎを追加",
@@ -400,9 +403,5 @@
     "clear": "クリア",
     "notesHint": "メモには実作業の記録を残してください。内蔵要件は上で読み取り専用のまま表示されます。"
   },
-  "jumpBar": {
-    "agents": "エージェント",
-    "tasks": "タスク",
-    "direction": "方針"
-  }
+  "jumpBar": { "agents": "エージェント", "tasks": "タスク", "direction": "方針" }
 }

@@ -41,8 +41,10 @@ function toElement(target: EventTarget | null): Element | null {
 function hasScrollableOverflow(node: Element): boolean {
   if (!(node instanceof HTMLElement)) return false;
   const style = window.getComputedStyle(node);
-  const scrollableX = /auto|scroll|overlay/.test(style.overflowX) && node.scrollWidth > node.clientWidth + 1;
-  const scrollableY = /auto|scroll|overlay/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1;
+  const scrollableX =
+    /auto|scroll|overlay/.test(style.overflowX) && node.scrollWidth > node.clientWidth + 1;
+  const scrollableY =
+    /auto|scroll|overlay/.test(style.overflowY) && node.scrollHeight > node.clientHeight + 1;
   return scrollableX || scrollableY;
 }
 
@@ -50,13 +52,20 @@ export function shouldHandleSwipeNavigationChain(nodes: SwipeNavigationGuardNode
   return !nodes.some((node) => node.interactive || node.scrollable);
 }
 
-export function shouldHandleSwipeNavigation(target: EventTarget | null, currentTarget: EventTarget | null): boolean {
+export function shouldHandleSwipeNavigation(
+  target: EventTarget | null,
+  currentTarget: EventTarget | null,
+): boolean {
   const targetEl = toElement(target);
   const boundaryEl = toElement(currentTarget);
   if (!targetEl || !boundaryEl) return true;
 
   const guardNodes: SwipeNavigationGuardNode[] = [];
-  for (let node: Element | null = targetEl; node && node !== boundaryEl; node = node.parentElement) {
+  for (
+    let node: Element | null = targetEl;
+    node && node !== boundaryEl;
+    node = node.parentElement
+  ) {
     guardNodes.push({
       interactive: node.matches(INTERACTIVE_SWIPE_GUARD_SELECTOR),
       scrollable: hasScrollableOverflow(node),
@@ -108,11 +117,8 @@ export function useSwipeNavigation({
       }
       touchNavigationEnabled.current = true;
     },
-    [tabs, activeTab, onTabChange, minSwipeDistance, swipeRatio]
+    [tabs, activeTab, onTabChange, minSwipeDistance, swipeRatio],
   );
 
-  return {
-    handleTouchStart,
-    handleTouchEnd,
-  };
+  return { handleTouchStart, handleTouchEnd };
 }

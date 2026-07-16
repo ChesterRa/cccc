@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { formatGroupSettingsUpdateError } from "../../src/utils/groupSettingsErrors";
 
@@ -13,7 +13,8 @@ function t(key: string, fallbackOrOptions?: unknown, maybeOptions?: unknown): st
 
   if (typeof fallbackOrOptions === "string") {
     template = translations[key] || fallbackOrOptions;
-    if (maybeOptions && typeof maybeOptions === "object") options = maybeOptions as Record<string, unknown>;
+    if (maybeOptions && typeof maybeOptions === "object")
+      options = maybeOptions as Record<string, unknown>;
   } else if (fallbackOrOptions && typeof fallbackOrOptions === "object") {
     options = fallbackOrOptions as Record<string, unknown>;
     template = translations[key] || String(options.defaultValue || key);

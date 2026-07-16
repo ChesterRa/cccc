@@ -2,7 +2,9 @@ import { lazy, Suspense } from "react";
 import { useTranslation } from "react-i18next";
 import { Actor, AgentState } from "../types";
 
-const LazyAgentTab = lazy(() => import("../components/AgentTab").then((m) => ({ default: m.AgentTab })));
+const LazyAgentTab = lazy(() =>
+  import("../components/AgentTab").then((m) => ({ default: m.AgentTab })),
+);
 
 export interface ActorTabProps {
   actor: Actor | null;
@@ -42,15 +44,25 @@ export function ActorTab({
   onInbox,
   onStatusChange,
 }: ActorTabProps) {
-  const { t } = useTranslation('actors');
+  const { t } = useTranslation("actors");
 
   if (!actor) {
-    return <div className="flex-1 flex items-center justify-center text-slate-500">{t('agentNotFound')}</div>;
+    return (
+      <div className="flex-1 flex items-center justify-center text-slate-500">
+        {t("agentNotFound")}
+      </div>
+    );
   }
 
   return (
     <Suspense
-      fallback={<div className={`flex-1 flex items-center justify-center ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t('loadingAgent')}</div>}
+      fallback={
+        <div
+          className={`flex-1 flex items-center justify-center ${isDark ? "text-slate-400" : "text-gray-500"}`}
+        >
+          {t("loadingAgent")}
+        </div>
+      }
     >
       <LazyAgentTab
         actor={actor}

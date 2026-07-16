@@ -31,9 +31,9 @@ function pad2(value: number): string {
 
 function isSameLocalDay(a: Date, b: Date): boolean {
   return (
-    a.getFullYear() === b.getFullYear()
-    && a.getMonth() === b.getMonth()
-    && a.getDate() === b.getDate()
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
   );
 }
 

@@ -1,15 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { CapabilityCenterWorkspace } from "../../src/components/capabilities/CapabilityCenterWorkspace";
 
-vi.mock("react-i18next", () => ({
-  useTranslation: () => ({
-    t: (key: string) => key,
-  }),
-}));
+vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 vi.mock("../../src/services/api", () => ({
   fetchCapabilityOverview: vi.fn(),
@@ -24,21 +20,29 @@ vi.mock("../../src/services/api", () => ({
 
 describe("CapabilityCenterWorkspace rendering", () => {
   it("keeps the empty details rail vertical-only", () => {
-    const html = renderToStaticMarkup(<CapabilityCenterWorkspace isOpen groupId="g-demo" surface="page" />);
+    const html = renderToStaticMarkup(
+      <CapabilityCenterWorkspace isOpen groupId="g-demo" surface="page" />,
+    );
 
     expect(html).toContain("overflow-x-hidden");
     expect(html).toContain("overflow-y-auto");
   });
 
   it("wraps long details text instead of allowing horizontal overflow", () => {
-    const source = readFileSync(resolve(process.cwd(), "src/components/capabilities/CapabilityCenterWorkspace.tsx"), "utf8");
+    const source = readFileSync(
+      resolve(process.cwd(), "src/components/capabilities/CapabilityCenterWorkspace.tsx"),
+      "utf8",
+    );
 
     expect(source).toContain("[overflow-wrap:anywhere]");
     expect(source).toContain("break-words");
   });
 
   it("uses mobile cards and scrollable shadcn-style controls instead of a forced table", () => {
-    const source = readFileSync(resolve(process.cwd(), "src/components/capabilities/CapabilityCenterWorkspace.tsx"), "utf8");
+    const source = readFileSync(
+      resolve(process.cwd(), "src/components/capabilities/CapabilityCenterWorkspace.tsx"),
+      "utf8",
+    );
 
     expect(source).toContain("md:hidden");
     expect(source).toContain("overflow-x-auto");
@@ -48,7 +52,10 @@ describe("CapabilityCenterWorkspace rendering", () => {
   });
 
   it("keeps mobile chrome compact so capability cards reach the first viewport", () => {
-    const source = readFileSync(resolve(process.cwd(), "src/components/capabilities/CapabilityCenterWorkspace.tsx"), "utf8");
+    const source = readFileSync(
+      resolve(process.cwd(), "src/components/capabilities/CapabilityCenterWorkspace.tsx"),
+      "utf8",
+    );
 
     expect(source).toContain("hidden grid-cols-2 gap-2 sm:grid");
     expect(source).toContain("hidden truncate text-xs");
@@ -68,7 +75,10 @@ describe("CapabilityCenterWorkspace rendering", () => {
   });
 
   it("uses overview kind counts instead of extra stats-only overview calls", () => {
-    const source = readFileSync(resolve(process.cwd(), "src/components/capabilities/CapabilityCenterWorkspace.tsx"), "utf8");
+    const source = readFileSync(
+      resolve(process.cwd(), "src/components/capabilities/CapabilityCenterWorkspace.tsx"),
+      "utf8",
+    );
 
     expect(source).toContain("overviewResp.result.kind_counts");
     expect(source).not.toContain("skillStatsResp");

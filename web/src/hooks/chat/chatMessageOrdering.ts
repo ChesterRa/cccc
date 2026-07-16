@@ -20,13 +20,7 @@ export function sortChatMessages(
       const slotKey = getReplySlotKey(event);
       const slotTs = slotKey ? String(replySlotTsByKey.get(slotKey) || "").trim() : "";
       const eventTs = String(event.ts || "").trim();
-      return {
-        event,
-        index,
-        hasReplySlot: slotKey.length > 0,
-        sortTs: slotTs || eventTs,
-        eventTs,
-      };
+      return { event, index, hasReplySlot: slotKey.length > 0, sortTs: slotTs || eventTs, eventTs };
     })
     .sort((a, b) => {
       if (a.sortTs && b.sortTs && a.sortTs !== b.sortTs) return a.sortTs.localeCompare(b.sortTs);
@@ -107,10 +101,7 @@ function getLogicalMessageReplacementKey(event: LedgerEvent): string {
         : "";
   const streamId = typeof data?.stream_id === "string" ? data.stream_id.trim() : "";
   const placeholderLike = isPlaceholderLikeStreamingEvent(
-    (data || {}) as ChatMessageData & {
-      pending_placeholder?: unknown;
-      stream_id?: unknown;
-    },
+    (data || {}) as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown },
   );
   if (actorId && actorId !== "user" && replyAnchor) {
     if (streamId && !placeholderLike) {
@@ -228,10 +219,7 @@ export function mergeVisibleChatMessages(
       if (slotKey && canonicalReplySlots.has(slotKey)) return hasRichActivityTimeline;
       if (slotKey && renderableStreamingReplySlots.has(slotKey)) {
         const placeholderLike = isPlaceholderLikeStreamingEvent(
-          (data || {}) as ChatMessageData & {
-            pending_placeholder?: unknown;
-            stream_id?: unknown;
-          },
+          (data || {}) as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown },
         );
         if (
           !hasRichActivityTimeline &&

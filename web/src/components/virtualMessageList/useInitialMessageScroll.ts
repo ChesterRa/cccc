@@ -58,15 +58,22 @@ export function useInitialMessageScroll({
 }: InitialMessageScrollOptions) {
   useEffect(() => {
     if (messages.length <= 0) return;
-    const requestKey = getScrollRestorationRequestKey({ targetId, anchorId, offsetPx: anchorOffsetPx });
+    const requestKey = getScrollRestorationRequestKey({
+      targetId,
+      anchorId,
+      offsetPx: anchorOffsetPx,
+    });
     if (didInitialScrollRef.current) {
       if (requestRef.current === requestKey) return;
-      if (!shouldAcceptLateScrollRestoration({
-        previousRequestKey: requestRef.current,
-        nextRequestKey: requestKey,
-        reentryDeadline: reentryDeadlineRef.current,
-        now: Date.now(),
-      })) return;
+      if (
+        !shouldAcceptLateScrollRestoration({
+          previousRequestKey: requestRef.current,
+          nextRequestKey: requestKey,
+          reentryDeadline: reentryDeadlineRef.current,
+          now: Date.now(),
+        })
+      )
+        return;
     }
     didInitialScrollRef.current = true;
     requestRef.current = requestKey;
@@ -78,7 +85,9 @@ export function useInitialMessageScroll({
       };
       if (targetId) {
         if (shouldVirtualize) {
-          const index = messages.findIndex((message) => String(message?.id || "") === String(targetId));
+          const index = messages.findIndex(
+            (message) => String(message?.id || "") === String(targetId),
+          );
           if (index >= 0) {
             markRestoredAwayFromBottom();
             scrollToIndex(index);
@@ -90,7 +99,12 @@ export function useInitialMessageScroll({
         }
       }
       if (anchorId) {
-        if (beginAnchorRestoration({ anchorId: String(anchorId), offsetPx: Number(anchorOffsetPx || 0) })) {
+        if (
+          beginAnchorRestoration({
+            anchorId: String(anchorId),
+            offsetPx: Number(anchorOffsetPx || 0),
+          })
+        ) {
           markRestoredAwayFromBottom();
           return;
         }

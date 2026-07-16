@@ -1,11 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { classNames } from "../../utils/classNames";
 
-type AppNotice = {
-  message: string;
-  actionLabel?: string;
-  onAction?: () => void;
-};
+type AppNotice = { message: string; actionLabel?: string; onAction?: () => void };
 
 type AppFeedbackProps = {
   isDark: boolean;
@@ -42,7 +38,7 @@ export function AppFeedback({
         <div
           className={classNames(
             "pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-2xl px-4 py-3 text-sm shadow-2xl glass-modal animate-slide-up",
-            isDark ? "border-rose-500/20 text-rose-300" : "border-rose-200/50 text-rose-700"
+            isDark ? "border-rose-500/20 text-rose-300" : "border-rose-200/50 text-rose-700",
           )}
           role="alert"
         >
@@ -51,7 +47,7 @@ export function AppFeedback({
             type="button"
             className={classNames(
               "glass-btn flex h-10 w-10 shrink-0 items-center justify-center rounded-lg p-2 transition-all",
-              isDark ? "text-rose-400" : "text-rose-600"
+              isDark ? "text-rose-400" : "text-rose-600",
             )}
             onClick={dismissError}
             aria-label={t("layout:dismissError")}
@@ -65,7 +61,7 @@ export function AppFeedback({
         <div
           className={classNames(
             "pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-2xl px-4 py-3 text-sm shadow-2xl glass-modal animate-slide-up",
-            isDark ? "border-white/10 text-slate-200" : "border-black/10 text-gray-800"
+            isDark ? "border-white/10 text-slate-200" : "border-black/10 text-gray-800",
           )}
           role="status"
         >
@@ -75,7 +71,7 @@ export function AppFeedback({
               type="button"
               className={classNames(
                 "glass-btn rounded-xl px-2 py-1 text-xs transition-all",
-                isDark ? "text-slate-100" : "text-gray-900"
+                isDark ? "text-slate-100" : "text-gray-900",
               )}
               onClick={handleNoticeAction}
             >
@@ -86,7 +82,7 @@ export function AppFeedback({
             type="button"
             className={classNames(
               "glass-btn flex min-h-[36px] min-w-[36px] items-center justify-center rounded-lg p-2 transition-all",
-              isDark ? "text-slate-300" : "text-gray-600"
+              isDark ? "text-slate-300" : "text-gray-600",
             )}
             onClick={dismissNotice}
             aria-label={t("common:dismiss")}

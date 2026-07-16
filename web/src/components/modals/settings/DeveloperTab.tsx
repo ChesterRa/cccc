@@ -107,25 +107,33 @@ export function DeveloperTab({
   onReconcileRegistry,
 }: DeveloperTabProps) {
   const { t } = useTranslation("settings");
-  const missing = Array.isArray(registryResult?.missing_group_ids) ? registryResult!.missing_group_ids : [];
-  const corrupt = Array.isArray(registryResult?.corrupt_group_ids) ? registryResult!.corrupt_group_ids : [];
-  const removed = Array.isArray(registryResult?.removed_group_ids) ? registryResult!.removed_group_ids : [];
-  const versionMismatch = Boolean(runtimeVersion && daemonVersion && runtimeVersion !== daemonVersion);
+  const missing = Array.isArray(registryResult?.missing_group_ids)
+    ? registryResult!.missing_group_ids
+    : [];
+  const corrupt = Array.isArray(registryResult?.corrupt_group_ids)
+    ? registryResult!.corrupt_group_ids
+    : [];
+  const removed = Array.isArray(registryResult?.removed_group_ids)
+    ? registryResult!.removed_group_ids
+    : [];
+  const versionMismatch = Boolean(
+    runtimeVersion && daemonVersion && runtimeVersion !== daemonVersion,
+  );
 
   return (
     <div className="space-y-5">
       <div className={settingsWorkspaceShellClass(_isDark)}>
         <div className={settingsWorkspaceHeaderClass(_isDark)}>
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("developer.title")}</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("developer.title")}
+            </h3>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
               {t("developer.description")}
             </p>
             <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/15 px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400">
               <div className="font-medium">{t("developer.warningTitle")}</div>
-              <div className="mt-1">
-                {t("developer.warningText")}
-              </div>
+              <div className="mt-1">{t("developer.warningText")}</div>
             </div>
           </div>
         </div>
@@ -134,7 +142,9 @@ export function DeveloperTab({
           <div className={settingsWorkspacePanelClass(_isDark)}>
             <div className="flex items-start justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("developer.runtimeInfoTitle")}</div>
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  {t("developer.runtimeInfoTitle")}
+                </div>
                 <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
                   {t("developer.runtimeInfoHint")}
                 </div>
@@ -179,7 +189,9 @@ export function DeveloperTab({
           <div className={settingsWorkspacePanelClass(_isDark)}>
             <div className="flex items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("developer.enableDeveloperMode")}</div>
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  {t("developer.enableDeveloperMode")}
+                </div>
                 <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
                   {t("developer.enableHint")}
                 </div>
@@ -192,14 +204,18 @@ export function DeveloperTab({
                   checked={developerMode}
                   onChange={(e) => setDeveloperMode(e.target.checked)}
                 />
-                <div className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors duration-300 ease-spring ${
-                  developerMode
-                    ? "border-emerald-500 bg-emerald-500"
-                    : "border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)]"
-                }`}>
-                  <div className={`absolute left-0.5 h-6 w-6 rounded-full bg-white shadow-[0_2px_4px_rgba(0,0,0,0.08),0_1px_1px_rgba(0,0,0,0.04)] transition-transform duration-300 ease-spring ${
-                    developerMode ? "translate-x-5" : "translate-x-0"
-                  }`} />
+                <div
+                  className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full border transition-colors duration-300 ease-spring ${
+                    developerMode
+                      ? "border-emerald-500 bg-emerald-500"
+                      : "border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)]"
+                  }`}
+                >
+                  <div
+                    className={`absolute left-0.5 h-6 w-6 rounded-full bg-white shadow-[0_2px_4px_rgba(0,0,0,0.08),0_1px_1px_rgba(0,0,0,0.04)] transition-transform duration-300 ease-spring ${
+                      developerMode ? "translate-x-5" : "translate-x-0"
+                    }`}
+                  />
                 </div>
               </label>
             </div>
@@ -213,7 +229,7 @@ export function DeveloperTab({
                     { value: "DEBUG", label: "DEBUG" },
                   ]}
                   value={logLevel}
-                  onChange={(value) => setLogLevel((value === "DEBUG" ? "DEBUG" : "INFO"))}
+                  onChange={(value) => setLogLevel(value === "DEBUG" ? "DEBUG" : "INFO")}
                   ariaLabel={t("developer.logLevel")}
                   className={inputClass()}
                 />
@@ -236,7 +252,9 @@ export function DeveloperTab({
                         { value: "hidden", label: t("developer.hidden") },
                       ]}
                       value={peerRuntimeVisibility}
-                      onChange={(value) => setPeerRuntimeVisibility(value === "hidden" ? "hidden" : "visible")}
+                      onChange={(value) =>
+                        setPeerRuntimeVisibility(value === "hidden" ? "hidden" : "visible")
+                      }
                       ariaLabel={t("developer.peerRuntime")}
                       className={inputClass()}
                     />
@@ -253,7 +271,9 @@ export function DeveloperTab({
                         { value: "visible", label: t("developer.visible") },
                       ]}
                       value={assistantRuntimeVisibility}
-                      onChange={(value) => setAssistantRuntimeVisibility(value === "hidden" ? "hidden" : "visible")}
+                      onChange={(value) =>
+                        setAssistantRuntimeVisibility(value === "hidden" ? "hidden" : "visible")
+                      }
                       ariaLabel={t("developer.assistantRuntime")}
                       className={inputClass()}
                     />
@@ -320,139 +340,152 @@ export function DeveloperTab({
       {/* Registry maintenance */}
       <div className={settingsWorkspaceShellClass(_isDark)}>
         <div className={settingsWorkspaceHeaderClass(_isDark)}>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("developer.registryTitle")}</div>
-            <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
-              {t("developer.registryDescription")}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {t("developer.registryTitle")}
+              </div>
+              <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
+                {t("developer.registryDescription")}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={onPreviewRegistry}
+                disabled={registryBusy}
+                className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
+              >
+                {registryBusy ? t("developer.scanning") : t("developer.scan")}
+              </button>
+              <button
+                onClick={onReconcileRegistry}
+                disabled={registryBusy || missing.length === 0}
+                className={primaryButtonClass(registryBusy || missing.length === 0)}
+              >
+                {registryBusy ? t("developer.cleaning") : t("developer.cleanMissing")}
+              </button>
             </div>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={onPreviewRegistry}
-              disabled={registryBusy}
-              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
-            >
-              {registryBusy ? t("developer.scanning") : t("developer.scan")}
-            </button>
-            <button
-              onClick={onReconcileRegistry}
-              disabled={registryBusy || missing.length === 0}
-              className={primaryButtonClass(registryBusy || missing.length === 0)}
-            >
-              {registryBusy ? t("developer.cleaning") : t("developer.cleanMissing")}
-            </button>
-          </div>
-        </div>
         </div>
 
         <div className={settingsWorkspaceBodyClass}>
-        {registryErr ? (
-          <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{registryErr}</div>
-        ) : null}
+          {registryErr ? (
+            <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{registryErr}</div>
+          ) : null}
 
-        {registryResult ? (
-          <div className="mt-3 rounded-lg border px-3 py-2 text-xs border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]">
-            <div>
-              {t("developer.scanned")}={registryResult.scanned_groups} · {t("developer.missing")}={missing.length} · {t("developer.corrupt")}={corrupt.length}
-              {removed.length > 0 ? ` · ${t("developer.removed")}=${removed.length}` : ""}
+          {registryResult ? (
+            <div className="mt-3 rounded-lg border px-3 py-2 text-xs border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]">
+              <div>
+                {t("developer.scanned")}={registryResult.scanned_groups} · {t("developer.missing")}=
+                {missing.length} · {t("developer.corrupt")}={corrupt.length}
+                {removed.length > 0 ? ` · ${t("developer.removed")}=${removed.length}` : ""}
+              </div>
+              {missing.length > 0 ? (
+                <div className="mt-2 break-all">
+                  <span className="text-amber-600 dark:text-amber-400">
+                    {t("developer.missing")}:
+                  </span>{" "}
+                  {missing.join(", ")}
+                </div>
+              ) : null}
+              {corrupt.length > 0 ? (
+                <div className="mt-2 break-all">
+                  <span className="text-rose-600 dark:text-rose-400">
+                    {t("developer.corrupt")}:
+                  </span>{" "}
+                  {corrupt.join(", ")}
+                </div>
+              ) : null}
+              {removed.length > 0 ? (
+                <div className="mt-2 break-all">
+                  <span className="text-emerald-600 dark:text-emerald-400">
+                    {t("developer.removed")}:
+                  </span>{" "}
+                  {removed.join(", ")}
+                </div>
+              ) : null}
             </div>
-            {missing.length > 0 ? (
-              <div className="mt-2 break-all">
-                <span className="text-amber-600 dark:text-amber-400">{t("developer.missing")}:</span>{" "}
-                {missing.join(", ")}
-              </div>
-            ) : null}
-            {corrupt.length > 0 ? (
-              <div className="mt-2 break-all">
-                <span className="text-rose-600 dark:text-rose-400">{t("developer.corrupt")}:</span>{" "}
-                {corrupt.join(", ")}
-              </div>
-            ) : null}
-            {removed.length > 0 ? (
-              <div className="mt-2 break-all">
-                <span className="text-emerald-600 dark:text-emerald-400">{t("developer.removed")}:</span>{" "}
-                {removed.join(", ")}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+          ) : null}
         </div>
       </div>
 
       {/* Debug Snapshot */}
       <div className={settingsWorkspaceShellClass(_isDark)}>
         <div className={settingsWorkspaceHeaderClass(_isDark)}>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("developer.debugSnapshot")}</div>
-            <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
-              {t("developer.debugSnapshotHint")}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {t("developer.debugSnapshot")}
+              </div>
+              <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
+                {t("developer.debugSnapshotHint")}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={onLoadDebugSnapshot}
+                disabled={!developerMode || !groupId || debugSnapshotBusy}
+                className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
+              >
+                {debugSnapshotBusy ? t("common:loading") : t("developer.refresh")}
+              </button>
+              <button
+                onClick={onClearDebugSnapshot}
+                disabled={debugSnapshotBusy}
+                className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-secondary)] disabled:opacity-50"
+              >
+                {t("developer.clear")}
+              </button>
             </div>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={onLoadDebugSnapshot}
-              disabled={!developerMode || !groupId || debugSnapshotBusy}
-              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
-            >
-              {debugSnapshotBusy ? t("common:loading") : t("developer.refresh")}
-            </button>
-            <button
-              onClick={onClearDebugSnapshot}
-              disabled={debugSnapshotBusy}
-              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-secondary)] disabled:opacity-50"
-            >
-              {t("developer.clear")}
-            </button>
-          </div>
-        </div>
         </div>
 
         <div className={settingsWorkspaceBodyClass}>
-        {!groupId && (
-          <div className="mt-2 text-xs text-[var(--color-text-muted)]">
-            {t("developer.openFromGroup")}
-          </div>
-        )}
+          {!groupId && (
+            <div className="mt-2 text-xs text-[var(--color-text-muted)]">
+              {t("developer.openFromGroup")}
+            </div>
+          )}
 
-        {debugSnapshotErr && (
-          <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{debugSnapshotErr}</div>
-        )}
+          {debugSnapshotErr && (
+            <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{debugSnapshotErr}</div>
+          )}
 
-        <pre className={`${preClass()} mt-0`}>
-          <code>{debugSnapshot || "—"}</code>
-        </pre>
+          <pre className={`${preClass()} mt-0`}>
+            <code>{debugSnapshot || "—"}</code>
+          </pre>
         </div>
       </div>
 
       {/* Log Tail */}
       <div className={settingsWorkspaceShellClass(_isDark)}>
         <div className={settingsWorkspaceHeaderClass(_isDark)}>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("developer.logTail")}</div>
-            <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
-              {t("developer.logTailHint")}
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {t("developer.logTail")}
+              </div>
+              <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
+                {t("developer.logTailHint")}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={onLoadLogTail}
+                disabled={!developerMode || logBusy}
+                className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
+              >
+                {logBusy ? t("common:loading") : t("developer.refresh")}
+              </button>
+              <button
+                onClick={onClearLogs}
+                disabled={!developerMode || logBusy}
+                className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-secondary)] disabled:opacity-50"
+              >
+                {t("developer.clearTruncate")}
+              </button>
             </div>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={onLoadLogTail}
-              disabled={!developerMode || logBusy}
-              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
-            >
-              {logBusy ? t("common:loading") : t("developer.refresh")}
-            </button>
-            <button
-              onClick={onClearLogs}
-              disabled={!developerMode || logBusy}
-              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-secondary)] disabled:opacity-50"
-            >
-              {t("developer.clearTruncate")}
-            </button>
-          </div>
-        </div>
         </div>
 
         <div className={settingsWorkspaceBodyClass}>
@@ -466,7 +499,9 @@ export function DeveloperTab({
                   { value: "im", label: "im" },
                 ]}
                 value={logComponent}
-                onChange={(value) => setLogComponent((value === "im" ? "im" : value === "web" ? "web" : "daemon"))}
+                onChange={(value) =>
+                  setLogComponent(value === "im" ? "im" : value === "web" ? "web" : "daemon")
+                }
                 ariaLabel={t("developer.component")}
                 className={inputClass()}
               />
@@ -484,19 +519,17 @@ export function DeveloperTab({
             </div>
           </div>
 
-        {logComponent === "im" && !groupId && (
-          <div className="mt-2 text-xs text-[var(--color-text-muted)]">
-            {t("developer.imLogsRequireGroup")}
-          </div>
-        )}
+          {logComponent === "im" && !groupId && (
+            <div className="mt-2 text-xs text-[var(--color-text-muted)]">
+              {t("developer.imLogsRequireGroup")}
+            </div>
+          )}
 
-        {logErr && (
-          <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{logErr}</div>
-        )}
+          {logErr && <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{logErr}</div>}
 
-        <pre className={`${preClass()} mt-0 max-h-[260px] overflow-y-auto`}>
-          <code>{logText || "—"}</code>
-        </pre>
+          <pre className={`${preClass()} mt-0 max-h-[260px] overflow-y-auto`}>
+            <code>{logText || "—"}</code>
+          </pre>
         </div>
       </div>
     </div>

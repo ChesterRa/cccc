@@ -1,4 +1,11 @@
-import { useCallback, useRef, useEffect, useState, type ReactNode, type CSSProperties } from "react";
+import {
+  useCallback,
+  useRef,
+  useEffect,
+  useState,
+  type ReactNode,
+  type CSSProperties,
+} from "react";
 import { classNames } from "../utils/classNames";
 
 interface ScrollFadeProps {
@@ -42,7 +49,14 @@ export function ScrollFade({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollStart, setCanScrollStart] = useState(false);
   const [canScrollEnd, setCanScrollEnd] = useState(false);
-  const dragStateRef = useRef<{ pointerId: number; startX: number; startY: number; startLeft: number; startTop: number; moved: boolean } | null>(null);
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startLeft: number;
+    startTop: number;
+    moved: boolean;
+  } | null>(null);
   const suppressClickRef = useRef(false);
 
   const check = useCallback(() => {
@@ -203,14 +217,14 @@ export function ScrollFade({
     maskParts.push(
       isH
         ? `linear-gradient(to right, transparent, black ${fadeWidth}px)`
-        : `linear-gradient(to bottom, transparent, black ${fadeWidth}px)`
+        : `linear-gradient(to bottom, transparent, black ${fadeWidth}px)`,
     );
   }
   if (canScrollEnd) {
     maskParts.push(
       isH
         ? `linear-gradient(to left, transparent, black ${fadeWidth}px)`
-        : `linear-gradient(to top, transparent, black ${fadeWidth}px)`
+        : `linear-gradient(to top, transparent, black ${fadeWidth}px)`,
     );
   }
 
@@ -223,10 +237,7 @@ export function ScrollFade({
           maskComposite: "intersect",
         }
       : maskParts.length === 1
-        ? {
-            WebkitMaskImage: maskParts[0],
-            maskImage: maskParts[0],
-          }
+        ? { WebkitMaskImage: maskParts[0], maskImage: maskParts[0] }
         : {};
 
   return (
@@ -235,7 +246,7 @@ export function ScrollFade({
         ref={scrollRef}
         className={classNames(
           isH ? "overflow-x-auto scrollbar-hide touch-pan-x" : "overflow-y-auto scrollbar-hide",
-          innerClassName
+          innerClassName,
         )}
       >
         {children}

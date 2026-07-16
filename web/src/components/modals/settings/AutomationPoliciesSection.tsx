@@ -49,9 +49,13 @@ function PolicyGroup({
   return (
     <div className="rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-3.5 space-y-3">
       <div>
-        <div className="text-xs font-semibold tracking-[0.02em] text-[var(--color-text-secondary)]">{title}</div>
+        <div className="text-xs font-semibold tracking-[0.02em] text-[var(--color-text-secondary)]">
+          {title}
+        </div>
         {description ? (
-          <div className="mt-1 text-[11px] leading-snug text-[var(--color-text-muted)]">{description}</div>
+          <div className="mt-1 text-[11px] leading-snug text-[var(--color-text-muted)]">
+            {description}
+          </div>
         ) : null}
       </div>
       {children}
@@ -68,7 +72,10 @@ export function AutomationPoliciesSection(props: AutomationPoliciesSectionProps)
       title={t("policies.title")}
       description={t("policies.description")}
     >
-      <PolicyGroup title={t("policies.messageFollowups")} description={t("policies.messageFollowupsHelp")}>
+      <PolicyGroup
+        title={t("policies.messageFollowups")}
+        description={t("policies.messageFollowupsHelp")}
+      >
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <NumberInputRow
             isDark={props.isDark}
@@ -94,7 +101,10 @@ export function AutomationPoliciesSection(props: AutomationPoliciesSectionProps)
         </div>
       </PolicyGroup>
 
-      <PolicyGroup title={t("policies.progressFollowups")} description={t("policies.progressFollowupsHelp")}>
+      <PolicyGroup
+        title={t("policies.progressFollowups")}
+        description={t("policies.progressFollowupsHelp")}
+      >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <NumberInputRow
             isDark={props.isDark}
@@ -118,7 +128,10 @@ export function AutomationPoliciesSection(props: AutomationPoliciesSectionProps)
         </div>
       </PolicyGroup>
 
-      <PolicyGroup title={t("policies.contextRefresh")} description={t("policies.contextRefreshHelp")}>
+      <PolicyGroup
+        title={t("policies.contextRefresh")}
+        description={t("policies.contextRefreshHelp")}
+      >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <NumberInputRow
             isDark={props.isDark}
@@ -138,7 +151,10 @@ export function AutomationPoliciesSection(props: AutomationPoliciesSectionProps)
         </div>
       </PolicyGroup>
 
-      <PolicyGroup title={t("policies.repeatEscalation")} description={t("policies.repeatEscalationHelp")}>
+      <PolicyGroup
+        title={t("policies.repeatEscalation")}
+        description={t("policies.repeatEscalationHelp")}
+      >
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <NumberInputRow
             isDark={props.isDark}
@@ -166,7 +182,10 @@ export function AutomationPoliciesSection(props: AutomationPoliciesSectionProps)
         </div>
       </PolicyGroup>
 
-      <PolicyGroup title={t("policies.advancedForemanAlerts")} description={t("policies.advancedForemanAlertsHelp")}>
+      <PolicyGroup
+        title={t("policies.advancedForemanAlerts")}
+        description={t("policies.advancedForemanAlertsHelp")}
+      >
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <NumberInputRow
             isDark={props.isDark}

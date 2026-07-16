@@ -11,12 +11,7 @@ import { ProjectedBrowserSurfacePanel } from "../browser/ProjectedBrowserSurface
 
 type Tone = "ready" | "needs" | "neutral" | "error";
 
-type StatusBlock = {
-  label: string;
-  value: string;
-  detail: string;
-  tone: Tone;
-};
+type StatusBlock = { label: string; value: string; detail: string; tone: Tone };
 
 interface WebModelRuntimePanelProps {
   groupId: string;
@@ -69,27 +64,27 @@ function buildChatGptBlock(session: WebModelBrowserSession | null): StatusBlock 
     const state = String(health.browser.state || "").trim();
     return {
       label: "ChatGPT",
-      value: String(health.browser.label || "").trim() || (state === "ready" ? "Ready" : "Check status"),
-      detail: String(health.browser.reason || health.browser.url || "").trim() || "ChatGPT browser state.",
-      tone: state === "ready" ? "ready" : state === "failed" ? "error" : state === "closed" ? "neutral" : "needs",
+      value:
+        String(health.browser.label || "").trim() || (state === "ready" ? "Ready" : "Check status"),
+      detail:
+        String(health.browser.reason || health.browser.url || "").trim() ||
+        "ChatGPT browser state.",
+      tone:
+        state === "ready"
+          ? "ready"
+          : state === "failed"
+            ? "error"
+            : state === "closed"
+              ? "neutral"
+              : "needs",
     };
   }
   const error = String(session?.error || "").trim();
   if (error) {
-    return {
-      label: "ChatGPT",
-      value: "Check failed",
-      detail: error,
-      tone: "error",
-    };
+    return { label: "ChatGPT", value: "Check failed", detail: error, tone: "error" };
   }
   if (session?.ready) {
-    return {
-      label: "ChatGPT",
-      value: "Ready",
-      detail: "Signed in and reachable.",
-      tone: "ready",
-    };
+    return { label: "ChatGPT", value: "Ready", detail: "Signed in and reachable.", tone: "ready" };
   }
   if (session?.active) {
     return {
@@ -157,7 +152,10 @@ function buildTargetBlock(session: WebModelBrowserSession | null): StatusBlock {
   };
 }
 
-function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount: number): StatusBlock {
+function buildActivityBlock(
+  session: WebModelBrowserSession | null,
+  queuedCount: number,
+): StatusBlock {
   const health = session?.health_snapshot;
   if (health?.delivery?.state) {
     const state = String(health.delivery.state || "").trim();
@@ -165,7 +163,9 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
       return {
         label: "Activity",
         value: String(health.delivery.label || "").trim() || "Delivery failed",
-        detail: String(health.delivery.reason || health.delivery.last_error || "").trim() || "The last ChatGPT delivery did not complete.",
+        detail:
+          String(health.delivery.reason || health.delivery.last_error || "").trim() ||
+          "The last ChatGPT delivery did not complete.",
         tone: "error",
       };
     }
@@ -173,7 +173,9 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
       return {
         label: "Activity",
         value: String(health.delivery.label || "").trim() || "Binding chat",
-        detail: String(health.delivery.reason || "").trim() || "Prompt was submitted; waiting for ChatGPT to assign the chat URL.",
+        detail:
+          String(health.delivery.reason || "").trim() ||
+          "Prompt was submitted; waiting for ChatGPT to assign the chat URL.",
         tone: "needs",
       };
     }
@@ -181,7 +183,9 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
       return {
         label: "Activity",
         value: String(health.delivery.label || "").trim() || "Submitting",
-        detail: String(health.delivery.reason || "").trim() || "CCCC is injecting this batch into ChatGPT.",
+        detail:
+          String(health.delivery.reason || "").trim() ||
+          "CCCC is injecting this batch into ChatGPT.",
         tone: "needs",
       };
     }
@@ -189,7 +193,9 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
       return {
         label: "Activity",
         value: String(health.delivery.label || "").trim() || "Delivery unverified",
-        detail: String(health.delivery.reason || health.delivery.last_error || "").trim() || "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it.",
+        detail:
+          String(health.delivery.reason || health.delivery.last_error || "").trim() ||
+          "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it.",
         tone: "needs",
       };
     }
@@ -206,9 +212,12 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
       return {
         label: "Activity",
         value: `Last ${formatTime(health.delivery.last_delivery_at)}`,
-        detail: state === "bound"
-          ? String(health.delivery.reason || "").trim() || "ChatGPT chat binding completed."
-          : evidence ? `Submitted: ${evidence}` : String(health.delivery.reason || "").trim() || "Browser delivery completed.",
+        detail:
+          state === "bound"
+            ? String(health.delivery.reason || "").trim() || "ChatGPT chat binding completed."
+            : evidence
+              ? `Submitted: ${evidence}`
+              : String(health.delivery.reason || "").trim() || "Browser delivery completed.",
         tone: "neutral",
       };
     }
@@ -219,9 +228,10 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
     return {
       label: "Activity",
       value: "Binding chat",
-      detail: lastError === "conversation_url_pending"
-        ? "Prompt was submitted; waiting for ChatGPT to assign the chat URL."
-        : lastError || "Prompt was submitted; waiting for ChatGPT to assign the chat URL.",
+      detail:
+        lastError === "conversation_url_pending"
+          ? "Prompt was submitted; waiting for ChatGPT to assign the chat URL."
+          : lastError || "Prompt was submitted; waiting for ChatGPT to assign the chat URL.",
       tone: "needs",
     };
   }
@@ -237,7 +247,9 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
     return {
       label: "Activity",
       value: "Delivery unverified",
-      detail: lastError || "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it.",
+      detail:
+        lastError ||
+        "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it.",
       tone: "needs",
     };
   }
@@ -270,7 +282,11 @@ function buildActivityBlock(session: WebModelBrowserSession | null, queuedCount:
     return {
       label: "Activity",
       value: `Last ${formatTime(session.last_delivery_at)}`,
-      detail: evidence ? `Submitted: ${evidence}` : session.last_turn_id ? String(session.last_turn_id) : "Browser delivery completed.",
+      detail: evidence
+        ? `Submitted: ${evidence}`
+        : session.last_turn_id
+          ? String(session.last_turn_id)
+          : "Browser delivery completed.",
       tone: "neutral",
     };
   }
@@ -308,7 +324,8 @@ export function WebModelRuntimePanel({
     if (!isVisible || !groupId || !actorId) return;
     let cancelled = false;
     setBusyAction("load");
-    void api.fetchWebModelBrowserSession(groupId, actorId, { inspect: false })
+    void api
+      .fetchWebModelBrowserSession(groupId, actorId, { inspect: false })
       .then((resp) => {
         if (cancelled) return;
         if (!resp.ok) {
@@ -368,40 +385,52 @@ export function WebModelRuntimePanel({
     return resp;
   }, [actorId, groupId]);
 
-  const startBrowserSurfaceSession = useCallback(async ({ width, height }: { width: number; height: number }) => {
-    if (!canControlSurface) {
-      const message = readOnly
-        ? "ChatGPT browser control is disabled in read-only mode."
-        : "Open ChatGPT Web Model settings to inspect the browser page.";
-      setError(message);
-      return {
-        ok: false as const,
-        error: { code: "browser_surface_unavailable", message, details: {} },
-      };
-    }
-    const resp = await api.openWebModelBrowserSurfaceSession({ groupId, actorId, width, height, inspect: true });
-    if (resp.ok) {
-      setSession(resp.result.browser_session || {});
-      setError("");
-    } else {
-      setError(resp.error?.message || "Failed to open ChatGPT browser surface.");
-    }
-    return resp;
-  }, [actorId, canControlSurface, groupId, readOnly]);
+  const startBrowserSurfaceSession = useCallback(
+    async ({ width, height }: { width: number; height: number }) => {
+      if (!canControlSurface) {
+        const message = readOnly
+          ? "ChatGPT browser control is disabled in read-only mode."
+          : "Open ChatGPT Web Model settings to inspect the browser page.";
+        setError(message);
+        return {
+          ok: false as const,
+          error: { code: "browser_surface_unavailable", message, details: {} },
+        };
+      }
+      const resp = await api.openWebModelBrowserSurfaceSession({
+        groupId,
+        actorId,
+        width,
+        height,
+        inspect: true,
+      });
+      if (resp.ok) {
+        setSession(resp.result.browser_session || {});
+        setError("");
+      } else {
+        setError(resp.error?.message || "Failed to open ChatGPT browser surface.");
+      }
+      return resp;
+    },
+    [actorId, canControlSurface, groupId, readOnly],
+  );
 
   const chatGptBlock = useMemo(() => buildChatGptBlock(session), [session]);
   const targetBlock = useMemo(() => buildTargetBlock(session), [session]);
-  const activityBlock = useMemo(() => buildActivityBlock(session, queuedCount), [queuedCount, session]);
-  const primaryActionNeeded = !session?.ready || (!session?.conversation_url && !session?.pending_new_chat_bind);
+  const activityBlock = useMemo(
+    () => buildActivityBlock(session, queuedCount),
+    [queuedCount, session],
+  );
+  const primaryActionNeeded =
+    !session?.ready || (!session?.conversation_url && !session?.pending_new_chat_bind);
   const nextAction = session?.health_snapshot?.next_action;
   const recommendedAction = String(nextAction?.recommended || "none").trim();
-  const surfaceDisabledMessage = readOnly
-    ? "Browser view is unavailable in read-only mode."
-    : "";
+  const surfaceDisabledMessage = readOnly ? "Browser view is unavailable in read-only mode." : "";
   const showActivity = shouldShowActivity(activityBlock, queuedCount);
-  const nextSummary = recommendedAction && recommendedAction !== "none"
-    ? String(nextAction?.label || "").trim() || recommendedAction
-    : "";
+  const nextSummary =
+    recommendedAction && recommendedAction !== "none"
+      ? String(nextAction?.label || "").trim() || recommendedAction
+      : "";
 
   return (
     <section
@@ -419,18 +448,29 @@ export function WebModelRuntimePanel({
       >
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-2 px-1">
-            <span className={classNames("shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold", tonePillClass(chatGptBlock.tone))}>
+            <span
+              className={classNames(
+                "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+                tonePillClass(chatGptBlock.tone),
+              )}
+            >
               ChatGPT {chatGptBlock.value}
             </span>
             <span
-              className={classNames("shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold", tonePillClass(targetBlock.tone))}
+              className={classNames(
+                "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+                tonePillClass(targetBlock.tone),
+              )}
               title={targetBlock.detail}
             >
               Target {targetBlock.value}
             </span>
             {showActivity ? (
               <span
-                className={classNames("shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold", tonePillClass(activityBlock.tone))}
+                className={classNames(
+                  "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-semibold",
+                  tonePillClass(activityBlock.tone),
+                )}
                 title={activityBlock.detail}
               >
                 {activityBlock.value}

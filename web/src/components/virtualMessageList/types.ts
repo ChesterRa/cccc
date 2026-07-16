@@ -41,10 +41,7 @@ export interface VirtualMessageListProps {
   onScrollButtonClick: () => void;
   chatUnreadCount: number;
   onScrollChange?: (isAtBottom: boolean) => void;
-  onScrollSnapshot?: (
-    snapshot: ChatScrollSnapshot,
-    groupId?: string,
-  ) => void;
+  onScrollSnapshot?: (snapshot: ChatScrollSnapshot, groupId?: string) => void;
   forceStickToBottomToken?: number;
   isLoadingHistory?: boolean;
   hasMoreHistory?: boolean;

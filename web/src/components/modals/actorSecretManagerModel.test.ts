@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildActorSecretSaveChanges,
@@ -19,7 +19,7 @@ describe("actorSecretManagerModel", () => {
       normalizeLoadedActorSecretKeys({
         keys: ["OPENAI_API_KEY"],
         masked_values: { OPENAI_API_KEY: "sk-******1234" },
-      })
+      }),
     ).toEqual({
       keys: ["OPENAI_API_KEY"],
       masks: { OPENAI_API_KEY: "sk-******1234" },
@@ -39,11 +39,7 @@ describe("actorSecretManagerModel", () => {
   it("stages a set operation and trims the key", () => {
     const changes = stageActorSecretSet(emptyActorSecretChanges(), " NEW_KEY ", "value");
 
-    expect(changes).toEqual({
-      setVars: { NEW_KEY: "value" },
-      unsetKeys: [],
-      clearAll: false,
-    });
+    expect(changes).toEqual({ setVars: { NEW_KEY: "value" }, unsetKeys: [], clearAll: false });
   });
 
   it("preserves an intentionally empty value", () => {
@@ -66,7 +62,7 @@ describe("actorSecretManagerModel", () => {
   it("stages multiple set values and cancels matching pending removals", () => {
     const removed = stageActorSecretUnset(
       stageActorSecretUnset(emptyActorSecretChanges(), "FIRST_KEY"),
-      "KEEP_REMOVED"
+      "KEEP_REMOVED",
     );
 
     expect(stageActorSecretSetMany(removed, { FIRST_KEY: "first", SECOND_KEY: "second" })).toEqual({
@@ -81,17 +77,13 @@ describe("actorSecretManagerModel", () => {
     const removed = stageActorSecretUnset(withValue, "OLD_KEY");
     const removedAgain = stageActorSecretUnset(removed, "OLD_KEY");
 
-    expect(removedAgain).toEqual({
-      setVars: {},
-      unsetKeys: ["OLD_KEY"],
-      clearAll: false,
-    });
+    expect(removedAgain).toEqual({ setVars: {}, unsetKeys: ["OLD_KEY"], clearAll: false });
   });
 
   it("undoes staged set and unset operations independently", () => {
     const staged = stageActorSecretUnset(
       stageActorSecretSet(emptyActorSecretChanges(), "NEW_KEY", "value"),
-      "OLD_KEY"
+      "OLD_KEY",
     );
 
     expect(undoActorSecretSet(staged, "NEW_KEY")).toEqual({
@@ -110,18 +102,14 @@ describe("actorSecretManagerModel", () => {
     const staged = stageActorSecretSet(emptyActorSecretChanges(), "NEW_KEY", "value");
     const clearing = setActorSecretClearAll(staged, true);
 
-    expect(clearing).toEqual({
-      setVars: { NEW_KEY: "value" },
-      unsetKeys: [],
-      clearAll: true,
-    });
+    expect(clearing).toEqual({ setVars: { NEW_KEY: "value" }, unsetKeys: [], clearAll: true });
     expect(setActorSecretClearAll(clearing, false)).toEqual(staged);
   });
 
   it("builds a normal save payload from staged changes", () => {
     const changes = stageActorSecretUnset(
       stageActorSecretSet(emptyActorSecretChanges(), "NEW_KEY", "value"),
-      "OLD_KEY"
+      "OLD_KEY",
     );
 
     expect(buildActorSecretSaveChanges(changes)).toEqual({
@@ -135,9 +123,9 @@ describe("actorSecretManagerModel", () => {
     const changes = setActorSecretClearAll(
       stageActorSecretUnset(
         stageActorSecretSet(emptyActorSecretChanges(), "NEW_KEY", "value"),
-        "OLD_KEY"
+        "OLD_KEY",
       ),
-      true
+      true,
     );
 
     expect(buildActorSecretSaveChanges(changes)).toEqual({

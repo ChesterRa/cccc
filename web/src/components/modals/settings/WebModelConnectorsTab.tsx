@@ -79,7 +79,10 @@ function connectorUrlWithToken(connectorUrl: string, secret: string): string {
 function connectorMcpUrl(connector?: api.WebModelConnector | null, secret?: string): string {
   const stored = String(connector?.connector_url_with_token || "").trim();
   if (stored) return stored;
-  return connectorUrlWithToken(String(connector?.connector_url || "").trim(), String(secret || "").trim());
+  return connectorUrlWithToken(
+    String(connector?.connector_url || "").trim(),
+    String(secret || "").trim(),
+  );
 }
 
 function connectorActivityLabel(connector: api.WebModelConnector, wm: Translate): string {
@@ -89,7 +92,8 @@ function connectorActivityLabel(connector: api.WebModelConnector, wm: Translate)
   if (!connector.last_activity_at) return wm("activity.notSeenYet");
   if (status === "error") return wm("activity.lastCallFailed");
   if (tool === "cccc_runtime_wait_next_turn" && wait) return wm("activity.wait", { status: wait });
-  if (tool === "cccc_runtime_complete_turn" && wait) return wm("activity.complete", { status: wait });
+  if (tool === "cccc_runtime_complete_turn" && wait)
+    return wm("activity.complete", { status: wait });
   return tool || String(connector.last_method || "").trim() || wm("activity.seen");
 }
 
@@ -99,8 +103,9 @@ function webModelQueuedCount(actor?: Actor | null): number {
 
 function isStandardChatGptWebModelActor(actor?: Actor | null): boolean {
   return (
-    String(actor?.runtime || "").trim().toLowerCase() === "web_model"
-    && !String(actor?.internal_kind || "").trim()
+    String(actor?.runtime || "")
+      .trim()
+      .toLowerCase() === "web_model" && !String(actor?.internal_kind || "").trim()
   );
 }
 
@@ -129,8 +134,10 @@ function shortConversationLabel(url?: string): string {
 type SetupTone = "ready" | "needs" | "warn" | "neutral";
 
 function setupPillClass(tone: SetupTone): string {
-  if (tone === "ready") return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
-  if (tone === "needs") return "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-200";
+  if (tone === "ready")
+    return "border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+  if (tone === "needs")
+    return "border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-200";
   if (tone === "warn") return "border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300";
   return "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]";
 }
@@ -146,34 +153,42 @@ function SetupStatusLine({
 }) {
   return (
     <div className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-2 first:border-t-0 first:pt-0 sm:border-t-0 sm:pt-0">
-      <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">{label}</div>
-      <div className={["mt-1 inline-flex max-w-full rounded-full border px-2 py-0.5 text-xs font-medium", setupPillClass(tone)].join(" ")}>
+      <div className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+        {label}
+      </div>
+      <div
+        className={[
+          "mt-1 inline-flex max-w-full rounded-full border px-2 py-0.5 text-xs font-medium",
+          setupPillClass(tone),
+        ].join(" ")}
+      >
         <span className="truncate">{detail}</span>
       </div>
     </div>
   );
 }
 
-function SetupSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: ReactNode;
-}) {
+function SetupSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="border-t border-[var(--glass-border-subtle)] pt-3 first:border-t-0 first:pt-0">
-      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">{title}</div>
+      <div className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-text-muted)]">
+        {title}
+      </div>
       <div className="mt-2">{children}</div>
     </div>
   );
 }
 
-function healthNextActionText(health: api.WebModelHealthSnapshot | null | undefined, wm: Translate): string {
+function healthNextActionText(
+  health: api.WebModelHealthSnapshot | null | undefined,
+  wm: Translate,
+): string {
   const action = health?.next_action;
   const recommended = String(action?.recommended || "none").trim();
   if (!recommended || recommended === "none") return "";
-  const label = wm(`nextAction.${recommended}`, { defaultValue: String(action?.label || "").trim() || recommended });
+  const label = wm(`nextAction.${recommended}`, {
+    defaultValue: String(action?.label || "").trim() || recommended,
+  });
   const reason = String(action?.reason || "").trim();
   return reason ? `${label}: ${reason}` : label;
 }
@@ -198,7 +213,9 @@ export default function WebModelConnectorsTab({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [browserSession, setBrowserSession] = useState<api.WebModelBrowserSession | null>(null);
-  const [browserSessionsByActor, setBrowserSessionsByActor] = useState<Record<string, api.WebModelBrowserSession>>({});
+  const [browserSessionsByActor, setBrowserSessionsByActor] = useState<
+    Record<string, api.WebModelBrowserSession>
+  >({});
   const [browserBusy, setBrowserBusy] = useState(false);
   const [showBrowserSurface, setShowBrowserSurface] = useState(false);
   const [browserSurfaceRefreshNonce, setBrowserSurfaceRefreshNonce] = useState(0);
@@ -229,13 +246,14 @@ export default function WebModelConnectorsTab({
     () => webModelActors.find((actor) => actor.id === actorId) || null,
     [actorId, webModelActors],
   );
-  const selectedConnector = useMemo(
-    () => {
-      if (!selectedActor) return null;
-      return currentGroupActiveConnectors.find((connector) => String(connector.actor_id || "") === selectedActor.id) || null;
-    },
-    [currentGroupActiveConnectors, selectedActor],
-  );
+  const selectedConnector = useMemo(() => {
+    if (!selectedActor) return null;
+    return (
+      currentGroupActiveConnectors.find(
+        (connector) => String(connector.actor_id || "") === selectedActor.id,
+      ) || null
+    );
+  }, [currentGroupActiveConnectors, selectedActor]);
   const chatGptActor = webModelActors[0] || null;
   const extraChatGptActors = webModelActors.slice(1);
   const ownerGroup = useMemo(
@@ -246,32 +264,49 @@ export default function WebModelConnectorsTab({
   const ownerActorLabel = chatGptActor
     ? String(chatGptActor.title || chatGptActor.id || "").trim()
     : "";
-  const configuredPublicUrl = String(remoteState?.config?.web_public_url || remoteState?.diagnostics?.web_public_url || "").trim();
+  const configuredPublicUrl = String(
+    remoteState?.config?.web_public_url || remoteState?.diagnostics?.web_public_url || "",
+  ).trim();
   const publicEndpointReady = Boolean(configuredPublicUrl && isHttpsUrl(configuredPublicUrl));
-  const uiAccessTokenPresent = Boolean(remoteState?.config?.access_token_configured || remoteState?.diagnostics?.access_token_present);
-  const selectedBrowserSession = browserSessionsByActor[browserSessionKey(groupId, actorId)] || browserSession || null;
+  const uiAccessTokenPresent = Boolean(
+    remoteState?.config?.access_token_configured || remoteState?.diagnostics?.access_token_present,
+  );
+  const selectedBrowserSession =
+    browserSessionsByActor[browserSessionKey(groupId, actorId)] || browserSession || null;
   const selectedHealth = selectedBrowserSession?.health_snapshot || null;
-  const deliveryTarget = selectedBrowserSession?.delivery_target || selectedHealth?.delivery_target || null;
+  const deliveryTarget =
+    selectedBrowserSession?.delivery_target || selectedHealth?.delivery_target || null;
   const deliveryTargetState = String(deliveryTarget?.state || "").trim();
-  const deliveryTargetSavedAt = String(deliveryTarget?.saved_at || selectedBrowserSession?.target_saved_at || selectedHealth?.target?.saved_at || "").trim();
+  const deliveryTargetSavedAt = String(
+    deliveryTarget?.saved_at ||
+      selectedBrowserSession?.target_saved_at ||
+      selectedHealth?.target?.saved_at ||
+      "",
+  ).trim();
   const browserActive = Boolean(selectedBrowserSession?.active || showBrowserSurface);
   const browserReady = Boolean(selectedBrowserSession?.ready);
   const boundConversationUrl = String(selectedBrowserSession?.conversation_url || "").trim();
   const pendingNewChatBind = Boolean(selectedBrowserSession?.pending_new_chat_bind);
   const pendingNewChatUrl = String(selectedBrowserSession?.pending_new_chat_url || "").trim();
   const liveBrowserUrl = String(selectedBrowserSession?.tab_url || "").trim();
-  const currentBrowserUrl = liveBrowserUrl || String(selectedBrowserSession?.last_tab_url || "").trim();
-  const currentBrowserConversationUrl = liveBrowserConversationUrlFromSession(selectedBrowserSession);
-  const browserStatusLabel = String(selectedHealth?.browser?.label || "").trim() || (browserReady
-    ? wm("browser.ready")
-    : browserActive
-      ? wm("browser.signInNeeded")
-      : wm("browser.notOpen"));
-  const targetStatusLabel = String(selectedHealth?.target?.label || "").trim() || (boundConversationUrl
-    ? wm("target.bound")
-    : pendingNewChatBind
-      ? wm("target.newChatArmed")
-      : wm("target.needed"));
+  const currentBrowserUrl =
+    liveBrowserUrl || String(selectedBrowserSession?.last_tab_url || "").trim();
+  const currentBrowserConversationUrl =
+    liveBrowserConversationUrlFromSession(selectedBrowserSession);
+  const browserStatusLabel =
+    String(selectedHealth?.browser?.label || "").trim() ||
+    (browserReady
+      ? wm("browser.ready")
+      : browserActive
+        ? wm("browser.signInNeeded")
+        : wm("browser.notOpen"));
+  const targetStatusLabel =
+    String(selectedHealth?.target?.label || "").trim() ||
+    (boundConversationUrl
+      ? wm("target.bound")
+      : pendingNewChatBind
+        ? wm("target.newChatArmed")
+        : wm("target.needed"));
   const savedTargetLabel = boundConversationUrl
     ? wm("target.savedExisting")
     : deliveryTargetState === "new_chat_submitted"
@@ -307,29 +342,38 @@ export default function WebModelConnectorsTab({
     saved: savedTargetDraft,
   });
   const targetDraftDirty = !targetDraftMatchesSavedTarget;
-  const targetDraftError = targetDraftMode === "existing" && targetDraftDirty && !isChatGptConversationUrl(targetDraftUrl)
+  const targetDraftError =
+    targetDraftMode === "existing" && targetDraftDirty && !isChatGptConversationUrl(targetDraftUrl)
       ? wm("target.urlInvalid")
       : "";
-  const targetUseCurrentAvailable = Boolean(currentBrowserConversationUrl && currentBrowserConversationUrl !== targetDraftUrl);
-  const targetSaveDisabled = browserBusy || !groupId || !actorId || Boolean(targetDraftError) || !targetDraftDirty;
+  const targetUseCurrentAvailable = Boolean(
+    currentBrowserConversationUrl && currentBrowserConversationUrl !== targetDraftUrl,
+  );
+  const targetSaveDisabled =
+    browserBusy || !groupId || !actorId || Boolean(targetDraftError) || !targetDraftDirty;
   const chooseTargetMode = (mode: TargetDraftMode) => {
     setTargetDraftMode(mode);
     setTargetDraftTouched(true);
   };
-  const targetRadioClass = (mode: TargetDraftMode) => [
-    "flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors",
-    targetDraftMode === mode
-      ? "border-[var(--color-text-primary)] bg-[var(--glass-tab-bg-hover)] text-[var(--color-text-primary)]"
-      : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
-  ].join(" ");
-  const selectedActorLabel = selectedActor ? String(selectedActor.title || selectedActor.id || "").trim() : "";
+  const targetRadioClass = (mode: TargetDraftMode) =>
+    [
+      "flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors",
+      targetDraftMode === mode
+        ? "border-[var(--color-text-primary)] bg-[var(--glass-tab-bg-hover)] text-[var(--color-text-primary)]"
+        : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
+    ].join(" ");
+  const selectedActorLabel = selectedActor
+    ? String(selectedActor.title || selectedActor.id || "").trim()
+    : "";
   const selectedActorRunning = Boolean(selectedActor?.running);
   const queuedCount = webModelQueuedCount(selectedActor);
   const selectedMcpUrl = connectorMcpUrl(selectedConnector || null);
   const selectedConnectorUrl = String(selectedConnector?.connector_url || "").trim();
   const selectedMcpUrlForValidation = selectedMcpUrl || selectedConnectorUrl;
-  const mcpUrlLocalWarning = Boolean(selectedMcpUrlForValidation) && isLocalConnectorUrl(selectedMcpUrlForValidation);
-  const mcpUrlHttpsWarning = Boolean(selectedMcpUrlForValidation) && !isHttpsUrl(selectedMcpUrlForValidation);
+  const mcpUrlLocalWarning =
+    Boolean(selectedMcpUrlForValidation) && isLocalConnectorUrl(selectedMcpUrlForValidation);
+  const mcpUrlHttpsWarning =
+    Boolean(selectedMcpUrlForValidation) && !isHttpsUrl(selectedMcpUrlForValidation);
   const mcpLastCallFailed = String(selectedConnector?.last_call_status || "").trim() === "error";
   const chatGptSeen = Boolean(selectedConnector?.last_activity_at);
   const mcpStatusLabel = !selectedConnector
@@ -354,20 +398,29 @@ export default function WebModelConnectorsTab({
       ? wm("prerequisites.actorReady", { actor: selectedActorLabel || actorId })
       : wm("prerequisites.actorStopped", { actor: selectedActorLabel || actorId })
     : wm("prerequisites.actorMissing");
-  const actorPrerequisiteTone: SetupTone = selectedActor ? (selectedActorRunning ? "ready" : "needs") : "needs";
-  const browserSummaryTone: SetupTone = browserReady ? "ready" : browserActive ? "needs" : "neutral";
+  const actorPrerequisiteTone: SetupTone = selectedActor
+    ? selectedActorRunning
+      ? "ready"
+      : "needs"
+    : "needs";
+  const browserSummaryTone: SetupTone = browserReady
+    ? "ready"
+    : browserActive
+      ? "needs"
+      : "neutral";
   const webAccessPrerequisiteLabel = webAccessReady
     ? wm("prerequisites.webAccessReady")
     : publicEndpointReady
       ? wm("prerequisites.accessTokenNeeded")
       : wm("prerequisites.publicHttpsNeeded");
-  const setupReady = webAccessReady
-    && selectedActorRunning
-    && browserReady
-    && Boolean(selectedMcpUrl)
-    && chatGptSeen
-    && !mcpLastCallFailed
-    && Boolean(boundConversationUrl || pendingNewChatBind);
+  const setupReady =
+    webAccessReady &&
+    selectedActorRunning &&
+    browserReady &&
+    Boolean(selectedMcpUrl) &&
+    chatGptSeen &&
+    !mcpLastCallFailed &&
+    Boolean(boundConversationUrl || pendingNewChatBind);
   const runtimeStatus = setupReady
     ? { label: wm("summary.ready"), tone: "ready" as const }
     : mcpLastCallFailed
@@ -404,7 +457,10 @@ export default function WebModelConnectorsTab({
 
   useEffect(() => {
     if (targetDraftTouched) return;
-    const draft = defaultTargetDraftFromSession(selectedBrowserSession, currentBrowserConversationUrl);
+    const draft = defaultTargetDraftFromSession(
+      selectedBrowserSession,
+      currentBrowserConversationUrl,
+    );
     setTargetDraftMode(draft.mode);
     setConversationUrlDraft(draft.url);
   }, [currentBrowserConversationUrl, selectedBrowserSession, targetDraftTouched]);
@@ -427,25 +483,26 @@ export default function WebModelConnectorsTab({
     }
   }, [wm]);
 
-  const loadBrowserSession = useCallback(async (gid: string = groupId, aid: string = actorId) => {
-    if ((gid && !aid) || (!gid && aid)) {
-      setBrowserSession(null);
-      return;
-    }
-    const resp = await api.fetchWebModelBrowserSession(gid, aid, { inspect: false });
-    if (resp.ok) {
-      const nextSession = resp.result?.browser_session || null;
-      const key = browserSessionKey(gid, aid);
-      setBrowserSessionsByActor((current) => ({
-        ...current,
-        [key]: nextSession || {},
-      }));
-      const currentSelection = currentSelectionRef.current;
-      if (gid === currentSelection.groupId && aid === currentSelection.actorId) setBrowserSession(nextSession);
-    } else {
-      setError(resp.error?.message || wm("errors.loadBrowserSessionFailed"));
-    }
-  }, [actorId, groupId, wm]);
+  const loadBrowserSession = useCallback(
+    async (gid: string = groupId, aid: string = actorId) => {
+      if ((gid && !aid) || (!gid && aid)) {
+        setBrowserSession(null);
+        return;
+      }
+      const resp = await api.fetchWebModelBrowserSession(gid, aid, { inspect: false });
+      if (resp.ok) {
+        const nextSession = resp.result?.browser_session || null;
+        const key = browserSessionKey(gid, aid);
+        setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession || {} }));
+        const currentSelection = currentSelectionRef.current;
+        if (gid === currentSelection.groupId && aid === currentSelection.actorId)
+          setBrowserSession(nextSession);
+      } else {
+        setError(resp.error?.message || wm("errors.loadBrowserSessionFailed"));
+      }
+    },
+    [actorId, groupId, wm],
+  );
 
   const loadBrowserSessionsForActors = useCallback(async (gid: string, rows: Actor[]) => {
     if (!gid || !rows.length) {
@@ -472,26 +529,35 @@ export default function WebModelConnectorsTab({
     if (selectedActorId && !next[selectedKey]) setBrowserSession(null);
   }, []);
 
-  const loadActorsForGroup = useCallback(async (gid: string) => {
-    if (!gid) {
-      setActors([]);
-      setActorId("");
-      return;
-    }
-    const resp = await api.fetchActors(gid, true, { noCache: true });
-    if (resp.ok) {
-      const nextActors = resp.result?.actors || [];
-      setActors(nextActors);
-      setActorId((current) => {
-        if (current && nextActors.some((actor) => actor.id === current && isStandardChatGptWebModelActor(actor))) return current;
-        return nextActors.find((actor) => isStandardChatGptWebModelActor(actor))?.id || "";
-      });
-    } else {
-      setActors([]);
-      setActorId("");
-      setError(resp.error?.message || wm("errors.loadActorsFailed"));
-    }
-  }, [wm]);
+  const loadActorsForGroup = useCallback(
+    async (gid: string) => {
+      if (!gid) {
+        setActors([]);
+        setActorId("");
+        return;
+      }
+      const resp = await api.fetchActors(gid, true, { noCache: true });
+      if (resp.ok) {
+        const nextActors = resp.result?.actors || [];
+        setActors(nextActors);
+        setActorId((current) => {
+          if (
+            current &&
+            nextActors.some(
+              (actor) => actor.id === current && isStandardChatGptWebModelActor(actor),
+            )
+          )
+            return current;
+          return nextActors.find((actor) => isStandardChatGptWebModelActor(actor))?.id || "";
+        });
+      } else {
+        setActors([]);
+        setActorId("");
+        setError(resp.error?.message || wm("errors.loadActorsFailed"));
+      }
+    },
+    [wm],
+  );
 
   const loadBrowserSurfaceSession = useCallback(async () => {
     const gid = groupId;
@@ -500,42 +566,41 @@ export default function WebModelConnectorsTab({
     if (resp.ok) {
       const nextSession = resp.result.browser_session || null;
       const key = browserSessionKey(gid, aid);
-      setBrowserSessionsByActor((current) => ({
-        ...current,
-        [key]: nextSession || {},
-      }));
+      setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession || {} }));
       const currentSelection = currentSelectionRef.current;
-      if (gid === currentSelection.groupId && aid === currentSelection.actorId) setBrowserSession(nextSession);
+      if (gid === currentSelection.groupId && aid === currentSelection.actorId)
+        setBrowserSession(nextSession);
     } else {
       setError(resp.error?.message || wm("errors.loadBrowserSessionFailed"));
     }
     return resp;
   }, [actorId, groupId, wm]);
 
-  const startBrowserSurfaceSession = useCallback(async (size: { width: number; height: number }) => {
-    const gid = groupId;
-    const aid = actorId;
-    const resp = await api.openWebModelBrowserSurfaceSession({
-      groupId: gid,
-      actorId: aid,
-      width: size.width,
-      height: size.height,
-      inspect: true,
-    });
-    if (resp.ok) {
-      const nextSession = resp.result.browser_session || null;
-      const key = browserSessionKey(gid, aid);
-      setBrowserSessionsByActor((current) => ({
-        ...current,
-        [key]: nextSession || {},
-      }));
-      const currentSelection = currentSelectionRef.current;
-      if (gid === currentSelection.groupId && aid === currentSelection.actorId) setBrowserSession(nextSession);
-    } else {
-      setError(resp.error?.message || wm("errors.openBrowserFailed"));
-    }
-    return resp;
-  }, [actorId, groupId, wm]);
+  const startBrowserSurfaceSession = useCallback(
+    async (size: { width: number; height: number }) => {
+      const gid = groupId;
+      const aid = actorId;
+      const resp = await api.openWebModelBrowserSurfaceSession({
+        groupId: gid,
+        actorId: aid,
+        width: size.width,
+        height: size.height,
+        inspect: true,
+      });
+      if (resp.ok) {
+        const nextSession = resp.result.browser_session || null;
+        const key = browserSessionKey(gid, aid);
+        setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession || {} }));
+        const currentSelection = currentSelectionRef.current;
+        if (gid === currentSelection.groupId && aid === currentSelection.actorId)
+          setBrowserSession(nextSession);
+      } else {
+        setError(resp.error?.message || wm("errors.openBrowserFailed"));
+      }
+      return resp;
+    },
+    [actorId, groupId, wm],
+  );
 
   const loadInitial = useCallback(async () => {
     if (!isActive) return;
@@ -574,9 +639,9 @@ export default function WebModelConnectorsTab({
       const preferredGroupId = String(currentGroupId || "").trim();
       const orderedGroups = preferredGroupId
         ? [
-          ...groups.filter((group) => String(group.group_id || "").trim() === preferredGroupId),
-          ...groups.filter((group) => String(group.group_id || "").trim() !== preferredGroupId),
-        ]
+            ...groups.filter((group) => String(group.group_id || "").trim() === preferredGroupId),
+            ...groups.filter((group) => String(group.group_id || "").trim() !== preferredGroupId),
+          ]
         : groups;
       for (const group of orderedGroups) {
         const gid = String(group.group_id || "").trim();
@@ -584,7 +649,9 @@ export default function WebModelConnectorsTab({
         const resp = await api.fetchActors(gid, true, { noCache: true });
         if (cancelled) return;
         if (!resp.ok) continue;
-        const found = (resp.result?.actors || []).find((actor) => isStandardChatGptWebModelActor(actor));
+        const found = (resp.result?.actors || []).find((actor) =>
+          isStandardChatGptWebModelActor(actor),
+        );
         if (found) {
           setGroupId(gid);
           setActors(resp.result?.actors || []);
@@ -661,12 +728,10 @@ export default function WebModelConnectorsTab({
       if (resp.ok) {
         const nextSession = resp.result?.browser_session || {};
         const key = browserSessionKey(gid, aid);
-        setBrowserSessionsByActor((current) => ({
-          ...current,
-          [key]: nextSession,
-        }));
+        setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession }));
         const currentSelection = currentSelectionRef.current;
-        if (gid === currentSelection.groupId && aid === currentSelection.actorId) setBrowserSession(nextSession);
+        if (gid === currentSelection.groupId && aid === currentSelection.actorId)
+          setBrowserSession(nextSession);
       }
     };
     void refresh();
@@ -698,7 +763,9 @@ export default function WebModelConnectorsTab({
       if (resp.ok) {
         setActorId(aid);
         const replaced = resp.result?.replaced_connector_ids || [];
-        pushNotice(replaced.length ? wm("notices.connectorRotated") : wm("notices.connectorCreated"));
+        pushNotice(
+          replaced.length ? wm("notices.connectorRotated") : wm("notices.connectorCreated"),
+        );
         await loadConnectors();
       } else {
         setError(resp.error?.message || wm("errors.createConnectorFailed"));
@@ -760,12 +827,10 @@ export default function WebModelConnectorsTab({
       if (resp.ok) {
         const nextSession = resp.result?.browser_session || null;
         const key = browserSessionKey(gid, aid);
-        setBrowserSessionsByActor((current) => ({
-          ...current,
-          [key]: nextSession || {},
-        }));
+        setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession || {} }));
         const currentSelection = currentSelectionRef.current;
-        if (gid === currentSelection.groupId && aid === currentSelection.actorId) setBrowserSession(nextSession);
+        if (gid === currentSelection.groupId && aid === currentSelection.actorId)
+          setBrowserSession(nextSession);
         setShowBrowserSurface(true);
         setBrowserSurfaceRestartNonce((value) => value + 1);
         pushNotice(wm("notices.browserRestarted"));
@@ -789,10 +854,7 @@ export default function WebModelConnectorsTab({
       if (resp.ok) {
         const nextSession = resp.result?.browser_session || null;
         const key = browserSessionKey(gid, aid);
-        setBrowserSessionsByActor((current) => ({
-          ...current,
-          [key]: nextSession || {},
-        }));
+        setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession || {} }));
         const currentSelection = currentSelectionRef.current;
         if (gid === currentSelection.groupId && aid === currentSelection.actorId) {
           setBrowserSession(nextSession);
@@ -809,7 +871,10 @@ export default function WebModelConnectorsTab({
     }
   };
 
-  const bindConversation = async (conversationUrl = "", options?: { newChat?: boolean; notice?: string }) => {
+  const bindConversation = async (
+    conversationUrl = "",
+    options?: { newChat?: boolean; notice?: string },
+  ) => {
     if (!groupId || !actorId) return;
     setBrowserBusy(true);
     setError("");
@@ -825,10 +890,7 @@ export default function WebModelConnectorsTab({
       if (resp.ok) {
         const nextSession = resp.result?.browser_session || null;
         const key = browserSessionKey(gid, aid);
-        setBrowserSessionsByActor((current) => ({
-          ...current,
-          [key]: nextSession || {},
-        }));
+        setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession || {} }));
         const currentSelection = currentSelectionRef.current;
         if (gid === currentSelection.groupId && aid === currentSelection.actorId) {
           setBrowserSession(nextSession);
@@ -836,7 +898,10 @@ export default function WebModelConnectorsTab({
           setTargetDraftMode(draft.mode);
           setConversationUrlDraft(draft.url);
           setTargetDraftTouched(false);
-          pushNotice(options?.notice || (options?.newChat ? wm("notices.newChatSelected") : wm("notices.conversationBound")));
+          pushNotice(
+            options?.notice ||
+              (options?.newChat ? wm("notices.newChatSelected") : wm("notices.conversationBound")),
+          );
         }
       } else {
         setError(resp.error?.message || wm("errors.bindConversationFailed"));
@@ -857,9 +922,7 @@ export default function WebModelConnectorsTab({
       });
       return;
     }
-    await bindConversation(targetDraftUrl, {
-      notice: wm("notices.targetSavedExisting"),
-    });
+    await bindConversation(targetDraftUrl, { notice: wm("notices.targetSavedExisting") });
   };
 
   const copyValue = async (value: string, labelText: string) => {
@@ -874,12 +937,19 @@ export default function WebModelConnectorsTab({
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
             {wm("header.kicker")}
           </div>
-          <h3 className="mt-1 text-base font-semibold text-[var(--color-text-primary)]">{wm("header.title")}</h3>
+          <h3 className="mt-1 text-base font-semibold text-[var(--color-text-primary)]">
+            {wm("header.title")}
+          </h3>
           <p className="mt-1 max-w-3xl text-sm leading-6 text-[var(--color-text-tertiary)]">
             {wm("header.description")}
           </p>
         </div>
-        <button type="button" onClick={() => void loadInitial()} disabled={busy} className={secondaryButtonClass("sm")}>
+        <button
+          type="button"
+          onClick={() => void loadInitial()}
+          disabled={busy}
+          className={secondaryButtonClass("sm")}
+        >
           {wm("buttons.refresh")}
         </button>
       </div>
@@ -900,8 +970,15 @@ export default function WebModelConnectorsTab({
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("summary.title")}</div>
-                <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(runtimeStatus.tone)].join(" ")}>
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  {wm("summary.title")}
+                </div>
+                <span
+                  className={[
+                    "inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold",
+                    setupPillClass(runtimeStatus.tone),
+                  ].join(" ")}
+                >
                   {runtimeStatus.label}
                 </span>
                 {queuedCount > 0 ? (
@@ -916,24 +993,53 @@ export default function WebModelConnectorsTab({
             </div>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-            <SetupStatusLine label={wm("summary.webAccess")} detail={webAccessPrerequisiteLabel} tone={webAccessReady ? "ready" : "needs"} />
-            <SetupStatusLine label={wm("summary.actor")} detail={actorPrerequisiteLabel} tone={actorPrerequisiteTone} />
-            <SetupStatusLine label={wm("summary.chatgpt")} detail={browserStatusLabel} tone={browserSummaryTone} />
-            <SetupStatusLine label={wm("summary.mcpApp")} detail={mcpStatusLabel} tone={mcpStatusTone} />
-            <SetupStatusLine label={wm("summary.deliveryTarget")} detail={savedTargetLabel} tone={savedTargetTone} />
+            <SetupStatusLine
+              label={wm("summary.webAccess")}
+              detail={webAccessPrerequisiteLabel}
+              tone={webAccessReady ? "ready" : "needs"}
+            />
+            <SetupStatusLine
+              label={wm("summary.actor")}
+              detail={actorPrerequisiteLabel}
+              tone={actorPrerequisiteTone}
+            />
+            <SetupStatusLine
+              label={wm("summary.chatgpt")}
+              detail={browserStatusLabel}
+              tone={browserSummaryTone}
+            />
+            <SetupStatusLine
+              label={wm("summary.mcpApp")}
+              detail={mcpStatusLabel}
+              tone={mcpStatusTone}
+            />
+            <SetupStatusLine
+              label={wm("summary.deliveryTarget")}
+              detail={savedTargetLabel}
+              tone={savedTargetTone}
+            />
           </div>
         </section>
 
         <section className={settingsWorkspacePanelClass(isDark)}>
-          <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("prerequisites.title")}</div>
+          <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+            {wm("prerequisites.title")}
+          </div>
           <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
             {wm("prerequisites.description")}
           </p>
           <div className="mt-4 grid gap-4 lg:grid-cols-2">
             <div className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-3 first:border-t-0 first:pt-0 lg:border-t-0 lg:pt-0">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("prerequisites.webAccessStepTitle")}</div>
-                <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(webAccessReady ? "ready" : "needs")].join(" ")}>
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  {wm("prerequisites.webAccessStepTitle")}
+                </div>
+                <span
+                  className={[
+                    "inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold",
+                    setupPillClass(webAccessReady ? "ready" : "needs"),
+                  ].join(" ")}
+                >
                   {webAccessPrerequisiteLabel}
                 </span>
               </div>
@@ -944,27 +1050,44 @@ export default function WebModelConnectorsTab({
                 {configuredPublicUrl || wm("prerequisites.noPublicUrl")}
               </div>
               {onOpenWebAccess ? (
-                <button type="button" onClick={onOpenWebAccess} className={[secondaryButtonClass("sm"), "mt-3"].join(" ")}>
+                <button
+                  type="button"
+                  onClick={onOpenWebAccess}
+                  className={[secondaryButtonClass("sm"), "mt-3"].join(" ")}
+                >
                   {wm("buttons.openWebAccess")}
                 </button>
               ) : null}
             </div>
             <div className="min-w-0 border-t border-[var(--glass-border-subtle)] pt-3 lg:border-t-0 lg:pt-0">
               <div className="flex flex-wrap items-center gap-2">
-                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("prerequisites.actorStepTitle")}</div>
-                <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(actorPrerequisiteTone)].join(" ")}>
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                  {wm("prerequisites.actorStepTitle")}
+                </div>
+                <span
+                  className={[
+                    "inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold",
+                    setupPillClass(actorPrerequisiteTone),
+                  ].join(" ")}
+                >
                   {actorPrerequisiteLabel}
                 </span>
               </div>
               <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">
-                {selectedActor ? wm("prerequisites.actorStepReadyDescription") : wm("prerequisites.actorStepDescription")}
+                {selectedActor
+                  ? wm("prerequisites.actorStepReadyDescription")
+                  : wm("prerequisites.actorStepDescription")}
               </p>
               <div className="mt-2 text-xs leading-5 text-[var(--color-text-tertiary)]">
                 {chatGptActor ? (
                   <>
-                    <span className="font-medium text-[var(--color-text-primary)]">{ownerGroupLabel || groupId}</span>
+                    <span className="font-medium text-[var(--color-text-primary)]">
+                      {ownerGroupLabel || groupId}
+                    </span>
                     <span className="mx-1 text-[var(--color-text-muted)]">/</span>
-                    <span className="font-mono text-[var(--color-text-primary)]">{ownerActorLabel || actorId}</span>
+                    <span className="font-mono text-[var(--color-text-primary)]">
+                      {ownerActorLabel || actorId}
+                    </span>
                   </>
                 ) : groups.length ? (
                   <span>{wm("prerequisites.actorCreateHint")}</span>
@@ -983,7 +1106,9 @@ export default function WebModelConnectorsTab({
 
         {!selectedActor ? (
           <section className={settingsWorkspacePanelClass(isDark)}>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{wm("empty.title")}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {wm("empty.title")}
+            </div>
             <p className="mt-1 text-sm leading-6 text-[var(--color-text-tertiary)]">
               {wm("empty.description")}
             </p>
@@ -1002,7 +1127,12 @@ export default function WebModelConnectorsTab({
                 </p>
               </div>
               <div className="flex shrink-0 flex-wrap items-start gap-2 sm:justify-end">
-                <span className={["inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold", setupPillClass(runtimeStatus.tone)].join(" ")}>
+                <span
+                  className={[
+                    "inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold",
+                    setupPillClass(runtimeStatus.tone),
+                  ].join(" ")}
+                >
                   {runtimeStatus.label}
                 </span>
               </div>
@@ -1013,13 +1143,21 @@ export default function WebModelConnectorsTab({
                 <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                   <div className="min-w-0 text-sm leading-6 text-[var(--color-text-secondary)]">
                     <span className="font-semibold text-[var(--color-text-primary)]">
-                      {browserReady ? wm("browser.signedIn") : browserActive ? wm("browser.open") : wm("browser.notOpen")}
+                      {browserReady
+                        ? wm("browser.signedIn")
+                        : browserActive
+                          ? wm("browser.open")
+                          : wm("browser.notOpen")}
                     </span>
                     <span className="ml-2 text-xs text-[var(--color-text-tertiary)]">
-                      {browserReady ? wm("chatSetup.accountReadyHint") : wm("chatSetup.accountOpenHint")}
+                      {browserReady
+                        ? wm("chatSetup.accountReadyHint")
+                        : wm("chatSetup.accountOpenHint")}
                     </span>
                     {selectedBrowserSession?.error ? (
-                      <div className="mt-1 text-xs leading-5 text-rose-600 dark:text-rose-300">{selectedBrowserSession.error}</div>
+                      <div className="mt-1 text-xs leading-5 text-rose-600 dark:text-rose-300">
+                        {selectedBrowserSession.error}
+                      </div>
                     ) : null}
                   </div>
                   <div className="flex shrink-0 flex-wrap gap-2 md:justify-end">
@@ -1027,7 +1165,9 @@ export default function WebModelConnectorsTab({
                       type="button"
                       onClick={() => void openBrowserLogin()}
                       disabled={browserBusy || !groupId || !actorId}
-                      className={browserReady ? secondaryButtonClass("sm") : primaryButtonClass(browserBusy)}
+                      className={
+                        browserReady ? secondaryButtonClass("sm") : primaryButtonClass(browserBusy)
+                      }
                     >
                       {wm("buttons.openChatGpt")}
                     </button>
@@ -1084,7 +1224,12 @@ export default function WebModelConnectorsTab({
                 <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(mcpStatusTone)].join(" ")}>
+                      <span
+                        className={[
+                          "inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold",
+                          setupPillClass(mcpStatusTone),
+                        ].join(" ")}
+                      >
                         {mcpStatusLabel}
                       </span>
                     </div>
@@ -1128,7 +1273,9 @@ export default function WebModelConnectorsTab({
                       <button
                         type="button"
                         onClick={() => void copyValue(selectedMcpUrl, wm("copyLabels.mcpUrl"))}
-                        className={chatGptSeen ? secondaryButtonClass("sm") : primaryButtonClass(false)}
+                        className={
+                          chatGptSeen ? secondaryButtonClass("sm") : primaryButtonClass(false)
+                        }
                       >
                         {wm("buttons.copyMcpUrl")}
                       </button>
@@ -1139,7 +1286,9 @@ export default function WebModelConnectorsTab({
                         disabled={createBusy || !groupId || !actorId || !webAccessReady}
                         className={primaryButtonClass(createBusy)}
                       >
-                        {selectedConnector ? wm("buttons.rotateMcpUrl") : wm("buttons.createMcpUrl")}
+                        {selectedConnector
+                          ? wm("buttons.rotateMcpUrl")
+                          : wm("buttons.createMcpUrl")}
                       </button>
                     )}
                   </div>
@@ -1153,7 +1302,12 @@ export default function WebModelConnectorsTab({
                       <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
                         {wm("target.savedTarget")}
                       </div>
-                      <span className={["inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold", setupPillClass(savedTargetTone)].join(" ")}>
+                      <span
+                        className={[
+                          "inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold",
+                          setupPillClass(savedTargetTone),
+                        ].join(" ")}
+                      >
                         {savedTargetLabel}
                       </span>
                     </div>
@@ -1166,7 +1320,9 @@ export default function WebModelConnectorsTab({
                         : wm("target.notSavedYet")}
                     </div>
                     <div className="mt-3 rounded-md border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2 text-xs leading-5 text-[var(--color-text-secondary)]">
-                      <span className="font-semibold text-[var(--color-text-primary)]">{wm("target.nextDelivery")}</span>
+                      <span className="font-semibold text-[var(--color-text-primary)]">
+                        {wm("target.nextDelivery")}
+                      </span>
                       <span className="ml-2">{nextDeliveryDetail}</span>
                     </div>
                   </div>
@@ -1178,7 +1334,9 @@ export default function WebModelConnectorsTab({
                     <div className="mt-2 break-all text-sm leading-6 text-[var(--color-text-secondary)]">
                       {currentBrowserDetail}
                     </div>
-                    {boundConversationUrl && currentBrowserUrl && currentBrowserUrl !== boundConversationUrl ? (
+                    {boundConversationUrl &&
+                    currentBrowserUrl &&
+                    currentBrowserUrl !== boundConversationUrl ? (
                       <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
                         {wm("target.currentTabNotTarget")}
                       </div>
@@ -1193,14 +1351,20 @@ export default function WebModelConnectorsTab({
                         {wm("target.changeTarget")}
                       </div>
                       <div className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">
-                        {targetDraftDirty ? wm("target.unsavedChanges") : wm("target.noUnsavedChanges")}
+                        {targetDraftDirty
+                          ? wm("target.unsavedChanges")
+                          : wm("target.noUnsavedChanges")}
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => void saveDeliveryTarget()}
                       disabled={targetSaveDisabled}
-                      className={targetDraftDirty ? primaryButtonClass(browserBusy) : secondaryButtonClass("sm")}
+                      className={
+                        targetDraftDirty
+                          ? primaryButtonClass(browserBusy)
+                          : secondaryButtonClass("sm")
+                      }
                     >
                       {wm("buttons.saveTarget")}
                     </button>
@@ -1260,7 +1424,9 @@ export default function WebModelConnectorsTab({
                         </label>
                         <div className="text-xs leading-5 text-[var(--color-text-tertiary)]">
                           {currentBrowserConversationUrl
-                            ? wm("target.currentTab", { target: shortConversationLabel(currentBrowserConversationUrl) })
+                            ? wm("target.currentTab", {
+                                target: shortConversationLabel(currentBrowserConversationUrl),
+                              })
                             : wm("target.currentTabUnavailable")}
                         </div>
                       </div>
@@ -1291,7 +1457,9 @@ export default function WebModelConnectorsTab({
               </SetupSection>
 
               <details className="text-xs leading-5 text-[var(--color-text-tertiary)]">
-                <summary className="cursor-pointer font-semibold text-[var(--color-text-secondary)]">{wm("advanced.summary")}</summary>
+                <summary className="cursor-pointer font-semibold text-[var(--color-text-secondary)]">
+                  {wm("advanced.summary")}
+                </summary>
                 <div className="mt-2 grid gap-x-4 gap-y-1 sm:grid-cols-[140px_1fr]">
                   <span>{wm("advanced.status")}</span>
                   <span>{runtimeStatus.label}</span>
@@ -1314,7 +1482,9 @@ export default function WebModelConnectorsTab({
                   {selectedConnector?.last_error ? (
                     <>
                       <span>{wm("details.lastMcpError")}</span>
-                      <span className="break-all text-rose-600 dark:text-rose-300">{selectedConnector.last_error}</span>
+                      <span className="break-all text-rose-600 dark:text-rose-300">
+                        {selectedConnector.last_error}
+                      </span>
                     </>
                   ) : null}
                   <span>{wm("advanced.targetStatus")}</span>
@@ -1325,15 +1495,28 @@ export default function WebModelConnectorsTab({
                       <span>{healthNextActionText(selectedHealth, wm)}</span>
                     </>
                   ) : null}
-                  <span>{browserActive ? wm("advanced.currentBrowserTab") : wm("advanced.lastBrowserTab")}</span>
-                  <span className="break-all font-mono">{currentBrowserUrl || wm("common.none")}</span>
+                  <span>
+                    {browserActive
+                      ? wm("advanced.currentBrowserTab")
+                      : wm("advanced.lastBrowserTab")}
+                  </span>
+                  <span className="break-all font-mono">
+                    {currentBrowserUrl || wm("common.none")}
+                  </span>
                   <span>{wm("advanced.deliveryTarget")}</span>
-                  <span className="break-all font-mono">{boundConversationUrl || (pendingNewChatBind ? wm("target.newChatNextDelivery") : wm("common.none"))}</span>
-                  {selectedBrowserSession?.last_delivery_status || selectedBrowserSession?.last_delivery_at ? (
+                  <span className="break-all font-mono">
+                    {boundConversationUrl ||
+                      (pendingNewChatBind ? wm("target.newChatNextDelivery") : wm("common.none"))}
+                  </span>
+                  {selectedBrowserSession?.last_delivery_status ||
+                  selectedBrowserSession?.last_delivery_at ? (
                     <>
                       <span>{wm("advanced.lastDelivery")}</span>
                       <span className="break-all font-mono">
-                        {[selectedBrowserSession.last_delivery_status || wm("advanced.recorded"), selectedBrowserSession.last_submission_evidence || ""]
+                        {[
+                          selectedBrowserSession.last_delivery_status || wm("advanced.recorded"),
+                          selectedBrowserSession.last_submission_evidence || "",
+                        ]
                           .filter(Boolean)
                           .join(" · ")}
                       </span>
@@ -1342,19 +1525,25 @@ export default function WebModelConnectorsTab({
                   {selectedBrowserSession?.last_error ? (
                     <>
                       <span>{wm("advanced.lastError")}</span>
-                      <span className="break-all text-rose-600 dark:text-rose-300">{selectedBrowserSession.last_error}</span>
+                      <span className="break-all text-rose-600 dark:text-rose-300">
+                        {selectedBrowserSession.last_error}
+                      </span>
                     </>
                   ) : null}
                   {!boundConversationUrl && pendingNewChatBind ? (
                     <>
                       <span>{wm("advanced.pendingNewChat")}</span>
-                      <span className="break-all font-mono">{pendingNewChatUrl || "https://chatgpt.com/"}</span>
+                      <span className="break-all font-mono">
+                        {pendingNewChatUrl || "https://chatgpt.com/"}
+                      </span>
                     </>
                   ) : null}
                   {selectedBrowserSession?.profile_dir ? (
                     <>
                       <span>{wm("details.profile")}</span>
-                      <span className="break-all font-mono">{selectedBrowserSession.profile_dir}</span>
+                      <span className="break-all font-mono">
+                        {selectedBrowserSession.profile_dir}
+                      </span>
                     </>
                   ) : null}
                   {selectedBrowserSession?.visibility ? (
@@ -1406,7 +1595,6 @@ export default function WebModelConnectorsTab({
             </div>
           </section>
         ) : null}
-
       </div>
     </div>
   );

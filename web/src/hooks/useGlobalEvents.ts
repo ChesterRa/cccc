@@ -25,9 +25,7 @@ const ACTOR_REFRESH_EVENT_KINDS = new Set([
   "group.state_changed",
 ]);
 
-const CAPABILITY_REFRESH_EVENT_KINDS = new Set([
-  "capability.changed",
-]);
+const CAPABILITY_REFRESH_EVENT_KINDS = new Set(["capability.changed"]);
 
 const GROUP_BRIDGE_PAIRING_EVENT_KINDS = new Set([
   "group_bridge.pairing.invite_created",
@@ -44,7 +42,9 @@ export function shouldRefreshGroupsAfterGlobalEventsOpen(_hasConnectedOnce: bool
   return true;
 }
 
-export function shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(_hasConnectedOnce: boolean): boolean {
+export function shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(
+  _hasConnectedOnce: boolean,
+): boolean {
   return true;
 }
 
@@ -70,7 +70,10 @@ export function shouldRefreshActorsAfterGlobalEvent(ev: unknown, selectedGroupId
   return getGlobalEventGroupId(ev) === selected;
 }
 
-export function shouldRefreshCapabilitiesAfterGlobalEvent(ev: unknown, selectedGroupId: string): boolean {
+export function shouldRefreshCapabilitiesAfterGlobalEvent(
+  ev: unknown,
+  selectedGroupId: string,
+): boolean {
   if (!ev || typeof ev !== "object") return false;
   const kind = String((ev as { kind?: unknown }).kind || "").trim();
   if (!CAPABILITY_REFRESH_EVENT_KINDS.has(kind)) return false;
@@ -79,7 +82,10 @@ export function shouldRefreshCapabilitiesAfterGlobalEvent(ev: unknown, selectedG
   return getGlobalEventGroupId(ev) === selected;
 }
 
-export function shouldRefreshGroupBridgePairingAfterGlobalEvent(ev: unknown, selectedGroupId: string): boolean {
+export function shouldRefreshGroupBridgePairingAfterGlobalEvent(
+  ev: unknown,
+  selectedGroupId: string,
+): boolean {
   if (!ev || typeof ev !== "object") return false;
   const kind = String((ev as { kind?: unknown }).kind || "").trim();
   if (!GROUP_BRIDGE_PAIRING_EVENT_KINDS.has(kind)) return false;
@@ -103,7 +109,12 @@ interface UseGlobalEventsOptions {
  * Subscribes to the global events stream to keep sidebar status in sync.
  * Falls back to polling after 3 consecutive SSE errors.
  */
-export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId, refreshCapabilities }: UseGlobalEventsOptions): void {
+export function useGlobalEvents({
+  refreshGroups,
+  refreshActors,
+  selectedGroupId,
+  refreshCapabilities,
+}: UseGlobalEventsOptions): void {
   // Use ref to avoid recreating SSE connection when refreshGroups reference changes
   const refreshGroupsRef = useRef(refreshGroups);
   const refreshActorsRef = useRef(refreshActors);
@@ -209,7 +220,9 @@ export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId,
           if (shouldRefreshCapabilitiesAfterGlobalEvent(ev, selectedGroupIdRef.current || "")) {
             refreshSelectedCapabilities();
           }
-          if (shouldRefreshGroupBridgePairingAfterGlobalEvent(ev, selectedGroupIdRef.current || "")) {
+          if (
+            shouldRefreshGroupBridgePairingAfterGlobalEvent(ev, selectedGroupIdRef.current || "")
+          ) {
             refreshSelectedGroupBridgePairing();
           }
         } catch {
@@ -218,7 +231,8 @@ export function useGlobalEvents({ refreshGroups, refreshActors, selectedGroupId,
       });
       es.onopen = () => {
         const shouldRefresh = shouldRefreshGroupsAfterGlobalEventsOpen(hasConnectedOnceRef.current);
-        const shouldRefreshGroupBridgePairing = shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(hasConnectedOnceRef.current);
+        const shouldRefreshGroupBridgePairing =
+          shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(hasConnectedOnceRef.current);
         errorCount = 0; // Reset on successful connection
         fallbackDelayMs = 10000;
         clearFallbackTimer();

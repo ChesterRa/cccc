@@ -33,7 +33,8 @@ export function normalizeLoadedActorSecretKeys(result?: {
 }): LoadedActorSecretKeys {
   return {
     keys: Array.isArray(result?.keys) ? result.keys : [],
-    masks: result?.masked_values && typeof result.masked_values === "object" ? result.masked_values : {},
+    masks:
+      result?.masked_values && typeof result.masked_values === "object" ? result.masked_values : {},
     error: "",
     loadFailed: false,
   };
@@ -42,7 +43,7 @@ export function normalizeLoadedActorSecretKeys(result?: {
 export function stageActorSecretSet(
   changes: ActorSecretChanges,
   key: string,
-  value: string
+  value: string,
 ): ActorSecretChanges {
   const normalizedKey = key.trim();
   return {
@@ -54,17 +55,17 @@ export function stageActorSecretSet(
 
 export function stageActorSecretSetMany(
   changes: ActorSecretChanges,
-  setVars: Record<string, string>
+  setVars: Record<string, string>,
 ): ActorSecretChanges {
   return Object.entries(setVars).reduce(
     (next, [key, value]) => stageActorSecretSet(next, key, value),
-    changes
+    changes,
   );
 }
 
 export function stageActorSecretUnset(
   changes: ActorSecretChanges,
-  key: string
+  key: string,
 ): ActorSecretChanges {
   const normalizedKey = key.trim();
   const { [normalizedKey]: _removed, ...setVars } = changes.setVars;
@@ -77,41 +78,26 @@ export function stageActorSecretUnset(
   };
 }
 
-export function undoActorSecretSet(
-  changes: ActorSecretChanges,
-  key: string
-): ActorSecretChanges {
+export function undoActorSecretSet(changes: ActorSecretChanges, key: string): ActorSecretChanges {
   const { [key.trim()]: _removed, ...setVars } = changes.setVars;
   return { ...changes, setVars };
 }
 
-export function undoActorSecretUnset(
-  changes: ActorSecretChanges,
-  key: string
-): ActorSecretChanges {
+export function undoActorSecretUnset(changes: ActorSecretChanges, key: string): ActorSecretChanges {
   const normalizedKey = key.trim();
-  return {
-    ...changes,
-    unsetKeys: changes.unsetKeys.filter((item) => item !== normalizedKey),
-  };
+  return { ...changes, unsetKeys: changes.unsetKeys.filter((item) => item !== normalizedKey) };
 }
 
 export function setActorSecretClearAll(
   changes: ActorSecretChanges,
-  clearAll: boolean
+  clearAll: boolean,
 ): ActorSecretChanges {
   return { ...changes, clearAll };
 }
 
-export function buildActorSecretSaveChanges(
-  changes: ActorSecretChanges
-): ActorSecretSaveChanges {
+export function buildActorSecretSaveChanges(changes: ActorSecretChanges): ActorSecretSaveChanges {
   if (changes.clearAll) {
     return { setVars: {}, unsetKeys: [], clear: true };
   }
-  return {
-    setVars: { ...changes.setVars },
-    unsetKeys: [...changes.unsetKeys],
-    clear: false,
-  };
+  return { setVars: { ...changes.setVars }, unsetKeys: [...changes.unsetKeys], clear: false };
 }

@@ -1,7 +1,4 @@
-export const MESSAGE_IMAGE_PREVIEW_HEIGHT_PX = {
-  hero: 224,
-  grid: 128,
-} as const;
+export const MESSAGE_IMAGE_PREVIEW_HEIGHT_PX = { hero: 224, grid: 128 } as const;
 
 export const MESSAGE_IMAGE_GRID_GAP_PX = 8;
 export const MESSAGE_ATTACHMENT_SECTION_LEADING_PX = 25;

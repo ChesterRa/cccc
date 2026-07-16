@@ -1,8 +1,17 @@
 .git
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
 dist/
+build/
+target/
 web/node_modules
 web/dist
 web/.vite
+src/cccc/ports/web/dist
+tests/
 docs/
 screenshots/
 .claude
@@ -11,3 +20,4 @@ screenshots/
 .vscode
 .codex
 .windsurf
+uv.lock

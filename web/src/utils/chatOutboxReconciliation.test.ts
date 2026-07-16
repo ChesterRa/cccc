@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { getOutboxEntry, useChatOutboxStore } from "../stores/chatOutboxStore";
 import type { LedgerEvent } from "../types";
 import {

@@ -2,10 +2,7 @@ import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
 
-type AnimatedShinyTextProps = {
-  className?: string;
-  children: ReactNode;
-};
+type AnimatedShinyTextProps = { className?: string; children: ReactNode };
 
 export function AnimatedShinyText({ className, children }: AnimatedShinyTextProps) {
   return (

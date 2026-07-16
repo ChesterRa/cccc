@@ -1,14 +1,12 @@
 import type { GroupPresentation, PresentationSlot } from "../types";
 
 function buildEmptySlot(index: number): PresentationSlot {
-  return {
-    slot_id: `slot-${index}`,
-    index,
-    card: null,
-  };
+  return { slot_id: `slot-${index}`, index, card: null };
 }
 
-export function ensurePresentation(presentation: GroupPresentation | null | undefined): GroupPresentation {
+export function ensurePresentation(
+  presentation: GroupPresentation | null | undefined,
+): GroupPresentation {
   const slots = Array.isArray(presentation?.slots) ? presentation.slots : [];
   const slotsById = new Map<string, PresentationSlot>();
   for (const slot of slots) {
@@ -34,12 +32,17 @@ export function findPresentationSlot(
 ): PresentationSlot | null {
   const normalizedSlotId = String(slotId || "").trim();
   if (!normalizedSlotId) return null;
-  return ensurePresentation(presentation).slots.find((slot) => slot.slot_id === normalizedSlotId) || null;
+  return (
+    ensurePresentation(presentation).slots.find((slot) => slot.slot_id === normalizedSlotId) || null
+  );
 }
 
 function isPrivateIpv4Hostname(hostname: string): boolean {
   const parts = hostname.split(".").map((part) => Number(part));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
     return false;
   }
   if (parts[0] === 10) return true;
@@ -53,7 +56,9 @@ function isPrivateIpv4Hostname(hostname: string): boolean {
 
 function isIpv4Hostname(hostname: string): boolean {
   const parts = hostname.split(".").map((part) => Number(part));
-  return parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255);
+  return (
+    parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+  );
 }
 
 function hostCandidateFromUrlLikeInput(raw: string): string {
@@ -70,7 +75,8 @@ function isLikelyPresentationUrlInput(raw: string): boolean {
   const trimmed = String(raw || "").trim();
   if (!trimmed) return false;
   if (/\s/.test(trimmed)) return false;
-  if (trimmed.startsWith("/") || trimmed.startsWith("./") || trimmed.startsWith("../")) return false;
+  if (trimmed.startsWith("/") || trimmed.startsWith("./") || trimmed.startsWith("../"))
+    return false;
   if (trimmed.startsWith("//")) return true;
   const hostCandidate = hostCandidateFromUrlLikeInput(trimmed).toLowerCase();
   if (!hostCandidate) return false;
@@ -84,7 +90,11 @@ function isLikelyPresentationUrlInput(raw: string): boolean {
 function shouldDefaultPresentationUrlToHttp(raw: string): boolean {
   const hostCandidate = hostCandidateFromUrlLikeInput(raw).toLowerCase();
   if (!hostCandidate) return false;
-  if (hostCandidate === "localhost" || hostCandidate === "host.docker.internal" || hostCandidate === "[::1]") {
+  if (
+    hostCandidate === "localhost" ||
+    hostCandidate === "host.docker.internal" ||
+    hostCandidate === "[::1]"
+  ) {
     return true;
   }
   if (hostCandidate.endsWith(".local")) return true;
@@ -102,7 +112,9 @@ export function normalizePresentationUrlInput(url: string): string {
   const candidate = `${prefix}${raw}`;
   try {
     const parsed = new URL(candidate);
-    const protocol = String(parsed.protocol || "").trim().toLowerCase();
+    const protocol = String(parsed.protocol || "")
+      .trim()
+      .toLowerCase();
     if ((protocol === "http:" || protocol === "https:") && String(parsed.hostname || "").trim()) {
       return candidate;
     }
@@ -117,8 +129,12 @@ export function isValidPresentationWebUrl(url: string): boolean {
   if (!raw) return false;
   try {
     const parsed = new URL(raw);
-    const protocol = String(parsed.protocol || "").trim().toLowerCase();
-    return (protocol === "http:" || protocol === "https:") && !!String(parsed.hostname || "").trim();
+    const protocol = String(parsed.protocol || "")
+      .trim()
+      .toLowerCase();
+    return (
+      (protocol === "http:" || protocol === "https:") && !!String(parsed.hostname || "").trim()
+    );
   } catch {
     return false;
   }
@@ -129,11 +145,20 @@ export function shouldPreferPresentationLiveBrowser(url: string): boolean {
   if (!raw) return false;
   try {
     const parsed = new URL(raw);
-    const protocol = String(parsed.protocol || "").trim().toLowerCase();
+    const protocol = String(parsed.protocol || "")
+      .trim()
+      .toLowerCase();
     if (protocol !== "http:" && protocol !== "https:") return false;
-    const hostname = String(parsed.hostname || "").trim().toLowerCase();
+    const hostname = String(parsed.hostname || "")
+      .trim()
+      .toLowerCase();
     if (!hostname) return false;
-    if (hostname === "localhost" || hostname === "::1" || hostname === "[::1]" || hostname === "host.docker.internal") {
+    if (
+      hostname === "localhost" ||
+      hostname === "::1" ||
+      hostname === "[::1]" ||
+      hostname === "host.docker.internal"
+    ) {
       return true;
     }
     if (isPrivateIpv4Hostname(hostname)) return true;

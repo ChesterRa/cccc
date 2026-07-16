@@ -25,8 +25,13 @@ export function ActorConfigTabs({ ariaLabel, tabs, activeId, onChange }: ActorCo
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    const nextId = nextActorConfigTabId(tabs.map((tab) => tab.id), activeTab.id, event.key);
-    if (nextId === activeTab.id || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const nextId = nextActorConfigTabId(
+      tabs.map((tab) => tab.id),
+      activeTab.id,
+      event.key,
+    );
+    if (nextId === activeTab.id || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+      return;
     event.preventDefault();
     onChange(nextId);
     focusTab(nextId);
@@ -35,7 +40,11 @@ export function ActorConfigTabs({ ariaLabel, tabs, activeId, onChange }: ActorCo
   return (
     <div className="min-w-0">
       <div className="overflow-x-auto scrollbar-hide">
-        <div role="tablist" aria-label={ariaLabel} className="inline-flex min-w-full items-center gap-1 border-b border-[var(--glass-border-subtle)]">
+        <div
+          role="tablist"
+          aria-label={ariaLabel}
+          className="inline-flex min-w-full items-center gap-1 border-b border-[var(--glass-border-subtle)]"
+        >
           {tabs.map((tab) => {
             const selected = tab.id === activeTab.id;
             return (

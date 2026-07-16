@@ -22,7 +22,8 @@ export function shouldSettleLiveVoiceActivityStream(
   const currentText = stripUncertainSpeakerPrefix(currentPreview.text);
   const text = stripUncertainSpeakerPrefix(nextText);
   if (!currentText || !text) return false;
-  if (currentText === text || currentText.endsWith(text) || text.startsWith(currentText)) return false;
+  if (currentText === text || currentText.endsWith(text) || text.startsWith(currentText))
+    return false;
   if (currentPreview.phase === "final" && nextPhase === "interim") return true;
   if (text.length < Math.max(8, currentText.length * 0.55)) return true;
   return false;
@@ -49,8 +50,9 @@ export function voiceActivityStreamItemFromPreview(
   };
 }
 
-export function newestVoiceActivityItemsFirst<T extends { sortAt: number }>(items: T[], limit: number): T[] {
-  return [...items]
-    .sort((left, right) => right.sortAt - left.sortAt)
-    .slice(0, limit);
+export function newestVoiceActivityItemsFirst<T extends { sortAt: number }>(
+  items: T[],
+  limit: number,
+): T[] {
+  return [...items].sort((left, right) => right.sortAt - left.sortAt).slice(0, limit);
 }

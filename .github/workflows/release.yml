@@ -1,159 +1,278 @@
-name: Release
+name: Release Python
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - 'v*'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            archive: tar.gz
-          - os: macos-13
-            target: x86_64-apple-darwin
-            archive: tar.gz
-          - os: macos-14
-            target: aarch64-apple-darwin
-            archive: tar.gz
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            archive: zip
-    runs-on: ${{ matrix.os }}
+  verify-linux:
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          node-version: "20"
-          cache: npm
+          python-version: '3.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.5'
+          cache: 'npm'
           cache-dependency-path: web/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-      - name: Verify tag version
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-          test "${GITHUB_REF_NAME}" = "v${version}"
-      - name: Build Web UI
-        shell: bash
+
+      - name: Build Web UI (bundled)
         run: |
           npm ci --prefix web
+          npm -C web run check
           npm -C web run build
-      - name: Build Rust distribution
-        run: cargo build --release --locked --target ${{ matrix.target }} -p cccc-cli --bin cccc
-      - name: Resolve package name
-        shell: bash
+          rm -rf src/cccc/ports/web/dist
+          mkdir -p src/cccc/ports/web/dist
+          cp -R web/dist/. src/cccc/ports/web/dist/
+          test -f src/cccc/ports/web/dist/index.html
+
+      - name: Verify tag matches package version
         run: |
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-          echo "PACKAGE_NAME=cccc-v${version}-${{ matrix.target }}" >> "$GITHUB_ENV"
-      - name: Package Unix distribution
-        if: matrix.archive == 'tar.gz'
-        shell: bash
+          python - <<'PY'
+          import os
+          import re
+
+          def _read_pyproject_version(path: str = "pyproject.toml") -> str:
+            in_project = False
+            with open(path, "r", encoding="utf-8") as f:
+              for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                  continue
+                if line.startswith("[") and line.endswith("]"):
+                  in_project = (line == "[project]")
+                  continue
+                if in_project:
+                  m = re.match(r"^version\s*=\s*['\"]([^'\"]+)['\"]\s*(?:#.*)?$", line)
+                  if m:
+                    return m.group(1)
+            return ""
+
+          tag = os.environ.get("GITHUB_REF_NAME", "")
+          if not tag.startswith("v"):
+            raise SystemExit(f"expected tag like v0.4.0 or v0.4.0-rc1, got: {tag!r}")
+
+          tag_body = tag[1:]
+          expected = None
+
+          m = re.fullmatch(r"(\d+\.\d+\.\d+)", tag_body)
+          if m:
+            expected = m.group(1)
+
+          if expected is None:
+            m = re.fullmatch(r"(\d+\.\d+\.\d+)-(alpha|beta|rc)(\d+)", tag_body)
+            if m:
+              base, phase, num = m.group(1), m.group(2), m.group(3)
+              phase_map = {"alpha": "a", "beta": "b", "rc": "rc"}
+              expected = f"{base}{phase_map[phase]}{num}"
+
+          if expected is None:
+            m = re.fullmatch(r"(\d+\.\d+\.\d+)(a|b|rc)(\d+)", tag_body)
+            if m:
+              expected = f"{m.group(1)}{m.group(2)}{m.group(3)}"
+
+          if expected is None:
+            raise SystemExit(f"unsupported tag format: {tag!r}")
+
+          version = _read_pyproject_version()
+          if version != expected:
+            raise SystemExit(f"tag/version mismatch: tag={tag!r} -> expected {expected!r}, pyproject.toml has {version!r}")
+
+          print(f"OK: tag {tag!r} matches pyproject.toml version {version!r}")
+          PY
+
+      - name: Install build deps
         run: |
-          mkdir -p "dist/${PACKAGE_NAME}"
-          cp target/${{ matrix.target }}/release/cccc "dist/${PACKAGE_NAME}/"
-          cp LICENSE README.md docs/rust-migration.md "dist/${PACKAGE_NAME}/"
-          tar -C dist -czf "dist/${PACKAGE_NAME}.tar.gz" "${PACKAGE_NAME}"
-      - name: Package Windows distribution
-        if: matrix.archive == 'zip'
-        shell: pwsh
+          python -m pip install -U pip build twine
+          python -m pip install -e . pytest pytest-timeout
+
+      - name: Run test suite
+        timeout-minutes: 15
         run: |
-          $name = $env:PACKAGE_NAME
-          New-Item -ItemType Directory -Force "dist/$name" | Out-Null
-          Copy-Item "target/${{ matrix.target }}/release/cccc.exe" "dist/$name/"
-          Copy-Item LICENSE,README.md,docs/rust-migration.md "dist/$name/"
-          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
-      - uses: actions/upload-artifact@v4
+          python -m pytest -q --timeout=120 --timeout-method=thread --durations=20
+
+      - name: Build
+        run: |
+          python -m compileall -q src/cccc
+          python -m build
+          python -m twine check dist/*
+
+      - name: Smoke test wheel
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          cccc version
+          python - <<'PY'
+          import importlib.resources as ir
+          import json
+          import subprocess
+
+          web_index = ir.files("cccc.ports.web").joinpath("dist/index.html")
+          help_md = ir.files("cccc.resources").joinpath("cccc-help.md")
+
+          assert web_index.is_file(), f"missing bundled web UI: {web_index}"
+          assert help_md.is_file(), f"missing bundled help playbook: {help_md}"
+
+          proc = subprocess.Popen(
+              ["cccc", "mcp"],
+              stdin=subprocess.PIPE,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+          )
+          assert proc.stdin is not None
+          assert proc.stdout is not None
+
+          proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}) + "\n")
+          proc.stdin.flush()
+          init_resp = json.loads(proc.stdout.readline().strip())
+          assert init_resp.get("id") == 1
+          assert init_resp.get("result", {}).get("serverInfo", {}).get("name") == "cccc-mcp"
+
+          proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}) + "\n")
+          proc.stdin.flush()
+          tools_resp = json.loads(proc.stdout.readline().strip())
+          assert tools_resp.get("id") == 2
+          assert isinstance(tools_resp.get("result", {}).get("tools"), list)
+
+          proc.terminate()
+
+          print("OK: bundled web UI + help playbook + MCP handshake")
+          PY
+
+      - name: Upload verified dist artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: cccc-${{ matrix.target }}
-          path: dist/*.${{ matrix.archive }}
+          name: release-dist
+          path: dist/*
           if-no-files-found: error
 
-  prepare-release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: cccc-*
-          path: artifacts
-          merge-multiple: true
-      - name: Prepare release candidate
-        shell: bash
-        run: |
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-          scripts/package_release_assets.sh artifacts "$version"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cccc-release-candidate
-          path: artifacts/*
-          if-no-files-found: error
-
-  verify-release:
-    needs: prepare-release
+  verify-platform-smoke:
+    needs: verify-linux
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            verifier: unix
-          - os: macos-13
-            target: x86_64-apple-darwin
-            verifier: unix
-          - os: macos-14
-            target: aarch64-apple-darwin
-            verifier: unix
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            verifier: windows
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: cccc-release-candidate
-          path: artifacts
-      - name: Verify Unix release candidate
-        if: matrix.verifier == 'unix'
+            label: Windows
+            run_windows_pty: true
+          - os: macos-latest
+            label: macOS
+            run_windows_pty: false
+    defaults:
+      run:
         shell: bash
-        run: bash scripts/tests/verify_release_unix.sh artifacts "${{ matrix.target }}"
-      - name: Verify Windows release candidate
-        if: matrix.verifier == 'windows'
-        shell: pwsh
-        run: ./scripts/tests/verify_release_windows.ps1 -ArtifactDir artifacts -Target "${{ matrix.target }}"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install smoke deps
+        run: |
+          python -m pip install -U pip pytest pytest-timeout
+          python -m pip install -e .
+
+      - name: Run Windows PTY smoke tests
+        if: matrix.run_windows_pty
+        timeout-minutes: 10
+        run: |
+          python -m pytest -q --timeout=90 --timeout-method=thread tests/test_socket_special_ops.py tests/test_windows_pty_backend.py
+
+      - name: Download verified dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-dist
+          path: dist
+
+      - name: Install verified wheel
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+
+      - name: Smoke test installed wheel on ${{ matrix.label }}
+        run: |
+          cccc version
+          python - <<'PY'
+          import json
+          import subprocess
+
+          proc = subprocess.Popen(
+              ["cccc", "mcp"],
+              stdin=subprocess.PIPE,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+          )
+          assert proc.stdin is not None
+          assert proc.stdout is not None
+
+          proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}) + "\n")
+          proc.stdin.flush()
+          init_resp = json.loads(proc.stdout.readline().strip())
+          assert init_resp.get("id") == 1
+          assert init_resp.get("result", {}).get("serverInfo", {}).get("name") == "cccc-mcp"
+
+          proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}) + "\n")
+          proc.stdin.flush()
+          tools_resp = json.loads(proc.stdout.readline().strip())
+          assert tools_resp.get("id") == 2
+          assert isinstance(tools_resp.get("result", {}).get("tools"), list)
+
+          proc.terminate()
+
+          print("OK: MCP handshake on installed wheel")
+          PY
 
   publish:
-    needs: [prepare-release, verify-release]
+    needs:
+      - verify-linux
+      - verify-platform-smoke
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          name: cccc-release-candidate
-          path: artifacts
-      - name: Resolve release type
-        shell: bash
+          python-version: '3.11'
+
+      - name: Install publish deps
         run: |
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-          prerelease="$(scripts/release_prerelease.sh "$version")"
-          echo "RELEASE_PRERELEASE=$prerelease" >> "$GITHUB_ENV"
-      - uses: softprops/action-gh-release@v2
-        if: github.event_name == 'push'
+          python -m pip install -U pip twine
+
+      - name: Download verified dist artifact
+        uses: actions/download-artifact@v4
         with:
-          files: artifacts/*
-          generate_release_notes: true
-          prerelease: ${{ env.RELEASE_PRERELEASE }}
+          name: release-dist
+          path: dist
+
+      - name: Determine repository
+        id: repo
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)[0-9]+|(a|b|rc)[0-9]+)$ ]]; then
+            echo "name=testpypi" >> $GITHUB_OUTPUT
+            echo "url=https://test.pypi.org/legacy/" >> $GITHUB_OUTPUT
+            echo "token=${{ secrets.TEST_PYPI_API_TOKEN }}" >> $GITHUB_OUTPUT
+          else
+            echo "name=pypi" >> $GITHUB_OUTPUT
+            echo "url=https://upload.pypi.org/legacy/" >> $GITHUB_OUTPUT
+            echo "token=${{ secrets.PYPI_API_TOKEN }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload to ${{ steps.repo.outputs.name }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ steps.repo.outputs.token }}
+        run: |
+          python -m twine upload --repository-url "${{ steps.repo.outputs.url }}" dist/*

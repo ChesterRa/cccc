@@ -394,6 +394,7 @@
   "openMessageContext": "打开消息上下文",
   "closeSearchModal": "关闭搜索窗口",
   "to": "收件人",
+  "senderPerspective": "发送者观点",
   "presentationTitle": "展示区",
   "presentationOpenDockAction": "打开展示区",
   "presentationCloseDockAction": "收起展示区",

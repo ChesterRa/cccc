@@ -375,6 +375,9 @@
     "handoffPlaceholder": "Record a durable handoff or next-owner note...",
     "needsCloseout": "Needs closeout",
     "needsContract": "Needs requirements",
+    "taskDoneGuard": "Complete closeout before marking this task done: {{items}}.",
+    "taskWorkflowNeedsCloseout": "Closeout is still missing {{items}}.",
+    "taskWorkflowNeedsContract": "This task type is still missing {{items}}.",
     "noRelatedTask": "No related task",
     "addDecision": "Add decision",
     "addHandoff": "Add handoff",
@@ -400,9 +403,5 @@
     "clear": "Clear",
     "notesHint": "Use notes for the working record. The built-in requirements stay read-only above."
   },
-  "jumpBar": {
-    "agents": "Agents",
-    "tasks": "Tasks",
-    "direction": "Direction"
-  }
+  "jumpBar": { "agents": "Agents", "tasks": "Tasks", "direction": "Direction" }
 }

@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
-import { actorHasRuntimeResumeFailure, shouldFetchStoppedTerminalTail } from "../../src/components/AgentTab.model";
+import {
+  actorHasRuntimeResumeFailure,
+  shouldFetchStoppedTerminalTail,
+} from "../../src/components/AgentTab.model";
 
 describe("AgentTab stopped terminal tail model", () => {
   it("detects persisted runtime resume failures from actor state", () => {

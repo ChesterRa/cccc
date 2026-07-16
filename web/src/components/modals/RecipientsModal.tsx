@@ -28,14 +28,24 @@ export function RecipientsModal({
 
   const isAck = statusKind === "ack";
   const isReply = statusKind === "reply";
-  const titleText = isReply ? t("recipients.replyStatus") : isAck ? t("recipients.acknowledgements") : t("recipients.recipients");
+  const titleText = isReply
+    ? t("recipients.replyStatus")
+    : isAck
+      ? t("recipients.acknowledgements")
+      : t("recipients.recipients");
 
   const titleContent = (
     <div className="min-w-0 pr-2">
-      <div id="recipients-title" className="text-sm font-semibold truncate text-[var(--color-text-primary)]">
+      <div
+        id="recipients-title"
+        className="text-sm font-semibold truncate text-[var(--color-text-primary)]"
+      >
         {titleText}
       </div>
-      <div className="text-[11px] truncate text-[var(--color-text-muted)] mt-0.5" title={t("recipients.toLabel", { label: toLabel })}>
+      <div
+        className="text-[11px] truncate text-[var(--color-text-muted)] mt-0.5"
+        title={t("recipients.toLabel", { label: toLabel })}
+      >
         {t("recipients.toLabel", { label: toLabel })}
       </div>
     </div>
@@ -57,21 +67,39 @@ export function RecipientsModal({
           <div className="rounded-xl border divide-y border-[var(--glass-border-subtle)] divide-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]">
             {entries.map(([id, cleared]) => (
               <div key={id} className="flex items-center justify-between gap-3 px-4 py-3">
-                <div className="text-sm font-medium truncate text-[var(--color-text-primary)]">{id}</div>
+                <div className="text-sm font-medium truncate text-[var(--color-text-primary)]">
+                  {id}
+                </div>
                 <div
                   className={classNames(
                     "text-sm font-semibold tracking-tight",
-                    cleared ? "text-emerald-600 dark:text-emerald-400" : "text-[var(--color-text-muted)]"
+                    cleared
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : "text-[var(--color-text-muted)]",
                   )}
-                  aria-label={cleared ? (isReply ? "replied" : isAck ? "acknowledged" : "read") : "pending"}
+                  aria-label={
+                    cleared ? (isReply ? "replied" : isAck ? "acknowledged" : "read") : "pending"
+                  }
                 >
-                  {isReply ? (cleared ? "↩" : "○") : isAck ? (cleared ? "✓" : "○") : cleared ? "✓✓" : "✓"}
+                  {isReply
+                    ? cleared
+                      ? "↩"
+                      : "○"
+                    : isAck
+                      ? cleared
+                        ? "✓"
+                        : "○"
+                      : cleared
+                        ? "✓✓"
+                        : "✓"}
                 </div>
               </div>
             ))}
           </div>
         ) : (
-          <div className="text-sm py-6 text-center text-[var(--color-text-muted)]">{t("recipients.noTracking")}</div>
+          <div className="text-sm py-6 text-center text-[var(--color-text-muted)]">
+            {t("recipients.noTracking")}
+          </div>
         )}
 
         <div className="text-[11px] mt-3 text-[var(--color-text-muted)]">

@@ -29,18 +29,21 @@ export function useVirtualScrollState(messages: LedgerEvent[], viewKey: string) 
   const previousContentSizeRef = useRef(0);
   const isContainerResizingRef = useRef(false);
   const forceStickToBottomUntilRef = useRef(0);
-  const prevResetKeyRef = useRef<string>();
+  const prevResetKeyRef = useRef<string | undefined>(undefined);
   const latestSnapshotRef = useRef<ChatScrollSnapshot | null>(null);
-  const getEstimatedSize = useCallback((index: number) => {
-    const message = messages[index];
-    const messageKey = getStableMessageKey(message, index);
-    const measuredHeight = getCachedMessageRowHeight(viewKey, messageKey);
-    if (measuredHeight !== undefined) return measuredHeight;
-    const previous = index > 0 ? messages[index - 1] : undefined;
-    return estimateMessageRowHeight(message, {
-      collapseHeader: getMessageRowGrouping(previous, message).collapseHeader,
-    });
-  }, [messages, viewKey]);
+  const getEstimatedSize = useCallback(
+    (index: number) => {
+      const message = messages[index];
+      const messageKey = getStableMessageKey(message, index);
+      const measuredHeight = getCachedMessageRowHeight(viewKey, messageKey);
+      if (measuredHeight !== undefined) return measuredHeight;
+      const previous = index > 0 ? messages[index - 1] : undefined;
+      return estimateMessageRowHeight(message, {
+        collapseHeader: getMessageRowGrouping(previous, message).collapseHeader,
+      });
+    },
+    [messages, viewKey],
+  );
 
   return {
     isAtBottomRef,

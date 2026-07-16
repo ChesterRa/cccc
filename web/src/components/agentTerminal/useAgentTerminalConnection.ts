@@ -17,7 +17,11 @@ import {
   shouldSuppressTerminalGeneratedInput,
 } from "../../utils/terminalConnection";
 
-export type AgentTerminalConnectionStatus = "disconnected" | "connecting" | "connected" | "reconnecting";
+export type AgentTerminalConnectionStatus =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "reconnecting";
 
 const TERMINAL_SHOW_DELAY_MS = 150;
 const RECONNECT_BASE_DELAY_MS = 1000;
@@ -60,7 +64,8 @@ export function useAgentTerminalConnection(args: {
     setReconnectTrigger,
   } = args;
 
-  const [connectionStatus, setConnectionStatus] = useState<AgentTerminalConnectionStatus>("disconnected");
+  const [connectionStatus, setConnectionStatus] =
+    useState<AgentTerminalConnectionStatus>("disconnected");
   const [terminalReady, setTerminalReady] = useState(false);
   const [terminalWritable, setTerminalWritable] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
@@ -95,7 +100,15 @@ export function useAgentTerminalConnection(args: {
       const timer = window.setTimeout(() => setTerminalWritable(false), 0);
       return () => window.clearTimeout(timer);
     }
-  }, [actorRuntime, canControl, clearTerminalSignal, isHeadless, isRunning, onStatusChange, setTerminalSignal]);
+  }, [
+    actorRuntime,
+    canControl,
+    clearTerminalSignal,
+    isHeadless,
+    isRunning,
+    onStatusChange,
+    setTerminalSignal,
+  ]);
 
   useEffect(() => {
     if (isRunning && !isHeadless) return;
@@ -170,7 +183,10 @@ export function useAgentTerminalConnection(args: {
     const connect = () => {
       if (disposed) return;
       const existingWs = wsRef.current;
-      if (existingWs && (existingWs.readyState === WebSocket.OPEN || existingWs.readyState === WebSocket.CONNECTING)) {
+      if (
+        existingWs &&
+        (existingWs.readyState === WebSocket.OPEN || existingWs.readyState === WebSocket.CONNECTING)
+      ) {
         return;
       }
 
@@ -287,7 +303,11 @@ export function useAgentTerminalConnection(args: {
           }
           outputFilterTailRef.current = tail;
           const safe = tail ? replaced.slice(0, -tail.length) : replaced;
-          const signal = getTerminalSignalFromChunk(terminalSignalBufferRef.current, safe, runtimeRef.current);
+          const signal = getTerminalSignalFromChunk(
+            terminalSignalBufferRef.current,
+            safe,
+            runtimeRef.current,
+          );
           terminalSignalBufferRef.current = signal.nextBuffer;
           if (signal.signalKind) {
             setTerminalSignalRef.current(groupId, actorId, {
@@ -326,12 +346,16 @@ export function useAgentTerminalConnection(args: {
               const writable = Boolean(result.terminal_writable);
               setTerminalWritable(writable);
               if (canControlRef.current && !writable) {
-                handleDecoded("\r\n[terminal] read-only connection; reconnect to take control.\r\n");
+                handleDecoded(
+                  "\r\n[terminal] read-only connection; reconnect to take control.\r\n",
+                );
               }
               return;
             }
             if (frame.type === "input_ack") {
-              const msg = decodeTerminalJsonFrame<{ ok?: boolean; error?: { message?: string } }>(frame.payload);
+              const msg = decodeTerminalJsonFrame<{ ok?: boolean; error?: { message?: string } }>(
+                frame.payload,
+              );
               if (msg?.ok === false) {
                 const message = String(msg.error?.message || "Terminal input was rejected.");
                 handleDecoded(`\r\n[terminal] ${message}\r\n`);
@@ -352,7 +376,9 @@ export function useAgentTerminalConnection(args: {
                 const writable = Boolean(result.terminal_writable);
                 setTerminalWritable(writable);
                 if (canControlRef.current && !writable) {
-                  handleDecoded("\r\n[terminal] read-only connection; reconnect to take control.\r\n");
+                  handleDecoded(
+                    "\r\n[terminal] read-only connection; reconnect to take control.\r\n",
+                  );
                 }
                 return;
               }
@@ -375,7 +401,8 @@ export function useAgentTerminalConnection(args: {
                 onStatusChangeRef.current?.();
               }
             } catch {
-              if (deliveredCursor !== null) deliveredCursor += new TextEncoder().encode(event.data).length;
+              if (deliveredCursor !== null)
+                deliveredCursor += new TextEncoder().encode(event.data).length;
               handleDecoded(event.data);
             }
           }
@@ -384,7 +411,8 @@ export function useAgentTerminalConnection(args: {
         ws.onclose = (event) => {
           if (disposed) return;
           wsRef.current = null;
-          const noRetry = event.code === 1000 || event.code === 4401 || terminalAttachNoRetryRef.current;
+          const noRetry =
+            event.code === 1000 || event.code === 4401 || terminalAttachNoRetryRef.current;
 
           if (!noRetry && isRunningRef.current && !isHeadless) {
             const startupRace = terminalAttachStartupRaceRef.current;
@@ -491,11 +519,5 @@ export function useAgentTerminalConnection(args: {
     requestReconnect();
   }, [activated, isHeadless, isRunning, requestReconnect, termEpoch, terminalRef]);
 
-  return {
-    connectionStatus,
-    terminalReady,
-    terminalWritable,
-    requestReconnect,
-    sendInterrupt,
-  };
+  return { connectionStatus, terminalReady, terminalWritable, requestReconnect, sendInterrupt };
 }

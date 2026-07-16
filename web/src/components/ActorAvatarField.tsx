@@ -42,7 +42,9 @@ export function ActorAvatarField({
   return (
     <div>
       {effectiveLabel ? (
-        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{effectiveLabel}</label>
+        <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">
+          {effectiveLabel}
+        </label>
       ) : null}
       <div className="flex flex-col items-center">
         <button
@@ -84,9 +86,13 @@ export function ActorAvatarField({
 
         <div className="mt-2 min-h-[1.25rem] text-center">
           {uploadBusy ? (
-            <span className="text-[11px] font-medium text-[var(--color-text-muted)]">{t("avatarUploading")}</span>
+            <span className="text-[11px] font-medium text-[var(--color-text-muted)]">
+              {t("avatarUploading")}
+            </span>
           ) : resetBusy ? (
-            <span className="text-[11px] font-medium text-[var(--color-text-muted)]">{t("avatarClearing")}</span>
+            <span className="text-[11px] font-medium text-[var(--color-text-muted)]">
+              {t("avatarClearing")}
+            </span>
           ) : showReset ? (
             <button
               type="button"

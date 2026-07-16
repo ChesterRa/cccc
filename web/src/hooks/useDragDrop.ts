@@ -5,7 +5,10 @@ import { useUIStore, useComposerStore } from "../stores";
 const WEB_MAX_FILE_MB = 100;
 const WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024;
 
-export function partitionAttachments(files: File[], existingBytes = 0): { accepted: File[]; rejected: File[] } {
+export function partitionAttachments(
+  files: File[],
+  existingBytes = 0,
+): { accepted: File[]; rejected: File[] } {
   let acceptedBytes = Math.max(0, existingBytes);
   const accepted: File[] = [];
   const rejected: File[] = [];
@@ -37,7 +40,10 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
       const files = Array.from(incoming || []);
       if (files.length === 0) return;
 
-      const existingBytes = composerFiles.reduce((total, file) => total + Math.max(0, file.size), 0);
+      const existingBytes = composerFiles.reduce(
+        (total, file) => total + Math.max(0, file.size),
+        0,
+      );
       const { accepted: ok, rejected: tooLarge } = partitionAttachments(files, existingBytes);
 
       if (tooLarge.length > 0) {
@@ -50,7 +56,7 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
         appendComposerFiles(ok);
       }
     },
-    [showError, appendComposerFiles, composerFiles]
+    [showError, appendComposerFiles, composerFiles],
   );
 
   // Drag/drop event listeners.
@@ -119,10 +125,5 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
     setDropOverlayOpen(false);
   }, []);
 
-  return {
-    dropOverlayOpen,
-    handleAppendComposerFiles,
-    resetDragDrop,
-    WEB_MAX_FILE_MB,
-  };
+  return { dropOverlayOpen, handleAppendComposerFiles, resetDragDrop, WEB_MAX_FILE_MB };
 }

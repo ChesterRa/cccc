@@ -31,7 +31,7 @@ Claude Code、Codex、ChatGPT Web 等 16 种运行时，在同一个持久协作
 
 <div align="center">
 
-<img src="screenshots/overview.png" alt="CCCC Web UI 概览" width="100%">
+<img src="screenshots/overview.webp" alt="CCCC Web UI 概览" width="100%">
 
 </div>
 

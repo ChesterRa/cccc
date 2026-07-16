@@ -14,10 +14,7 @@ function loadContextModalDetail(
   if (!gid) {
     return Promise.resolve();
   }
-  return fetchContext(gid, {
-    detail: opts?.detail ?? "summary",
-    fresh: opts?.fresh,
-  });
+  return fetchContext(gid, { detail: opts?.detail ?? "summary", fresh: opts?.fresh });
 }
 
 export function openContextModalData(
@@ -38,8 +35,5 @@ export function reloadContextModalData(
   fetchContext: ContextModalFetch,
   groupId: string,
 ): Promise<void> {
-  return loadContextModalDetail(fetchContext, groupId, {
-    detail: "full",
-    fresh: true,
-  });
+  return loadContextModalDetail(fetchContext, groupId, { detail: "full", fresh: true });
 }

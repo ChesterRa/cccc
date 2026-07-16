@@ -8,15 +8,18 @@ import type { LedgerEvent } from "../types";
 function collectEventObjectUrls(event: LedgerEvent | undefined): string[] {
   const data = event?.data;
   const attachments =
-    data && typeof data === "object" && Array.isArray((data as { attachments?: unknown[] }).attachments)
+    data &&
+    typeof data === "object" &&
+    Array.isArray((data as { attachments?: unknown[] }).attachments)
       ? ((data as { attachments?: unknown[] }).attachments as unknown[])
       : [];
   const urls: string[] = [];
   for (const item of attachments) {
     if (!item || typeof item !== "object") continue;
-    const previewUrl = typeof (item as { local_preview_url?: unknown }).local_preview_url === "string"
-      ? String((item as { local_preview_url?: string }).local_preview_url || "").trim()
-      : "";
+    const previewUrl =
+      typeof (item as { local_preview_url?: unknown }).local_preview_url === "string"
+        ? String((item as { local_preview_url?: string }).local_preview_url || "").trim()
+        : "";
     if (previewUrl.startsWith("blob:")) {
       urls.push(previewUrl);
     }
@@ -74,18 +77,8 @@ export const useChatOutboxStore = create<ChatOutboxState>((set) => ({
   enqueue: (groupId, localId, event) =>
     set((state) => {
       const prev = state.entriesByGroup[groupId] || [];
-      const entry: OutboxEntry = {
-        localId,
-        groupId,
-        event,
-        createdAt: Date.now(),
-      };
-      return {
-        entriesByGroup: {
-          ...state.entriesByGroup,
-          [groupId]: [...prev, entry],
-        },
-      };
+      const entry: OutboxEntry = { localId, groupId, event, createdAt: Date.now() };
+      return { entriesByGroup: { ...state.entriesByGroup, [groupId]: [...prev, entry] } };
     }),
 
   remove: (groupId, localId) =>
@@ -101,12 +94,7 @@ export const useChatOutboxStore = create<ChatOutboxState>((set) => ({
       } else {
         revokeEventObjectUrls(removed?.event);
       }
-      return {
-        entriesByGroup: {
-          ...state.entriesByGroup,
-          [groupId]: next,
-        },
-      };
+      return { entriesByGroup: { ...state.entriesByGroup, [groupId]: next } };
     }),
 
   clearGroup: (groupId) =>

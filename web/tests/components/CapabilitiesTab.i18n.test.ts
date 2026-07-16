@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import enChat from "../../src/i18n/locales/en/chat.json";
 import enSettings from "../../src/i18n/locales/en/settings.json";

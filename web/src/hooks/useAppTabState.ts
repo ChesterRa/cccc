@@ -1,7 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { Actor } from "../types";
 
-export function isChatViewportAtBottom(scrollHeight: number, scrollTop: number, clientHeight: number, threshold = 100): boolean {
+export function isChatViewportAtBottom(
+  scrollHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+  threshold = 100,
+): boolean {
   return scrollHeight - scrollTop - clientHeight < threshold;
 }
 
@@ -38,11 +43,14 @@ export function getRenderedActorIds({
   activeTab: string;
   runtimeActors: Actor[];
 }): string[] {
-  const live = new Set(runtimeActors.map((actor) => String(actor.id || "").trim()).filter((id) => id));
+  const live = new Set(
+    runtimeActors.map((actor) => String(actor.id || "").trim()).filter((id) => id),
+  );
   const mountedLiveIds = mountedActorIds.filter((id) => live.has(id));
   if (activeTab === "chat") return mountedLiveIds;
   if (mountedLiveIds.includes(activeTab)) return mountedLiveIds;
-  if (mountedActorIds.includes(activeTab) || live.has(activeTab)) return [...mountedLiveIds, activeTab];
+  if (mountedActorIds.includes(activeTab) || live.has(activeTab))
+    return [...mountedLiveIds, activeTab];
   return mountedLiveIds;
 }
 
@@ -73,7 +81,7 @@ export function useAppTabState({
       }
       setActiveTab(newTab);
     },
-    [setActiveTab]
+    [setActiveTab],
   );
 
   useEffect(() => {

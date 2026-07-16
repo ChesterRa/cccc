@@ -1,14 +1,14 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const repoRoot = resolve(__dirname, "../../../..");
 
 function collectContextKeys(): string[] {
-  const pattern = /tr\("([^"]+)"/g;
+  const pattern = /tr\(\s*"([^"]+)"/g;
   const seen = new Set<string>();
   const queue = [
     resolve(repoRoot, "web/src/components/ContextModal"),

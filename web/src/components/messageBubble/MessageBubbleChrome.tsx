@@ -162,8 +162,12 @@ export function MessageFooter({
             className={classNames(
               "text-[10px] font-semibold tracking-tight",
               cleared
-                ? isDark ? "text-emerald-400" : "text-emerald-600"
-                : isDark ? "text-slate-500" : "text-gray-500",
+                ? isDark
+                  ? "text-emerald-400"
+                  : "text-emerald-600"
+                : isDark
+                  ? "text-slate-500"
+                  : "text-gray-500",
             )}
             aria-label={cleared ? t("read") : t("pending")}
           >
@@ -179,20 +183,31 @@ export function MessageFooter({
     </div>
   );
 
-  const deliveryLabel = webModelDeliveryStatus ? t(`webModelDelivery.${webModelDeliveryStatus.state}`) : "";
+  const deliveryLabel = webModelDeliveryStatus
+    ? t(`webModelDelivery.${webModelDeliveryStatus.state}`)
+    : "";
   const deliveryDetail = String(webModelDeliveryStatus?.detail || "").trim();
-  const deliveryToneClass = webModelDeliveryStatus?.state === "failed"
-    ? "border-rose-500/20 bg-rose-500/8 text-rose-700 dark:text-rose-300"
-    : webModelDeliveryStatus?.state === "submitted" || webModelDeliveryStatus?.state === "bound"
-      ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
-      : "border-amber-500/20 bg-amber-500/8 text-amber-700 dark:text-amber-300";
-  const allRead = visibleReadStatusEntries.length > 0 && visibleReadStatusEntries.every(([_, cleared]) => cleared);
+  const deliveryToneClass =
+    webModelDeliveryStatus?.state === "failed"
+      ? "border-rose-500/20 bg-rose-500/8 text-rose-700 dark:text-rose-300"
+      : webModelDeliveryStatus?.state === "submitted" || webModelDeliveryStatus?.state === "bound"
+        ? "border-emerald-500/20 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
+        : "border-amber-500/20 bg-amber-500/8 text-amber-700 dark:text-amber-300";
+  const allRead =
+    visibleReadStatusEntries.length > 0 &&
+    visibleReadStatusEntries.every(([_, cleared]) => cleared);
 
   return (
     <div
       className={classNames(
         "mt-2 flex flex-wrap items-center gap-2 px-1 text-[10px] transition-opacity",
-        (webModelDeliveryStatus || obligationSummary || ackSummary || visibleReadStatusEntries.length > 0 || replyRequired) ? "justify-between" : "justify-end",
+        webModelDeliveryStatus ||
+          obligationSummary ||
+          ackSummary ||
+          visibleReadStatusEntries.length > 0 ||
+          replyRequired
+          ? "justify-between"
+          : "justify-end",
         "opacity-80 group-hover:opacity-100",
         "text-[var(--color-text-tertiary)]",
       )}
@@ -207,7 +222,10 @@ export function MessageFooter({
             title={deliveryDetail || undefined}
           >
             {webModelDeliveryStatus.state === "submitting" ? (
-              <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-current" aria-hidden="true" />
+              <span
+                className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-current"
+                aria-hidden="true"
+              />
             ) : null}
             <span className="truncate">{deliveryLabel}</span>
           </span>
@@ -219,11 +237,12 @@ export function MessageFooter({
                 "flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1",
                 obligationSummary.done >= obligationSummary.total
                   ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/5"
-                  : "border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/5"
+                  : "border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/5",
               )}
             >
               <span className="text-[10px] font-semibold tracking-tight">
-                {obligationSummary.kind === "reply" ? t("reply") : t("ack")} {obligationSummary.done}/{obligationSummary.total}
+                {obligationSummary.kind === "reply" ? t("reply") : t("ack")}{" "}
+                {obligationSummary.done}/{obligationSummary.total}
               </span>
             </div>
           ) : (
@@ -233,13 +252,14 @@ export function MessageFooter({
                 "touch-target-sm flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1 transition-all duration-150",
                 obligationSummary.done >= obligationSummary.total
                   ? "border-emerald-500/25 bg-emerald-500/6 hover:bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/8 dark:hover:bg-emerald-500/15"
-                  : "border-amber-500/25 bg-amber-500/6 hover:bg-amber-500/12 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/8 dark:hover:bg-amber-500/15"
+                  : "border-amber-500/25 bg-amber-500/6 hover:bg-amber-500/12 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/8 dark:hover:bg-amber-500/15",
               )}
               onClick={onShowRecipients}
               aria-label={t("showObligationStatus")}
             >
               <span className="text-[10px] font-semibold tracking-tight">
-                {obligationSummary.kind === "reply" ? t("reply") : t("ack")} {obligationSummary.done}/{obligationSummary.total}
+                {obligationSummary.kind === "reply" ? t("reply") : t("ack")}{" "}
+                {obligationSummary.done}/{obligationSummary.total}
               </span>
             </button>
           )
@@ -250,7 +270,7 @@ export function MessageFooter({
                 "flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1",
                 ackSummary.done >= ackSummary.total
                   ? "border-emerald-500/20 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/5"
-                  : "border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/5"
+                  : "border-amber-500/20 bg-amber-500/5 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/5",
               )}
             >
               <span className="text-[10px] font-semibold tracking-tight">
@@ -264,7 +284,7 @@ export function MessageFooter({
                 "touch-target-sm flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1 transition-all duration-150",
                 ackSummary.done >= ackSummary.total
                   ? "border-emerald-500/25 bg-emerald-500/6 hover:bg-emerald-500/12 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20 dark:bg-emerald-500/8 dark:hover:bg-emerald-500/15"
-                  : "border-amber-500/25 bg-amber-500/6 hover:bg-amber-500/12 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/8 dark:hover:bg-amber-500/15"
+                  : "border-amber-500/25 bg-amber-500/6 hover:bg-amber-500/12 text-amber-600 dark:text-amber-400 dark:border-amber-500/20 dark:bg-amber-500/8 dark:hover:bg-amber-500/15",
               )}
               onClick={onShowRecipients}
               aria-label={t("showAckStatus")}
@@ -281,7 +301,7 @@ export function MessageFooter({
                 "flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1",
                 allRead
                   ? "border-emerald-500/15 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/15 dark:bg-emerald-500/5"
-                  : "border-black/5 bg-black/[0.025] dark:border-white/8 dark:bg-white/[0.035]"
+                  : "border-black/5 bg-black/[0.025] dark:border-white/8 dark:bg-white/[0.035]",
               )}
             >
               {renderRecipientStatus()}
@@ -293,7 +313,7 @@ export function MessageFooter({
                 "touch-target-sm flex min-w-0 items-center gap-2 rounded-full border px-2.5 py-1 transition-all duration-150",
                 allRead
                   ? "border-emerald-500/15 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/15 dark:bg-emerald-500/5 dark:hover:bg-emerald-500/10"
-                  : "border-black/5 bg-black/[0.025] hover:bg-black/[0.045] dark:border-white/8 dark:bg-white/[0.035] dark:hover:bg-white/[0.055]"
+                  : "border-black/5 bg-black/[0.025] hover:bg-black/[0.045] dark:border-white/8 dark:bg-white/[0.035] dark:hover:bg-white/[0.055]",
               )}
               onClick={onShowRecipients}
               aria-label={t("showRecipientStatus")}
@@ -304,7 +324,12 @@ export function MessageFooter({
         ) : null}
 
         {!obligationSummary && !ackSummary && replyRequired ? (
-          <span className={classNames("rounded-full border border-violet-500/20 bg-violet-500/8 px-2.5 py-1 text-[10px] font-semibold tracking-tight", "text-violet-700 dark:text-violet-300")}>
+          <span
+            className={classNames(
+              "rounded-full border border-violet-500/20 bg-violet-500/8 px-2.5 py-1 text-[10px] font-semibold tracking-tight",
+              "text-violet-700 dark:text-violet-300",
+            )}
+          >
             {t("needReply")}
           </span>
         ) : null}

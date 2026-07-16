@@ -19,8 +19,5 @@ export function useTextScale() {
     setTextScaleState(normalizeTextScale(value));
   };
 
-  return {
-    textScale,
-    setTextScale,
-  };
+  return { textScale, setTextScale };
 }

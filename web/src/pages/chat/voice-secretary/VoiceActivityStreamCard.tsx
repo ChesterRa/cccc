@@ -60,9 +60,7 @@ export function VoiceActivityStreamCard({
         {item.text}
       </div>
       {title ? (
-        <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">
-          {title}
-        </div>
+        <div className="mt-1 truncate text-[10px] text-[var(--color-text-muted)]">{title}</div>
       ) : null}
     </div>
   );

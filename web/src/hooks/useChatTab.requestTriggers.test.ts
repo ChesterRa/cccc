@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import * as api from "../services/api";
 import { shouldBlockLocalCrossGroupAttachments } from "../utils/chatSend";
@@ -31,7 +31,9 @@ describe("useChatTab request triggers", () => {
   it("delegates message-body mention suggestions to the focused builder", () => {
     expect(source).not.toContain("buildGroupMentionSuggestions");
     expect(source).toContain("buildComposerMentionSuggestions");
-    expect(source).toMatch(/const mentionSuggestions = useMemo\(\(\) => \{[\s\S]*return buildComposerMentionSuggestions\(\{/);
+    expect(source).toMatch(
+      /const mentionSuggestions = useMemo\(\(\) => \{[\s\S]*return buildComposerMentionSuggestions\(\{/,
+    );
     expect(source).toContain("kind: mentionKind");
     expect(source).toContain("filter: mentionFilter");
     expect(source).toContain('mentionActorScope === "selected" ? actors : recipientActors');
@@ -72,9 +74,7 @@ describe("useChatTab request triggers", () => {
       replyTarget: null,
       remoteReplyGroupId: "",
       remoteReplyTo: [],
-      sendPlanTargets: [
-        { groupId: "g_remote", isCrossGroup: true, source: "selected_group" },
-      ],
+      sendPlanTargets: [{ groupId: "g_remote", isCrossGroup: true, source: "selected_group" }],
       sendsCrossGroup: true,
     });
 
@@ -128,14 +128,18 @@ describe("useChatTab request triggers", () => {
 
   it("allows attachment sends to remote group chips while blocking local cross-group attachments", async () => {
     const file = new File(["payload"], "payload.txt", { type: "text/plain" });
-    expect(shouldBlockLocalCrossGroupAttachments({
-      attachmentCount: 1,
-      targets: [{ isCrossGroup: true, isRemote: false }],
-    })).toBe(true);
-    expect(shouldBlockLocalCrossGroupAttachments({
-      attachmentCount: 1,
-      targets: [{ isCrossGroup: true, isRemote: true }],
-    })).toBe(false);
+    expect(
+      shouldBlockLocalCrossGroupAttachments({
+        attachmentCount: 1,
+        targets: [{ isCrossGroup: true, isRemote: false }],
+      }),
+    ).toBe(true);
+    expect(
+      shouldBlockLocalCrossGroupAttachments({
+        attachmentCount: 1,
+        targets: [{ isCrossGroup: true, isRemote: true }],
+      }),
+    ).toBe(false);
     vi.mocked(api.sendCrossGroupMessage).mockResolvedValue({ ok: true, result: {} });
 
     await dispatchPreparedMessage({
@@ -151,13 +155,15 @@ describe("useChatTab request triggers", () => {
       replyTarget: null,
       remoteReplyGroupId: "",
       remoteReplyTo: [],
-      sendPlanTargets: [{
-        groupId: "g_remote",
-        isCrossGroup: true,
-        isRemote: true,
-        source: "remote_chip",
-        recipientTokens: ["@foreman"],
-      }],
+      sendPlanTargets: [
+        {
+          groupId: "g_remote",
+          isCrossGroup: true,
+          isRemote: true,
+          source: "remote_chip",
+          recipientTokens: ["@foreman"],
+        },
+      ],
       sendsCrossGroup: true,
     });
 

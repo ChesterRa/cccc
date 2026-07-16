@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildComposerMentionSuggestions,
@@ -30,7 +30,10 @@ describe("resolveComposerMentionContext", () => {
   });
 
   it("#self-agent @ (valid group, same segment) → destination/target group", () => {
-    expect(ctx("ask #self-agent to help @")).toEqual({ scope: "destination", mentionTargetGroupId: "self-agent" });
+    expect(ctx("ask #self-agent to help @")).toEqual({
+      scope: "destination",
+      mentionTargetGroupId: "self-agent",
+    });
   });
 
   it("invalid #not-a-group @ → selected/local", () => {
@@ -38,7 +41,10 @@ describe("resolveComposerMentionContext", () => {
   });
 
   it("a # on a previous line does not pollute @ on the next line", () => {
-    expect(ctx("#self-agent first line\nsecond line @")).toEqual({ scope: "selected", mentionTargetGroupId: "" });
+    expect(ctx("#self-agent first line\nsecond line @")).toEqual({
+      scope: "selected",
+      mentionTargetGroupId: "",
+    });
   });
 });
 
@@ -129,12 +135,7 @@ describe("buildComposerMentionSuggestions", () => {
     expect(remoteGroups[0]?.group_bridge_access_level).toBe("read");
 
     const staleRemoteGroups = buildGroupBridgeRouteGroups([
-      {
-        trust_id: "ptrust_2",
-        status: "active",
-        group_id: "g_owner",
-        remote_group_id: "g_unknown",
-      },
+      { trust_id: "ptrust_2", status: "active", group_id: "g_owner", remote_group_id: "g_unknown" },
     ]);
     expect(staleRemoteGroups[0]?.group_bridge_access_level).toBe("unknown");
 
@@ -235,12 +236,14 @@ describe("buildComposerMentionSuggestions", () => {
       groups: remoteGroups,
     });
 
-    expect(items[0]).toEqual(expect.objectContaining({
-      label: "remote.example",
-      badgeKind: "remote",
-      description: "g_0fb5f39478cc",
-      meta: "peer_00e780d5eb7bad9dea41bba479a9c292",
-    }));
+    expect(items[0]).toEqual(
+      expect.objectContaining({
+        label: "remote.example",
+        badgeKind: "remote",
+        description: "g_0fb5f39478cc",
+        meta: "peer_00e780d5eb7bad9dea41bba479a9c292",
+      }),
+    );
   });
 
   it("inserts the readable remote group label for Group Bridge # suggestions", () => {
@@ -270,27 +273,33 @@ describe("hasComposerGroupRouteToken", () => {
   it("keeps a destination group active only while its # route token remains", () => {
     const groups = [{ group_id: "g_sdk", title: "cccc-sdk", topic: "SDK integration" }];
 
-    expect(hasComposerGroupRouteToken({
-      text: "#cccc-sdk @foreman ",
-      destGroupId: "g_sdk",
-      selectedGroupId: "g_current",
-      groups,
-    })).toBe(true);
-    expect(hasComposerGroupRouteToken({
-      text: "@foreman ",
-      destGroupId: "g_sdk",
-      selectedGroupId: "g_current",
-      groups,
-    })).toBe(false);
+    expect(
+      hasComposerGroupRouteToken({
+        text: "#cccc-sdk @foreman ",
+        destGroupId: "g_sdk",
+        selectedGroupId: "g_current",
+        groups,
+      }),
+    ).toBe(true);
+    expect(
+      hasComposerGroupRouteToken({
+        text: "@foreman ",
+        destGroupId: "g_sdk",
+        selectedGroupId: "g_current",
+        groups,
+      }),
+    ).toBe(false);
   });
 
   it("does not treat partial issue-style hashes as group route tokens", () => {
-    expect(hasComposerGroupRouteToken({
-      text: "参考 #g_sdk-issue @foreman",
-      destGroupId: "g_sdk",
-      selectedGroupId: "g_current",
-      groups: [{ group_id: "g_sdk", title: "cccc-sdk" }],
-    })).toBe(false);
+    expect(
+      hasComposerGroupRouteToken({
+        text: "参考 #g_sdk-issue @foreman",
+        destGroupId: "g_sdk",
+        selectedGroupId: "g_current",
+        groups: [{ group_id: "g_sdk", title: "cccc-sdk" }],
+      }),
+    ).toBe(false);
   });
 });
 
@@ -301,26 +310,28 @@ describe("getComposerGroupRouteDestination", () => {
   ];
 
   it("uses the last complete #group route token as the destination", () => {
-    expect(getComposerGroupRouteDestination({
-      text: "#first-group @foreman #second-group @peer ",
-      selectedGroupId: "g_current",
-      groups,
-    })).toBe("g_second");
+    expect(
+      getComposerGroupRouteDestination({
+        text: "#first-group @foreman #second-group @peer ",
+        selectedGroupId: "g_current",
+        groups,
+      }),
+    ).toBe("g_second");
   });
 
   it("returns to the previous #group route when the later route is removed", () => {
-    expect(getComposerGroupRouteDestination({
-      text: "#first-group @foreman ",
-      selectedGroupId: "g_current",
-      groups,
-    })).toBe("g_first");
+    expect(
+      getComposerGroupRouteDestination({
+        text: "#first-group @foreman ",
+        selectedGroupId: "g_current",
+        groups,
+      }),
+    ).toBe("g_first");
   });
 
   it("falls back to the selected group when no complete #group route remains", () => {
-    expect(getComposerGroupRouteDestination({
-      text: "@foreman ",
-      selectedGroupId: "g_current",
-      groups,
-    })).toBe("g_current");
+    expect(
+      getComposerGroupRouteDestination({ text: "@foreman ", selectedGroupId: "g_current", groups }),
+    ).toBe("g_current");
   });
 });

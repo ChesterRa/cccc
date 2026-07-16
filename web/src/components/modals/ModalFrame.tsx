@@ -43,7 +43,14 @@ export function ModalFrame({
       } ${floatingCloseButtonClassName}`}
       aria-label={closeAriaLabel}
     >
-      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden="true">
+      <svg
+        className="h-4 w-4"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth={2.5}
+        aria-hidden="true"
+      >
         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
       </svg>
     </button>
@@ -54,7 +61,9 @@ export function ModalFrame({
       className={`fixed inset-0 z-50 flex items-stretch justify-center p-0 transition-[opacity,visibility] duration-200 sm:items-center sm:p-4 ${
         isOpen ? "visible opacity-100 animate-fade-in" : "pointer-events-none invisible opacity-0"
       }`}
-      style={isOpen ? { backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" } : undefined}
+      style={
+        isOpen ? { backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)" } : undefined
+      }
       aria-hidden={isOpen ? undefined : true}
     >
       <div
@@ -65,7 +74,9 @@ export function ModalFrame({
 
       <div
         className={`relative flex flex-col rounded-none border shadow-2xl transition-[opacity,transform] duration-200 sm:rounded-[28px] glass-modal ${panelClassName} ${
-          isOpen ? "opacity-100 animate-scale-in" : "pointer-events-none translate-y-2 scale-[0.985] opacity-0"
+          isOpen
+            ? "opacity-100 animate-scale-in"
+            : "pointer-events-none translate-y-2 scale-[0.985] opacity-0"
         }`}
         ref={modalRef}
         role="dialog"
@@ -89,10 +100,10 @@ export function ModalFrame({
             </div>
           </div>
         ) : (
-          <div className={`pointer-events-none absolute right-4 top-4 z-10 sm:right-5 sm:top-5 ${floatingCloseClassName}`}>
-            <div className="pointer-events-auto">
-              {closeButtonElement}
-            </div>
+          <div
+            className={`pointer-events-none absolute right-4 top-4 z-10 sm:right-5 sm:top-5 ${floatingCloseClassName}`}
+          >
+            <div className="pointer-events-auto">{closeButtonElement}</div>
           </div>
         )}
 

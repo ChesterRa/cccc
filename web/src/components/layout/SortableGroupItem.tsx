@@ -57,10 +57,7 @@ export function SortableGroupItem({
     isDragging,
   } = useSortable({ id: gid, disabled: dragDisabled });
 
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
+  const style = { transform: CSS.Transform.toString(transform), transition };
 
   const status = getGroupStatusFromSource(group);
   const { refs, floatingStyles, context } = useFloating({
@@ -76,10 +73,13 @@ export function SortableGroupItem({
   const { getFloatingProps } = useInteractions([dismiss, role]);
   const setReference = useCallback((node: HTMLElement | null) => refs.setReference(node), [refs]);
   const setFloating = useCallback((node: HTMLElement | null) => refs.setFloating(node), [refs]);
-  const setCombinedActivatorRef = useCallback((node: HTMLButtonElement | null) => {
-    setActivatorNodeRef(node);
-    setReference(node);
-  }, [setActivatorNodeRef, setReference]);
+  const setCombinedActivatorRef = useCallback(
+    (node: HTMLButtonElement | null) => {
+      setActivatorNodeRef(node);
+      setReference(node);
+    },
+    [setActivatorNodeRef, setReference],
+  );
   const dragListeners = useMemo(() => listeners ?? {}, [listeners]);
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const suppressMenuClickRef = useRef(false);
@@ -92,9 +92,7 @@ export function SortableGroupItem({
           className={classNames(
             "w-11 h-11 rounded-xl flex items-center justify-center transition-all relative",
             isDragging && "opacity-50 shadow-lg",
-            isActive
-              ? "glass-group-item-active"
-              : "glass-group-item hover:scale-105"
+            isActive ? "glass-group-item-active" : "glass-group-item hover:scale-105",
           )}
           onClick={onSelect}
           onMouseEnter={onWarm}
@@ -106,38 +104,35 @@ export function SortableGroupItem({
               "text-sm font-semibold",
               isActive
                 ? "text-[rgb(35,36,37)] dark:text-white"
-                : "text-[var(--color-text-secondary)]"
+                : "text-[var(--color-text-secondary)]",
             )}
           >
             {initial}
           </span>
           {/* Status dot */}
-          <span className={classNames(
-            "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-[var(--color-bg-primary)]",
-            status.dotClass
-          )} />
+          <span
+            className={classNames(
+              "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-[var(--color-bg-primary)]",
+              status.dotClass,
+            )}
+          />
         </button>
       </div>
     );
   }
 
   return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        className={classNames(
-          "group/item relative",
-          isDragging && "z-50"
-        )}
-      >
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={classNames("group/item relative", isDragging && "z-50")}
+    >
       <div
         className={classNames(
           "w-full px-3 py-3 rounded-xl transition-all min-h-[48px] flex items-center gap-2 relative",
           isDragging && "opacity-70 shadow-lg ring-2 ring-[rgb(143,163,187)]/24",
-          isActive
-            ? "glass-group-item-active"
-            : "glass-group-item",
-          isArchived && !isActive && "opacity-90"
+          isActive ? "glass-group-item-active" : "glass-group-item",
+          isArchived && !isActive && "opacity-90",
         )}
         role="button"
         tabIndex={0}
@@ -148,7 +143,7 @@ export function SortableGroupItem({
           onSelect();
         }}
       >
-        {(onMenuAction && menuActionLabel) ? (
+        {onMenuAction && menuActionLabel ? (
           <button
             type="button"
             {...attributes}
@@ -157,10 +152,12 @@ export function SortableGroupItem({
             className={classNames(
               "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent bg-transparent transition-all duration-150 touch-none",
               "cursor-grab active:cursor-grabbing text-[var(--color-text-tertiary)] opacity-0 md:group-hover/item:opacity-100 focus-visible:opacity-100",
-              menuOpen && "opacity-100 bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-sm",
+              menuOpen &&
+                "opacity-100 bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-sm",
               !menuOpen && isActive && "opacity-100 text-[rgb(35,36,37)] dark:text-white",
-              !menuOpen && "hover:bg-[var(--glass-tab-bg-hover)] hover:border-[var(--glass-border-subtle)] hover:text-[var(--color-text-primary)]",
-              isDragging && "!opacity-100"
+              !menuOpen &&
+                "hover:bg-[var(--glass-tab-bg-hover)] hover:border-[var(--glass-border-subtle)] hover:text-[var(--color-text-primary)]",
+              isDragging && "!opacity-100",
             )}
             aria-label={menuAriaLabel || menuActionLabel}
             title={menuAriaLabel || menuActionLabel}
@@ -204,7 +201,7 @@ export function SortableGroupItem({
               "cursor-grab active:cursor-grabbing text-[var(--color-text-tertiary)] opacity-0 md:group-hover/item:opacity-100 focus-visible:opacity-100",
               "hover:bg-[var(--glass-tab-bg-hover)] hover:border-[var(--glass-border-subtle)] hover:text-[var(--color-text-primary)]",
               isActive && "opacity-100 text-[rgb(35,36,37)] dark:text-white",
-              isDragging && "!opacity-100"
+              isDragging && "!opacity-100",
             )}
             aria-label="Drag group"
             onPointerDown={(event) => event.stopPropagation()}
@@ -220,16 +217,15 @@ export function SortableGroupItem({
         >
           <div className="flex items-center gap-2 min-w-0">
             {/* Status dot */}
-            <span className={classNames(
-              "w-2.5 h-2.5 rounded-full flex-shrink-0",
-              status.dotClass
-            )} />
+            <span
+              className={classNames("w-2.5 h-2.5 rounded-full flex-shrink-0", status.dotClass)}
+            />
             <span
               className={classNames(
                 "text-sm font-medium truncate",
                 isActive
                   ? "text-[rgb(35,36,37)] dark:text-white"
-                  : "text-[var(--color-text-primary)] group-hover/item:text-[var(--color-text-primary)]"
+                  : "text-[var(--color-text-primary)] group-hover/item:text-[var(--color-text-primary)]",
               )}
             >
               {group.title || gid}
@@ -250,7 +246,7 @@ export function SortableGroupItem({
                   type="button"
                   className={classNames(
                     "w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
-                    "text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                    "text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]",
                   )}
                   onClick={() => {
                     setMenuOpen(false);

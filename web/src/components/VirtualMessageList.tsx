@@ -36,9 +36,7 @@ import { cacheMessageRowHeight } from "./virtualMessageList/rowHeightCache";
 
 export type { VirtualMessageListProps } from "./virtualMessageList/types";
 
-type VirtualMessageListInnerProps = VirtualMessageListProps & {
-  resetKey: string;
-};
+type VirtualMessageListInnerProps = VirtualMessageListProps & { resetKey: string };
 
 const VirtualMessageListInner = function VirtualMessageListInner({
   messages,
@@ -181,20 +179,14 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         const msg = displayMessages[anchorItem.index];
         const anchorId = msg?.id ? String(msg.id) : "";
         if (!anchorId) return null;
-        return {
-          anchorId,
-          offsetPx: Math.max(0, scrollTop - anchorItem.start),
-        };
+        return { anchorId, offsetPx: Math.max(0, scrollTop - anchorItem.start) };
       }
 
       if (renderedRows.length <= 0) return null;
       const anchorRow = renderedRows[0];
       const anchorId = String(anchorRow.dataset.messageId || "").trim();
       if (!anchorId) return null;
-      return {
-        anchorId,
-        offsetPx: Math.max(0, scrollTop - anchorRow.offsetTop),
-      };
+      return { anchorId, offsetPx: Math.max(0, scrollTop - anchorRow.offsetTop) };
     },
     [displayMessages, shouldVirtualize, virtualizer],
   );
@@ -205,13 +197,19 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     return shouldVirtualize ? virtualizer.getTotalSize() : el.scrollHeight;
   }, [shouldVirtualize, virtualizer]);
 
-  const setAtBottom = useCallback((next: boolean) => {
-    isAtBottomRef.current = next;
-  }, [isAtBottomRef]);
+  const setAtBottom = useCallback(
+    (next: boolean) => {
+      isAtBottomRef.current = next;
+    },
+    [isAtBottomRef],
+  );
 
-  const setFollowMode = useCallback((next: ChatFollowMode) => {
-    followModeRef.current = next;
-  }, [followModeRef]);
+  const setFollowMode = useCallback(
+    (next: ChatFollowMode) => {
+      followModeRef.current = next;
+    },
+    [followModeRef],
+  );
 
   const notifyRestoredAwayFromBottom = useCallback(() => {
     onScrollChange?.(false);
@@ -295,7 +293,13 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const el = parentRef.current;
     if (!el || displayMessages.length <= 0) return latestSnapshotRef.current;
     if (checkIsAtBottom()) {
-      return { mode: "follow", anchorId: "", offsetPx: 0, scrollTop: el.scrollTop, updatedAt: Date.now() };
+      return {
+        mode: "follow",
+        anchorId: "",
+        offsetPx: 0,
+        scrollTop: el.scrollTop,
+        updatedAt: Date.now(),
+      };
     }
     const anchor = getAnchorSnapshot(el.scrollTop);
     if (!anchor) return latestSnapshotRef.current;
@@ -418,15 +422,18 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     return forceStickToBottomUntilRef.current > performance.now();
   }, [forceStickToBottomUntilRef]);
 
-  const wasFollowingBeforeContentChange = useCallback((previousContentSize?: number) => {
-    const el = parentRef.current;
-    if (!el) return false;
-    return wasAtBottomBeforeContentChange({
-      previousContentSize: previousContentSize ?? previousContentSizeRef.current,
-      scrollTop: el.scrollTop,
-      clientHeight: el.clientHeight,
-    });
-  }, [previousContentSizeRef]);
+  const wasFollowingBeforeContentChange = useCallback(
+    (previousContentSize?: number) => {
+      const el = parentRef.current;
+      if (!el) return false;
+      return wasAtBottomBeforeContentChange({
+        previousContentSize: previousContentSize ?? previousContentSizeRef.current,
+        scrollTop: el.scrollTop,
+        clientHeight: el.clientHeight,
+      });
+    },
+    [previousContentSizeRef],
+  );
 
   const shouldAutoScrollNow = useCallback(
     (opts?: { previousContentSize?: number }) => {
@@ -694,7 +701,6 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         : null,
       "",
     );
-
   }, [
     cancelPendingBottomScroll,
     didInitialScrollRef,

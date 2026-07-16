@@ -57,13 +57,15 @@ export function useAppGroupLifecycle({
   useEffect(() => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid) return;
-    if (shouldResetDestGroupForLifecycle({
-      selectedGroupId: gid,
-      destGroupId,
-      sendGroupId,
-      hasReplyTarget,
-      hasComposerFiles,
-    })) {
+    if (
+      shouldResetDestGroupForLifecycle({
+        selectedGroupId: gid,
+        destGroupId,
+        sendGroupId,
+        hasReplyTarget,
+        hasComposerFiles,
+      })
+    ) {
       setDestGroupId(gid);
     }
   }, [destGroupId, hasComposerFiles, hasReplyTarget, selectedGroupId, sendGroupId, setDestGroupId]);

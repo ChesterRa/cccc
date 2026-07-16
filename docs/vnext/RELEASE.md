@@ -16,7 +16,7 @@ The GitHub Actions workflow builds and uploads:
 
 - Python `sdist` + `wheel`
 - Bundled Web UI assets (built from `web/` and packaged under `cccc/ports/web/dist/`)
-- Embedded MCP server (`cccc mcp`) + help playbook (`cccc_help`, sourced from `cccc/resources/cccc-help.md`)
+- Embedded MCP server (`cccc mcp`) + protocol reference (`cccc_help`, sourced from `cccc/resources/cccc-help.md`)
 
 ## Tag ↔ Version conventions
 

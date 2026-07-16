@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import type { Actor } from "../../types";
 import { resolveRuntimeInspectorActor } from "./appShellRuntimeActors";
@@ -10,7 +10,9 @@ describe("runtime inspector actor stability", () => {
       "claude-1": { id: "claude-1", role: "peer", runtime: "claude", runner: "pty" },
     };
 
-    expect(resolveRuntimeInspectorActor("claude-1", currentActors, mountedActorsById)).toBe(mountedActorsById["claude-1"]);
+    expect(resolveRuntimeInspectorActor("claude-1", currentActors, mountedActorsById)).toBe(
+      mountedActorsById["claude-1"],
+    );
   });
 
   it("does not fall back to a mounted actor from another group", () => {

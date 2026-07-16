@@ -25,6 +25,7 @@ import {
   type TaskRefStateKey,
 } from "../utils/taskRefs";
 import { isRedundantWecomImagePlaceholder } from "../utils/messageAttachments";
+import { getMessageInsight } from "../utils/messagePerspective";
 import {
   destinationChipKey,
   getDelegationDisplayText,
@@ -158,6 +159,7 @@ function MessageBubbleBody({
   taskById,
   messageText,
   bodyText,
+  insight,
   shouldRenderMarkdown,
   blobAttachments,
   blobGroupId,
@@ -189,6 +191,7 @@ function MessageBubbleBody({
   taskById: Map<string, Task>;
   messageText: string;
   bodyText: string;
+  insight: string;
   shouldRenderMarkdown: boolean;
   blobAttachments: Array<{
     kind: string;
@@ -389,6 +392,17 @@ function MessageBubbleBody({
         isDark={isDark}
       />
 
+      {insight ? (
+        <div className={supportingSectionClass}>
+          <div className="mb-1.5 text-[10px] font-semibold uppercase opacity-50">
+            {t("senderPerspective")}
+          </div>
+          <div className="max-w-full break-words whitespace-pre-wrap text-[var(--color-text-secondary)] [overflow-wrap:anywhere]">
+            {insight}
+          </div>
+        </div>
+      ) : null}
+
       <MessageAttachments
         attachments={blobAttachments}
         blobGroupId={blobGroupId}
@@ -507,6 +521,7 @@ export const MessageBubble = memo(
 
     // Treat data as ChatMessageData.
     const msgData = ev.data as ChatMessageData | undefined;
+    const insight = getMessageInsight(msgData);
     const quoteText =
       String(msgData?.quote_text || resolvedReplyQuoteText || "").trim() || undefined;
     const replyToEventId =
@@ -566,12 +581,7 @@ export const MessageBubble = memo(
       return messageText;
     }, [blobAttachments, messageText, sourcePlatform]);
     const delegationSourceOutbound = useMemo(
-      () =>
-        isDelegationSourceOutbound({
-          rawText: displayMessageText,
-          srcGroupId,
-          dstGroupId,
-        }),
+      () => isDelegationSourceOutbound({ rawText: displayMessageText, srcGroupId, dstGroupId }),
       [displayMessageText, dstGroupId, srcGroupId],
     );
     // Body text shown in the bubble: source-side outbound delegation is a
@@ -621,6 +631,8 @@ export const MessageBubble = memo(
         buildMessageCopyText({
           quoteText,
           messageText: displayMessageText,
+          insight,
+          insightLabel: t("senderPerspective"),
           presentationRefs,
           taskRefs,
           attachments: blobAttachments.map((attachment) => ({
@@ -628,7 +640,7 @@ export const MessageBubble = memo(
             path: attachment.path || attachment.local_preview_url,
           })),
         }),
-      [blobAttachments, displayMessageText, presentationRefs, quoteText, taskRefs],
+      [blobAttachments, displayMessageText, insight, presentationRefs, quoteText, t, taskRefs],
     );
     const messageTimestamp = formatMessageTimestamp(ev.ts);
     const fullMessageTimestamp = formatFullTime(ev.ts);
@@ -936,6 +948,7 @@ export const MessageBubble = memo(
                 taskById={taskById}
                 messageText={displayMessageText}
                 bodyText={bubbleBodyText}
+                insight={insight}
                 shouldRenderMarkdown={shouldRenderMarkdown}
                 blobAttachments={blobAttachments}
                 blobGroupId={blobGroupId}

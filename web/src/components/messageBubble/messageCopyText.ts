@@ -5,6 +5,8 @@ import { getTaskRefChipLabel } from "../../utils/taskRefs";
 export function buildMessageCopyText(input: {
   quoteText?: string;
   messageText: string;
+  insight: string;
+  insightLabel: string;
   presentationRefs: PresentationMessageRef[];
   taskRefs: TaskMessageRef[];
   attachments: { title: string; path: string }[];
@@ -14,6 +16,10 @@ export function buildMessageCopyText(input: {
   const message = String(input.messageText || "").trim();
   if (quote) sections.push(`> ${quote}`);
   if (message) sections.push(message);
+  const insight = String(input.insight || "").trim();
+  if (insight) {
+    sections.push(`${String(input.insightLabel || "Sender perspective").trim()}:\n${insight}`);
+  }
   if (input.presentationRefs.length > 0) {
     sections.push(
       [

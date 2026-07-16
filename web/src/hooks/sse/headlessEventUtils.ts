@@ -11,12 +11,7 @@ export function translateActorLabel(key: string, defaultValue: string): string {
 export function formatHeadlessErrorMessage(error: unknown): string {
   if (typeof error === "string") return error.trim();
   if (!error || typeof error !== "object") return "";
-  const value = error as {
-    message?: unknown;
-    code?: unknown;
-    type?: unknown;
-    status?: unknown;
-  };
+  const value = error as { message?: unknown; code?: unknown; type?: unknown; status?: unknown };
   const message = String(value.message || "").trim();
   const code = String(value.code || value.type || value.status || "").trim();
   if (message && code && !message.includes(code)) return `${code}: ${message}`;

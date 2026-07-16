@@ -17,11 +17,19 @@ interface InfoPopoverProps {
   isDark: boolean;
   title: string;
   content: ReactNode;
-  placement?: "top" | "top-start" | "top-end" | "bottom" | "bottom-start" | "bottom-end" | "right" | "left";
+  placement?:
+    | "top"
+    | "top-start"
+    | "top-end"
+    | "bottom"
+    | "bottom-start"
+    | "bottom-end"
+    | "right"
+    | "left";
   maxWidthClassName?: string;
   children: (
     getReferenceProps: (userProps?: HTMLAttributes<HTMLElement>) => Record<string, unknown>,
-    setReference: (node: HTMLElement | null) => void
+    setReference: (node: HTMLElement | null) => void,
   ) => ReactNode;
 }
 
@@ -53,14 +61,14 @@ export function InfoPopover({
     (node: HTMLElement | null) => {
       refs.setReference(node);
     },
-    [refs]
+    [refs],
   );
 
   const setFloating = useCallback(
     (node: HTMLElement | null) => {
       refs.setFloating(node);
     },
-    [refs]
+    [refs],
   );
 
   return (

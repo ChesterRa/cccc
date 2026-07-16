@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { IMConfigSaveRequest } from "../../../../src/components/modals/settings/imBridgeConfig";
 import {
@@ -7,10 +7,7 @@ import {
 } from "../../../../src/components/modals/settings/imBridgeConfig";
 import * as api from "../../../../src/services/api";
 
-vi.mock("../../../../src/services/api", () => ({
-  setIMConfig: vi.fn(),
-  startIMBridge: vi.fn(),
-}));
+vi.mock("../../../../src/services/api", () => ({ setIMConfig: vi.fn(), startIMBridge: vi.fn() }));
 
 const makeConfig = (overrides: Partial<IMConfigSaveRequest> = {}): IMConfigSaveRequest => ({
   groupId: "g-demo",
@@ -43,10 +40,7 @@ describe("imBridgeConfig", () => {
       "wecom",
       "",
       "",
-      expect.objectContaining({
-        wecom_bot_id: "corp123",
-        wecom_secret: "sec456",
-      }),
+      expect.objectContaining({ wecom_bot_id: "corp123", wecom_secret: "sec456" }),
     );
   });
 

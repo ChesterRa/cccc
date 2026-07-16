@@ -1,9 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 
-export type RestoredScrollAnchor = {
-  anchorId: string;
-  offsetPx: number;
-};
+export type RestoredScrollAnchor = { anchorId: string; offsetPx: number };
 
 const RESTORATION_WINDOW_MS = 5_000;
 
@@ -20,9 +17,7 @@ export function getScrollRestorationRequestKey(input: {
   return `anchor:${anchorId}:${offsetPx}`;
 }
 
-export function useScrollAnchorRestoration(
-  applyAnchor: (anchor: RestoredScrollAnchor) => boolean,
-) {
+export function useScrollAnchorRestoration(applyAnchor: (anchor: RestoredScrollAnchor) => boolean) {
   const applyAnchorRef = useRef(applyAnchor);
   const activeRef = useRef<(RestoredScrollAnchor & { expiresAt: number }) | null>(null);
   const correctionRafRef = useRef<number | null>(null);
@@ -86,8 +81,5 @@ export function useScrollAnchorRestoration(
 
   useLayoutEffect(() => cancel, [cancel]);
 
-  return useMemo(
-    () => ({ begin, cancel, correct, isActive }),
-    [begin, cancel, correct, isActive],
-  );
+  return useMemo(() => ({ begin, cancel, correct, isActive }), [begin, cancel, correct, isActive]);
 }

@@ -13,11 +13,7 @@ export type SlashCommandItem = {
   active?: boolean;
 };
 
-export type ParsedSlashCommand = {
-  item: SlashCommandItem;
-  commandText: string;
-  argsText: string;
-};
+export type ParsedSlashCommand = { item: SlashCommandItem; commandText: string; argsText: string };
 
 export type SlashCommandDisplayKind = "command" | "skill" | "tool";
 
@@ -36,9 +32,7 @@ export type SlashCommandGuardInput = {
   selectedGroupId: string;
 };
 
-export type SlashCommandGuardResult =
-  | { ok: true }
-  | { ok: false; message: string };
+export type SlashCommandGuardResult = { ok: true } | { ok: false; message: string };
 
 export type SlashCommandGuardMessages = {
   attachmentsUnsupported: string;
@@ -47,9 +41,7 @@ export type SlashCommandGuardMessages = {
   crossGroupUnsupported: string;
 };
 
-export type CapsuleSkillSlashCommandMessages = {
-  missingArgs: (command: string) => string;
-};
+export type CapsuleSkillSlashCommandMessages = { missingArgs: (command: string) => string };
 
 const DEFAULT_SLASH_GUARD_MESSAGES: SlashCommandGuardMessages = {
   attachmentsUnsupported: "Slash command does not support attachments.",
@@ -58,18 +50,29 @@ const DEFAULT_SLASH_GUARD_MESSAGES: SlashCommandGuardMessages = {
   crossGroupUnsupported: "Slash command does not support cross-group send.",
 };
 
-export function slashCommandSupportsReplyTarget(sourceType: SlashCommandItem["sourceType"] | undefined): boolean {
+export function slashCommandSupportsReplyTarget(
+  sourceType: SlashCommandItem["sourceType"] | undefined,
+): boolean {
   return sourceType === "builtin_command" || sourceType === "capsule_skill";
 }
 
-export function slashCommandDisplayKind(item: Pick<SlashCommandItem, "sourceType" | "capabilityId">): SlashCommandDisplayKind {
-  if (String(item.capabilityId || "").trim().startsWith("skill:")) return "skill";
+export function slashCommandDisplayKind(
+  item: Pick<SlashCommandItem, "sourceType" | "capabilityId">,
+): SlashCommandDisplayKind {
+  if (
+    String(item.capabilityId || "")
+      .trim()
+      .startsWith("skill:")
+  )
+    return "skill";
   if (item.sourceType === "dynamic_tool") return "tool";
   return "command";
 }
 
 function normalizeCommandToken(value: unknown): string {
-  const text = String(value || "").trim().toLowerCase();
+  const text = String(value || "")
+    .trim()
+    .toLowerCase();
   if (!text) return "";
   return text
     .replace(/[^a-z0-9_-]+/g, "-")
@@ -80,7 +83,10 @@ function normalizeCommandToken(value: unknown): string {
 function capabilityIdTail(value: unknown): string {
   const text = String(value || "").trim();
   if (!text) return "";
-  const parts = text.split(":").map((part) => part.trim()).filter(Boolean);
+  const parts = text
+    .split(":")
+    .map((part) => part.trim())
+    .filter(Boolean);
   return parts[parts.length - 1] || text;
 }
 
@@ -112,7 +118,10 @@ export function buildSlashCommands(args: {
   const used = new Set<string>();
   const commands: SlashCommandItem[] = [];
   const actorHiddenCapabilityIds = new Set(
-    (Array.isArray(args.state?.actor_hidden_capabilities) ? args.state.actor_hidden_capabilities : [])
+    (Array.isArray(args.state?.actor_hidden_capabilities)
+      ? args.state.actor_hidden_capabilities
+      : []
+    )
       .map((item) => String(item || "").trim())
       .filter(Boolean),
   );
@@ -123,18 +132,29 @@ export function buildSlashCommands(args: {
     commands.push({ ...command, name, command: `/${name}` });
   }
 
-  const activeSkills = Array.isArray(args.state?.active_capsule_skills) ? args.state.active_capsule_skills : [];
+  const activeSkills = Array.isArray(args.state?.active_capsule_skills)
+    ? args.state.active_capsule_skills
+    : [];
   for (const skill of activeSkills) {
     if (!skill || typeof skill !== "object") continue;
     const capabilityId = String(skill.capability_id || "").trim();
-    if (!capabilityId || actorHiddenCapabilityIds.has(capabilityId) || commands.some((item) => item.capabilityId === capabilityId)) continue;
-    const name = uniqueCommandName([skill.name, capabilityIdTail(capabilityId), capabilityId], used);
+    if (
+      !capabilityId ||
+      actorHiddenCapabilityIds.has(capabilityId) ||
+      commands.some((item) => item.capabilityId === capabilityId)
+    )
+      continue;
+    const name = uniqueCommandName(
+      [skill.name, capabilityIdTail(capabilityId), capabilityId],
+      used,
+    );
     if (!name) continue;
     used.add(name);
     commands.push({
       name,
       command: `/${name}`,
-      description: String(skill.description_short || skill.capsule_preview || "").trim() || undefined,
+      description:
+        String(skill.description_short || skill.capsule_preview || "").trim() || undefined,
       capabilityId,
       sourceType: "capsule_skill",
       active: true,
@@ -148,7 +168,8 @@ export function buildSlashCommands(args: {
     const toolName = String(tool.name || "").trim();
     if (!capabilityId || !toolName) continue;
     const realToolName = String(tool.real_tool_name || "").trim();
-    const inputSchema = tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : undefined;
+    const inputSchema =
+      tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : undefined;
     if (!supportsSlashTextToolArguments(inputSchema)) continue;
     const name = uniqueCommandName([realToolName, toolName], used);
     if (!name) continue;
@@ -168,7 +189,10 @@ export function buildSlashCommands(args: {
   return sortSlashCommands(commands);
 }
 
-export function filterSlashCommands(commands: SlashCommandItem[], input: string): SlashCommandItem[] {
+export function filterSlashCommands(
+  commands: SlashCommandItem[],
+  input: string,
+): SlashCommandItem[] {
   const text = String(input || "");
   if (text !== text.trimStart()) return [];
   if (!text.startsWith("/")) return [];
@@ -196,12 +220,18 @@ export function filterSlashCommands(commands: SlashCommandItem[], input: string)
     .map((row) => row.item);
 }
 
-export function getVisibleSlashCommandPage(commands: SlashCommandItem[], visibleCount: number): SlashCommandItem[] {
+export function getVisibleSlashCommandPage(
+  commands: SlashCommandItem[],
+  visibleCount: number,
+): SlashCommandItem[] {
   const count = Math.max(0, Math.floor(Number(visibleCount) || 0));
   return commands.slice(0, count);
 }
 
-export function parseSlashCommandInput(text: string, commands: SlashCommandItem[]): ParsedSlashCommand | null {
+export function parseSlashCommandInput(
+  text: string,
+  commands: SlashCommandItem[],
+): ParsedSlashCommand | null {
   const raw = String(text || "");
   if (raw !== raw.trimStart()) return null;
   const trimmed = raw.trim();
@@ -257,14 +287,16 @@ export function resolveCapsuleSkillSlashCommand(
   const skillLabel = String(item.command || item.name || "the skill").trim();
   return {
     kind: "missing_args",
-    message: messages.missingArgs ? messages.missingArgs(skillLabel) : `Enter a task after ${skillLabel}.`,
+    message: messages.missingArgs
+      ? messages.missingArgs(skillLabel)
+      : `Enter a task after ${skillLabel}.`,
   };
 }
 
 function schemaProperties(schema: Record<string, unknown> | undefined): Record<string, unknown> {
   const properties = schema?.properties;
   return properties && typeof properties === "object" && !Array.isArray(properties)
-    ? properties as Record<string, unknown>
+    ? (properties as Record<string, unknown>)
     : {};
 }
 
@@ -272,11 +304,18 @@ function schemaFieldType(schema: Record<string, unknown> | undefined, field: str
   const row = schemaProperties(schema)[field];
   if (!row || typeof row !== "object" || Array.isArray(row)) return "";
   const type = (row as Record<string, unknown>).type;
-  if (Array.isArray(type)) return type.map((item) => String(item || "").trim()).filter(Boolean).join("|");
+  if (Array.isArray(type))
+    return type
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .join("|");
   return String(type || "").trim();
 }
 
-function isTextCompatibleSchemaField(schema: Record<string, unknown> | undefined, field: string): boolean {
+function isTextCompatibleSchemaField(
+  schema: Record<string, unknown> | undefined,
+  field: string,
+): boolean {
   const type = schemaFieldType(schema, field);
   return !type || type.split("|").includes("string");
 }
@@ -286,7 +325,16 @@ function preferredTextFieldFromSchema(schema: Record<string, unknown> | undefine
   const required = Array.isArray(schema?.required)
     ? schema.required.map((item) => String(item || "").trim()).filter(Boolean)
     : [];
-  const preferred = ["text", "input", "query", "prompt", "message", "libraryName", "name", "content"];
+  const preferred = [
+    "text",
+    "input",
+    "query",
+    "prompt",
+    "message",
+    "libraryName",
+    "name",
+    "content",
+  ];
   for (const key of required) {
     if (Object.prototype.hasOwnProperty.call(properties, key)) return key;
   }
@@ -296,7 +344,9 @@ function preferredTextFieldFromSchema(schema: Record<string, unknown> | undefine
   return "";
 }
 
-export function supportsSlashTextToolArguments(schema: Record<string, unknown> | undefined): boolean {
+export function supportsSlashTextToolArguments(
+  schema: Record<string, unknown> | undefined,
+): boolean {
   if (!schema || Object.keys(schema).length === 0) return true;
   const properties = schemaProperties(schema);
   const required = Array.isArray(schema.required)
@@ -307,7 +357,11 @@ export function supportsSlashTextToolArguments(schema: Record<string, unknown> |
   const nonTextRequired = required.filter((field) => field !== textField);
   if (nonTextRequired.length > 0) return false;
   const additionalProperties = schema.additionalProperties;
-  if (additionalProperties === false && textField && !Object.prototype.hasOwnProperty.call(properties, textField)) {
+  if (
+    additionalProperties === false &&
+    textField &&
+    !Object.prototype.hasOwnProperty.call(properties, textField)
+  ) {
     return false;
   }
   return true;

@@ -1,7 +1,7 @@
 import { createInstance } from "i18next";
 import { renderToStaticMarkup } from "react-dom/server";
 import { I18nextProvider, initReactI18next } from "react-i18next";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vite-plus/test";
 
 import actorsEn from "../../i18n/locales/en/actors.json";
 import { ActorConfigModal } from "./ActorConfigModal";
@@ -12,16 +12,23 @@ import { SecretValueInput } from "./SecretValueInput";
 const i18n = createInstance();
 
 beforeAll(async () => {
-  await i18n.use(initReactI18next).init({
-    lng: "en",
-    fallbackLng: "en",
-    defaultNS: "actors",
-    resources: { en: { actors: actorsEn } },
-    interpolation: { escapeValue: false },
-  });
+  await i18n
+    .use(initReactI18next)
+    .init({
+      lng: "en",
+      fallbackLng: "en",
+      defaultNS: "actors",
+      resources: { en: { actors: actorsEn } },
+      interpolation: { escapeValue: false },
+    });
 });
 
-function renderManager(clearAll = false, loading = false, keysLoadFailed = false, keys = ["OPENAI_API_KEY", "A_VERY_LONG_ENVIRONMENT_VARIABLE_NAME"]) {
+function renderManager(
+  clearAll = false,
+  loading = false,
+  keysLoadFailed = false,
+  keys = ["OPENAI_API_KEY", "A_VERY_LONG_ENVIRONMENT_VARIABLE_NAME"],
+) {
   const changes = setActorSecretClearAll(emptyActorSecretChanges(), clearAll);
   return renderToStaticMarkup(
     <I18nextProvider i18n={i18n}>
@@ -34,7 +41,7 @@ function renderManager(clearAll = false, loading = false, keysLoadFailed = false
         onRefresh={() => undefined}
         onChangesChange={() => undefined}
       />
-    </I18nextProvider>
+    </I18nextProvider>,
   );
 }
 
@@ -50,7 +57,9 @@ describe("ActorSecretManager", () => {
 
     expect(markup).toContain("Environment variables");
     expect(markup).not.toContain(">Environment variables</div>");
-    expect(markup).not.toContain("Add, update, or remove variables here. Changes apply when you save.");
+    expect(markup).not.toContain(
+      "Add, update, or remove variables here. Changes apply when you save.",
+    );
     expect(markup).toContain("OPENAI_API_KEY");
     expect(markup).toContain("A_VERY_LONG_ENVIRONMENT_VARIABLE_NAME");
     expect(markup).toContain('aria-label="Update OPENAI_API_KEY"');
@@ -107,7 +116,7 @@ describe("SecretValueInput", () => {
         hideLabel="Hide value"
         onChange={() => undefined}
         onToggleVisibility={() => undefined}
-      />
+      />,
     );
 
     expect(markup).toContain('aria-label="New value for OPENAI_API_KEY"');
@@ -147,7 +156,7 @@ describe("ActorConfigModal secret manager integration", () => {
           onSaveAndRestart={async () => undefined}
           onCancel={() => undefined}
         />
-      </I18nextProvider>
+      </I18nextProvider>,
     );
 
     expect(markup).toContain("Add variable");
@@ -203,7 +212,7 @@ describe("ActorConfigModal secret manager integration", () => {
           onCreate={() => true}
           onCancel={() => undefined}
         />
-      </I18nextProvider>
+      </I18nextProvider>,
     );
 
     expect(markup).toContain('role="tablist"');

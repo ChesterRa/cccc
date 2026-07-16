@@ -4,48 +4,199 @@ on:
   push:
     branches: [main, rust]
   pull_request:
+  schedule:
+    - cron: "17 2 * * *"
 
 jobs:
-  test:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install quality dependencies
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e . pytest ruff
+
+      - name: Run Ruff error checks
+        run: python -m ruff check src scripts tests
+
+      - name: Test quality tooling and workflow contracts
+        run: >-
+          python -m pytest -q
+          tests/test_quality_pytest_shards.py
+          tests/test_quality_configuration.py
+          tests/test_quality_ci_workflow.py
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.5"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Web dependencies
+        run: npm ci --prefix web
+
+      - name: Check Web
+        run: npm -C web run check
+
+      - name: Test Web
+        run: npm -C web test
+
+      - name: Build Web bundle
+        run: npm -C web run build
+
+      - name: Upload Web bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundled-web
+          path: web/dist
+          if-no-files-found: error
+
+  python-tests:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e . pytest pytest-timeout
+
+      - name: Run stable Python test shard
+        shell: bash
+        run: |
+          mapfile -t TEST_FILES < <(python scripts/quality/pytest_shards.py --total 4 --index "${{ matrix.shard }}")
+          test "${#TEST_FILES[@]}" -gt 0
+          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest -q --timeout=120 --timeout-method=thread --durations=20 "${TEST_FILES[@]}"
+
+  package:
+    if: github.event_name != 'schedule'
+    needs: [quality, web, python-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: bundled-web
+          path: src/cccc/ports/web/dist
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Build and check package
+        run: |
+          python -m pip install -U pip build twine
+          python -m compileall -q src/cccc
+          python -m build
+          python -m twine check dist/*
+
+      - name: Smoke test wheel
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          cccc version
+          python - <<'PY'
+          import importlib.resources as ir
+
+          web_index = ir.files("cccc.ports.web").joinpath("dist/index.html")
+          help_md = ir.files("cccc.resources").joinpath("cccc-help.md")
+
+          assert web_index.is_file(), f"missing bundled web UI: {web_index}"
+          assert help_md.is_file(), f"missing bundled help playbook: {help_md}"
+          print("OK: bundled web UI + help playbook")
+          PY
+
+  windows-smoke:
+    if: github.event_name != 'schedule'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e . pytest pytest-timeout
+
+      - name: Run Windows PTY smoke tests
+        timeout-minutes: 10
+        run: >-
+          python -m pytest -q --timeout=90 --timeout-method=thread
+          tests/test_socket_special_ops.py tests/test_windows_pty_backend.py
+
+  rust:
+    if: github.event_name != 'schedule'
+    needs: web
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/download-artifact@v4
         with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          name: bundled-web
+          path: web/dist
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Installer and release asset tests
+      - name: Test installer and release assets
         run: |
           scripts/tests/install_unix.sh
           scripts/tests/release_assets.sh
-      - name: Build embedded Web UI
-        run: |
-          npm ci --prefix web
-          npm -C web run lint
-          npm -C web run typecheck
-          npm -C web run build
-          test -f web/dist/index.html
-      - name: Rust format
+      - name: Check Rust formatting
         run: cargo fmt --all --check
-      - name: Rust lint
+      - name: Lint Rust workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
-      - name: Rust tests
+      - name: Test Rust workspace
         run: cargo test --workspace --locked
-      - name: Release build
-        run: cargo build --workspace --release --locked
-      - name: Test real Unix distribution installer
-        run: scripts/tests/install_real_unix.sh target/release/cccc
-      - name: CLI smoke
+      - name: Build and verify Rust distribution
         run: |
+          cargo build --workspace --release --locked
+          scripts/tests/install_real_unix.sh target/release/cccc
           target/release/cccc --version
-          target/release/cccc --help | grep -E 'daemon|mcp|web'
 
-  platform-check:
+  rust-platform:
+    if: github.event_name != 'schedule'
+    needs: web
     strategy:
       fail-fast: false
       matrix:
@@ -53,24 +204,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/download-artifact@v4
         with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          name: bundled-web
+          path: web/dist
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Build embedded Web UI
-        shell: bash
+      - name: Check and test Rust workspace
         run: |
-          npm ci --prefix web
-          npm -C web run build
-      - name: Check workspace
-        run: cargo check --workspace --all-targets --locked
-      - name: Test workspace
-        run: cargo test --workspace --locked
-      - name: Build platform distribution for installer test
-        run: cargo build --release --locked -p cccc-cli --bin cccc
+          cargo check --workspace --all-targets --locked
+          cargo test --workspace --locked
+          cargo build --release --locked -p cccc-cli --bin cccc
       - name: Test Unix installer
         if: runner.os != 'Windows'
         shell: bash
@@ -81,3 +225,27 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: scripts/tests/install_windows.ps1
+
+  nightly-serial:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e . pytest pytest-timeout
+
+      - name: Run full Python suite serially
+        timeout-minutes: 30
+        run: >-
+          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/ -q --timeout=120 --timeout-method=thread --durations=20

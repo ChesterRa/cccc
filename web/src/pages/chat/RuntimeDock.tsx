@@ -15,7 +15,10 @@ import {
   upsertRuntimeDockTickerCache,
   type RuntimeDockTickerCache,
 } from "./runtimeDockTickerCache";
-import { buildRuntimeDockTickerEntries, type RuntimeDockTickerEntry } from "./runtimeDockTickerEntries";
+import {
+  buildRuntimeDockTickerEntries,
+  type RuntimeDockTickerEntry,
+} from "./runtimeDockTickerEntries";
 import { buildRuntimeDockItems, type RuntimeDockItem } from "./runtimeDockItems";
 import { getRuntimeRingTone, type RuntimeRingTone } from "./runtimeDockRingTone";
 
@@ -35,37 +38,38 @@ function buildFlowRingStyle(args: {
   tone: "active" | "attention";
   isDark: boolean;
 }): CSSProperties {
-  const palette = args.tone === "attention"
-    ? args.isDark
-      ? {
-          base: "rgba(251, 113, 133, 0.24)",
-          glow: "rgba(239, 68, 68, 0.42)",
-          streamA: "rgba(253, 164, 175, 0.9)",
-          streamB: "rgba(251, 113, 133, 0.82)",
-          streamC: "rgba(254, 226, 226, 0.52)",
-        }
-      : {
-          base: "rgba(251, 113, 133, 0.18)",
-          glow: "rgba(239, 68, 68, 0.28)",
-          streamA: "rgba(244, 63, 94, 0.82)",
-          streamB: "rgba(251, 113, 133, 0.74)",
-          streamC: "rgba(255, 228, 230, 0.52)",
-        }
-    : args.isDark
-      ? {
-          base: "rgba(160, 124, 254, 0.22)",
-          glow: "rgba(254, 143, 181, 0.34)",
-          streamA: "rgba(160, 124, 254, 0.92)",
-          streamB: "rgba(254, 143, 181, 0.82)",
-          streamC: "rgba(255, 190, 123, 0.56)",
-        }
-      : {
-          base: "rgba(160, 124, 254, 0.14)",
-          glow: "rgba(254, 143, 181, 0.22)",
-          streamA: "rgba(160, 124, 254, 0.82)",
-          streamB: "rgba(254, 143, 181, 0.72)",
-          streamC: "rgba(255, 190, 123, 0.46)",
-        };
+  const palette =
+    args.tone === "attention"
+      ? args.isDark
+        ? {
+            base: "rgba(251, 113, 133, 0.24)",
+            glow: "rgba(239, 68, 68, 0.42)",
+            streamA: "rgba(253, 164, 175, 0.9)",
+            streamB: "rgba(251, 113, 133, 0.82)",
+            streamC: "rgba(254, 226, 226, 0.52)",
+          }
+        : {
+            base: "rgba(251, 113, 133, 0.18)",
+            glow: "rgba(239, 68, 68, 0.28)",
+            streamA: "rgba(244, 63, 94, 0.82)",
+            streamB: "rgba(251, 113, 133, 0.74)",
+            streamC: "rgba(255, 228, 230, 0.52)",
+          }
+      : args.isDark
+        ? {
+            base: "rgba(160, 124, 254, 0.22)",
+            glow: "rgba(254, 143, 181, 0.34)",
+            streamA: "rgba(160, 124, 254, 0.92)",
+            streamB: "rgba(254, 143, 181, 0.82)",
+            streamC: "rgba(255, 190, 123, 0.56)",
+          }
+        : {
+            base: "rgba(160, 124, 254, 0.14)",
+            glow: "rgba(254, 143, 181, 0.22)",
+            streamA: "rgba(160, 124, 254, 0.82)",
+            streamB: "rgba(254, 143, 181, 0.72)",
+            streamC: "rgba(255, 190, 123, 0.46)",
+          };
 
   return {
     ["--runtime-flow-base" as keyof CSSProperties]: palette.base,
@@ -118,7 +122,10 @@ function getRuntimeStatusLabel(
   return t("running", { defaultValue: "Running" });
 }
 
-function getLiveWorkBadgeLabel(card: LiveWorkCard, t: (key: string, options?: Record<string, unknown>) => string): string {
+function getLiveWorkBadgeLabel(
+  card: LiveWorkCard,
+  t: (key: string, options?: Record<string, unknown>) => string,
+): string {
   if (card.phase === "failed") {
     return t("liveWorkPhaseFailed", { defaultValue: "Failed" });
   }
@@ -134,7 +141,10 @@ function getLiveWorkBadgeLabel(card: LiveWorkCard, t: (key: string, options?: Re
   return t("liveWorkPhaseWorking", { defaultValue: "Working" });
 }
 
-function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): RuntimeRingPresentation {
+function getRuntimeRingPresentation(
+  tone: RuntimeRingTone,
+  isDark: boolean,
+): RuntimeRingPresentation {
   switch (tone) {
     case "active":
       return {
@@ -146,7 +156,9 @@ function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): Run
           duration: 6.2,
           shineColors: ["#A07CFE", "#FE8FB5", "#FFBE7B"],
         }),
-        unreadBadgeClassName: isDark ? "bg-emerald-300/[0.18] text-emerald-50" : "bg-emerald-500/[0.14] text-emerald-700",
+        unreadBadgeClassName: isDark
+          ? "bg-emerald-300/[0.18] text-emerald-50"
+          : "bg-emerald-500/[0.14] text-emerald-700",
       };
     case "attention":
       return {
@@ -158,7 +170,9 @@ function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): Run
           duration: 5.4,
           shineColors: ["#fb7185", "#ef4444", "#fda4af"],
         }),
-        unreadBadgeClassName: isDark ? "bg-rose-300/[0.18] text-rose-50" : "bg-rose-500/[0.14] text-rose-700",
+        unreadBadgeClassName: isDark
+          ? "bg-rose-300/[0.18] text-rose-50"
+          : "bg-rose-500/[0.14] text-rose-700",
       };
     case "idle":
       return {
@@ -169,7 +183,9 @@ function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): Run
           isDark ? "border-emerald-300/75" : "border-emerald-500/75",
         ),
         ringStyle: {},
-        unreadBadgeClassName: isDark ? "bg-emerald-300/[0.12] text-emerald-50" : "bg-emerald-500/[0.10] text-emerald-700",
+        unreadBadgeClassName: isDark
+          ? "bg-emerald-300/[0.12] text-emerald-50"
+          : "bg-emerald-500/[0.10] text-emerald-700",
       };
     case "stopped":
     default:
@@ -181,7 +197,9 @@ function getRuntimeRingPresentation(tone: RuntimeRingTone, isDark: boolean): Run
           isDark ? "border-slate-400/50" : "border-slate-500/50",
         ),
         ringStyle: {},
-        unreadBadgeClassName: isDark ? "bg-white/10 text-slate-100" : "bg-black/[0.08] text-gray-800",
+        unreadBadgeClassName: isDark
+          ? "bg-white/10 text-slate-100"
+          : "bg-black/[0.08] text-gray-800",
         avatarClassName: "opacity-45 grayscale saturate-50",
       };
   }
@@ -224,11 +242,13 @@ function RuntimeDockTicker({
     <div
       className={classNames(
         "pointer-events-none absolute bottom-[calc(100%+0.8rem)] left-1/2 z-20 h-[5.25rem] w-[min(92vw,560px)] -translate-x-1/2 overflow-hidden transition-opacity duration-200 ease-out",
-        suppressed ? "invisible opacity-0" : "visible opacity-100"
+        suppressed ? "invisible opacity-0" : "visible opacity-100",
       )}
       style={{
-        WebkitMaskImage: "linear-gradient(to top, #000 0%, #000 72%, rgba(0,0,0,0.78) 84%, transparent 100%)",
-        maskImage: "linear-gradient(to top, #000 0%, #000 72%, rgba(0,0,0,0.78) 84%, transparent 100%)",
+        WebkitMaskImage:
+          "linear-gradient(to top, #000 0%, #000 72%, rgba(0,0,0,0.78) 84%, transparent 100%)",
+        maskImage:
+          "linear-gradient(to top, #000 0%, #000 72%, rgba(0,0,0,0.78) 84%, transparent 100%)",
       }}
       aria-hidden="true"
     >
@@ -253,10 +273,15 @@ function RuntimeDockTicker({
                       : "opacity-[0.2]",
                 isDark
                   ? "border-white/[0.08] bg-slate-950/70 text-slate-200"
-                  : "border-black/[0.08] bg-white/[0.78] text-gray-700"
+                  : "border-black/[0.08] bg-white/[0.78] text-gray-700",
               )}
             >
-              <span className={classNames("font-semibold", isDark ? "text-white" : "text-[rgb(35,36,37)]")}>
+              <span
+                className={classNames(
+                  "font-semibold",
+                  isDark ? "text-white" : "text-[rgb(35,36,37)]",
+                )}
+              >
                 {entry.actorLabel}
               </span>
               <span className={isDark ? "text-slate-500" : "text-gray-400"}>: </span>
@@ -301,12 +326,13 @@ function RuntimeDockActorButton({
     ? getLiveWorkBadgeLabel(item.liveWorkCard, (key, options) => t(`chat:${key}`, options))
     : getRuntimeStatusLabel(isRunning, workingState, (key, options) => t(`actors:${key}`, options));
   const queuedCount = Math.max(0, Number(item.webModelQueuedCount || 0));
-  const queuedLabel = queuedCount > 0
-    ? t("chat:runtimeDockQueuedForNextTurn", {
-        count: queuedCount,
-        defaultValue: `${queuedCount} queued for next turn`,
-      })
-    : "";
+  const queuedLabel =
+    queuedCount > 0
+      ? t("chat:runtimeDockQueuedForNextTurn", {
+          count: queuedCount,
+          defaultValue: `${queuedCount} queued for next turn`,
+        })
+      : "";
   const ringFrameClassName = isSmallScreen
     ? "pointer-events-none absolute left-1/2 top-1/2 h-[35px] w-[35px] -translate-x-1/2 -translate-y-1/2"
     : "pointer-events-none absolute left-1/2 top-1/2 h-[39px] w-[39px] -translate-x-1/2 -translate-y-1/2";
@@ -323,7 +349,7 @@ function RuntimeDockActorButton({
           "runtime-dock-actor-label",
           isDark
             ? "text-white [text-shadow:0_1px_8px_rgba(2,6,23,0.85)]"
-            : "text-[rgb(35,36,37)] [text-shadow:0_1px_7px_rgba(255,255,255,0.9)]"
+            : "text-[rgb(35,36,37)] [text-shadow:0_1px_7px_rgba(255,255,255,0.9)]",
         )}
         aria-hidden="true"
       >
@@ -342,43 +368,44 @@ function RuntimeDockActorButton({
               ? "bg-transparent"
               : "bg-transparent",
           isInspectorOpen
-            ? classNames(
-                "scale-[1.04] shadow-[0_18px_40px_-28px_rgba(62,80,103,0.32)]"
-              )
+            ? classNames("scale-[1.04] shadow-[0_18px_40px_-28px_rgba(62,80,103,0.32)]")
             : "hover:scale-[1.05] active:scale-[0.95]",
         )}
-        aria-label={item.runner === "headless"
-          ? t("chat:runtimeDockOpenLiveWork", {
-              name: item.actorLabel,
-              defaultValue: `Open live work for ${item.actorLabel}`,
-            })
-          : t("chat:runtimeDockOpenTerminal", {
-              name: item.actorLabel,
-              defaultValue: `Open terminal for ${item.actorLabel}`,
-            })}
+        aria-label={
+          item.runner === "headless"
+            ? t("chat:runtimeDockOpenLiveWork", {
+                name: item.actorLabel,
+                defaultValue: `Open live work for ${item.actorLabel}`,
+              })
+            : t("chat:runtimeDockOpenTerminal", {
+                name: item.actorLabel,
+                defaultValue: `Open terminal for ${item.actorLabel}`,
+              })
+        }
         aria-describedby={`runtime-dock-status-${item.actorId}`}
       >
         <span className={ringFrameClassName}>
-          <span className={classNames("pointer-events-none", ringPresentation.ringClassName)} style={ringPresentation.ringStyle} />
+          <span
+            className={classNames("pointer-events-none", ringPresentation.ringClassName)}
+            style={ringPresentation.ringStyle}
+          />
           {ringPresentation.customRing ? ringPresentation.customRing : null}
         </span>
 
         <ActorAvatar
-            avatarUrl={item.actor.avatar_url || undefined}
-            runtime={item.runtime}
-            title={item.actorLabel}
-            isDark={isDark}
-            sizeClassName={isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]"}
-            className={classNames(
-              "relative z-10 border-transparent shadow-[0_18px_34px_-22px_rgba(15,23,42,0.68)]",
-              ringPresentation.avatarClassName,
-              item.runner === "headless"
-                ? isDark
-                  ? "bg-slate-900"
-                  : "bg-slate-50"
-                : undefined
-            )}
-          accentRingClassName={isInspectorOpen ? (isDark ? "ring-white/10" : "ring-black/10") : null}
+          avatarUrl={item.actor.avatar_url || undefined}
+          runtime={item.runtime}
+          title={item.actorLabel}
+          isDark={isDark}
+          sizeClassName={isSmallScreen ? "h-[33px] w-[33px]" : "h-[37px] w-[37px]"}
+          className={classNames(
+            "relative z-10 border-transparent shadow-[0_18px_34px_-22px_rgba(15,23,42,0.68)]",
+            ringPresentation.avatarClassName,
+            item.runner === "headless" ? (isDark ? "bg-slate-900" : "bg-slate-50") : undefined,
+          )}
+          accentRingClassName={
+            isInspectorOpen ? (isDark ? "ring-white/10" : "ring-black/10") : null
+          }
         />
         {queuedCount > 0 ? (
           <span
@@ -392,10 +419,10 @@ function RuntimeDockActorButton({
             {queuedCount > 99 ? "99+" : queuedCount}
           </span>
         ) : null}
-
       </button>
       <span id={`runtime-dock-status-${item.actorId}`} className="sr-only">
-        {item.actorLabel} · {item.runtime} · {statusLabel}{queuedLabel ? ` · ${queuedLabel}` : ""}
+        {item.actorLabel} · {item.runtime} · {statusLabel}
+        {queuedLabel ? ` · ${queuedLabel}` : ""}
       </span>
     </div>
   );
@@ -430,7 +457,10 @@ export function RuntimeDock({
 }: RuntimeDockProps) {
   const { t } = useTranslation("chat");
 
-  const items = useMemo(() => buildRuntimeDockItems({ actors: runtimeActors, liveWorkCards }), [runtimeActors, liveWorkCards]);
+  const items = useMemo(
+    () => buildRuntimeDockItems({ actors: runtimeActors, liveWorkCards }),
+    [runtimeActors, liveWorkCards],
+  );
   const tickerEntries = useMemo(() => buildRuntimeDockTickerEntries(items), [items]);
 
   if (items.length <= 0) return null;
@@ -441,16 +471,20 @@ export function RuntimeDock({
         <div
           className={classNames(
             "group/runtime-dock pointer-events-auto relative flex justify-center",
-            isSmallScreen ? "max-w-[calc(100vw-2.5rem)]" : ""
+            isSmallScreen ? "max-w-[calc(100vw-2.5rem)]" : "",
           )}
         >
           <div
             className={classNames(
               "flex items-end opacity-[0.72] transition-opacity delay-[3000ms] duration-200 ease-out group-hover/runtime-dock:opacity-100 group-hover/runtime-dock:delay-0 group-has-[:focus-visible]/runtime-dock:opacity-100 group-has-[:focus-visible]/runtime-dock:delay-0",
-              isSmallScreen ? "max-w-[calc(100vw-2.5rem)] gap-2 overflow-x-auto pb-1 scrollbar-hide" : "gap-2.5",
+              isSmallScreen
+                ? "max-w-[calc(100vw-2.5rem)] gap-2 overflow-x-auto pb-1 scrollbar-hide"
+                : "gap-2.5",
             )}
           >
-            <div className={classNames("relative flex items-end", isSmallScreen ? "gap-2" : "gap-2.5")}>
+            <div
+              className={classNames("relative flex items-end", isSmallScreen ? "gap-2" : "gap-2.5")}
+            >
               <RuntimeDockTicker
                 key={groupId}
                 entries={tickerEntries}

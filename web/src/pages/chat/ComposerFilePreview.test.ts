@@ -1,11 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
-import { getComposerPreviewPosition, isPreviewableComposerImageFile } from "./ComposerFilePreview.model";
+import {
+  getComposerPreviewPosition,
+  isPreviewableComposerImageFile,
+} from "./ComposerFilePreview.model";
 
 describe("isPreviewableComposerImageFile", () => {
   it("only enables hover previews for image files", () => {
-    expect(isPreviewableComposerImageFile(new File(["png"], "image.png", { type: "image/png" }))).toBe(true);
-    expect(isPreviewableComposerImageFile(new File(["txt"], "notes.txt", { type: "text/plain" }))).toBe(false);
+    expect(
+      isPreviewableComposerImageFile(new File(["png"], "image.png", { type: "image/png" })),
+    ).toBe(true);
+    expect(
+      isPreviewableComposerImageFile(new File(["txt"], "notes.txt", { type: "text/plain" })),
+    ).toBe(false);
   });
 });
 

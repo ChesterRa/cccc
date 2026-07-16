@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import type { AgentState } from "../../../src/types";
 import {
   alignTaskDraftTaskType,
@@ -61,10 +61,7 @@ describe("ContextModal task draft task type", () => {
   });
 
   it("marks task-type-only changes as dirty for new drafts", () => {
-    const draft = {
-      ...emptyTaskDraft("planned"),
-      taskType: "free" as const,
-    };
+    const draft = { ...emptyTaskDraft("planned"), taskType: "free" as const };
 
     expect(taskDraftDirty(draft)).toBe(true);
   });
@@ -86,9 +83,8 @@ describe("ContextModal visible agents", () => {
 });
 
 describe("ContextModal recovery cues", () => {
-  const tr = (_key: string, fallback: string, options?: Record<string, unknown>) => (
-    fallback.replace("{{count}}", String(options?.count ?? ""))
-  );
+  const tr = (_key: string, fallback: string, options?: Record<string, unknown>) =>
+    fallback.replace("{{count}}", String(options?.count ?? ""));
 
   it("ignores legacy resume_hint and summarizes open loops and commitments", () => {
     const legacyAgent = {
@@ -102,10 +98,7 @@ describe("ContextModal recovery cues", () => {
 
     const currentAgent = {
       id: "peer-1",
-      warm: {
-        open_loops: ["verify migration"],
-        commitments: ["report residual risk"],
-      },
+      warm: { open_loops: ["verify migration"], commitments: ["report residual risk"] },
     } as AgentState;
 
     expect(hasRecoveryCues(currentAgent)).toBe(true);

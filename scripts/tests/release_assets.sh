@@ -29,7 +29,7 @@ test "$("$ROOT_DIR/scripts/release_prerelease.sh" 0.5.0)" = false
 test "$("$ROOT_DIR/scripts/release_prerelease.sh" 0.5.0+build-1)" = false
 test "$("$ROOT_DIR/scripts/release_prerelease.sh" 0.5.0-preview.1)" = true
 test "$("$ROOT_DIR/scripts/release_prerelease.sh" 0.5.0-preview.1+build-1)" = true
-grep -Fq 'scripts/release_prerelease.sh "$version"' "$ROOT_DIR/.github/workflows/release.yml"
-grep -Fq 'prerelease: ${{ env.RELEASE_PRERELEASE }}' "$ROOT_DIR/.github/workflows/release.yml"
+grep -Fq 'scripts/release_prerelease.sh "$version"' "$ROOT_DIR/.github/workflows/release-rust.yml"
+grep -Fq 'prerelease: ${{ env.RELEASE_PRERELEASE }}' "$ROOT_DIR/.github/workflows/release-rust.yml"
 
 echo "OK: release assets"

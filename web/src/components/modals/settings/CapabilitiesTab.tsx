@@ -44,7 +44,9 @@ const SELF_PROPOSED_CAPSULE_TEXT_MAX = 2400;
 
 function selfProposedFallbackCapsule(row: CapabilityOverviewItem) {
   const name = String(row.name || row.capability_id || "Self-Proposed Skill").trim();
-  const description = String(row.description_short || "Maintain a reusable self-proposed procedure.").trim();
+  const description = String(
+    row.description_short || "Maintain a reusable self-proposed procedure.",
+  ).trim();
   return [
     `Skill: ${name}`,
     "When to use:",
@@ -73,7 +75,9 @@ function normalizeCapabilityIdList(raw: unknown) {
 }
 
 function capabilitySlugTail(row: CapabilityOverviewItem) {
-  const capId = String(row.capability_id || "").trim().toLowerCase();
+  const capId = String(row.capability_id || "")
+    .trim()
+    .toLowerCase();
   return capId.split(":").filter(Boolean).pop() || capId;
 }
 
@@ -84,7 +88,9 @@ function capabilityUsageActorLabel(row: CapabilityUsageActorEntry) {
 function capabilityEnableResultSucceeded(result: unknown) {
   if (!result || typeof result !== "object") return false;
   const row = result as Record<string, unknown>;
-  const state = String(row.state || "").trim().toLowerCase();
+  const state = String(row.state || "")
+    .trim()
+    .toLowerCase();
   return row.enabled === true && !["blocked", "denied", "failed"].includes(state);
 }
 
@@ -153,7 +159,12 @@ function formatCapabilityProvenanceTimestamp(value: unknown) {
   return new Date(ms).toLocaleString();
 }
 
-export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surface = "global" }: CapabilitiesTabProps) {
+export function CapabilitiesTab({
+  isDark: _isDark,
+  isActive,
+  groupId = "",
+  surface = "global",
+}: CapabilitiesTabProps) {
   const { t } = useTranslation("settings");
   const selfEvolvingSurface = surface === "selfEvolving";
   const [loading, setLoading] = useState(false);
@@ -167,7 +178,8 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
   const [manageName, setManageName] = useState("");
   const [manageDescription, setManageDescription] = useState("");
   const [manageCapsuleText, setManageCapsuleText] = useState("");
-  const [manageQualificationStatus, setManageQualificationStatus] = useState<ManageQualificationStatus>("qualified");
+  const [manageQualificationStatus, setManageQualificationStatus] =
+    useState<ManageQualificationStatus>("qualified");
   const [manageQualificationReason, setManageQualificationReason] = useState("");
   const [manageActors, setManageActors] = useState<Actor[]>([]);
   const [manageAssignedActorIds, setManageAssignedActorIds] = useState<string[]>([]);
@@ -210,7 +222,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         selfEvolvingSurface ? Promise.resolve(null) : api.fetchGroups(),
         selfEvolvingSurface || !String(groupId || "").trim()
           ? Promise.resolve(null)
-          : api.fetchSlashCommandCapabilityState(String(groupId || "").trim(), "user", { noCache: true }),
+          : api.fetchSlashCommandCapabilityState(String(groupId || "").trim(), "user", {
+              noCache: true,
+            }),
       ]);
       if (overviewRequestSeqRef.current != requestSeq) return;
       if (!overviewResp.ok) {
@@ -218,7 +232,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         setItems([]);
         setGroups([]);
       } else {
-        const nextItems = Array.isArray(overviewResp.result?.items) ? overviewResp.result.items : [];
+        const nextItems = Array.isArray(overviewResp.result?.items)
+          ? overviewResp.result.items
+          : [];
         setItems(nextItems);
       }
       if (groupsResp?.ok) {
@@ -227,7 +243,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         setGroups([]);
       }
       if (stateResp?.ok) {
-        setSlashHiddenCapabilityIds(normalizeCapabilityIdList(stateResp.result?.actor_hidden_capabilities));
+        setSlashHiddenCapabilityIds(
+          normalizeCapabilityIdList(stateResp.result?.actor_hidden_capabilities),
+        );
       } else if (!selfEvolvingSurface) {
         setSlashHiddenCapabilityIds([]);
       }
@@ -250,11 +268,14 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
 
   const selfProposedCandidates = useMemo(() => {
     const gid = String(groupId || "").trim();
-    return items.filter((row) => (
-      String(row.source_id || "").trim() === SELF_PROPOSED_SOURCE_ID
-      && String(row.kind || "").trim().toLowerCase() === "skill"
-      && (!selfEvolvingSurface || !gid || String(row.origin_group_id || "").trim() === gid)
-    ));
+    return items.filter(
+      (row) =>
+        String(row.source_id || "").trim() === SELF_PROPOSED_SOURCE_ID &&
+        String(row.kind || "")
+          .trim()
+          .toLowerCase() === "skill" &&
+        (!selfEvolvingSurface || !gid || String(row.origin_group_id || "").trim() === gid),
+    );
   }, [groupId, items, selfEvolvingSurface]);
 
   const manageableSkillCandidates = useMemo(() => {
@@ -273,18 +294,19 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       const gid = String(group.group_id || "").trim();
       if (gid) groupById.set(gid, group);
     }
-    const sections = new Map<string, { key: string; groupId: string; label: string; hint: string; rows: CapabilityOverviewItem[] }>();
+    const sections = new Map<
+      string,
+      { key: string; groupId: string; label: string; hint: string; rows: CapabilityOverviewItem[] }
+    >();
     for (const row of selfProposedCandidates) {
       const originGroupId = String(row.origin_group_id || "").trim();
       const key = originGroupId || "__ungrouped__";
       const group = originGroupId ? groupById.get(originGroupId) : null;
       const title = group ? String(group.title || group.topic || "").trim() : "";
       const label = originGroupId
-        ? (title || originGroupId)
+        ? title || originGroupId
         : t("capabilities.selfProposedUngroupedTitle");
-      const hint = originGroupId
-        ? originGroupId
-        : t("capabilities.selfProposedUngroupedHint");
+      const hint = originGroupId ? originGroupId : t("capabilities.selfProposedUngroupedHint");
       const existing = sections.get(key);
       if (existing) existing.rows.push(row);
       else sections.set(key, { key, groupId: originGroupId, label, hint, rows: [row] });
@@ -298,7 +320,11 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
 
   const managingCandidate = useMemo(() => {
     if (!manageCapabilityId) return null;
-    return manageableSkillCandidates.find((row) => String(row.capability_id || "").trim() === manageCapabilityId) || null;
+    return (
+      manageableSkillCandidates.find(
+        (row) => String(row.capability_id || "").trim() === manageCapabilityId,
+      ) || null
+    );
   }, [manageCapabilityId, manageableSkillCandidates]);
 
   const managingCandidateEditable = useMemo(() => {
@@ -307,38 +333,66 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
 
   const manageDuplicateCandidates = useMemo(() => {
     if (!managingCandidate || !managingCandidateEditable) return [];
-    const targetName = String(managingCandidate.name || "").trim().toLowerCase();
+    const targetName = String(managingCandidate.name || "")
+      .trim()
+      .toLowerCase();
     const targetSlug = capabilitySlugTail(managingCandidate);
     return selfProposedCandidates
       .filter((row) => String(row.capability_id || "").trim() !== manageCapabilityId)
       .filter((row) => {
-        const name = String(row.name || "").trim().toLowerCase();
+        const name = String(row.name || "")
+          .trim()
+          .toLowerCase();
         const slug = capabilitySlugTail(row);
         return Boolean((targetName && name === targetName) || (targetSlug && slug === targetSlug));
       })
       .slice(0, 3);
   }, [manageCapabilityId, managingCandidate, managingCandidateEditable, selfProposedCandidates]);
 
-  const manageUsageTtlLabel = useCallback((seconds?: number) => {
-    const safeSeconds = Number.isFinite(Number(seconds)) ? Math.max(0, Math.trunc(Number(seconds))) : 0;
-    if (safeSeconds < 60) return t("capabilities.manageUsageTtlSeconds");
-    if (safeSeconds < 3600) return t("capabilities.manageUsageTtlMinutes", { count: Math.ceil(safeSeconds / 60) });
-    return t("capabilities.manageUsageTtlHours", { count: Math.ceil(safeSeconds / 3600) });
-  }, [t]);
+  const manageUsageTtlLabel = useCallback(
+    (seconds?: number) => {
+      const safeSeconds = Number.isFinite(Number(seconds))
+        ? Math.max(0, Math.trunc(Number(seconds)))
+        : 0;
+      if (safeSeconds < 60) return t("capabilities.manageUsageTtlSeconds");
+      if (safeSeconds < 3600)
+        return t("capabilities.manageUsageTtlMinutes", { count: Math.ceil(safeSeconds / 60) });
+      return t("capabilities.manageUsageTtlHours", { count: Math.ceil(safeSeconds / 3600) });
+    },
+    [t],
+  );
 
-  const manageAssignedActorIdSet = useMemo(() => new Set(manageAssignedActorIds), [manageAssignedActorIds]);
-  const manageHiddenActorIdSet = useMemo(() => new Set(manageHiddenActorIds), [manageHiddenActorIds]);
+  const manageAssignedActorIdSet = useMemo(
+    () => new Set(manageAssignedActorIds),
+    [manageAssignedActorIds],
+  );
+  const manageHiddenActorIdSet = useMemo(
+    () => new Set(manageHiddenActorIds),
+    [manageHiddenActorIds],
+  );
 
   const manageProfileActorIdSet = useMemo(() => {
-    return new Set((manageUsage?.profile_autoload || []).map((row) => String(row.actor_id || "").trim()).filter(Boolean));
+    return new Set(
+      (manageUsage?.profile_autoload || [])
+        .map((row) => String(row.actor_id || "").trim())
+        .filter(Boolean),
+    );
   }, [manageUsage]);
 
   const manageSessionActorIdSet = useMemo(() => {
-    return new Set((manageUsage?.session_enabled || []).map((row) => String(row.actor_id || "").trim()).filter(Boolean));
+    return new Set(
+      (manageUsage?.session_enabled || [])
+        .map((row) => String(row.actor_id || "").trim())
+        .filter(Boolean),
+    );
   }, [manageUsage]);
 
   const manageActorScopeIdSet = useMemo(() => {
-    return new Set((manageUsage?.actor_enabled || []).map((row) => String(row.actor_id || "").trim()).filter(Boolean));
+    return new Set(
+      (manageUsage?.actor_enabled || [])
+        .map((row) => String(row.actor_id || "").trim())
+        .filter(Boolean),
+    );
   }, [manageUsage]);
 
   const manageProvenanceRows = useMemo(() => {
@@ -350,13 +404,16 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     const originGroupId = String(managingCandidate.origin_group_id || "").trim();
     const updatedAt = formatCapabilityProvenanceTimestamp(managingCandidate.updated_at_source);
     const importedAt = formatCapabilityProvenanceTimestamp(managingCandidate.last_synced_at);
-    const status = manageQualificationStatus === "blocked"
-      ? t("capabilities.manageStatusBlocked")
-      : t("capabilities.manageStatusAvailable");
+    const status =
+      manageQualificationStatus === "blocked"
+        ? t("capabilities.manageStatusBlocked")
+        : t("capabilities.manageStatusAvailable");
     const rows = [
       {
         label: t("capabilities.manageProvenanceSource"),
-        value: String(managingCandidate.source_id || SELF_PROPOSED_SOURCE_ID).trim() || SELF_PROPOSED_SOURCE_ID,
+        value:
+          String(managingCandidate.source_id || SELF_PROPOSED_SOURCE_ID).trim() ||
+          SELF_PROPOSED_SOURCE_ID,
       },
       {
         label: t("capabilities.manageProvenanceRecord"),
@@ -364,16 +421,10 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       },
     ];
     if (originGroupId) {
-      rows.push({
-        label: t("capabilities.manageProvenanceOriginGroup"),
-        value: originGroupId,
-      });
+      rows.push({ label: t("capabilities.manageProvenanceOriginGroup"), value: originGroupId });
     }
     if (recordVersion) {
-      rows.push({
-        label: t("capabilities.manageProvenanceVersion"),
-        value: recordVersion,
-      });
+      rows.push({ label: t("capabilities.manageProvenanceVersion"), value: recordVersion });
     }
     rows.push(
       {
@@ -386,24 +437,29 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       },
       {
         label: t("capabilities.manageProvenanceTrust"),
-        value: [trustTier, sourceTier].filter(Boolean).join(" / ") || t("capabilities.manageProvenanceNotRecorded"),
+        value:
+          [trustTier, sourceTier].filter(Boolean).join(" / ") ||
+          t("capabilities.manageProvenanceNotRecorded"),
       },
-      {
-        label: t("capabilities.manageProvenanceAvailability"),
-        value: status,
-      },
+      { label: t("capabilities.manageProvenanceAvailability"), value: status },
     );
     const blockReason = String(manageQualificationReason || "").trim();
     if (manageQualificationStatus === "blocked" && blockReason) {
-      rows.push({
-        label: t("capabilities.manageProvenanceBlockReason"),
-        value: blockReason,
-      });
+      rows.push({ label: t("capabilities.manageProvenanceBlockReason"), value: blockReason });
     }
     return rows;
-  }, [manageCapabilityId, manageQualificationReason, manageQualificationStatus, managingCandidate, t]);
+  }, [
+    manageCapabilityId,
+    manageQualificationReason,
+    manageQualificationStatus,
+    managingCandidate,
+    t,
+  ]);
 
-  const toggleSlashCommandVisibility = async (row: CapabilityOverviewItem, nextVisible: boolean) => {
+  const toggleSlashCommandVisibility = async (
+    row: CapabilityOverviewItem,
+    nextVisible: boolean,
+  ) => {
     const gid = String(groupId || "").trim();
     const capId = String(row.capability_id || "").trim();
     if (!gid) {
@@ -411,7 +467,11 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       return;
     }
     if (!capId || !canManageSkillAssignments(row)) return;
-    const nextHidden = nextSlashCommandHiddenCapabilities(slashHiddenCapabilityIds, capId, nextVisible);
+    const nextHidden = nextSlashCommandHiddenCapabilities(
+      slashHiddenCapabilityIds,
+      capId,
+      nextVisible,
+    );
     setBusyKey(`slash-visible:${capId}`);
     setErr("");
     setSlashHiddenCapabilityIds(nextHidden);
@@ -428,7 +488,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       }
       const stateResp = await api.fetchSlashCommandCapabilityState(gid, "user", { noCache: true });
       if (stateResp.ok) {
-        setSlashHiddenCapabilityIds(normalizeCapabilityIdList(stateResp.result?.actor_hidden_capabilities));
+        setSlashHiddenCapabilityIds(
+          normalizeCapabilityIdList(stateResp.result?.actor_hidden_capabilities),
+        );
       }
       publishCapabilityChanged(gid);
     } catch (e) {
@@ -447,7 +509,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     }
     const resp = await api.fetchSlashCommandCapabilityState(gid, "user", { noCache: true });
     if (resp.ok) {
-      setSlashHiddenCapabilityIds(normalizeCapabilityIdList(resp.result?.actor_hidden_capabilities));
+      setSlashHiddenCapabilityIds(
+        normalizeCapabilityIdList(resp.result?.actor_hidden_capabilities),
+      );
     }
   };
 
@@ -467,13 +531,11 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       const [actorsResp, usageResp] = await Promise.all([
         api.fetchActors(gid, false, { noCache: true }),
         capId
-          ? api.fetchGroupCapabilityState(gid, "user", {
-              capabilityId: capId,
-              noCache: true,
-            })
+          ? api.fetchGroupCapabilityState(gid, "user", { capabilityId: capId, noCache: true })
           : Promise.resolve(null),
       ]);
-      const actors = actorsResp.ok && Array.isArray(actorsResp.result?.actors) ? actorsResp.result.actors : [];
+      const actors =
+        actorsResp.ok && Array.isArray(actorsResp.result?.actors) ? actorsResp.result.actors : [];
       const usage = usageResp && usageResp.ok ? usageResp.result?.capability_usage || null : null;
       setManageActors(actors);
       setManageUsage(usage);
@@ -529,10 +591,18 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
     setManageCapabilityId(capId);
     setManageName(String(row.name || capId));
     setManageDescription(String(row.description_short || ""));
-    setManageCapsuleText(canEditSkillRecord(row)
-      ? String(row.capsule_text || "").trim() || selfProposedFallbackCapsule(row)
-      : "");
-    setManageQualificationStatus(String(row.qualification_status || "").trim().toLowerCase() === "blocked" ? "blocked" : "qualified");
+    setManageCapsuleText(
+      canEditSkillRecord(row)
+        ? String(row.capsule_text || "").trim() || selfProposedFallbackCapsule(row)
+        : "",
+    );
+    setManageQualificationStatus(
+      String(row.qualification_status || "")
+        .trim()
+        .toLowerCase() === "blocked"
+        ? "blocked"
+        : "qualified",
+    );
     const reasons = Array.isArray(row.qualification_reasons) ? row.qualification_reasons : [];
     setManageQualificationReason(String(row.blocked_reason || reasons[0] || ""));
     setManageErr("");
@@ -564,15 +634,21 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       setManageErr(t("capabilities.manageCapsuleRequired"));
       return;
     }
-    const qualificationReasons = nextQualification === "blocked"
-      ? [String(manageQualificationReason || "manual_review_required").trim() || "manual_review_required"]
-      : [];
+    const qualificationReasons =
+      nextQualification === "blocked"
+        ? [
+            String(manageQualificationReason || "manual_review_required").trim() ||
+              "manual_review_required",
+          ]
+        : [];
     const record: CapabilityImportRecord = {
       capability_id: capId,
       kind: "skill",
       source_id: SELF_PROPOSED_SOURCE_ID,
       name: String(manageName || managingCandidate.name || capId).trim(),
-      description_short: String(manageDescription || managingCandidate.description_short || "").trim(),
+      description_short: String(
+        manageDescription || managingCandidate.description_short || "",
+      ).trim(),
       source_uri: String(managingCandidate.source_uri || ""),
       source_record_id: String(managingCandidate.source_record_id || capId),
       source_record_version: String(managingCandidate.source_record_version || ""),
@@ -599,10 +675,13 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         setManageErr(resp.error?.message || t("capabilities.manageSaveFailed"));
         return;
       }
-      const savedRecord = resp.result?.record && typeof resp.result.record === "object"
-        ? (resp.result.record as Record<string, unknown>)
-        : {};
-      const savedQualification = String(savedRecord.qualification_status || "").trim().toLowerCase();
+      const savedRecord =
+        resp.result?.record && typeof resp.result.record === "object"
+          ? (resp.result.record as Record<string, unknown>)
+          : {};
+      const savedQualification = String(savedRecord.qualification_status || "")
+        .trim()
+        .toLowerCase();
       if (savedQualification === "blocked" || savedQualification === "qualified") {
         setManageQualificationStatus(savedQualification);
       }
@@ -658,8 +737,12 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         return;
       }
       const actors = Array.isArray(actorsResp.result?.actors) ? actorsResp.result.actors : [];
-      const desired = new Set(manageAssignedActorIds.map((item) => String(item || "").trim()).filter(Boolean));
-      const hiddenDesired = new Set(manageHiddenActorIds.map((item) => String(item || "").trim()).filter(Boolean));
+      const desired = new Set(
+        manageAssignedActorIds.map((item) => String(item || "").trim()).filter(Boolean),
+      );
+      const hiddenDesired = new Set(
+        manageHiddenActorIds.map((item) => String(item || "").trim()).filter(Boolean),
+      );
       const userSessionResp = await api.enableGroupCapability(gid, capId, {
         enabled: false,
         scope: "session",
@@ -667,7 +750,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         reason: "web_self_proposed_actor_assignment",
       });
       if (!userSessionResp.ok) {
-        setManageErr(userSessionResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+        setManageErr(
+          userSessionResp.error?.message || t("capabilities.manageActorAssignmentsFailed"),
+        );
         return;
       }
       for (const actor of actors) {
@@ -680,7 +765,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         const shouldAutoload = desired.has(aid);
         const shouldHide = hiddenDesired.has(aid);
         const nextHidden = shouldHide
-          ? (hasHidden ? currentHidden : [...currentHidden, capId])
+          ? hasHidden
+            ? currentHidden
+            : [...currentHidden, capId]
           : currentHidden.filter((item) => item !== capId);
         if (shouldAutoload) {
           const actorResp = await api.enableGroupCapability(gid, capId, {
@@ -690,7 +777,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             reason: "web_self_proposed_actor_assignment",
           });
           if (!actorResp.ok) {
-            setManageErr(actorResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+            setManageErr(
+              actorResp.error?.message || t("capabilities.manageActorAssignmentsFailed"),
+            );
             return;
           }
           if (!capabilityEnableResultSucceeded(actorResp.result)) {
@@ -698,15 +787,20 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             setManageErr(
               reason
                 ? t("capabilities.manageActorActivationFailedWithReason", { reason })
-                : t("capabilities.manageActorActivationFailed")
+                : t("capabilities.manageActorActivationFailed"),
             );
             return;
           }
           if (!hasAutoload) {
-            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
-              capabilityAutoload: [...currentAutoload, capId],
-              capabilityHidden: nextHidden,
-            });
+            const resp = await api.updateActor(
+              gid,
+              aid,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              { capabilityAutoload: [...currentAutoload, capId], capabilityHidden: nextHidden },
+            );
             if (!resp.ok) {
               await api.enableGroupCapability(gid, capId, {
                 enabled: false,
@@ -718,9 +812,15 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
               return;
             }
           } else if (hasHidden !== shouldHide) {
-            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
-              capabilityHidden: nextHidden,
-            });
+            const resp = await api.updateActor(
+              gid,
+              aid,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              { capabilityHidden: nextHidden },
+            );
             if (!resp.ok) {
               setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
               return;
@@ -728,18 +828,32 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
           }
         } else {
           if (hasAutoload) {
-            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
-              capabilityAutoload: currentAutoload.filter((item) => item !== capId),
-              capabilityHidden: nextHidden,
-            });
+            const resp = await api.updateActor(
+              gid,
+              aid,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              {
+                capabilityAutoload: currentAutoload.filter((item) => item !== capId),
+                capabilityHidden: nextHidden,
+              },
+            );
             if (!resp.ok) {
               setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
               return;
             }
           } else if (hasHidden !== shouldHide) {
-            const resp = await api.updateActor(gid, aid, undefined, undefined, undefined, undefined, {
-              capabilityHidden: nextHidden,
-            });
+            const resp = await api.updateActor(
+              gid,
+              aid,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              { capabilityHidden: nextHidden },
+            );
             if (!resp.ok) {
               setManageErr(resp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
               return;
@@ -752,7 +866,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             reason: "web_self_proposed_actor_assignment",
           });
           if (!actorResp.ok) {
-            setManageErr(actorResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+            setManageErr(
+              actorResp.error?.message || t("capabilities.manageActorAssignmentsFailed"),
+            );
             return;
           }
           const sessionResp = await api.enableGroupCapability(gid, capId, {
@@ -762,7 +878,9 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             reason: "web_self_proposed_actor_assignment",
           });
           if (!sessionResp.ok) {
-            setManageErr(sessionResp.error?.message || t("capabilities.manageActorAssignmentsFailed"));
+            setManageErr(
+              sessionResp.error?.message || t("capabilities.manageActorAssignmentsFailed"),
+            );
             return;
           }
         }
@@ -797,7 +915,8 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
       return;
     }
     if (!capId) return;
-    if (typeof window !== "undefined" && !window.confirm(t("capabilities.manageRemoveConfirm"))) return;
+    if (typeof window !== "undefined" && !window.confirm(t("capabilities.manageRemoveConfirm")))
+      return;
     setBusyKey(`manage-remove:${capId}`);
     setManageErr("");
     setManageNotice("");
@@ -843,8 +962,12 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         <section className={settingsWorkspaceShellClass(_isDark)}>
           <div className={settingsWorkspaceHeaderClass(_isDark)}>
             <div>
-              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.title")}</div>
-              <div className="mt-1 text-xs text-[var(--color-text-muted)]">{t("capabilities.subtitle")}</div>
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+                {t("capabilities.title")}
+              </div>
+              <div className="mt-1 text-xs text-[var(--color-text-muted)]">
+                {t("capabilities.subtitle")}
+              </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
               <button
@@ -867,14 +990,24 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             </div>
           </div>
           <div className={settingsWorkspaceBodyClass}>
-            <div className="text-xs text-[var(--color-text-tertiary)]">{t("capabilities.pageGuide")}</div>
+            <div className="text-xs text-[var(--color-text-tertiary)]">
+              {t("capabilities.pageGuide")}
+            </div>
             {err ? (
-              <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400" role="alert">{err}</div>
+              <div
+                className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400"
+                role="alert"
+              >
+                {err}
+              </div>
             ) : null}
           </div>
         </section>
       ) : err ? (
-        <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400" role="alert">
+        <div
+          className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400"
+          role="alert"
+        >
           {err}
         </div>
       ) : null}
@@ -883,10 +1016,18 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
         <div className={settingsWorkspaceHeaderClass(_isDark)}>
           <div>
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">
-              {t(selfEvolvingSurface ? "capabilities.selfEvolvingGroupTitle" : "capabilities.selfProposedTitle")}
+              {t(
+                selfEvolvingSurface
+                  ? "capabilities.selfEvolvingGroupTitle"
+                  : "capabilities.selfProposedTitle",
+              )}
             </div>
             <div className="mt-1 text-xs text-[var(--color-text-muted)]">
-              {t(selfEvolvingSurface ? "capabilities.selfEvolvingGroupHint" : "capabilities.selfProposedHint")}
+              {t(
+                selfEvolvingSurface
+                  ? "capabilities.selfEvolvingGroupHint"
+                  : "capabilities.selfProposedHint",
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -904,111 +1045,147 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
           <div className="grid gap-3 md:grid-cols-2">
             <div className={settingsWorkspacePanelClass(_isDark)}>
               <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                {t(selfEvolvingSurface ? "capabilities.selfEvolvingGroupCount" : "capabilities.selfProposedGenerated")}
+                {t(
+                  selfEvolvingSurface
+                    ? "capabilities.selfEvolvingGroupCount"
+                    : "capabilities.selfProposedGenerated",
+                )}
               </div>
-              <div className="mt-1 text-lg font-semibold text-[var(--color-text-primary)]">{selfProposedCandidates.length}</div>
+              <div className="mt-1 text-lg font-semibold text-[var(--color-text-primary)]">
+                {selfProposedCandidates.length}
+              </div>
             </div>
             <div className={settingsWorkspacePanelClass(_isDark)}>
               <div className="text-[10px] uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
-                {t(selfEvolvingSurface ? "capabilities.selfProposedSource" : "capabilities.selfProposedGroups")}
+                {t(
+                  selfEvolvingSurface
+                    ? "capabilities.selfProposedSource"
+                    : "capabilities.selfProposedGroups",
+                )}
               </div>
-              <div className={`${selfEvolvingSurface ? "text-sm font-mono" : "text-lg font-semibold"} mt-1 text-[var(--color-text-primary)]`}>
+              <div
+                className={`${selfEvolvingSurface ? "text-sm font-mono" : "text-lg font-semibold"} mt-1 text-[var(--color-text-primary)]`}
+              >
                 {selfEvolvingSurface ? SELF_PROPOSED_SOURCE_ID : selfProposedGroupSections.length}
               </div>
             </div>
           </div>
-        {selfEvolvingSurface ? (
-          <div className="space-y-3">
-            {selfProposedCandidates.map((row) => {
-              const capId = String(row.capability_id || "");
-              const isBlocked = String(row.qualification_status || "").trim().toLowerCase() === "blocked";
-              return (
-                <div key={capId} className={settingsWorkspacePanelClass(_isDark)}>
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-xs font-medium text-[var(--color-text-primary)]">{String(row.name || capId)}</span>
-                    {isBlocked ? (
-                      <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
-                        {t("capabilities.manageStatusBlocked")}
+          {selfEvolvingSurface ? (
+            <div className="space-y-3">
+              {selfProposedCandidates.map((row) => {
+                const capId = String(row.capability_id || "");
+                const isBlocked =
+                  String(row.qualification_status || "")
+                    .trim()
+                    .toLowerCase() === "blocked";
+                return (
+                  <div key={capId} className={settingsWorkspacePanelClass(_isDark)}>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-xs font-medium text-[var(--color-text-primary)]">
+                        {String(row.name || capId)}
                       </span>
-                    ) : null}
-                  </div>
-                  <div className="mt-0.5 text-[11px] truncate text-[var(--color-text-tertiary)]">{capId}</div>
-                  {String(row.description_short || "").trim() ? (
-                    <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
-                  ) : null}
-                  <div className="mt-3 flex flex-wrap items-center gap-2">
-                    {renderSlashVisibilityControl(row)}
-                    <button
-                      type="button"
-                      className={secondaryButtonClass("sm")}
-                      onClick={() => openSkillAssignmentManager(row)}
-                    >
-                      {t("capabilities.selfProposedManage")}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-            {selfProposedCandidates.length === 0 ? (
-              <div className="text-xs text-[var(--color-text-muted)]">
-                {t("capabilities.selfEvolvingGroupNoCandidates")}
-              </div>
-            ) : null}
-          </div>
-        ) : (
-          <div className="space-y-3">
-            {selfProposedGroupSections.map((section) => (
-              <div key={section.key} className={settingsWorkspacePanelClass(_isDark)}>
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">{section.label}</div>
-                    <div className="mt-0.5 font-mono text-[11px] text-[var(--color-text-tertiary)]">{section.hint}</div>
-                  </div>
-                  <span className="w-fit rounded-full bg-[var(--glass-tab-bg)] px-2 py-1 text-[10px] font-medium text-[var(--color-text-secondary)]">
-                    {t("capabilities.selfProposedGroupSkillCount", { count: section.rows.length })}
-                  </span>
-                </div>
-                <div className="mt-3 space-y-2">
-                  {section.rows.map((row) => {
-                    const capId = String(row.capability_id || "");
-                    const isBlocked = String(row.qualification_status || "").trim().toLowerCase() === "blocked";
-                    return (
-                      <div key={capId} className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <span className="text-xs font-medium text-[var(--color-text-primary)]">{String(row.name || capId)}</span>
-                          {isBlocked ? (
-                            <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
-                              {t("capabilities.manageStatusBlocked")}
-                            </span>
-                          ) : null}
-                        </div>
-                        <div className="mt-0.5 text-[11px] truncate text-[var(--color-text-tertiary)]">{capId}</div>
-                        {String(row.description_short || "").trim() ? (
-                          <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{String(row.description_short || "")}</div>
-                        ) : null}
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          {renderSlashVisibilityControl(row)}
-                          <button
-                            type="button"
-                            className={secondaryButtonClass("sm")}
-                            onClick={() => openSkillAssignmentManager(row)}
-                          >
-                            {t("capabilities.selfProposedManage")}
-                          </button>
-                        </div>
+                      {isBlocked ? (
+                        <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
+                          {t("capabilities.manageStatusBlocked")}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="mt-0.5 text-[11px] truncate text-[var(--color-text-tertiary)]">
+                      {capId}
+                    </div>
+                    {String(row.description_short || "").trim() ? (
+                      <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                        {String(row.description_short || "")}
                       </div>
-                    );
-                  })}
+                    ) : null}
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {renderSlashVisibilityControl(row)}
+                      <button
+                        type="button"
+                        className={secondaryButtonClass("sm")}
+                        onClick={() => openSkillAssignmentManager(row)}
+                      >
+                        {t("capabilities.selfProposedManage")}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+              {selfProposedCandidates.length === 0 ? (
+                <div className="text-xs text-[var(--color-text-muted)]">
+                  {t("capabilities.selfEvolvingGroupNoCandidates")}
                 </div>
-              </div>
-            ))}
-            {selfProposedGroupSections.length === 0 ? (
-              <div className="text-xs text-[var(--color-text-muted)]">
-                {t("capabilities.selfProposedNoCandidates")}
-              </div>
-            ) : null}
-          </div>
-        )}
+              ) : null}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {selfProposedGroupSections.map((section) => (
+                <div key={section.key} className={settingsWorkspacePanelClass(_isDark)}>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">
+                        {section.label}
+                      </div>
+                      <div className="mt-0.5 font-mono text-[11px] text-[var(--color-text-tertiary)]">
+                        {section.hint}
+                      </div>
+                    </div>
+                    <span className="w-fit rounded-full bg-[var(--glass-tab-bg)] px-2 py-1 text-[10px] font-medium text-[var(--color-text-secondary)]">
+                      {t("capabilities.selfProposedGroupSkillCount", {
+                        count: section.rows.length,
+                      })}
+                    </span>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {section.rows.map((row) => {
+                      const capId = String(row.capability_id || "");
+                      const isBlocked =
+                        String(row.qualification_status || "")
+                          .trim()
+                          .toLowerCase() === "blocked";
+                      return (
+                        <div key={capId} className={settingsWorkspaceSoftPanelClass(_isDark)}>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-xs font-medium text-[var(--color-text-primary)]">
+                              {String(row.name || capId)}
+                            </span>
+                            {isBlocked ? (
+                              <span className="rounded bg-rose-500/10 px-1.5 py-0.5 text-[10px] text-rose-600 dark:text-rose-300">
+                                {t("capabilities.manageStatusBlocked")}
+                              </span>
+                            ) : null}
+                          </div>
+                          <div className="mt-0.5 text-[11px] truncate text-[var(--color-text-tertiary)]">
+                            {capId}
+                          </div>
+                          {String(row.description_short || "").trim() ? (
+                            <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                              {String(row.description_short || "")}
+                            </div>
+                          ) : null}
+                          <div className="mt-3 flex flex-wrap items-center gap-2">
+                            {renderSlashVisibilityControl(row)}
+                            <button
+                              type="button"
+                              className={secondaryButtonClass("sm")}
+                              onClick={() => openSkillAssignmentManager(row)}
+                            >
+                              {t("capabilities.selfProposedManage")}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+              {selfProposedGroupSections.length === 0 ? (
+                <div className="text-xs text-[var(--color-text-muted)]">
+                  {t("capabilities.selfProposedNoCandidates")}
+                </div>
+              ) : null}
+            </div>
+          )}
         </div>
       </section>
 
@@ -1038,8 +1215,16 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
           actorScopeIds={manageActorScopeIdSet}
           busyKey={busyKey}
           labels={{
-            title: t(managingCandidateEditable ? "capabilities.manageTitle" : "capabilities.manageAssignmentsTitle"),
-            subtitle: t(managingCandidateEditable ? "capabilities.manageSubtitle" : "capabilities.manageAssignmentsSubtitle"),
+            title: t(
+              managingCandidateEditable
+                ? "capabilities.manageTitle"
+                : "capabilities.manageAssignmentsTitle",
+            ),
+            subtitle: t(
+              managingCandidateEditable
+                ? "capabilities.manageSubtitle"
+                : "capabilities.manageAssignmentsSubtitle",
+            ),
             close: t("capabilities.manageClose"),
             statusBlocked: t("capabilities.manageStatusBlocked"),
             noGroupHint: t("capabilities.manageNoGroupHint"),
@@ -1050,7 +1235,10 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
             name: t("capabilities.manageName"),
             description: t("capabilities.manageDescription"),
             capsule: t("capabilities.manageCapsule"),
-            capsuleLimit: t("capabilities.manageCapsuleLimit", { count: manageCapsuleText.length, max: SELF_PROPOSED_CAPSULE_TEXT_MAX }),
+            capsuleLimit: t("capabilities.manageCapsuleLimit", {
+              count: manageCapsuleText.length,
+              max: SELF_PROPOSED_CAPSULE_TEXT_MAX,
+            }),
             save: t("capabilities.manageSave"),
             saving: t("common:saving"),
             blockedBanner: t("capabilities.manageBlockedBanner"),
@@ -1063,15 +1251,27 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
               active: Number(manageUsage?.active_actor_count || 0),
               startup: Number(manageUsage?.startup_autoload_actor_count || 0),
             }),
-            usageGroup: t("capabilities.manageUsageGroup", { count: Number(manageUsage?.group_actor_count || 0) }),
-            usageSession: (row) => t("capabilities.manageUsageSession", { actor: capabilityUsageActorLabel(row), ttl: manageUsageTtlLabel(row.ttl_seconds) }),
-            usageActor: (row) => t("capabilities.manageUsageActor", { actor: capabilityUsageActorLabel(row) }),
-            usageActorAutoload: (row) => t("capabilities.manageUsageActorAutoload", { actor: capabilityUsageActorLabel(row) }),
-            usageProfileAutoload: (row) => t("capabilities.manageUsageProfileAutoload", {
-              actor: capabilityUsageActorLabel(row),
-              profile: String(row.profile_name || row.profile_id || "").trim() || t("capabilities.manageUsageUnknownProfile"),
+            usageGroup: t("capabilities.manageUsageGroup", {
+              count: Number(manageUsage?.group_actor_count || 0),
             }),
-            usageActorHidden: (row) => t("capabilities.manageUsageActorHidden", { actor: capabilityUsageActorLabel(row) }),
+            usageSession: (row) =>
+              t("capabilities.manageUsageSession", {
+                actor: capabilityUsageActorLabel(row),
+                ttl: manageUsageTtlLabel(row.ttl_seconds),
+              }),
+            usageActor: (row) =>
+              t("capabilities.manageUsageActor", { actor: capabilityUsageActorLabel(row) }),
+            usageActorAutoload: (row) =>
+              t("capabilities.manageUsageActorAutoload", { actor: capabilityUsageActorLabel(row) }),
+            usageProfileAutoload: (row) =>
+              t("capabilities.manageUsageProfileAutoload", {
+                actor: capabilityUsageActorLabel(row),
+                profile:
+                  String(row.profile_name || row.profile_id || "").trim() ||
+                  t("capabilities.manageUsageUnknownProfile"),
+              }),
+            usageActorHidden: (row) =>
+              t("capabilities.manageUsageActorHidden", { actor: capabilityUsageActorLabel(row) }),
             usageBlocked: t("capabilities.manageUsageBlocked"),
             noCurrentUse: t("capabilities.manageNoCurrentUse"),
             actorAssignmentsTitle: t("capabilities.manageActorAssignmentsTitle"),
@@ -1094,10 +1294,14 @@ export function CapabilitiesTab({ isDark: _isDark, isActive, groupId = "", surfa
           onDescriptionChange={setManageDescription}
           onCapsuleTextChange={setManageCapsuleText}
           onSaveRecord={() => void saveManagedSelfProposed()}
-          onToggleRecordBlock={() => void saveManagedSelfProposed(
-            manageQualificationStatus === "blocked" ? "qualified" : "blocked",
-            manageQualificationStatus === "blocked" ? "capabilities.manageUnblockedSaved" : "capabilities.manageBlockedSaved",
-          )}
+          onToggleRecordBlock={() =>
+            void saveManagedSelfProposed(
+              manageQualificationStatus === "blocked" ? "qualified" : "blocked",
+              manageQualificationStatus === "blocked"
+                ? "capabilities.manageUnblockedSaved"
+                : "capabilities.manageBlockedSaved",
+            )
+          }
           onRemoveRecord={() => void uninstallManagedSelfProposed()}
           onToggleActor={toggleManagedActorAssignment}
           onToggleActorVisibility={toggleManagedActorVisibility}

@@ -17,7 +17,10 @@ export function createSilentVoiceAudioLevels(barCount = VOICE_AUDIO_LEVEL_BARS):
   return Array.from({ length: Math.max(1, barCount) }, () => 0);
 }
 
-export function computeVoiceAudioLevels(samples: Float32Array, barCount = VOICE_AUDIO_LEVEL_BARS): number[] {
+export function computeVoiceAudioLevels(
+  samples: Float32Array,
+  barCount = VOICE_AUDIO_LEVEL_BARS,
+): number[] {
   const count = Math.max(1, barCount);
   if (!samples.length) return createSilentVoiceAudioLevels(count);
   const chunkSize = Math.max(1, Math.floor(samples.length / count));
@@ -34,7 +37,11 @@ export function computeVoiceAudioLevels(samples: Float32Array, barCount = VOICE_
   });
 }
 
-export function smoothVoiceAudioLevels(previous: number[], next: number[], weight = 0.42): number[] {
+export function smoothVoiceAudioLevels(
+  previous: number[],
+  next: number[],
+  weight = 0.42,
+): number[] {
   const count = Math.max(previous.length, next.length, VOICE_AUDIO_LEVEL_BARS);
   const nextWeight = clamp01(weight);
   const previousWeight = 1 - nextWeight;

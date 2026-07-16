@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useTranslation } from 'react-i18next';
+import { useTranslation } from "react-i18next";
 import { apiJson } from "../services/api";
 import { Actor, LedgerEvent } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
@@ -12,6 +12,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Surface } from "./ui/surface";
 import { ModalFrame } from "./modals/ModalFrame";
+import { getMessageInsight } from "../utils/messagePerspective";
 
 type KindFilter = "all" | "chat" | "notify";
 
@@ -64,7 +65,7 @@ function highlightText(text: string, query: string, _isDark?: boolean): ReactNod
         className="px-0.5 rounded bg-amber-200 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200"
       >
         {matched}
-      </mark>
+      </mark>,
     );
     from = idx + q.length;
     if (from >= text.length) break;
@@ -73,7 +74,15 @@ function highlightText(text: string, query: string, _isDark?: boolean): ReactNod
   return out;
 }
 
-export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply, onJumpToMessage }: SearchModalProps) {
+export function SearchModal({
+  isOpen,
+  onClose,
+  groupId,
+  actors,
+  isDark,
+  onReply,
+  onJumpToMessage,
+}: SearchModalProps) {
   const copyWithFeedback = useCopyFeedback();
   const { modalRef } = useModalA11y(isOpen, onClose);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -85,7 +94,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
 
   const [results, setResults] = useState<LedgerEvent[]>([]);
   const [hasMore, setHasMore] = useState(false);
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation("chat");
 
   const actorIds = useMemo(() => {
     const ids = actors.map((a) => String(a.id || "")).filter(Boolean);
@@ -134,7 +143,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
       if (opts?.before) params.set("before", opts.before);
 
       const resp = await apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
-        `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`
+        `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`,
       );
 
       if (!resp.ok) {
@@ -166,12 +175,10 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
       <h2 className="text-lg font-semibold truncate text-[var(--color-text-primary)]">
         <span className="inline-flex items-center gap-2">
           <SearchIcon size={18} />
-          <span>{t('searchMessages')}</span>
+          <span>{t("searchMessages")}</span>
         </span>
       </h2>
-      <div className="text-xs mt-0.5 truncate text-[var(--color-text-muted)]">
-        {groupId}
-      </div>
+      <div className="text-xs mt-0.5 truncate text-[var(--color-text-muted)]">{groupId}</div>
     </div>
   );
 
@@ -182,7 +189,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
       onClose={onClose}
       titleId="search-modal-title"
       title={titleContent}
-      closeAriaLabel={t('closeSearchModal')}
+      closeAriaLabel={t("closeSearchModal")}
       panelClassName="w-full h-full sm:h-auto sm:max-h-[80vh] sm:max-w-3xl"
       modalRef={modalRef}
     >
@@ -190,7 +197,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
       <div className="px-4 py-3 border-b space-y-3 sm:space-y-0 sm:flex sm:items-end sm:gap-3 flex-shrink-0 border-[var(--glass-border-subtle)]">
         <div className="flex-1 min-w-0">
           <label className="block text-xs font-medium mb-1 text-[var(--color-text-secondary)]">
-            {t('query')}
+            {t("query")}
           </label>
           <div className="flex gap-2">
             <Input
@@ -201,14 +208,14 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                 if (e.key === "Enter") void doSearch({ mode: "replace" });
               }}
               className="flex-1 rounded-xl px-3 py-2 min-h-[44px]"
-              placeholder={t('searchPlaceholder')}
+              placeholder={t("searchPlaceholder")}
             />
             <Button
               onClick={() => void doSearch({ mode: "replace" })}
               disabled={busy}
               className="rounded-xl px-4 py-2 min-h-[44px] bg-emerald-600 hover:bg-emerald-500 active:scale-[0.97] transition-all duration-150"
             >
-              {busy ? "…" : t('common:search')}
+              {busy ? "…" : t("common:search")}
             </Button>
           </div>
         </div>
@@ -216,14 +223,16 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
         <div className="flex flex-wrap gap-3 items-end">
           <div className="min-w-0">
             <label className="block text-xs font-medium mb-1 text-[var(--color-text-secondary)]">
-              {t('kind')}
+              {t("kind")}
             </label>
             <div className="flex items-center gap-1 p-1 rounded-xl glass-panel">
-              {([
-                ["all", t('kindAll')],
-                ["chat", t('kindChat')],
-                ["notify", t('kindNotify')],
-              ] as Array<[KindFilter, string]>).map(([id, label]) => (
+              {(
+                [
+                  ["all", t("kindAll")],
+                  ["chat", t("kindChat")],
+                  ["notify", t("kindNotify")],
+                ] as Array<[KindFilter, string]>
+              ).map(([id, label]) => (
                 <Button
                   key={id}
                   type="button"
@@ -234,7 +243,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                     "min-h-[36px] rounded-lg active:scale-[0.97] transition-all duration-150",
                     kind === id
                       ? "glass-card text-[var(--color-text-primary)]"
-                      : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                      : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
                   )}
                   aria-pressed={kind === id}
                 >
@@ -246,21 +255,21 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
 
           <div className="min-w-0 flex-1 sm:flex-none">
             <label className="block text-xs font-medium mb-1 text-[var(--color-text-secondary)]">
-              {t('by')}
+              {t("by")}
             </label>
             <SelectCombobox
               items={[
-                { value: "", label: t('any') },
+                { value: "", label: t("any") },
                 { value: "user", label: "user" },
                 { value: "system", label: "system" },
                 ...actorIds.map((id) => ({ value: id, label: id })),
               ]}
               value={by}
               onChange={setBy}
-              ariaLabel={t('by')}
+              ariaLabel={t("by")}
               className={classNames(
                 "w-full sm:w-auto px-3 py-2 border rounded-lg text-sm min-h-[44px] sm:min-w-[140px]",
-                "glass-input text-[var(--color-text-primary)]"
+                "glass-input text-[var(--color-text-primary)]",
               )}
             />
           </div>
@@ -269,7 +278,10 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
 
       {/* Error */}
       {error && (
-        <div className="px-4 py-2.5 mx-4 mt-3 text-sm rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-600 dark:text-rose-400 flex-shrink-0" role="alert">
+        <div
+          className="px-4 py-2.5 mx-4 mt-3 text-sm rounded-xl border border-rose-500/20 bg-rose-500/5 text-rose-600 dark:text-rose-400 flex-shrink-0"
+          role="alert"
+        >
           {error}
         </div>
       )}
@@ -284,21 +296,19 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
             onClick={() => void loadOlder()}
             disabled={busy}
           >
-            {t('loadOlderResults')}
+            {t("loadOlderResults")}
           </Button>
         )}
 
         {results.map((ev, idx) => {
           const text = formatEventText(ev);
+          const insight = ev.kind === "chat.message" ? getMessageInsight(ev.data) : "";
           const evId = ev.id ? String(ev.id) : "";
           const isChat = ev.kind === "chat.message";
           return (
             <Surface
               key={evId || `r${idx}`}
-              className={classNames(
-                "rounded-2xl px-4 py-3",
-                "glass-card"
-              )}
+              className={classNames("rounded-2xl px-4 py-3", "glass-card")}
               variant="subtle"
               radius="lg"
               padding="none"
@@ -306,7 +316,10 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
               <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-[var(--color-text-muted)]" title={formatFullTime(ev.ts)}>
+                    <span
+                      className="text-xs text-[var(--color-text-muted)]"
+                      title={formatFullTime(ev.ts)}
+                    >
                       {formatTime(ev.ts)}
                     </span>
                     <span className="text-xs font-medium text-[var(--color-text-primary)]">
@@ -317,13 +330,16 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                         "text-[10px] px-2 py-0.5 rounded-full font-medium",
                         ev.kind === "system.notify"
                           ? "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white"
-                          : "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]"
+                          : "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]",
                       )}
                     >
                       {ev.kind || "event"}
                     </span>
                     {evId && (
-                      <span className="text-[10px] truncate text-[var(--color-text-muted)]" title={evId}>
+                      <span
+                        className="text-[10px] truncate text-[var(--color-text-muted)]"
+                        title={evId}
+                      >
                         {evId}
                       </span>
                     )}
@@ -331,6 +347,16 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                   <div className="mt-2 text-sm whitespace-pre-wrap break-words text-[var(--color-text-primary)]">
                     {highlightText(text, query, isDark)}
                   </div>
+                  {insight ? (
+                    <div className="mt-3 border-t border-[var(--glass-border-subtle)] pt-2">
+                      <div className="mb-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]">
+                        {t("senderPerspective")}
+                      </div>
+                      <div className="text-sm whitespace-pre-wrap break-words text-[var(--color-text-secondary)]">
+                        {highlightText(insight, query, isDark)}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="flex items-center gap-2 justify-end sm:flex-col sm:items-end">
@@ -342,9 +368,9 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                       className="text-[10px]"
                       onClick={() => onReply(ev)}
                       aria-label={`Reply to ${getDisplayName(ev.by || "") || "message"}`}
-                      title={t('reply')}
+                      title={t("reply")}
                     >
-                      {t('replyTo')}
+                      {t("replyTo")}
                     </Button>
                   )}
                   {isChat && evId && onJumpToMessage ? (
@@ -354,10 +380,10 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                       size="sm"
                       className="text-[10px]"
                       onClick={() => onJumpToMessage(evId)}
-                      aria-label={t('openMessageContext')}
-                      title={t('openMessage').replace('↗ ', '')}
+                      aria-label={t("openMessageContext")}
+                      title={t("openMessage").replace("↗ ", "")}
                     >
-                      {t('openMessage')}
+                      {t("openMessage")}
                     </Button>
                   ) : null}
                   {evId && (
@@ -372,10 +398,10 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                           errorMessage: t("common:copyFailed"),
                         });
                       }}
-                      aria-label={t('copyEventId')}
-                      title={t('copyEventId')}
+                      aria-label={t("copyEventId")}
+                      title={t("copyEventId")}
                     >
-                      {t('copyId')}
+                      {t("copyId")}
                     </Button>
                   )}
                 </div>
@@ -387,10 +413,8 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
         {!busy && results.length === 0 && (
           <div className="text-center py-10">
             <div className="text-3xl mb-2">🔎</div>
-            <div className="text-sm text-[var(--color-text-secondary)]">{t('noResults')}</div>
-            <div className="text-xs mt-1 text-[var(--color-text-muted)]">
-              {t('noResultsHint')}
-            </div>
+            <div className="text-sm text-[var(--color-text-secondary)]">{t("noResults")}</div>
+            <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("noResultsHint")}</div>
           </div>
         )}
       </div>

@@ -24,7 +24,11 @@ export function isDelegationSourceOutbound({
   srcGroupId?: string;
   dstGroupId?: string;
 }): boolean {
-  return isDelegationRequestText(rawText) && !String(srcGroupId || "").trim() && !!String(dstGroupId || "").trim();
+  return (
+    isDelegationRequestText(rawText) &&
+    !String(srcGroupId || "").trim() &&
+    !!String(dstGroupId || "").trim()
+  );
 }
 
 export function isDelegationSourceOutboundEvent(data: unknown): boolean {

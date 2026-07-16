@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import type { Actor } from "../types";
 import {
@@ -16,17 +16,14 @@ describe("actor refresh stability", () => {
   });
 
   it("defers initial tail refresh when cached events can render immediately", () => {
-    expect(shouldDeferInitialTailRefresh({
-      ...EMPTY_CHAT_BUCKET,
-      events: [
-        {
-          id: "ev-1",
-          kind: "chat.message",
-          group_id: "g_cached",
-          data: { text: "cached" },
-        },
-      ],
-    })).toBe(true);
+    expect(
+      shouldDeferInitialTailRefresh({
+        ...EMPTY_CHAT_BUCKET,
+        events: [
+          { id: "ev-1", kind: "chat.message", group_id: "g_cached", data: { text: "cached" } },
+        ],
+      }),
+    ).toBe(true);
 
     expect(shouldDeferInitialTailRefresh(EMPTY_CHAT_BUCKET)).toBe(false);
   });
@@ -68,13 +65,7 @@ describe("actor refresh stability", () => {
       },
     ];
     const readonlyRefresh: Actor[] = [
-      {
-        id: "claude-1",
-        role: "peer",
-        runtime: "claude",
-        runner: "pty",
-        running: true,
-      },
+      { id: "claude-1", role: "peer", runtime: "claude", runner: "pty", running: true },
     ];
 
     expect(mergeActorUnreadCounts(readonlyRefresh, previous)).toBe(previous);
@@ -82,16 +73,14 @@ describe("actor refresh stability", () => {
 
   it("keeps fallback lifecycle when actors refresh has no running actors", () => {
     const actors: Actor[] = [
-      {
-        id: "claude-1",
-        role: "foreman",
-        runtime: "codex",
-        runner: "pty",
-        running: false,
-      },
+      { id: "claude-1", role: "foreman", runtime: "codex", runner: "pty", running: false },
     ];
 
-    expect(deriveRuntimeStatusFromActors(actors, { lifecycle_state: "active" }).lifecycle_state).toBe("active");
-    expect(deriveRuntimeStatusFromActors(actors, { lifecycle_state: "stopped" }).lifecycle_state).toBe("stopped");
+    expect(
+      deriveRuntimeStatusFromActors(actors, { lifecycle_state: "active" }).lifecycle_state,
+    ).toBe("active");
+    expect(
+      deriveRuntimeStatusFromActors(actors, { lifecycle_state: "stopped" }).lifecycle_state,
+    ).toBe("stopped");
   });
 });

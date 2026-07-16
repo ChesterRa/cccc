@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import { shouldHandleSwipeNavigationChain } from "../../src/hooks/useSwipeNavigation";
 
 describe("shouldHandleSwipeNavigationChain", () => {
@@ -12,11 +12,9 @@ describe("shouldHandleSwipeNavigationChain", () => {
   });
 
   it("blocks swipe when gesture starts from interactive controls", () => {
-    expect(
-      shouldHandleSwipeNavigationChain([
-        { interactive: true, scrollable: false },
-      ]),
-    ).toBe(false);
+    expect(shouldHandleSwipeNavigationChain([{ interactive: true, scrollable: false }])).toBe(
+      false,
+    );
   });
 
   it("blocks swipe when gesture starts inside a scrollable region", () => {

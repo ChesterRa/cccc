@@ -2,7 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { classNames } from "../../utils/classNames";
 import { AttachmentIcon, CloseIcon, ImageIcon } from "../../components/Icons";
 import { BodyPortal } from "../../components/ui/BodyPortal";
-import { getComposerPreviewPosition, isPreviewableComposerImageFile } from "./ComposerFilePreview.model";
+import {
+  getComposerPreviewPosition,
+  isPreviewableComposerImageFile,
+} from "./ComposerFilePreview.model";
 
 export function ComposerFilePreview({
   file,
@@ -18,7 +21,8 @@ export function ComposerFilePreview({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const canPreviewImage = isPreviewableComposerImageFile(file);
   const previewUrl = useMemo(() => {
-    if (!canPreviewImage || typeof URL === "undefined" || typeof URL.createObjectURL !== "function") return "";
+    if (!canPreviewImage || typeof URL === "undefined" || typeof URL.createObjectURL !== "function")
+      return "";
     return URL.createObjectURL(file);
   }, [canPreviewImage, file]);
 
@@ -33,10 +37,12 @@ export function ComposerFilePreview({
   const updatePreviewPosition = useCallback(() => {
     const root = rootRef.current;
     if (!root || typeof window === "undefined") return;
-    setPreviewPosition(getComposerPreviewPosition({
-      anchor: root.getBoundingClientRect(),
-      viewport: { width: window.innerWidth, height: window.innerHeight },
-    }));
+    setPreviewPosition(
+      getComposerPreviewPosition({
+        anchor: root.getBoundingClientRect(),
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      }),
+    );
   }, []);
 
   const openPreview = useCallback(() => {

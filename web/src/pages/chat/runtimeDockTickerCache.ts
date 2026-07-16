@@ -38,11 +38,7 @@ const TICKER_MESSAGE_SOURCE_LIMIT = 120;
 const TICKER_RETIRED_SIGNATURE_LIMIT = 160;
 
 export function createRuntimeDockTickerCache(): RuntimeDockTickerCache {
-  return {
-    entries: new Map(),
-    messageSources: new Map(),
-    retiredSignatures: new Map(),
-  };
+  return { entries: new Map(), messageSources: new Map(), retiredSignatures: new Map() };
 }
 
 export function hasRuntimeDockTickerWork(cache: RuntimeDockTickerCache): boolean {
@@ -54,7 +50,11 @@ export function hasRuntimeDockTickerWork(cache: RuntimeDockTickerCache): boolean
     const length = getTickerMessageLength(pendingText);
     if (length >= TICKER_MESSAGE_CHUNK_CHAR_LIMIT) return true;
     if (hasTickerMessageHardBoundary(pendingText)) return true;
-    if (length >= TICKER_MESSAGE_MIN_BOUNDARY_FLUSH_CHARS && hasTickerMessageSoftBoundary(pendingText)) return true;
+    if (
+      length >= TICKER_MESSAGE_MIN_BOUNDARY_FLUSH_CHARS &&
+      hasTickerMessageSoftBoundary(pendingText)
+    )
+      return true;
     if (length >= TICKER_MESSAGE_MIN_TIMED_FLUSH_CHARS) return true;
   }
   return false;
@@ -77,7 +77,9 @@ function getMessageSourceId(entry: RuntimeDockTickerEntry): string {
 
 function splitTickerMessageDelta(value: string): string[] {
   const chunks: string[] = [];
-  for (const rawLine of String(value || "").replace(/\r\n/g, "\n").split("\n")) {
+  for (const rawLine of String(value || "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
     const chars = Array.from(line);
@@ -86,7 +88,11 @@ function splitTickerMessageDelta(value: string): string[] {
       const maxEnd = Math.min(chars.length, index + TICKER_MESSAGE_CHUNK_CHAR_LIMIT);
       let end = maxEnd;
       if (maxEnd < chars.length) {
-        for (let cursor = maxEnd; cursor > index + TICKER_MESSAGE_CHUNK_SOFT_MIN_CHARS; cursor -= 1) {
+        for (
+          let cursor = maxEnd;
+          cursor > index + TICKER_MESSAGE_CHUNK_SOFT_MIN_CHARS;
+          cursor -= 1
+        ) {
           if (/[\s,，、.!?。！？;；:：)\]}]/.test(chars[cursor - 1] || "")) {
             end = cursor;
             break;
@@ -117,23 +123,41 @@ function hasTickerMessageSoftBoundary(value: string): boolean {
   return /(?:[,，、)])\s*$/.test(String(value || ""));
 }
 
-function shouldFlushTickerMessage(value: string, startedAtMs: number, nowMs: number, completed = false): boolean {
+function shouldFlushTickerMessage(
+  value: string,
+  startedAtMs: number,
+  nowMs: number,
+  completed = false,
+): boolean {
   const length = getTickerMessageLength(value);
   if (length <= 0) return false;
   if (completed) return true;
   if (length >= TICKER_MESSAGE_CHUNK_CHAR_LIMIT) return true;
   if (hasTickerMessageHardBoundary(value)) return true;
-  if (length >= TICKER_MESSAGE_MIN_BOUNDARY_FLUSH_CHARS && hasTickerMessageSoftBoundary(value)) return true;
-  if (length >= TICKER_MESSAGE_MIN_TIMED_FLUSH_CHARS && nowMs - startedAtMs >= TICKER_MESSAGE_FLUSH_DELAY_MS) return true;
+  if (length >= TICKER_MESSAGE_MIN_BOUNDARY_FLUSH_CHARS && hasTickerMessageSoftBoundary(value))
+    return true;
+  if (
+    length >= TICKER_MESSAGE_MIN_TIMED_FLUSH_CHARS &&
+    nowMs - startedAtMs >= TICKER_MESSAGE_FLUSH_DELAY_MS
+  )
+    return true;
   return false;
 }
 
 function getTickerMessageDisplayMs(value: string): number {
-  const estimatedLines = Math.max(1, Math.ceil(getTickerMessageLength(value) / TICKER_MESSAGE_DISPLAY_LINE_CHAR_ESTIMATE));
-  return TICKER_HOLD_AFTER_DISPLAY_MS + (estimatedLines - 1) * TICKER_MESSAGE_EXTRA_DISPLAY_MS_PER_LINE;
+  const estimatedLines = Math.max(
+    1,
+    Math.ceil(getTickerMessageLength(value) / TICKER_MESSAGE_DISPLAY_LINE_CHAR_ESTIMATE),
+  );
+  return (
+    TICKER_HOLD_AFTER_DISPLAY_MS + (estimatedLines - 1) * TICKER_MESSAGE_EXTRA_DISPLAY_MS_PER_LINE
+  );
 }
 
-function compareCachedTickerEntries(left: CachedRuntimeDockTickerEntry, right: CachedRuntimeDockTickerEntry): number {
+function compareCachedTickerEntries(
+  left: CachedRuntimeDockTickerEntry,
+  right: CachedRuntimeDockTickerEntry,
+): number {
   const leftTs = getTickerTimestampMs(left.updatedAt) ?? left.lastUpdatedAtMs;
   const rightTs = getTickerTimestampMs(right.updatedAt) ?? right.lastUpdatedAtMs;
   if (leftTs !== rightTs) return leftTs - rightTs;
@@ -156,7 +180,10 @@ function trimMessageSources(cache: RuntimeDockTickerCache): void {
   }
 }
 
-function retireTickerEntry(cache: RuntimeDockTickerCache, entry: CachedRuntimeDockTickerEntry): void {
+function retireTickerEntry(
+  cache: RuntimeDockTickerCache,
+  entry: CachedRuntimeDockTickerEntry,
+): void {
   cache.retiredSignatures.set(entry.id, entry.signature);
   trimRetiredSignatures(cache);
 }
@@ -165,10 +192,20 @@ function toVisibleEntries(cache: RuntimeDockTickerCache): RuntimeDockTickerEntry
   return Array.from(cache.entries.values())
     .sort(compareCachedTickerEntries)
     .slice(-TICKER_RENDER_LIMIT)
-    .map(({ displayMs: _displayMs, lastUpdatedAtMs: _lastUpdatedAtMs, signature: _signature, ...entry }) => entry);
+    .map(
+      ({
+        displayMs: _displayMs,
+        lastUpdatedAtMs: _lastUpdatedAtMs,
+        signature: _signature,
+        ...entry
+      }) => entry,
+    );
 }
 
-export function pruneRuntimeDockTickerCache(cache: RuntimeDockTickerCache, nowMs: number): RuntimeDockTickerEntry[] {
+export function pruneRuntimeDockTickerCache(
+  cache: RuntimeDockTickerCache,
+  nowMs: number,
+): RuntimeDockTickerEntry[] {
   flushPendingMessageSources(cache, nowMs);
 
   for (const [id, entry] of cache.entries.entries()) {
@@ -222,14 +259,22 @@ function flushPendingMessageSource(
     return { ...source, pendingText: "", pendingStartedAtMs: 0, drainingBacklog: false };
   }
   const pendingStartedAtMs = source.pendingStartedAtMs || nowMs;
-  if (!force && source.lastFlushedAtMs > 0 && nowMs - source.lastFlushedAtMs < TICKER_MESSAGE_CHUNK_REVEAL_INTERVAL_MS) {
+  if (
+    !force &&
+    source.lastFlushedAtMs > 0 &&
+    nowMs - source.lastFlushedAtMs < TICKER_MESSAGE_CHUNK_REVEAL_INTERVAL_MS
+  ) {
     return { ...source, pendingStartedAtMs };
   }
   const baseEntry = source.lastEntry;
   if (!baseEntry) {
     return { ...source, pendingText: "", pendingStartedAtMs: 0 };
   }
-  if (!force && !source.drainingBacklog && !shouldFlushTickerMessage(pendingText, pendingStartedAtMs, nowMs, Boolean(baseEntry.completed))) {
+  if (
+    !force &&
+    !source.drainingBacklog &&
+    !shouldFlushTickerMessage(pendingText, pendingStartedAtMs, nowMs, Boolean(baseEntry.completed))
+  ) {
     return { ...source, pendingStartedAtMs };
   }
 
@@ -239,12 +284,23 @@ function flushPendingMessageSource(
   }
   const sequence = source.sequence + 1;
   const backlogDisplayMs = remainingChunks.length * TICKER_MESSAGE_CHUNK_REVEAL_INTERVAL_MS;
-  upsertStableTickerEntry(cache, {
-    ...baseEntry,
-    id: [sourceId, "rev", String(source.revision).padStart(3, "0"), "seq", String(sequence).padStart(5, "0")].join(":"),
-    text: chunk,
-    sourceId,
-  }, nowMs, getTickerMessageDisplayMs(chunk) + backlogDisplayMs);
+  upsertStableTickerEntry(
+    cache,
+    {
+      ...baseEntry,
+      id: [
+        sourceId,
+        "rev",
+        String(source.revision).padStart(3, "0"),
+        "seq",
+        String(sequence).padStart(5, "0"),
+      ].join(":"),
+      text: chunk,
+      sourceId,
+    },
+    nowMs,
+    getTickerMessageDisplayMs(chunk) + backlogDisplayMs,
+  );
 
   return {
     ...source,
@@ -310,13 +366,18 @@ function upsertMessageTickerEntry(
     }
   }
 
-  const nextSource = flushPendingMessageSource(cache, sourceId, {
-    ...source,
-    consumedText: nextText,
-    pendingText: `${source.pendingText || ""}${delta}`,
-    pendingStartedAtMs: source.pendingText ? (source.pendingStartedAtMs || nowMs) : nowMs,
-    lastEntry: entry,
-  }, nowMs);
+  const nextSource = flushPendingMessageSource(
+    cache,
+    sourceId,
+    {
+      ...source,
+      consumedText: nextText,
+      pendingText: `${source.pendingText || ""}${delta}`,
+      pendingStartedAtMs: source.pendingText ? source.pendingStartedAtMs || nowMs : nowMs,
+      lastEntry: entry,
+    },
+    nowMs,
+  );
 
   cache.messageSources.set(sourceId, nextSource);
   trimMessageSources(cache);

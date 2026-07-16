@@ -34,7 +34,10 @@ function matchesMentionFilter(item: ComposerMentionSuggestion, needle: string): 
     .some((part) => String(part).toLowerCase().includes(needle));
 }
 
-function buildAgentMentionSuggestions(recipientActors: Actor[], needle: string): ComposerMentionSuggestion[] {
+function buildAgentMentionSuggestions(
+  recipientActors: Actor[],
+  needle: string,
+): ComposerMentionSuggestion[] {
   const base = ["@all", "@foreman", "@peers"];
   const actorItems = recipientActors
     .map((actor) => {
@@ -63,7 +66,10 @@ function buildAgentMentionSuggestions(recipientActors: Actor[], needle: string):
   ].filter((item) => matchesMentionFilter(item, needle));
 }
 
-function buildGroupMentionSuggestions(groups: GroupMeta[], needle: string): ComposerMentionSuggestion[] {
+function buildGroupMentionSuggestions(
+  groups: GroupMeta[],
+  needle: string,
+): ComposerMentionSuggestion[] {
   return (groups || [])
     .filter((group) => String(group.group_id || "").trim())
     .map((group) => {
@@ -77,9 +83,13 @@ function buildGroupMentionSuggestions(groups: GroupMeta[], needle: string): Comp
         kind: "group" as const,
         value: groupId,
         label,
-        badgeKind: group.group_bridge_remote ? "remote" as const : undefined,
-        description: group.group_bridge_remote ? groupId : (remoteEndpoint || topic || undefined),
-        meta: group.group_bridge_remote ? (remotePeerId || undefined) : (label !== groupId ? groupId : undefined),
+        badgeKind: group.group_bridge_remote ? ("remote" as const) : undefined,
+        description: group.group_bridge_remote ? groupId : remoteEndpoint || topic || undefined,
+        meta: group.group_bridge_remote
+          ? remotePeerId || undefined
+          : label !== groupId
+            ? groupId
+            : undefined,
         keywords: [groupId, title, topic, remoteEndpoint, remotePeerId].filter(Boolean),
       };
     })
@@ -97,13 +107,17 @@ function endpointDisplayName(endpoint: string): string {
 }
 
 function normalizeGroupBridgeAccessLevel(value: unknown): "messages" | "read" | "full" | "unknown" {
-  const level = String(value || "").trim().toLowerCase();
+  const level = String(value || "")
+    .trim()
+    .toLowerCase();
   if (level === "messages") return "messages";
   if (level === "read" || level === "full") return level;
   return "unknown";
 }
 
-export function buildGroupBridgeRouteGroups(trusts: GroupBridgeTrust[] | undefined | null): GroupMeta[] {
+export function buildGroupBridgeRouteGroups(
+  trusts: GroupBridgeTrust[] | undefined | null,
+): GroupMeta[] {
   const out: GroupMeta[] = [];
   for (const trust of trusts || []) {
     if (String(trust.status || "").trim() !== "active") continue;
@@ -129,7 +143,10 @@ export function buildGroupBridgeRouteGroups(trusts: GroupBridgeTrust[] | undefin
   return out;
 }
 
-export function mergeComposerRouteGroups(localGroups: GroupMeta[], group_bridgeGroups: GroupMeta[]): GroupMeta[] {
+export function mergeComposerRouteGroups(
+  localGroups: GroupMeta[],
+  group_bridgeGroups: GroupMeta[],
+): GroupMeta[] {
   const byId = new Map<string, GroupMeta>();
   for (const group of localGroups || []) {
     const groupId = String(group.group_id || "").trim();
@@ -178,7 +195,9 @@ function getGroupRouteCandidates(group: GroupMeta): string[] {
     String(group.group_id || "").trim(),
     String(group.title || "").trim(),
     String(group.topic || "").trim(),
-  ].filter((value, index, list): value is string => Boolean(value) && list.indexOf(value) === index);
+  ].filter(
+    (value, index, list): value is string => Boolean(value) && list.indexOf(value) === index,
+  );
 }
 
 export function hasComposerGroupRouteToken({
@@ -332,7 +351,9 @@ export function buildComposerMentionSuggestions({
   recipientActors: Actor[];
   groups: GroupMeta[];
 }): ComposerMentionSuggestion[] {
-  const needle = String(filter || "").trim().toLowerCase();
+  const needle = String(filter || "")
+    .trim()
+    .toLowerCase();
   return kind === "agent"
     ? buildAgentMentionSuggestions(recipientActors, needle)
     : buildGroupMentionSuggestions(groups, needle);

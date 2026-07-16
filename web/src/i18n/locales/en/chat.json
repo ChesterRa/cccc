@@ -394,6 +394,7 @@
   "openMessageContext": "Open message context",
   "closeSearchModal": "Close search modal",
   "to": "To",
+  "senderPerspective": "Sender perspective",
   "presentationTitle": "Presentation",
   "presentationOpenDockAction": "Open presentation",
   "presentationCloseDockAction": "Hide presentation",

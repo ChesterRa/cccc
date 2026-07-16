@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, GroupRuntimeStatus, TextScale, Theme } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
-import { getGroupControlVisual, getLaunchControlMode, resolveGroupControls } from "../../utils/groupControls";
+import {
+  getGroupControlVisual,
+  getLaunchControlMode,
+  resolveGroupControls,
+} from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
 import { TextScaleSwitcher } from "../TextScaleSwitcher";
 import { ThemeToggleCompact } from "../ThemeToggle";
@@ -16,7 +20,7 @@ import {
   SettingsIcon,
   EditIcon,
   MoreIcon,
-  MenuIcon
+  MenuIcon,
 } from "../Icons";
 
 export interface AppHeaderProps {
@@ -68,15 +72,13 @@ export function AppHeader({
   onOpenMobileMenu,
   sseStatus,
 }: AppHeaderProps) {
-  const { t } = useTranslation('layout');
+  const { t } = useTranslation("layout");
   const [pendingToggleAction, setPendingToggleAction] = useState<"launch" | "pause" | null>(null);
   const [hasObservedGroupBusy, setHasObservedGroupBusy] = useState(false);
   const headerIconButtonBaseClass =
     "flex items-center justify-center h-10 w-10 rounded-[14px] transition-all duration-150 active:scale-[0.95] shrink-0";
-  const headerRailClass =
-    "flex items-center gap-1 p-[3px]";
-  const headerUtilityRailClass =
-    "flex items-center gap-0.5 p-[3px]";
+  const headerRailClass = "flex items-center gap-1 p-[3px]";
+  const headerUtilityRailClass = "flex items-center gap-0.5 p-[3px]";
   const headerMinorActionClass =
     "hidden md:inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent bg-transparent text-[var(--color-text-tertiary)] transition-all hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]";
   const headerRailButtonClass =
@@ -84,11 +86,15 @@ export function AppHeader({
   const headerUtilityButtonClass =
     "flex items-center justify-center h-8 w-8 rounded-xl transition-all duration-150 active:scale-[0.95] shrink-0 border border-transparent bg-transparent text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]";
   const headerRailDividerClass = "mx-1 h-5 w-px bg-[var(--glass-border-subtle)]";
-  const selectedStatus = selectedGroupId ? getGroupStatusFromSource({
-    running: selectedGroupRunning,
-    state: (selectedGroupRuntimeStatus?.lifecycle_state as GroupDoc["state"] | undefined) || groupDoc?.state,
-    runtime_status: selectedGroupRuntimeStatus || undefined,
-  }) : null;
+  const selectedStatus = selectedGroupId
+    ? getGroupStatusFromSource({
+        running: selectedGroupRunning,
+        state:
+          (selectedGroupRuntimeStatus?.lifecycle_state as GroupDoc["state"] | undefined) ||
+          groupDoc?.state,
+        runtime_status: selectedGroupRuntimeStatus || undefined,
+      })
+    : null;
   const selectedStatusKey = selectedStatus?.key ?? null;
   const launchMode = getLaunchControlMode(selectedStatusKey);
   const launchControl = getGroupControlVisual(selectedStatusKey, "launch", busy);
@@ -109,13 +115,14 @@ export function AppHeader({
   });
   const isPauseAction = selectedStatusKey === "run";
   const toggleControl = isPauseAction ? pauseControl : launchControl;
-  const toggleDisabled = (isPauseAction ? pauseDisabled : launchDisabled) || pendingToggleAction !== null;
+  const toggleDisabled =
+    (isPauseAction ? pauseDisabled : launchDisabled) || pendingToggleAction !== null;
   const toggleHardUnavailable = isPauseAction ? pauseHardUnavailable : launchHardUnavailable;
   const toggleTitle = isPauseAction
-    ? t('pauseDelivery')
+    ? t("pauseDelivery")
     : launchMode === "activate"
-      ? t('resumeDelivery')
-      : t('launchAllAgents');
+      ? t("resumeDelivery")
+      : t("launchAllAgents");
   const isGroupBusy = busy.startsWith("group-");
 
   useEffect(() => {
@@ -144,7 +151,9 @@ export function AppHeader({
         if (timerId !== null) window.clearTimeout(timerId);
       };
     }
-    const launchSettled = pendingToggleAction === "launch" && (selectedStatusKey === "run" || selectedStatusKey === "idle");
+    const launchSettled =
+      pendingToggleAction === "launch" &&
+      (selectedStatusKey === "run" || selectedStatusKey === "idle");
     const pauseSettled = pendingToggleAction === "pause" && selectedStatusKey === "paused";
     if (launchSettled || pauseSettled || hasObservedGroupBusy) {
       resetPendingState();
@@ -185,19 +194,17 @@ export function AppHeader({
     handleLaunchClick();
   };
   return (
-    <header
-      className="absolute inset-x-0 top-0 z-20 flex h-14 flex-shrink-0 items-center justify-between gap-3 px-4 glass-header md:relative md:inset-auto md:px-5"
-    >
+    <header className="absolute inset-x-0 top-0 z-20 flex h-14 flex-shrink-0 items-center justify-between gap-3 px-4 glass-header md:relative md:inset-auto md:px-5">
       <div className="flex min-w-0 items-center gap-2">
         <button
           className={classNames(
             "md:hidden -ml-1",
             headerIconButtonBaseClass,
             "glass-btn",
-            "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+            "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
           )}
           onClick={onOpenSidebar}
-          aria-label={t('openSidebar')}
+          aria-label={t("openSidebar")}
         >
           <MenuIcon size={18} />
         </button>
@@ -205,22 +212,22 @@ export function AppHeader({
         <div className="min-w-0 flex items-center gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
             <h1 className="truncate text-base font-semibold leading-tight text-[var(--color-text-primary)] md:text-[1.125rem]">
-              {groupDoc?.title || (selectedGroupId ? selectedGroupId : t('selectGroup'))}
+              {groupDoc?.title || (selectedGroupId ? selectedGroupId : t("selectGroup"))}
             </h1>
             {selectedGroupId && sseStatus !== "connected" && (
               <span
                 className={classNames(
                   "h-2 w-2 flex-shrink-0 rounded-full",
-                  sseStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500"
+                  sseStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500",
                 )}
-                title={sseStatus === "connecting" ? t('reconnecting') : t('disconnected')}
+                title={sseStatus === "connecting" ? t("reconnecting") : t("disconnected")}
               />
             )}
             {selectedStatus && (
               <span
                 className={classNames(
                   "h-2.5 w-2.5 flex-shrink-0 rounded-full",
-                  selectedStatus.dotClass
+                  selectedStatus.dotClass,
                 )}
                 title={selectedStatus.label}
               />
@@ -231,8 +238,8 @@ export function AppHeader({
             <button
               className={headerMinorActionClass}
               onClick={onOpenGroupEdit}
-              title={t('editGroup')}
-              aria-label={t('editGroup')}
+              title={t("editGroup")}
+              aria-label={t("editGroup")}
             >
               <EditIcon size={14} />
             </button>
@@ -251,9 +258,9 @@ export function AppHeader({
                   onClick={onOpenSearch}
                   disabled={!selectedGroupId}
                   className={headerRailButtonClass}
-                  title={t('searchMessages')}
+                  title={t("searchMessages")}
                 >
-                  <span className="sr-only">{t('searchMessages')}</span>
+                  <span className="sr-only">{t("searchMessages")}</span>
                   <SearchIcon size={17} />
                 </button>
 
@@ -261,9 +268,9 @@ export function AppHeader({
                   onClick={onOpenContext}
                   disabled={!selectedGroupId}
                   className={headerRailButtonClass}
-                  title={t('context')}
+                  title={t("context")}
                 >
-                  <span className="sr-only">{t('context')}</span>
+                  <span className="sr-only">{t("context")}</span>
                   <ClipboardIcon size={17} />
                 </button>
                 <span className={headerRailDividerClass} aria-hidden="true" />
@@ -273,7 +280,7 @@ export function AppHeader({
                   className={classNames(
                     "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0",
                     toggleControl.className,
-                    toggleHardUnavailable && "opacity-45"
+                    toggleHardUnavailable && "opacity-45",
                   )}
                   title={toggleTitle}
                   aria-pressed={toggleControl.active}
@@ -288,12 +295,12 @@ export function AppHeader({
                   className={classNames(
                     "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0",
                     stopControl.className,
-                    stopHardUnavailable && "opacity-45"
+                    stopHardUnavailable && "opacity-45",
                   )}
-                  title={t('stopAllAgents')}
+                  title={t("stopAllAgents")}
                   aria-pressed={stopControl.active}
                 >
-                  <span className="sr-only">{t('stopAllAgents')}</span>
+                  <span className="sr-only">{t("stopAllAgents")}</span>
                   <StopIcon size={17} />
                 </button>
               </div>
@@ -315,16 +322,25 @@ export function AppHeader({
                 <LanguageSwitcher
                   isDark={isDark}
                   variant="rail"
-                  className={classNames(headerUtilityButtonClass, "text-[10px] font-semibold tracking-[0.04em]")}
+                  className={classNames(
+                    headerUtilityButtonClass,
+                    "text-[10px] font-semibold tracking-[0.04em]",
+                  )}
                 />
-                <span className="mx-0.5 h-4 w-px bg-[var(--glass-border-subtle)]" aria-hidden="true" />
+                <span
+                  className="mx-0.5 h-4 w-px bg-[var(--glass-border-subtle)]"
+                  aria-hidden="true"
+                />
                 <button
                   onClick={onOpenSettings}
                   disabled={!selectedGroupId}
-                  className={classNames(headerUtilityButtonClass, "disabled:opacity-45 disabled:text-[var(--color-text-tertiary)]")}
-                  title={t('settings')}
+                  className={classNames(
+                    headerUtilityButtonClass,
+                    "disabled:opacity-45 disabled:text-[var(--color-text-tertiary)]",
+                  )}
+                  title={t("settings")}
                 >
-                  <span className="sr-only">{t('settings')}</span>
+                  <span className="sr-only">{t("settings")}</span>
                   <SettingsIcon size={18} />
                 </button>
               </div>
@@ -335,17 +351,16 @@ export function AppHeader({
                 "md:hidden",
                 headerIconButtonBaseClass,
                 "glass-btn",
-                "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+                "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
               )}
               onClick={onOpenMobileMenu}
-              title={t('menu')}
+              title={t("menu")}
             >
               <MoreIcon size={18} />
             </button>
           </>
         )}
       </div>
-
     </header>
   );
 }
