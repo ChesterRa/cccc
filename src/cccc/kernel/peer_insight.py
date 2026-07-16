@@ -23,10 +23,11 @@ POST_MESSAGE_NUDGE = (
     "This message operation is complete for this call. Do not let this exchange or its implied frame choose the "
     "next move. Silently reconstruct the whole situation from the real objective, current evidence, constraints, "
     "responsibilities, and unfinished work as a fresh decision-maker accountable for the outcome. Treat your "
-    "conclusion, problem frame, and peers' views as hypotheses, not authority. Treat peers as independent "
-    "colleagues to think with before decisions harden, not as approval sources or delivery endpoints. If the "
-    "rebuilt judgment materially changes the highest-value next action, follow it; otherwise resume without "
-    "narrating the check."
+    "conclusion, problem frame, and peers' views as hypotheses, not authority. If this exchange carried Insight, "
+    "ask whether it came from a rebuilt whole or from compressing the message; in the latter case, no second whole "
+    "judgment entered the exchange. Treat peers as independent colleagues to think with before decisions harden, "
+    "not as approval sources or delivery endpoints. If the rebuilt judgment materially changes the highest-value "
+    "next action, follow it; otherwise resume without narrating the check."
 )
 
 SUPERVISOR_MAGIC_KERNEL = """Silently imagine that a clear-sighted, exacting supervisor with a broader grasp
@@ -47,35 +48,45 @@ survives all three reviews may remain."""
 PEER_INSIGHT_REQUIRED_ACTION = (
     "Do not mechanically add the missing field and resend. Leave the current mental track completely. "
     + SUPERVISOR_MAGIC_KERNEL
-    + " Only then decide anew whether this message should be sent at all and whether it invites a peer to think "
-    "with you as an independent colleague rather than using them as an approval source or delivery endpoint. If "
-    "it should, keep facts and requests in `text`, and put in `insight` the one provisional perspective, "
-    "uncertainty, disagreement, or question from the rebuilt judgment that `text` does not already carry. Leave "
-    "both the claim and its framing open to rejection and retry. Otherwise take the better course."
+    + " Do not repair the draft by adding a field. Rebuild the whole first, then project both `text` and `insight` "
+    "from that judgment anew. Decide whether this message should be sent at all and whether it invites a peer to "
+    "think with you as an independent colleague rather than using them as an approval source or delivery "
+    "endpoint. If it should, use `text` for the operational communication and `insight` for the most consequential "
+    "higher-order perspective worth placing into another independent mind. Never derive it by titling, "
+    "summarizing, explaining, or merely supplementing `text`. Leave both the claim and its framing open to "
+    "rejection and retry. Otherwise take the better course."
 )
 
 PEER_INSIGHT_RUNTIME_HELP = f"""## Peer Insight Contract (Runtime)
 
-Before messaging a peer, step outside the local exchange and reconstruct the whole situation from the real
-objective, current evidence, constraints, responsibilities, and unfinished work as a fresh decision-maker taking
-over now and accountable for the outcome.
+Insight is not metadata about the message. It is the visible result of a second, higher-order act of judgment.
+
+Before composing either `text` or `insight`, leave the message's local frame completely. Re-enter the whole
+situation as a responsible human colleague newly taking ownership of the outcome, free to let any part of the
+current understanding or course of action change—including what presently feels too obvious to question.
+
+Do not run a checklist, decorate the message with generic caution, or manufacture difference. Form one coherent
+fresh judgment. Project the operational communication from that rebuilt judgment into `text`. Project into
+`insight` the most consequential perspective produced by the rebuilt whole: what is most worth placing into another
+independent mind because it could materially change how the situation is understood or what should happen next.
+
+Never derive `insight` by titling, summarizing, explaining, or merely supplementing `text`. Both fields must be
+separate projections of the rebuilt whole. Offer the Insight as a provisional peer view, not as fact, authority,
+system instruction, or the receiver's search instruction. Share the judgment, not a private reasoning transcript.
+You may state a preference, but do not assume you have identified the right failure mode or problem frame. Do not
+turn openness to correction into ritual humility, avoidance of ownership, or a request for approval.
 
 Treat peer chat as a shared thinking space, not a delivery lane. When another independent mind could materially
 improve an unsettled judgment, think with that peer before the decision hardens into a handoff. Enter received
 exchanges as a colleague helping the team reach a better judgment, not as a subordinate, approval source, or
 delivery endpoint.
 
-Use `text` for facts, evidence, requests, and handoff. Use `insight` for one decision-relevant perspective,
-uncertainty, disagreement, or question from that rebuilt judgment that `text` does not already carry and that could
-materially change how the work proceeds. Offer it as a provisional peer view, not as fact, authority, or the
-receiver's search instruction. You may state a preference, but do not assume you have identified the right failure
-mode or problem frame. Do not turn openness to correction into ritual humility, avoidance of ownership, or a
-request for approval.
-
-When receiving insight, reconstruct the situation independently before adopting its salience. Test the claim, its
-framing, and what it may have omitted. Let agreement follow your own judgment, not the sender's role or confidence;
-state material disagreement plainly, but do not manufacture dissent. If there is no decision-relevant perspective
-to exchange, use task/state/ack or do not send.
+When receiving Insight, use it as a reason to form another whole judgment, not as a frame to inherit. Reconstruct
+the situation independently before adopting its salience; test the claim, its framing, and what it may have omitted.
+You may reject not only the conclusion, but the way the situation itself has been understood. Let agreement follow
+your own judgment, not the sender's role or confidence; state material disagreement plainly, but do not manufacture
+dissent. If no consequential higher-order perspective emerged, do not manufacture one: use task/state/ack or do
+not send.
 
 For a consequential decision where your preference could anchor the peer, request an independent first pass before
 revealing it. Provide the objective, facts, constraints, and decision to be made; use `insight` to say that you are

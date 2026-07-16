@@ -452,6 +452,31 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual(len(page.calls), 1)
         self.assertEqual(page.calls[0][1], "")
 
+    def test_submit_prompt_retypes_when_staged_batch_only_matches_prefix_and_suffix(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        shared_prefix = "bootstrap-seed-" + ("a" * 170)
+        shared_suffix = ("z" * 130) + "-shared-message-tail"
+        staged_prompt = f"{shared_prefix}\ndelivery=old events=event-old\n{shared_suffix}"
+        current_prompt = f"{shared_prefix}\ndelivery=new events=event-old,event-new\n{shared_suffix}"
+        page = object()
+
+        with (
+            patch.object(sidecar, "_submission_echo_found", return_value=False),
+            patch.object(sidecar, "_visible_input_selector", return_value="#prompt-textarea"),
+            patch.object(sidecar, "_composer_text", return_value=staged_prompt),
+            patch.object(sidecar, "_clear_and_type_prompt") as clear_and_type,
+            patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(sidecar, "_click_send", return_value="#composer-submit-button"),
+            patch.object(sidecar, "_wait_for_submission", return_value="message_echo"),
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            self.assertFalse(sidecar._prompt_exactly_staged(page, "#prompt-textarea", current_prompt))
+            result = sidecar._submit_prompt(page, current_prompt, input_timeout_seconds=1.0)
+
+        clear_and_type.assert_called_once_with(page, "#prompt-textarea", current_prompt)
+        self.assertEqual(result.get("submission_evidence"), "message_echo")
+
     def test_clear_and_type_prompt_uses_keyboard_for_contenteditable(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar
 
@@ -618,26 +643,111 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual(result.get("send_selector"), "#composer-submit-button")
         self.assertEqual(result.get("submission_evidence"), "running_without_echo")
 
-    def test_submit_prompt_refuses_when_chatgpt_is_already_running(self) -> None:
+    def test_submit_prompt_uses_explicit_send_control_while_chatgpt_is_running(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar
 
         page = object()
+        prompt = "Browser-delivered CCCC message"
 
         with (
             patch.object(sidecar, "_chatgpt_running_visible", return_value=True),
-            patch.object(sidecar, "_visible_input_selector") as input_selector,
+            patch.object(sidecar, "_visible_input_selector", return_value="#prompt-textarea") as input_selector,
             patch.object(sidecar, "_clear_and_type_prompt") as clear_prompt,
-            patch.object(sidecar, "_click_send") as click_send,
+            patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(sidecar, "_click_send", return_value='button[data-testid="send-button"]') as click_send,
+            patch.object(sidecar, "_wait_for_submission", return_value="message_echo"),
             patch.object(sidecar, "_request_submit_composer") as request_submit,
             patch.object(sidecar.time, "sleep", return_value=None),
         ):
-            with self.assertRaisesRegex(RuntimeError, "currently responding"):
-                sidecar._submit_prompt(page, "Browser-delivered CCCC message", input_timeout_seconds=1.0)
+            result = sidecar._submit_prompt(page, prompt, input_timeout_seconds=1.0)
+
+        input_selector.assert_called_once()
+        clear_prompt.assert_called_once_with(page, "#prompt-textarea", prompt)
+        self.assertEqual(click_send.call_args.kwargs.get("input_selector"), "#prompt-textarea")
+        request_submit.assert_not_called()
+        self.assertEqual(result.get("send_selector"), 'button[data-testid="send-button"]')
+        self.assertEqual(result.get("submission_evidence"), "message_echo")
+
+    def test_submit_prompt_stages_prompt_but_defers_without_form_or_enter_when_no_safe_send_exists(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Keyboard:
+            def __init__(self) -> None:
+                self.pressed: list[str] = []
+
+            def press(self, key: str) -> None:
+                self.pressed.append(key)
+
+        class _Page:
+            def __init__(self) -> None:
+                self.keyboard = _Keyboard()
+
+        page = _Page()
+        prompt = "Browser-delivered CCCC message"
+
+        with (
+            patch.object(sidecar, "_visible_input_selector", return_value="#prompt-textarea"),
+            patch.object(sidecar, "_clear_and_type_prompt") as clear_prompt,
+            patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(
+                sidecar,
+                "_click_send",
+                side_effect=sidecar._SubmitDeferredState(
+                    f"{sidecar.CHATGPT_SUBMIT_DEFERRED_MARKER} no safe Send prompt control"
+                ),
+            ),
+            patch.object(sidecar, "_request_submit_composer") as request_submit,
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            with self.assertRaisesRegex(RuntimeError, sidecar.CHATGPT_SUBMIT_DEFERRED_MARKER):
+                sidecar._submit_prompt(page, prompt, input_timeout_seconds=1.0)
+
+        clear_prompt.assert_called_once_with(page, "#prompt-textarea", prompt)
+        request_submit.assert_not_called()
+        self.assertEqual(page.keyboard.pressed, [])
+
+    def test_submit_prompt_does_not_retype_same_deferred_prompt(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        page = object()
+        prompt = "Browser-delivered CCCC message"
+
+        with (
+            patch.object(sidecar, "_visible_input_selector", return_value="#prompt-textarea"),
+            patch.object(sidecar, "_prompt_exactly_staged", return_value=True),
+            patch.object(sidecar, "_clear_and_type_prompt") as clear_prompt,
+            patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(
+                sidecar,
+                "_click_send",
+                side_effect=sidecar._SubmitDeferredState(sidecar.CHATGPT_SUBMIT_DEFERRED_ERROR),
+            ),
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            with self.assertRaisesRegex(RuntimeError, sidecar.CHATGPT_SUBMIT_DEFERRED_MARKER):
+                sidecar._submit_prompt(page, prompt, input_timeout_seconds=1.0)
+
+        clear_prompt.assert_not_called()
+
+    def test_submit_prompt_accepts_existing_delivery_echo_before_retrying(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        page = object()
+        prompt = "[cccc] Browser batch webdelivery:peer1:test events=abc123def456 actor=peer1"
+
+        with (
+            patch.object(sidecar, "_submission_echo_found", return_value=True),
+            patch.object(sidecar, "_visible_input_selector") as input_selector,
+            patch.object(sidecar, "_clear_and_type_prompt") as clear_prompt,
+            patch.object(sidecar, "_click_send") as click_send,
+        ):
+            result = sidecar._submit_prompt(page, prompt, input_timeout_seconds=1.0)
 
         input_selector.assert_not_called()
         clear_prompt.assert_not_called()
         click_send.assert_not_called()
-        request_submit.assert_not_called()
+        self.assertEqual(result.get("send_selector"), "existing:message_echo")
+        self.assertEqual(result.get("submission_evidence"), "message_echo")
 
     def test_submit_prompt_reselects_input_after_focus_failure(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar
@@ -822,7 +932,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual(page.keyboard.pressed, [])
         self.assertEqual(result.get("submission_evidence"), "running_without_echo")
 
-    def test_submit_prompt_accepts_click_exception_when_chatgpt_starts_running(self) -> None:
+    def test_submit_prompt_treats_invoked_click_exception_as_dispatch_unknown_without_running_signal(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar
 
         class _Button:
@@ -857,8 +967,9 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
             patch.object(sidecar, "_visible_input_selector", return_value="#prompt-textarea"),
             patch.object(sidecar, "_clear_and_type_prompt"),
             patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(sidecar, "_composer_control_candidate_selector", return_value="#composer-submit-button"),
             patch.object(sidecar, "_wait_for_stable_send_control", return_value=True),
-            patch.object(sidecar, "_chatgpt_running_visible", side_effect=[False, False, False, True]),
+            patch.object(sidecar, "_chatgpt_running_visible", return_value=False),
             patch.object(sidecar, "_wait_for_submission", return_value="stop_without_echo"),
             patch.object(sidecar, "_request_submit_composer", return_value="form.requestSubmit:button") as request_submit,
             patch.object(sidecar.time, "sleep", return_value=None),
@@ -866,8 +977,46 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
             result = sidecar._submit_prompt(page, "Browser-delivered CCCC message", input_timeout_seconds=1.0)
 
         request_submit.assert_not_called()
-        self.assertEqual(result.get("send_selector"), "#composer-submit-button:post_click_running")
-        self.assertEqual(result.get("submission_evidence"), "running_without_echo")
+        self.assertEqual(result.get("send_selector"), "#composer-submit-button:click_dispatch_unknown")
+        self.assertEqual(result.get("submission_evidence"), "click_dispatch_unknown")
+
+    def test_submit_prompt_treats_invoked_click_exception_as_unknown_while_already_running(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Button:
+            def click(self, *_args, **_kwargs) -> None:
+                raise RuntimeError("element detached after click")
+
+        class _Locator:
+            @property
+            def first(self) -> _Button:
+                return _Button()
+
+        class _Page:
+            def locator(self, _selector: str) -> _Locator:
+                return _Locator()
+
+        page = _Page()
+
+        with (
+            patch.object(sidecar, "SEND_BUTTON_SELECTORS", ['button[aria-label="Send prompt"]']),
+            patch.object(sidecar, "_visible_input_selector", return_value="#prompt-textarea"),
+            patch.object(sidecar, "_clear_and_type_prompt"),
+            patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(sidecar, "_composer_control_candidate_selector", return_value="#safe-send-prompt"),
+            patch.object(sidecar, "_wait_for_stable_send_control", return_value=True),
+            patch.object(sidecar, "_chatgpt_running_visible", return_value=True),
+            patch.object(sidecar, "_wait_for_submission", return_value="stop_without_echo"),
+            patch.object(sidecar, "_prompt_present_in_any_composer", return_value=True),
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            result = sidecar._submit_prompt(page, "Browser-delivered CCCC message", input_timeout_seconds=1.0)
+
+        self.assertEqual(
+            result.get("send_selector"),
+            'button[aria-label="Send prompt"]:click_dispatch_unknown',
+        )
+        self.assertEqual(result.get("submission_evidence"), "click_dispatch_unknown")
 
     def test_click_send_waits_for_stable_enabled_send_control(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar
@@ -912,13 +1061,109 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
 
         with (
             patch.object(sidecar, "SEND_BUTTON_SELECTORS", ["#composer-submit-button"]),
+            patch.object(sidecar, "_composer_control_candidate_selector", return_value="#composer-submit-button"),
             patch.object(sidecar, "_chatgpt_running_visible", return_value=False),
         ):
-            selector = sidecar._click_send(page, timeout_seconds=1.5)
+            selector = sidecar._click_send(page, input_selector="#prompt-textarea", timeout_seconds=1.5)
 
         self.assertEqual(selector, "#composer-submit-button")
         self.assertGreaterEqual(page.button.disabled_checks, 3)
         self.assertEqual(page.button.clicks, 1)
+
+    def test_click_send_skips_stop_candidate_and_clicks_safe_send_prompt_control(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Button:
+            def __init__(self) -> None:
+                self.clicks = 0
+
+            def click(self, *_args, **_kwargs) -> None:
+                self.clicks += 1
+
+        class _Locator:
+            def __init__(self, button: _Button) -> None:
+                self._button = button
+
+            @property
+            def first(self) -> _Button:
+                return self._button
+
+        class _Page:
+            def __init__(self) -> None:
+                self.buttons = {"#stop": _Button(), "#send-prompt": _Button()}
+
+            def locator(self, selector: str) -> _Locator:
+                return _Locator(self.buttons[selector])
+
+        page = _Page()
+
+        def stable_control(_page, selector: str, **_kwargs) -> bool:
+            if selector == "#stop":
+                raise sidecar._UnsafeSubmitState("stop control")
+            return True
+
+        with (
+            patch.object(sidecar, "SEND_BUTTON_SELECTORS", ["#stop", "#send-prompt"]),
+            patch.object(sidecar, "_composer_control_candidate_selector", side_effect=lambda _page, _input, selector: selector),
+            patch.object(sidecar, "_wait_for_stable_send_control", side_effect=stable_control),
+            patch.object(sidecar, "_chatgpt_running_visible", return_value=True),
+        ):
+            selector = sidecar._click_send(page, input_selector="#prompt-textarea", timeout_seconds=1.0)
+
+        self.assertEqual(selector, "#send-prompt")
+        self.assertEqual(page.buttons["#stop"].clicks, 0)
+        self.assertEqual(page.buttons["#send-prompt"].clicks, 1)
+
+    def test_scored_send_candidate_is_confined_to_real_composer_root(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Page:
+            def __init__(self) -> None:
+                self.script = ""
+                self.input_selector = ""
+
+            def evaluate(self, script: str, input_selector: str) -> str:
+                self.script = script
+                self.input_selector = input_selector
+                return ""
+
+        page = _Page()
+
+        selector = sidecar._scored_composer_send_selector(page, "#prompt-textarea")
+
+        self.assertEqual(selector, "")
+        self.assertEqual(page.input_selector, "#prompt-textarea")
+        self.assertIn("composerRoot.querySelectorAll", page.script)
+        self.assertNotIn('prompt?.closest?.("main")', page.script)
+        self.assertNotIn("...document.querySelectorAll(\"button, [role='button']\")", page.script)
+        self.assertNotIn("follow", page.script.lower())
+
+    def test_explicit_send_candidate_is_confined_to_real_composer_root(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class _Page:
+            def __init__(self) -> None:
+                self.script = ""
+                self.args: dict[str, str] = {}
+
+            def evaluate(self, script: str, args: dict[str, str]) -> str:
+                self.script = script
+                self.args = args
+                return ""
+
+        page = _Page()
+
+        selector = sidecar._composer_control_candidate_selector(
+            page,
+            "#prompt-textarea",
+            'button[aria-label*="Send"]',
+        )
+
+        self.assertEqual(selector, "")
+        self.assertEqual(page.args.get("inputSelector"), "#prompt-textarea")
+        self.assertIn("composerRoot.querySelectorAll(candidateSelector)", page.script)
+        self.assertNotIn("document.querySelectorAll(candidateSelector)", page.script)
+        self.assertNotIn('prompt.closest("main")', page.script)
 
     def test_submit_prompt_accepts_cleared_composer_without_echo(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar

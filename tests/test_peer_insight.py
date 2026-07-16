@@ -153,10 +153,22 @@ def test_missing_insight_stops_before_wake_ledger_and_other_collaboration_side_e
     assert response.error.code == "peer_insight_required"
     assert response.error.details["recommended_action"] == PEER_INSIGHT_REQUIRED_ACTION
     assert SUPERVISOR_MAGIC_KERNEL in response.error.details["recommended_action"]
+    assert "Do not repair the draft by adding a field" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "project both `text` and `insight` from that judgment anew" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "Never derive it by titling, summarizing" in PEER_INSIGHT_REQUIRED_ACTION
     assert wakes == []
     wake_group.assert_not_called()
     sync_peer_addresses.assert_not_called()
     assert list(iter_events(peer_group.ledger_path)) == before
+
+
+def test_post_message_nudge_audits_insight_origin_without_dynamic_scene_logic() -> None:
+    from cccc.kernel.peer_insight import POST_MESSAGE_NUDGE
+
+    assert "If this exchange carried Insight" in POST_MESSAGE_NUDGE
+    assert "came from a rebuilt whole or from compressing the message" in POST_MESSAGE_NUDGE
+    assert "no second whole judgment entered the exchange" in POST_MESSAGE_NUDGE
+    assert "If the rebuilt judgment materially changes" in POST_MESSAGE_NUDGE
 
 
 def test_disabled_visible_peer_still_triggers_gate(peer_group) -> None:

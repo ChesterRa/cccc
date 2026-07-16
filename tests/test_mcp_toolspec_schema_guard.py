@@ -118,7 +118,7 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertIn("UTF-8 text", str((file_props.get("rel_path") or {}).get("description") or ""))
         self.assertIn("active scope", str((file_props.get("path") or {}).get("description") or ""))
 
-    def test_messaging_toolspec_exposes_neutral_optional_insight_without_advertising_the_gate(self) -> None:
+    def test_messaging_toolspec_exposes_optional_higher_order_insight_without_advertising_the_gate(self) -> None:
         for tool_name in (
             "cccc_message_send",
             "cccc_message_reply",
@@ -134,6 +134,12 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
             self.assertEqual(field.get("maxLength"), 1200)
             required = schema.get("required") if isinstance(schema, dict) else []
             self.assertNotIn("insight", required or [])
+            self.assertLess(list(props).index("text"), list(props).index("insight"))
+            field_copy = str(field.get("description") or "").lower()
+            self.assertIn("not a title or recap of `text`", field_copy)
+            self.assertIn("rebuild the whole situation", field_copy)
+            self.assertIn("derive `insight` from that fresh judgment, never from `text`", field_copy)
+            self.assertIn("another independent mind", field_copy)
             public_copy = f"{spec.get('description', '')} {field.get('description', '')}".lower()
             self.assertNotIn("insight is required", public_copy)
             self.assertNotIn("must include insight", public_copy)

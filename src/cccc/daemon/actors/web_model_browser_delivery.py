@@ -23,6 +23,7 @@ from ...kernel.web_model_connectors import list_web_model_connectors
 from ...util.time import parse_utc_iso, utc_now_iso
 from ...ports.web_model_browser_sidecar import (
     CHATGPT_URL,
+    CHATGPT_SUBMIT_DEFERRED_MARKER,
     _conversation_url_from_tab,
     read_chatgpt_browser_state,
     record_chatgpt_browser_state,
@@ -54,6 +55,9 @@ _DEFAULT_TIMEOUT_SECONDS = 30.0
 _PROMPT_TEXT_LIMIT = 48_000
 _MAX_BROWSER_DELIVERY_EVENTS = 20
 _PENDING_NEW_CHAT_RETRY_AFTER_SECONDS = 60.0
+_DEFERRED_RETRY_AFTER_SECONDS = 3.0
+_DEFERRED_MAX_AUTOMATIC_RETRIES = 3
+_DEFERRED_MAX_RETRY_AFTER_SECONDS = 30.0
 _BOOTSTRAP_SEED_VERSION = "web-model-bootstrap-normal-system-prompt-v2"
 
 
@@ -307,6 +311,10 @@ def _is_submission_ambiguous_error(error: str) -> bool:
         "submit action was attempted" in lowered
         and "submission could not be verified" in lowered
     ) or "submission_verification=ambiguous" in lowered
+
+
+def _is_submission_deferred_error(error: str) -> bool:
+    return CHATGPT_SUBMIT_DEFERRED_MARKER in str(error or "").lower()
 
 
 def _append_delivery_event(
@@ -590,6 +598,14 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
     bootstrap_seed_text = candidate_seed_text if bootstrap_seed else ""
     delivery_id = str(turn.get("delivery_id") or "")
     delivery_timeout_seconds = _timeout_seconds(actor)
+    try:
+        previous_browser_state = read_chatgpt_browser_state(group.group_id, aid)
+    except Exception:
+        previous_browser_state = {}
+    already_submitting = (
+        str(previous_browser_state.get("last_delivery_id") or "") == delivery_id
+        and str(previous_browser_state.get("last_delivery_status") or "") == "submitting"
+    )
     _record_delivery_submitting(
         group.group_id,
         aid,
@@ -597,21 +613,22 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         delivery_id=delivery_id,
         timeout_seconds=delivery_timeout_seconds,
     )
-    _append_delivery_event(
-        group=group,
-        actor_id=aid,
-        turn=turn,
-        kind="web_model.browser_delivery.submitting",
-        data={
-            "provider": provider,
-            "delivery_id": delivery_id,
-            "trigger_event_id": str(trigger_event_id or "").strip(),
-            "delivery_transport": "projected_session",
-            "target_url": target_url,
-            "auto_bind_new_chat": bool(auto_bind_new_chat),
-            "timeout_seconds": float(delivery_timeout_seconds),
-        },
-    )
+    if not already_submitting:
+        _append_delivery_event(
+            group=group,
+            actor_id=aid,
+            turn=turn,
+            kind="web_model.browser_delivery.submitting",
+            data={
+                "provider": provider,
+                "delivery_id": delivery_id,
+                "trigger_event_id": str(trigger_event_id or "").strip(),
+                "delivery_transport": "projected_session",
+                "target_url": target_url,
+                "auto_bind_new_chat": bool(auto_bind_new_chat),
+                "timeout_seconds": float(delivery_timeout_seconds),
+            },
+        )
     prompt = build_web_model_browser_turn_prompt(
         turn,
         bootstrap_seed_text=bootstrap_seed_text,
@@ -904,6 +921,30 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         }
 
     error = str(delivery_result.get("error") or "browser delivery failed")
+    if _is_submission_deferred_error(error):
+        record_chatgpt_browser_state(
+            group.group_id,
+            aid,
+            {
+                "last_delivery_at": utc_now_iso(),
+                "last_turn_id": str(turn.get("turn_id") or ""),
+                "last_event_ids": list(turn.get("event_ids") or []),
+                "last_delivery_id": str(turn.get("delivery_id") or ""),
+                "last_delivery_status": "submitting",
+                "last_submission_evidence": "",
+                "last_send_selector": "",
+                "last_error": error[:1200],
+            },
+        )
+        return {
+            "ok": True,
+            "status": "deferred",
+            "turn_id": str(turn.get("turn_id") or ""),
+            "reason": error,
+            "cursor_committed": False,
+            "reschedule": True,
+            "reschedule_after_seconds": _DEFERRED_RETRY_AFTER_SECONDS,
+        }
     if _is_submission_ambiguous_error(error):
         delivery_id = str(delivery_result.get("delivery_id") or turn.get("delivery_id") or "")
         ambiguous_browser = delivery_result.get("browser") if isinstance(delivery_result.get("browser"), dict) else {}
@@ -1045,24 +1086,75 @@ def schedule_web_model_browser_delivery(
     active_logger = logger or _LOG
 
     def _worker() -> None:
-        reschedule = False
+        deferred_retries = 0
+        exhausted_delivery_id = ""
         try:
-            result = submit_next_web_model_browser_turn(gid, aid, trigger_event_id=trigger_event_id)
-            reschedule = bool(result.get("reschedule"))
-            if not result.get("ok") and str(result.get("error") or "") != "browser_delivery_disabled":
-                active_logger.info(
-                    "[web-model-browser-delivery] failed group=%s actor=%s error=%s",
-                    gid,
-                    aid,
-                    result.get("error"),
+            while True:
+                try:
+                    result = submit_next_web_model_browser_turn(gid, aid, trigger_event_id=trigger_event_id)
+                except Exception:
+                    active_logger.exception(
+                        "[web-model-browser-delivery] unexpected error group=%s actor=%s",
+                        gid,
+                        aid,
+                    )
+                    break
+                if not result.get("ok") and str(result.get("error") or "") != "browser_delivery_disabled":
+                    active_logger.info(
+                        "[web-model-browser-delivery] failed group=%s actor=%s error=%s",
+                        gid,
+                        aid,
+                        result.get("error"),
+                    )
+                if not bool(result.get("reschedule")):
+                    break
+                try:
+                    requested_delay = max(0.0, min(float(result.get("reschedule_after_seconds") or 0.0), 60.0))
+                except Exception:
+                    requested_delay = 0.0
+                if str(result.get("status") or "") != "deferred":
+                    deferred_retries = 0
+                    if requested_delay > 0:
+                        threading.Event().wait(requested_delay)
+                    continue
+                if deferred_retries >= _DEFERRED_MAX_AUTOMATIC_RETRIES:
+                    exhausted_delivery_id = str(result.get("turn_id") or "").strip()
+                    active_logger.info(
+                        "[web-model-browser-delivery] deferred retry limit reached group=%s actor=%s",
+                        gid,
+                        aid,
+                    )
+                    break
+                base_delay = requested_delay or _DEFERRED_RETRY_AFTER_SECONDS
+                retry_delay = min(
+                    _DEFERRED_MAX_RETRY_AFTER_SECONDS,
+                    base_delay * (2**deferred_retries),
                 )
+                deferred_retries += 1
+                threading.Event().wait(retry_delay)
         except Exception:
             active_logger.exception("[web-model-browser-delivery] unexpected error group=%s actor=%s", gid, aid)
         finally:
             with _IN_FLIGHT_LOCK:
                 _IN_FLIGHT.discard(key)
-        if reschedule:
-            schedule_web_model_browser_delivery(group_id=gid, actor_id=aid, logger=active_logger)
+        if exhausted_delivery_id:
+            try:
+                current_group = load_group(gid)
+                current_turn = _browser_delivery_batch(current_group, actor_id=aid) if current_group is not None else {}
+                current_delivery_id = str(current_turn.get("delivery_id") or "").strip()
+                if current_delivery_id and current_delivery_id != exhausted_delivery_id:
+                    schedule_web_model_browser_delivery(
+                        group_id=gid,
+                        actor_id=aid,
+                        trigger_event_id=str(current_turn.get("latest_event_id") or "").strip(),
+                        logger=active_logger,
+                    )
+            except Exception:
+                active_logger.exception(
+                    "[web-model-browser-delivery] fresh unread check failed group=%s actor=%s",
+                    gid,
+                    aid,
+                )
 
     threading.Thread(
         target=_worker,

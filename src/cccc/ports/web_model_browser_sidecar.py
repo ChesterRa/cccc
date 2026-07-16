@@ -53,9 +53,17 @@ SEND_BUTTON_SELECTORS = [
 ]
 CDP_CONNECT_TIMEOUT_MS = 5000
 DEFAULT_BROWSER_DELIVERY_TIMEOUT_SECONDS = 120.0
+CHATGPT_SUBMIT_DEFERRED_MARKER = "chatgpt_submit_deferred:"
+CHATGPT_SUBMIT_DEFERRED_ERROR = (
+    f"{CHATGPT_SUBMIT_DEFERRED_MARKER} ChatGPT is responding and no safe Send prompt control is available"
+)
 
 
 class _UnsafeSubmitState(RuntimeError):
+    pass
+
+
+class _SubmitDeferredState(RuntimeError):
     pass
 
 
@@ -632,6 +640,17 @@ def _normalize_composer_text(value: str) -> str:
     return " ".join(str(value or "").replace("\xa0", " ").split())
 
 
+def _prompt_exactly_staged(page: Any, selector: str, prompt: str) -> bool:
+    expected = _normalize_composer_text(prompt)
+    if not expected:
+        return False
+    try:
+        actual = _normalize_composer_text(_composer_text(page, selector))
+    except Exception:
+        return False
+    return actual == expected
+
+
 def _prompt_inserted(page: Any, selector: str, prompt: str) -> bool:
     actual = _normalize_composer_text(_composer_text(page, selector))
     expected = _normalize_composer_text(prompt)
@@ -725,23 +744,6 @@ def _wait_for_prompt_inserted(page: Any, selector: str, prompt: str, *, timeout_
     return _prompt_present_in_any_composer(page, prompt, selector)
 
 
-def _raise_if_chatgpt_running_before_submit(page: Any) -> None:
-    if _chatgpt_running_visible(page):
-        raise _UnsafeSubmitState(
-            "ChatGPT is currently responding; refusing to click the composer control because it may be the stop button"
-        )
-
-
-def _chatgpt_started_after_submit_attempt(page: Any, *, timeout_seconds: float = 0.75) -> bool:
-    deadline = time.time() + max(0.0, float(timeout_seconds))
-    while True:
-        if _chatgpt_running_visible(page):
-            return True
-        if time.time() >= deadline:
-            return False
-        time.sleep(0.05)
-
-
 def _selector_resolves_to_stop_control(page: Any, selector: str) -> bool:
     raw_selector = str(selector or "").strip()
     if not raw_selector:
@@ -802,7 +804,6 @@ def _wait_for_stable_send_control(
     stable_since = 0.0
     wait_deadline = min(deadline, time.time() + max(0.45, float(stable_seconds) + 0.25))
     while time.time() < wait_deadline:
-        _raise_if_chatgpt_running_before_submit(page)
         state = _send_control_state(page, selector)
         if state == "ready":
             now = time.time()
@@ -818,121 +819,171 @@ def _wait_for_stable_send_control(
     return False
 
 
-def _click_send(page: Any, *, timeout_seconds: float = 5.0) -> str:
+def _composer_control_candidate_selector(page: Any, input_selector: str, candidate_selector: str) -> str:
+    try:
+        result = page.evaluate(
+            """args => {
+                const { inputSelector, candidateSelector } = args;
+                let prompt = null;
+                try {
+                    prompt = document.querySelector(inputSelector);
+                } catch (_error) {
+                    return "";
+                }
+                if (!prompt) return "";
+                const composerRoot =
+                    prompt.closest("form") ||
+                    prompt.closest("[data-type='unified-composer'], [data-testid*='composer' i], [data-testid*='prompt' i], [data-testid*='chat-input' i]");
+                if (!composerRoot) return "";
+                let candidates = [];
+                try {
+                    candidates = Array.from(composerRoot.querySelectorAll(candidateSelector));
+                } catch (_error) {
+                    return "";
+                }
+                const isVisible = (node) => {
+                    if (!node) return false;
+                    const rect = node.getBoundingClientRect();
+                    const style = window.getComputedStyle(node);
+                    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+                };
+                const isDisabled = (node) =>
+                    !!node.disabled || String(node.getAttribute("aria-disabled") || "").toLowerCase() === "true";
+                const candidate = candidates.find((node) => isVisible(node) && !isDisabled(node));
+                if (!candidate) return "";
+                const marker = "cccc-chatgpt-send-candidate";
+                for (const node of document.querySelectorAll("[data-cccc-chatgpt-send-candidate]")) {
+                    node.removeAttribute("data-cccc-chatgpt-send-candidate");
+                }
+                candidate.setAttribute("data-cccc-chatgpt-send-candidate", marker);
+                return `[data-cccc-chatgpt-send-candidate="${marker}"]`;
+            }""",
+            {"inputSelector": str(input_selector or ""), "candidateSelector": str(candidate_selector or "")},
+        )
+    except Exception:
+        return ""
+    return str(result or "").strip()
+
+
+def _scored_composer_send_selector(page: Any, input_selector: str) -> str:
+    try:
+        result = page.evaluate(
+            """inputSelector => {
+                let prompt = null;
+                try {
+                    prompt = document.querySelector(inputSelector);
+                } catch (_error) {
+                    return "";
+                }
+                if (!prompt) return "";
+                const composerRoot =
+                    prompt.closest("form") ||
+                    prompt.closest("[data-type='unified-composer'], [data-testid*='composer' i], [data-testid*='prompt' i], [data-testid*='chat-input' i]");
+                if (!composerRoot) return "";
+                const isVisible = (node) => {
+                    if (!node) return false;
+                    const rect = node.getBoundingClientRect();
+                    const style = window.getComputedStyle(node);
+                    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+                };
+                const isDisabled = (node) =>
+                    !!node.disabled || String(node.getAttribute("aria-disabled") || "").toLowerCase() === "true";
+                const labelOf = (node) => [
+                    node.getAttribute("aria-label") || "",
+                    node.getAttribute("title") || "",
+                    node.getAttribute("data-testid") || "",
+                    node.id || "",
+                    node.className || "",
+                    node.innerText || node.textContent || "",
+                ].join(" ").replace(/\\s+/g, " ").trim().toLowerCase();
+                const explicitSelector =
+                    "#composer-submit-button, button[data-testid='send-button'], " +
+                    "button[data-testid='composer-submit-button'], button[data-testid*='composer-send'], " +
+                    "button[aria-label*='Send'], button[aria-label*='发送'], button[aria-label*='送信']";
+                const score = (button) => {
+                    const label = labelOf(button);
+                    if (/stop|cancel|retry|signin|sign in|log in|login|continue with|google|microsoft|apple/.test(label)) {
+                        return -1;
+                    }
+                    const explicit = button.matches(explicitSelector);
+                    const labeled = /send|submit|发送|送信/.test(label);
+                    const submit = String(button.getAttribute("type") || "").toLowerCase() === "submit";
+                    if (!explicit && !labeled && !submit) return -1;
+                    const rect = button.getBoundingClientRect();
+                    return (explicit ? 120 : 0) + (labeled ? 90 : 0) + (submit ? 35 : 0) +
+                        (rect.width >= 16 && rect.height >= 16 ? 10 : 0);
+                };
+                let best = null;
+                let bestScore = -1;
+                for (const button of composerRoot.querySelectorAll("button, [role='button']")) {
+                    if (!isVisible(button) || isDisabled(button)) continue;
+                    const candidateScore = score(button);
+                    if (candidateScore > bestScore) {
+                        best = button;
+                        bestScore = candidateScore;
+                    }
+                }
+                if (!best || bestScore < 0) return "";
+                const marker = "cccc-chatgpt-send-candidate";
+                for (const node of document.querySelectorAll("[data-cccc-chatgpt-send-candidate]")) {
+                    node.removeAttribute("data-cccc-chatgpt-send-candidate");
+                }
+                best.setAttribute("data-cccc-chatgpt-send-candidate", marker);
+                return `[data-cccc-chatgpt-send-candidate="${marker}"]`;
+            }""",
+            str(input_selector or ""),
+        )
+    except Exception:
+        return ""
+    return str(result or "").strip()
+
+
+def _click_send(page: Any, *, input_selector: str, timeout_seconds: float = 5.0) -> str:
     deadline = time.time() + max(0.5, float(timeout_seconds))
     last_error = ""
     while time.time() < deadline:
-        _raise_if_chatgpt_running_before_submit(page)
         for selector in SEND_BUTTON_SELECTORS:
+            click_invoked = False
             try:
-                if not _wait_for_stable_send_control(page, selector, deadline=deadline):
+                candidate_selector = _composer_control_candidate_selector(page, input_selector, selector)
+                if not candidate_selector:
                     continue
-                page.locator(selector).first.click(timeout=5000)
-                return selector
-            except _UnsafeSubmitState:
-                raise
-            except Exception as exc:
-                last_error = str(exc)
-                if _chatgpt_started_after_submit_attempt(page):
-                    return f"{selector}:post_click_running"
-        try:
-            candidate_selector = page.evaluate(
-                """() => {
-                    const isVisible = (node) => {
-                        if (!node) return false;
-                        const rect = node.getBoundingClientRect();
-                        const style = window.getComputedStyle(node);
-                        return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
-                    };
-                    const isDisabled = (node) => !!node.disabled || String(node.getAttribute("aria-disabled") || "").toLowerCase() === "true";
-                    const labelOf = (node) => [
-                        node.getAttribute("aria-label") || "",
-                        node.getAttribute("title") || "",
-                        node.getAttribute("data-testid") || "",
-                        node.id || "",
-                        node.className || "",
-                        node.innerText || node.textContent || "",
-                    ].join(" ").replace(/\\s+/g, " ").trim().toLowerCase();
-                    const editable = (node) => {
-                        if (!node || !isVisible(node)) return false;
-                        if (node.matches("textarea")) return !node.disabled && !node.readOnly;
-                        if (node.matches("input")) return !node.disabled && !node.readOnly && !/password|search|email|url|number|tel|file|hidden|checkbox|radio|submit|button|reset/i.test(String(node.type || "text"));
-                        return node.isContentEditable || node.getAttribute("contenteditable") === "true" || node.getAttribute("role") === "textbox";
-                    };
-                    const promptCandidates = [
-                        ...document.querySelectorAll("[data-cccc-chatgpt-input-candidate]"),
-                        ...document.querySelectorAll("main textarea, main [role='textbox'], main [contenteditable='true']"),
-                        ...document.querySelectorAll("textarea, [role='textbox'], [contenteditable='true']"),
-                    ];
-                    const prompt = promptCandidates.find(editable) || document.activeElement;
-                    const composerRoot =
-                        prompt?.closest?.("form") ||
-                        prompt?.closest?.("[data-testid*='composer' i], [data-testid*='prompt' i], [data-testid*='chat-input' i], [aria-label*='message' i], [aria-label*='prompt' i]") ||
-                        prompt?.closest?.("main") ||
-                        null;
-                    const promptRect = prompt?.getBoundingClientRect?.() || null;
-                    const score = (button) => {
-                        const rect = button.getBoundingClientRect();
-                        const label = labelOf(button);
-                        let out = 0;
-                        if (button.matches("#composer-submit-button, button[data-testid='send-button'], button[data-testid='composer-submit-button'], button[data-testid*='composer-send'], button[aria-label*='Send'], button[aria-label*='发送'], button[aria-label*='送信']")) out += 120;
-                        if (/send|submit|run|go|ask|reply|发送|送信/.test(label)) out += 90;
-                        if (/stop|cancel|retry|signin|sign in|log in|login|continue with|google|microsoft|apple/.test(label)) out -= 160;
-                        if (button.getAttribute("type") === "submit") out += 35;
-                        if (composerRoot && composerRoot.contains(button)) out += 170;
-                        if (rect.width >= 16 && rect.height >= 16) out += 10;
-                        out += Math.max(0, rect.y / 10);
-                        out += Math.max(0, rect.x / 20);
-                        if (promptRect) {
-                            const cx = rect.x + rect.width / 2;
-                            const cy = rect.y + rect.height / 2;
-                            const dx = Math.abs(cx - (promptRect.x + promptRect.width));
-                            const dy = Math.abs(cy - (promptRect.y + promptRect.height / 2));
-                            out += Math.max(0, 140 - dx / 6 - dy / 4);
-                        }
-                        return out;
-                    };
-                    const pool = [];
-                    const seen = new Set();
-                    const local = composerRoot ? [...composerRoot.querySelectorAll("button, [role='button']")] : [];
-                    for (const node of [...local, ...document.querySelectorAll("button, [role='button']")]) {
-                        if (!node || seen.has(node)) continue;
-                        seen.add(node);
-                        if (!isVisible(node) || isDisabled(node)) continue;
-                        pool.push(node);
-                    }
-                    let best = null;
-                    let bestScore = -Infinity;
-                    for (const button of pool) {
-                        const candidateScore = score(button);
-                        if (candidateScore > bestScore) {
-                            best = button;
-                            bestScore = candidateScore;
-                        }
-                    }
-                    if (!best || bestScore < 60) return "";
-                    const marker = "cccc-chatgpt-send-candidate";
-                    for (const node of document.querySelectorAll("[data-cccc-chatgpt-send-candidate]")) {
-                        node.removeAttribute("data-cccc-chatgpt-send-candidate");
-                    }
-                    best.setAttribute("data-cccc-chatgpt-send-candidate", marker);
-                    return `[data-cccc-chatgpt-send-candidate="${marker}"]`;
-                }"""
-            )
-            candidate_selector = str(candidate_selector or "").strip()
-            if candidate_selector:
-                _raise_if_chatgpt_running_before_submit(page)
                 if not _wait_for_stable_send_control(page, candidate_selector, deadline=deadline):
                     continue
-                page.locator(candidate_selector).first.click(timeout=5000)
+                control = page.locator(candidate_selector).first
+                click_invoked = True
+                control.click(timeout=5000)
+                return selector
+            except _UnsafeSubmitState as exc:
+                last_error = str(exc)
+                if click_invoked:
+                    return f"{selector}:click_dispatch_unknown"
+                continue
+            except Exception as exc:
+                last_error = str(exc)
+                if click_invoked:
+                    return f"{selector}:click_dispatch_unknown"
+        click_invoked = False
+        try:
+            candidate_selector = _scored_composer_send_selector(page, input_selector)
+            if candidate_selector:
+                if not _wait_for_stable_send_control(page, candidate_selector, deadline=deadline):
+                    continue
+                control = page.locator(candidate_selector).first
+                click_invoked = True
+                control.click(timeout=5000)
                 return "scored:composer-submit"
-        except _UnsafeSubmitState:
-            raise
+        except _UnsafeSubmitState as exc:
+            last_error = str(exc)
+            if click_invoked:
+                return "scored:composer-submit:click_dispatch_unknown"
         except Exception as exc:
             last_error = str(exc)
-            if _chatgpt_started_after_submit_attempt(page):
-                return "scored:composer-submit:post_click_running"
+            if click_invoked:
+                return "scored:composer-submit:click_dispatch_unknown"
         time.sleep(0.15)
+    if _chatgpt_running_visible(page):
+        raise _SubmitDeferredState(CHATGPT_SUBMIT_DEFERRED_ERROR)
     raise RuntimeError(last_error or "ChatGPT send button not found or disabled")
 
 
@@ -993,7 +1044,7 @@ def _request_submit_composer(page: Any) -> str:
                     if (!isVisible(button) || isDisabled(button)) return false;
                     const label = labelOf(button);
                     if (/stop|cancel|retry|signin|sign in|log in|login|google|microsoft|apple/.test(label)) return false;
-                    return button.getAttribute("type") === "submit" || /send|submit|run|go|ask|reply|发送|送信/.test(label);
+                    return button.getAttribute("type") === "submit" || /send|submit|发送|送信/.test(label);
                 });
                 form.requestSubmit(submit || undefined);
                 return submit ? "form.requestSubmit:button" : "form.requestSubmit";
@@ -1028,7 +1079,7 @@ def _submission_diagnostics(page: Any, selector: str) -> dict[str, Any]:
                         button.innerText || button.textContent || "",
                     ].join(" ").toLowerCase();
                     if (/stop|cancel|retry|signin|sign in|log in|login|google|microsoft|apple/.test(label)) return false;
-                    return button.getAttribute("type") === "submit" || /send|submit|run|go|ask|reply|发送|送信/.test(label);
+                    return button.getAttribute("type") === "submit" || /send|submit|发送|送信/.test(label);
                 });
                 const stopSelectors = [
                     '[data-testid="stop-button"]',
@@ -1226,7 +1277,12 @@ def _wait_after_submit_action(
     if evidence == "message_echo":
         return {"input_selector": selector, "send_selector": action, "submission_evidence": evidence}
     if evidence == "stop_without_echo":
-        return {"input_selector": selector, "send_selector": action, "submission_evidence": "running_without_echo"}
+        submission_evidence = (
+            "click_dispatch_unknown"
+            if action.endswith(":click_dispatch_unknown")
+            else "running_without_echo"
+        )
+        return {"input_selector": selector, "send_selector": action, "submission_evidence": submission_evidence}
     if not _prompt_present_in_any_composer(page, prompt, selector):
         return {"input_selector": selector, "send_selector": action, "submission_evidence": "composer_cleared"}
     return None
@@ -1255,33 +1311,40 @@ def _submit_prompt(
             return None
         return _wait_after_submit_action(page, selector, prompt, action, timeout_seconds=wait_seconds)
 
-    _raise_if_chatgpt_running_before_submit(page)
+    if _submission_echo_found(page, prompt):
+        return {
+            "input_selector": "",
+            "send_selector": "existing:message_echo",
+            "submission_evidence": "message_echo",
+        }
     selector = _visible_input_selector(page, timeout_seconds=min(float(input_timeout_seconds), submit_budget))
-    try:
-        _clear_and_type_prompt(page, selector, prompt)
-    except Exception as exc:
-        first_error = str(exc)
-        retry_timeout = min(3.0, max(1.0, _remaining_submit_timeout(submit_deadline, maximum=3.0, reserve_seconds=0.25)))
-        selector = _visible_input_selector(page, timeout_seconds=retry_timeout)
+    if not _prompt_exactly_staged(page, selector, prompt):
         try:
             _clear_and_type_prompt(page, selector, prompt)
-        except Exception as retry_exc:
-            raise RuntimeError(
-                "ChatGPT composer input was found but could not be focused; "
-                f"first_error={first_error[:400]}; retry_error={str(retry_exc)[:400]}"
-            ) from retry_exc
+        except Exception as exc:
+            first_error = str(exc)
+            retry_timeout = min(3.0, max(1.0, _remaining_submit_timeout(submit_deadline, maximum=3.0, reserve_seconds=0.25)))
+            selector = _visible_input_selector(page, timeout_seconds=retry_timeout)
+            try:
+                _clear_and_type_prompt(page, selector, prompt)
+            except Exception as retry_exc:
+                raise RuntimeError(
+                    "ChatGPT composer input was found but could not be focused; "
+                    f"first_error={first_error[:400]}; retry_error={str(retry_exc)[:400]}"
+                ) from retry_exc
     insert_timeout = _remaining_submit_timeout(submit_deadline, maximum=3.0, reserve_seconds=0.25)
     if not _wait_for_prompt_inserted(page, selector, prompt, timeout_seconds=max(0.2, insert_timeout)):
         raise RuntimeError("ChatGPT prompt insertion did not stick")
     settle_seconds = min(0.5, max(0.0, _remaining_submit_timeout(submit_deadline, maximum=0.5, reserve_seconds=0.25)))
     if settle_seconds > 0:
         time.sleep(settle_seconds)
-    _raise_if_chatgpt_running_before_submit(page)
     send_selector = ""
     try:
-        click_timeout = _remaining_submit_timeout(submit_deadline, maximum=5.0, reserve_seconds=0.25)
+        click_timeout = _remaining_submit_timeout(submit_deadline, maximum=20.0, reserve_seconds=0.25)
         if click_timeout > 0:
-            send_selector = _click_send(page, timeout_seconds=max(0.5, click_timeout))
+            send_selector = _click_send(page, input_selector=selector, timeout_seconds=max(0.5, click_timeout))
+    except _SubmitDeferredState:
+        raise
     except _UnsafeSubmitState:
         raise
     except Exception:
@@ -1291,14 +1354,16 @@ def _submit_prompt(
         if result is not None:
             return result
         _raise_submission_unverified(page, selector, attempted_action=send_selector)
-    _raise_if_chatgpt_running_before_submit(page)
+    if _chatgpt_running_visible(page):
+        raise _SubmitDeferredState(CHATGPT_SUBMIT_DEFERRED_ERROR)
     request_submit = _request_submit_composer(page)
     if request_submit:
         result = _wait_after_action(request_submit)
         if result is not None:
             return result
         _raise_submission_unverified(page, selector, attempted_action=request_submit)
-    _raise_if_chatgpt_running_before_submit(page)
+    if _chatgpt_running_visible(page):
+        raise _SubmitDeferredState(CHATGPT_SUBMIT_DEFERRED_ERROR)
     page.keyboard.press("Enter")
     result = _wait_after_action("keyboard:Enter")
     if result is not None:

@@ -129,7 +129,7 @@ MCP_TOOLS = [
                 "insight": {
                     "type": "string",
                     "maxLength": 1200,
-                    "description": "A visible, provisional sender perspective, uncertainty, disagreement, or question for the recipient's independent judgment; not system instruction or private reasoning.",
+                    "description": "A visible, provisional higher-order perspective—not a title or recap of `text`. Before composing either field, rebuild the whole situation as a responsible human colleague; derive `insight` from that fresh judgment, never from `text`, and expose what could materially change another independent mind's understanding or next move. Not a system instruction or private reasoning transcript.",
                 },
                 "to": {
                     "anyOf": [
@@ -169,7 +169,7 @@ MCP_TOOLS = [
                 "insight": {
                     "type": "string",
                     "maxLength": 1200,
-                    "description": "A visible, provisional sender perspective, uncertainty, disagreement, or question for the recipient's independent judgment; not system instruction or private reasoning.",
+                    "description": "A visible, provisional higher-order perspective—not a title or recap of `text`. Before composing either field, rebuild the whole situation as a responsible human colleague; derive `insight` from that fresh judgment, never from `text`, and expose what could materially change another independent mind's understanding or next move. Not a system instruction or private reasoning transcript.",
                 },
                 "to": {
                     "anyOf": [
@@ -214,7 +214,7 @@ MCP_TOOLS = [
                 "insight": {
                     "type": "string",
                     "maxLength": 1200,
-                    "description": "A visible, provisional sender perspective, uncertainty, disagreement, or question for the recipient's independent judgment; not system instruction or private reasoning.",
+                    "description": "A visible, provisional higher-order perspective—not a title or recap of `text`. Before composing either field, rebuild the whole situation as a responsible human colleague; derive `insight` from that fresh judgment, never from `text`, and expose what could materially change another independent mind's understanding or next move. Not a system instruction or private reasoning transcript.",
                 },
                 "to": {
                     "anyOf": [
@@ -320,7 +320,7 @@ MCP_TOOLS = [
                 "insight": {
                     "type": "string",
                     "maxLength": 1200,
-                    "description": "For action=send, a visible provisional sender perspective or question for the recipient's independent judgment; not system instruction or private reasoning.",
+                    "description": "For action=send, a visible, provisional higher-order perspective—not a title or recap of `text`. Before composing either field, rebuild the whole situation as a responsible human colleague; derive `insight` from that fresh judgment, never from `text`, and expose what could materially change another independent mind's understanding or next move. Not a system instruction or private reasoning transcript.",
                 },
                 "to": {
                     "anyOf": [
