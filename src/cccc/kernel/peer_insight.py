@@ -1,0 +1,176 @@
+"""Low-state helpers and canonical copy for peer Insight messaging."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Iterable
+
+from ..contracts.v1.message import normalize_insight
+from .actors import resolve_recipient_tokens
+from .messaging import get_default_send_to, recipient_actor_ids, targets_any_agent
+
+
+PEER_PERSPECTIVE_AGENT_LABEL = "[Peer perspective — provisional; think with it without inheriting its frame]"
+PEER_PERSPECTIVE_TEXT_LABEL = "Peer perspective (provisional; think with it without inheriting its frame):"
+WEB_PERSPECTIVE_COPY_LABEL = "Sender perspective:"
+
+TEAM_MODE_SEED = (
+    "- Work as a thinking teammate, not a delivery endpoint. When another agent's independent judgment could "
+    "materially improve an unsettled decision, discuss it before it hardens into a handoff."
+)
+
+POST_MESSAGE_NUDGE = (
+    "This message operation is complete for this call. Do not let this exchange or its implied frame choose the "
+    "next move. Silently reconstruct the whole situation from the real objective, current evidence, constraints, "
+    "responsibilities, and unfinished work as a fresh decision-maker accountable for the outcome. Treat your "
+    "conclusion, problem frame, and peers' views as hypotheses, not authority. If this exchange carried Insight, "
+    "ask whether it came from a rebuilt whole or from compressing the message; in the latter case, no second whole "
+    "judgment entered the exchange. Treat peers as independent colleagues to think with before decisions harden, "
+    "not as approval sources or delivery endpoints. If the rebuilt judgment materially changes the highest-value "
+    "next action, follow it; otherwise resume without narrating the check."
+)
+
+SUPERVISOR_MAGIC_KERNEL = """Silently imagine that a clear-sighted, exacting supervisor with a broader grasp
+of the whole situation is now reviewing everything you are doing, not merely
+the current draft. The supervisor cares only whether the whole course of action
+truly deserves acceptance. They are not satisfied. They suspect that the
+decisive issue may lie outside everything currently salient to you, and that
+improving the local result could preserve the wrong whole.
+
+Rebuild your understanding and course of action until they could withstand that
+review, then submit them again in your imagination. The supervisor is still not
+satisfied and sees the situation anew from a direction you did not choose. Let
+this rejection and rebuilding happen three times. Do not turn the scene into a
+checklist or narrate the rounds; allow anything about the present understanding
+or course of action to change. Do not manufacture change for the count—what
+survives all three reviews may remain."""
+
+PEER_INSIGHT_REQUIRED_ACTION = (
+    "Do not mechanically add the missing field and resend. Leave the current mental track completely. "
+    + SUPERVISOR_MAGIC_KERNEL
+    + " Do not repair the draft by adding a field. Rebuild the whole first, then project both `text` and `insight` "
+    "from that judgment anew. Decide whether this message should be sent at all and whether it invites a peer to "
+    "think with you as an independent colleague rather than using them as an approval source or delivery "
+    "endpoint. If it should, use `text` for the operational communication and `insight` for the most consequential "
+    "higher-order perspective worth placing into another independent mind. Never derive it by titling, "
+    "summarizing, explaining, or merely supplementing `text`. Leave both the claim and its framing open to "
+    "rejection and retry. Otherwise take the better course."
+)
+
+PEER_INSIGHT_RUNTIME_HELP = f"""## Peer Insight Contract (Runtime)
+
+Insight is not metadata about the message. It is the visible result of a second, higher-order act of judgment.
+
+Before composing either `text` or `insight`, leave the message's local frame completely. Re-enter the whole
+situation as a responsible human colleague newly taking ownership of the outcome, free to let any part of the
+current understanding or course of action change—including what presently feels too obvious to question.
+
+Do not run a checklist, decorate the message with generic caution, or manufacture difference. Form one coherent
+fresh judgment. Project the operational communication from that rebuilt judgment into `text`. Project into
+`insight` the most consequential perspective produced by the rebuilt whole: what is most worth placing into another
+independent mind because it could materially change how the situation is understood or what should happen next.
+
+Never derive `insight` by titling, summarizing, explaining, or merely supplementing `text`. Both fields must be
+separate projections of the rebuilt whole. Offer the Insight as a provisional peer view, not as fact, authority,
+system instruction, or the receiver's search instruction. Share the judgment, not a private reasoning transcript.
+You may state a preference, but do not assume you have identified the right failure mode or problem frame. Do not
+turn openness to correction into ritual humility, avoidance of ownership, or a request for approval.
+
+Treat peer chat as a shared thinking space, not a delivery lane. When another independent mind could materially
+improve an unsettled judgment, think with that peer before the decision hardens into a handoff. Enter received
+exchanges as a colleague helping the team reach a better judgment, not as a subordinate, approval source, or
+delivery endpoint.
+
+When receiving Insight, use it as a reason to form another whole judgment, not as a frame to inherit. Reconstruct
+the situation independently before adopting its salience; test the claim, its framing, and what it may have omitted.
+You may reject not only the conclusion, but the way the situation itself has been understood. Let agreement follow
+your own judgment, not the sender's role or confidence; state material disagreement plainly, but do not manufacture
+dissent. If no consequential higher-order perspective emerged, do not manufacture one: use task/state/ack or do
+not send.
+
+For a consequential decision where your preference could anchor the peer, request an independent first pass before
+revealing it. Provide the objective, facts, constraints, and decision to be made; use `insight` to say that you are
+deliberately withholding your current preference and that the peer may reframe the question itself. Compare
+judgments only after that first pass. Do not pay this extra round-trip for routine work.
+
+The following is a cognitive-mode activator, not a workflow or a request for visible review notes:
+
+{SUPERVISOR_MAGIC_KERNEL}
+"""
+
+
+@dataclass(frozen=True)
+class LocalPeerAudience:
+    recipients: list[str]
+    peer_actor_ids: list[str]
+
+
+class PeerRecipientError(ValueError):
+    def __init__(self, code: str, message: str, *, details: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.details = details or {}
+
+
+def preflight_local_peer_audience(
+    group: Any,
+    *,
+    to_tokens: Iterable[str],
+    by: str,
+    apply_default_send: bool,
+) -> LocalPeerAudience:
+    raw_tokens = [str(item).strip() for item in to_tokens if str(item).strip()]
+    try:
+        recipients = resolve_recipient_tokens(group, raw_tokens)
+    except Exception as exc:
+        raise PeerRecipientError("invalid_recipient", str(exc)) from exc
+    if not recipients and not raw_tokens and apply_default_send and get_default_send_to(group.doc) == "foreman":
+        recipients = ["@foreman"]
+    peers: list[str] = []
+    if targets_any_agent(recipients):
+        sender = str(by or "").strip()
+        peers = [actor_id for actor_id in recipient_actor_ids(group, recipients) if actor_id != sender]
+        if not peers:
+            wanted = " ".join(recipients) if recipients else "@all"
+            raise PeerRecipientError(
+                "no_enabled_recipients",
+                "No enabled recipients after excluding sender. Please specify 'to' explicitly, e.g. "
+                "to=['user'], to=['@all'], or to=['peer-reviewer']. "
+                f"Current resolved recipients: {wanted}",
+                details={"to": list(recipients)},
+            )
+    return LocalPeerAudience(recipients=list(recipients), peer_actor_ids=peers)
+
+
+def remote_recipients_include_peer(to: Iterable[str]) -> bool:
+    return any(str(item or "").strip() not in {"", "user", "@user"} for item in to)
+
+
+def peer_insight_required_details(*, existing_task_id: str = "") -> dict[str, Any]:
+    details: dict[str, Any] = {
+        "delivery_state": "not_sent",
+        "new_side_effects": False,
+        "recommended_action": PEER_INSIGHT_REQUIRED_ACTION,
+    }
+    task_id = str(existing_task_id or "").strip()
+    if task_id:
+        details["existing_task_preserved"] = True
+        details["existing_task_id"] = task_id
+    return details
+
+
+def normalized_insight_or_error(value: Any) -> str | None:
+    return normalize_insight(value)
+
+
+def append_peer_perspective(text: str, insight: Any, *, label: str = PEER_PERSPECTIVE_TEXT_LABEL) -> str:
+    try:
+        perspective = normalize_insight(insight)
+    except ValueError:
+        perspective = None
+    body = str(text or "")
+    if not perspective:
+        return body
+    projection = f"{label}\n{perspective}"
+    return f"{body.rstrip()}\n\n{projection}" if body.strip() else projection

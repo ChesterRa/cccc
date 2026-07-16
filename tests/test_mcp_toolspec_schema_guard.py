@@ -1,0 +1,298 @@
+import unittest
+
+from cccc.ports.mcp.toolspecs import MCP_TOOLS
+
+
+class TestMcpToolspecSchemaGuard(unittest.TestCase):
+    def test_toolspec_entries_have_required_fields(self) -> None:
+        self.assertIsInstance(MCP_TOOLS, list)
+        self.assertGreater(len(MCP_TOOLS), 0)
+        for idx, spec in enumerate(MCP_TOOLS):
+            self.assertIsInstance(spec, dict, msg=f"MCP_TOOLS[{idx}] must be dict")
+            self.assertIn("name", spec, msg=f"MCP_TOOLS[{idx}] missing name")
+            self.assertIn("description", spec, msg=f"MCP_TOOLS[{idx}] missing description")
+            self.assertIn("inputSchema", spec, msg=f"MCP_TOOLS[{idx}] missing inputSchema")
+
+            name = str(spec.get("name") or "").strip()
+            desc = str(spec.get("description") or "").strip()
+            self.assertTrue(name, msg=f"MCP_TOOLS[{idx}] empty name")
+            self.assertTrue(desc, msg=f"MCP_TOOLS[{idx}] empty description")
+            self.assertTrue(name.startswith("cccc_"), msg=f"MCP_TOOLS[{idx}] invalid name prefix: {name}")
+
+    def test_input_schema_shape_is_consistent(self) -> None:
+        for idx, spec in enumerate(MCP_TOOLS):
+            schema = spec.get("inputSchema")
+            self.assertIsInstance(schema, dict, msg=f"MCP_TOOLS[{idx}] inputSchema must be dict")
+            self.assertEqual(schema.get("type"), "object", msg=f"MCP_TOOLS[{idx}] inputSchema.type must be object")
+            props = schema.get("properties")
+            required = schema.get("required")
+            self.assertIsInstance(props, dict, msg=f"MCP_TOOLS[{idx}] inputSchema.properties must be dict")
+            self.assertIsInstance(required, list, msg=f"MCP_TOOLS[{idx}] inputSchema.required must be list")
+
+    def test_agent_state_toolspec_describes_current_memo_fields(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_agent_state"), None)
+        self.assertIsInstance(spec, dict)
+        desc = str(spec.get("description") or "") if isinstance(spec, dict) else ""
+        self.assertIn("post-write agent_state", desc)
+        self.assertIn("context_hygiene confirmation", desc)
+        schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+        props = schema.get("properties") if isinstance(schema, dict) else {}
+        self.assertIsInstance(props, dict)
+
+        open_loops = props.get("open_loops") if isinstance(props, dict) else {}
+        commitments = props.get("commitments") if isinstance(props, dict) else {}
+        persona_notes = props.get("persona_notes") if isinstance(props, dict) else {}
+        self.assertIn("Current memo", str(open_loops.get("description") or ""))
+        self.assertIn("exit criteria", str(open_loops.get("description") or ""))
+        self.assertIn("concrete referent", str(open_loops.get("description") or ""))
+        self.assertNotIn("Creed-derived warnings", str(open_loops.get("description") or ""))
+        self.assertIn("Promises", str(commitments.get("description") or ""))
+        self.assertIn("not temporary task memos", str(persona_notes.get("description") or ""))
+        self.assertNotIn("resume_hint", props)
+
+    def test_space_query_toolspec_options_are_explicit(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_space"), None)
+        self.assertIsInstance(spec, dict)
+        desc = str(spec.get("description") or "") if isinstance(spec, dict) else ""
+        self.assertIn("status=pending|queued", desc)
+        self.assertIn("wait for the later system.notify", desc)
+        schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+        self.assertIsInstance(schema, dict)
+        props = schema.get("properties") if isinstance(schema, dict) else {}
+        self.assertIsInstance(props, dict)
+        options = props.get("options") if isinstance(props, dict) else {}
+        self.assertIsInstance(options, dict)
+        opt_props = options.get("properties") if isinstance(options, dict) else {}
+        self.assertIsInstance(opt_props, dict)
+        self.assertIn("source_ids", opt_props)
+        self.assertNotIn("language", opt_props)
+        self.assertNotIn("lang", opt_props)
+
+    def test_memory_actions_match_reme_surface(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_memory"), None)
+        self.assertIsInstance(spec, dict)
+        schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+        self.assertIsInstance(schema, dict)
+        props = schema.get("properties") if isinstance(schema, dict) else {}
+        self.assertIsInstance(props, dict)
+        action = props.get("action") if isinstance(props, dict) else {}
+        self.assertIsInstance(action, dict)
+        self.assertEqual(action.get("enum"), ["layout_get", "search", "get", "write"])
+
+    def test_memory_admin_actions_match_reme_surface(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_memory_admin"), None)
+        self.assertIsInstance(spec, dict)
+        schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+        self.assertIsInstance(schema, dict)
+        props = schema.get("properties") if isinstance(schema, dict) else {}
+        self.assertIsInstance(props, dict)
+        action = props.get("action") if isinstance(props, dict) else {}
+        self.assertIsInstance(action, dict)
+        self.assertEqual(
+            action.get("enum"),
+            ["index_sync", "context_check", "compact", "daily_flush"],
+        )
+
+    def test_messaging_toolspec_priority_matches_runtime_surface(self) -> None:
+        for tool_name in ("cccc_message_send", "cccc_message_reply", "cccc_file"):
+            spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == tool_name), None)
+            self.assertIsInstance(spec, dict, msg=f"missing toolspec for {tool_name}")
+            schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+            self.assertIsInstance(schema, dict)
+            props = schema.get("properties") if isinstance(schema, dict) else {}
+            self.assertIsInstance(props, dict)
+            priority = props.get("priority") if isinstance(props, dict) else {}
+            self.assertIsInstance(priority, dict)
+            self.assertEqual(priority.get("enum"), ["normal", "attention"])
+
+        file_spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_file"), None)
+        file_schema = file_spec.get("inputSchema") if isinstance(file_spec, dict) else {}
+        file_props = file_schema.get("properties") if isinstance(file_schema, dict) else {}
+        action = file_props.get("action") if isinstance(file_props, dict) else {}
+        self.assertEqual(action.get("enum"), ["send", "blob_path", "info", "read"])
+        self.assertIn("max_bytes", file_props)
+        file_desc = str(file_spec.get("description") or "") if isinstance(file_spec, dict) else ""
+        self.assertIn("chat attachment", file_desc)
+        self.assertIn("delivered state/blobs attachments", file_desc)
+        self.assertIn("active-scope local file", file_desc)
+        self.assertIn("UTF-8 text", str((file_props.get("rel_path") or {}).get("description") or ""))
+        self.assertIn("active scope", str((file_props.get("path") or {}).get("description") or ""))
+
+    def test_messaging_toolspec_exposes_optional_higher_order_insight_without_advertising_the_gate(self) -> None:
+        for tool_name in (
+            "cccc_message_send",
+            "cccc_message_reply",
+            "cccc_tracked_send",
+            "cccc_file",
+        ):
+            spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == tool_name), None)
+            self.assertIsInstance(spec, dict, msg=f"missing toolspec for {tool_name}")
+            schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+            props = schema.get("properties") if isinstance(schema, dict) else {}
+            field = props.get("insight") if isinstance(props, dict) else {}
+            self.assertEqual(field.get("type"), "string")
+            self.assertEqual(field.get("maxLength"), 1200)
+            required = schema.get("required") if isinstance(schema, dict) else []
+            self.assertNotIn("insight", required or [])
+            self.assertLess(list(props).index("text"), list(props).index("insight"))
+            field_copy = str(field.get("description") or "").lower()
+            self.assertIn("not a title or recap of `text`", field_copy)
+            self.assertIn("rebuild the whole situation", field_copy)
+            self.assertIn("derive `insight` from that fresh judgment, never from `text`", field_copy)
+            self.assertIn("another independent mind", field_copy)
+            public_copy = f"{spec.get('description', '')} {field.get('description', '')}".lower()
+            self.assertNotIn("insight is required", public_copy)
+            self.assertNotIn("must include insight", public_copy)
+
+    def test_message_toolspec_exposes_suggested_user_message_as_optional_hint(self) -> None:
+        for tool_name in ("cccc_message_send", "cccc_message_reply"):
+            spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == tool_name), None)
+            self.assertIsInstance(spec, dict, msg=f"missing toolspec for {tool_name}")
+            schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+            props = schema.get("properties") if isinstance(schema, dict) else {}
+            self.assertIsInstance(props, dict)
+            field = props.get("suggested_user_message") if isinstance(props, dict) else {}
+            self.assertIsInstance(field, dict)
+            self.assertEqual(field.get("type"), "string")
+            desc = str(field.get("description") or "")
+            self.assertIn("CCCC Web composer", desc)
+            self.assertIn("not sent automatically", desc)
+            self.assertIn("must not be used for approvals", desc)
+            self.assertNotIn("suggested_user_message", schema.get("required") or [])
+
+    def test_message_send_toolspec_directs_replies_to_reply_tool(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_message_send"), None)
+        self.assertIsInstance(spec, dict)
+        desc = str(spec.get("description") or "") if isinstance(spec, dict) else ""
+        self.assertIn("Start a new visible chat message", desc)
+        self.assertIn("Do not use this to answer an existing delivered message/event", desc)
+        self.assertIn("use cccc_message_reply with that event_id instead", desc)
+
+    def test_task_toolspec_exposes_type_enum(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_task"), None)
+        self.assertIsInstance(spec, dict)
+        schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+        self.assertIsInstance(schema, dict)
+        props = schema.get("properties") if isinstance(schema, dict) else {}
+        self.assertIsInstance(props, dict)
+        task_type = props.get("type") if isinstance(props, dict) else {}
+        self.assertIsInstance(task_type, dict)
+        self.assertEqual(
+            task_type.get("enum"),
+            ["free", "standard", "optimization"],
+        )
+
+    def test_actor_toolspec_does_not_expose_legacy_session_restart_action(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_actor"), None)
+        self.assertIsInstance(spec, dict)
+        props = ((spec.get("inputSchema") or {}).get("properties") or {}) if isinstance(spec, dict) else {}
+        action = props.get("action") if isinstance(props, dict) else {}
+        self.assertIsInstance(action, dict)
+        removed_action = "restart" + "_clear" + "_session"
+        self.assertNotIn(removed_action, action.get("enum") or [])
+
+    def test_remote_runtime_repo_tools_are_split_by_write_risk(self) -> None:
+        repo = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_repo"), None)
+        repo_edit = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_repo_edit"), None)
+        self.assertIsInstance(repo, dict)
+        self.assertIsInstance(repo_edit, dict)
+
+        repo_annotations = repo.get("annotations") if isinstance(repo, dict) else {}
+        self.assertIsInstance(repo_annotations, dict)
+        self.assertTrue(repo_annotations.get("readOnlyHint"))
+        repo_props = ((repo.get("inputSchema") or {}).get("properties") or {}) if isinstance(repo, dict) else {}
+        self.assertEqual((repo_props.get("action") or {}).get("enum"), ["info", "list", "list_dir", "read", "search"])
+        self.assertIn("query", repo_props)
+        self.assertIn("regex", repo_props)
+        self.assertIn("include_globs", repo_props)
+        self.assertIn("exclude_globs", repo_props)
+        self.assertIn("context_lines", repo_props)
+        self.assertIn("start_line", repo_props)
+        self.assertIn("end_line", repo_props)
+
+        edit_annotations = repo_edit.get("annotations") if isinstance(repo_edit, dict) else {}
+        self.assertIsInstance(edit_annotations, dict)
+        self.assertFalse(edit_annotations.get("readOnlyHint"))
+        self.assertTrue(edit_annotations.get("destructiveHint"))
+        edit_props = ((repo_edit.get("inputSchema") or {}).get("properties") or {}) if isinstance(repo_edit, dict) else {}
+        self.assertEqual((edit_props.get("action") or {}).get("enum"), ["replace", "multi_replace", "write", "mkdir", "delete", "move"])
+        self.assertIn("old_text", edit_props)
+        self.assertIn("replacements", edit_props)
+        self.assertIn("expected_sha256", edit_props)
+        self.assertNotIn("patch", edit_props)
+        apply_patch = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_apply_patch"), None)
+        self.assertIsInstance(apply_patch, dict)
+        self.assertIn("Codex-style", str(apply_patch.get("description") or ""))
+
+    def test_capability_search_defaults_to_local_sources(self) -> None:
+        search = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_capability_search"), None)
+        self.assertIsInstance(search, dict)
+        props = ((search.get("inputSchema") or {}).get("properties") or {}) if isinstance(search, dict) else {}
+        self.assertEqual((props.get("include_external") or {}).get("default"), False)
+
+    def test_web_model_local_power_tools_are_not_generic_core_tools(self) -> None:
+        from cccc.kernel.capabilities import CORE_BASIC_TOOLS, WEB_MODEL_CORE_TOOLS, resolve_core_tool_names
+
+        web_model_only_tools = {
+            "cccc_runtime_wait_next_turn",
+            "cccc_runtime_complete_turn",
+            "cccc_code_exec",
+            "cccc_code_wait",
+            "cccc_repo_edit",
+            "cccc_apply_patch",
+            "cccc_shell",
+            "cccc_exec_command",
+            "cccc_write_stdin",
+            "cccc_git",
+        }
+        self.assertFalse(web_model_only_tools & set(CORE_BASIC_TOOLS))
+        self.assertTrue(web_model_only_tools <= set(WEB_MODEL_CORE_TOOLS))
+        self.assertFalse(web_model_only_tools & resolve_core_tool_names(actor_role="peer"))
+        self.assertTrue(web_model_only_tools <= resolve_core_tool_names(actor_role="peer", is_web_model=True))
+
+    def test_web_model_keeps_fixed_schema_fallbacks_outside_generic_lean_core(self) -> None:
+        from cccc.kernel.capabilities import CORE_BASIC_TOOLS, WEB_MODEL_CORE_TOOLS
+
+        fixed_schema_fallbacks = {
+            "cccc_repo",
+            "cccc_capability_enable",
+            "cccc_memory",
+        }
+        self.assertFalse(fixed_schema_fallbacks & set(CORE_BASIC_TOOLS))
+        self.assertTrue(fixed_schema_fallbacks <= set(WEB_MODEL_CORE_TOOLS))
+
+    def test_bootstrap_description_matches_on_demand_help_and_hidden_tool_routes(self) -> None:
+        bootstrap = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_bootstrap"), None)
+        self.assertIsInstance(bootstrap, dict)
+        description = str((bootstrap or {}).get("description") or "")
+
+        self.assertIn("Call cccc_help only when", description)
+        self.assertIn("hidden tools are routed through cccc_capability_use", description)
+        self.assertNotIn("usually follow with cccc_help once", description)
+
+    def test_web_model_turn_tools_describe_transport_boundary(self) -> None:
+        wait = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_runtime_wait_next_turn"), None)
+        complete = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_runtime_complete_turn"), None)
+        self.assertIsInstance(wait, dict)
+        self.assertIsInstance(complete, dict)
+
+        wait_desc = str(wait.get("description") or "") if isinstance(wait, dict) else ""
+        complete_desc = str(complete.get("description") or "") if isinstance(complete, dict) else ""
+        self.assertIn("when no turn was browser-delivered", wait_desc)
+        self.assertIn("does not mark messages read", wait_desc)
+        self.assertIn("whether it was browser-delivered or pulled", complete_desc)
+
+    def test_code_exec_schema_advertises_discovery_helpers(self) -> None:
+        code_exec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_code_exec"), None)
+        self.assertIsInstance(code_exec, dict)
+        desc = str(code_exec.get("description") or "") if isinstance(code_exec, dict) else ""
+        self.assertIn("COMMON_WORK_LOOPS", desc)
+        self.assertIn("tool_help(query", desc)
+        self.assertIn("tool_names(query)", desc)
+        self.assertIn("list_tools(query)", desc)
+        self.assertIn("detail:'schema'", desc)
+        self.assertIn("max_output_tokens up to 50000", desc)
+
+
+if __name__ == "__main__":
+    unittest.main()

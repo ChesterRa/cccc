@@ -1,0 +1,1334 @@
+from __future__ import annotations
+
+import copy
+import logging
+import os
+import socket
+import signal
+import threading
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+
+logger = logging.getLogger("cccc.daemon.server")
+
+from .. import __version__
+from ..contracts.v1 import DaemonError, DaemonRequest, DaemonResponse
+from ..kernel.group import get_group_state, load_group
+from ..kernel.actors import find_actor, find_foreman, get_effective_role, update_actor
+from ..kernel.actor_avatar_assets import delete_actor_avatar as _delete_actor_avatar
+from ..kernel.blobs import resolve_blob_attachment_path
+from ..kernel.ledger_retention import compact as compact_ledger
+from ..kernel.settings import (
+    get_observability_settings,
+    get_web_branding_settings,
+    update_observability_settings,
+    update_web_branding_settings,
+)
+from ..kernel.terminal_transcript import get_terminal_transcript_settings
+from ..kernel.messaging import disabled_recipient_actor_ids, enabled_recipient_actor_ids
+from ..kernel.runtime_state_source import actor_uses_codex_app_server_state
+from ..paths import ensure_home
+from ..runners import pty as pty_runner
+from ..runners import headless as headless_runner
+from ..util.conv import coerce_bool
+from ..util.node_env import with_node_deprecation_warnings_suppressed
+from ..util.obslog import apply_logger_levels, setup_root_json_logging
+from ..util.process import best_effort_signal_pid, pid_is_alive
+from ..util.fs import atomic_write_json, atomic_write_text, read_json
+from ..util.file_lock import acquire_lockfile, release_lockfile, LockUnavailableError
+from ..util.time import utc_now_iso
+from .automation import AutomationManager
+from .actors.actor_exit_ops import persist_actor_process_exit_stopped
+from .claude_app_sessions import SUPERVISOR as claude_app_supervisor
+from .codex_app_sessions import SUPERVISOR as codex_app_supervisor
+from .codex_config_ops import codex_command_stem, inject_codex_openai_base_url_config
+from .pty_app_server_exit import stop_codex_app_server_for_pty_actor_if_needed
+from .im.bootstrap_im_ops import autostart_enabled_im_bridges
+from .group.bootstrap_actor_ops import autostart_running_groups
+from .assistants.voice_idle_review_scheduler import recover_pending_voice_idle_reviews
+from .mcp_install import (
+    is_mcp_installed as runtime_is_mcp_installed,
+    ensure_mcp_installed as runtime_ensure_mcp_installed,
+)
+from .client_ops import DaemonClientError, send_daemon_request
+from .im.im_bridge_ops import (
+    stop_im_bridges_for_group as im_stop_group,
+    stop_all_im_bridges as im_stop_all,
+    cleanup_invalid_im_bridges as im_cleanup_invalid,
+)
+from .actors.private_env_ops import (
+    PRIVATE_ENV_MAX_KEYS as _PRIVATE_ENV_MAX_KEYS,
+    validate_private_env_key as _validate_private_env_key,
+    coerce_private_env_value as _coerce_private_env_value,
+    load_actor_private_env as _load_actor_private_env,
+    update_actor_private_env as _update_actor_private_env,
+    delete_actor_private_env as _delete_actor_private_env,
+    delete_group_private_env as _delete_group_private_env,
+    merge_actor_env_with_private as _merge_actor_env_with_private,
+)
+from .actors.actor_profile_store import (
+    get_actor_profile as _get_actor_profile,
+    load_actor_profile_secrets as _load_actor_profile_secrets,
+)
+from .actors.actor_profile_runtime import resolve_linked_actor_before_start as _resolve_linked_actor_before_start
+from .runner_state_ops import (
+    pty_state_path as _pty_state_path,
+    write_pty_state as _write_pty_state,
+    remove_pty_state_if_pid as _remove_pty_state_if_pid,
+    headless_state_path as _headless_state_path,
+    headless_state_running as _headless_state_running,
+    write_headless_state as _write_headless_state,
+    remove_headless_state as _remove_headless_state,
+    cleanup_stale_pty_state as _cleanup_stale_pty_state,
+)
+from .socket_protocol_ops import (
+    recv_json_line as _recv_json_line,
+    send_json as _send_json,
+    dump_response as _dump_response,
+    supported_stream_kinds as _supported_stream_kinds,
+    start_events_stream as _start_events_stream,
+    error as _error,
+)
+from .messaging.delivery import (
+    inject_system_prompt as deliver_system_prompt,
+    pty_submit_text,
+    render_delivery_text,
+    deliver_message_with_preamble,
+    flush_pending_messages,
+    request_flush_pending_messages,
+    tick_delivery,
+    clear_preamble_sent,
+    THROTTLE,
+)
+from .messaging.chat_support_ops import auto_wake_recipients, normalize_attachments
+from .messaging.message_request_lanes import MessageRequestLanes
+from .ops.execution_queues import DaemonRequestExecutionQueue, GroupSpaceSyncRunQueue
+from .ops.socket_special_ops import try_handle_socket_special_op
+from .ops.socket_accept_ops import handle_incoming_connection
+from .actors.actor_runtime_ops import start_actor_process as runtime_start_actor_process
+from .actors.runner_ops import stop_actor as runner_stop_actor
+from .request_dispatch_ops import RequestDispatchDeps, dispatch_request
+from .serve_ops import (
+    start_automation_thread,
+    start_request_execution_thread,
+    start_space_jobs_thread,
+    start_space_sync_thread,
+    start_actor_activity_thread,
+    start_supervisor_watchdog_thread,
+    bind_server_socket,
+    write_daemon_addr,
+    start_bootstrap_thread,
+    cleanup_after_stop,
+)
+from .group_bridge.ws_manager import start_group_bridge_session_manager_thread
+from .space.group_space_memory_sync import process_due_memory_space_syncs
+from .space.group_space_runtime import process_due_space_jobs
+from .space.group_space_sync import process_due_space_syncs, sync_group_space_files
+from .space.group_space_store import get_space_provider_state
+from .request_queue_policy import FAST_QUEUE_OPS, should_use_read_queue
+from .group.presentation_browser_runtime import close_all_browser_surface_sessions
+from .space.notebooklm_auth_browser_runtime import close_all_notebooklm_auth_browser_sessions
+from .actors.web_model_browser_session import close_all_web_model_chatgpt_browser_sessions
+
+_OBS_LOCK = threading.Lock()
+_OBSERVABILITY: Dict[str, Any] = {}
+_OBSERVABILITY_HOME: Optional[Path] = None
+_AUTO_WAKE_LOCK = threading.Lock()
+_AUTO_WAKE_IN_PROGRESS: set[tuple[str, str]] = set()
+_REQUEST_DISPATCH_DEPS: Optional[RequestDispatchDeps] = None
+_DAEMON_CLIENT_WARNING_WINDOW_S = 5.0
+_DAEMON_CLIENT_WARN_LOCK = threading.Lock()
+_DAEMON_CLIENT_WARN_SEEN: Dict[tuple[str, str, str], float] = {}
+_SPACE_SYNC_RUN_QUEUE: Optional[GroupSpaceSyncRunQueue] = None
+def _should_log_daemon_client_warning(*, op: str, phase: str, reason: str) -> bool:
+    key = (
+        str(op or "").strip() or "unknown",
+        str(phase or "").strip() or "unknown",
+        str(reason or "").strip() or "unknown",
+    )
+    now = time.monotonic()
+    with _DAEMON_CLIENT_WARN_LOCK:
+        last_at = float(_DAEMON_CLIENT_WARN_SEEN.get(key) or 0.0)
+        if last_at > 0.0 and (now - last_at) < float(_DAEMON_CLIENT_WARNING_WINDOW_S):
+            return False
+        _DAEMON_CLIENT_WARN_SEEN[key] = now
+        return True
+
+
+def _get_observability() -> Dict[str, Any]:
+    global _OBSERVABILITY_HOME
+    current_home = ensure_home()
+    with _OBS_LOCK:
+        if _OBSERVABILITY:
+            if _OBSERVABILITY_HOME == current_home:
+                return copy.deepcopy(_OBSERVABILITY)
+            _OBSERVABILITY.clear()
+            _OBSERVABILITY_HOME = None
+    return get_observability_settings()
+
+
+def _developer_mode_enabled() -> bool:
+    obs = _get_observability()
+    return coerce_bool(obs.get("developer_mode"), default=False)
+
+
+def _apply_observability_settings(home: Path, obs: Dict[str, Any]) -> None:
+    """Apply observability settings in-process (best-effort)."""
+    global _OBSERVABILITY_HOME
+    if not isinstance(obs, dict):
+        return
+    with _OBS_LOCK:
+        _OBSERVABILITY.clear()
+        _OBSERVABILITY.update(copy.deepcopy(obs))
+        _OBSERVABILITY_HOME = home
+
+    # Keep root conservative and express targeted DEBUG via logger overrides.
+    requested_level = str(obs.get("log_level") or "INFO").strip().upper() or "INFO"
+    effective_level = requested_level
+    if coerce_bool(obs.get("developer_mode"), default=False) and requested_level == "INFO":
+        effective_level = "DEBUG"
+    root_level = "INFO" if effective_level == "DEBUG" else effective_level
+    logger_levels = {
+        str(name): str(level)
+        for name, level in (obs.get("logger_levels") or {}).items()
+    } if isinstance(obs.get("logger_levels"), dict) else {}
+    for noisy_logger in (
+        "httpcore",
+        "httpx",
+        "notebooklm",
+        "cccc.providers.notebooklm._vendor.notebooklm",
+    ):
+        logger_levels.setdefault(noisy_logger, "WARNING")
+    if effective_level == "DEBUG":
+        logger_levels.setdefault("cccc", "DEBUG")
+        for noisy_logger in (
+            "asyncio",
+            "cccc.delivery",
+        ):
+            logger_levels.setdefault(noisy_logger, "INFO")
+    setup_root_json_logging(component="daemon", level=root_level, force=True)
+    apply_logger_levels(logger_levels)
+
+
+def _apply_space_provider_runtime_flags_from_state() -> None:
+    """Restore provider runtime toggles from daemon-owned persisted state."""
+    try:
+        if str(os.environ.get("CCCC_NOTEBOOKLM_REAL") or "").strip():
+            return
+        state = get_space_provider_state("notebooklm")
+        if bool(state.get("real_enabled")):
+            os.environ["CCCC_NOTEBOOKLM_REAL"] = "1"
+    except Exception:
+        pass
+
+
+def _pty_backlog_bytes() -> int:
+    """Best-effort per-actor PTY backlog size (ring buffer)."""
+    obs = _get_observability()
+    tt = obs.get("terminal_transcript") if isinstance(obs, dict) else None
+    n = 10 * 1024 * 1024
+    if isinstance(tt, dict):
+        try:
+            n = int(tt.get("per_actor_bytes") or 0)
+        except Exception:
+            n = 0
+    if n <= 0:
+        n = 10 * 1024 * 1024
+    if n > 50_000_000:
+        n = 50_000_000
+    return int(n)
+
+
+def _effective_runner_kind(runner_kind: str) -> str:
+    """Return the effective runner kind for runtime decisions.
+
+    Standard CCCC no longer auto-downgrades PTY actors to headless.
+    """
+    rk = str(runner_kind or "").strip().lower() or "pty"
+    return "headless" if rk == "headless" else "pty"
+
+
+def _request_queue_for(
+    req: Any,
+    *,
+    read_queue: DaemonRequestExecutionQueue,
+    message_lanes: Any,
+    slow_queue: DaemonRequestExecutionQueue,
+) -> Any:
+    op = str(getattr(req, "op", "") or "").strip()
+    args = getattr(req, "args", None)
+    if should_use_read_queue(op, args):
+        return read_queue
+    if op in FAST_QUEUE_OPS:
+        group_id = str(args.get("group_id") or "").strip() if isinstance(args, dict) else ""
+        if group_id:
+            group = load_group(group_id)
+            if group is not None:
+                state_at_accept = get_group_state(group)
+                if isinstance(args, dict):
+                    args["__group_state_at_accept"] = state_at_accept
+        return message_lanes
+    return slow_queue
+
+
+def _can_read_terminal_transcript(group: Any, *, by: str, target_actor_id: str) -> bool:
+    who = str(by or "").strip()
+    target = str(target_actor_id or "").strip()
+    if not target:
+        return False
+    if not who or who == "user":
+        return True
+    if who == target:
+        return True
+    if find_actor(group, who) is None:
+        return False
+    tt = get_terminal_transcript_settings(group.doc)
+    vis = str(tt.get("visibility") or "foreman")
+    if vis == "all":
+        return True
+    if vis == "foreman" and get_effective_role(group, who) == "foreman":
+        return True
+    return False
+
+SUPPORTED_RUNTIMES = (
+    "amp",
+    "antigravity",
+    "auggie",
+    "claude",
+    "codex",
+    "copilot",
+    "cursor",
+    "devin",
+    "kiro",
+    "kilo",
+    "droid",
+    "grok",
+    "hermes",
+    "kimi",
+    "opencode",
+    "web_model",
+    "custom",
+)
+
+AUTO_MCP_RUNTIMES = (
+    "claude",
+    "codex",
+    "copilot",
+    "devin",
+    "kiro",
+    "droid",
+    "amp",
+    "auggie",
+    "grok",
+    "hermes",
+    "kimi",
+    "opencode",
+)
+
+
+def _normalize_runtime_command(runtime: str, command: list[str], *, env: Dict[str, Any] | None = None) -> list[str]:
+    """Return a runtime-safe command line used for process start.
+
+    Important: This MUST NOT mutate the stored actor.command (ledger). It's runtime-only.
+
+    Rationale:
+    Some runtimes spawn MCP servers/tools as subprocesses and may not inherit the full actor env by
+    default. CCCC injects critical context into actor env (CCCC_GROUP_ID/CCCC_ACTOR_ID); if a runtime
+    drops these, MCP tools cannot resolve "self" and agent matches can stall.
+    """
+    rt = str(runtime or "").strip()
+    cmd = [str(x) for x in (command or []) if str(x).strip()]
+    if not cmd:
+        return []
+
+    if rt == "codex":
+        exe = codex_command_stem(str(cmd[0] or ""))
+        if exe == "codex":
+            # Ensure MCP servers inherit actor env (CCCC_* / ARENA_*).
+            has_env_inherit = any("shell_environment_policy.inherit" in str(x) for x in cmd)
+            if not has_env_inherit:
+                cmd = [cmd[0], "-c", "shell_environment_policy.inherit=all", *cmd[1:]]
+            cmd = inject_codex_openai_base_url_config(cmd, env)
+
+    return cmd
+
+
+def _is_mcp_installed(runtime: str) -> bool:
+    return runtime_is_mcp_installed(runtime)
+
+
+def _ensure_mcp_installed(runtime: str, cwd: Path, *, env: Dict[str, str] | None = None) -> bool:
+    return runtime_ensure_mcp_installed(
+        runtime,
+        cwd,
+        auto_mcp_runtimes=AUTO_MCP_RUNTIMES,
+        env=env,
+        raise_on_error=True,
+    )
+
+
+def _prepare_pty_env(env: Dict[str, Any]) -> Dict[str, str]:
+    """Prepare environment variables for PTY session.
+    
+    Key modifications:
+    - Disable bracketed paste mode via INPUTRC to prevent readline from
+      interfering with programmatic text input
+    - This is critical for reliable message delivery to CLI applications
+    
+    Returns a new dict with string values only.
+    """
+    result = {str(k): str(v) for k, v in env.items() if isinstance(k, str)}
+    
+    # Create a temporary inputrc file to disable bracketed paste
+    # This is more reliable than sending escape sequences
+    home = ensure_home()
+    inputrc_path = home / "daemon" / "inputrc"
+    try:
+        inputrc_path.parent.mkdir(parents=True, exist_ok=True)
+        inputrc_content = "set enable-bracketed-paste off\n"
+        if not inputrc_path.exists() or inputrc_path.read_text() != inputrc_content:
+            inputrc_path.write_text(inputrc_content)
+        result["INPUTRC"] = str(inputrc_path)
+    except Exception:
+        pass
+
+    return with_node_deprecation_warnings_suppressed(result)
+
+
+def _inject_actor_context_env(env: Dict[str, Any], *, group_id: str, actor_id: str) -> Dict[str, Any]:
+    """Inject per-actor context for MCP servers/tools into the actor process env.
+
+    This is runtime-only (not persisted to group docs).
+    """
+    out: Dict[str, Any] = dict(env or {})
+    out["CCCC_HOME"] = str(ensure_home())
+    out["CCCC_GROUP_ID"] = str(group_id or "").strip()
+    out["CCCC_ACTOR_ID"] = str(actor_id or "").strip()
+    return out
+
+
+AUTOMATION = AutomationManager()
+
+_AUTOMATION_RESET_NOTIFY_KINDS = {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "auto_idle", "automation"}
+
+
+def _foreman_id(group: Any) -> str:
+    try:
+        foreman = find_foreman(group)
+    except Exception:
+        foreman = None
+    if isinstance(foreman, dict):
+        return str(foreman.get("id") or "").strip()
+    return ""
+
+
+def _reset_automation_timers_if_active(group: Any) -> None:
+    """Reset automation timers without catch-up bursts.
+
+    Used on resume/start and when foreman changes (ownership transfer).
+    """
+    try:
+        from ..kernel.group import get_group_state
+
+        if get_group_state(group) != "active":
+            return
+        AUTOMATION.on_resume(group)
+        try:
+            THROTTLE.clear_pending_system_notifies(group.group_id, notify_kinds=set(_AUTOMATION_RESET_NOTIFY_KINDS))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _maybe_reset_automation_on_foreman_change(group: Any, *, before_foreman_id: str) -> None:
+    after = _foreman_id(group)
+    if str(before_foreman_id or "") == str(after or ""):
+        return
+    _reset_automation_timers_if_active(group)
+
+
+@dataclass
+class DaemonPaths:
+    home: Path
+
+    @property
+    def daemon_dir(self) -> Path:
+        return self.home / "daemon"
+
+    @property
+    def sock_path(self) -> Path:
+        return self.daemon_dir / "ccccd.sock"
+
+    @property
+    def addr_path(self) -> Path:
+        # Cross-platform daemon endpoint descriptor (TCP fallback on Windows).
+        return self.daemon_dir / "ccccd.addr.json"
+
+    @property
+    def pid_path(self) -> Path:
+        return self.daemon_dir / "ccccd.pid"
+
+    @property
+    def log_path(self) -> Path:
+        return self.daemon_dir / "ccccd.log"
+
+
+def default_paths() -> DaemonPaths:
+    return DaemonPaths(home=ensure_home())
+
+
+def _desired_daemon_transport() -> str:
+    override = str(os.environ.get("CCCC_DAEMON_TRANSPORT") or "").strip().lower()
+    if override in ("unix", "tcp"):
+        return override
+    # Default: AF_UNIX on POSIX, TCP on Windows.
+    return "tcp" if os.name == "nt" else "unix"
+
+
+def _allow_remote_daemon() -> bool:
+    """Whether it's OK to bind the daemon to a non-loopback TCP host.
+
+    Warning: the daemon IPC has no authentication.
+    """
+    v = str(os.environ.get("CCCC_DAEMON_ALLOW_REMOTE") or "").strip().lower()
+    return v in ("1", "true", "yes", "y", "on")
+
+
+def _daemon_tcp_connect_host(bind_host: str) -> str:
+    """Return a TCP host that local clients can connect to."""
+    h = str(bind_host or "").strip()
+    if not h or h == "localhost":
+        return "127.0.0.1"
+    if h == "0.0.0.0":
+        return "127.0.0.1"
+    # This daemon currently uses AF_INET only; avoid writing an IPv6 host into addr.json.
+    if ":" in h:
+        return "127.0.0.1"
+    return h
+
+
+def _daemon_tcp_bind_host() -> str:
+    host = str(os.environ.get("CCCC_DAEMON_HOST") or "").strip()
+    if not host or host == "localhost":
+        return "127.0.0.1"
+    if ":" in host:
+        logger.warning("CCCC_DAEMON_HOST=%s looks like IPv6; only IPv4 is supported. Using 127.0.0.1.", host)
+        return "127.0.0.1"
+    if host == "127.0.0.1":
+        return host
+    if not _allow_remote_daemon():
+        logger.warning(
+            "Refusing to bind daemon to non-loopback host %s (no auth). Using 127.0.0.1. "
+            "Set CCCC_DAEMON_ALLOW_REMOTE=1 to override.",
+            host,
+        )
+        return "127.0.0.1"
+    return host
+
+
+def _daemon_tcp_port() -> int:
+    raw = str(os.environ.get("CCCC_DAEMON_PORT") or "").strip()
+    if not raw:
+        return 9765
+    try:
+        port = int(raw)
+    except Exception:
+        return 9765
+    if port < 0 or port > 65535:
+        return 9765
+    return port
+
+
+def _daemon_tcp_port_is_explicit() -> bool:
+    """Return True when the user explicitly set CCCC_DAEMON_PORT."""
+    raw = str(os.environ.get("CCCC_DAEMON_PORT") or "").strip()
+    if not raw:
+        return False
+    try:
+        port = int(raw)
+    except Exception:
+        return False
+    return 0 <= port <= 65535
+
+
+def get_daemon_endpoint(paths: Optional[DaemonPaths] = None) -> Dict[str, Any]:
+    """Best-effort: load the daemon endpoint descriptor (cross-platform)."""
+    p = paths or default_paths()
+    doc = read_json(p.addr_path)
+    if isinstance(doc, dict):
+        transport = str(doc.get("transport") or "").strip().lower()
+        if transport == "tcp":
+            try:
+                host = str(doc.get("host") or "").strip() or "127.0.0.1"
+                port = int(doc.get("port") or 0)
+            except Exception:
+                host = "127.0.0.1"
+                port = 0
+            if port > 0:
+                return {"transport": "tcp", "host": _daemon_tcp_connect_host(host), "port": port}
+        if transport == "unix":
+            path = str(doc.get("path") or "").strip()
+            if path:
+                return {"transport": "unix", "path": path}
+
+    # Back-compat: if no descriptor exists, fall back to AF_UNIX when available.
+    if getattr(socket, "AF_UNIX", None) is not None:
+        return {"transport": "unix", "path": str(p.sock_path)}
+    return {}
+
+
+def _is_daemon_alive(paths: DaemonPaths) -> bool:
+    try:
+        return bool(call_daemon({"op": "ping"}, paths=paths, timeout_s=0.2).get("ok"))
+    except Exception:
+        return False
+
+
+def _cleanup_stale_daemon_endpoints(paths: DaemonPaths) -> None:
+    if _is_daemon_alive(paths):
+        return
+    for stale in (paths.addr_path, paths.sock_path):
+        try:
+            stale.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _write_pid(pid_path: Path) -> None:
+    pid_path.parent.mkdir(parents=True, exist_ok=True)
+    atomic_write_text(pid_path, str(os.getpid()) + "\n")
+
+
+def _pid_alive(pid: int) -> bool:
+    return pid_is_alive(pid)
+
+
+def _best_effort_killpg(pid: int, sig: signal.Signals) -> None:
+    best_effort_signal_pid(pid, sig, include_group=True)
+
+
+def _handle_pty_session_exit(session: pty_runner.PtySession, *, persist_actor_stopped: bool = True) -> None:
+    """Persist user-visible PTY exits as stopped so daemon autostart does not resurrect them."""
+    removed_current_state = bool(_remove_pty_state_if_pid(session.group_id, session.actor_id, pid=session.pid))
+    stop_codex_app_server_for_pty_actor_if_needed(group_id=session.group_id, actor_id=session.actor_id, pid=session.pid)
+    if not persist_actor_stopped:
+        return
+    if not removed_current_state:
+        return
+    try:
+        group = load_group(session.group_id)
+        actor = find_actor(group, session.actor_id) if group is not None else None
+        if isinstance(actor, dict) and actor_uses_codex_app_server_state(actor):
+            return
+    except Exception:
+        pass
+    persist_actor_process_exit_stopped(group_id=session.group_id, actor_id=session.actor_id, runner="pty")
+
+
+def _maybe_autostart_enabled_im_bridges() -> None:
+    """Autostart IM bridges that are marked enabled in group settings."""
+    autostart_enabled_im_bridges(ensure_home())
+
+
+def _maybe_autostart_running_groups() -> None:
+    from ..kernel.group import get_group_state
+
+    autostart_running_groups(
+        ensure_home(),
+        effective_runner_kind=_effective_runner_kind,
+        find_scope_url=_find_scope_url,
+        supported_runtimes=SUPPORTED_RUNTIMES,
+        ensure_mcp_installed=_ensure_mcp_installed,
+        auto_mcp_runtimes=AUTO_MCP_RUNTIMES,
+        merge_actor_env_with_private=_merge_actor_env_with_private,
+        inject_actor_context_env=lambda env, gid, aid: _inject_actor_context_env(env, group_id=gid, actor_id=aid),
+        prepare_pty_env=_prepare_pty_env,
+        normalize_runtime_command=_normalize_runtime_command,
+        pty_backlog_bytes=_pty_backlog_bytes,
+        write_headless_state=_write_headless_state,
+        write_pty_state=lambda gid, aid, pid: _write_pty_state(gid, aid, pid=pid),
+        clear_preamble_sent=clear_preamble_sent,
+        throttle_reset_actor=lambda gid, aid: THROTTLE.reset_actor(gid, aid, keep_pending=True),
+        automation_on_resume=AUTOMATION.on_resume,
+        get_group_state=get_group_state,
+        load_actor_private_env=_load_actor_private_env,
+        update_actor_private_env=_update_actor_private_env,
+        delete_actor_private_env=_delete_actor_private_env,
+        resolve_linked_actor_before_start=lambda grp, aid, caller_id="", is_admin=False: _resolve_linked_actor_before_start(
+            grp,
+            aid,
+            get_actor_profile=_get_actor_profile,
+            load_actor_profile_secrets=_load_actor_profile_secrets,
+            update_actor_private_env=_update_actor_private_env,
+            caller_id=caller_id,
+            is_admin=is_admin,
+        ),
+    )
+
+
+def _maybe_compact_ledgers(home: Path) -> None:
+    base = home / "groups"
+    if not base.exists():
+        return
+    for p in base.glob("*/group.yaml"):
+        gid = p.parent.name
+        group = load_group(gid)
+        if group is None:
+            continue
+        if not coerce_bool(group.doc.get("running"), default=False):
+            continue
+        try:
+            _ = compact_ledger(group, reason="auto", force=False)
+        except Exception:
+            continue
+
+
+def _inject_system_prompt(group: Any, actor: Dict[str, Any]) -> None:
+    try:
+        deliver_system_prompt(group, actor=actor)
+    except Exception:
+        pass
+
+
+def _remove_stale_socket(sock_path: Path) -> None:
+    # Deprecated: daemon IPC is now cross-platform and uses `ccccd.addr.json`.
+    # Keep this as a best-effort cleanup helper for older call sites.
+    try:
+        sock_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def _find_scope_url(group: Any, scope_key: str) -> str:
+    wanted = str(scope_key or "").strip()
+    if not wanted:
+        return ""
+    scopes = group.doc.get("scopes")
+    if not isinstance(scopes, list):
+        return ""
+    for sc in scopes:
+        if not isinstance(sc, dict):
+            continue
+        if str(sc.get("scope_key") or "").strip() != wanted:
+            continue
+        return str(sc.get("url") or "").strip()
+    return ""
+
+
+def _start_actor_process(
+    group: Any,
+    actor_id: str,
+    *,
+    command: list[str],
+    env: Dict[str, str],
+    runner: str,
+    runtime: str,
+    by: str,
+    caller_id: str = "",
+    is_admin: bool = False,
+) -> Dict[str, Any]:
+    return runtime_start_actor_process(
+        group,
+        actor_id,
+        command=command,
+        env=env,
+        runner=runner,
+        runtime=runtime,
+        by=by,
+        caller_id=caller_id,
+        is_admin=is_admin,
+        find_scope_url=_find_scope_url,
+        effective_runner_kind=_effective_runner_kind,
+        merge_actor_env_with_private=_merge_actor_env_with_private,
+        normalize_runtime_command=_normalize_runtime_command,
+        ensure_mcp_installed=_ensure_mcp_installed,
+        inject_actor_context_env=lambda e, gid, aid: _inject_actor_context_env(e, group_id=gid, actor_id=aid),
+        prepare_pty_env=_prepare_pty_env,
+        pty_backlog_bytes=_pty_backlog_bytes,
+        write_headless_state=_write_headless_state,
+        write_pty_state=lambda gid, aid, pid: _write_pty_state(gid, aid, pid=pid),
+        clear_preamble_sent=clear_preamble_sent,
+        throttle_reset_actor=lambda gid, aid: THROTTLE.reset_actor(gid, aid, keep_pending=True),
+        supported_runtimes=SUPPORTED_RUNTIMES,
+        load_actor_private_env=_load_actor_private_env,
+        resolve_linked_actor_before_start=lambda grp, aid, caller_id="", is_admin=False: _resolve_linked_actor_before_start(
+            grp,
+            aid,
+            get_actor_profile=_get_actor_profile,
+            load_actor_profile_secrets=_load_actor_profile_secrets,
+            update_actor_private_env=_update_actor_private_env,
+            caller_id=caller_id,
+            is_admin=is_admin,
+        ),
+    )
+
+
+def _auto_wake_actor_running(wake_group: Any, actor_id: str) -> bool:
+    actor = find_actor(wake_group, actor_id)
+    actor_doc = actor if isinstance(actor, dict) else {}
+    runtime = str(actor_doc.get("runtime") or "").strip().lower()
+    runner_effective = _effective_runner_kind(str(actor_doc.get("runner") or "pty"))
+    if actor_uses_codex_app_server_state(actor_doc):
+        return bool(codex_app_supervisor.actor_running(wake_group.group_id, actor_id))
+    if runtime == "codex" and runner_effective == "headless":
+        return bool(codex_app_supervisor.actor_running(wake_group.group_id, actor_id))
+    if runtime == "claude" and runner_effective == "headless":
+        return bool(claude_app_supervisor.actor_running(wake_group.group_id, actor_id))
+    if runtime == "web_model" and runner_effective == "headless":
+        return bool(_headless_state_running(wake_group.group_id, actor_id))
+    if runner_effective == "headless":
+        return bool(headless_runner.SUPERVISOR.actor_running(wake_group.group_id, actor_id))
+    return bool(pty_runner.SUPERVISOR.actor_running(wake_group.group_id, actor_id))
+
+
+def _request_dispatch_deps() -> RequestDispatchDeps:
+    global _REQUEST_DISPATCH_DEPS
+    if _REQUEST_DISPATCH_DEPS is not None:
+        return _REQUEST_DISPATCH_DEPS
+    _REQUEST_DISPATCH_DEPS = RequestDispatchDeps(
+        version=__version__,
+        pid_provider=os.getpid,
+        now_iso=utc_now_iso,
+        get_observability=_get_observability,
+        update_observability_settings=update_observability_settings,
+        apply_observability_settings=lambda obs: _apply_observability_settings(ensure_home(), obs),
+        get_web_branding=get_web_branding_settings,
+        update_web_branding_settings=update_web_branding_settings,
+        developer_mode_enabled=_developer_mode_enabled,
+        effective_runner_kind=_effective_runner_kind,
+        throttle_debug_summary=THROTTLE.debug_summary,
+        can_read_terminal_transcript=lambda group, by, actor_id: _can_read_terminal_transcript(
+            group,
+            by=by,
+            target_actor_id=actor_id,
+        ),
+        pty_backlog_bytes=_pty_backlog_bytes,
+        foreman_id=_foreman_id,
+        maybe_reset_automation_on_foreman_change=lambda group, before_foreman_id: _maybe_reset_automation_on_foreman_change(
+            group,
+            before_foreman_id=before_foreman_id,
+        ),
+        stop_im_bridges_for_group=lambda gid: im_stop_group(
+            ensure_home(),
+            group_id=gid,
+            best_effort_killpg=_best_effort_killpg,
+        ),
+        delete_group_private_env=_delete_group_private_env,
+        find_scope_url=_find_scope_url,
+        ensure_mcp_installed=_ensure_mcp_installed,
+        merge_actor_env_with_private=_merge_actor_env_with_private,
+        inject_actor_context_env=_inject_actor_context_env,
+        normalize_runtime_command=_normalize_runtime_command,
+        prepare_pty_env=_prepare_pty_env,
+        write_headless_state=_write_headless_state,
+        write_pty_state=_write_pty_state,
+        clear_preamble_sent=clear_preamble_sent,
+        throttle_reset_actor=THROTTLE.reset_actor,
+        reset_automation_timers_if_active=_reset_automation_timers_if_active,
+        supported_runtimes=SUPPORTED_RUNTIMES,
+        pty_state_dir_for_group=lambda group_id: _pty_state_path(group_id, "_").parent,
+        headless_state_dir_for_group=lambda group_id: _headless_state_path(group_id, "_").parent,
+        automation_on_resume=AUTOMATION.on_resume,
+        clear_pending_system_notifies=lambda group_id: THROTTLE.clear_pending_system_notifies(
+            group_id,
+            notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "auto_idle", "automation"},
+        ),
+        load_actor_private_env=_load_actor_private_env,
+        validate_private_env_key=_validate_private_env_key,
+        coerce_private_env_value=_coerce_private_env_value,
+        update_actor_private_env=_update_actor_private_env,
+        private_env_max_keys=_PRIVATE_ENV_MAX_KEYS,
+        start_actor_process=_start_actor_process,
+        delete_actor_private_env=_delete_actor_private_env,
+        delete_actor_avatar=_delete_actor_avatar,
+        get_actor_profile=_get_actor_profile,
+        load_actor_profile_secrets=_load_actor_profile_secrets,
+        remove_headless_state=_remove_headless_state,
+        remove_pty_state_if_pid=_remove_pty_state_if_pid,
+        throttle_clear_actor=THROTTLE.clear_actor,
+        daemon_request_factory=DaemonRequest,
+        coerce_bool_default_false=lambda value: coerce_bool(value, default=False),
+        normalize_attachments=lambda group, raw: normalize_attachments(
+            group,
+            raw,
+            resolve_blob_attachment_path=resolve_blob_attachment_path,
+        ),
+        auto_wake_recipients=lambda group, to, by: auto_wake_recipients(
+            group,
+            to,
+            by=by,
+            disabled_recipient_actor_ids=disabled_recipient_actor_ids,
+            enabled_recipient_actor_ids=enabled_recipient_actor_ids,
+            find_actor=find_actor,
+            coerce_bool=coerce_bool,
+            is_actor_running=_auto_wake_actor_running,
+            start_actor_process=_start_actor_process,
+            update_actor=update_actor,
+            runner_stop_actor=runner_stop_actor,
+            request_flush_pending_messages=lambda wake_group, actor_id: request_flush_pending_messages(
+                wake_group,
+                actor_id=actor_id,
+            ),
+            logger=logger,
+            auto_wake_lock=_AUTO_WAKE_LOCK,
+            auto_wake_in_progress=_AUTO_WAKE_IN_PROGRESS,
+        ),
+        automation_on_new_message=AUTOMATION.on_new_message,
+        clear_pending_system_notifies_chat=lambda group_id, notify_kinds: THROTTLE.clear_pending_system_notifies(
+            group_id,
+            notify_kinds=notify_kinds,
+        ),
+        enqueue_group_space_sync_run=lambda **kwargs: _enqueue_group_space_sync_run(**kwargs),
+        error_factory=_error,
+    )
+    return _REQUEST_DISPATCH_DEPS
+
+
+def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
+    return dispatch_request(req, deps=_request_dispatch_deps(), recurse=handle_request)
+
+
+def _enqueue_group_space_sync_run(*, group_id: str, provider: str, force: bool, by: str) -> Dict[str, Any]:
+    queue = _SPACE_SYNC_RUN_QUEUE
+    if queue is None:
+        return {
+            "accepted": False,
+            "queued": False,
+            "code": "space_sync_executor_unavailable",
+            "message": "space sync executor unavailable",
+        }
+    return queue.submit(
+        group_id=group_id,
+        provider=provider,
+        force=force,
+        by=by,
+    )
+
+
+def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
+    global _SPACE_SYNC_RUN_QUEUE
+    p = paths or default_paths()
+    p.daemon_dir.mkdir(parents=True, exist_ok=True)
+
+    # Acquire exclusive lock to prevent multiple daemon instances (race condition fix).
+    # The lock is held for the lifetime of the daemon process.
+    lock_path = p.daemon_dir / "ccccd.lock"
+    try:
+        lock_handle = acquire_lockfile(lock_path, blocking=False)
+    except LockUnavailableError:
+        # Another daemon already holds the lock
+        return 0
+
+    # Apply global observability settings early (logging + developer mode gating).
+    try:
+        _apply_observability_settings(p.home, get_observability_settings())
+    except Exception:
+        pass
+    _apply_space_provider_runtime_flags_from_state()
+
+    _cleanup_stale_daemon_endpoints(p)
+    if _is_daemon_alive(p):
+        release_lockfile(lock_handle)
+        return 0
+
+    # Cleanup stale IM bridge state from previous runs/crashes.
+    try:
+        res = im_cleanup_invalid(
+            p.home,
+            pid_alive=_pid_alive,
+            best_effort_killpg=_best_effort_killpg,
+        )
+        if res.get("killed") or res.get("stale_pidfiles"):
+            logger.info(
+                "im_bridge_cleanup killed=%s stale_pidfiles=%s",
+                res.get("killed"),
+                res.get("stale_pidfiles"),
+                extra={"op": "im_bridge_cleanup"},
+            )
+    except Exception:
+        pass
+
+    # Best-effort cleanup of orphaned PTY actor processes from a previous daemon crash.
+    try:
+        _cleanup_stale_pty_state(
+            p.home,
+            pid_alive=_pid_alive,
+            best_effort_killpg=_best_effort_killpg,
+        )
+    except Exception:
+        pass
+
+    try:
+        p.sock_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    try:
+        p.addr_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    stop_event = threading.Event()
+
+    try:
+        pty_runner.SUPERVISOR.set_exit_hook(
+            lambda session: _handle_pty_session_exit(session, persist_actor_stopped=not stop_event.is_set())
+        )
+    except Exception:
+        pass
+
+    _SPACE_SYNC_RUN_QUEUE = GroupSpaceSyncRunQueue()
+
+    # Best-effort: enable in-process event streaming for SDKs (daemon-owned only).
+    try:
+        from ..kernel.ledger import set_append_hook
+        from .messaging.streaming import EVENT_BROADCASTER
+
+        set_append_hook(EVENT_BROADCASTER.on_append)
+    except Exception:
+        pass
+
+    # Graceful shutdown on SIGTERM/SIGINT
+    def _signal_handler(signum: int, frame: Any) -> None:
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
+    try:
+        daemon_supervisor_pid = int(str(os.environ.get("CCCC_DAEMON_SUPERVISOR_PID") or "").strip() or 0)
+    except Exception:
+        daemon_supervisor_pid = 0
+    start_supervisor_watchdog_thread(
+        stop_event=stop_event,
+        supervisor_pid=daemon_supervisor_pid,
+        pid_alive=_pid_alive,
+        interval_seconds=0.5,
+    )
+
+    start_automation_thread(
+        stop_event=stop_event,
+        home=p.home,
+        automation_tick=AUTOMATION.tick,
+        load_group=load_group,
+        group_running=lambda gid: (
+            codex_app_supervisor.group_running(gid)
+            or
+            claude_app_supervisor.group_running(gid)
+            or
+            pty_runner.SUPERVISOR.group_running(gid)
+            or headless_runner.SUPERVISOR.group_running(gid)
+        ),
+        tick_delivery=tick_delivery,
+        compact_ledgers=_maybe_compact_ledgers,
+        automation_interval_seconds=5.0,
+        initial_automation_delay_seconds=5.0,
+    )
+
+    def _tick_space_jobs() -> None:
+        result = process_due_space_jobs(limit=20)
+        if int(result.get("processed") or 0) > 0:
+            logger.debug("group_space_due_jobs_processed=%s", int(result.get("processed") or 0))
+
+    start_space_jobs_thread(
+        stop_event=stop_event,
+        tick_space_jobs=_tick_space_jobs,
+        interval_seconds=1.0,
+    )
+
+    start_group_bridge_session_manager_thread(
+        home=p.home,
+        stop_event=stop_event,
+        interval_seconds=10.0,
+    )
+
+    def _tick_space_sync() -> None:
+        result = process_due_space_syncs(provider="notebooklm", limit=20)
+        memory_result = process_due_memory_space_syncs(provider="notebooklm", limit=20)
+        if int(result.get("processed") or 0) > 0:
+            logger.debug("group_space_sync_processed=%s", int(result.get("processed") or 0))
+        if int(memory_result.get("queued") or 0) > 0:
+            logger.debug("group_space_memory_sync_queued=%s", int(memory_result.get("queued") or 0))
+
+    def _run_manual_space_sync(task: Any) -> None:
+        result = sync_group_space_files(
+            task.group_id,
+            provider=task.provider,
+            force=bool(task.force),
+            by=str(task.by or "user"),
+        )
+        if int(result.get("processed") or 0) > 0 or not bool(result.get("ok", True)):
+            logger.debug(
+                "group_space_sync_manual group=%s provider=%s ok=%s converged=%s skipped=%s",
+                task.group_id,
+                task.provider,
+                bool(result.get("ok")),
+                bool(result.get("converged")),
+                bool(result.get("skipped")),
+            )
+
+    start_space_sync_thread(
+        stop_event=stop_event,
+        tick_space_sync=_tick_space_sync,
+        drain_space_sync_runs=lambda limit: _SPACE_SYNC_RUN_QUEUE.drain(
+            limit=limit,
+            runner=_run_manual_space_sync,
+            logger=logger,
+        ),
+        wake_event=_SPACE_SYNC_RUN_QUEUE.wake_event,
+        interval_seconds=30.0,
+    )
+
+    try:
+        from .messaging.streaming import EVENT_BROADCASTER as _activity_broadcaster
+
+        start_actor_activity_thread(
+            stop_event=stop_event,
+            home=p.home,
+            pty_supervisor=pty_runner.SUPERVISOR,
+            headless_supervisor=headless_runner.SUPERVISOR,
+            codex_supervisor=codex_app_supervisor,
+            claude_supervisor=claude_app_supervisor,
+            event_broadcaster=_activity_broadcaster,
+            load_group=load_group,
+            interval_seconds=1.0,
+        )
+    except Exception:
+        logger.warning("Failed to start actor activity thread")
+
+    transport = _desired_daemon_transport()
+    if transport == "unix" and getattr(socket, "AF_UNIX", None) is None:
+        transport = "tcp"
+    s, endpoint = bind_server_socket(
+        transport=transport,
+        sock_path=p.sock_path,
+        daemon_tcp_bind_host=_daemon_tcp_bind_host,
+        daemon_tcp_port=_daemon_tcp_port,
+        daemon_tcp_port_is_explicit=_daemon_tcp_port_is_explicit,
+    )
+
+    with s:
+        s.listen(50)
+        s.settimeout(1.0)  # Allow periodic check of stop_event
+        _write_pid(p.pid_path)
+        write_daemon_addr(
+            atomic_write_json=atomic_write_json,
+            addr_path=p.addr_path,
+            endpoint=endpoint,
+            pid=os.getpid(),
+            version=__version__,
+            now_iso=utc_now_iso(),
+        )
+
+        # Bootstrap background work only after the daemon socket is ready, but
+        # don't block the accept loop (clients should see the daemon as responsive).
+        recover_pending_voice_idle_reviews()
+        start_bootstrap_thread(
+            maybe_autostart_running_groups=_maybe_autostart_running_groups,
+            maybe_autostart_enabled_im_bridges=_maybe_autostart_enabled_im_bridges,
+        )
+
+        request_queue = DaemonRequestExecutionQueue(
+            stop_event=stop_event,
+            handle_request=handle_request,
+            send_json=_send_json,
+            dump_response=_dump_response,
+            logger=logger,
+            on_should_exit=stop_event.set,
+        )
+        message_request_lanes = MessageRequestLanes(
+            stop_event=stop_event,
+            handle_request=handle_request,
+            send_json=_send_json,
+            dump_response=_dump_response,
+            logger=logger,
+            on_should_exit=stop_event.set,
+            diagnostics_enabled=_developer_mode_enabled,
+        )
+        read_request_queue = DaemonRequestExecutionQueue(
+            stop_event=stop_event,
+            handle_request=handle_request,
+            send_json=_send_json,
+            dump_response=_dump_response,
+            logger=logger,
+            on_should_exit=stop_event.set,
+        )
+        start_request_execution_thread(request_queue=request_queue, name="cccc-request-worker-slow")
+        start_request_execution_thread(request_queue=read_request_queue, name="cccc-request-worker-read-1")
+        start_request_execution_thread(request_queue=read_request_queue, name="cccc-request-worker-read-2")
+
+        should_exit = False
+        while not should_exit and not stop_event.is_set():
+            try:
+                conn, _ = s.accept()
+            except socket.timeout:
+                continue
+            except KeyboardInterrupt:
+                break
+            except Exception:
+                continue
+            should_exit = handle_incoming_connection(
+                conn,
+                recv_json_line=_recv_json_line,
+                parse_request=DaemonRequest.model_validate,
+                make_invalid_request_error=lambda err: _error(
+                    "invalid_request",
+                    "invalid request",
+                    details={"error": err},
+                ),
+                send_json=_send_json,
+                dump_response=_dump_response,
+                try_handle_special=lambda req, sock: try_handle_socket_special_op(
+                    req,
+                    sock,
+                    send_json=_send_json,
+                    dump_response=_dump_response,
+                    error=lambda code, message, details=None: _error(code, message, details=details),
+                    actor_running=pty_runner.SUPERVISOR.actor_running,
+                    attach_actor_socket=lambda group_id, actor_id, sock2, since=None, mode="control", takeover=False: pty_runner.SUPERVISOR.attach(
+                        group_id=group_id,
+                        actor_id=actor_id,
+                        sock=sock2,
+                        since=since,
+                        mode=mode,
+                        takeover=takeover,
+                    ),
+                    backlog_start_offset=lambda group_id, actor_id: pty_runner.SUPERVISOR.backlog_start_offset(
+                        group_id=group_id,
+                        actor_id=actor_id,
+                    ),
+                    load_group=load_group,
+                    find_actor=find_actor,
+                    effective_runner_kind=_effective_runner_kind,
+                    supported_stream_kinds=_supported_stream_kinds,
+                    start_events_stream=lambda sock2, group_id, by, kinds, since_event_id, since_ts: _start_events_stream(
+                        sock=sock2,
+                        group_id=group_id,
+                        by=by,
+                        kinds=kinds,
+                        since_event_id=since_event_id,
+                        since_ts=since_ts,
+                    ),
+                ),
+                handle_request=handle_request,
+                schedule_request=lambda req, conn: _request_queue_for(
+                    req,
+                    read_queue=read_request_queue,
+                    message_lanes=message_request_lanes,
+                    slow_queue=request_queue,
+                ).submit(conn=conn, req=req),
+                logger=logger,
+            )
+            if should_exit:
+                stop_event.set()
+
+    try:
+        close_all_browser_surface_sessions()
+    except Exception:
+        pass
+    try:
+        close_all_notebooklm_auth_browser_sessions()
+    except Exception:
+        pass
+    try:
+        close_all_web_model_chatgpt_browser_sessions()
+    except Exception:
+        pass
+    _SPACE_SYNC_RUN_QUEUE = None
+
+    cleanup_after_stop(
+        stop_event=stop_event,
+        home=p.home,
+        best_effort_killpg=_best_effort_killpg,
+        runtime_session_shutdown_start=lambda: (
+            codex_app_supervisor.begin_shutdown(),
+            claude_app_supervisor.begin_shutdown(),
+        ),
+        im_stop_all=im_stop_all,
+        codex_stop_all=codex_app_supervisor.stop_all,
+        claude_stop_all=claude_app_supervisor.stop_all,
+        pty_stop_all=pty_runner.SUPERVISOR.stop_all,
+        headless_stop_all=headless_runner.SUPERVISOR.stop_all,
+        sock_path=p.sock_path,
+        addr_path=p.addr_path,
+        pid_path=p.pid_path,
+        release_lockfile=release_lockfile,
+        lock_handle=lock_handle,
+    )
+
+    return 0
+
+
+def call_daemon(req: Dict[str, Any], *, paths: Optional[DaemonPaths] = None, timeout_s: float = 60.0) -> Dict[str, Any]:
+    p = paths or default_paths()
+    try:
+        request = DaemonRequest.model_validate(req)
+    except Exception as e:
+        return DaemonResponse(
+            ok=False,
+            error=DaemonError(code="invalid_request", message="invalid request", details={"error": str(e)}),
+        ).model_dump()
+    try:
+        ep = get_daemon_endpoint(p)
+        obj = send_daemon_request(
+            ep,
+            request.model_dump(),
+            timeout_s=timeout_s,
+            sock_path_default=p.sock_path,
+        )
+        resp = DaemonResponse.model_validate(obj)
+        return resp.model_dump()
+    except DaemonClientError as exc:
+        details = exc.details()
+        op_name = str(details.get("op", request.op) or request.op).strip()
+        if op_name in {"ping", "shutdown", "observability_get", "debug_snapshot"}:
+            logger.debug(
+                "daemon transport failure op=%s phase=%s reason=%s transport=%s details=%s",
+                op_name,
+                details.get("phase", "unknown"),
+                details.get("reason", "unknown"),
+                details.get("transport", "unknown"),
+                details,
+            )
+        elif _should_log_daemon_client_warning(
+            op=op_name,
+            phase=str(details.get("phase") or "unknown"),
+            reason=str(details.get("reason") or "unknown"),
+        ):
+            logger.warning(
+                "daemon transport failure op=%s phase=%s reason=%s transport=%s details=%s",
+                op_name,
+                details.get("phase", "unknown"),
+                details.get("reason", "unknown"),
+                details.get("transport", "unknown"),
+                details,
+            )
+        return DaemonResponse(
+            ok=False,
+            error=DaemonError(code="daemon_unavailable", message="daemon unavailable", details=details),
+        ).model_dump()
+    except Exception as exc:
+        details = {
+            "phase": "client",
+            "reason": "unexpected",
+            "op": request.op,
+            "timeout_s": float(timeout_s or 0.0),
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+        }
+        logger.warning("daemon client unexpected failure op=%s details=%s", request.op, details)
+        return DaemonResponse(
+            ok=False,
+            error=DaemonError(code="daemon_unavailable", message="daemon unavailable", details=details),
+        ).model_dump()
+
+
+def read_pid(paths: Optional[DaemonPaths] = None) -> int:
+    p = paths or default_paths()
+    try:
+        txt = p.pid_path.read_text(encoding="utf-8").strip()
+        return int(txt) if txt.isdigit() else 0
+    except Exception:
+        return 0

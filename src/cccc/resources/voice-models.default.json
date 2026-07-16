@@ -1,0 +1,99 @@
+{
+  "voice_secretary_asr_models": [
+    {
+      "model_id": "sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8",
+      "kind": "asr",
+      "title": "sherpa-onnx SenseVoice zh/en/ja/ko/yue int8",
+      "description": "Offline SenseVoice ASR model for final Voice Secretary transcripts in Mandarin, English, Japanese, Korean, and Cantonese.",
+      "offline": {
+        "engine": "sense_voice",
+        "model": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx",
+        "tokens": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt",
+        "sample_rate": 16000,
+        "num_threads": 2,
+        "provider": "cpu",
+        "language": "auto",
+        "use_itn": true
+      },
+      "required_files": [
+        "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/model.int8.onnx",
+        "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17/tokens.txt"
+      ],
+      "artifacts": [
+        {
+          "path": "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2024-07-17.tar.bz2",
+          "sha256": "7d1efa2138a65b0b488df37f8b89e3d91a60676e416f515b952358d83dfd347e",
+          "size_bytes": 163002883,
+          "archive": "tar.bz2"
+        }
+      ]
+    },
+    {
+      "model_id": "sherpa_onnx_streaming_paraformer_trilingual_zh_cantonese_en",
+      "kind": "asr",
+      "title": "sherpa-onnx streaming Paraformer trilingual zh/cantonese/en int8",
+      "description": "Streaming Paraformer ASR model for low-latency Voice Secretary captions in Mandarin, Cantonese, and English.",
+      "streaming": {
+        "engine": "paraformer",
+        "encoder": "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/encoder.int8.onnx",
+        "decoder": "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/decoder.int8.onnx",
+        "tokens": "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/tokens.txt",
+        "sample_rate": 16000,
+        "num_threads": 2,
+        "provider": "cpu"
+      },
+      "required_files": [
+        "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/encoder.int8.onnx",
+        "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/decoder.int8.onnx",
+        "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en/tokens.txt"
+      ],
+      "artifacts": [
+        {
+          "path": "sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en.tar.bz2",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-paraformer-trilingual-zh-cantonese-en.tar.bz2",
+          "sha256": "d479167d8752628d9032d29de1060493865389d1e295a1c2e8e011e7062f1932",
+          "size_bytes": 1047671211,
+          "archive": "tar.bz2"
+        }
+      ]
+    },
+    {
+      "model_id": "sherpa_onnx_diarization_pyannote_3dspeaker_zh",
+      "kind": "diarization",
+      "title": "sherpa-onnx speaker diarization pyannote + 3D-Speaker zh",
+      "description": "Optional local speaker diarization model for anonymous Speaker 1 / Speaker 2 labels after Voice Secretary recordings.",
+      "diarization": {
+        "engine": "offline_speaker_diarization",
+        "segmentation_model": "sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx",
+        "embedding_model": "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
+        "sample_rate": 16000,
+        "num_threads": 2,
+        "provider": "cpu",
+        "num_speakers": -1,
+        "cluster_threshold": 0.5,
+        "min_duration_on": 0.3,
+        "min_duration_off": 0.5
+      },
+      "required_files": [
+        "sherpa-onnx-pyannote-segmentation-3-0/model.int8.onnx",
+        "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx"
+      ],
+      "artifacts": [
+        {
+          "path": "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+          "sha256": "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
+          "size_bytes": 6958444,
+          "archive": "tar.bz2"
+        },
+        {
+          "path": "3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
+          "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh-cn_16k-common.onnx",
+          "sha256": "f682b514c05d947ee3fa91cd6ec6c5c7543479a128373fa29b1faedccd21fd11",
+          "size_bytes": 28281138
+        }
+      ]
+    }
+  ]
+}

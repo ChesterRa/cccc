@@ -1,0 +1,830 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+import signal
+import subprocess
+import time
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+
+from ....daemon.im.im_bridge_ops import read_live_im_bridge_pid, sanitize_im_bridge_env, stop_im_bridges_for_group
+from ....kernel.group import load_group
+from ....paths import ensure_home
+from ....ports.im.config_schema import canonicalize_im_config
+from ....util.conv import coerce_bool
+from ....util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive, resolve_background_python_argv, supervised_process_popen_kwargs
+from ..schemas import (
+    IMActionRequest,
+    IMBindRequest,
+    IMPendingRejectRequest,
+    IMSetRequest,
+    InboxReadRequest,
+    RouteContext,
+    check_group,
+    get_principal,
+    require_group,
+)
+from .actors import invalidate_readonly_actor_list
+
+
+def _weixin_state_paths(group: Any) -> Dict[str, Any]:
+    state_dir = group.path / "state"
+    return {
+        "state_dir": state_dir,
+        "status_path": state_dir / "im_weixin_login.json",
+        "pid_path": state_dir / "im_weixin_login.pid",
+        "log_path": state_dir / "im_weixin_login.log",
+        "cred_path": state_dir / "im_weixin_credentials.json",
+        "context_cache_path": state_dir / "im_weixin_context_tokens.json",
+    }
+
+
+def _write_weixin_status(status_path: Path, data: Dict[str, Any]) -> None:
+    """Write weixin login status to the state file."""
+    status_path.parent.mkdir(parents=True, exist_ok=True)
+    merged = {"updated_at": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    merged.update(data)
+    status_path.write_text(
+        json.dumps(merged, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+async def _refresh_weixin_login_status(group: Any, status: Dict[str, Any]) -> Dict[str, Any]:
+    """Poll the wechatbot QR state and persist credentials on confirmation."""
+    current = dict(status or {})
+    if current.get("logged_in"):
+        return current
+    if str(current.get("status") or "").strip().lower() != "waiting_scan":
+        return current
+
+    qrcode = str(current.get("qrcode") or "").strip()
+    poll_base_url = str(current.get("poll_base_url") or "").strip()
+    if not qrcode:
+        return current
+
+    im_cfg = canonicalize_im_config(group.doc.get("im", {}))
+    if str(im_cfg.get("platform") or "").strip().lower() not in ("", "weixin"):
+        return current
+
+    paths = _weixin_state_paths(group)
+    status_path = paths["status_path"]
+    try:
+        from wechatbot.auth import FIXED_QR_BASE_URL, save_credentials
+        from wechatbot.protocol import ILinkApi
+        from wechatbot.types import Credentials
+
+        api = ILinkApi()
+        result = await api.poll_qr_status(poll_base_url or FIXED_QR_BASE_URL, qrcode)
+        qr_status = str(result.get("status") or "").strip().lower()
+
+        if qr_status == "confirmed":
+            token = str(result.get("bot_token") or "").strip()
+            account_id = str(result.get("ilink_bot_id") or "").strip()
+            user_id = str(result.get("ilink_user_id") or "").strip()
+            base_url = str(result.get("baseurl") or poll_base_url or FIXED_QR_BASE_URL).strip()
+            if not (token and account_id and user_id):
+                _write_weixin_status(status_path, {
+                    "status": "error",
+                    "logged_in": False,
+                    "account_id": "",
+                    "error": "Login confirmed but missing credentials",
+                    "user_id": "",
+                    "qrcode_url": "",
+                    "qrcode": "",
+                    "poll_base_url": "",
+                })
+                return _read_weixin_status(group)
+            await save_credentials(
+                Credentials(
+                    token=token,
+                    base_url=base_url,
+                    account_id=account_id,
+                    user_id=user_id,
+                ),
+                paths["cred_path"],
+            )
+            _write_weixin_status(status_path, {
+                "status": "logged_in",
+                "logged_in": True,
+                "account_id": account_id,
+                "error": "",
+                "user_id": user_id,
+                "qrcode_url": "",
+                "qrcode": "",
+                "poll_base_url": "",
+            })
+        elif qr_status == "expired":
+            _write_weixin_status(status_path, {
+                "status": "expired",
+                "logged_in": False,
+                "error": "QR code expired, please regenerate",
+                "qrcode_url": "",
+                "qrcode": "",
+                "poll_base_url": "",
+            })
+        elif qr_status == "scaned_but_redirect":
+            redirect_host = str(result.get("redirect_host") or "").strip()
+            next_base_url = f"https://{redirect_host}" if redirect_host else (poll_base_url or FIXED_QR_BASE_URL)
+            _write_weixin_status(status_path, {
+                "status": "waiting_scan",
+                "logged_in": False,
+                "qrcode_url": str(current.get("qrcode_url") or "").strip(),
+                "qrcode": qrcode,
+                "poll_base_url": next_base_url,
+                "error": "",
+            })
+        elif qr_status in {"error", "failed"}:
+            _write_weixin_status(status_path, {
+                "status": "error",
+                "logged_in": False,
+                "error": str(result.get("errmsg") or "login check failed"),
+                "qrcode_url": "",
+                "qrcode": "",
+                "poll_base_url": "",
+            })
+    except Exception:
+        return current
+    return _read_weixin_status(group)
+
+
+def _read_weixin_status(group: Any) -> Dict[str, Any]:
+    paths = _weixin_state_paths(group)
+    status_path = paths["status_path"]
+    pid_path = paths["pid_path"]
+    data: Dict[str, Any] = {
+        "status": "not_logged_in",
+        "logged_in": False,
+        "account_id": "",
+        "qr_ascii": "",
+        "error": "",
+        "running": False,
+        "pid": None,
+    }
+    try:
+        if paths["cred_path"].exists():
+            loaded_creds = json.loads(paths["cred_path"].read_text(encoding="utf-8"))
+            if isinstance(loaded_creds, dict) and str(loaded_creds.get("token") or "").strip():
+                data.update({
+                    "status": "logged_in",
+                    "logged_in": True,
+                    "account_id": str(loaded_creds.get("accountId") or loaded_creds.get("account_id") or "").strip(),
+                    "user_id": str(loaded_creds.get("userId") or loaded_creds.get("user_id") or "").strip(),
+                    "error": "",
+                })
+    except Exception:
+        pass
+    if status_path.exists():
+        try:
+            loaded = json.loads(status_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                data.update(loaded)
+        except Exception:
+            pass
+    if pid_path.exists():
+        try:
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
+            if pid_is_alive(pid):
+                data["running"] = True
+                data["pid"] = pid
+            else:
+                pid_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return data
+
+
+def _stop_weixin_login_runner(group: Any) -> None:
+    pid_path = _weixin_state_paths(group)["pid_path"]
+    if not pid_path.exists():
+        return
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        if pid > 0:
+            best_effort_signal_pid(pid, SOFT_TERMINATE_SIGNAL, include_group=True)
+    except Exception:
+        pass
+    try:
+        pid_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def create_routers(ctx: RouteContext) -> list[APIRouter]:
+    # Group-scoped routes: /api/v1/groups/{group_id}/...
+    group_router = APIRouter(
+        prefix="/api/v1/groups/{group_id}",
+        dependencies=[Depends(require_group)],
+    )
+    # IM bridge routes: /api/im/... (manual check_group, group_id from query/body)
+    im_router = APIRouter()
+
+    # =========================================================================
+    # Group-scoped endpoints (guard via router dependency)
+    # =========================================================================
+
+    def _profile_auth_args(request: Request) -> Dict[str, Any]:
+        principal = get_principal(request)
+        return {
+            "caller_id": str(getattr(principal, "user_id", "") or "").strip(),
+            "is_admin": bool(getattr(principal, "is_admin", False)),
+        }
+
+    @group_router.get("/inbox/{actor_id}")
+    async def inbox_list(group_id: str, actor_id: str, by: str = "user", limit: int = 50) -> Dict[str, Any]:
+        return await ctx.daemon({"op": "inbox_list", "args": {"group_id": group_id, "actor_id": actor_id, "by": by, "limit": int(limit)}})
+
+    @group_router.post("/inbox/{actor_id}/read")
+    async def inbox_mark_read(group_id: str, actor_id: str, req: InboxReadRequest) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {"op": "inbox_mark_read", "args": {"group_id": group_id, "actor_id": actor_id, "event_id": req.event_id, "by": req.by}}
+        )
+
+    @group_router.post("/start")
+    async def group_start(request: Request, group_id: str, by: str = "user") -> Dict[str, Any]:
+        await invalidate_readonly_actor_list(group_id)
+        result = await ctx.daemon({"op": "group_start", "args": {"group_id": group_id, "by": by, **_profile_auth_args(request)}})
+        await invalidate_readonly_actor_list(group_id)
+        return result
+
+    @group_router.post("/stop")
+    async def group_stop(group_id: str, by: str = "user") -> Dict[str, Any]:
+        await invalidate_readonly_actor_list(group_id)
+        result = await ctx.daemon({"op": "group_stop", "args": {"group_id": group_id, "by": by}})
+        await invalidate_readonly_actor_list(group_id)
+        return result
+
+    @group_router.post("/state")
+    async def group_set_state(group_id: str, state: str, by: str = "user") -> Dict[str, Any]:
+        """Set group state (active/idle/paused) to control automation behavior."""
+        await invalidate_readonly_actor_list(group_id)
+        result = await ctx.daemon({"op": "group_set_state", "args": {"group_id": group_id, "state": state, "by": by}})
+        await invalidate_readonly_actor_list(group_id)
+        return result
+
+    # =========================================================================
+    # IM Bridge API (manual check_group — group_id from query/body)
+    # =========================================================================
+
+    @im_router.get("/api/im/status")
+    async def im_status(request: Request, group_id: str) -> Dict[str, Any]:
+        """Get IM bridge status for a group."""
+        check_group(request, group_id)
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        im_config = canonicalize_im_config(group.doc.get("im", {}))
+        platform = im_config.get("platform") if im_config else None
+
+        pid_path = group.path / "state" / "im_bridge.pid"
+        pid = read_live_im_bridge_pid(pid_path) if pid_path.exists() else None
+        running = pid is not None
+
+        # Get subscriber count
+        subscribers_path = group.path / "state" / "im_subscribers.json"
+        subscriber_count = 0
+        if subscribers_path.exists():
+            try:
+                subs = json.loads(subscribers_path.read_text(encoding="utf-8"))
+                subscriber_count = sum(1 for s in subs.values() if isinstance(s, dict) and s.get("subscribed"))
+            except Exception:
+                pass
+
+        return {
+            "ok": True,
+            "result": {
+                "group_id": group_id,
+                "configured": bool(im_config),
+                "enabled": coerce_bool(im_config.get("enabled"), default=False) if im_config else False,
+                "platform": platform,
+                "running": running,
+                "pid": pid,
+                "subscribers": subscriber_count,
+            }
+        }
+
+    @im_router.get("/api/im/config")
+    async def im_config(request: Request, group_id: str) -> Dict[str, Any]:
+        """Get IM bridge configuration for a group."""
+        check_group(request, group_id)
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        im_cfg = canonicalize_im_config(group.doc.get("im"))
+        return {"ok": True, "result": {"group_id": group_id, "im": im_cfg}}
+
+    @im_router.get("/api/im/weixin/login/status")
+    async def im_weixin_login_status(request: Request, group_id: str) -> Dict[str, Any]:
+        """Return current Weixin login/runtime status for a group."""
+        check_group(request, group_id)
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        status = _read_weixin_status(group)
+        status = await _refresh_weixin_login_status(group, status)
+        return {"ok": True, "result": status}
+
+    @im_router.post("/api/im/weixin/login/start")
+    async def im_weixin_login_start(request: Request, req: IMActionRequest) -> Dict[str, Any]:
+        """Start a Weixin QR login flow using the Python SDK."""
+        check_group(request, req.group_id)
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        im_cfg = canonicalize_im_config(group.doc.get("im", {}))
+        platform = str(im_cfg.get("platform") or "").strip().lower()
+        if platform and platform != "weixin":
+            return {"ok": False, "error": {"code": "wrong_platform", "message": f"group IM platform is {platform}, not weixin"}}
+
+        paths = _weixin_state_paths(group)
+        status = _read_weixin_status(group)
+        if status.get("logged_in"):
+            return {"ok": True, "result": status}
+
+        account_id = str(im_cfg.get("weixin_account_id") or "").strip()
+        paths["state_dir"].mkdir(parents=True, exist_ok=True)
+        status_path = paths["status_path"]
+
+        try:
+            from wechatbot.auth import FIXED_QR_BASE_URL, load_credentials
+            from wechatbot.protocol import ILinkApi
+
+            creds = await load_credentials(paths["cred_path"])
+            if creds is not None:
+                _write_weixin_status(status_path, {
+                    "status": "logged_in",
+                    "logged_in": True,
+                    "account_id": str(getattr(creds, "account_id", "") or account_id),
+                    "user_id": str(getattr(creds, "user_id", "") or ""),
+                    "error": "",
+                })
+                return {"ok": True, "result": _read_weixin_status(group)}
+
+            api = ILinkApi()
+            session = await api.get_qr_code(FIXED_QR_BASE_URL)
+            qr_url = str(session.get("qrcode_img_content") or "").strip()
+            qrcode = str(session.get("qrcode") or "").strip()
+            if not qr_url or not qrcode:
+                raise RuntimeError("wechatbot returned no QR code")
+
+            _write_weixin_status(status_path, {
+                "status": "waiting_scan",
+                "logged_in": False,
+                "account_id": account_id,
+                "qrcode_url": qr_url,
+                "qrcode": qrcode,
+                "poll_base_url": FIXED_QR_BASE_URL,
+                "error": "",
+            })
+            return {"ok": True, "result": _read_weixin_status(group)}
+        except Exception as e:
+            _write_weixin_status(status_path, {
+                "status": "error",
+                "logged_in": False,
+                "error": str(e),
+            })
+            return {"ok": False, "error": {"code": "login_failed", "message": str(e)}}
+
+    @im_router.post("/api/im/weixin/logout")
+    async def im_weixin_logout(request: Request, req: IMActionRequest) -> Dict[str, Any]:
+        """Clear Weixin login state."""
+        check_group(request, req.group_id)
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        im_cfg = canonicalize_im_config(group.doc.get("im", {}))
+        paths = _weixin_state_paths(group)
+        _stop_weixin_login_runner(group)
+
+        def _killpg(pid: int, sig: signal.Signals) -> None:
+            best_effort_signal_pid(pid, sig, include_group=True)
+
+        stop_im_bridges_for_group(
+            ensure_home(),
+            group_id=req.group_id,
+            best_effort_killpg=_killpg,
+        )
+
+        try:
+            from wechatbot.auth import clear_credentials
+
+            await clear_credentials(paths["cred_path"])
+        except Exception as e:
+            return {"ok": False, "error": {"code": "logout_failed", "message": str(e)}}
+
+        try:
+            paths["context_cache_path"].unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        _write_weixin_status(paths["status_path"], {
+            "status": "logged_out",
+            "logged_in": False,
+            "account_id": "",
+            "error": "",
+        })
+        return {"ok": True, "result": _read_weixin_status(group)}
+
+    @im_router.post("/api/im/set")
+    async def im_set(request: Request, req: IMSetRequest) -> Dict[str, Any]:
+        """Set IM bridge configuration for a group."""
+        check_group(request, req.group_id)
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        prev_im = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
+        prev_enabled = coerce_bool(prev_im.get("enabled"), default=False) if isinstance(prev_im, dict) else False
+
+        # Build IM config draft then canonicalize to keep storage shape stable.
+        im_cfg: Dict[str, Any] = {"platform": str(req.platform or "").strip().lower()}
+        if prev_enabled:
+            im_cfg["enabled"] = True
+
+        platform = str(im_cfg.get("platform") or "").strip().lower()
+        prev_files = prev_im.get("files") if isinstance(prev_im, dict) else None
+        if isinstance(prev_files, dict):
+            # Preserve non-credential settings, if any (so "Set" doesn't silently drop them).
+            im_cfg["files"] = prev_files
+        else:
+            # Default file-transfer policy (also used by CLI).
+            default_max_mb = 20 if platform in ("telegram", "slack") else 10
+            im_cfg["files"] = {"enabled": True, "max_mb": default_max_mb}
+
+        if isinstance(prev_im, dict) and "skip_pending_on_start" in prev_im:
+            im_cfg["skip_pending_on_start"] = coerce_bool(prev_im.get("skip_pending_on_start"), default=True)
+
+        token_hint = str(req.bot_token_env or req.token_env or req.token or "").strip()
+
+        if platform in ("telegram", "discord", "slack"):
+            if token_hint:
+                im_cfg["bot_token_env"] = token_hint
+            app_hint = str(req.app_token_env or "").strip()
+            if platform == "slack" and app_hint:
+                im_cfg["app_token_env"] = app_hint
+        elif platform == "feishu":
+            im_cfg["feishu_domain"] = str(req.feishu_domain or "").strip()
+            app_id = str(req.feishu_app_id or "").strip()
+            app_secret = str(req.feishu_app_secret or "").strip()
+            if app_id:
+                im_cfg["feishu_app_id"] = app_id
+            if app_secret:
+                im_cfg["feishu_app_secret"] = app_secret
+        elif platform == "dingtalk":
+            app_key = str(req.dingtalk_app_key or "").strip()
+            app_secret = str(req.dingtalk_app_secret or "").strip()
+            robot_code = str(req.dingtalk_robot_code or "").strip()
+            if app_key:
+                im_cfg["dingtalk_app_key"] = app_key
+            if app_secret:
+                im_cfg["dingtalk_app_secret"] = app_secret
+            if robot_code:
+                im_cfg["dingtalk_robot_code"] = robot_code
+        elif platform == "wecom":
+            bot_id = str(req.wecom_bot_id or "").strip()
+            secret = str(req.wecom_secret or "").strip()
+            if bot_id:
+                im_cfg["wecom_bot_id"] = bot_id
+            if secret:
+                im_cfg["wecom_secret"] = secret
+        elif platform == "weixin":
+            account_id = str(req.weixin_account_id or "").strip()
+            if account_id:
+                im_cfg["weixin_account_id"] = account_id
+
+        im_cfg = canonicalize_im_config(im_cfg)
+
+        # Update group doc and save
+        group.doc["im"] = im_cfg
+        group.save()
+
+        return {"ok": True, "result": {"group_id": req.group_id, "im": im_cfg}}
+
+    @im_router.post("/api/im/unset")
+    async def im_unset(request: Request, req: IMActionRequest) -> Dict[str, Any]:
+        """Remove IM bridge configuration from a group."""
+        check_group(request, req.group_id)
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        # 1. Stop bridge (pid file + orphan scan) via reusable helper
+        def _killpg(pid: int, sig: signal.Signals) -> None:
+            best_effort_signal_pid(pid, sig, include_group=True)
+
+        stop_im_bridges_for_group(
+            ensure_home(), group_id=req.group_id, best_effort_killpg=_killpg,
+        )
+
+        # 2. Clean up IM state files (graceful — ignore missing files)
+        state_dir = group.path / "state"
+        for fname in ("im_subscribers.json", "im_authorized_chats.json", "im_pending_keys.json"):
+            try:
+                (state_dir / fname).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        # 3. Remove IM config from group doc
+        if "im" in group.doc:
+            del group.doc["im"]
+            group.save()
+
+        return {"ok": True, "result": {"group_id": req.group_id, "im": None}}
+
+    @im_router.post("/api/im/start")
+    async def im_start(request: Request, req: IMActionRequest) -> Dict[str, Any]:
+        """Start IM bridge for a group."""
+        import subprocess
+        import sys
+
+        check_group(request, req.group_id)
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        # Check if already running
+        pid_path = group.path / "state" / "im_bridge.pid"
+        if pid_path.exists():
+            pid = read_live_im_bridge_pid(pid_path)
+            if pid is not None:
+                return {"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={pid})"}}
+
+        # Check IM config
+        im_cfg = canonicalize_im_config(group.doc.get("im", {}))
+        if not im_cfg:
+            return {"ok": False, "error": {"code": "no_im_config", "message": "no IM configuration"}}
+
+        # Persist desired run-state for restart/autostart.
+        im_cfg["enabled"] = True
+        group.doc["im"] = im_cfg
+        group.save()
+
+        platform = im_cfg.get("platform", "telegram")
+
+        # Prepare environment
+        env = sanitize_im_bridge_env(os.environ.copy())
+
+        if platform == "feishu":
+            # Feishu: set FEISHU_APP_ID and FEISHU_APP_SECRET
+            app_id = im_cfg.get("feishu_app_id") or ""
+            app_secret = im_cfg.get("feishu_app_secret") or ""
+            app_id_env = im_cfg.get("feishu_app_id_env") or ""
+            app_secret_env = im_cfg.get("feishu_app_secret_env") or ""
+            # Set actual values to default env var names
+            if app_id:
+                env["FEISHU_APP_ID"] = app_id
+            if app_secret:
+                env["FEISHU_APP_SECRET"] = app_secret
+            # Also set to custom env var names if specified
+            if app_id_env and app_id:
+                env[app_id_env] = app_id
+            if app_secret_env and app_secret:
+                env[app_secret_env] = app_secret
+        elif platform == "dingtalk":
+            # DingTalk: set DINGTALK_APP_KEY, DINGTALK_APP_SECRET, DINGTALK_ROBOT_CODE
+            app_key = im_cfg.get("dingtalk_app_key") or ""
+            app_secret = im_cfg.get("dingtalk_app_secret") or ""
+            robot_code = im_cfg.get("dingtalk_robot_code") or ""
+            app_key_env = im_cfg.get("dingtalk_app_key_env") or ""
+            app_secret_env = im_cfg.get("dingtalk_app_secret_env") or ""
+            robot_code_env = im_cfg.get("dingtalk_robot_code_env") or ""
+            # Set actual values to default env var names
+            if app_key:
+                env["DINGTALK_APP_KEY"] = app_key
+            if app_secret:
+                env["DINGTALK_APP_SECRET"] = app_secret
+            if robot_code:
+                env["DINGTALK_ROBOT_CODE"] = robot_code
+            # Also set to custom env var names if specified
+            if app_key_env and app_key:
+                env[app_key_env] = app_key
+            if app_secret_env and app_secret:
+                env[app_secret_env] = app_secret
+            if robot_code_env and robot_code:
+                env[robot_code_env] = robot_code
+        elif platform == "wecom":
+            # WeCom: set WECOM_BOT_ID and WECOM_SECRET
+            bot_id = im_cfg.get("wecom_bot_id") or ""
+            secret = im_cfg.get("wecom_secret") or ""
+            bot_id_env = im_cfg.get("wecom_bot_id_env") or ""
+            secret_env = im_cfg.get("wecom_secret_env") or ""
+            # Set actual values to default env var names
+            if bot_id:
+                env["WECOM_BOT_ID"] = bot_id
+            if secret:
+                env["WECOM_SECRET"] = secret
+            # Also set to custom env var names if specified
+            if bot_id_env and bot_id:
+                env[bot_id_env] = bot_id
+            if secret_env and secret:
+                env[secret_env] = secret
+        else:
+            # Telegram/Slack/Discord: token-based
+            bot_token_env = str(im_cfg.get("bot_token_env") or "").strip()
+            bot_token = str(im_cfg.get("bot_token") or "").strip()
+            if bot_token and bot_token_env:
+                env[bot_token_env] = bot_token
+            elif bot_token:
+                default_env = {"telegram": "TELEGRAM_BOT_TOKEN", "slack": "SLACK_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
+                env[default_env.get(platform, "BOT_TOKEN")] = bot_token
+            if platform == "slack":
+                app_token_env = str(im_cfg.get("app_token_env") or "").strip()
+                app_token = str(im_cfg.get("app_token") or "").strip()
+                if app_token and app_token_env:
+                    env[app_token_env] = app_token
+
+        # Start bridge as subprocess
+        state_dir = group.path / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        log_path = state_dir / "im_bridge.log"
+
+        try:
+            popen_kwargs: Dict[str, Any] = {
+                "env": env,
+                "stdin": subprocess.DEVNULL,
+                "close_fds": True,
+                "cwd": str(ensure_home()),
+            }
+            if os.name == "nt":
+                popen_kwargs.update(supervised_process_popen_kwargs())
+            else:
+                popen_kwargs["start_new_session"] = True
+
+            with log_path.open("a", encoding="utf-8") as log_file:
+                proc = subprocess.Popen(
+                    resolve_background_python_argv([sys.executable, "-m", "cccc.ports.im", req.group_id, platform]),
+                    stdout=log_file,
+                    stderr=log_file,
+                    **popen_kwargs,
+                )
+                # If the process exits immediately (common for missing token/deps), report failure.
+                await asyncio.sleep(0.25)
+                exit_code = proc.poll()
+                if exit_code is not None:
+                    try:
+                        proc.wait(timeout=0.1)
+                    except Exception:
+                        pass
+                    return {
+                        "ok": False,
+                        "error": {
+                            "code": "bridge_exited",
+                            "message": f"bridge exited early (code={exit_code}). Check log: {log_path}",
+                        },
+                    }
+
+                pid_path.write_text(str(proc.pid), encoding="utf-8")
+                return {"ok": True, "result": {"group_id": req.group_id, "platform": platform, "pid": proc.pid}}
+        except Exception as e:
+            return {"ok": False, "error": {"code": "start_failed", "message": str(e)}}
+
+    @im_router.post("/api/im/stop")
+    async def im_stop(request: Request, req: IMActionRequest) -> Dict[str, Any]:
+        """Stop IM bridge for a group."""
+        check_group(request, req.group_id)
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        # Persist desired run-state for restart/autostart.
+        raw_im_cfg = group.doc.get("im")
+        if isinstance(raw_im_cfg, dict):
+            im_cfg = canonicalize_im_config(raw_im_cfg)
+            im_cfg["enabled"] = False
+            group.doc["im"] = im_cfg
+            try:
+                group.save()
+            except Exception:
+                pass
+
+        stopped = 0
+        pid_path = group.path / "state" / "im_bridge.pid"
+
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                best_effort_signal_pid(pid, SOFT_TERMINATE_SIGNAL, include_group=True)
+                stopped += 1
+            except Exception:
+                pass
+            try:
+                pid_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        return {"ok": True, "result": {"group_id": req.group_id, "stopped": stopped}}
+
+    # ----- IM auth (bind / pending / list / revoke) -----
+
+    @im_router.post("/api/im/bind")
+    async def im_bind(request: Request, req: Optional[IMBindRequest] = None, group_id: str = "", key: str = "") -> Dict[str, Any]:
+        """Bind a pending authorization key to authorize an IM chat."""
+        gid = str((req.group_id if isinstance(req, IMBindRequest) else group_id) or "").strip()
+        k = str((req.key if isinstance(req, IMBindRequest) else key) or "").strip()
+        check_group(request, gid)
+        if not gid:
+            raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "group_id is required"})
+        if not k:
+            raise HTTPException(status_code=400, detail={"code": "missing_key", "message": "key is required"})
+        resp = await ctx.daemon({"op": "im_bind_chat", "args": {"group_id": gid, "key": k}})
+        if not resp.get("ok"):
+            err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+            code = str(err.get("code") or "bind_failed")
+            msg = str(err.get("message") or "bind failed")
+            raise HTTPException(status_code=400, detail={"code": code, "message": msg})
+        return resp
+
+    @im_router.get("/api/im/authorized")
+    async def im_list_authorized(request: Request, group_id: str) -> Dict[str, Any]:
+        """List authorized chats for a group (enriched with verbose status)."""
+        check_group(request, group_id)
+        resp = await ctx.daemon({"op": "im_list_authorized", "args": {"group_id": group_id}})
+        if not resp.get("ok"):
+            err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+            raise HTTPException(status_code=400, detail=err)
+        # Enrich with subscriber verbose status
+        group = load_group(group_id)
+        if group is not None:
+            from ....ports.im.subscribers import SubscriberManager
+            sm = SubscriberManager(group.path / "state")
+            authorized = (resp.get("result") or {}).get("authorized", [])
+            for chat in authorized:
+                if isinstance(chat, dict):
+                    chat["verbose"] = sm.is_verbose(
+                        str(chat.get("chat_id", "")),
+                        int(chat.get("thread_id", 0)),
+                    )
+        return resp
+
+    @im_router.post("/api/im/verbose")
+    async def im_set_verbose(request: Request, group_id: str, chat_id: str, verbose: bool, thread_id: int = 0) -> Dict[str, Any]:
+        """Set verbose mode for an IM subscriber."""
+        check_group(request, group_id)
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        from ....ports.im.subscribers import SubscriberManager
+        sm = SubscriberManager(group.path / "state")
+        ok = sm.set_verbose(chat_id, verbose, thread_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail={"code": "subscriber_not_found", "message": "subscriber not found"})
+        return {"ok": True, "result": {"chat_id": chat_id, "thread_id": thread_id, "verbose": verbose}}
+
+    @im_router.get("/api/im/pending")
+    async def im_list_pending(request: Request, group_id: str) -> Dict[str, Any]:
+        """List pending bind requests for a group."""
+        check_group(request, group_id)
+        resp = await ctx.daemon({"op": "im_list_pending", "args": {"group_id": group_id}})
+        if not resp.get("ok"):
+            err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+            raise HTTPException(status_code=400, detail=err)
+        return resp
+
+    @im_router.post("/api/im/pending/reject")
+    async def im_reject_pending(
+        request: Request,
+        req: Optional[IMPendingRejectRequest] = None,
+        group_id: str = "",
+        key: str = "",
+    ) -> Dict[str, Any]:
+        """Reject a pending bind request key."""
+        gid = str((req.group_id if isinstance(req, IMPendingRejectRequest) else group_id) or "").strip()
+        k = str((req.key if isinstance(req, IMPendingRejectRequest) else key) or "").strip()
+        check_group(request, gid)
+        if not gid:
+            raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "group_id is required"})
+        if not k:
+            raise HTTPException(status_code=400, detail={"code": "missing_key", "message": "key is required"})
+        resp = await ctx.daemon({"op": "im_reject_pending", "args": {"group_id": gid, "key": k}})
+        if not resp.get("ok"):
+            err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+            code = str(err.get("code") or "reject_failed")
+            msg = str(err.get("message") or "reject failed")
+            raise HTTPException(status_code=400, detail={"code": code, "message": msg})
+        return resp
+
+    @im_router.post("/api/im/revoke")
+    async def im_revoke(request: Request, group_id: str, chat_id: str, thread_id: int = 0) -> Dict[str, Any]:
+        """Revoke authorization for a chat."""
+        check_group(request, group_id)
+        resp = await ctx.daemon({"op": "im_revoke_chat", "args": {"group_id": group_id, "chat_id": chat_id, "thread_id": thread_id}})
+        if not resp.get("ok"):
+            err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+            raise HTTPException(status_code=400, detail=err)
+        return resp
+
+    return [group_router, im_router]
+
+
+def register_im_routes(app: FastAPI, *, ctx: RouteContext) -> None:
+    """Backward-compatible wrapper — delegates to create_routers."""
+    for router in create_routers(ctx):
+        app.include_router(router)
