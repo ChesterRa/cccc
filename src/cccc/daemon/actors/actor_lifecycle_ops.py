@@ -23,7 +23,7 @@ from ...util.conv import coerce_bool
 from .actor_runtime_ops import model_from_runtime_command, resolve_actor_launch_spec
 from .actor_profile_runtime import ActorProfileAccessDeniedError, resolve_linked_actor_before_start
 
-_NEW_SESSION_RUNTIMES = frozenset({"claude", "codex"})
+_NEW_SESSION_RUNTIMES = frozenset({"claude", "codex", "grok"})
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -556,7 +556,7 @@ def handle_actor_new_session(
             _restore_previous_enabled()
             return _error(
                 "unsupported_runtime",
-                "new session is supported only for claude and codex actors",
+                "new session is supported only for claude, codex, and grok actors",
                 details={
                     "group_id": group.group_id,
                     "actor_id": actor_id,

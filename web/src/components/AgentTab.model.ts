@@ -1,5 +1,13 @@
 import type { Actor } from "../types";
 
+export function actorSupportsNewSession(runtime: Actor["runtime"]): boolean {
+  return ["claude", "codex", "grok"].includes(
+    String(runtime || "")
+      .trim()
+      .toLowerCase(),
+  );
+}
+
 export function actorHasRuntimeResumeFailure(
   actor: Pick<Actor, "runtime_session_status">,
 ): boolean {

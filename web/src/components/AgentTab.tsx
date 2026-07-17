@@ -36,7 +36,11 @@ import { copyTextToClipboard } from "../utils/copy";
 import { getStoppedTerminalOutputText } from "../utils/stoppedTerminalOutput";
 import { fetchTerminalTail } from "../services/api/diagnostics";
 import { useAgentTerminalConnection } from "./agentTerminal/useAgentTerminalConnection";
-import { actorHasRuntimeResumeFailure, shouldFetchStoppedTerminalTail } from "./AgentTab.model";
+import {
+  actorHasRuntimeResumeFailure,
+  actorSupportsNewSession,
+  shouldFetchStoppedTerminalTail,
+} from "./AgentTab.model";
 import { ActorAvatar } from "./ActorAvatar";
 
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
@@ -126,11 +130,7 @@ export function AgentTab({
     String(actor.runtime || "")
       .trim()
       .toLowerCase() === "web_model";
-  const canStartNewSession = ["claude", "codex"].includes(
-    String(actor.runtime || "")
-      .trim()
-      .toLowerCase(),
-  );
+  const canStartNewSession = actorSupportsNewSession(actor.runtime);
   const hasRuntimeResumeFailure = actorHasRuntimeResumeFailure(actor);
   const runtimeResumeError = String(actor.runtime_session_last_resume_error || "").trim();
   const canControl = !readOnly;
