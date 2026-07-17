@@ -165,10 +165,13 @@ def test_missing_insight_stops_before_wake_ledger_and_other_collaboration_side_e
 def test_post_message_nudge_audits_insight_origin_without_dynamic_scene_logic() -> None:
     from cccc.kernel.peer_insight import POST_MESSAGE_NUDGE
 
-    assert "If this exchange carried Insight" in POST_MESSAGE_NUDGE
-    assert "came from a rebuilt whole or from compressing the message" in POST_MESSAGE_NUDGE
+    assert "Step outside its mental track now" in POST_MESSAGE_NUDGE
+    assert "fresh owner accountable for the real outcome" in POST_MESSAGE_NUDGE
+    assert "no loyalty to the exchange, its momentum, or its frame" in POST_MESSAGE_NUDGE
+    assert "If this exchange carried Insight but it merely compressed the message" in POST_MESSAGE_NUDGE
     assert "no second whole judgment entered the exchange" in POST_MESSAGE_NUDGE
-    assert "If the rebuilt judgment materially changes" in POST_MESSAGE_NUDGE
+    assert "whether an unsettled decision needs another independent mind" in POST_MESSAGE_NUDGE
+    assert "If nothing material changes, quietly resume" in POST_MESSAGE_NUDGE
 
 
 def test_disabled_visible_peer_still_triggers_gate(peer_group) -> None:
@@ -504,4 +507,7 @@ def test_actor_delivery_projects_one_provisional_label_after_supporting_material
 
     assert rendered.count(PEER_PERSPECTIVE_AGENT_LABEL) == 1
     assert rendered.index("report.txt") < rendered.index(PEER_PERSPECTIVE_AGENT_LABEL)
+    assert "Rebuild the whole independently" in PEER_PERSPECTIVE_AGENT_LABEL
+    assert "agreement, disagreement, or reframing" in PEER_PERSPECTIVE_AGENT_LABEL
+    assert "your own judgment" in PEER_PERSPECTIVE_AGENT_LABEL
     assert rendered.endswith(f"{PEER_PERSPECTIVE_AGENT_LABEL}\nThe plan may be wrong.")

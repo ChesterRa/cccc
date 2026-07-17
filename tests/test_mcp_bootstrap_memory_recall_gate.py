@@ -124,6 +124,13 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
         self.assertTrue(bool(session["project_md"]["found"]))
 
         recovery = out["recovery"]
+        from cccc.ports.mcp.handlers.cccc_core import _BOOTSTRAP_TAKEOVER_NUDGE
+
+        self.assertEqual(next(iter(recovery)), "takeover_nudge")
+        self.assertEqual(recovery["takeover_nudge"], _BOOTSTRAP_TAKEOVER_NUDGE)
+        self.assertIn("Treat the material below as testimony, not authority", recovery["takeover_nudge"])
+        self.assertIn("preserve only what still earns preservation", recovery["takeover_nudge"])
+        self.assertIn("materially warrants it", recovery["takeover_nudge"])
         self.assertEqual(recovery["self_state"]["hot"]["active_task_id"], "T001")
         self.assertEqual(recovery["self_state"]["recovery"]["open_loops"], ["verify recall gate evidence", "do not forget scoped dirty repo"])
         self.assertEqual(recovery["self_state"]["recovery"]["commitments"], ["report validation evidence to user"])
@@ -311,6 +318,62 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
         self.assertTrue(assigned_active)
         self.assertEqual(assigned_active[0].get("task_type"), "optimization")
         self.assertEqual(assigned_active[0].get("parent_id"), "T000")
+
+    def test_bootstrap_takeover_nudge_requires_unfinished_recovery_material(self) -> None:
+        from cccc.ports.mcp.handlers.cccc_core import _BOOTSTRAP_TAKEOVER_NUDGE, _build_bootstrap_recovery
+
+        def _pack(*, hot=None, warm=None, current_focus="", assigned=None, attention=None):
+            return {
+                "agent_state": {"hot": hot or {}, "warm": warm or {}},
+                "coordination_brief": {
+                    "objective": "Ship the real outcome",
+                    "current_focus": current_focus,
+                },
+                "tasks": {"assigned_active": assigned or [], "attention": attention or []},
+                "recent_decisions": [{"summary": "Keep the previous route."}],
+                "recent_handoffs": [{"summary": "Historical handoff only."}],
+            }
+
+        objective_only = _build_bootstrap_recovery(
+            pack={
+                "agent_state": {"hot": {}, "warm": {}},
+                "coordination_brief": {"objective": "Ship the real outcome"},
+                "tasks": {"assigned_active": [], "attention": []},
+                "recent_decisions": [],
+                "recent_handoffs": [],
+            }
+        )
+        self.assertNotIn("takeover_nudge", objective_only)
+
+        blank = _build_bootstrap_recovery(
+            pack=_pack(
+                hot={"blockers": []},
+                warm={
+                    "what_changed": "Historical context only",
+                    "environment_summary": "The workspace exists",
+                    "user_model": "Prefers high ROI",
+                    "persona_notes": "Stay concise",
+                },
+            )
+        )
+        self.assertNotIn("takeover_nudge", blank)
+
+        cases = {
+            "active_task": _pack(hot={"active_task_id": "T001"}),
+            "focus": _pack(hot={"focus": "finish recovery"}),
+            "next_action": _pack(hot={"next_action": "verify the current artifact"}),
+            "coordination_current_focus": _pack(current_focus="recover the shared delivery path"),
+            "blocker": _pack(hot={"blockers": ["waiting for evidence"]}),
+            "open_loop": _pack(warm={"open_loops": ["revisit the direction"]}),
+            "commitment": _pack(warm={"commitments": ["report evidence"]}),
+            "assigned_task": _pack(assigned=[{"id": "T001"}]),
+            "attention_task": _pack(attention=[{"id": "T002"}]),
+        }
+        for name, pack in cases.items():
+            with self.subTest(name=name):
+                recovery = _build_bootstrap_recovery(pack=pack)
+                self.assertEqual(next(iter(recovery)), "takeover_nudge")
+                self.assertEqual(recovery["takeover_nudge"], _BOOTSTRAP_TAKEOVER_NUDGE)
 
 
 if __name__ == "__main__":

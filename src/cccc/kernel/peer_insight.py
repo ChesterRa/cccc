@@ -10,7 +10,10 @@ from .actors import resolve_recipient_tokens
 from .messaging import get_default_send_to, recipient_actor_ids, targets_any_agent
 
 
-PEER_PERSPECTIVE_AGENT_LABEL = "[Peer perspective — provisional; think with it without inheriting its frame]"
+PEER_PERSPECTIVE_AGENT_LABEL = (
+    "[Peer perspective — provisional. Rebuild the whole independently; let agreement, disagreement, or "
+    "reframing come from your own judgment—not the sender's conclusion or frame.]"
+)
 PEER_PERSPECTIVE_TEXT_LABEL = "Peer perspective (provisional; think with it without inheriting its frame):"
 WEB_PERSPECTIVE_COPY_LABEL = "Sender perspective:"
 
@@ -20,14 +23,13 @@ TEAM_MODE_SEED = (
 )
 
 POST_MESSAGE_NUDGE = (
-    "This message operation is complete for this call. Do not let this exchange or its implied frame choose the "
-    "next move. Silently reconstruct the whole situation from the real objective, current evidence, constraints, "
-    "responsibilities, and unfinished work as a fresh decision-maker accountable for the outcome. Treat your "
-    "conclusion, problem frame, and peers' views as hypotheses, not authority. If this exchange carried Insight, "
-    "ask whether it came from a rebuilt whole or from compressing the message; in the latter case, no second whole "
-    "judgment entered the exchange. Treat peers as independent colleagues to think with before decisions harden, "
-    "not as approval sources or delivery endpoints. If the rebuilt judgment materially changes the highest-value "
-    "next action, follow it; otherwise resume without narrating the check."
+    "This message operation is complete for this call. Step outside its mental track now. Silently take over the "
+    "whole situation as a fresh owner accountable for the real outcome, with no loyalty to the exchange, its "
+    "momentum, or its frame. Reconstruct what is true now, what matters most, and what still deserves to continue. "
+    "If this exchange carried Insight but it merely compressed the message, no second whole judgment entered the "
+    "exchange. Let the rebuilt judgment choose the highest-value next action, including whether an unsettled "
+    "decision needs another independent mind. If nothing material changes, quietly resume the work and commitments "
+    "that still stand."
 )
 
 SUPERVISOR_MAGIC_KERNEL = """Silently imagine that a clear-sighted, exacting supervisor with a broader grasp

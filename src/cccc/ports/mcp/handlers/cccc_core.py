@@ -62,6 +62,14 @@ _BOOTSTRAP_INTERRUPT_NOTIFY_KINDS = {
     "standup",
 }
 
+_BOOTSTRAP_TAKEOVER_NUDGE = (
+    "Do not resume the train of thought that produced this recovery state. Imagine its author has left and you "
+    "have just inherited the real situation. Treat the material below as testimony, not authority. Take ownership "
+    "of the real outcome with no loyalty to the predecessor's framing, confidence, plan, or sunk cost. Reconstruct "
+    "what is true now; preserve only what still earns preservation, and change course only when the renewed judgment "
+    "materially warrants it."
+)
+
 
 def _bootstrap_signal_family(*, item: Dict[str, Any], data: Dict[str, Any]) -> str:
     kind = str(item.get("kind") or "").strip()
@@ -545,9 +553,34 @@ def _build_bootstrap_session(*, group: Dict[str, Any], actors: List[Dict[str, An
     }
 
 
+def _bootstrap_has_recoverable_work(*, pack: Dict[str, Any]) -> bool:
+    agent_state = pack.get("agent_state") if isinstance(pack.get("agent_state"), dict) else {}
+    hot = agent_state.get("hot") if isinstance(agent_state.get("hot"), dict) else {}
+    warm = agent_state.get("warm") if isinstance(agent_state.get("warm"), dict) else {}
+    brief = pack.get("coordination_brief") if isinstance(pack.get("coordination_brief"), dict) else {}
+    tasks = pack.get("tasks") if isinstance(pack.get("tasks"), dict) else {}
+
+    if any(str(hot.get(field) or "").strip() for field in ("active_task_id", "focus", "next_action")):
+        return True
+    if str(brief.get("current_focus") or "").strip():
+        return True
+    blockers = hot.get("blockers")
+    if isinstance(blockers, list) and any(str(item or "").strip() for item in blockers):
+        return True
+    for field in ("open_loops", "commitments"):
+        items = warm.get(field)
+        if isinstance(items, list) and any(str(item or "").strip() for item in items):
+            return True
+    for field in ("assigned_active", "attention"):
+        items = tasks.get(field)
+        if isinstance(items, list) and any(isinstance(item, dict) and bool(item) for item in items):
+            return True
+    return False
+
+
 def _build_bootstrap_recovery(*, pack: Dict[str, Any]) -> Dict[str, Any]:
     agent_state = pack.get("agent_state") if isinstance(pack.get("agent_state"), dict) else {}
-    return {
+    recovery = {
         "coordination_brief": pack.get("coordination_brief") if isinstance(pack.get("coordination_brief"), dict) else {},
         "self_state": {
             "hot": agent_state.get("hot") if isinstance(agent_state.get("hot"), dict) else {},
@@ -563,6 +596,10 @@ def _build_bootstrap_recovery(*, pack: Dict[str, Any]) -> Dict[str, Any]:
             "handoffs": pack.get("recent_handoffs") if isinstance(pack.get("recent_handoffs"), list) else [],
         },
     }
+    if not _bootstrap_has_recoverable_work(pack=pack):
+        return recovery
+    # Prime the takeover stance before exposing state that could otherwise anchor the resumed frame.
+    return {"takeover_nudge": _BOOTSTRAP_TAKEOVER_NUDGE, **recovery}
 
 
 def _build_bootstrap_inbox_preview(*, inbox: Dict[str, Any], limit: int) -> Dict[str, Any]:
