@@ -268,7 +268,11 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertIn("- keep this", markdown)
 
     def test_peer_insight_contract_is_reserved_once_and_survives_capability_failure(self) -> None:
-        from cccc.kernel.peer_insight import PEER_INSIGHT_RUNTIME_HELP, SUPERVISOR_MAGIC_KERNEL
+        from cccc.kernel.peer_insight import (
+            FIRST_PRINCIPLES_OUTCOME_KERNEL,
+            PEER_INSIGHT_RUNTIME_HELP,
+            SUPERVISOR_MAGIC_KERNEL,
+        )
         from cccc.ports.mcp.handlers.cccc_core import _append_runtime_help_addenda
 
         group = SimpleNamespace(
@@ -295,7 +299,15 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertIn("shared thinking space, not a delivery lane", markdown)
         self.assertIn("provisional peer view", markdown)
         self.assertIn("Insight is second in the JSON, not second in thought", markdown)
-        self.assertIn("Step materially above the message's\nworking level", markdown)
+        self.assertEqual(markdown.count(FIRST_PRINCIPLES_OUTCOME_KERNEL), 1)
+        self.assertIn("responsible co-owner of the real outcome", markdown)
+        self.assertIn("Reconstruct\nthe situation from first principles", markdown)
+        self.assertIn("one move on a living\ndecision path", markdown)
+        self.assertIn("where reality could break it", markdown)
+        self.assertIn("switch to Plan B", markdown)
+        self.assertIn("advance into\nwhat success has made possible", markdown)
+        self.assertIn("one fallible projection of the situation", markdown)
+        self.assertIn("step materially above the message's working level", markdown)
         self.assertIn("became visible only after that climb", markdown)
         self.assertIn("equally able to judge the work from above", markdown)
         self.assertIn("Do not pretend to see every layer", markdown)

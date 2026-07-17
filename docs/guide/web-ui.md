@@ -71,6 +71,11 @@ Click on an agent's tab to see its terminal output.
 1. Type in the message input at the bottom
 2. Press `Ctrl+Enter` / `Cmd+Enter`, or click Send
 
+With an empty message input, press `Up` to recall your most recent message in the current Group.
+Continue with `Up` / `Down` to browse the already loaded message history. Editing or repositioning
+the cursor leaves history mode. Recall restores message text only; recipients, reply context,
+attachments, and delivery options remain those currently shown in the composer.
+
 ### @Mentions
 
 Type `@` to trigger autocomplete:

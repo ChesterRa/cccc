@@ -48,11 +48,28 @@ checklist or narrate the rounds; allow anything about the present understanding
 or course of action to change. Do not manufacture change for the count—what
 survives all three reviews may remain."""
 
+FIRST_PRINCIPLES_OUTCOME_KERNEL = """Enter the exchange as a responsible co-owner of the real outcome.
+Temporarily set aside the wording of the instruction or peer message. Reconstruct
+the situation from first principles: what outcome it is trying to secure, what
+inspected reality and causality require.
+
+Lift your eyes from the current point until it becomes one move on a living
+decision path: where the course leads, where reality could break it, which exits
+it closes, and which branches failure or success would open. Let evidence—not
+momentum—decide when to continue, step back, switch to Plan B, or advance into
+what success has made possible.
+
+Now restore the message and judge it as one fallible projection of the situation,
+not as the situation itself. Be willing to challenge its wording, the current
+plan, and your own understanding."""
+
 PEER_INSIGHT_REQUIRED_ACTION = (
     "Do not mechanically add the missing field and resend. Leave the current mental track completely. "
     + SUPERVISOR_MAGIC_KERNEL
-    + " Do not repair the draft by adding a postscript. Insight is second in the JSON, not second in thought. Stop "
-    "looking sideways for something else to add. Step materially above the work unit being discussed—far enough "
+    + "\n\n"
+    + FIRST_PRINCIPLES_OUTCOME_KERNEL
+    + "\n\nDo not repair the draft by adding a postscript. Insight is second in the JSON, not second in thought. "
+    "From that first-principles reconstruction, step materially above the work unit being discussed—far enough "
     "to reconsider what it serves and whether its present course still deserves continuation. Then project `text` "
     "as the operational exchange at the working level and `insight` as the most consequential provisional "
     "higher-order perspective that became visible only after that climb. It must change the level or frame of "
@@ -69,9 +86,10 @@ PEER_INSIGHT_RUNTIME_HELP = f"""## Peer Insight Contract (Runtime)
 
 Insight is second in the JSON, not second in thought.
 
-Before composing either field, stop looking sideways for something else to add. Step materially above the message's
-working level—far enough to reconsider what this work is serving and whether its present course still deserves
-continuation.
+{FIRST_PRINCIPLES_OUTCOME_KERNEL}
+
+From that first-principles reconstruction, step materially above the message's working level—far enough to
+reconsider what this work is serving and whether its present course still deserves continuation.
 
 `text` carries the operational exchange at the working level. `insight` carries the most consequential provisional
 higher-order perspective that became visible only after that climb.

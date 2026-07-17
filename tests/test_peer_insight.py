@@ -123,7 +123,11 @@ def test_strict_peer_send_requires_insight_for_real_peer_audiences(peer_group, b
 
 def test_missing_insight_stops_before_wake_ledger_and_other_collaboration_side_effects(peer_group) -> None:
     from cccc.kernel.inbox import iter_events
-    from cccc.kernel.peer_insight import PEER_INSIGHT_REQUIRED_ACTION, SUPERVISOR_MAGIC_KERNEL
+    from cccc.kernel.peer_insight import (
+        FIRST_PRINCIPLES_OUTCOME_KERNEL,
+        PEER_INSIGHT_REQUIRED_ACTION,
+        SUPERVISOR_MAGIC_KERNEL,
+    )
 
     before = list(iter_events(peer_group.ledger_path))
     wakes: list[tuple[list[str], str]] = []
@@ -153,9 +157,17 @@ def test_missing_insight_stops_before_wake_ledger_and_other_collaboration_side_e
     assert response.error.code == "peer_insight_required"
     assert response.error.details["recommended_action"] == PEER_INSIGHT_REQUIRED_ACTION
     assert SUPERVISOR_MAGIC_KERNEL in response.error.details["recommended_action"]
+    assert PEER_INSIGHT_REQUIRED_ACTION.count(FIRST_PRINCIPLES_OUTCOME_KERNEL) == 1
     assert "Do not repair the draft by adding a postscript" in PEER_INSIGHT_REQUIRED_ACTION
     assert "Insight is second in the JSON, not second in thought" in PEER_INSIGHT_REQUIRED_ACTION
-    assert "Step materially above the work unit being discussed" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "responsible co-owner of the real outcome" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "Reconstruct\nthe situation from first principles" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "one move on a living\ndecision path" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "where reality could break it" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "switch to Plan B" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "advance into\nwhat success has made possible" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "one fallible projection of the situation" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "step materially above the work unit being discussed" in PEER_INSIGHT_REQUIRED_ACTION
     assert 'reads naturally after "by the way,"' in PEER_INSIGHT_REQUIRED_ACTION
     assert "Do not pretend to see every layer or manufacture strategic drama" in PEER_INSIGHT_REQUIRED_ACTION
     assert "may change the course or confirm it" in PEER_INSIGHT_REQUIRED_ACTION

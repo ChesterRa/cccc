@@ -53,6 +53,14 @@ import {
   readConsumedSuggestedUserMessageIds,
 } from "../../utils/suggestedUserMessage";
 import { ComposerRecipientsRow } from "./ComposerRecipientsRow";
+import {
+  buildComposerHistoryEntries,
+  canStartComposerHistory,
+  getComposerHistoryText,
+  moveComposerHistory,
+  startComposerHistory,
+  type ComposerHistorySession,
+} from "./chatComposerHistory";
 
 const SLASH_COMMAND_PAGE_SIZE = 8;
 const MENTION_MENU_DESKTOP_WIDTH = 320;
@@ -203,6 +211,7 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const composerHeightRef = useRef(0);
   const isUserInputRef = useRef(false);
+  const composerHistoryRef = useRef<ComposerHistorySession | null>(null);
   const [showModeMenu, setShowModeMenu] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashSelectedIndex, setSlashSelectedIndex] = useState(0);
@@ -243,6 +252,42 @@ export function ChatComposer({
     },
     [baseComposerHeight, maxComposerHeight],
   );
+
+  const exitComposerHistory = useCallback(() => {
+    composerHistoryRef.current = null;
+  }, []);
+
+  const applyComposerHistoryText = useCallback(
+    (text: string) => {
+      // History recalls text only. Structured mention tokens encode routing context
+      // from an older draft and must never be revived implicitly.
+      setComposerGroupMentionTokens([]);
+      setComposerAgentMentionTokens([]);
+      setComposerText(text);
+      requestAnimationFrame(() => {
+        const textarea = composerRef.current;
+        if (!textarea) return;
+        textarea.focus();
+        const end = textarea.value.length;
+        textarea.setSelectionRange(end, end);
+        textarea.scrollTop = textarea.scrollHeight;
+        setComposerScrollTop(textarea.scrollTop);
+      });
+    },
+    [composerRef, setComposerAgentMentionTokens, setComposerGroupMentionTokens, setComposerText],
+  );
+
+  useEffect(() => {
+    exitComposerHistory();
+  }, [exitComposerHistory, selectedGroupId]);
+
+  useEffect(() => {
+    const session = composerHistoryRef.current;
+    if (!session) return;
+    if (session.groupId !== selectedGroupId || composerText !== getComposerHistoryText(session)) {
+      exitComposerHistory();
+    }
+  }, [composerText, exitComposerHistory, selectedGroupId]);
 
   const updateMentionMenuPosition = useCallback(
     (textToTrigger: string) => {
@@ -426,6 +471,7 @@ export function ChatComposer({
   const acceptSuggestedUserMessage = useCallback(() => {
     const text = String(suggestedUserMessage?.text || "").trim();
     if (!showSuggestedUserMessage || !text) return;
+    exitComposerHistory();
     markSuggestedUserMessageConsumed();
     setComposerText(text);
     requestAnimationFrame(() => {
@@ -436,6 +482,7 @@ export function ChatComposer({
     });
   }, [
     composerRef,
+    exitComposerHistory,
     markSuggestedUserMessageConsumed,
     setComposerText,
     showSuggestedUserMessage,
@@ -444,6 +491,7 @@ export function ChatComposer({
 
   // Handle pasted files (clipboard items).
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    exitComposerHistory();
     const dt = e.clipboardData;
     if (!dt) return;
 
@@ -486,6 +534,7 @@ export function ChatComposer({
 
   // Handle text changes.
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    exitComposerHistory();
     const val = e.target.value;
     if (showSuggestedUserMessage && val.trim()) {
       markSuggestedUserMessageConsumed();
@@ -666,6 +715,56 @@ export function ChatComposer({
       markSuggestedUserMessageConsumed();
       return;
     }
+
+    const nativeKeyboardEvent = e.nativeEvent as KeyboardEvent & { keyCode?: number };
+    const isComposing = nativeKeyboardEvent.isComposing || nativeKeyboardEvent.keyCode === 229;
+    const hasModifier = e.shiftKey || e.ctrlKey || e.metaKey || e.altKey;
+    let historySession = composerHistoryRef.current;
+    if (historySession && historySession.groupId !== selectedGroupId) {
+      exitComposerHistory();
+      historySession = null;
+    }
+
+    if (historySession) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        exitComposerHistory();
+        return;
+      }
+      if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !isComposing && !hasModifier) {
+        e.preventDefault();
+        const move = moveComposerHistory(historySession, e.key === "ArrowUp" ? "older" : "newer");
+        composerHistoryRef.current = move.session;
+        applyComposerHistoryText(move.text);
+        return;
+      }
+      if (!(["Shift", "Control", "Alt", "Meta"] as string[]).includes(e.key)) {
+        exitComposerHistory();
+      }
+    }
+
+    if (
+      e.key === "ArrowUp" &&
+      canStartComposerHistory({
+        composerText,
+        composerGroupSettled,
+        selectedGroupId,
+        busy,
+        menuOpen: showSlashMenu || showMentionMenu,
+        isComposing,
+        hasModifier,
+      })
+    ) {
+      const entries = buildComposerHistoryEntries(suggestionSourceMessages || recentMessages);
+      const session = startComposerHistory(entries, selectedGroupId, composerText);
+      if (session) {
+        e.preventDefault();
+        composerHistoryRef.current = session;
+        applyComposerHistoryText(getComposerHistoryText(session));
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !showMentionMenu) {
       if (showSlashMenu) return;
       if (e.ctrlKey || e.metaKey) {
@@ -1049,6 +1148,7 @@ export function ChatComposer({
               onPaste={handlePaste}
               onChange={handleChange}
               onKeyDown={handleKeyDown}
+              onPointerDown={exitComposerHistory}
               onScroll={(event) => setComposerScrollTop(event.currentTarget.scrollTop)}
               onBlur={() => setTimeout(() => setShowMentionMenu(false), 150)}
               aria-label={t("messageInput")}

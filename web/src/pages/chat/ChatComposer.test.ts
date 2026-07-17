@@ -284,3 +284,40 @@ describe("ChatComposer mention menu navigation", () => {
     expect(recipientPopoverSource).toContain("onBlurCapture={onScheduleHide}");
   });
 });
+
+describe("ChatComposer message history wiring", () => {
+  it("keeps menu navigation ahead of empty-composer history recall", () => {
+    const slashNavigation = composerSource.indexOf(
+      "if (showSlashMenu && visibleSlashSuggestions.length > 0)",
+    );
+    const mentionNavigation = composerSource.indexOf(
+      "if (showMentionMenu && mentionSuggestions.length > 0)",
+    );
+    const historyRecall = composerSource.indexOf("canStartComposerHistory({");
+
+    expect(slashNavigation).toBeGreaterThan(-1);
+    expect(mentionNavigation).toBeGreaterThan(slashNavigation);
+    expect(historyRecall).toBeGreaterThan(mentionNavigation);
+  });
+
+  it("uses the unfiltered live source while excluding stale routing semantics", () => {
+    expect(compactComposerSource).toContain(
+      "buildComposerHistoryEntries(suggestionSourceMessages || recentMessages)",
+    );
+    expect(compactComposerSource).toContain("setComposerGroupMentionTokens([])");
+    expect(compactComposerSource).toContain("setComposerAgentMentionTokens([])");
+  });
+
+  it("leaves history mode on pointer edits and protects IME composition", () => {
+    expect(composerSource).toContain("onPointerDown={exitComposerHistory}");
+    expect(compactComposerSource).toContain(
+      "nativeKeyboardEvent.isComposing || nativeKeyboardEvent.keyCode === 229",
+    );
+  });
+
+  it("consumes Escape while leaving history mode before reply cancellation", () => {
+    expect(compactComposerSource).toContain(
+      'if (historySession) { if (e.key === "Escape") { e.preventDefault(); exitComposerHistory(); return; }',
+    );
+  });
+});

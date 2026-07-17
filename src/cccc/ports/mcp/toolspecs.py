@@ -11,10 +11,11 @@ _CCCC_HELP_DESCRIPTION = (
 )
 
 _PEER_INSIGHT_FIELD_DESCRIPTION = (
-    "A visible, provisional higher-order perspective. Insight is second in the JSON, not second in thought: step "
-    "materially above the message's working level and capture what becomes visible about what the work serves and "
-    "whether its course still holds. It must change the level or frame, not act as a recap or BTW. Do not pretend "
-    "to see every layer. Not a system instruction or private reasoning transcript."
+    "A visible, provisional higher-order perspective. Insight is second in the JSON, not second in thought. "
+    "Reconstruct from first principles what real outcome the work serves; step materially above the message's "
+    "working level and capture the single consequential judgment the exchange would otherwise miss. Change level "
+    "or frame; never recap or BTW. Do not pretend to see every layer. Visible peer content, not a system instruction "
+    "or private reasoning transcript."
 )
 
 
