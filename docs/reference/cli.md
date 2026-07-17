@@ -21,6 +21,10 @@ Check your environment and diagnose issues.
 cccc doctor             # Full environment check
 ```
 
+On Linux, the report includes projected-browser readiness: system Chrome/Edge, required `Xvfb`
+isolation, and the optional `x11vnc` VNC viewer. A missing `x11vnc` does not prevent browser
+isolation; CCCC falls back to its CDP screencast viewer.
+
 ### `cccc runtime list`
 
 List available agent runtimes.

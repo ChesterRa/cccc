@@ -1695,6 +1695,37 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_projected_chatgpt_ready_state_persists_display_ownership(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        _, cleanup = self._with_home()
+        try:
+            web_model_browser_session._record_projected_browser_state(
+                "g-test",
+                "peer1",
+                {
+                    "active": True,
+                    "state": "ready",
+                    "url": "https://chatgpt.com/",
+                    "metadata": {
+                        "pid": 4321,
+                        "cdp_port": 9333,
+                        "browser_binary": "/usr/bin/google-chrome",
+                        "display": ":123",
+                        "display_owned": True,
+                        "display_owner": "cccc_xvfb",
+                    },
+                },
+            )
+
+            state = sidecar.read_chatgpt_browser_process_state()
+            self.assertEqual(state.get("display"), ":123")
+            self.assertEqual(state.get("display_owned"), True)
+            self.assertEqual(state.get("display_owner"), "cccc_xvfb")
+        finally:
+            cleanup()
+
     def test_projected_chatgpt_session_closes_stale_starting_instance_before_open(self) -> None:
         from cccc.daemon.actors import web_model_browser_session
 
@@ -1748,6 +1779,9 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
                     "profile_dir": str(profile_dir),
                     "visibility": "projected",
                     "browser_binary": "/usr/bin/google-chrome",
+                    "display": ":123",
+                    "display_owned": True,
+                    "display_owner": "cccc_xvfb",
                     "started_at": "2026-05-03T00:00:00Z",
                 }
             )
@@ -1782,6 +1816,51 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
             self.assertEqual(kwargs.get("existing_cdp_port"), 9222)
             self.assertEqual((kwargs.get("existing_browser_metadata") or {}).get("pid"), 1234)
             close_browser.assert_not_called()
+        finally:
+            cleanup()
+
+    def test_projected_chatgpt_session_does_not_adopt_unisolated_linux_process(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        _, cleanup = self._with_home()
+        try:
+            profile_dir = sidecar.chatgpt_browser_profile_dir("g-test", "peer1")
+            sidecar.record_chatgpt_browser_process_state(
+                {
+                    "pid": 1234,
+                    "cdp_port": 9222,
+                    "profile_dir": str(profile_dir),
+                    "visibility": "projected",
+                    "browser_binary": "/usr/bin/google-chrome",
+                    "started_at": "2026-05-03T00:00:00Z",
+                }
+            )
+            opened = {
+                "active": True,
+                "state": "ready",
+                "url": "https://chatgpt.com/",
+                "metadata": {"cdp_port": 9333, "pid": 4321, "display_owned": True},
+            }
+            with (
+                patch.object(web_model_browser_session.sys, "platform", "linux"),
+                patch.object(web_model_browser_session._MANAGER, "info", return_value={"active": False, "state": "idle"}),
+                patch.object(web_model_browser_session, "_wait_cdp_endpoint", return_value=True),
+                patch.object(web_model_browser_session._MANAGER, "open", return_value=opened) as open_session,
+                patch.object(web_model_browser_session, "close_chatgpt_browser_session") as close_browser,
+                patch.object(web_model_browser_session, "ensure_web_model_browser_recovery_watcher", return_value=True),
+            ):
+                result = web_model_browser_session.open_web_model_chatgpt_browser_session(
+                    group_id="g-test",
+                    actor_id="peer1",
+                    width=1280,
+                    height=800,
+                )
+
+            self.assertEqual(result, opened)
+            self.assertEqual(open_session.call_args.kwargs.get("existing_cdp_port"), 0)
+            self.assertEqual(open_session.call_args.kwargs.get("existing_browser_metadata"), {})
+            close_browser.assert_called_once_with("g-test", "peer1")
         finally:
             cleanup()
 

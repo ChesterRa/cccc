@@ -646,6 +646,12 @@ export type PresentationBrowserSurfaceState = {
   last_frame_seq?: number;
   last_frame_at?: string | null;
   controller_attached?: boolean;
+  metadata?: {
+    display?: string | null;
+    display_owned?: boolean;
+    display_owner?: string | null;
+    adopted?: boolean;
+  } | null;
   viewer?: {
     kind?: string | null;
     vnc?: { available?: boolean; error?: string | null; started_at?: string | null } | null;

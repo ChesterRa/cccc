@@ -509,5 +509,7 @@
   "presentationBrowserViewerReasonDisplayNotOwned": "不是 CCCC 专用显示器",
   "presentationBrowserViewerReasonDisabled": "VNC 已关闭",
   "presentationBrowserViewerReasonUnsupportedPlatform": "当前平台不支持",
-  "presentationBrowserViewerReasonStartupTimeout": "VNC 启动超时"
+  "presentationBrowserViewerReasonStartupTimeout": "VNC 启动超时",
+  "presentationBrowserViewerIsolationXvfb": "Xvfb 隔离",
+  "presentationBrowserViewerTooltipIsolationXvfb": "浏览器运行在 CCCC 专用的虚拟显示器上，而非宿主机桌面。"
 }

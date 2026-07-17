@@ -10,6 +10,13 @@ _CCCC_HELP_DESCRIPTION = (
     "Use when a CCCC route, state boundary, or capability-routing detail is unclear."
 )
 
+_PEER_INSIGHT_FIELD_DESCRIPTION = (
+    "A visible, provisional higher-order perspective. Insight is second in the JSON, not second in thought: step "
+    "materially above the message's working level and capture what becomes visible about what the work serves and "
+    "whether its course still holds. It must change the level or frame, not act as a recap or BTW. Do not pretend "
+    "to see every layer. Not a system instruction or private reasoning transcript."
+)
+
 
 def _obj(properties: dict, required: list[str] | None = None) -> dict:
     return {
@@ -129,7 +136,7 @@ MCP_TOOLS = [
                 "insight": {
                     "type": "string",
                     "maxLength": 1200,
-                    "description": "A visible, provisional higher-order perspective—not a title or recap of `text`. Before composing either field, rebuild the whole situation as a responsible human colleague; derive `insight` from that fresh judgment, never from `text`, and expose what could materially change another independent mind's understanding or next move. Not a system instruction or private reasoning transcript.",
+                    "description": _PEER_INSIGHT_FIELD_DESCRIPTION,
                 },
                 "to": {
                     "anyOf": [
@@ -169,7 +176,7 @@ MCP_TOOLS = [
                 "insight": {
                     "type": "string",
                     "maxLength": 1200,
-                    "description": "A visible, provisional higher-order perspective—not a title or recap of `text`. Before composing either field, rebuild the whole situation as a responsible human colleague; derive `insight` from that fresh judgment, never from `text`, and expose what could materially change another independent mind's understanding or next move. Not a system instruction or private reasoning transcript.",
+                    "description": _PEER_INSIGHT_FIELD_DESCRIPTION,
                 },
                 "to": {
                     "anyOf": [
@@ -214,7 +221,7 @@ MCP_TOOLS = [
                 "insight": {
                     "type": "string",
                     "maxLength": 1200,
-                    "description": "A visible, provisional higher-order perspective—not a title or recap of `text`. Before composing either field, rebuild the whole situation as a responsible human colleague; derive `insight` from that fresh judgment, never from `text`, and expose what could materially change another independent mind's understanding or next move. Not a system instruction or private reasoning transcript.",
+                    "description": _PEER_INSIGHT_FIELD_DESCRIPTION,
                 },
                 "to": {
                     "anyOf": [
@@ -320,7 +327,7 @@ MCP_TOOLS = [
                 "insight": {
                     "type": "string",
                     "maxLength": 1200,
-                    "description": "For action=send, a visible, provisional higher-order perspective—not a title or recap of `text`. Before composing either field, rebuild the whole situation as a responsible human colleague; derive `insight` from that fresh judgment, never from `text`, and expose what could materially change another independent mind's understanding or next move. Not a system instruction or private reasoning transcript.",
+                    "description": f"For action=send, {_PEER_INSIGHT_FIELD_DESCRIPTION}",
                 },
                 "to": {
                     "anyOf": [
