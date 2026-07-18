@@ -66,8 +66,17 @@ def test_pr_python_matrix_uses_four_stable_file_shards_without_xdist() -> None:
     assert "scripts/quality/pytest_shards.py" in runs
     assert "--total 4" in runs
     assert "env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest" in runs
+    assert '-m "not packaged_web_dist"' in runs
     assert "pytest-xdist" not in runs
     assert " -n " not in runs
+
+
+def test_package_job_owns_the_built_web_bundle_contract() -> None:
+    package = _workflow()["jobs"]["package"]
+    runs = _runs(package)
+
+    assert any(step.get("uses", "").startswith("actions/download-artifact") for step in package["steps"])
+    assert "-m packaged_web_dist tests/test_web_manifest_static.py" in runs
 
 
 def test_schedule_runs_one_serial_full_python_suite() -> None:
@@ -79,6 +88,7 @@ def test_schedule_runs_one_serial_full_python_suite() -> None:
     assert "github.event_name == 'schedule'" in nightly["if"]
     assert "python -m pytest tests/" in runs
     assert "env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/" in runs
+    assert '-m "not packaged_web_dist"' in runs
     assert "pytest_shards.py" not in runs
     assert "pytest-xdist" not in runs
     assert " -n " not in runs

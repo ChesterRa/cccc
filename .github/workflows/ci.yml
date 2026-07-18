@@ -97,7 +97,7 @@ jobs:
         run: |
           mapfile -t TEST_FILES < <(python scripts/quality/pytest_shards.py --total 4 --index "${{ matrix.shard }}")
           test "${#TEST_FILES[@]}" -gt 0
-          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest -q --timeout=120 --timeout-method=thread --durations=20 "${TEST_FILES[@]}"
+          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest -q -m "not packaged_web_dist" --timeout=120 --timeout-method=thread --durations=20 "${TEST_FILES[@]}"
 
   package:
     if: github.event_name != 'schedule'
@@ -122,7 +122,7 @@ jobs:
 
       - name: Build and check package
         run: |
-          python -m pip install -U pip build twine
+          python -m pip install -U pip build twine pytest
           python -m compileall -q src/cccc
           python -m build
           python -m twine check dist/*
@@ -141,6 +141,9 @@ jobs:
           assert help_md.is_file(), f"missing bundled help playbook: {help_md}"
           print("OK: bundled web UI + help playbook")
           PY
+
+      - name: Verify packaged Web bundle contract
+        run: python -m pytest -q -m packaged_web_dist tests/test_web_manifest_static.py
 
   windows-smoke:
     if: github.event_name != 'schedule'
@@ -187,4 +190,4 @@ jobs:
       - name: Run full Python suite serially
         timeout-minutes: 30
         run: >-
-          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/ -q --timeout=120 --timeout-method=thread --durations=20
+          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/ -q -m "not packaged_web_dist" --timeout=120 --timeout-method=thread --durations=20

@@ -68,6 +68,9 @@ include = ["cccc*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "packaged_web_dist: requires the Web build artifact consumed by package CI",
+]
 
 [tool.ruff]
 target-version = "py39"
