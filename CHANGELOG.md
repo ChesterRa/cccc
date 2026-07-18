@@ -6,6 +6,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.32] — 2026-07-18
+
+### Added
+- **Peer Insight adds a structured second channel to agent-to-agent messaging.** Built-in MCP peer sends now carry operational `text` plus a provisional higher-order `insight`, with end-to-end projection through the ledger, Web UI, Group Bridge, IM, search, replies, files, and tracked delegation.
+- **The Insight Loop places reflective checkpoints at collaboration boundaries.** Missing peer Insight is rejected before task, blob, wake, or ledger side effects; successful message operations return a short perspective reset; and bootstrap adds a conditional takeover cue when real unfinished work is recoverable.
+- **The Web composer can recall loaded message history with Up and Down.** Recall restores text only while preserving the composer's current recipients, reply target, attachments, priority, and delivery mode.
+- **Linux projected-browser readiness is visible in `cccc doctor`.** The report distinguishes the required system browser and Xvfb isolation from the optional x11vnc viewer.
+
+### Changed
+- **The default collaboration surface is leaner.** Ordinary actors receive a compact 13-tool protocol core, optional tools stay available through capability use, and general reasoning or writing doctrine has been removed from the base system prompt and help reference.
+- **Heuristic nudges are off by default for newly created groups.** Generic nudge, unread, keepalive, and periodic help reminders no longer add background pressure unless configured; explicit reply-required and attention acknowledgement reminders remain available for reliability. Existing group settings are not migrated.
+- **ChatGPT Web delivery can safely queue prompts while ChatGPT is already responding.** CCCC uses only a verified composer-local Send prompt control, defers without advancing the cursor when no safe control exists, and uses bounded single-flight retries instead of reporting a premature delivery failure.
+- **Linux projected browsers now require CCCC-owned Xvfb isolation.** CCCC no longer falls back to the host desktop display; x11vnc remains optional because the embedded viewer can use CDP screencasting.
+- **Grok Build PTY actors preserve provider sessions across restarts.** CCCC assigns an actor-specific session ID, resumes it with Grok's native flags, preserves user-owned session arguments, and exposes deliberate new-session restart behavior.
+- **Release validation now uses durable quality boundaries.** Web checks run through Vite+ with Oxfmt/Oxlint, Python tests use deterministic PR shards plus a serial nightly reference run, Windows retains focused PTY smoke coverage, and package-only Web artifact contracts run after the bundle is built.
+
+### Fixed
+- **Ambiguous ChatGPT submit clicks no longer create automatic duplicate deliveries.** Confirmed pre-submit deferrals remain retryable, while dispatch-unknown clicks follow an explicit at-most-once policy.
+- **Projected browser sessions no longer leak physical Chrome windows onto Linux desktops** when isolation dependencies are missing or persisted browser metadata is not trustworthy.
+- **Recipient detail popovers remain usable when the pointer moves from the recipient chip into the popover**, and message history Escape handling no longer cancels an unrelated reply draft.
+- **Terminal option changes no longer recreate the live xterm session**, preserving its WebSocket-bound input and resize behavior.
+- **Deleted groups no longer leave stale Group Space memory bindings that interfere with synchronization.**
+
+### Tests
+- Expanded backend and frontend coverage for Peer Insight validation and projection, bootstrap takeover gating, ChatGPT browser delivery ambiguity and retry boundaries, Linux projected-browser isolation, Grok session reuse and rotation, composer history navigation, recipient popovers, quality workflow contracts, packaging, and Windows PTY smoke behavior.
+
 ## [0.4.31] — 2026-07-12
 
 ### Added
