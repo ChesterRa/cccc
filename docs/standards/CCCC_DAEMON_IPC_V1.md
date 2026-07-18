@@ -2166,7 +2166,7 @@ Result:
 ```
 
 Notes:
-- Supported for `claude` and `codex` actors.
+- Supported for `claude`, `codex`, and Grok PTY actors.
 - Stops the current actor runtime if present, clears CCCC's saved runtime session metadata for that actor, then starts the actor with the same runtime settings.
 - Does not delete provider-side conversation/session history.
 
@@ -2473,6 +2473,8 @@ Args (core):
   path?: string                 // optional filesystem path to attribute scope_key
   attachments?: unknown[]       // attachment refs (implementation-defined)
   refs?: ReferenceV1[]          // structured message refs, e.g. presentation_ref/task_ref
+  insight?: string              // optional provisional sender perspective; max 1200 characters
+  require_peer_insight?: boolean // profile gate; default false
   src_group_id?: string         // relay provenance (both required if either is set)
   src_event_id?: string
   dst_group_id?: string         // optional "send record" metadata (source messages)
@@ -2500,6 +2502,8 @@ Args:
   priority?: "normal" | "attention"
   attachments?: unknown[]
   refs?: ReferenceV1[]
+  insight?: string
+  require_peer_insight?: boolean // profile gate; default false
 }
 ```
 
@@ -2531,6 +2535,8 @@ Args:
   reply_required?: boolean      // default true
   idempotency_key?: string
   refs?: ReferenceV1[]
+  insight?: string
+  require_peer_insight?: boolean // profile gate; default false
 }
 ```
 
@@ -2562,7 +2568,7 @@ Cross-group send implemented as:
 
 Args:
 ```ts
-{ group_id: string; dst_group_id: string; text: string; by?: string; to?: string[]; priority?: "normal" | "attention" }
+{ group_id: string; dst_group_id: string; text: string; by?: string; to?: string[]; priority?: "normal" | "attention"; insight?: string; require_peer_insight?: boolean }
 ```
 
 Result:
@@ -2572,6 +2578,14 @@ Result:
 
 Notes:
 - Attachments are not supported in cross-group send in v1.
+
+#### Agent Insight Profile marker
+
+`require_peer_insight` is an internal request-profile marker, not a global message-validity rule. It defaults to `false`. When `true`, the daemon resolves the operation's real audience and rejects a new peer-facing message whose normalized `insight` is empty. User-only sends remain valid without Insight.
+
+The check MUST occur after routing and successful-idempotency lookup, but before this request creates a new message, task, actor wake, or remote outbox entry. The recommended error code is `peer_insight_required`, with `details.delivery_state="not_sent"` and `details.new_side_effects=false`. Invalid Insight type or length SHOULD use `invalid_insight` instead. Existing accepted idempotent operations MUST replay their original result without being reinterpreted by a newer profile requirement.
+
+For a legacy Group Bridge wire that does not advertise structured Insight, an implementation MAY flatten the perspective into remote text with an explicit sender-perspective label. It MUST NOT infer structured `insight` back from that text.
 
 #### `chat_ack`
 

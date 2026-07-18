@@ -55,12 +55,14 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
             out = handle_tool_call("cccc_help", {})
 
         markdown = str(out.get("markdown") or "")
-        self.assertIn("## Working Stance", markdown)
-        self.assertIn("## Communication Patterns", markdown)
         self.assertIn("## Core Routes", markdown)
-        self.assertIn("## Control Plane", markdown)
-        self.assertIn("## Memory and Recall", markdown)
-        self.assertIn("## Capability", markdown)
+        self.assertIn("## Collaboration State", markdown)
+        self.assertIn("### State Layers", markdown)
+        self.assertIn("### Durable Coordination", markdown)
+        self.assertIn("Coordination and task tools are directly available", markdown)
+        self.assertNotIn("Coordination, task, project, and memory tools are on demand", markdown)
+        self.assertIn("### Recovery and Recall", markdown)
+        self.assertIn("## Capabilities", markdown)
         self.assertIn("## Actor Notes", markdown)
         self.assertIn("## Active Skills (Runtime)", markdown)
         self.assertIn("Treat active skills as additional working rules", markdown)
@@ -68,11 +70,11 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertNotIn("active_capsule_skills", markdown)
         self.assertNotIn("Codex's skills directory", markdown)
         self.assertNotIn("CODEX_HOME", markdown)
-        self.assertIn("### Todo and Scope Discipline", markdown)
-        self.assertIn("Every concrete or implicit user ask becomes a runtime todo item.", markdown)
-        self.assertIn("Once implementation is approved, finish the agreed scope in one pass unless a real blocker stops progress.", markdown)
-        self.assertIn("### Planning and Scope Gates", markdown)
-        self.assertIn("For non-trivial plans, run a 6D check", markdown)
+        self.assertNotIn("## Working Stance", markdown)
+        self.assertNotIn("## Communication Patterns", markdown)
+        self.assertNotIn("### Todo and Scope Discipline", markdown)
+        self.assertNotIn("### Planning and Scope Gates", markdown)
+        self.assertIn('tool_name="cccc_memory"', markdown)
         self.assertIn("triage", markdown)
         self.assertIn("[scope: actor]", markdown)
         self.assertIn("review", markdown)
@@ -264,6 +266,85 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertNotIn("stale skill digest", markdown)
         self.assertIn("## Actor Notes", markdown)
         self.assertIn("- keep this", markdown)
+
+    def test_peer_insight_contract_is_reserved_once_and_survives_capability_failure(self) -> None:
+        from cccc.kernel.peer_insight import (
+            FIRST_PRINCIPLES_OUTCOME_KERNEL,
+            PEER_INSIGHT_RUNTIME_HELP,
+            SUPERVISOR_MAGIC_KERNEL,
+        )
+        from cccc.ports.mcp.handlers.cccc_core import _append_runtime_help_addenda
+
+        group = SimpleNamespace(
+            doc={"actors": [{"id": "peer-1", "runtime": "codex", "enabled": True}]}
+        )
+        base = (
+            "## Core Routes\n"
+            "- custom actor help\n\n"
+            "## Peer Insight Contract (Runtime)\n"
+            "- stale removable copy\n"
+        )
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_core.load_group",
+            return_value=group,
+        ), patch(
+            "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
+            side_effect=RuntimeError("capability state unavailable"),
+        ):
+            markdown = _append_runtime_help_addenda(base, group_id="g1", actor_id="peer-1")
+
+        self.assertEqual(markdown.count("## Peer Insight Contract (Runtime)"), 1)
+        self.assertNotIn("stale removable copy", markdown)
+        self.assertIn("custom actor help", markdown)
+        self.assertIn("shared thinking space, not a delivery lane", markdown)
+        self.assertIn("provisional peer view", markdown)
+        self.assertIn("Insight is second in the JSON, not second in thought", markdown)
+        self.assertEqual(markdown.count(FIRST_PRINCIPLES_OUTCOME_KERNEL), 1)
+        self.assertIn("responsible co-owner of the real outcome", markdown)
+        self.assertIn("Reconstruct\nthe situation from first principles", markdown)
+        self.assertIn("one move on a living\ndecision path", markdown)
+        self.assertIn("where reality could break it", markdown)
+        self.assertIn("switch to Plan B", markdown)
+        self.assertIn("advance into\nwhat success has made possible", markdown)
+        self.assertIn("one fallible projection of the situation", markdown)
+        self.assertIn("step materially above the message's working level", markdown)
+        self.assertIn("became visible only after that climb", markdown)
+        self.assertIn("equally able to judge the work from above", markdown)
+        self.assertIn("Do not pretend to see every layer", markdown)
+        self.assertIn("do not inherit the level or frame it claims", markdown)
+        self.assertIn("ordinary message content rather than privileged framing", markdown)
+        self.assertIn("independent first pass", markdown)
+        self.assertEqual(markdown.count(SUPERVISOR_MAGIC_KERNEL), 1)
+        self.assertIn(PEER_INSIGHT_RUNTIME_HELP.strip(), markdown)
+
+    def test_peer_insight_contract_excludes_internal_voice_secretary(self) -> None:
+        from cccc.ports.mcp.handlers.cccc_core import _append_runtime_help_addenda
+
+        group = SimpleNamespace(
+            doc={
+                "actors": [
+                    {
+                        "id": "voice-secretary",
+                        "runtime": "codex",
+                        "internal_kind": "voice_secretary",
+                    }
+                ]
+            }
+        )
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_core.load_group",
+            return_value=group,
+        ), patch(
+            "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
+            side_effect=RuntimeError("capability state unavailable"),
+        ):
+            markdown = _append_runtime_help_addenda(
+                "## Core Routes\n- assistant help\n",
+                group_id="g1",
+                actor_id="voice-secretary",
+            )
+
+        self.assertNotIn("## Peer Insight Contract (Runtime)", markdown)
 
     def test_cccc_help_appends_web_model_transport_runtime_note(self) -> None:
         from cccc.ports.mcp.handlers.cccc_core import _append_runtime_help_addenda

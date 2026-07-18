@@ -22,9 +22,9 @@ cccc tracked-send "Delegated work" --to assistant --title "Task title" --outcome
 cccc reply <event_id> "Reply text"
 
 # MCP
-cccc_message_send(text="Hello", to=["@foreman"])
-cccc_tracked_send(title="Task title", text="Delegated work", to=["assistant"], outcome="Done criterion")
-cccc_message_reply(reply_to="evt_xxx", text="Reply")
+cccc_message_send(text="Hello", to=["@foreman"], insight="This direction may still be framed too narrowly.")
+cccc_tracked_send(title="Task title", text="Delegated work", to=["assistant"], outcome="Done criterion", insight="The assignee should be free to reject the proposed approach.")
+cccc_message_reply(reply_to="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
 ```
 
 Agents may add `suggested_user_message` when sending to `user`; CCCC Web shows it as an editable next-message suggestion in the composer and never sends it automatically.
@@ -139,9 +139,9 @@ System Prompt (thin layer)
 ├── Where you are: Working Group, Scope
 └── What you can do: MCP tool list + key reminders (see cccc_help)
 
-MCP Tools (authoritative playbook + execution interface)
-├── cccc_help: Operation guide (playbook)
-├── cccc_project_info: Get PROJECT.md
+MCP Tools (protocol + execution interface)
+├── cccc_help: On-demand CCCC protocol reference
+├── cccc_capability_use: Invoke hidden tools without mounting every pack
 ├── cccc_inbox_list / cccc_inbox_mark_read: Inbox
 └── cccc_message_send / cccc_message_reply: Send/reply
 
@@ -151,20 +151,20 @@ Ledger (complete memory)
 
 ### Core Principles
 
-- **Do**: One authoritative playbook (`cccc_help`)
+- **Do**: One compact protocol reference (`cccc_help`)
 - **Do**: Kernel enforcement (RBAC by daemon)
 - **Do**: Minimal startup handshake (Bootstrap)
+- **Do**: Keep heuristic automation opt-in for new groups
 - **Don't**: Write three versions of the same copy
 
-### Agent Standard Workflow
+### Minimal Protocol Loop (example)
 
 ```
-1. Receive SYSTEM injection → Know who you are
-2. Call cccc_inbox_list → Get unread messages
-3. Process messages → Execute tasks
-4. Call cccc_inbox_mark_read → Mark as read
-5. Call cccc_message_reply → Reply with results
-6. Wait for next message
+1. Cold start or resume → Call cccc_bootstrap
+2. Need the full unread queue → Call cccc_inbox_list
+3. Do the work with the agent runtime's normal tools and judgment
+4. Reply visibly with cccc_message_reply
+5. Mark handled inbox items read
 ```
 
 ## Automation
@@ -205,14 +205,16 @@ Notes:
 
 | Behavior | Config | Default | Description |
 |----------|--------|---------|-------------|
-| Nudge | `nudge_after_seconds` | 300s | Digest follow-up for pending unread or obligation items |
-| Reply-required nudge | `reply_required_nudge_after_seconds` | 300s | Follow-up for required-reply obligations |
-| Attention-ack nudge | `attention_ack_nudge_after_seconds` | 600s | Follow-up for attention messages lacking ACK |
-| Unread nudge | `unread_nudge_after_seconds` | 900s | Reminder when unread backlog keeps accumulating |
+| Nudge | `nudge_after_seconds` | 0s | Optional digest follow-up for pending unread or obligation items |
+| Reply-required nudge | `reply_required_nudge_after_seconds` | 300s | Reliability follow-up for required-reply obligations |
+| Attention-ack nudge | `attention_ack_nudge_after_seconds` | 600s | Reliability follow-up for attention messages lacking ACK |
+| Unread nudge | `unread_nudge_after_seconds` | 0s | Optional reminder when unread backlog keeps accumulating |
 | Actor idle | `actor_idle_timeout_seconds` | 0s | Optional actor idle notification to foreman; `0` disables it by default |
-| Keepalive | `keepalive_delay_seconds` | 120s | Follow-up after an actor declares a next step and then goes quiet |
+| Keepalive | `keepalive_delay_seconds` | 0s | Optional follow-up after an actor declares a next step and then goes quiet |
 | Silence check | `silence_timeout_seconds` | 0s | Optional group-level silence review and idle transition; `0` disables it |
-| Help nudge | `help_nudge_interval_seconds` / `help_nudge_min_messages` | 600s / 10 | Prompt actor to revisit `cccc_help` and refresh working context |
+| Help nudge | `help_nudge_interval_seconds` / `help_nudge_min_messages` | 0s / 0 | Optional prompt to revisit `cccc_help` |
+
+These are defaults written for newly created groups. Heuristic steering stays off by default, while explicit reply/attention obligations retain reliability reminders. Existing groups are not migrated; legacy groups that omit these fields retain the daemon's compatibility fallbacks until explicitly changed.
 
 ### Delivery Policy
 

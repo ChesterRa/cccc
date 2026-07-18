@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   DEFAULT_LIVE_SERVICE_MODEL_ID,
@@ -40,10 +40,7 @@ describe("assistants local ASR model selection", () => {
     const selected = resolveLocalAsrModels({
       configuredModelId: finalModel.model_id,
       serviceModels: [finalModel, liveModel],
-      serviceModelsById: {
-        [finalModel.model_id]: finalModel,
-        [liveModel.model_id]: liveModel,
-      },
+      serviceModelsById: { [finalModel.model_id]: finalModel, [liveModel.model_id]: liveModel },
     });
 
     expect(selected.finalModel?.model_id).toBe(finalModel.model_id);
@@ -56,9 +53,7 @@ describe("assistants local ASR model selection", () => {
     const selected = resolveLocalAsrModels({
       configuredModelId: finalModel.model_id,
       serviceModels: [finalModel],
-      serviceModelsById: {
-        [finalModel.model_id]: finalModel,
-      },
+      serviceModelsById: { [finalModel.model_id]: finalModel },
     });
 
     expect(selected.finalModel?.model_id).toBe(finalModel.model_id);

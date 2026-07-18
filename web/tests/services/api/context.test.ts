@@ -1,13 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { fetchGroupCapabilityState } from "../../../src/services/api";
 
 function makeJsonResponse(body: unknown): Response {
-  return {
-    ok: true,
-    status: 200,
-    text: () => Promise.resolve(JSON.stringify(body)),
-  } as Response;
+  return { ok: true, status: 200, text: () => Promise.resolve(JSON.stringify(body)) } as Response;
 }
 
 beforeEach(() => {
@@ -16,9 +12,7 @@ beforeEach(() => {
     setItem: () => undefined,
     removeItem: () => undefined,
   });
-  vi.stubGlobal("window", {
-    location: { search: "" },
-  });
+  vi.stubGlobal("window", { location: { search: "" } });
 });
 
 afterEach(() => {

@@ -17,7 +17,7 @@ export function clampPresentationSplitWidth(value: number, containerWidth?: numb
 
   const maxWidth = Math.max(
     minWidth,
-    Math.round(totalWidth - PRESENTATION_SPLIT_DIVIDER_WIDTH - PRESENTATION_SPLIT_MIN_CHAT_WIDTH)
+    Math.round(totalWidth - PRESENTATION_SPLIT_DIVIDER_WIDTH - PRESENTATION_SPLIT_MIN_CHAT_WIDTH),
   );
   return Math.min(maxWidth, Math.max(minWidth, rounded));
 }

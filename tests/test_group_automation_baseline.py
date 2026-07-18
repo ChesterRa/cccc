@@ -84,6 +84,19 @@ class TestGroupAutomationBaseline(unittest.TestCase):
                 group = load_group(group_id)
                 self.assertIsNotNone(group)
                 automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
+                expected_interrupt_defaults = {
+                    "nudge_after_seconds": 0,
+                    "reply_required_nudge_after_seconds": 300,
+                    "attention_ack_nudge_after_seconds": 600,
+                    "unread_nudge_after_seconds": 0,
+                    "actor_idle_timeout_seconds": 0,
+                    "keepalive_delay_seconds": 0,
+                    "silence_timeout_seconds": 0,
+                    "help_nudge_interval_seconds": 0,
+                    "help_nudge_min_messages": 0,
+                }
+                for key, expected in expected_interrupt_defaults.items():
+                    self.assertEqual(automation.get(key), expected, f"unexpected new-group default for {key}")
                 self.assertEqual(automation.get("snippets"), {}, "stored custom snippets should be cleared")
                 self.assertEqual(automation.get("snippet_overrides"), {}, "built-in overrides should be cleared")
         finally:
@@ -91,6 +104,32 @@ class TestGroupAutomationBaseline(unittest.TestCase):
                 os.environ.pop("CCCC_HOME", None)
             else:
                 os.environ["CCCC_HOME"] = old_home
+
+    def test_legacy_group_without_interrupt_fields_keeps_compatibility_defaults(self) -> None:
+        from pathlib import Path
+
+        from cccc.daemon.automation.engine import _cfg
+        from cccc.kernel.group import Group
+
+        group = Group(group_id="g_legacy", path=Path("/unused"), doc={"automation": {}})
+        cfg = _cfg(group)
+
+        self.assertEqual(cfg.nudge_after_seconds, 300)
+        self.assertEqual(cfg.reply_required_nudge_after_seconds, 300)
+        self.assertEqual(cfg.attention_ack_nudge_after_seconds, 600)
+        self.assertEqual(cfg.unread_nudge_after_seconds, 900)
+        self.assertEqual(cfg.keepalive_delay_seconds, 120)
+        self.assertEqual(cfg.help_nudge_interval_seconds, 600)
+        self.assertEqual(cfg.help_nudge_min_messages, 10)
+
+    def test_baseline_ruleset_seed_does_not_migrate_legacy_interrupt_fields(self) -> None:
+        from cccc.kernel.group import default_automation_ruleset_doc
+
+        seed = default_automation_ruleset_doc()
+
+        self.assertNotIn("nudge_after_seconds", seed)
+        self.assertNotIn("keepalive_delay_seconds", seed)
+        self.assertNotIn("help_nudge_interval_seconds", seed)
 
     def test_legacy_flat_snippets_migrate_to_custom_and_builtin_override_layers(self) -> None:
         from cccc.contracts.v1 import DaemonRequest

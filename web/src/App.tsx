@@ -1,6 +1,8 @@
 import React, { lazy, Suspense, useCallback, useEffect, useMemo } from "react";
 import { DropOverlay } from "./components/DropOverlay";
-const AppModals = lazy(() => import("./components/AppModals").then((m) => ({ default: m.AppModals })));
+const AppModals = lazy(() =>
+  import("./components/AppModals").then((m) => ({ default: m.AppModals })),
+);
 import { AppBackground } from "./components/app/AppBackground";
 import { AppFeedback } from "./components/app/AppFeedback";
 import { AppShell } from "./components/app/AppShell";
@@ -103,10 +105,12 @@ export default function App() {
       presentationViewer: s.presentationViewer,
       presentationPin: s.presentationPin,
       editingActor: s.editingActor,
-    })
+    }),
   );
   const peerRuntimeVisibility = useObservabilityStore((state) => state.peerRuntimeVisibility);
-  const assistantRuntimeVisibility = useObservabilityStore((state) => state.assistantRuntimeVisibility);
+  const assistantRuntimeVisibility = useObservabilityStore(
+    (state) => state.assistantRuntimeVisibility,
+  );
 
   const {
     activeGroupId,
@@ -135,14 +139,16 @@ export default function App() {
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
   const [mentionFilter, setMentionFilter] = React.useState("");
   const [mentionKind, setMentionKind] = React.useState<ComposerMentionKind>("agent");
-  const [mentionActorScope, setMentionActorScope] = React.useState<"selected" | "destination">("selected");
+  const [mentionActorScope, setMentionActorScope] = React.useState<"selected" | "destination">(
+    "selected",
+  );
   // Group whose actors feed the `@` destination menu (set when typing `#group @`).
   // Decoupled from destGroupId so it never turns the message into a cross-send.
   const [mentionTargetGroupId, setMentionTargetGroupId] = React.useState<string>("");
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
   const internalRuntimeActors = useMemo(
     () => internalRuntimeActorsByGroup[String(selectedGroupId || "").trim()] || [],
-    [internalRuntimeActorsByGroup, selectedGroupId]
+    [internalRuntimeActorsByGroup, selectedGroupId],
   );
   const refreshRuntimeActors = useCallback(
     async (groupIdArg?: string, opts?: { includeUnread?: boolean }) => {
@@ -158,12 +164,13 @@ export default function App() {
         [
           ...actors,
           ...internalRuntimeActors.filter(
-            (actor) => !actors.some((existing) => String(existing.id || "") === String(actor.id || ""))
+            (actor) =>
+              !actors.some((existing) => String(existing.id || "") === String(actor.id || "")),
           ),
         ],
-        { peerRuntimeVisibility, assistantRuntimeVisibility }
+        { peerRuntimeVisibility, assistantRuntimeVisibility },
       ),
-    [actors, internalRuntimeActors, peerRuntimeVisibility, assistantRuntimeVisibility]
+    [actors, internalRuntimeActors, peerRuntimeVisibility, assistantRuntimeVisibility],
   );
 
   useEffect(() => {
@@ -216,19 +223,22 @@ export default function App() {
   }, [selectedGroupId, refreshInternalRuntimeActors]);
 
   // Custom hooks
-  const { connectStream, fetchContext, cleanup: cleanupSSE } = useSSE({
-    activeTabRef,
-    chatAtBottomRef,
-    actorsRef,
-  });
+  const {
+    connectStream,
+    fetchContext,
+    cleanup: cleanupSSE,
+  } = useSSE({ activeTabRef, chatAtBottomRef, actorsRef });
 
-  const { dropOverlayOpen, handleAppendComposerFiles, resetDragDrop, WEB_MAX_FILE_MB } = useDragDrop({
-    selectedGroupId,
-  });
+  const { dropOverlayOpen, handleAppendComposerFiles, resetDragDrop, WEB_MAX_FILE_MB } =
+    useDragDrop({ selectedGroupId });
 
   const { handleStartGroup, handleStopGroup, handleSetGroupState } = useGroupActions();
 
-  const computedSendGroupId = getEffectiveComposerDestGroupId(destGroupId, activeGroupId, selectedGroupId);
+  const computedSendGroupId = getEffectiveComposerDestGroupId(
+    destGroupId,
+    activeGroupId,
+    selectedGroupId,
+  );
 
   const { recipientActors, recipientActorsBusy, destGroupScopeLabel } = useCrossGroupRecipients({
     actors,
@@ -243,7 +253,12 @@ export default function App() {
 
   const startReply = React.useCallback(
     (ev: LedgerEvent) => {
-      const replyComposerState = buildReplyComposerState(ev, selectedGroupId, actors, groupSettings);
+      const replyComposerState = buildReplyComposerState(
+        ev,
+        selectedGroupId,
+        actors,
+        groupSettings,
+      );
       if (!replyComposerState) return;
 
       if (replyComposerState.destGroupId) {
@@ -253,7 +268,15 @@ export default function App() {
       setReplyTarget(replyComposerState.replyTarget);
       requestAnimationFrame(() => composerRef.current?.focus());
     },
-    [selectedGroupId, actors, composerRef, groupSettings, setDestGroupId, setReplyTarget, setReplyToText]
+    [
+      selectedGroupId,
+      actors,
+      composerRef,
+      groupSettings,
+      setDestGroupId,
+      setReplyTarget,
+      setReplyToText,
+    ],
   );
 
   const { parseUrlDeepLink } = useDeepLink({
@@ -292,10 +315,7 @@ export default function App() {
     onTabChange: handleTabChange,
   });
 
-  const {
-    selectedGroupRunning,
-    selectedGroupRuntimeStatus,
-  } = useSelectedGroupRuntime({
+  const { selectedGroupRunning, selectedGroupRuntimeStatus } = useSelectedGroupRuntime({
     groups,
     selectedGroupId,
     groupDoc,

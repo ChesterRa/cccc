@@ -10,10 +10,7 @@ export function shouldRefreshNotebookSpaces(
 
 export function resolveNotebookSpacesAfterLoad(
   currentSpaces: GroupSpaceRemoteSpace[],
-  options: {
-    writeReady: boolean;
-    fetchedSpaces?: GroupSpaceRemoteSpace[] | null;
-  },
+  options: { writeReady: boolean; fetchedSpaces?: GroupSpaceRemoteSpace[] | null },
 ): GroupSpaceRemoteSpace[] {
   if (!options.writeReady) return [];
   if (Array.isArray(options.fetchedSpaces)) return options.fetchedSpaces;

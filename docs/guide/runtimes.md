@@ -93,6 +93,8 @@ Actors normally run in one of two modes:
 
 Claude Code and Codex CLI support both PTY and headless operation. Most other CLI runtimes use PTY. ChatGPT Web Model is fixed to browser delivery plus a remote MCP connector.
 
+CCCC also preserves current Grok Build PTY sessions with its native `--session-id` and `--resume` flags. A fresh actor launch receives a CCCC-owned UUID; later starts resume that exact actor session rather than using Grok's directory-wide `--continue` selection. Commands that already contain Grok session-control flags remain user-owned and are not rewritten. Set `CCCC_RUNTIME_RESUME=0` to disable provider-session reuse globally.
+
 ## ChatGPT Web Model
 
 `web_model` does not use `cccc setup`. Create the ChatGPT Web Model actor from the CCCC Web group, then finish sign-in, MCP URL setup, and conversation binding in **Settings > ChatGPT Web Model**.

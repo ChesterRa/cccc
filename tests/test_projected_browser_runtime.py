@@ -777,6 +777,17 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         launched.close()
         self.assertTrue(xvfb_proc.terminated or xvfb_proc.killed)
 
+    def test_linux_headed_launch_requires_xvfb_even_when_host_display_exists(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        with patch.object(runtime.shutil, "which", return_value=None), patch.object(
+            runtime.sys,
+            "platform",
+            "linux",
+        ), patch.dict(runtime.os.environ, {"DISPLAY": ":0"}, clear=True):
+            with self.assertRaisesRegex(RuntimeError, "Xvfb.*apt install xvfb"):
+                runtime._start_virtual_display(width=1280, height=800)
+
     def test_headed_launch_prefers_isolated_xvfb_even_when_display_exists(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime
 
@@ -798,7 +809,11 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
             runtime.sys,
             "platform",
             "linux",
-        ), patch.dict(runtime.os.environ, {"DISPLAY": ":0"}, clear=True):
+        ), patch.dict(
+            runtime.os.environ,
+            {"DISPLAY": ":0", "WAYLAND_DISPLAY": "wayland-0", "XDG_SESSION_TYPE": "wayland"},
+            clear=True,
+        ):
             launched = runtime.launch_projected_browser_runtime(
                 profile_dir=runtime.Path("/tmp/projected-browser-test"),
                 url="https://example.com",
@@ -810,6 +825,9 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
 
         launch_kwargs = fake_cm.playwright.chromium.launch_calls[0]
         self.assertEqual(str((launch_kwargs.get("env") or {}).get("DISPLAY") or ""), ":123")
+        self.assertNotIn("WAYLAND_DISPLAY", launch_kwargs.get("env") or {})
+        self.assertEqual(str((launch_kwargs.get("env") or {}).get("XDG_SESSION_TYPE") or ""), "x11")
+        self.assertIn("--ozone-platform=x11", list(launch_kwargs.get("args") or []))
         self.assertIn("xvfb", str(getattr(launched, "strategy", "") or ""))
         self.assertEqual((getattr(launched, "metadata", {}) or {}).get("display_owned"), True)
         launched.close()
@@ -1019,6 +1037,9 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
                     "pid": 1234,
                     "profile_dir": "/tmp/web-model-chatgpt-profile",
                     "browser_binary": "/usr/bin/google-chrome",
+                    "display": ":123",
+                    "display_owned": True,
+                    "display_owner": "cccc_xvfb",
                 },
             )
 
@@ -1027,7 +1048,11 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         start_display.assert_not_called()
         popen.assert_not_called()
         self.assertEqual(str(getattr(launched, "strategy", "") or ""), "system_browser_cdp:adopted")
-        self.assertTrue(bool((getattr(launched, "metadata", {}) or {}).get("adopted")))
+        metadata = getattr(launched, "metadata", {}) or {}
+        self.assertTrue(bool(metadata.get("adopted")))
+        self.assertEqual(metadata.get("display"), ":123")
+        self.assertEqual(metadata.get("display_owned"), True)
+        self.assertEqual(metadata.get("display_owner"), "cccc_xvfb")
         browser = fake_cm.playwright.chromium.last_browser
         self.assertEqual(browser.contexts[0].pages[0].url, "https://chatgpt.com/c/adopted-chat")
         launched.close()

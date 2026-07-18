@@ -1,7 +1,15 @@
 // SettingsModal renders the settings modal.
 import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform, WebAccessSession, WeixinLoginStatus } from "../types";
+import {
+  Actor,
+  GroupDoc,
+  GroupSettings,
+  IMStatus,
+  IMPlatform,
+  WebAccessSession,
+  WeixinLoginStatus,
+} from "../types";
 import * as api from "../services/api";
 import { useModalStore, useObservabilityStore } from "../stores";
 import {
@@ -10,39 +18,75 @@ import {
   normalizeRuntimeVisibilityMode,
   type RuntimeVisibilityMode,
 } from "../utils/runtimeVisibility";
-import {
-  SettingsScope,
-  GroupTabId,
-  GlobalTabId,
-} from "./modals/settings/types";
+import { SettingsScope, GroupTabId, GlobalTabId } from "./modals/settings/types";
 import {
   readSettingsLastLocation,
   writeSettingsLastLocation,
 } from "./modals/settings/settingsLastLocation";
 import { ModalFrame } from "./modals/ModalFrame";
 import { SettingsNavigation } from "./modals/settings/SettingsNavigation";
-import { IMConfigDraft, saveAndStartIMBridge, saveIMConfigDraft } from "./modals/settings/imBridgeConfig";
+import {
+  IMConfigDraft,
+  saveAndStartIMBridge,
+  saveIMConfigDraft,
+} from "./modals/settings/imBridgeConfig";
 import { useModalA11y } from "../hooks/useModalA11y";
 import { copyTextToClipboard } from "../utils/copy";
 
-const AutomationTab = lazy(() => import("./modals/settings/AutomationTab").then((module) => ({ default: module.AutomationTab })));
-const DeliveryTab = lazy(() => import("./modals/settings/DeliveryTab").then((module) => ({ default: module.DeliveryTab })));
-const MessagingTab = lazy(() => import("./modals/settings/MessagingTab").then((module) => ({ default: module.MessagingTab })));
-const IMBridgeTab = lazy(() => import("./modals/settings/IMBridgeTab").then((module) => ({ default: module.IMBridgeTab })));
-const TranscriptTab = lazy(() => import("./modals/settings/TranscriptTab").then((module) => ({ default: module.TranscriptTab })));
-const GuidanceTab = lazy(() => import("./modals/settings/GuidanceTab").then((module) => ({ default: module.GuidanceTab })));
-const AssistantsTab = lazy(() => import("./modals/settings/AssistantsTab").then((module) => ({ default: module.AssistantsTab })));
-const GroupSpaceTab = lazy(() => import("./modals/settings/GroupSpaceTab").then((module) => ({ default: module.GroupSpaceTab })));
-const CopyGroupsTab = lazy(() => import("./modals/settings/CopyGroupsTab").then((module) => ({ default: module.CopyGroupsTab })));
-const CapabilitiesTab = lazy(() => import("./modals/settings/CapabilitiesTab").then((module) => ({ default: module.CapabilitiesTab })));
-const ActorProfilesTab = lazy(() => import("./modals/settings/ActorProfilesTab").then((module) => ({ default: module.ActorProfilesTab })));
-const BrandingTab = lazy(() => import("./modals/settings/BrandingTab").then((module) => ({ default: module.BrandingTab })));
-const WebAccessTab = lazy(() => import("./modals/settings/WebAccessTab").then((module) => ({ default: module.WebAccessTab })));
-const GroupBridgeConnectionsTab = lazy(() => import("./modals/settings/GroupBridgeConnectionsSection").then((module) => ({ default: module.GroupBridgeConnectionsSection })));
-const WebModelConnectorsTab = lazy(() =>
-  import("./modals/settings/WebModelConnectorsTab").then((module) => ({ default: module.default }))
+const AutomationTab = lazy(() =>
+  import("./modals/settings/AutomationTab").then((module) => ({ default: module.AutomationTab })),
 );
-const DeveloperTab = lazy(() => import("./modals/settings/DeveloperTab").then((module) => ({ default: module.DeveloperTab })));
+const DeliveryTab = lazy(() =>
+  import("./modals/settings/DeliveryTab").then((module) => ({ default: module.DeliveryTab })),
+);
+const MessagingTab = lazy(() =>
+  import("./modals/settings/MessagingTab").then((module) => ({ default: module.MessagingTab })),
+);
+const IMBridgeTab = lazy(() =>
+  import("./modals/settings/IMBridgeTab").then((module) => ({ default: module.IMBridgeTab })),
+);
+const TranscriptTab = lazy(() =>
+  import("./modals/settings/TranscriptTab").then((module) => ({ default: module.TranscriptTab })),
+);
+const GuidanceTab = lazy(() =>
+  import("./modals/settings/GuidanceTab").then((module) => ({ default: module.GuidanceTab })),
+);
+const AssistantsTab = lazy(() =>
+  import("./modals/settings/AssistantsTab").then((module) => ({ default: module.AssistantsTab })),
+);
+const GroupSpaceTab = lazy(() =>
+  import("./modals/settings/GroupSpaceTab").then((module) => ({ default: module.GroupSpaceTab })),
+);
+const CopyGroupsTab = lazy(() =>
+  import("./modals/settings/CopyGroupsTab").then((module) => ({ default: module.CopyGroupsTab })),
+);
+const CapabilitiesTab = lazy(() =>
+  import("./modals/settings/CapabilitiesTab").then((module) => ({
+    default: module.CapabilitiesTab,
+  })),
+);
+const ActorProfilesTab = lazy(() =>
+  import("./modals/settings/ActorProfilesTab").then((module) => ({
+    default: module.ActorProfilesTab,
+  })),
+);
+const BrandingTab = lazy(() =>
+  import("./modals/settings/BrandingTab").then((module) => ({ default: module.BrandingTab })),
+);
+const WebAccessTab = lazy(() =>
+  import("./modals/settings/WebAccessTab").then((module) => ({ default: module.WebAccessTab })),
+);
+const GroupBridgeConnectionsTab = lazy(() =>
+  import("./modals/settings/GroupBridgeConnectionsSection").then((module) => ({
+    default: module.GroupBridgeConnectionsSection,
+  })),
+);
+const WebModelConnectorsTab = lazy(() =>
+  import("./modals/settings/WebModelConnectorsTab").then((module) => ({ default: module.default })),
+);
+const DeveloperTab = lazy(() =>
+  import("./modals/settings/DeveloperTab").then((module) => ({ default: module.DeveloperTab })),
+);
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -58,9 +102,7 @@ interface SettingsModalProps {
 
 function SettingsTabFallback() {
   return (
-    <div
-      className="rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-5 text-sm text-[var(--color-text-secondary)]"
-    >
+    <div className="rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] p-5 text-sm text-[var(--color-text-secondary)]">
       Loading...
     </div>
   );
@@ -108,7 +150,9 @@ export function SettingsModal({
   const [defaultSendTo, setDefaultSendTo] = useState<"foreman" | "broadcast">("foreman");
 
   // Terminal transcript (group-scoped policy)
-  const [terminalVisibility, setTerminalVisibility] = useState<"off" | "foreman" | "all">("foreman");
+  const [terminalVisibility, setTerminalVisibility] = useState<"off" | "foreman" | "all">(
+    "foreman",
+  );
   const [terminalNotifyTail, setTerminalNotifyTail] = useState(false);
   const [terminalNotifyLines, setTerminalNotifyLines] = useState(20);
 
@@ -148,15 +192,19 @@ export function SettingsModal({
   const contentScrollRef = useRef<HTMLDivElement | null>(null);
 
   // IM config drafts cache (per-platform local edits, not yet saved to server)
-  const [imConfigDrafts, setImConfigDrafts] = useState<Partial<Record<IMPlatform, IMConfigDraft>>>({});
+  const [imConfigDrafts, setImConfigDrafts] = useState<Partial<Record<IMPlatform, IMConfigDraft>>>(
+    {},
+  );
 
   // Global observability (developer mode)
   const [developerMode, setDeveloperMode] = useState(false);
   const [logLevel, setLogLevel] = useState<"INFO" | "DEBUG">("INFO");
   const [terminalBacklogMiB, setTerminalBacklogMiB] = useState(10);
   const [terminalScrollbackLines, setTerminalScrollbackLines] = useState(8000);
-  const [peerRuntimeVisibility, setPeerRuntimeVisibility] = useState<RuntimeVisibilityMode>("visible");
-  const [assistantRuntimeVisibility, setAssistantRuntimeVisibility] = useState<RuntimeVisibilityMode>("hidden");
+  const [peerRuntimeVisibility, setPeerRuntimeVisibility] =
+    useState<RuntimeVisibilityMode>("visible");
+  const [assistantRuntimeVisibility, setAssistantRuntimeVisibility] =
+    useState<RuntimeVisibilityMode>("hidden");
   const [obsBusy, setObsBusy] = useState(false);
 
   // Developer-mode debug views
@@ -216,9 +264,11 @@ export function SettingsModal({
       try {
         const resp = await api.fetchWebAccessSession();
         if (cancelled) return;
-        const session = resp.ok ? resp.result?.web_access_session ?? null : null;
+        const session = resp.ok ? (resp.result?.web_access_session ?? null) : null;
         setWebAccessSession(session);
-        const allowed = Boolean(session?.can_access_global_settings ?? !(session?.login_active ?? false));
+        const allowed = Boolean(
+          session?.can_access_global_settings ?? !(session?.login_active ?? false),
+        );
         setCanAccessGlobalSettings(allowed);
         const allowGlobalScope = Boolean(allowed || session?.current_browser_signed_in);
         if (!allowGlobalScope && groupId) setScope("group");
@@ -251,50 +301,53 @@ export function SettingsModal({
     setImWeixinAccountId("");
   };
 
-  const loadIMStatus = useCallback(async (opts?: { resetFirst?: boolean }) => {
-    const gid = String(groupId || "").trim();
-    const seq = ++imLoadSeq.current;
-    if (opts?.resetFirst) resetIMState();
-    if (!gid) return;
-    try {
-      const statusResp = await api.fetchIMStatus(gid);
-      if (seq !== imLoadSeq.current) return;
-      if (statusResp.ok) {
-        setImStatus(statusResp.result);
-        if (statusResp.result.platform) {
-          setImPlatform(statusResp.result.platform as IMPlatform);
+  const loadIMStatus = useCallback(
+    async (opts?: { resetFirst?: boolean }) => {
+      const gid = String(groupId || "").trim();
+      const seq = ++imLoadSeq.current;
+      if (opts?.resetFirst) resetIMState();
+      if (!gid) return;
+      try {
+        const statusResp = await api.fetchIMStatus(gid);
+        if (seq !== imLoadSeq.current) return;
+        if (statusResp.ok) {
+          setImStatus(statusResp.result);
+          if (statusResp.result.platform) {
+            setImPlatform(statusResp.result.platform as IMPlatform);
+          }
         }
-      }
-      const configResp = await api.fetchIMConfig(gid);
-      if (seq !== imLoadSeq.current) return;
-      if (configResp.ok && configResp.result.im) {
-        const im = configResp.result.im;
-        if (im.platform) setImPlatform(im.platform);
-        setImBotTokenEnv(im.bot_token_env || im.bot_token || im.token_env || im.token || "");
-        setImAppTokenEnv(im.app_token_env || im.app_token || "");
-        {
-          const raw = String(im.feishu_domain || "https://open.feishu.cn").trim();
-          const canon = raw
-            .replace(/\/+$/, "")
-            .replace(/\/open-apis$/, "")
-            .replace(/^open\.larksuite\.com$/i, "https://open.larkoffice.com")
-            .replace(/^https?:\/\/open\.larksuite\.com$/i, "https://open.larkoffice.com")
-            .replace(/^open\.larkoffice\.com$/i, "https://open.larkoffice.com");
-          setImFeishuDomain(canon);
+        const configResp = await api.fetchIMConfig(gid);
+        if (seq !== imLoadSeq.current) return;
+        if (configResp.ok && configResp.result.im) {
+          const im = configResp.result.im;
+          if (im.platform) setImPlatform(im.platform);
+          setImBotTokenEnv(im.bot_token_env || im.bot_token || im.token_env || im.token || "");
+          setImAppTokenEnv(im.app_token_env || im.app_token || "");
+          {
+            const raw = String(im.feishu_domain || "https://open.feishu.cn").trim();
+            const canon = raw
+              .replace(/\/+$/, "")
+              .replace(/\/open-apis$/, "")
+              .replace(/^open\.larksuite\.com$/i, "https://open.larkoffice.com")
+              .replace(/^https?:\/\/open\.larksuite\.com$/i, "https://open.larkoffice.com")
+              .replace(/^open\.larkoffice\.com$/i, "https://open.larkoffice.com");
+            setImFeishuDomain(canon);
+          }
+          setImFeishuAppId(im.feishu_app_id || im.feishu_app_id_env || "");
+          setImFeishuAppSecret(im.feishu_app_secret || im.feishu_app_secret_env || "");
+          setImDingtalkAppKey(im.dingtalk_app_key || im.dingtalk_app_key_env || "");
+          setImDingtalkAppSecret(im.dingtalk_app_secret || im.dingtalk_app_secret_env || "");
+          setImDingtalkRobotCode(im.dingtalk_robot_code || im.dingtalk_robot_code_env || "");
+          setImWecomBotId(im.wecom_bot_id || "");
+          setImWecomSecret(im.wecom_secret || "");
+          setImWeixinAccountId(im.weixin_account_id || "");
         }
-        setImFeishuAppId(im.feishu_app_id || im.feishu_app_id_env || "");
-        setImFeishuAppSecret(im.feishu_app_secret || im.feishu_app_secret_env || "");
-        setImDingtalkAppKey(im.dingtalk_app_key || im.dingtalk_app_key_env || "");
-        setImDingtalkAppSecret(im.dingtalk_app_secret || im.dingtalk_app_secret_env || "");
-        setImDingtalkRobotCode(im.dingtalk_robot_code || im.dingtalk_robot_code_env || "");
-        setImWecomBotId(im.wecom_bot_id || "");
-        setImWecomSecret(im.wecom_secret || "");
-        setImWeixinAccountId(im.weixin_account_id || "");
+      } catch (e) {
+        console.error("Failed to load IM status:", e);
       }
-    } catch (e) {
-      console.error("Failed to load IM status:", e);
-    }
-  }, [groupId]);
+    },
+    [groupId],
+  );
 
   useEffect(() => {
     if (!isOpen) return;
@@ -302,17 +355,20 @@ export function SettingsModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Only load when the modal opens or groupId changes.
   }, [isOpen, groupId]);
 
-  const toWeixinErrorStatus = useCallback((message: string): WeixinLoginStatus => ({
-    status: "error",
-    logged_in: false,
-    account_id: "",
-    qrcode_url: "",
-    qr_ascii: "",
-    error: String(message || "").trim(),
-    running: false,
-    pid: null,
-    updated_at: new Date().toISOString(),
-  }), []);
+  const toWeixinErrorStatus = useCallback(
+    (message: string): WeixinLoginStatus => ({
+      status: "error",
+      logged_in: false,
+      account_id: "",
+      qrcode_url: "",
+      qr_ascii: "",
+      error: String(message || "").trim(),
+      running: false,
+      pid: null,
+      updated_at: new Date().toISOString(),
+    }),
+    [],
+  );
 
   useEffect(() => {
     if (!isOpen || !groupId || imPlatform !== "weixin") return;
@@ -324,7 +380,9 @@ export function SettingsModal({
         if (resp.ok) {
           setWeixinLoginStatus(resp.result ?? null);
         } else {
-          setWeixinLoginStatus(toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStatusLoadFailed")));
+          setWeixinLoginStatus(
+            toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStatusLoadFailed")),
+          );
         }
       } catch {
         if (!cancelled) {
@@ -335,7 +393,10 @@ export function SettingsModal({
     void loadWeixinStatus();
     // Only poll while waiting for QR scan; stop once logged in or idle
     const needsPoll = weixinLoginStatus?.status === "waiting_scan";
-    if (!needsPoll) return () => { cancelled = true; };
+    if (!needsPoll)
+      return () => {
+        cancelled = true;
+      };
     const timer = window.setInterval(() => {
       void loadWeixinStatus();
     }, 3000);
@@ -427,13 +488,16 @@ export function SettingsModal({
           setTerminalScrollbackLines(Math.max(1000, Math.round(scrollbackLines)));
         }
         setPeerRuntimeVisibility(
-          normalizeRuntimeVisibilityMode(obs.runtime_visibility?.peer_runtime, DEFAULT_PEER_RUNTIME_VISIBILITY)
+          normalizeRuntimeVisibilityMode(
+            obs.runtime_visibility?.peer_runtime,
+            DEFAULT_PEER_RUNTIME_VISIBILITY,
+          ),
         );
         setAssistantRuntimeVisibility(
           normalizeRuntimeVisibilityMode(
             obs.runtime_visibility?.assistant_runtime,
             DEFAULT_ASSISTANT_RUNTIME_VISIBILITY,
-          )
+          ),
         );
       }
     } catch (e) {
@@ -460,9 +524,7 @@ export function SettingsModal({
   // ============ Handlers ============
 
   const handleSaveDeliverySettings = async () => {
-    await onUpdateSettings({
-      auto_mark_on_delivery: autoMarkOnDelivery,
-    });
+    await onUpdateSettings({ auto_mark_on_delivery: autoMarkOnDelivery });
   };
 
   const handleSaveAutomationSettings = async () => {
@@ -512,9 +574,7 @@ export function SettingsModal({
   };
 
   const handleSaveMessagingSettings = async () => {
-    await onUpdateSettings({
-      default_send_to: defaultSendTo,
-    });
+    await onUpdateSettings({ default_send_to: defaultSendTo });
   };
 
   const copyTailLastLines = async (lineCount: number) => {
@@ -522,7 +582,10 @@ export function SettingsModal({
     const text = String(tailText || "");
     if (!text.trim()) return;
     const lines = text.split("\n");
-    const payload = lines.slice(Math.max(0, lines.length - n)).join("\n").trimEnd();
+    const payload = lines
+      .slice(Math.max(0, lines.length - n))
+      .join("\n")
+      .trimEnd();
     if (!payload) return;
 
     const setToast = (msg: string) => {
@@ -539,7 +602,13 @@ export function SettingsModal({
     setTailBusy(true);
     setTailErr("");
     try {
-      const resp = await api.fetchTerminalTail(groupId, tailActorId, tailMaxChars || 8000, tailStripAnsi, tailCompact);
+      const resp = await api.fetchTerminalTail(
+        groupId,
+        tailActorId,
+        tailMaxChars || 8000,
+        tailStripAnsi,
+        tailCompact,
+      );
       if (resp.ok) {
         setTailText(String(resp.result?.text || ""));
         setTailHint(String(resp.result?.hint || ""));
@@ -617,10 +686,7 @@ export function SettingsModal({
     if (newPlatform === imPlatform) return;
 
     // 1. Save current platform config to drafts
-    setImConfigDrafts((prev) => ({
-      ...prev,
-      [imPlatform]: getCurrentIMConfigDraft(),
-    }));
+    setImConfigDrafts((prev) => ({ ...prev, [imPlatform]: getCurrentIMConfigDraft() }));
 
     // 2. Load new platform's cached draft (if exists)
     const cachedDraft = imConfigDrafts[newPlatform];
@@ -716,7 +782,9 @@ export function SettingsModal({
     try {
       const saveResp = await saveIMConfigDraft(getCurrentIMSaveRequest());
       if (!saveResp.ok) {
-        setWeixinLoginStatus(toWeixinErrorStatus(saveResp.error?.message || t("imBridge.weixinStartFailed")));
+        setWeixinLoginStatus(
+          toWeixinErrorStatus(saveResp.error?.message || t("imBridge.weixinStartFailed")),
+        );
         return;
       }
       await loadIMStatus();
@@ -725,7 +793,9 @@ export function SettingsModal({
       if (resp.ok) {
         setWeixinLoginStatus(resp.result ?? null);
       } else {
-        setWeixinLoginStatus(toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStartFailed")));
+        setWeixinLoginStatus(
+          toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinStartFailed")),
+        );
       }
     } catch (e) {
       setWeixinLoginStatus(toWeixinErrorStatus(t("imBridge.weixinStartFailed")));
@@ -744,7 +814,9 @@ export function SettingsModal({
       if (resp.ok) {
         setWeixinLoginStatus(resp.result ?? null);
       } else {
-        setWeixinLoginStatus(toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinLogoutFailed")));
+        setWeixinLoginStatus(
+          toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinLogoutFailed")),
+        );
       }
     } catch (e) {
       setWeixinLoginStatus(toWeixinErrorStatus(t("imBridge.weixinLogoutFailed")));
@@ -757,8 +829,12 @@ export function SettingsModal({
   const handleSaveObservability = async () => {
     setObsBusy(true);
     try {
-      const perActorBytes = Math.max(1, Math.min(50, Number(terminalBacklogMiB || 0))) * 1024 * 1024;
-      const scrollbackLines = Math.max(1000, Math.min(200000, Number(terminalScrollbackLines || 0)));
+      const perActorBytes =
+        Math.max(1, Math.min(50, Number(terminalBacklogMiB || 0))) * 1024 * 1024;
+      const scrollbackLines = Math.max(
+        1000,
+        Math.min(200000, Number(terminalScrollbackLines || 0)),
+      );
       const resp = await api.updateObservability({
         developerMode,
         logLevel,
@@ -782,13 +858,16 @@ export function SettingsModal({
           setTerminalScrollbackLines(Math.max(1000, Math.round(lines)));
         }
         setPeerRuntimeVisibility(
-          normalizeRuntimeVisibilityMode(obs.runtime_visibility?.peer_runtime, DEFAULT_PEER_RUNTIME_VISIBILITY)
+          normalizeRuntimeVisibilityMode(
+            obs.runtime_visibility?.peer_runtime,
+            DEFAULT_PEER_RUNTIME_VISIBILITY,
+          ),
         );
         setAssistantRuntimeVisibility(
           normalizeRuntimeVisibilityMode(
             obs.runtime_visibility?.assistant_runtime,
             DEFAULT_ASSISTANT_RUNTIME_VISIBILITY,
-          )
+          ),
         );
       } else if (resp.ok) {
         await loadObservability();
@@ -831,9 +910,10 @@ export function SettingsModal({
         return;
       }
       const result = resp.result || {};
-      const daemon = result.daemon && typeof result.daemon === "object" && !Array.isArray(result.daemon)
-        ? result.daemon as Record<string, unknown>
-        : null;
+      const daemon =
+        result.daemon && typeof result.daemon === "object" && !Array.isArray(result.daemon)
+          ? (result.daemon as Record<string, unknown>)
+          : null;
       setRuntimeVersion(String(result.version || "").trim());
       setDaemonVersion(String(daemon?.version || "").trim());
     } catch {
@@ -942,20 +1022,32 @@ export function SettingsModal({
   const currentBrowserSignedIn = Boolean(webAccessSession?.current_browser_signed_in);
   const globalScopeEnabled = globalSettingsEnabled || currentBrowserSignedIn;
 
-  const globalTabs = useMemo<{ id: GlobalTabId; label: string }[]>(() => [
-    ...(globalSettingsEnabled ? [
-      { id: "capabilities" as const, label: t("tabs.capabilities") },
-      { id: "actorProfiles" as const, label: t("tabs.actorProfiles") },
-    ] : []),
-    // Non-admin signed-in users see My Profiles; admin already has Actor Profiles covering all
-    ...(currentBrowserSignedIn && !globalSettingsEnabled ? [{ id: "myProfiles" as const, label: t("tabs.myProfiles") }] : []),
-    ...(globalSettingsEnabled ? [
-      { id: "branding" as const, label: t("tabs.branding") },
-      { id: "webAccess" as const, label: t("tabs.webAccess") },
-      { id: "webModels" as const, label: t("tabs.webModels", { defaultValue: "ChatGPT Web Model" }) },
-      { id: "developer" as const, label: t("tabs.developer") },
-    ] : []),
-  ], [globalSettingsEnabled, currentBrowserSignedIn, t]);
+  const globalTabs = useMemo<{ id: GlobalTabId; label: string }[]>(
+    () => [
+      ...(globalSettingsEnabled
+        ? [
+            { id: "capabilities" as const, label: t("tabs.capabilities") },
+            { id: "actorProfiles" as const, label: t("tabs.actorProfiles") },
+          ]
+        : []),
+      // Non-admin signed-in users see My Profiles; admin already has Actor Profiles covering all
+      ...(currentBrowserSignedIn && !globalSettingsEnabled
+        ? [{ id: "myProfiles" as const, label: t("tabs.myProfiles") }]
+        : []),
+      ...(globalSettingsEnabled
+        ? [
+            { id: "branding" as const, label: t("tabs.branding") },
+            { id: "webAccess" as const, label: t("tabs.webAccess") },
+            {
+              id: "webModels" as const,
+              label: t("tabs.webModels", { defaultValue: "ChatGPT Web Model" }),
+            },
+            { id: "developer" as const, label: t("tabs.developer") },
+          ]
+        : []),
+    ],
+    [globalSettingsEnabled, currentBrowserSignedIn, t],
+  );
 
   useEffect(() => {
     if (scope !== "global") return;
@@ -967,7 +1059,12 @@ export function SettingsModal({
 
   useEffect(() => {
     if (!isOpen || !settingsTarget) return;
-    const nextScope = settingsTarget.scope === "global" ? "global" : settingsTarget.scope === "group" ? "group" : "";
+    const nextScope =
+      settingsTarget.scope === "global"
+        ? "global"
+        : settingsTarget.scope === "group"
+          ? "group"
+          : "";
     const nextTab = String(settingsTarget.tab || "").trim();
     if (nextScope === "global") {
       setScope("global");
@@ -991,7 +1088,7 @@ export function SettingsModal({
     { id: "transcript", label: t("tabs.transcript") },
     { id: "copyGroups", label: t("tabs.copyGroups") },
   ];
-  const tabs = scope === "group" ? groupTabs : (globalScopeEnabled ? globalTabs : []);
+  const tabs = scope === "group" ? groupTabs : globalScopeEnabled ? globalTabs : [];
   const activeTab = scope === "group" ? groupTab : globalTab;
   const setActiveTab = (tab: GroupTabId | GlobalTabId) => {
     if (scope === "group") setGroupTab(tab as GroupTabId);
@@ -1019,7 +1116,9 @@ export function SettingsModal({
     if (!groupDoc || String(groupDoc.group_id || "") !== String(groupId || "")) return "";
     const scopes = Array.isArray(groupDoc.scopes) ? groupDoc.scopes : [];
     const activeKey = String(groupDoc.active_scope_key || "");
-    const active = scopes.find((s) => String(s?.scope_key || "") === activeKey && String(s?.url || "").trim());
+    const active = scopes.find(
+      (s) => String(s?.scope_key || "") === activeKey && String(s?.url || "").trim(),
+    );
     const first = scopes.find((s) => String(s?.url || "").trim());
     return String((active || first)?.url || "").trim();
   })();
@@ -1029,7 +1128,7 @@ export function SettingsModal({
       isDark={isDark}
       onClose={onClose}
       titleId="settings-modal-title"
-      title={(
+      title={
         <div className="min-w-0">
           <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
             Workspace Settings
@@ -1040,13 +1139,15 @@ export function SettingsModal({
           <div className="mt-1 text-xs leading-5 text-[var(--color-text-tertiary)]">
             {scope === "group"
               ? t("navigation.groupScopeContent", { scopeRoot: scopeRootUrl || groupId || "—" })
-              : (globalScopeEnabled ? t("navigation.globalScopeContent") : t("navigation.globalLockedContent"))}
+              : globalScopeEnabled
+                ? t("navigation.globalScopeContent")
+                : t("navigation.globalLockedContent")}
           </div>
         </div>
-      )}
+      }
       closeAriaLabel={t("closeAriaLabel")}
       panelClassName="w-full h-full sm:h-[min(90dvh,920px)] sm:max-w-[min(1280px,calc(100vw-2rem))] sm:max-h-[90dvh]"
-      headerActions={(
+      headerActions={
         <div className="hidden sm:flex items-center gap-2">
           <span className="rounded-full border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] px-3 py-1 text-[11px] font-medium text-[var(--color-text-secondary)]">
             {scope === "group" ? t("navigation.thisGroup") : t("navigation.global")}
@@ -1057,7 +1158,7 @@ export function SettingsModal({
             </span>
           ) : null}
         </div>
-      )}
+      }
       modalRef={modalRef}
     >
       <div className="min-h-0 flex-1 flex flex-col sm:flex-row overflow-hidden">
@@ -1084,7 +1185,9 @@ export function SettingsModal({
         >
           <div className="p-4 pb-6 sm:p-5 lg:p-6 sm:pb-7 space-y-4 lg:space-y-5">
             {scope === "global" && !globalSettingsEnabled && !currentBrowserSignedIn ? (
-              <div className={`rounded-xl border p-6 ${isDark ? "border-amber-700/40 bg-amber-900/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+              <div
+                className={`rounded-xl border p-6 ${isDark ? "border-amber-700/40 bg-amber-900/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"}`}
+              >
                 <div className="text-sm font-semibold">{t("navigation.globalLockedTitle")}</div>
                 <div className="mt-2 text-sm leading-6">{t("navigation.globalLockedContent")}</div>
                 {groupId ? (
@@ -1099,259 +1202,264 @@ export function SettingsModal({
               </div>
             ) : !tabs.some((tab) => tab.id === activeTab) ? null : (
               <Suspense fallback={<SettingsTabFallback />}>
-              {activeTab === "automation" && (
-                <AutomationTab
-                  isDark={isDark}
-                  groupId={groupId}
-                  devActors={devActors}
-                  busy={busy}
-                  nudgeSeconds={nudgeSeconds}
-                  setNudgeSeconds={setNudgeSeconds}
-                  replyRequiredNudgeSeconds={replyRequiredNudgeSeconds}
-                  setReplyRequiredNudgeSeconds={setReplyRequiredNudgeSeconds}
-                  attentionAckNudgeSeconds={attentionAckNudgeSeconds}
-                  setAttentionAckNudgeSeconds={setAttentionAckNudgeSeconds}
-                  unreadNudgeSeconds={unreadNudgeSeconds}
-                  setUnreadNudgeSeconds={setUnreadNudgeSeconds}
-                  nudgeDigestMinIntervalSeconds={nudgeDigestMinIntervalSeconds}
-                  setNudgeDigestMinIntervalSeconds={setNudgeDigestMinIntervalSeconds}
-                  nudgeMaxRepeatsPerObligation={nudgeMaxRepeatsPerObligation}
-                  setNudgeMaxRepeatsPerObligation={setNudgeMaxRepeatsPerObligation}
-                  nudgeEscalateAfterRepeats={nudgeEscalateAfterRepeats}
-                  setNudgeEscalateAfterRepeats={setNudgeEscalateAfterRepeats}
-                  idleSeconds={idleSeconds}
-                  setIdleSeconds={setIdleSeconds}
-                  keepaliveSeconds={keepaliveSeconds}
-                  setKeepaliveSeconds={setKeepaliveSeconds}
-                  keepaliveMax={keepaliveMax}
-                  setKeepaliveMax={setKeepaliveMax}
-                  silenceSeconds={silenceSeconds}
-                  setSilenceSeconds={setSilenceSeconds}
-                  helpNudgeIntervalSeconds={helpNudgeIntervalSeconds}
-                  setHelpNudgeIntervalSeconds={setHelpNudgeIntervalSeconds}
-                  helpNudgeMinMessages={helpNudgeMinMessages}
-                  setHelpNudgeMinMessages={setHelpNudgeMinMessages}
-                  onSavePolicies={handleSaveAutomationSettings}
-                  onResetPolicies={handleResetAutomationSettingsDraft}
-                />
-              )}
+                {activeTab === "automation" && (
+                  <AutomationTab
+                    isDark={isDark}
+                    groupId={groupId}
+                    devActors={devActors}
+                    busy={busy}
+                    nudgeSeconds={nudgeSeconds}
+                    setNudgeSeconds={setNudgeSeconds}
+                    replyRequiredNudgeSeconds={replyRequiredNudgeSeconds}
+                    setReplyRequiredNudgeSeconds={setReplyRequiredNudgeSeconds}
+                    attentionAckNudgeSeconds={attentionAckNudgeSeconds}
+                    setAttentionAckNudgeSeconds={setAttentionAckNudgeSeconds}
+                    unreadNudgeSeconds={unreadNudgeSeconds}
+                    setUnreadNudgeSeconds={setUnreadNudgeSeconds}
+                    nudgeDigestMinIntervalSeconds={nudgeDigestMinIntervalSeconds}
+                    setNudgeDigestMinIntervalSeconds={setNudgeDigestMinIntervalSeconds}
+                    nudgeMaxRepeatsPerObligation={nudgeMaxRepeatsPerObligation}
+                    setNudgeMaxRepeatsPerObligation={setNudgeMaxRepeatsPerObligation}
+                    nudgeEscalateAfterRepeats={nudgeEscalateAfterRepeats}
+                    setNudgeEscalateAfterRepeats={setNudgeEscalateAfterRepeats}
+                    idleSeconds={idleSeconds}
+                    setIdleSeconds={setIdleSeconds}
+                    keepaliveSeconds={keepaliveSeconds}
+                    setKeepaliveSeconds={setKeepaliveSeconds}
+                    keepaliveMax={keepaliveMax}
+                    setKeepaliveMax={setKeepaliveMax}
+                    silenceSeconds={silenceSeconds}
+                    setSilenceSeconds={setSilenceSeconds}
+                    helpNudgeIntervalSeconds={helpNudgeIntervalSeconds}
+                    setHelpNudgeIntervalSeconds={setHelpNudgeIntervalSeconds}
+                    helpNudgeMinMessages={helpNudgeMinMessages}
+                    setHelpNudgeMinMessages={setHelpNudgeMinMessages}
+                    onSavePolicies={handleSaveAutomationSettings}
+                    onResetPolicies={handleResetAutomationSettingsDraft}
+                  />
+                )}
 
-              {activeTab === "delivery" && (
-                <DeliveryTab
-                  isDark={isDark}
-                  busy={busy}
-                  autoMarkOnDelivery={autoMarkOnDelivery}
-                  setAutoMarkOnDelivery={setAutoMarkOnDelivery}
-                  onSave={handleSaveDeliverySettings}
-                  onAutoSave={handleAutoSave}
-                />
-              )}
+                {activeTab === "delivery" && (
+                  <DeliveryTab
+                    isDark={isDark}
+                    busy={busy}
+                    autoMarkOnDelivery={autoMarkOnDelivery}
+                    setAutoMarkOnDelivery={setAutoMarkOnDelivery}
+                    onSave={handleSaveDeliverySettings}
+                    onAutoSave={handleAutoSave}
+                  />
+                )}
 
-              {activeTab === "messaging" && (
-                <MessagingTab
-                  isDark={isDark}
-                  busy={busy}
-                  defaultSendTo={defaultSendTo}
-                  setDefaultSendTo={setDefaultSendTo}
-                  onSave={handleSaveMessagingSettings}
-                />
-              )}
+                {activeTab === "messaging" && (
+                  <MessagingTab
+                    isDark={isDark}
+                    busy={busy}
+                    defaultSendTo={defaultSendTo}
+                    setDefaultSendTo={setDefaultSendTo}
+                    onSave={handleSaveMessagingSettings}
+                  />
+                )}
 
-              {activeTab === "im" && (
-                <IMBridgeTab
-                  isDark={isDark}
-                  groupId={groupId}
-                  imStatus={imStatus}
-                  imPlatform={imPlatform}
-                  onPlatformChange={handlePlatformChange}
-                  imBotTokenEnv={imBotTokenEnv}
-                  setImBotTokenEnv={setImBotTokenEnv}
-                  imAppTokenEnv={imAppTokenEnv}
-                  setImAppTokenEnv={setImAppTokenEnv}
-                  imFeishuAppId={imFeishuAppId}
-                  setImFeishuAppId={setImFeishuAppId}
-                  imFeishuAppSecret={imFeishuAppSecret}
-                  setImFeishuAppSecret={setImFeishuAppSecret}
-                  imFeishuDomain={imFeishuDomain}
-                  setImFeishuDomain={setImFeishuDomain}
-                  imDingtalkAppKey={imDingtalkAppKey}
-                  setImDingtalkAppKey={setImDingtalkAppKey}
-                  imDingtalkAppSecret={imDingtalkAppSecret}
-                  setImDingtalkAppSecret={setImDingtalkAppSecret}
-                  imDingtalkRobotCode={imDingtalkRobotCode}
-                  setImDingtalkRobotCode={setImDingtalkRobotCode}
-                  imWecomBotId={imWecomBotId}
-                  setImWecomBotId={setImWecomBotId}
-                  imWecomSecret={imWecomSecret}
-                  setImWecomSecret={setImWecomSecret}
-                  imWeixinAccountId={imWeixinAccountId}
-                  setImWeixinAccountId={setImWeixinAccountId}
-                  weixinLoginStatus={weixinLoginStatus}
-                  onStartWeixinLogin={handleStartWeixinLogin}
-                  onLogoutWeixin={handleLogoutWeixin}
-                  imBusy={imBusy}
-                  onSaveConfig={handleSaveIMConfig}
-                  onRemoveConfig={handleRemoveIMConfig}
-                  onStartBridge={handleStartBridge}
-                  onStopBridge={handleStopBridge}
-                />
-              )}
+                {activeTab === "im" && (
+                  <IMBridgeTab
+                    isDark={isDark}
+                    groupId={groupId}
+                    imStatus={imStatus}
+                    imPlatform={imPlatform}
+                    onPlatformChange={handlePlatformChange}
+                    imBotTokenEnv={imBotTokenEnv}
+                    setImBotTokenEnv={setImBotTokenEnv}
+                    imAppTokenEnv={imAppTokenEnv}
+                    setImAppTokenEnv={setImAppTokenEnv}
+                    imFeishuAppId={imFeishuAppId}
+                    setImFeishuAppId={setImFeishuAppId}
+                    imFeishuAppSecret={imFeishuAppSecret}
+                    setImFeishuAppSecret={setImFeishuAppSecret}
+                    imFeishuDomain={imFeishuDomain}
+                    setImFeishuDomain={setImFeishuDomain}
+                    imDingtalkAppKey={imDingtalkAppKey}
+                    setImDingtalkAppKey={setImDingtalkAppKey}
+                    imDingtalkAppSecret={imDingtalkAppSecret}
+                    setImDingtalkAppSecret={setImDingtalkAppSecret}
+                    imDingtalkRobotCode={imDingtalkRobotCode}
+                    setImDingtalkRobotCode={setImDingtalkRobotCode}
+                    imWecomBotId={imWecomBotId}
+                    setImWecomBotId={setImWecomBotId}
+                    imWecomSecret={imWecomSecret}
+                    setImWecomSecret={setImWecomSecret}
+                    imWeixinAccountId={imWeixinAccountId}
+                    setImWeixinAccountId={setImWeixinAccountId}
+                    weixinLoginStatus={weixinLoginStatus}
+                    onStartWeixinLogin={handleStartWeixinLogin}
+                    onLogoutWeixin={handleLogoutWeixin}
+                    imBusy={imBusy}
+                    onSaveConfig={handleSaveIMConfig}
+                    onRemoveConfig={handleRemoveIMConfig}
+                    onStartBridge={handleStartBridge}
+                    onStopBridge={handleStopBridge}
+                  />
+                )}
 
-              {activeTab === "transcript" && (
-                <TranscriptTab
-                  isDark={isDark}
-                  busy={busy}
-                  groupId={groupId}
-                  devActors={devActors}
-                  terminalVisibility={terminalVisibility}
-                  setTerminalVisibility={setTerminalVisibility}
-                  terminalNotifyTail={terminalNotifyTail}
-                  setTerminalNotifyTail={setTerminalNotifyTail}
-                  terminalNotifyLines={terminalNotifyLines}
-                  setTerminalNotifyLines={setTerminalNotifyLines}
-                  onSaveTranscriptSettings={handleSaveTranscriptSettings}
-                  tailActorId={tailActorId}
-                  setTailActorId={setTailActorId}
-                  tailMaxChars={tailMaxChars}
-                  setTailMaxChars={setTailMaxChars}
-                  tailStripAnsi={tailStripAnsi}
-                  setTailStripAnsi={setTailStripAnsi}
-                  tailCompact={tailCompact}
-                  setTailCompact={setTailCompact}
-                  tailText={tailText}
-                  tailHint={tailHint}
-                  tailErr={tailErr}
-                  tailBusy={tailBusy}
-                  tailCopyInfo={tailCopyInfo}
-                  onLoadTail={loadTerminalTail}
-                  onCopyTail={copyTailLastLines}
-                  onClearTail={clearTail}
-                />
-              )}
+                {activeTab === "transcript" && (
+                  <TranscriptTab
+                    isDark={isDark}
+                    busy={busy}
+                    groupId={groupId}
+                    devActors={devActors}
+                    terminalVisibility={terminalVisibility}
+                    setTerminalVisibility={setTerminalVisibility}
+                    terminalNotifyTail={terminalNotifyTail}
+                    setTerminalNotifyTail={setTerminalNotifyTail}
+                    terminalNotifyLines={terminalNotifyLines}
+                    setTerminalNotifyLines={setTerminalNotifyLines}
+                    onSaveTranscriptSettings={handleSaveTranscriptSettings}
+                    tailActorId={tailActorId}
+                    setTailActorId={setTailActorId}
+                    tailMaxChars={tailMaxChars}
+                    setTailMaxChars={setTailMaxChars}
+                    tailStripAnsi={tailStripAnsi}
+                    setTailStripAnsi={setTailStripAnsi}
+                    tailCompact={tailCompact}
+                    setTailCompact={setTailCompact}
+                    tailText={tailText}
+                    tailHint={tailHint}
+                    tailErr={tailErr}
+                    tailBusy={tailBusy}
+                    tailCopyInfo={tailCopyInfo}
+                    onLoadTail={loadTerminalTail}
+                    onCopyTail={copyTailLastLines}
+                    onClearTail={clearTail}
+                  />
+                )}
 
-              {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} />}
+                {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} />}
 
-              {activeTab === "assistants" && (
-                <AssistantsTab
-                  isDark={isDark}
-                  groupId={groupId}
-                  isActive={scope === "group" && activeTab === "assistants"}
-                  busy={busy}
-                />
-              )}
+                {activeTab === "assistants" && (
+                  <AssistantsTab
+                    isDark={isDark}
+                    groupId={groupId}
+                    isActive={scope === "group" && activeTab === "assistants"}
+                    busy={busy}
+                  />
+                )}
 
-              {activeTab === "space" && (
-                <GroupSpaceTab
-                  isDark={isDark}
-                  groupId={groupId}
-                  isActive={scope === "group" && activeTab === "space"}
-                />
-              )}
+                {activeTab === "space" && (
+                  <GroupSpaceTab
+                    isDark={isDark}
+                    groupId={groupId}
+                    isActive={scope === "group" && activeTab === "space"}
+                  />
+                )}
 
-              {activeTab === "copyGroups" && <CopyGroupsTab isDark={isDark} groupId={groupId} groupTitle={groupDoc?.title || ""} />}
+                {activeTab === "copyGroups" && (
+                  <CopyGroupsTab
+                    isDark={isDark}
+                    groupId={groupId}
+                    groupTitle={groupDoc?.title || ""}
+                  />
+                )}
 
-              {activeTab === "connections" && (
-                <GroupBridgeConnectionsTab
-                  isDark={isDark}
-                  isActive={scope === "group" && activeTab === "connections"}
-                  groupId={groupId || ""}
-                  groupTitle={groupDoc?.title || ""}
-                />
-              )}
+                {activeTab === "connections" && (
+                  <GroupBridgeConnectionsTab
+                    isDark={isDark}
+                    isActive={scope === "group" && activeTab === "connections"}
+                    groupId={groupId || ""}
+                    groupTitle={groupDoc?.title || ""}
+                  />
+                )}
 
-              {activeTab === "capabilities" && (
-                <CapabilitiesTab
-                  isDark={isDark}
-                  isActive={scope === "global" && activeTab === "capabilities"}
-                  groupId={groupId}
-                />
-              )}
+                {activeTab === "capabilities" && (
+                  <CapabilitiesTab
+                    isDark={isDark}
+                    isActive={scope === "global" && activeTab === "capabilities"}
+                    groupId={groupId}
+                  />
+                )}
 
-              {activeTab === "actorProfiles" && (
-                <ActorProfilesTab
-                  isDark={isDark}
-                  isActive={scope === "global" && activeTab === "actorProfiles"}
-                  scope="global"
-                />
-              )}
+                {activeTab === "actorProfiles" && (
+                  <ActorProfilesTab
+                    isDark={isDark}
+                    isActive={scope === "global" && activeTab === "actorProfiles"}
+                    scope="global"
+                  />
+                )}
 
-              {activeTab === "myProfiles" && (
-                <ActorProfilesTab
-                  isDark={isDark}
-                  isActive={scope === "global" && activeTab === "myProfiles"}
-                  scope="my"
-                />
-              )}
+                {activeTab === "myProfiles" && (
+                  <ActorProfilesTab
+                    isDark={isDark}
+                    isActive={scope === "global" && activeTab === "myProfiles"}
+                    scope="my"
+                  />
+                )}
 
-              {activeTab === "branding" && (
-                <BrandingTab
-                  isDark={isDark}
-                  isActive={scope === "global" && activeTab === "branding"}
-                />
-              )}
+                {activeTab === "branding" && (
+                  <BrandingTab
+                    isDark={isDark}
+                    isActive={scope === "global" && activeTab === "branding"}
+                  />
+                )}
 
-              {activeTab === "webAccess" && (
-                <WebAccessTab
-                  isDark={isDark}
-                  isActive={scope === "global" && activeTab === "webAccess"}
-                />
-              )}
+                {activeTab === "webAccess" && (
+                  <WebAccessTab
+                    isDark={isDark}
+                    isActive={scope === "global" && activeTab === "webAccess"}
+                  />
+                )}
 
-              {activeTab === "webModels" && (
-                <WebModelConnectorsTab
-                  isDark={isDark}
-                  isActive={scope === "global" && activeTab === "webModels"}
-                  currentGroupId={groupId}
-                  onOpenWebAccess={() => setGlobalTab("webAccess")}
-                />
-              )}
+                {activeTab === "webModels" && (
+                  <WebModelConnectorsTab
+                    isDark={isDark}
+                    isActive={scope === "global" && activeTab === "webModels"}
+                    currentGroupId={groupId}
+                    onOpenWebAccess={() => setGlobalTab("webAccess")}
+                  />
+                )}
 
-
-              {activeTab === "developer" && (
-                <DeveloperTab
-                  isDark={isDark}
-                  groupId={groupId}
-                  runtimeVersion={runtimeVersion}
-                  daemonVersion={daemonVersion}
-                  runtimeInfoErr={runtimeInfoErr}
-                  developerMode={developerMode}
-                  setDeveloperMode={setDeveloperMode}
-                  logLevel={logLevel}
-                  setLogLevel={setLogLevel}
-                  terminalBacklogMiB={terminalBacklogMiB}
-                  setTerminalBacklogMiB={setTerminalBacklogMiB}
-                  terminalScrollbackLines={terminalScrollbackLines}
-                  setTerminalScrollbackLines={setTerminalScrollbackLines}
-                  peerRuntimeVisibility={peerRuntimeVisibility}
-                  setPeerRuntimeVisibility={setPeerRuntimeVisibility}
-                  assistantRuntimeVisibility={assistantRuntimeVisibility}
-                  setAssistantRuntimeVisibility={setAssistantRuntimeVisibility}
-                  obsBusy={obsBusy}
-                  onSaveObservability={handleSaveObservability}
-                  debugSnapshot={debugSnapshot}
-                  debugSnapshotErr={debugSnapshotErr}
-                  debugSnapshotBusy={debugSnapshotBusy}
-                  onLoadDebugSnapshot={loadDebugSnapshot}
-                  onClearDebugSnapshot={() => {
-                    setDebugSnapshot("");
-                    setDebugSnapshotErr("");
-                  }}
-                  logComponent={logComponent}
-                  setLogComponent={setLogComponent}
-                  logLines={logLines}
-                  setLogLines={setLogLines}
-                  logText={logText}
-                  logErr={logErr}
-                  logBusy={logBusy}
-                  onLoadLogTail={loadLogTail}
-                  onClearLogs={handleClearLogs}
-                  registryBusy={registryBusy}
-                  registryErr={registryErr}
-                  registryResult={registryResult}
-                  onPreviewRegistry={loadRegistryPreview}
-                  onReconcileRegistry={handleReconcileRegistry}
-                />
-              )}
+                {activeTab === "developer" && (
+                  <DeveloperTab
+                    isDark={isDark}
+                    groupId={groupId}
+                    runtimeVersion={runtimeVersion}
+                    daemonVersion={daemonVersion}
+                    runtimeInfoErr={runtimeInfoErr}
+                    developerMode={developerMode}
+                    setDeveloperMode={setDeveloperMode}
+                    logLevel={logLevel}
+                    setLogLevel={setLogLevel}
+                    terminalBacklogMiB={terminalBacklogMiB}
+                    setTerminalBacklogMiB={setTerminalBacklogMiB}
+                    terminalScrollbackLines={terminalScrollbackLines}
+                    setTerminalScrollbackLines={setTerminalScrollbackLines}
+                    peerRuntimeVisibility={peerRuntimeVisibility}
+                    setPeerRuntimeVisibility={setPeerRuntimeVisibility}
+                    assistantRuntimeVisibility={assistantRuntimeVisibility}
+                    setAssistantRuntimeVisibility={setAssistantRuntimeVisibility}
+                    obsBusy={obsBusy}
+                    onSaveObservability={handleSaveObservability}
+                    debugSnapshot={debugSnapshot}
+                    debugSnapshotErr={debugSnapshotErr}
+                    debugSnapshotBusy={debugSnapshotBusy}
+                    onLoadDebugSnapshot={loadDebugSnapshot}
+                    onClearDebugSnapshot={() => {
+                      setDebugSnapshot("");
+                      setDebugSnapshotErr("");
+                    }}
+                    logComponent={logComponent}
+                    setLogComponent={setLogComponent}
+                    logLines={logLines}
+                    setLogLines={setLogLines}
+                    logText={logText}
+                    logErr={logErr}
+                    logBusy={logBusy}
+                    onLoadLogTail={loadLogTail}
+                    onClearLogs={handleClearLogs}
+                    registryBusy={registryBusy}
+                    registryErr={registryErr}
+                    registryResult={registryResult}
+                    onPreviewRegistry={loadRegistryPreview}
+                    onReconcileRegistry={handleReconcileRegistry}
+                  />
+                )}
               </Suspense>
             )}
           </div>

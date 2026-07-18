@@ -7,7 +7,9 @@ type VoiceServiceReadinessInput = {
 };
 
 function recordFromUnknown(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 export function resolveVoiceServiceReadiness(input: VoiceServiceReadinessInput) {
@@ -16,13 +18,14 @@ export function resolveVoiceServiceReadiness(input: VoiceServiceReadinessInput) 
   const serviceHealth = recordFromUnknown(recordFromUnknown(assistant?.health).service);
   const serviceManagedModel = recordFromUnknown(serviceHealth.managed_model);
   const serviceStreamingBackend = recordFromUnknown(serviceHealth.streaming_backend);
-  const streamingRuntimeReady = String(input.serviceRuntimesById?.[input.streamingRuntimeId]?.status || "").trim() === "ready";
+  const streamingRuntimeReady =
+    String(input.serviceRuntimesById?.[input.streamingRuntimeId]?.status || "").trim() === "ready";
   const serviceAsrConfigured = Boolean(
-    serviceStreamingBackend.ready
-    || serviceHealth.asr_command_configured
-    || serviceHealth.asr_mock_configured
-    || serviceHealth.managed_asr_command_configured
-    || serviceManagedModel.command_ready,
+    serviceStreamingBackend.ready ||
+    serviceHealth.asr_command_configured ||
+    serviceHealth.asr_mock_configured ||
+    serviceHealth.managed_asr_command_configured ||
+    serviceManagedModel.command_ready,
   );
   return {
     assistantEnabled: Boolean(assistant?.enabled),

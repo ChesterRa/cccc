@@ -7,36 +7,27 @@ export type HeadlessPreviewTimelineEntry = {
   ts: string;
   live: boolean;
 } & (
-  {
-    kind: "message";
-    streamPhase: string;
-    text: string;
-    completed: boolean;
-    transient: boolean;
-  }
-  | {
-    kind: "activity";
-    activity: StreamingActivity;
-  }
+  | { kind: "message"; streamPhase: string; text: string; completed: boolean; transient: boolean }
+  | { kind: "activity"; activity: StreamingActivity }
 );
 
 export type HeadlessPreviewRenderGroup =
   | {
-    id: string;
-    kind: "message";
-    pendingEventId: string;
-    ts: string;
-    live: boolean;
-    entry: Extract<HeadlessPreviewTimelineEntry, { kind: "message" }>;
-  }
+      id: string;
+      kind: "message";
+      pendingEventId: string;
+      ts: string;
+      live: boolean;
+      entry: Extract<HeadlessPreviewTimelineEntry, { kind: "message" }>;
+    }
   | {
-    id: string;
-    kind: "activity-band";
-    pendingEventId: string;
-    ts: string;
-    live: boolean;
-    entries: Array<Extract<HeadlessPreviewTimelineEntry, { kind: "activity" }>>;
-  };
+      id: string;
+      kind: "activity-band";
+      pendingEventId: string;
+      ts: string;
+      live: boolean;
+      entries: Array<Extract<HeadlessPreviewTimelineEntry, { kind: "activity" }>>;
+    };
 
 type BuildHeadlessPreviewTimelineArgs = {
   previewSessions?: HeadlessPreviewSession[];
@@ -49,51 +40,73 @@ type BuildHeadlessPreviewTimelineArgs = {
   fallbackPhase?: string;
 };
 
-type SortableTimelineEntry = HeadlessPreviewTimelineEntry & {
-  order: number;
-};
+type SortableTimelineEntry = HeadlessPreviewTimelineEntry & { order: number };
 
-function normalizeTimelineSessions(args: BuildHeadlessPreviewTimelineArgs): HeadlessPreviewSession[] {
+function normalizeTimelineSessions(
+  args: BuildHeadlessPreviewTimelineArgs,
+): HeadlessPreviewSession[] {
   const previewSessions = Array.isArray(args.previewSessions)
     ? args.previewSessions.filter((session) => {
-      if (!session) return false;
-      const hasTranscriptBlocks = Array.isArray(session.transcriptBlocks)
-        && session.transcriptBlocks.some((block) => String(block?.text || "").trim());
-      const hasActivities = Array.isArray(session.activities)
-        && session.activities.some((activity) => String(activity?.summary || "").trim());
-      return hasTranscriptBlocks || hasActivities || Boolean(String(session.latestText || "").trim());
-    })
+        if (!session) return false;
+        const hasTranscriptBlocks =
+          Array.isArray(session.transcriptBlocks) &&
+          session.transcriptBlocks.some((block) => String(block?.text || "").trim());
+        const hasActivities =
+          Array.isArray(session.activities) &&
+          session.activities.some((activity) => String(activity?.summary || "").trim());
+        return (
+          hasTranscriptBlocks || hasActivities || Boolean(String(session.latestText || "").trim())
+        );
+      })
     : [];
 
   if (previewSessions.length > 0) return previewSessions;
 
   const fallbackText = String(args.fallbackText || "").trim();
-  const fallbackActivities = dedupeStreamingActivities(args.fallbackActivities || []).filter((activity) => String(activity.summary || "").trim());
+  const fallbackActivities = dedupeStreamingActivities(args.fallbackActivities || []).filter(
+    (activity) => String(activity.summary || "").trim(),
+  );
   if (!fallbackText && fallbackActivities.length <= 0) return [];
 
   const updatedAt = String(args.fallbackUpdatedAt || "").trim();
-  const fallbackPhase = String(args.fallbackPhase || "").trim().toLowerCase();
-  return [{
-    actorId: "",
-    pendingEventId: String(args.fallbackPendingEventId || "fallback-preview").trim() || "fallback-preview",
-    currentStreamId: String(args.fallbackStreamId || "fallback-stream").trim() || "fallback-stream",
-    phase: fallbackPhase || (fallbackText ? "streaming" : "pending"),
-    streamPhase: String(args.fallbackStreamPhase || "").trim().toLowerCase(),
-    updatedAt,
-    latestText: fallbackText,
-    transcriptBlocks: fallbackText
-      ? [{
-          id: `fallback:${String(args.fallbackPendingEventId || "preview").trim() || "preview"}`,
-          streamId: String(args.fallbackStreamId || "fallback-stream").trim() || "fallback-stream",
-          streamPhase: String(args.fallbackStreamPhase || "").trim().toLowerCase(),
-          text: fallbackText,
-          updatedAt,
-          completed: false,
-          transient: String(args.fallbackStreamPhase || "").trim().toLowerCase() === "commentary",
-        }]
-      : [],
-    activities: fallbackActivities,
-  }];
+  const fallbackPhase = String(args.fallbackPhase || "")
+    .trim()
+    .toLowerCase();
+  return [
+    {
+      actorId: "",
+      pendingEventId:
+        String(args.fallbackPendingEventId || "fallback-preview").trim() || "fallback-preview",
+      currentStreamId:
+        String(args.fallbackStreamId || "fallback-stream").trim() || "fallback-stream",
+      phase: fallbackPhase || (fallbackText ? "streaming" : "pending"),
+      streamPhase: String(args.fallbackStreamPhase || "")
+        .trim()
+        .toLowerCase(),
+      updatedAt,
+      latestText: fallbackText,
+      transcriptBlocks: fallbackText
+        ? [
+            {
+              id: `fallback:${String(args.fallbackPendingEventId || "preview").trim() || "preview"}`,
+              streamId:
+                String(args.fallbackStreamId || "fallback-stream").trim() || "fallback-stream",
+              streamPhase: String(args.fallbackStreamPhase || "")
+                .trim()
+                .toLowerCase(),
+              text: fallbackText,
+              updatedAt,
+              completed: false,
+              transient:
+                String(args.fallbackStreamPhase || "")
+                  .trim()
+                  .toLowerCase() === "commentary",
+            },
+          ]
+        : [],
+      activities: fallbackActivities,
+    },
+  ];
 }
 
 function compareTimelineEntries(left: SortableTimelineEntry, right: SortableTimelineEntry): number {
@@ -112,22 +125,33 @@ function compareTimelineEntries(left: SortableTimelineEntry, right: SortableTime
 }
 
 function normalizeComparableText(value: string | undefined): string {
-  return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 function isPlainReasoningActivity(activity: StreamingActivity): boolean {
-  const kind = String(activity?.kind || "").trim().toLowerCase();
-  const rawItemType = String(activity?.raw_item_type || "").trim().toLowerCase();
+  const kind = String(activity?.kind || "")
+    .trim()
+    .toLowerCase();
+  const rawItemType = String(activity?.raw_item_type || "")
+    .trim()
+    .toLowerCase();
   const hasActionMetadata = Boolean(
-    String(activity?.tool_name || "").trim()
-    || String(activity?.server_name || "").trim()
-    || String(activity?.command || "").trim()
-    || String(activity?.cwd || "").trim()
-    || String(activity?.query || "").trim()
-    || (Array.isArray(activity?.file_paths) && activity.file_paths.some((path) => String(path || "").trim()))
+    String(activity?.tool_name || "").trim() ||
+    String(activity?.server_name || "").trim() ||
+    String(activity?.command || "").trim() ||
+    String(activity?.cwd || "").trim() ||
+    String(activity?.query || "").trim() ||
+    (Array.isArray(activity?.file_paths) &&
+      activity.file_paths.some((path) => String(path || "").trim())),
   );
   if (hasActionMetadata) return false;
-  return rawItemType === "reasoning" || (kind === "thinking" && (!rawItemType || rawItemType === "reasoning"));
+  return (
+    rawItemType === "reasoning" ||
+    (kind === "thinking" && (!rawItemType || rawItemType === "reasoning"))
+  );
 }
 
 function duplicatesTranscriptText(activity: StreamingActivity, transcriptTexts: string[]): boolean {
@@ -140,20 +164,36 @@ function duplicatesTranscriptText(activity: StreamingActivity, transcriptTexts: 
   });
 }
 
-export function buildHeadlessPreviewTimelineEntries(args: BuildHeadlessPreviewTimelineArgs): HeadlessPreviewTimelineEntry[] {
+export function buildHeadlessPreviewTimelineEntries(
+  args: BuildHeadlessPreviewTimelineArgs,
+): HeadlessPreviewTimelineEntry[] {
   const previewSessions = normalizeTimelineSessions(args);
   if (previewSessions.length <= 0) return [];
 
-  const latestPendingEventId = String(previewSessions[previewSessions.length - 1]?.pendingEventId || "").trim();
+  const latestPendingEventId = String(
+    previewSessions[previewSessions.length - 1]?.pendingEventId || "",
+  ).trim();
   let order = 0;
   const entries: SortableTimelineEntry[] = [];
 
   for (const session of previewSessions) {
     const pendingEventId = String(session.pendingEventId || "").trim();
-    const liveSession = latestPendingEventId === pendingEventId
-      && !["completed", "failed"].includes(String(session.phase || "").trim().toLowerCase());
-    const narrativeTranscriptTexts = (Array.isArray(session.transcriptBlocks) ? session.transcriptBlocks : [])
-      .filter((block) => String(block?.streamPhase || "").trim().toLowerCase() !== "final_answer")
+    const liveSession =
+      latestPendingEventId === pendingEventId &&
+      !["completed", "failed"].includes(
+        String(session.phase || "")
+          .trim()
+          .toLowerCase(),
+      );
+    const narrativeTranscriptTexts = (
+      Array.isArray(session.transcriptBlocks) ? session.transcriptBlocks : []
+    )
+      .filter(
+        (block) =>
+          String(block?.streamPhase || "")
+            .trim()
+            .toLowerCase() !== "final_answer",
+      )
       .map((block) => normalizeComparableText(block?.text))
       .filter(Boolean);
 
@@ -166,11 +206,13 @@ export function buildHeadlessPreviewTimelineEntries(args: BuildHeadlessPreviewTi
         pendingEventId,
         ts: String(block.updatedAt || session.updatedAt || "").trim(),
         live: liveSession && !block.completed,
-        streamPhase: String(block.streamPhase || "").trim().toLowerCase(),
+        streamPhase: String(block.streamPhase || "")
+          .trim()
+          .toLowerCase(),
         text,
         completed: Boolean(block.completed),
         transient: Boolean(block.transient),
-        order: order += 1,
+        order: (order += 1),
       });
     }
 
@@ -183,23 +225,27 @@ export function buildHeadlessPreviewTimelineEntries(args: BuildHeadlessPreviewTi
         kind: "activity",
         pendingEventId,
         ts: String(activity.ts || session.updatedAt || "").trim(),
-        live: liveSession && String(activity.status || "").trim().toLowerCase() !== "completed",
+        live:
+          liveSession &&
+          String(activity.status || "")
+            .trim()
+            .toLowerCase() !== "completed",
         activity: {
           ...activity,
           id: String(activity.id || "").trim() || `activity-${order}`,
           summary,
         },
-        order: order += 1,
+        order: (order += 1),
       });
     }
   }
 
-  return entries
-    .sort(compareTimelineEntries)
-    .map(({ order: _order, ...entry }) => entry);
+  return entries.sort(compareTimelineEntries).map(({ order: _order, ...entry }) => entry);
 }
 
-export function buildHeadlessPreviewRenderGroups(entries: HeadlessPreviewTimelineEntry[]): HeadlessPreviewRenderGroup[] {
+export function buildHeadlessPreviewRenderGroups(
+  entries: HeadlessPreviewTimelineEntry[],
+): HeadlessPreviewRenderGroup[] {
   const groups: HeadlessPreviewRenderGroup[] = [];
   let activityBand: Array<Extract<HeadlessPreviewTimelineEntry, { kind: "activity" }>> = [];
 

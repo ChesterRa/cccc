@@ -19,7 +19,12 @@ export function shouldTriggerTopHistoryLoad(input: {
   hasLoadMoreHandler: boolean;
 }): boolean {
   if (input.isPrependCompensating) return false;
-  if (!input.topLoadArmed || !input.hasMoreHistory || input.isLoadingHistory || !input.hasLoadMoreHandler) {
+  if (
+    !input.topLoadArmed ||
+    !input.hasMoreHistory ||
+    input.isLoadingHistory ||
+    !input.hasLoadMoreHandler
+  ) {
     return false;
   }
   return input.scrollTop < input.topTriggerPx;
@@ -48,7 +53,9 @@ export function getTopHistoryLoadDecision(input: {
     scrollTop: input.scrollTop,
     topRearmPx: input.topRearmPx,
     isPrependCompensating: input.isPrependCompensating,
-  }) ? true : input.topLoadArmed;
+  })
+    ? true
+    : input.topLoadArmed;
 
   const shouldLoad = shouldTriggerTopHistoryLoad({
     scrollTop: input.scrollTop,
@@ -60,10 +67,7 @@ export function getTopHistoryLoadDecision(input: {
     hasLoadMoreHandler: input.hasLoadMoreHandler,
   });
 
-  return {
-    topLoadArmed: shouldLoad ? false : nextTopLoadArmed,
-    shouldLoad,
-  };
+  return { topLoadArmed: shouldLoad ? false : nextTopLoadArmed, shouldLoad };
 }
 
 export function getCorrectedScrollTopForAnchor(input: {
@@ -86,13 +90,8 @@ export function usePrependCompensationController(input: {
   isVirtualized: boolean;
   scrollToVirtualOffset: (offsetPx: number) => void;
 }) {
-  const {
-    parentRef,
-    lastScrollTopRef,
-    getMessageRowById,
-    isVirtualized,
-    scrollToVirtualOffset,
-  } = input;
+  const { parentRef, lastScrollTopRef, getMessageRowById, isVirtualized, scrollToVirtualOffset } =
+    input;
   const pendingRef = useRef<PendingPrependCompensation | null>(null);
   const isCompensatingRef = useRef(false);
   const rafRef = useRef<number | null>(null);
@@ -125,73 +124,74 @@ export function usePrependCompensationController(input: {
     isCompensatingRef.current = false;
   }, []);
 
-  const scrollToOffset = useCallback((offsetPx: number) => {
-    const el = parentRef.current;
-    if (!el) return;
-    const top = Math.max(0, Number(offsetPx) || 0);
-    if (isVirtualized) {
-      scrollToVirtualOffset(top);
-    } else {
-      el.scrollTo({ top, behavior: "auto" });
-    }
-    lastScrollTopRef.current = top;
-  }, [isVirtualized, lastScrollTopRef, parentRef, scrollToVirtualOffset]);
-
-  const scheduleAnchorCorrection = useCallback((anchorId: string, lockedAnchorTop: number | null) => {
-    cancelCorrection();
-    if (!anchorId || lockedAnchorTop == null) {
-      finish();
-      return;
-    }
-
-    let remainingChecks = 2;
-    const correctAnchor = () => {
-      rafRef.current = null;
+  const scrollToOffset = useCallback(
+    (offsetPx: number) => {
       const el = parentRef.current;
-      const row = getMessageRowById(anchorId);
-      if (el && row) {
-        const correctedTop = getCorrectedScrollTopForAnchor({
-          currentScrollTop: el.scrollTop,
-          lockedAnchorTop,
-          currentAnchorTop: row.getBoundingClientRect().top,
-          minDeltaPx: 0.5,
-        });
-        if (correctedTop !== el.scrollTop) {
-          el.scrollTop = correctedTop;
-        }
-        lastScrollTopRef.current = el.scrollTop;
+      if (!el) return;
+      const top = Math.max(0, Number(offsetPx) || 0);
+      if (isVirtualized) {
+        scrollToVirtualOffset(top);
+      } else {
+        el.scrollTo({ top, behavior: "auto" });
       }
+      lastScrollTopRef.current = top;
+    },
+    [isVirtualized, lastScrollTopRef, parentRef, scrollToVirtualOffset],
+  );
 
-      remainingChecks -= 1;
-      if (remainingChecks > 0) {
-        rafRef.current = window.requestAnimationFrame(correctAnchor);
+  const scheduleAnchorCorrection = useCallback(
+    (anchorId: string, lockedAnchorTop: number | null) => {
+      cancelCorrection();
+      if (!anchorId || lockedAnchorTop == null) {
+        finish();
         return;
       }
-      finish();
-    };
 
-    rafRef.current = window.requestAnimationFrame(correctAnchor);
-  }, [cancelCorrection, finish, getMessageRowById, lastScrollTopRef, parentRef]);
+      let remainingChecks = 2;
+      const correctAnchor = () => {
+        rafRef.current = null;
+        const el = parentRef.current;
+        const row = getMessageRowById(anchorId);
+        if (el && row) {
+          const correctedTop = getCorrectedScrollTopForAnchor({
+            currentScrollTop: el.scrollTop,
+            lockedAnchorTop,
+            currentAnchorTop: row.getBoundingClientRect().top,
+            minDeltaPx: 0.5,
+          });
+          if (correctedTop !== el.scrollTop) {
+            el.scrollTop = correctedTop;
+          }
+          lastScrollTopRef.current = el.scrollTop;
+        }
 
-  return useMemo(() => ({
-    pendingRef,
-    isCompensatingRef,
-    begin,
-    takePending,
-    finish,
-    clear,
-    cancelCorrection,
-    scrollToOffset,
-    scheduleAnchorCorrection,
-  }), [
-    begin,
-    cancelCorrection,
-    clear,
-    finish,
-    scheduleAnchorCorrection,
-    scrollToOffset,
-    takePending,
-  ]);
+        remainingChecks -= 1;
+        if (remainingChecks > 0) {
+          rafRef.current = window.requestAnimationFrame(correctAnchor);
+          return;
+        }
+        finish();
+      };
+
+      rafRef.current = window.requestAnimationFrame(correctAnchor);
+    },
+    [cancelCorrection, finish, getMessageRowById, lastScrollTopRef, parentRef],
+  );
+
+  return useMemo(
+    () => ({
+      pendingRef,
+      isCompensatingRef,
+      begin,
+      takePending,
+      finish,
+      clear,
+      cancelCorrection,
+      scrollToOffset,
+      scheduleAnchorCorrection,
+    }),
+    [begin, cancelCorrection, clear, finish, scheduleAnchorCorrection, scrollToOffset, takePending],
+  );
 }
 
 export function useTopHistoryLoadCoordinator(input: {
@@ -223,79 +223,82 @@ export function useTopHistoryLoadCoordinator(input: {
     compensation.clear();
   }, [compensation]);
 
-  const handleTopHistoryScroll = useCallback((params: {
-    scrollTop: number;
-    topTriggerPx: number;
-    topRearmPx: number;
-    hasMoreHistory: boolean;
-    isLoadingHistory: boolean;
-  }) => {
-    const decision = getTopHistoryLoadDecision({
-      ...params,
-      topLoadArmed: topLoadArmedRef.current,
-      isPrependCompensating: compensation.isCompensatingRef.current,
-      hasLoadMoreHandler: !!onLoadMore,
-    });
-    topLoadArmedRef.current = decision.topLoadArmed;
-    if (!decision.shouldLoad) return false;
+  const handleTopHistoryScroll = useCallback(
+    (params: {
+      scrollTop: number;
+      topTriggerPx: number;
+      topRearmPx: number;
+      hasMoreHistory: boolean;
+      isLoadingHistory: boolean;
+    }) => {
+      const decision = getTopHistoryLoadDecision({
+        ...params,
+        topLoadArmed: topLoadArmedRef.current,
+        isPrependCompensating: compensation.isCompensatingRef.current,
+        hasLoadMoreHandler: !!onLoadMore,
+      });
+      topLoadArmedRef.current = decision.topLoadArmed;
+      if (!decision.shouldLoad) return false;
 
-    detachFollowMode();
-    markAwayFromBottom();
-    cancelPendingBottomScroll();
+      detachFollowMode();
+      markAwayFromBottom();
+      cancelPendingBottomScroll();
 
-    const anchor = getAnchorSnapshot(params.scrollTop);
-    compensation.begin({
-      previousOffset: params.scrollTop,
-      previousTotalSize: getCurrentContentSize(),
-      anchorId: anchor?.anchorId || "",
-      anchorOffsetPx: Number(anchor?.offsetPx || 0),
-      anchorTop: anchor?.anchorId ? getAnchorTop(anchor.anchorId) : null,
-    });
+      const anchor = getAnchorSnapshot(params.scrollTop);
+      compensation.begin({
+        previousOffset: params.scrollTop,
+        previousTotalSize: getCurrentContentSize(),
+        anchorId: anchor?.anchorId || "",
+        anchorOffsetPx: Number(anchor?.offsetPx || 0),
+        anchorTop: anchor?.anchorId ? getAnchorTop(anchor.anchorId) : null,
+      });
 
-    onLoadMore?.();
-    return true;
-  }, [
-    cancelPendingBottomScroll,
-    compensation,
-    detachFollowMode,
-    getAnchorSnapshot,
-    getAnchorTop,
-    getCurrentContentSize,
-    markAwayFromBottom,
-    onLoadMore,
-  ]);
+      onLoadMore?.();
+      return true;
+    },
+    [
+      cancelPendingBottomScroll,
+      compensation,
+      detachFollowMode,
+      getAnchorSnapshot,
+      getAnchorTop,
+      getCurrentContentSize,
+      markAwayFromBottom,
+      onLoadMore,
+    ],
+  );
 
-  const applyPendingPrependCompensation = useCallback((params: {
-    isLoadingHistory: boolean;
-  }) => {
-    if (params.isLoadingHistory) return false;
-    const pending = compensation.pendingRef.current;
-    if (!pending) return false;
+  const applyPendingPrependCompensation = useCallback(
+    (params: { isLoadingHistory: boolean }) => {
+      if (params.isLoadingHistory) return false;
+      const pending = compensation.pendingRef.current;
+      if (!pending) return false;
 
-    compensation.takePending();
+      compensation.takePending();
 
-    if (pending.anchorId && scrollToMessageAnchor(pending.anchorId, pending.anchorOffsetPx)) {
+      if (pending.anchorId && scrollToMessageAnchor(pending.anchorId, pending.anchorOffsetPx)) {
+        topLoadArmedRef.current = false;
+        compensation.scheduleAnchorCorrection(pending.anchorId, pending.anchorTop);
+        return true;
+      }
+
+      const nextTotalSize = getCurrentContentSize();
+      const delta = Math.max(0, nextTotalSize - pending.previousTotalSize);
+      if (delta <= 0) {
+        compensation.finish();
+        return true;
+      }
+
+      compensation.scrollToOffset(pending.previousOffset + delta);
       topLoadArmedRef.current = false;
       compensation.scheduleAnchorCorrection(pending.anchorId, pending.anchorTop);
       return true;
-    }
+    },
+    [compensation, getCurrentContentSize, scrollToMessageAnchor],
+  );
 
-    const nextTotalSize = getCurrentContentSize();
-    const delta = Math.max(0, nextTotalSize - pending.previousTotalSize);
-    if (delta <= 0) {
-      compensation.finish();
-      return true;
-    }
-
-    compensation.scrollToOffset(pending.previousOffset + delta);
-    topLoadArmedRef.current = false;
-    compensation.scheduleAnchorCorrection(pending.anchorId, pending.anchorTop);
-    return true;
-  }, [compensation, getCurrentContentSize, scrollToMessageAnchor]);
-
-  return useMemo(() => ({
-    handleTopHistoryScroll,
-    applyPendingPrependCompensation,
-    reset,
-  }), [applyPendingPrependCompensation, handleTopHistoryScroll, reset]);
+  return useMemo(
+    () => ({ handleTopHistoryScroll, applyPendingPrependCompensation, reset }),
+    [applyPendingPrependCompensation, handleTopHistoryScroll, reset],
+  );
 }

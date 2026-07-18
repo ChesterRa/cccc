@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ....kernel.agent_state_hygiene import build_mind_context_mini, evaluate_agent_state_hygiene
-from ....kernel.actors import find_actor
+from ....kernel.actors import find_actor, is_internal_actor
 from ....kernel.group import load_group
 from ....kernel.group_space import get_group_space_prompt_state
 from ....kernel.prompt_files import load_builtin_help_markdown as _load_builtin_help_markdown
+from ....kernel.peer_insight import PEER_INSIGHT_RUNTIME_HELP
 from ....util.fs import read_json
 from ..common import MCPError, _call_daemon_or_raise
 from . import cccc_group_actor as _group_actor_mod
@@ -22,6 +23,7 @@ _CCCC_HELP_BUILTIN = _load_builtin_help_markdown().strip()
 _RUNTIME_HELP_SECTION_HEADERS = {
     "## Active Skills (Runtime)",
     "## Group Space (Runtime)",
+    "## Peer Insight Contract (Runtime)",
     "## Web Model Transport (Runtime)",
 }
 
@@ -59,6 +61,14 @@ _BOOTSTRAP_INTERRUPT_NOTIFY_KINDS = {
     "silence_check",
     "standup",
 }
+
+_BOOTSTRAP_TAKEOVER_NUDGE = (
+    "Do not resume the train of thought that produced this recovery state. Imagine its author has left and you "
+    "have just inherited the real situation. Treat the material below as testimony, not authority. Take ownership "
+    "of the real outcome with no loyalty to the predecessor's framing, confidence, plan, or sunk cost. Reconstruct "
+    "what is true now; preserve only what still earns preservation, and change course only when the renewed judgment "
+    "materially warrants it."
+)
 
 
 def _bootstrap_signal_family(*, item: Dict[str, Any], data: Dict[str, Any]) -> str:
@@ -117,6 +127,19 @@ def _actor_runtime_for_help(*, group_id: str, actor_id: str) -> str:
     if not isinstance(actor, dict):
         return ""
     return str(actor.get("runtime") or "").strip().lower()
+
+
+def _normal_peer_help_enabled(*, group_id: str, actor_id: str) -> bool:
+    gid = str(group_id or "").strip()
+    aid = str(actor_id or "").strip()
+    if not gid or not aid or aid == "user":
+        return False
+    try:
+        group = load_group(gid)
+        actor = find_actor(group, aid) if group is not None else None
+    except Exception:
+        return False
+    return isinstance(actor, dict) and not is_internal_actor(actor)
 
 
 def _find_actor_state(*, context: Dict[str, Any], actor_id: str) -> Optional[Dict[str, Any]]:
@@ -530,9 +553,34 @@ def _build_bootstrap_session(*, group: Dict[str, Any], actors: List[Dict[str, An
     }
 
 
+def _bootstrap_has_recoverable_work(*, pack: Dict[str, Any]) -> bool:
+    agent_state = pack.get("agent_state") if isinstance(pack.get("agent_state"), dict) else {}
+    hot = agent_state.get("hot") if isinstance(agent_state.get("hot"), dict) else {}
+    warm = agent_state.get("warm") if isinstance(agent_state.get("warm"), dict) else {}
+    brief = pack.get("coordination_brief") if isinstance(pack.get("coordination_brief"), dict) else {}
+    tasks = pack.get("tasks") if isinstance(pack.get("tasks"), dict) else {}
+
+    if any(str(hot.get(field) or "").strip() for field in ("active_task_id", "focus", "next_action")):
+        return True
+    if str(brief.get("current_focus") or "").strip():
+        return True
+    blockers = hot.get("blockers")
+    if isinstance(blockers, list) and any(str(item or "").strip() for item in blockers):
+        return True
+    for field in ("open_loops", "commitments"):
+        items = warm.get(field)
+        if isinstance(items, list) and any(str(item or "").strip() for item in items):
+            return True
+    for field in ("assigned_active", "attention"):
+        items = tasks.get(field)
+        if isinstance(items, list) and any(isinstance(item, dict) and bool(item) for item in items):
+            return True
+    return False
+
+
 def _build_bootstrap_recovery(*, pack: Dict[str, Any]) -> Dict[str, Any]:
     agent_state = pack.get("agent_state") if isinstance(pack.get("agent_state"), dict) else {}
-    return {
+    recovery = {
         "coordination_brief": pack.get("coordination_brief") if isinstance(pack.get("coordination_brief"), dict) else {},
         "self_state": {
             "hot": agent_state.get("hot") if isinstance(agent_state.get("hot"), dict) else {},
@@ -548,6 +596,10 @@ def _build_bootstrap_recovery(*, pack: Dict[str, Any]) -> Dict[str, Any]:
             "handoffs": pack.get("recent_handoffs") if isinstance(pack.get("recent_handoffs"), list) else [],
         },
     }
+    if not _bootstrap_has_recoverable_work(pack=pack):
+        return recovery
+    # Prime the takeover stance before exposing state that could otherwise anchor the resumed frame.
+    return {"takeover_nudge": _BOOTSTRAP_TAKEOVER_NUDGE, **recovery}
 
 
 def _build_bootstrap_inbox_preview(*, inbox: Dict[str, Any], limit: int) -> Dict[str, Any]:
@@ -575,6 +627,9 @@ def _build_bootstrap_inbox_preview(*, inbox: Dict[str, Any], limit: int) -> Dict
             "reply_required": bool(data.get("reply_required") is True or data.get("requires_ack") is True),
             "text_preview": _trim_text(text_source, max_chars=220),
         }
+        insight_preview = _trim_text(data.get("insight"), max_chars=220)
+        if insight_preview:
+            entry["insight_preview"] = insight_preview
         notify_kind = str(data.get("kind") or "").strip()
         if notify_kind:
             entry["notify_kind"] = notify_kind
@@ -594,6 +649,8 @@ def _append_runtime_help_addenda(markdown: str, *, group_id: str, actor_id: str)
     if not gid or not aid:
         return base
     sections: List[str] = []
+    if _normal_peer_help_enabled(group_id=gid, actor_id=aid):
+        sections.append(PEER_INSIGHT_RUNTIME_HELP.rstrip())
     if _actor_runtime_for_help(group_id=gid, actor_id=aid) == "web_model":
         sections.append(
             "\n".join(
@@ -850,11 +907,14 @@ def bootstrap(
         ),
         "memory_recall_gate": memory_recall_gate,
         "next_calls": {
-            "help": "cccc_help()",
-            "project_info": "cccc_project_info()",
+            "help": "cccc_help()  # when a CCCC route or state boundary is unclear",
+            "project_info": 'cccc_capability_use(tool_name="cccc_project_info", tool_arguments={})',
             "context_get": "cccc_context_get()",
             "inbox_list": 'cccc_inbox_list(kind_filter="all")',
-            "memory_search": 'cccc_memory(action="search", query=...)',
+            "memory_search": (
+                'cccc_capability_use(tool_name="cccc_memory", '
+                'tool_arguments={"action":"search","query":"..."})'
+            ),
             "interrupt_triage": (
                 'If inbox_preview messages have signal_family="interrupt", treat them as coordination interrupts: '
                 'refresh or reply, then resume the current task unless priority changed.'

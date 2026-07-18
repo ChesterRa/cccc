@@ -43,8 +43,14 @@ export const ActorAvatar = memo(function ActorAvatar({
   const [failedCustomAvatarSrc, setFailedCustomAvatarSrc] = useState<string | null>(null);
   const customAvatarFailed = !!customAvatarSrc && failedCustomAvatarSrc === customAvatarSrc;
 
-  const usesInlineClaudeLogo = !isUser && String(runtime || "").trim().toLowerCase() === "claude";
-  const runtimeKey = String(runtime || "").trim().toLowerCase();
+  const usesInlineClaudeLogo =
+    !isUser &&
+    String(runtime || "")
+      .trim()
+      .toLowerCase() === "claude";
+  const runtimeKey = String(runtime || "")
+    .trim()
+    .toLowerCase();
   const logoClassName =
     runtimeKey === "grok"
       ? "h-[68%] w-[68%] object-contain"

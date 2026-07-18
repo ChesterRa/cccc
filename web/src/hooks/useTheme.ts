@@ -21,20 +21,17 @@ function getStoredTheme(): Theme {
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
   const effectiveTheme = theme === "system" ? getSystemTheme() : theme;
-  
+
   // Remove both classes first
   root.classList.remove("light", "dark");
-  
+
   // Add the appropriate class
   root.classList.add(effectiveTheme);
-  
+
   // Update meta theme-color for mobile browsers
   const metaThemeColor = document.querySelector('meta[name="theme-color"]');
   if (metaThemeColor) {
-    metaThemeColor.setAttribute(
-      "content",
-      effectiveTheme === "dark" ? "#020617" : "#f8fafc"
-    );
+    metaThemeColor.setAttribute("content", effectiveTheme === "dark" ? "#020617" : "#f8fafc");
   }
   syncDocumentBrandingTheme();
 }
@@ -48,18 +45,18 @@ function subscribeToSystemTheme(callback: () => void) {
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(getStoredTheme);
-  
+
   // Use useSyncExternalStore to subscribe to system theme changes.
   const systemTheme = useSyncExternalStore(
     subscribeToSystemTheme,
     getSystemTheme,
-    () => "dark" as const
+    () => "dark" as const,
   );
 
   // Compute resolvedTheme with useMemo to avoid extra state writes in effects.
   const resolvedTheme = useMemo<"light" | "dark">(
     () => (theme === "system" ? systemTheme : theme),
-    [theme, systemTheme]
+    [theme, systemTheme],
   );
 
   // Apply theme on mount and when theme changes
@@ -83,13 +80,7 @@ export function useTheme() {
     });
   }, []);
 
-  return {
-    theme,
-    resolvedTheme,
-    setTheme,
-    toggleTheme,
-    isDark: resolvedTheme === "dark",
-  };
+  return { theme, resolvedTheme, setTheme, toggleTheme, isDark: resolvedTheme === "dark" };
 }
 
 // Terminal theme colors based on CSS variables

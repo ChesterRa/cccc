@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { getRenderedActorIds, isChatViewportAtBottom } from "../../src/hooks/useAppTabState";
 
@@ -19,7 +19,7 @@ describe("useAppTabState", () => {
         mountedActorIds: ["codex-1"],
         activeTab: "codex-1",
         runtimeActors: [],
-      })
+      }),
     ).toEqual(["codex-1"]);
   });
 
@@ -29,17 +29,13 @@ describe("useAppTabState", () => {
         mountedActorIds: ["codex-1", "claude-1"],
         activeTab: "chat",
         runtimeActors: [{ id: "claude-1", role: "peer", runtime: "claude", runner: "pty" }],
-      })
+      }),
     ).toEqual(["claude-1"]);
   });
 
   it("does not render an unknown active runtime tab without a live actor or mounted cache", () => {
     expect(
-      getRenderedActorIds({
-        mountedActorIds: [],
-        activeTab: "missing-actor",
-        runtimeActors: [],
-      })
+      getRenderedActorIds({ mountedActorIds: [], activeTab: "missing-actor", runtimeActors: [] }),
     ).toEqual([]);
   });
 });

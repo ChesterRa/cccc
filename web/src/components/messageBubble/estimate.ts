@@ -37,17 +37,24 @@ function getEstimatedAttachmentHeight(attachments: MessageAttachment[]): number 
   return total;
 }
 
-export function estimateMessageRowHeight(message: LedgerEvent | undefined, options?: { collapseHeader?: boolean }): number {
+export function estimateMessageRowHeight(
+  message: LedgerEvent | undefined,
+  options?: { collapseHeader?: boolean },
+): number {
   if (!message) return 100;
 
-  const data = message.data as {
-    text?: string;
-    attachments?: MessageAttachment[];
-    quote_text?: string;
-    activities?: Array<{ kind?: string; summary?: string }>;
-  } | undefined;
+  const data = message.data as
+    | {
+        text?: string;
+        insight?: string;
+        attachments?: MessageAttachment[];
+        quote_text?: string;
+        activities?: Array<{ kind?: string; summary?: string }>;
+      }
+    | undefined;
 
   const text = String(data?.text || "");
+  const insight = String(data?.insight || "");
   const attachments = Array.isArray(data?.attachments) ? data.attachments : [];
   const quoteText = String(data?.quote_text || "");
   const activities = Array.isArray(data?.activities) ? data.activities : [];
@@ -65,11 +72,20 @@ export function estimateMessageRowHeight(message: LedgerEvent | undefined, optio
     if (isQueuedOnlyPlaceholder) {
       return Math.max(56, DEFAULT_QUEUED_PLACEHOLDER_HEIGHT + headerOffset);
     }
-    return Math.max(72, DEFAULT_STREAMING_HEIGHT + getEstimatedTextHeight(text) + headerOffset);
+    return Math.max(
+      72,
+      DEFAULT_STREAMING_HEIGHT +
+        getEstimatedTextHeight(text) +
+        (insight.trim() ? 32 + getEstimatedTextHeight(insight) : 0) +
+        headerOffset,
+    );
   }
 
   let height = DEFAULT_MESSAGE_HEIGHT;
   height += getEstimatedTextHeight(text);
+  if (insight.trim()) {
+    height += 32 + getEstimatedTextHeight(insight);
+  }
 
   const codeBlockCount = (text.match(/```/g) || []).length / 2;
   if (codeBlockCount > 0) {

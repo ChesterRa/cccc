@@ -22,12 +22,17 @@ import {
 } from "../features/contextModal/contextRead";
 import { parsePrivateEnvSetText } from "../utils/privateEnvInput";
 import { parseHelpMarkdown, updateActorHelpNote } from "../utils/helpMarkdown";
-import { formatCapabilityIdInput, normalizeCapabilityIdList, parseCapabilityIdInput } from "../utils/capabilityAutoload";
+import {
+  formatCapabilityIdInput,
+  normalizeCapabilityIdList,
+  parseCapabilityIdInput,
+} from "../utils/capabilityAutoload";
 import { actorProfileIdentityKey, actorProfileMatchesRef } from "../utils/actorProfiles";
 import { findPresentationSlot } from "../utils/presentation";
 import { buildPresentationRefForSlot } from "../utils/presentationRefs";
 import { formatGroupSettingsUpdateError } from "../utils/groupSettingsErrors";
 import { getEffectiveActorRunner, normalizeActorRunner } from "../utils/headlessRuntimeSupport";
+import { appendQuotedOriginalPerspective, getMessageInsight } from "../utils/messagePerspective";
 import {
   useGroupStore,
   useUIStore,
@@ -39,12 +44,29 @@ import {
 import { getAckRecipientIdsForEvent, getRecipientActorIdsForEvent } from "../hooks/useSSE";
 import { getChatSession } from "../stores/useUIStore";
 import * as api from "../services/api";
-import { Actor, ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData, PresentationMessageRef, SupportedRuntime, TextScale, Theme } from "../types";
+import {
+  Actor,
+  ActorProfile,
+  RUNTIME_INFO,
+  LedgerEvent,
+  GroupSettings,
+  ChatMessageData,
+  PresentationMessageRef,
+  SupportedRuntime,
+  TextScale,
+  Theme,
+} from "../types";
 
-const ContextModal = lazy(() => import("./ContextModal/index").then((module) => ({ default: module.ContextModal })));
-const SettingsModal = lazy(() => import("./SettingsModal").then((module) => ({ default: module.SettingsModal })));
+const ContextModal = lazy(() =>
+  import("./ContextModal/index").then((module) => ({ default: module.ContextModal })),
+);
+const SettingsModal = lazy(() =>
+  import("./SettingsModal").then((module) => ({ default: module.SettingsModal })),
+);
 const PresentationViewerModal = lazy(() =>
-  import("./presentation/PresentationViewerModal").then((module) => ({ default: module.PresentationViewerModal }))
+  import("./presentation/PresentationViewerModal").then((module) => ({
+    default: module.PresentationViewerModal,
+  })),
 );
 
 interface AppModalsProps {
@@ -81,17 +103,16 @@ function sortPresentationSlotIds(slotIds: string[]): string[] {
 
 function isStandardChatGptWebModelActor(actor?: Actor | null): boolean {
   return (
-    String(actor?.runtime || "").trim().toLowerCase() === "web_model"
-    && !String(actor?.internal_kind || "").trim()
+    String(actor?.runtime || "")
+      .trim()
+      .toLowerCase() === "web_model" && !String(actor?.internal_kind || "").trim()
   );
 }
 
 function LazyModalFallback({ isDark: _ }: { isDark?: boolean }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/40 backdrop-blur-[2px]">
-      <div
-        className="rounded-2xl px-5 py-4 text-sm shadow-xl glass-modal min-w-[120px] flex items-center justify-center font-medium text-[var(--color-text-secondary)]"
-      >
+      <div className="rounded-2xl px-5 py-4 text-sm shadow-xl glass-modal min-w-[120px] flex items-center justify-center font-medium text-[var(--color-text-secondary)]">
         <span className="flex items-center gap-2">
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--color-text-muted)] border-t-transparent" />
           <span>Loading...</span>
@@ -117,7 +138,7 @@ export function AppModals({
   fetchContext,
   canManageGroups,
 }: AppModalsProps) {
-  const { t } = useTranslation(['actors', 'chat', 'modals']);
+  const { t } = useTranslation(["actors", "chat", "modals"]);
   // Stores
   const {
     groups,
@@ -180,7 +201,10 @@ export function AppModals({
   const setComposerDestGroupId = useComposerStore((state) => state.setDestGroupId);
 
   const preferredPresentationSurface = selectedGroupId
-    ? (!isSmallScreen && getChatSession(selectedGroupId, chatSessions).presentationDisplayMode === "split" ? "split" : "modal")
+    ? !isSmallScreen &&
+      getChatSession(selectedGroupId, chatSessions).presentationDisplayMode === "split"
+      ? "split"
+      : "modal"
     : "modal";
 
   const {
@@ -245,7 +269,9 @@ export function AppModals({
   const [actorProfiles, setActorProfiles] = useState<ActorProfile[]>([]);
   const [actorProfilesBusy, setActorProfilesBusy] = useState(false);
   const [editActorNotesBusy, setEditActorNotesBusy] = useState(false);
-  const [presentationViewerCacheByGroup, setPresentationViewerCacheByGroup] = useState<Record<string, string[]>>({});
+  const [presentationViewerCacheByGroup, setPresentationViewerCacheByGroup] = useState<
+    Record<string, string[]>
+  >({});
   const editActorNotesBaselineRef = useRef("");
   const editActorNotesSeqRef = useRef(0);
 
@@ -277,10 +303,7 @@ export function AppModals({
         delete next[normalizedGroupId];
         return next;
       }
-      return {
-        ...current,
-        [normalizedGroupId]: nextSlots,
-      };
+      return { ...current, [normalizedGroupId]: nextSlots };
     });
   }, []);
 
@@ -313,7 +336,7 @@ export function AppModals({
     const gid = String(selectedGroupId || "").trim();
     if (!gid) return [];
     const cachedSlots = (presentationViewerCacheByGroup[gid] || []).filter(
-      (slotId) => !!findPresentationSlot(groupPresentation, slotId)?.card
+      (slotId) => !!findPresentationSlot(groupPresentation, slotId)?.card,
     );
     const activeSlotId =
       presentationViewer && presentationViewer.groupId === gid
@@ -325,37 +348,40 @@ export function AppModals({
     return sortPresentationSlotIds(cachedSlots);
   }, [groupPresentation, presentationViewer, presentationViewerCacheByGroup, selectedGroupId]);
 
-  const loadEditingActorNotes = useCallback(async (groupId: string, actorId: string) => {
-    const gid = String(groupId || "").trim();
-    const aid = String(actorId || "").trim();
-    if (!gid || !aid) {
-      editActorNotesBaselineRef.current = "";
-      setEditActorNotes("");
-      return;
-    }
-    const seq = ++editActorNotesSeqRef.current;
-    setEditActorNotesBusy(true);
-    try {
-      const resp = await api.fetchGroupPrompts(gid);
-      if (!resp.ok) {
-        if (seq === editActorNotesSeqRef.current) {
-          editActorNotesBaselineRef.current = "";
-          setEditActorNotes("");
-        }
+  const loadEditingActorNotes = useCallback(
+    async (groupId: string, actorId: string) => {
+      const gid = String(groupId || "").trim();
+      const aid = String(actorId || "").trim();
+      if (!gid || !aid) {
+        editActorNotesBaselineRef.current = "";
+        setEditActorNotes("");
         return;
       }
-      const helpContent = String(resp.result?.help?.content || "");
-      const parsed = parseHelpMarkdown(helpContent);
-      const note = String(parsed.actorNotes[aid] || "");
-      if (seq !== editActorNotesSeqRef.current) return;
-      editActorNotesBaselineRef.current = note.trim();
-      setEditActorNotes(note);
-    } finally {
-      if (seq === editActorNotesSeqRef.current) {
-        setEditActorNotesBusy(false);
+      const seq = ++editActorNotesSeqRef.current;
+      setEditActorNotesBusy(true);
+      try {
+        const resp = await api.fetchGroupPrompts(gid);
+        if (!resp.ok) {
+          if (seq === editActorNotesSeqRef.current) {
+            editActorNotesBaselineRef.current = "";
+            setEditActorNotes("");
+          }
+          return;
+        }
+        const helpContent = String(resp.result?.help?.content || "");
+        const parsed = parseHelpMarkdown(helpContent);
+        const note = String(parsed.actorNotes[aid] || "");
+        if (seq !== editActorNotesSeqRef.current) return;
+        editActorNotesBaselineRef.current = note.trim();
+        setEditActorNotes(note);
+      } finally {
+        if (seq === editActorNotesSeqRef.current) {
+          setEditActorNotesBusy(false);
+        }
       }
-    }
-  }, [setEditActorNotes]);
+    },
+    [setEditActorNotes],
+  );
 
   const persistActorNotes = useCallback(
     async (groupId: string, actorId: string, note: string, actorOrder?: string[]) => {
@@ -387,12 +413,12 @@ export function AppModals({
 
       return { ok: true as const };
     },
-    []
+    [],
   );
 
   // Computed
   const selectedGroupRunning = useGroupStore(
-    (s) => s.groups.find((g) => String(g.group_id || "") === s.selectedGroupId)?.running ?? false
+    (s) => s.groups.find((g) => String(g.group_id || "") === s.selectedGroupId)?.running ?? false,
   );
   const hasForeman = actors.some((a) => a.role === "foreman");
 
@@ -400,13 +426,13 @@ export function AppModals({
   const messageMetaEvent = useMemo(() => {
     if (!_recipientsEventId) return null;
     const liveHit = events.find(
-      (x) => x.kind === "chat.message" && String(x.id || "") === _recipientsEventId
+      (x) => x.kind === "chat.message" && String(x.id || "") === _recipientsEventId,
     );
     if (liveHit) return liveHit;
     const windowEvents = Array.isArray(chatWindow?.events) ? chatWindow.events : [];
     return (
       windowEvents.find(
-        (x) => x.kind === "chat.message" && String(x.id || "") === _recipientsEventId
+        (x) => x.kind === "chat.message" && String(x.id || "") === _recipientsEventId,
       ) || null
     );
   }, [chatWindow?.events, events, _recipientsEventId]);
@@ -416,9 +442,7 @@ export function AppModals({
     // Type guard: ensure data.to is an array.
     const metaData = messageMetaEvent.data as { to?: unknown[] } | undefined;
     const toRaw = metaData && Array.isArray(metaData.to) ? metaData.to : [];
-    const toTokensList = toRaw
-      .map((x) => String(x || "").trim())
-      .filter((s) => s.length > 0);
+    const toTokensList = toRaw.map((x) => String(x || "").trim()).filter((s) => s.length > 0);
     const toLabel = toTokensList.length > 0 ? toTokensList.join(", ") : "@all";
 
     const msgData = messageMetaEvent.data as ChatMessageData | undefined;
@@ -435,11 +459,18 @@ export function AppModals({
           .filter((id) => id && recipientIdSet.has(id))
           .map((id) => [id, !!(os[id]?.reply_required ? os[id]?.replied : os[id]?.acked)] as const),
         recipientIdSet.has("user")
-          ? (["user", !!(os["user"]?.reply_required ? os["user"]?.replied : os["user"]?.acked)] as const)
+          ? ([
+              "user",
+              !!(os["user"]?.reply_required ? os["user"]?.replied : os["user"]?.acked),
+            ] as const)
           : null,
       ].filter(Boolean) as Array<readonly [string, boolean]>;
       const anyReplyRequired = recipientIds.some((id) => !!os[id]?.reply_required);
-      return { toLabel, entries, statusKind: anyReplyRequired ? ("reply" as const) : ("ack" as const) };
+      return {
+        toLabel,
+        entries,
+        statusKind: anyReplyRequired ? ("reply" as const) : ("ack" as const),
+      };
     }
 
     const isAttention = String(msgData?.priority || "normal") === "attention";
@@ -560,7 +591,8 @@ export function AppModals({
 
   const handleDeleteGroup = async () => {
     if (!selectedGroupId) return;
-    if (!window.confirm(t('deleteGroupConfirm', { name: groupDoc?.title || selectedGroupId }))) return;
+    if (!window.confirm(t("deleteGroupConfirm", { name: groupDoc?.title || selectedGroupId })))
+      return;
     setBusy("group-delete");
     try {
       const resp = await api.deleteGroup(selectedGroupId);
@@ -582,7 +614,8 @@ export function AppModals({
 
   const handleResetGroup = async () => {
     if (!selectedGroupId) return;
-    if (!window.confirm(t('resetGroupConfirm', { name: groupDoc?.title || selectedGroupId }))) return;
+    if (!window.confirm(t("resetGroupConfirm", { name: groupDoc?.title || selectedGroupId })))
+      return;
     const oldGroupId = selectedGroupId;
     setBusy("group-reset");
     try {
@@ -615,7 +648,7 @@ export function AppModals({
 
   const handleSaveEditActor = async (
     payload: EditActorSavePayload,
-    options: { restart: boolean }
+    options: { restart: boolean },
   ) => {
     if (!selectedGroupId || !editingActor) return;
 
@@ -625,9 +658,11 @@ export function AppModals({
     const label = String(editingActor.title || editingActor.id || actorId).trim() || actorId;
     const mode = payload.mode === "profile" ? "profile" : "custom";
     const profileSelectionKey = String(payload.profileId || "").trim();
-    const selectedProfile = mode === "profile"
-      ? actorProfiles.find((item) => actorProfileIdentityKey(item) === profileSelectionKey) || null
-      : null;
+    const selectedProfile =
+      mode === "profile"
+        ? actorProfiles.find((item) => actorProfileIdentityKey(item) === profileSelectionKey) ||
+          null
+        : null;
     const profileId = String(selectedProfile?.id || "").trim();
     const linkedBefore = Boolean(String(editingActor.profile_id || "").trim());
     const convertToCustom = mode === "custom" && linkedBefore && !!payload.convertToCustom;
@@ -646,16 +681,20 @@ export function AppModals({
     const unsetKeys = Array.isArray(payload?.unsetKeys) ? payload.unsetKeys : [];
     const clear = !!payload?.clear;
     const canEditSecrets = mode === "custom" && (!linkedBefore || convertToCustom);
-    const willChangeSecrets = canEditSecrets && (clear || setKeys.length > 0 || unsetKeys.length > 0);
+    const willChangeSecrets =
+      canEditSecrets && (clear || setKeys.length > 0 || unsetKeys.length > 0);
 
     const currentRuntime = String(editingActor.runtime || "codex").trim();
     const currentRunner = getEffectiveActorRunner(editingActor);
     const currentCommand = Array.isArray(editingActor.command)
-      ? editingActor.command.filter((item) => typeof item === "string" && item.trim()).join(" ").trim()
+      ? editingActor.command
+          .filter((item) => typeof item === "string" && item.trim())
+          .join(" ")
+          .trim()
       : "";
     const currentTitle = String(editingActor.title || "").trim();
     const currentCapabilityAutoload = normalizeCapabilityIdList(
-      (editingActor as { capability_autoload?: unknown[] })?.capability_autoload
+      (editingActor as { capability_autoload?: unknown[] })?.capability_autoload,
     );
     const currentActorNotes = String(editActorNotesBaselineRef.current || "").trim();
     const nextActorNotes = String(editActorNotes || "").trim();
@@ -667,20 +706,31 @@ export function AppModals({
       ? normalizeCapabilityIdList(payload.capabilityAutoload)
       : [];
 
-    const runtimeChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextRuntime !== currentRuntime;
-    const runnerChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextRunner !== currentRunner;
-    const commandChanged = mode === "custom" && (!linkedBefore || convertToCustom) && nextCommand !== currentCommand;
+    const runtimeChanged =
+      mode === "custom" && (!linkedBefore || convertToCustom) && nextRuntime !== currentRuntime;
+    const runnerChanged =
+      mode === "custom" && (!linkedBefore || convertToCustom) && nextRunner !== currentRunner;
+    const commandChanged =
+      mode === "custom" && (!linkedBefore || convertToCustom) && nextCommand !== currentCommand;
     const titleChanged = nextTitle !== currentTitle;
     const autoloadChanged =
       JSON.stringify(nextCapabilityAutoload) !== JSON.stringify(currentCapabilityAutoload);
-    const profileChanged = mode === "profile" && !actorProfileMatchesRef(selectedProfile || { id: "", scope: "global", owner_id: "" }, {
-      profileId: String(editingActor.profile_id || "").trim(),
-      profileScope: String(editingActor.profile_scope || "global").trim() || "global",
-      profileOwner: String(editingActor.profile_owner || "").trim(),
-    });
+    const profileChanged =
+      mode === "profile" &&
+      !actorProfileMatchesRef(selectedProfile || { id: "", scope: "global", owner_id: "" }, {
+        profileId: String(editingActor.profile_id || "").trim(),
+        profileScope: String(editingActor.profile_scope || "global").trim() || "global",
+        profileOwner: String(editingActor.profile_owner || "").trim(),
+      });
     const actorNotesChanged = nextActorNotes !== currentActorNotes;
     const hasActorMutation =
-      convertToCustom || runtimeChanged || runnerChanged || commandChanged || titleChanged || autoloadChanged || profileChanged;
+      convertToCustom ||
+      runtimeChanged ||
+      runnerChanged ||
+      commandChanged ||
+      titleChanged ||
+      autoloadChanged ||
+      profileChanged;
 
     if (!options.restart && !hasActorMutation && !willChangeSecrets && !actorNotesChanged) {
       throw new Error(NO_CHANGES_SENTINEL);
@@ -695,7 +745,10 @@ export function AppModals({
 
     setBusy("actor-update");
     try {
-      let actorSnapshot: Record<string, unknown> = editingActor as unknown as Record<string, unknown>;
+      let actorSnapshot: Record<string, unknown> = editingActor as unknown as Record<
+        string,
+        unknown
+      >;
 
       if (mode === "custom" && linkedBefore && convertToCustom) {
         const convertResp = await api.updateActor(
@@ -705,10 +758,7 @@ export function AppModals({
           undefined,
           undefined,
           nextTitle,
-          {
-            profileAction: "convert_to_custom",
-            capabilityAutoload: nextCapabilityAutoload,
-          }
+          { profileAction: "convert_to_custom", capabilityAutoload: nextCapabilityAutoload },
         );
         if (!convertResp.ok) {
           showError(`${convertResp.error.code}: ${convertResp.error.message}`);
@@ -736,7 +786,7 @@ export function AppModals({
               profileScope: (selectedProfile?.scope || "global") as api.ProfileScope,
               profileOwner: String(selectedProfile?.owner_id || "").trim() || undefined,
               capabilityAutoload: nextCapabilityAutoload,
-            }
+            },
           );
           if (!profileResp.ok) {
             showError(`${profileResp.error.code}: ${profileResp.error.message}`);
@@ -751,9 +801,14 @@ export function AppModals({
       } else {
         const snapshotRuntime = String(actorSnapshot.runtime || currentRuntime || "codex").trim();
         const snapshotCommand = Array.isArray(actorSnapshot.command)
-          ? actorSnapshot.command.filter((item) => typeof item === "string" && item.trim()).join(" ").trim()
+          ? actorSnapshot.command
+              .filter((item) => typeof item === "string" && item.trim())
+              .join(" ")
+              .trim()
           : currentCommand;
-        const snapshotRunner = getEffectiveActorRunner(actorSnapshot as { runner?: unknown; runner_effective?: unknown });
+        const snapshotRunner = getEffectiveActorRunner(
+          actorSnapshot as { runner?: unknown; runner_effective?: unknown },
+        );
         const snapshotTitle = String(actorSnapshot.title || "").trim();
         const needCustomPatch =
           nextRuntime !== snapshotRuntime ||
@@ -769,7 +824,7 @@ export function AppModals({
             nextRunner,
             editActorCommand,
             nextTitle,
-            { capabilityAutoload: nextCapabilityAutoload }
+            { capabilityAutoload: nextCapabilityAutoload },
           );
           if (!customResp.ok) {
             showError(`${customResp.error.code}: ${customResp.error.message}`);
@@ -784,7 +839,13 @@ export function AppModals({
       }
 
       if (willChangeSecrets) {
-        const envResp = await api.updateActorPrivateEnv(selectedGroupId, actorId, setVars, unsetKeys, clear);
+        const envResp = await api.updateActorPrivateEnv(
+          selectedGroupId,
+          actorId,
+          setVars,
+          unsetKeys,
+          clear,
+        );
         if (!envResp.ok) {
           showError(`${envResp.error.code}: ${envResp.error.message}`);
           return;
@@ -796,7 +857,7 @@ export function AppModals({
           selectedGroupId,
           actorId,
           nextActorNotes,
-          actors.map((item) => String(item.id || "").trim()).filter(Boolean)
+          actors.map((item) => String(item.id || "").trim()).filter(Boolean),
         );
         if (!actorNotesResp.ok) {
           showError(actorNotesResp.error);
@@ -818,7 +879,13 @@ export function AppModals({
 
       if (!options.restart) {
         const isRunning = Boolean(editingActor.running ?? editingActor.enabled ?? false);
-        const restartRequired = isRunning && (willChangeSecrets || profileChanged || runtimeChanged || commandChanged || convertToCustom);
+        const restartRequired =
+          isRunning &&
+          (willChangeSecrets ||
+            profileChanged ||
+            runtimeChanged ||
+            commandChanged ||
+            convertToCustom);
         if (restartRequired) {
           showNotice({ message: t("savedRestartRequired", { label }) });
         }
@@ -836,19 +903,30 @@ export function AppModals({
     await handleSaveEditActor(payload, { restart: true });
   };
 
-  const applyEditingActor = useCallback((actor: Record<string, unknown>) => {
-    const runtime = String(actor.runtime || "").trim();
-    setEditActorRuntime((runtime || "codex") as SupportedRuntime);
-    setEditActorRunner(getEffectiveActorRunner(actor));
-    setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
-    setEditActorTitle(String(actor.title || ""));
-    setEditActorNotes("");
-    editActorNotesBaselineRef.current = "";
-    setEditActorCapabilityAutoloadText(
-      formatCapabilityIdInput((actor as { capability_autoload?: unknown[] }).capability_autoload)
-    );
-    setEditingActor(actor as Actor);
-  }, [setEditActorRuntime, setEditActorRunner, setEditActorCommand, setEditActorTitle, setEditActorNotes, setEditActorCapabilityAutoloadText, setEditingActor]);
+  const applyEditingActor = useCallback(
+    (actor: Record<string, unknown>) => {
+      const runtime = String(actor.runtime || "").trim();
+      setEditActorRuntime((runtime || "codex") as SupportedRuntime);
+      setEditActorRunner(getEffectiveActorRunner(actor));
+      setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
+      setEditActorTitle(String(actor.title || ""));
+      setEditActorNotes("");
+      editActorNotesBaselineRef.current = "";
+      setEditActorCapabilityAutoloadText(
+        formatCapabilityIdInput((actor as { capability_autoload?: unknown[] }).capability_autoload),
+      );
+      setEditingActor(actor as Actor);
+    },
+    [
+      setEditActorRuntime,
+      setEditActorRunner,
+      setEditActorCommand,
+      setEditActorTitle,
+      setEditActorNotes,
+      setEditActorCapabilityAutoloadText,
+      setEditingActor,
+    ],
+  );
 
   useEffect(() => {
     if (!editingActor || !selectedGroupId) return;
@@ -865,21 +943,26 @@ export function AppModals({
     if (!latest) return;
     const configChanged =
       String(editingActor.profile_id || "").trim() !== String(latest.profile_id || "").trim() ||
-      String(editingActor.profile_scope || "global").trim() !== String(latest.profile_scope || "global").trim() ||
-      String(editingActor.profile_owner || "").trim() !== String(latest.profile_owner || "").trim() ||
-      Number(editingActor.profile_revision_applied || 0) !== Number(latest.profile_revision_applied || 0) ||
+      String(editingActor.profile_scope || "global").trim() !==
+        String(latest.profile_scope || "global").trim() ||
+      String(editingActor.profile_owner || "").trim() !==
+        String(latest.profile_owner || "").trim() ||
+      Number(editingActor.profile_revision_applied || 0) !==
+        Number(latest.profile_revision_applied || 0) ||
       String(editingActor.runtime || "").trim() !== String(latest.runtime || "").trim() ||
       getEffectiveActorRunner(editingActor) !== getEffectiveActorRunner(latest) ||
       String(editingActor.title || "") !== String(latest.title || "") ||
       String(Array.isArray(editingActor.command) ? editingActor.command.join("\u0000") : "") !==
         String(Array.isArray(latest.command) ? latest.command.join("\u0000") : "") ||
       String(
-        normalizeCapabilityIdList((editingActor as { capability_autoload?: unknown[] }).capability_autoload).join(
-          "\u0000"
-        )
+        normalizeCapabilityIdList(
+          (editingActor as { capability_autoload?: unknown[] }).capability_autoload,
+        ).join("\u0000"),
       ) !==
         String(
-          normalizeCapabilityIdList((latest as { capability_autoload?: unknown[] }).capability_autoload).join("\u0000")
+          normalizeCapabilityIdList(
+            (latest as { capability_autoload?: unknown[] }).capability_autoload,
+          ).join("\u0000"),
         );
     if (configChanged) {
       applyEditingActor(latest as Record<string, unknown>);
@@ -897,7 +980,9 @@ export function AppModals({
 
   const handleSaveEditActorAsProfile = async (): Promise<SaveActorProfileResult | void> => {
     if (!editingActor || !selectedGroupId) return;
-    const suggested = String(editActorTitle || editingActor.title || editingActor.id || "New Profile").trim();
+    const suggested = String(
+      editActorTitle || editingActor.title || editingActor.id || "New Profile",
+    ).trim();
     const name = window.prompt(t("profileNamePrompt"), suggested);
     if (!name || !name.trim()) return;
     setBusy("actor-profile-save");
@@ -921,7 +1006,11 @@ export function AppModals({
       }
       const profileId = String(resp.result?.profile?.id || "").trim();
       if (profileId) {
-        const copyResp = await api.copyActorPrivateEnvToProfile(profileId, selectedGroupId, editingActor.id);
+        const copyResp = await api.copyActorPrivateEnvToProfile(
+          profileId,
+          selectedGroupId,
+          editingActor.id,
+        );
         if (!copyResp.ok) {
           showError(`${copyResp.error.code}: ${copyResp.error.message}`);
           return;
@@ -934,8 +1023,10 @@ export function AppModals({
       const useNow = window.confirm(
         t("useSavedProfileNowConfirm", {
           name: profileName,
-          actor: String(editActorTitle || editingActor.title || editingActor.id || "").trim() || editingActor.id,
-        })
+          actor:
+            String(editActorTitle || editingActor.title || editingActor.id || "").trim() ||
+            editingActor.id,
+        }),
       );
       return { profileId, profileName, useNow };
     } finally {
@@ -952,7 +1043,7 @@ export function AppModals({
       setCurrentDir(resp.result.path || path);
       setParentDir(resp.result.parent || null);
     } else {
-      setDirBrowseError(resp.error?.message || t('failedToListDir'));
+      setDirBrowseError(resp.error?.message || t("failedToListDir"));
     }
   };
 
@@ -968,7 +1059,7 @@ export function AppModals({
         if (resp.error?.code === "scope_already_attached") {
           const existing = getErrorDetailGroupId(resp.error);
           if (existing) {
-            showError(t('scopeAlreadyAttached'));
+            showError(t("scopeAlreadyAttached"));
             closeModal("createGroup");
             resetCreateGroupForm();
             await refreshGroups();
@@ -982,7 +1073,7 @@ export function AppModals({
       const groupId = resp.result.group_id;
       const attachResp = await api.attachScope(groupId, path);
       if (!attachResp.ok) {
-        showError(t('createdButFailedAttach', { message: attachResp.error.message }));
+        showError(t("createdButFailedAttach", { message: attachResp.error.message }));
       }
 
       resetCreateGroupForm();
@@ -999,7 +1090,10 @@ export function AppModals({
     const actorId = newActorId.trim();
     const secretsText = String(newActorSecretsSetText || "");
     const actorNotes = String(newActorNotes || "").trim();
-    const selectedProfile = actorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim()) || null;
+    const selectedProfile =
+      actorProfiles.find(
+        (item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim(),
+      ) || null;
     const capabilityAutoload = parseCapabilityIdInput(newActorCapabilityAutoloadText);
 
     if (newActorUseProfile && !selectedProfile) {
@@ -1020,17 +1114,23 @@ export function AppModals({
     setBusy("actor-add");
     setAddActorError("");
     try {
-      const commandToUse = newActorUseProfile ? "" : (newActorUseDefaultCommand ? "" : newActorCommand);
+      const commandToUse = newActorUseProfile
+        ? ""
+        : newActorUseDefaultCommand
+          ? ""
+          : newActorCommand;
       const resp = await api.addActor(
         selectedGroupId,
         actorId,
         newActorRole,
         newActorUseProfile ? String(selectedProfile?.runtime || "codex") : newActorRuntime,
-        newActorUseProfile
-          ? normalizeActorRunner(selectedProfile?.runner)
-          : newActorRunner,
+        newActorUseProfile ? normalizeActorRunner(selectedProfile?.runner) : newActorRunner,
         commandToUse,
-        newActorUseProfile ? undefined : (Object.keys(secretsSetVars).length ? secretsSetVars : undefined),
+        newActorUseProfile
+          ? undefined
+          : Object.keys(secretsSetVars).length
+            ? secretsSetVars
+            : undefined,
         newActorUseProfile
           ? {
               profileId: String(selectedProfile?.id || "").trim(),
@@ -1038,19 +1138,19 @@ export function AppModals({
               profileOwner: String(selectedProfile?.owner_id || "").trim() || undefined,
               capabilityAutoload,
             }
-          : {
-              capabilityAutoload,
-            }
+          : { capabilityAutoload },
       );
       if (!resp.ok) {
-        setAddActorError(resp.error?.message || t('failedToAddAgent'));
+        setAddActorError(resp.error?.message || t("failedToAddAgent"));
         return false;
       }
 
       const createdActorId = String(
         (resp.result && typeof resp.result === "object"
           ? (resp.result as { actor?: { id?: string } }).actor?.id
-          : "") || actorId || suggestedActorId
+          : "") ||
+          actorId ||
+          suggestedActorId,
       ).trim();
 
       const postCreateErrors: string[] = [];
@@ -1060,7 +1160,7 @@ export function AppModals({
           selectedGroupId,
           createdActorId,
           actorNotes,
-          [...actors.map((item) => String(item.id || "").trim()).filter(Boolean), createdActorId]
+          [...actors.map((item) => String(item.id || "").trim()).filter(Boolean), createdActorId],
         );
         if (!actorNotesResp.ok) {
           postCreateErrors.push(`${t("actorNotes")}: ${actorNotesResp.error}`);
@@ -1070,7 +1170,9 @@ export function AppModals({
       if (avatarFile && createdActorId) {
         const avatarResp = await api.uploadActorAvatar(selectedGroupId, createdActorId, avatarFile);
         if (!avatarResp.ok) {
-          postCreateErrors.push(`${t("avatarTitle")}: ${avatarResp.error?.message || t("avatarUploadFailed")}`);
+          postCreateErrors.push(
+            `${t("avatarTitle")}: ${avatarResp.error?.message || t("avatarUploadFailed")}`,
+          );
         }
       }
 
@@ -1082,7 +1184,7 @@ export function AppModals({
           t("actorCreatedSetupFailed", {
             actor: createdActorId,
             details: postCreateErrors.join(" · "),
-          })
+          }),
         );
       }
       return true;
@@ -1125,7 +1227,12 @@ export function AppModals({
         }
         const hasSecrets = Object.keys(parsed.setVars).length > 0;
         if (hasSecrets) {
-          const secretResp = await api.updateActorProfilePrivateEnv(profileId, parsed.setVars, [], false);
+          const secretResp = await api.updateActorProfilePrivateEnv(
+            profileId,
+            parsed.setVars,
+            [],
+            false,
+          );
           if (!secretResp.ok) {
             setAddActorError(secretResp.error?.message || t("failedToSaveActorProfile"));
             return;
@@ -1141,9 +1248,16 @@ export function AppModals({
 
   // Computed for ActorConfigModal create mode
   const suggestedActorId = (() => {
-    const selectedProfile = actorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim()) || null;
+    const selectedProfile =
+      actorProfiles.find(
+        (item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim(),
+      ) || null;
     const profileRuntime = String(selectedProfile?.runtime || "").trim();
-    const prefix = newActorUseProfile ? (profileRuntime || "actor") : (newActorRuntime === "web_model" ? "chatgpt-web" : newActorRuntime);
+    const prefix = newActorUseProfile
+      ? profileRuntime || "actor"
+      : newActorRuntime === "web_model"
+        ? "chatgpt-web"
+        : newActorRuntime;
     const existing = new Set(actors.map((a) => String(a.id || "")));
     for (let i = 1; i <= 999; i++) {
       const candidate = `${prefix}-${i}`;
@@ -1151,7 +1265,9 @@ export function AppModals({
     }
     return `${prefix}-${Date.now()}`;
   })();
-  const currentGroupHasChatGptWebModelActor = actors.some((actor) => isStandardChatGptWebModelActor(actor));
+  const currentGroupHasChatGptWebModelActor = actors.some((actor) =>
+    isStandardChatGptWebModelActor(actor),
+  );
 
   const canAddActor = (() => {
     if (busy === "actor-add") return false;
@@ -1160,7 +1276,8 @@ export function AppModals({
     const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
     const available = rtInfo?.available ?? false;
     if (!newActorUseDefaultCommand && !newActorCommand.trim()) return false;
-    if (newActorRuntime === "custom" && (newActorUseDefaultCommand || !newActorCommand.trim())) return false;
+    if (newActorRuntime === "custom" && (newActorUseDefaultCommand || !newActorCommand.trim()))
+      return false;
     if (!available && (newActorUseDefaultCommand || !newActorCommand.trim())) return false;
     return true;
   })();
@@ -1170,7 +1287,11 @@ export function AppModals({
     if (newActorUseProfile && !String(newActorProfileId || "").trim()) {
       return t("profileRequired");
     }
-    if (!newActorUseProfile && newActorRuntime === "web_model" && currentGroupHasChatGptWebModelActor) {
+    if (
+      !newActorUseProfile &&
+      newActorRuntime === "web_model" &&
+      currentGroupHasChatGptWebModelActor
+    ) {
       return "This group already has the ChatGPT Web Model actor. Use Settings > ChatGPT Web Model to configure it.";
     }
     const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
@@ -1179,21 +1300,20 @@ export function AppModals({
       return t("commandOverrideRequired");
     }
     if (newActorRuntime === "custom" && (newActorUseDefaultCommand || !newActorCommand.trim())) {
-      return t('customRuntimeRequiresCommand');
+      return t("customRuntimeRequiresCommand");
     }
     if (!available && (newActorUseDefaultCommand || !newActorCommand.trim())) {
-      return t('runtimeNotInstalled', { runtime: RUNTIME_INFO[newActorRuntime]?.label || newActorRuntime });
+      return t("runtimeNotInstalled", {
+        runtime: RUNTIME_INFO[newActorRuntime]?.label || newActorRuntime,
+      });
     }
     return "";
   })();
 
-  const handleCloseAddActor = useCallback(
-    () => {
-      closeModal("addActor");
-      resetAddActorForm();
-    },
-    [closeModal, resetAddActorForm]
-  );
+  const handleCloseAddActor = useCallback(() => {
+    closeModal("addActor");
+    resetAddActorForm();
+  }, [closeModal, resetAddActorForm]);
 
   const handleCancelEditActor = useCallback(() => {
     editActorNotesSeqRef.current += 1;
@@ -1239,28 +1359,33 @@ export function AppModals({
   const presentationViewerSourceEvent = useMemo(() => {
     const focusEventId = String(presentationViewer?.focusEventId || "").trim();
     if (!focusEventId || presentationViewer?.groupId !== selectedGroupId) return null;
-    return presentationReferenceEvents.find((event) => String(event.id || "").trim() === focusEventId) || null;
+    return (
+      presentationReferenceEvents.find((event) => String(event.id || "").trim() === focusEventId) ||
+      null
+    );
   }, [presentationReferenceEvents, presentationViewer, selectedGroupId]);
 
   const handleRelayMessage = async (dstGroupId: string, toTokens: string[], note: string) => {
     const src = relaySourceEvent;
-     const srcGroupId = relaySourceGroupId;
+    const srcGroupId = relaySourceGroupId;
     const dstGroup = String(dstGroupId || "").trim();
     const srcEventId = src?.id ? String(src.id) : "";
     if (!src || !srcGroupId || !srcEventId) return;
     if (!dstGroup) return;
     if (dstGroup === srcGroupId) {
-      showError(t('destGroupDifferent'));
+      showError(t("destGroupDifferent"));
       return;
     }
 
     const d = src.data as ChatMessageData | undefined;
     const srcText = typeof d?.text === "string" ? d.text : "";
+    const srcInsight = getMessageInsight(d);
     const srcQuoteText = typeof d?.quote_text === "string" ? d.quote_text.trim() : "";
     const noteText = String(note || "").trim();
-    const relayText = (noteText ? noteText + "\n\n" : "") + String(srcText || "");
+    const relayBody = [noteText, String(srcText || "").trim()].filter(Boolean).join("\n\n");
+    const relayText = appendQuotedOriginalPerspective(relayBody, srcInsight, src.by || "sender");
     if (!relayText.trim()) {
-      showError(t('relayTextEmpty'));
+      showError(t("relayTextEmpty"));
       return;
     }
 
@@ -1302,12 +1427,25 @@ export function AppModals({
         if (preferredPresentationSurface === "split") {
           setChatPresentationDockOpen(gid, true);
         }
-        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId, surface: preferredPresentationSurface });
+        setPresentationViewer({
+          groupId: gid,
+          slotId: resp.result.slot_id || payload.slotId,
+          surface: preferredPresentationSurface,
+        });
       } finally {
         setBusy("");
       }
     },
-    [preferredPresentationSurface, selectedGroupId, setBusy, setChatPresentationDockOpen, setGroupPresentation, setPresentationPin, setPresentationViewer, showError],
+    [
+      preferredPresentationSurface,
+      selectedGroupId,
+      setBusy,
+      setChatPresentationDockOpen,
+      setGroupPresentation,
+      setPresentationPin,
+      setPresentationViewer,
+      showError,
+    ],
   );
 
   const handlePresentationPublishFile = useCallback(
@@ -1326,12 +1464,25 @@ export function AppModals({
         if (preferredPresentationSurface === "split") {
           setChatPresentationDockOpen(gid, true);
         }
-        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId, surface: preferredPresentationSurface });
+        setPresentationViewer({
+          groupId: gid,
+          slotId: resp.result.slot_id || payload.slotId,
+          surface: preferredPresentationSurface,
+        });
       } finally {
         setBusy("");
       }
     },
-    [preferredPresentationSurface, selectedGroupId, setBusy, setChatPresentationDockOpen, setGroupPresentation, setPresentationPin, setPresentationViewer, showError],
+    [
+      preferredPresentationSurface,
+      selectedGroupId,
+      setBusy,
+      setChatPresentationDockOpen,
+      setGroupPresentation,
+      setPresentationPin,
+      setPresentationViewer,
+      showError,
+    ],
   );
 
   const handlePresentationPublishWorkspace = useCallback(
@@ -1350,12 +1501,25 @@ export function AppModals({
         if (preferredPresentationSurface === "split") {
           setChatPresentationDockOpen(gid, true);
         }
-        setPresentationViewer({ groupId: gid, slotId: resp.result.slot_id || payload.slotId, surface: preferredPresentationSurface });
+        setPresentationViewer({
+          groupId: gid,
+          slotId: resp.result.slot_id || payload.slotId,
+          surface: preferredPresentationSurface,
+        });
       } finally {
         setBusy("");
       }
     },
-    [preferredPresentationSurface, selectedGroupId, setBusy, setChatPresentationDockOpen, setGroupPresentation, setPresentationPin, setPresentationViewer, showError],
+    [
+      preferredPresentationSurface,
+      selectedGroupId,
+      setBusy,
+      setChatPresentationDockOpen,
+      setGroupPresentation,
+      setPresentationPin,
+      setPresentationViewer,
+      showError,
+    ],
   );
 
   const handlePresentationClear = useCallback(
@@ -1386,7 +1550,17 @@ export function AppModals({
         setBusy("");
       }
     },
-    [clearPresentationSlotAttention, forgetPresentationViewerSlot, selectedGroupId, setBusy, setGroupPresentation, setPresentationViewer, setPresentationPin, showError, t],
+    [
+      clearPresentationSlotAttention,
+      forgetPresentationViewerSlot,
+      selectedGroupId,
+      setBusy,
+      setGroupPresentation,
+      setPresentationViewer,
+      setPresentationPin,
+      showError,
+      t,
+    ],
   );
 
   const handleQuotePresentationReference = useCallback(
@@ -1397,7 +1571,9 @@ export function AppModals({
       const slot = findPresentationSlot(groupPresentation, normalizedSlotId);
       const ref = payload.ref || buildPresentationRefForSlot(slot);
       if (!ref) {
-        showError(t("chat:presentationMissingCard", { defaultValue: "This presentation slot is empty." }));
+        showError(
+          t("chat:presentationMissingCard", { defaultValue: "This presentation slot is empty." }),
+        );
         return;
       }
       setQuotedPresentationRef(ref);
@@ -1407,7 +1583,18 @@ export function AppModals({
       setPresentationViewer(null);
       window.setTimeout(() => composerRef.current?.focus(), 0);
     },
-    [composerRef, groupPresentation, selectedGroupId, setActiveTab, setChatMobileSurface, setComposerDestGroupId, setPresentationViewer, setQuotedPresentationRef, showError, t],
+    [
+      composerRef,
+      groupPresentation,
+      selectedGroupId,
+      setActiveTab,
+      setChatMobileSurface,
+      setComposerDestGroupId,
+      setPresentationViewer,
+      setQuotedPresentationRef,
+      showError,
+      t,
+    ],
   );
 
   const handleOpenPresentationMessageContext = useCallback(
@@ -1435,7 +1622,15 @@ export function AppModals({
       await openChatWindow(gid, eid);
       window.setTimeout(() => composerRef.current?.focus(), 0);
     },
-    [composerRef, onStartReply, openChatWindow, selectedGroupId, setActiveTab, setChatMobileSurface, setPresentationViewer],
+    [
+      composerRef,
+      onStartReply,
+      openChatWindow,
+      selectedGroupId,
+      setActiveTab,
+      setChatMobileSurface,
+      setPresentationViewer,
+    ],
   );
 
   return (
@@ -1458,13 +1653,17 @@ export function AppModals({
           openModal("context");
         }}
         onOpenSettings={() => openModal("settings")}
-        onOpenGroupEdit={canManageGroups ? () => {
-          if (groupDoc) {
-            setEditGroupTitle(groupDoc.title || "");
-            setEditGroupTopic(groupDoc.topic || "");
-            openModal("groupEdit");
-          }
-        } : undefined}
+        onOpenGroupEdit={
+          canManageGroups
+            ? () => {
+                if (groupDoc) {
+                  setEditGroupTitle(groupDoc.title || "");
+                  setEditGroupTopic(groupDoc.topic || "");
+                  openModal("groupEdit");
+                }
+              }
+            : undefined
+        }
         onStartGroup={onStartGroup}
         onStopGroup={onStopGroup}
         onSetGroupState={onSetGroupState}
@@ -1514,14 +1713,19 @@ export function AppModals({
         key={
           presentationPin
             ? `${presentationPin.groupId}:${presentationPin.slotId}:${
-                findPresentationSlot(groupPresentation, presentationPin?.slotId || "")?.card?.published_at || "empty"
+                findPresentationSlot(groupPresentation, presentationPin?.slotId || "")?.card
+                  ?.published_at || "empty"
               }`
             : "presentation-pin-closed"
         }
         isOpen={!!presentationPin && presentationPin.groupId === selectedGroupId}
         groupId={selectedGroupId}
         isDark={isDark}
-        slot={presentationPin?.groupId === selectedGroupId ? findPresentationSlot(groupPresentation, presentationPin?.slotId || "") : null}
+        slot={
+          presentationPin?.groupId === selectedGroupId
+            ? findPresentationSlot(groupPresentation, presentationPin?.slotId || "")
+            : null
+        }
         busy={busy === "presentation-pin"}
         onClose={() => setPresentationPin(null)}
         onSubmitUrl={handlePresentationPublishUrl}
@@ -1537,17 +1741,39 @@ export function AppModals({
             return (
               <PresentationViewerModal
                 key={`${selectedGroupId}:${slotId}:${version}`}
-                isOpen={!!presentationViewer && presentationViewer.surface !== "split" && presentationViewer.groupId === selectedGroupId && presentationViewer.slotId === slotId}
+                isOpen={
+                  !!presentationViewer &&
+                  presentationViewer.surface !== "split" &&
+                  presentationViewer.groupId === selectedGroupId &&
+                  presentationViewer.slotId === slotId
+                }
                 isDark={isDark}
                 readOnly={readOnly}
                 groupId={selectedGroupId}
                 slotId={slotId}
                 presentation={groupPresentation}
-                focusRef={presentationViewer?.groupId === selectedGroupId && presentationViewer.slotId === slotId ? presentationViewer.focusRef || null : null}
-                focusEventId={presentationViewer?.groupId === selectedGroupId && presentationViewer.slotId === slotId ? presentationViewer.focusEventId || null : null}
-                sourceEvent={presentationViewer?.groupId === selectedGroupId && presentationViewer.slotId === slotId ? presentationViewerSourceEvent : null}
+                focusRef={
+                  presentationViewer?.groupId === selectedGroupId &&
+                  presentationViewer.slotId === slotId
+                    ? presentationViewer.focusRef || null
+                    : null
+                }
+                focusEventId={
+                  presentationViewer?.groupId === selectedGroupId &&
+                  presentationViewer.slotId === slotId
+                    ? presentationViewer.focusEventId || null
+                    : null
+                }
+                sourceEvent={
+                  presentationViewer?.groupId === selectedGroupId &&
+                  presentationViewer.slotId === slotId
+                    ? presentationViewerSourceEvent
+                    : null
+                }
                 onQuoteInChat={handleQuotePresentationReference}
-                onOpenMessageContext={(eventId) => void handleOpenPresentationMessageContext(eventId)}
+                onOpenMessageContext={(eventId) =>
+                  void handleOpenPresentationMessageContext(eventId)
+                }
                 onReplyToMessage={(event) => void handleReplyToPresentationMessage(event)}
                 onReplaceSlot={(nextSlotId) => {
                   const gid = String(selectedGroupId || "").trim();
@@ -1629,15 +1855,13 @@ export function AppModals({
         busy={busy}
         groupId={selectedGroupId || groupDoc?.group_id || ""}
         ccccHome={ccccHome}
-        projectRoot={
-          (() => {
-            const key = String(groupDoc?.active_scope_key || "").trim();
-            const scopes = Array.isArray(groupDoc?.scopes) ? groupDoc?.scopes : [];
-            const active = scopes.find((s) => String(s?.scope_key || "").trim() === key);
-            const url = String(active?.url || scopes[0]?.url || "").trim();
-            return url;
-          })()
-        }
+        projectRoot={(() => {
+          const key = String(groupDoc?.active_scope_key || "").trim();
+          const scopes = Array.isArray(groupDoc?.scopes) ? groupDoc?.scopes : [];
+          const active = scopes.find((s) => String(s?.scope_key || "").trim() === key);
+          const url = String(active?.url || scopes[0]?.url || "").trim();
+          return url;
+        })()}
         title={editGroupTitle}
         topic={editGroupTopic}
         onChangeTitle={setEditGroupTitle}
@@ -1676,7 +1900,9 @@ export function AppModals({
         onSave={handleSaveEditActorOnly}
         onSaveAndRestart={handleSaveEditActorAndRestart}
         linkedProfileId={String(editingActor?.profile_id || "") || undefined}
-        linkedProfileScope={(String(editingActor?.profile_scope || "global").trim() || "global") as "global" | "user"}
+        linkedProfileScope={
+          (String(editingActor?.profile_scope || "global").trim() || "global") as "global" | "user"
+        }
         linkedProfileOwner={String(editingActor?.profile_owner || "").trim() || undefined}
         actorProfiles={actorProfiles}
         actorProfilesBusy={actorProfilesBusy}

@@ -52,6 +52,28 @@ _CODEX_KNOWN_SUBCOMMANDS = {
     "server",
     "status",
 }
+_GROK_KNOWN_SUBCOMMANDS = {
+    "agent",
+    "completions",
+    "dashboard",
+    "export",
+    "help",
+    "inspect",
+    "leader",
+    "login",
+    "logout",
+    "mcp",
+    "memory",
+    "models",
+    "plugin",
+    "sessions",
+    "setup",
+    "trace",
+    "update",
+    "version",
+    "worktree",
+    "wrap",
+}
 
 
 def runtime_session_path(group_id: str, actor_id: str) -> Path:
@@ -420,6 +442,41 @@ def _codex_resume_command(base_command: list[str], session_id: str) -> list[str]
     return [base_command[0], *base_command[1:], "resume", session_id]
 
 
+def _has_grok_session_control(args: list[str]) -> bool:
+    for item in args[1:]:
+        value = str(item or "").strip()
+        if value in {
+            "--resume",
+            "-r",
+            "--continue",
+            "-c",
+            "--session-id",
+            "-s",
+            "--fork-session",
+        }:
+            return True
+        if value.startswith(("--resume=", "--session-id=")):
+            return True
+        if len(value) > 2 and value[:2] in {"-r", "-s"}:
+            return True
+    return False
+
+
+def _grok_command_allows_managed_sessions(base_command: list[str]) -> bool:
+    if not base_command or _has_grok_session_control(base_command):
+        return False
+    rest = [str(item or "").strip() for item in base_command[1:]]
+    if any(item in _GROK_KNOWN_SUBCOMMANDS for item in rest):
+        return False
+    return True
+
+
+def _grok_resume_command(base_command: list[str], session_id: str) -> list[str]:
+    if not _grok_command_allows_managed_sessions(base_command):
+        return []
+    return [base_command[0], "--resume", session_id, *base_command[1:]]
+
+
 def _claude_initial_session_command(
     *,
     group_id: str,
@@ -439,6 +496,31 @@ def _claude_initial_session_command(
         provider_session_id=session_id,
         resume_command_hint=f"claude --resume {session_id}",
         captured_from="claude_generated_session_id",
+        status="usable",
+        resume_eligible=True,
+    )
+    return [base_command[0], "--session-id", session_id, *base_command[1:]], doc
+
+
+def _grok_initial_session_command(
+    *,
+    group_id: str,
+    actor_id: str,
+    cwd: Path,
+    base_command: list[str],
+) -> Tuple[list[str], Optional[Dict[str, Any]]]:
+    if not _grok_command_allows_managed_sessions(base_command):
+        return base_command, None
+    session_id = str(uuid.uuid4())
+    doc = record_pty_runtime_session(
+        group_id=group_id,
+        actor_id=actor_id,
+        runtime="grok",
+        cwd=cwd,
+        command=base_command,
+        provider_session_id=session_id,
+        resume_command_hint=f"grok --resume {session_id}",
+        captured_from="grok_generated_session_id",
         status="usable",
         resume_eligible=True,
     )
@@ -694,6 +776,8 @@ def prepare_initial_pty_session_command(
         return _claude_initial_session_command(group_id=group_id, actor_id=actor_id, cwd=cwd, base_command=command)
     if runtime_norm == "codex":
         return command, None
+    if runtime_norm == "grok":
+        return _grok_initial_session_command(group_id=group_id, actor_id=actor_id, cwd=cwd, base_command=command)
     return command, None
 
 
@@ -711,7 +795,7 @@ def prepare_pty_resume_command(
         return command, None
 
     runtime_norm = str(runtime or "").strip().lower()
-    if runtime_norm not in {"claude", "codex"}:
+    if runtime_norm not in {"claude", "codex", "grok"}:
         return command, None
 
     doc = read_runtime_session(group_id, actor_id)
@@ -740,8 +824,10 @@ def prepare_pty_resume_command(
 
     if runtime_norm == "claude":
         resume_command = _claude_resume_command(command, session_id)
-    else:
+    elif runtime_norm == "codex":
         resume_command = _codex_resume_command(command, session_id)
+    else:
+        resume_command = _grok_resume_command(command, session_id)
     if not resume_command:
         return command, None
 
@@ -958,7 +1044,7 @@ def _start_fresh_pty_actor_after_resume_failure(
     runtime_norm = str(runtime or "").strip().lower()
     fresh_command = list(base_command)
     fresh_doc: Optional[Dict[str, Any]] = None
-    if runtime_norm == "claude":
+    if runtime_norm in {"claude", "grok"}:
         fresh_command, fresh_doc = prepare_initial_pty_session_command(
             group_id=group_id,
             actor_id=actor_id,

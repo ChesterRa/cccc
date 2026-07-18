@@ -19,7 +19,7 @@ interface ScopeTooltipProps {
   content: ReactNode;
   children: (
     getReferenceProps: (userProps?: HTMLAttributes<HTMLElement>) => Record<string, unknown>,
-    setReference: (node: HTMLElement | null) => void
+    setReference: (node: HTMLElement | null) => void,
   ) => ReactNode;
 }
 
@@ -44,14 +44,14 @@ export function ScopeTooltip({ isDark: _isDark, title, content, children }: Scop
     (node: HTMLElement | null) => {
       refs.setReference(node);
     },
-    [refs]
+    [refs],
   );
 
   const setFloating = useCallback(
     (node: HTMLElement | null) => {
       refs.setFloating(node);
     },
-    [refs]
+    [refs],
   );
 
   return (

@@ -41,8 +41,7 @@ class TestMcpCapabilitySurface(unittest.TestCase):
     def test_core_surface_budget_is_small(self) -> None:
         total = len(MCP_TOOLS)
         core = len(CORE_TOOL_NAMES)
-        # Keep core constrained while allowing a few high-frequency tools to stay first-class.
-        self.assertLessEqual(core, (total // 2) + 4, msg=f"core surface too large: core={core}, total={total}")
+        self.assertEqual(core, 13, msg=f"unexpected lean core size: core={core}, total={total}")
 
     def test_capability_runtime_tools_are_core_and_admin_tools_are_packaged(self) -> None:
         core = set(CORE_TOOL_NAMES)
@@ -51,21 +50,51 @@ class TestMcpCapabilitySurface(unittest.TestCase):
         capability_admin_pack = set(BUILTIN_CAPABILITY_PACKS["pack:capability-admin"]["tool_names"])
 
         self.assertIn("cccc_capability_search", core)
-        self.assertIn("cccc_capability_enable", core)
-        self.assertIn("cccc_capability_state", core)
-        self.assertIn("cccc_capability_install", core)
         self.assertIn("cccc_capability_use", core)
-        self.assertIn("cccc_capability_enable", basic)
-        self.assertIn("cccc_capability_install", basic)
         self.assertIn("cccc_capability_use", basic)
         self.assertEqual(admin, set())
-        self.assertEqual(capability_admin_pack, set(CAPABILITY_ADMIN_TOOLS))
+        self.assertEqual(
+            capability_admin_pack,
+            {
+                "cccc_capability_state",
+                "cccc_capability_enable",
+                "cccc_capability_install",
+                *CAPABILITY_ADMIN_TOOLS,
+            },
+        )
+        self.assertNotIn("cccc_capability_state", core)
+        self.assertNotIn("cccc_capability_enable", core)
+        self.assertNotIn("cccc_capability_install", core)
         self.assertNotIn("cccc_capability_block", core)
         self.assertNotIn("cccc_capability_import", core)
         self.assertNotIn("cccc_capability_uninstall", core)
         self.assertIn("cccc_agent_state", core)
         self.assertIn("cccc_coordination", core)
-        self.assertIn("cccc_memory", core)
+        self.assertIn("cccc_task", core)
+        self.assertNotIn("cccc_memory", core)
+        self.assertNotIn("cccc_coordination", BUILTIN_CAPABILITY_PACKS["pack:context-advanced"]["tool_names"])
+        self.assertNotIn("cccc_task", BUILTIN_CAPABILITY_PACKS["pack:context-advanced"]["tool_names"])
+        self.assertIn("cccc_memory", BUILTIN_CAPABILITY_PACKS["pack:context-advanced"]["tool_names"])
+
+    def test_tools_removed_from_lean_core_remain_reachable_through_existing_packs(self) -> None:
+        moved = {
+            "cccc_project_info",
+            "cccc_capability_state",
+            "cccc_capability_enable",
+            "cccc_capability_install",
+            "cccc_tracked_send",
+            "cccc_repo",
+            "cccc_presentation",
+            "cccc_memory",
+        }
+        packaged = {
+            str(tool_name)
+            for pack in BUILTIN_CAPABILITY_PACKS.values()
+            for tool_name in (pack.get("tool_names") or ())
+        }
+
+        self.assertFalse(moved & set(CORE_BASIC_TOOLS))
+        self.assertTrue(moved <= packaged)
 
 
 if __name__ == "__main__":

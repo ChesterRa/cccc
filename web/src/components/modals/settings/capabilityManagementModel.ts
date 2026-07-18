@@ -4,22 +4,34 @@ function firstRecommendationLine(value?: string[]) {
   return Array.isArray(value) ? String(value[0] || "").trim() : "";
 }
 
-export function canManageSkillAssignments(row: Pick<CapabilityOverviewItem, "capability_id" | "kind">): boolean {
+export function canManageSkillAssignments(
+  row: Pick<CapabilityOverviewItem, "capability_id" | "kind">,
+): boolean {
   const capabilityId = String(row.capability_id || "").trim();
-  const kind = String(row.kind || "").trim().toLowerCase();
+  const kind = String(row.kind || "")
+    .trim()
+    .toLowerCase();
   return kind === "skill" && capabilityId.startsWith("skill:");
 }
 
-export function canManageSlashCommandVisibility(row: Pick<CapabilityOverviewItem, "capability_id" | "kind">): boolean {
+export function canManageSlashCommandVisibility(
+  row: Pick<CapabilityOverviewItem, "capability_id" | "kind">,
+): boolean {
   return canManageSkillAssignments(row);
 }
 
-export function canEditSkillRecord(row: Pick<CapabilityOverviewItem, "capability_id" | "kind" | "source_id">): boolean {
-  return canManageSkillAssignments(row)
-    && String(row.source_id || "").trim() === "agent_self_proposed";
+export function canEditSkillRecord(
+  row: Pick<CapabilityOverviewItem, "capability_id" | "kind" | "source_id">,
+): boolean {
+  return (
+    canManageSkillAssignments(row) && String(row.source_id || "").trim() === "agent_self_proposed"
+  );
 }
 
-export function isCapabilityHiddenFromSlashCommands(capabilityId: string, hiddenCapabilityIds: readonly string[]): boolean {
+export function isCapabilityHiddenFromSlashCommands(
+  capabilityId: string,
+  hiddenCapabilityIds: readonly string[],
+): boolean {
   const capId = String(capabilityId || "").trim();
   if (!capId) return false;
   return hiddenCapabilityIds.some((item) => String(item || "").trim() === capId);
@@ -41,16 +53,17 @@ export function nextSlashCommandHiddenCapabilities(
   return out;
 }
 
-export function capabilityRegistryActionKind(row: Pick<CapabilityOverviewItem, "capability_id" | "kind" | "source_id">): "edit-skill" | "manage-skill-assignments" | "block" {
+export function capabilityRegistryActionKind(
+  row: Pick<CapabilityOverviewItem, "capability_id" | "kind" | "source_id">,
+): "edit-skill" | "manage-skill-assignments" | "block" {
   if (canEditSkillRecord(row)) return "edit-skill";
   if (canManageSkillAssignments(row)) return "manage-skill-assignments";
   return "block";
 }
 
-export function capabilityRecommendationEntries(row: Pick<CapabilityOverviewItem, "use_when" | "evidence_kind" | "gotchas" | "avoid_when">): Array<{
-  key: "use_when" | "verify_with" | "gotcha" | "avoid_when";
-  value: string;
-}> {
+export function capabilityRecommendationEntries(
+  row: Pick<CapabilityOverviewItem, "use_when" | "evidence_kind" | "gotchas" | "avoid_when">,
+): Array<{ key: "use_when" | "verify_with" | "gotcha" | "avoid_when"; value: string }> {
   return [
     { key: "use_when" as const, value: firstRecommendationLine(row.use_when) },
     { key: "verify_with" as const, value: String(row.evidence_kind || "").trim() },

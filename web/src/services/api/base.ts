@@ -28,17 +28,10 @@ export type FetchContextOptions = {
 };
 
 type SharedReadPromise = Promise<ApiResponse<unknown>>;
-type RecentReadEntry = {
-  response: ApiResponse<unknown>;
-  expiresAt: number;
-};
+type RecentReadEntry = { response: ApiResponse<unknown>; expiresAt: number };
 
 type UnknownRecord = Record<string, unknown>;
-type ApiErrorShape = {
-  code?: string;
-  message?: string;
-  details?: unknown;
-};
+type ApiErrorShape = { code?: string; message?: string; details?: unknown };
 
 let cachedToken: string | null = null;
 const FORCE_LOGIN_KEY = "cccc_force_token_login";
@@ -183,7 +176,8 @@ export function reuseRecentReadRequest<T>(
   return reuseSharedReadRequest(key, async () => {
     const response = await loader();
     const generationStillCurrent =
-      globalReadEpoch === requestEpoch && (recentReadGenerations.get(key) || 0) === requestGeneration;
+      globalReadEpoch === requestEpoch &&
+      (recentReadGenerations.get(key) || 0) === requestGeneration;
     if (response.ok && generationStillCurrent) {
       recentReadResponses.set(key, {
         response: response as ApiResponse<unknown>,
@@ -219,7 +213,9 @@ export function groupPromptsRequestKey(groupId: string): string {
 }
 
 export function ledgerStatusesRequestKey(groupId: string, eventIds: string[]): string {
-  const normalizedIds = eventIds.map((eventId) => String(eventId || "").trim()).filter((eventId) => eventId);
+  const normalizedIds = eventIds
+    .map((eventId) => String(eventId || "").trim())
+    .filter((eventId) => eventId);
   return `ledger-statuses:${String(groupId || "").trim()}:${normalizedIds.join(",")}`;
 }
 
@@ -235,7 +231,12 @@ export function contextRequestKey(groupId: string, detail: ContextDetailLevel): 
   return `context:${String(groupId || "").trim()}:${detail}`;
 }
 
-export function capabilityStateRequestKey(groupId: string, actorId: string, capabilityId: string = "", view: string = ""): string {
+export function capabilityStateRequestKey(
+  groupId: string,
+  actorId: string,
+  capabilityId: string = "",
+  view: string = "",
+): string {
   return [
     "capability-state",
     String(groupId || "").trim(),
@@ -285,7 +286,9 @@ export function invalidateContextRead(groupId: string): void {
 }
 
 export function asRecord(value: unknown): UnknownRecord | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as UnknownRecord) : null;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : null;
 }
 
 export function asString(value: unknown): string {
@@ -351,11 +354,7 @@ export function normalizeApiResponse<T>(data: unknown): ApiResponse<T> {
     return {
       ok: false,
       result: record.result,
-      error: {
-        code,
-        message,
-        details: errorRecord?.details,
-      },
+      error: { code, message, details: errorRecord?.details },
     };
   }
   return record as ApiResponse<T>;
@@ -472,7 +471,13 @@ function normalizeTaskSummary(value: unknown, tasks: Task[]): GroupTasksSummary 
     };
   }
 
-  const summary: GroupTasksSummary = { total: tasks.length, planned: 0, active: 0, done: 0, archived: 0 };
+  const summary: GroupTasksSummary = {
+    total: tasks.length,
+    planned: 0,
+    active: 0,
+    done: 0,
+    archived: 0,
+  };
   for (const task of tasks) {
     const status = asString(task.status || "planned").toLowerCase();
     if (status === "active") summary.active += 1;
@@ -502,10 +507,14 @@ export function normalizeContext(raw: unknown): GroupContext {
     ? coordination.tasks.map((item) => normalizeTask(item)).filter((item): item is Task => !!item)
     : [];
   const agentStates = Array.isArray(record.agent_states)
-    ? record.agent_states.map((item) => normalizeAgentState(item)).filter((item): item is AgentState => !!item)
+    ? record.agent_states
+        .map((item) => normalizeAgentState(item))
+        .filter((item): item is AgentState => !!item)
     : [];
   const actorsRuntime = Array.isArray(record.actors_runtime)
-    ? record.actors_runtime.map((item) => normalizeActorRuntimeState(item)).filter((item): item is ActorRuntimeState => !!item)
+    ? record.actors_runtime
+        .map((item) => normalizeActorRuntimeState(item))
+        .filter((item): item is ActorRuntimeState => !!item)
     : [];
   const briefRecord = asRecord(coordination.brief);
   const summary = normalizeTaskSummary(record.tasks_summary, tasks);
@@ -645,11 +654,7 @@ function normalizePresentationSlot(value: unknown, fallbackIndex: number): Prese
   const index = Number(record.index || fallbackIndex);
   const normalizedIndex = Number.isFinite(index) && index > 0 ? index : fallbackIndex;
   const slotId = asString(record.slot_id).trim() || `slot-${normalizedIndex}`;
-  return {
-    slot_id: slotId,
-    index: normalizedIndex,
-    card: normalizePresentationCard(record.card),
-  };
+  return { slot_id: slotId, index: normalizedIndex, card: normalizePresentationCard(record.card) };
 }
 
 export function normalizePresentation(raw: unknown): GroupPresentation {
@@ -676,9 +681,12 @@ export function normalizePresentation(raw: unknown): GroupPresentation {
   };
 }
 
-export function normalizePresentationBrowserSurfaceState(value: unknown): PresentationBrowserSurfaceState {
+export function normalizePresentationBrowserSurfaceState(
+  value: unknown,
+): PresentationBrowserSurfaceState {
   const record = asRecord(value) ?? {};
   const errorRecord = asRecord(record.error);
+  const metadataRecord = asRecord(record.metadata);
   const viewerRecord = asRecord(record.viewer);
   const vncRecord = asRecord(viewerRecord?.vnc);
   return {
@@ -686,10 +694,7 @@ export function normalizePresentationBrowserSurfaceState(value: unknown): Presen
     state: asString(record.state).trim() || "idle",
     message: asOptionalString(record.message),
     error: errorRecord
-      ? {
-          code: asOptionalString(errorRecord.code),
-          message: asOptionalString(errorRecord.message),
-        }
+      ? { code: asOptionalString(errorRecord.code), message: asOptionalString(errorRecord.message) }
       : null,
     strategy: asOptionalString(record.strategy),
     url: asOptionalString(record.url),
@@ -697,9 +702,19 @@ export function normalizePresentationBrowserSurfaceState(value: unknown): Presen
     height: Number.isFinite(Number(record.height)) ? Number(record.height) : 0,
     started_at: asOptionalString(record.started_at),
     updated_at: asOptionalString(record.updated_at),
-    last_frame_seq: Number.isFinite(Number(record.last_frame_seq)) ? Number(record.last_frame_seq) : 0,
+    last_frame_seq: Number.isFinite(Number(record.last_frame_seq))
+      ? Number(record.last_frame_seq)
+      : 0,
     last_frame_at: asOptionalString(record.last_frame_at),
     controller_attached: !!record.controller_attached,
+    metadata: metadataRecord
+      ? {
+          display: asOptionalString(metadataRecord.display),
+          display_owned: !!metadataRecord.display_owned,
+          display_owner: asOptionalString(metadataRecord.display_owner),
+          adopted: !!metadataRecord.adopted,
+        }
+      : null,
     viewer: viewerRecord
       ? {
           kind: asOptionalString(viewerRecord.kind),
@@ -754,23 +769,27 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
   } catch {
     if (!resp.ok) {
       const statusText = resp.statusText ? ` ${resp.statusText}` : "";
-      return makeErrorResponse("HTTP_ERROR", `Server returned ${resp.status}${statusText}: ${text.slice(0, 100)}`);
+      return makeErrorResponse(
+        "HTTP_ERROR",
+        `Server returned ${resp.status}${statusText}: ${text.slice(0, 100)}`,
+      );
     }
     return makeErrorResponse("PARSE_ERROR", `Invalid JSON response: ${text.slice(0, 100)}`);
   }
 }
 
-export async function apiForm<T>(path: string, form: FormData, init?: RequestInit): Promise<ApiResponse<T>> {
+export async function apiForm<T>(
+  path: string,
+  form: FormData,
+  init?: RequestInit,
+): Promise<ApiResponse<T>> {
   let resp: Response;
   try {
     resp = await fetch(path, {
       ...(init || {}),
       method: init?.method || "POST",
       body: form,
-      headers: {
-        ...getAuthHeaders(),
-        ...(init?.headers || {}),
-      },
+      headers: { ...getAuthHeaders(), ...(init?.headers || {}) },
     });
   } catch (error) {
     return makeErrorResponse(

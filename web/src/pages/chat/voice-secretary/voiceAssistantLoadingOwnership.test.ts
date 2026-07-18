@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   beginVoiceAssistantRefresh,
   resetVoiceAssistantVisibleLoading,
@@ -41,7 +41,9 @@ describe("voice assistant loading ownership", () => {
   it("clears visible loading for ok:false or thrown visible refreshes", () => {
     const visible = beginVoiceAssistantRefresh(initialOwnership(), { quiet: false });
 
-    expect(shouldFinishVoiceAssistantVisibleLoading(visible.next, visible.request, true)).toBe(true);
+    expect(shouldFinishVoiceAssistantVisibleLoading(visible.next, visible.request, true)).toBe(
+      true,
+    );
   });
 
   it("clears loading on group switch and prevents old requests from owning new group UI", () => {
@@ -50,7 +52,11 @@ describe("voice assistant loading ownership", () => {
 
     expect(afterSwitch.visibleLoadingSeq).toBe(0);
     expect(shouldApplyVoiceAssistantRefresh(afterSwitch, visible.request, false)).toBe(false);
-    expect(shouldFinishVoiceAssistantVisibleLoading(afterSwitch, visible.request, false)).toBe(false);
-    expect(shouldFinishVoiceAssistantVisibleLoading(afterSwitch, visible.request, true)).toBe(false);
+    expect(shouldFinishVoiceAssistantVisibleLoading(afterSwitch, visible.request, false)).toBe(
+      false,
+    );
+    expect(shouldFinishVoiceAssistantVisibleLoading(afterSwitch, visible.request, true)).toBe(
+      false,
+    );
   });
 });

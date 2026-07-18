@@ -23,7 +23,12 @@ const LANGUAGE_NATIVE_NAME: Record<LanguageCode, string> = {
   ja: "日本語",
 };
 
-export function LanguageSwitcher({ isDark: _isDark, showLabel = false, variant = "default", className }: LanguageSwitcherProps) {
+export function LanguageSwitcher({
+  isDark: _isDark,
+  showLabel = false,
+  variant = "default",
+  className,
+}: LanguageSwitcherProps) {
   const { i18n, t } = useTranslation(["layout", "common"]);
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -108,31 +113,28 @@ export function LanguageSwitcher({ isDark: _isDark, showLabel = false, variant =
                   "w-full flex items-center gap-3 px-3 py-2 text-[13px] transition-colors relative",
                   isActive
                     ? "text-[var(--color-text-primary)]"
-                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-black/[.03] dark:hover:bg-[var(--glass-tab-bg-hover)]"
+                    : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-black/[.03] dark:hover:bg-[var(--glass-tab-bg-hover)]",
                 )}
               >
                 {isActive && (
-                  <span
-                    className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-gray-900 dark:bg-white"
-                  />
+                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-gray-900 dark:bg-white" />
                 )}
-                <span className={classNames(
-                  "w-7 text-center text-xs font-mono shrink-0 tracking-wide",
-                  isActive ? "font-bold" : "font-normal"
-                )}>
+                <span
+                  className={classNames(
+                    "w-7 text-center text-xs font-mono shrink-0 tracking-wide",
+                    isActive ? "font-bold" : "font-normal",
+                  )}
+                >
                   {LANGUAGE_SHORT_LABEL[lang]}
                 </span>
-                <span className={classNames(
-                  "text-sm",
-                  isActive ? "font-medium" : "font-normal"
-                )}>
+                <span className={classNames("text-sm", isActive ? "font-medium" : "font-normal")}>
                   {LANGUAGE_NATIVE_NAME[lang]}
                 </span>
               </button>
             );
           })}
         </div>,
-        document.body
+        document.body,
       )
     : null;
 
@@ -146,16 +148,16 @@ export function LanguageSwitcher({ isDark: _isDark, showLabel = false, variant =
           isRow
             ? "w-full flex items-center justify-between gap-3 px-3.5 py-3 rounded-xl text-sm min-h-[48px] active:scale-[0.98]"
             : isRail
-            ? "flex items-center justify-center h-9 w-9 min-w-[36px] min-h-[36px] rounded-[14px] text-[11px] shrink-0 border border-transparent bg-transparent active:scale-[0.95]"
-            : showLabel
-            ? "w-full flex items-center justify-center gap-2 px-3 py-3 text-sm rounded-2xl min-h-[52px] glass-btn active:scale-[0.98]"
-            : "flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] rounded-xl text-xs shrink-0 glass-btn active:scale-[0.95]",
+              ? "flex items-center justify-center h-9 w-9 min-w-[36px] min-h-[36px] rounded-[14px] text-[11px] shrink-0 border border-transparent bg-transparent active:scale-[0.95]"
+              : showLabel
+                ? "w-full flex items-center justify-center gap-2 px-3 py-3 text-sm rounded-2xl min-h-[52px] glass-btn active:scale-[0.98]"
+                : "flex items-center justify-center w-11 h-11 min-w-[44px] min-h-[44px] rounded-xl text-xs shrink-0 glass-btn active:scale-[0.95]",
           isRow
             ? "text-[var(--color-text-primary)] hover:bg-black/5 dark:hover:bg-white/6"
             : isRail
-            ? "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
-            : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
-          className
+              ? "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]"
+              : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
+          className,
         )}
         aria-expanded={isOpen}
         aria-haspopup="listbox"

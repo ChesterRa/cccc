@@ -84,7 +84,9 @@ export function TranscriptTab({
       <div className={settingsWorkspaceShellClass(_isDark)}>
         <div className={settingsWorkspaceHeaderClass(_isDark)}>
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("transcript.title")}</h3>
+            <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("transcript.title")}
+            </h3>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
               {t("transcript.description")}
             </p>
@@ -93,11 +95,15 @@ export function TranscriptTab({
 
         <div className={settingsWorkspaceBodyClass}>
           <div className={settingsWorkspacePanelClass(_isDark)}>
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("transcript.policy")}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("transcript.policy")}
+            </div>
 
             <div className="mt-4 space-y-4">
               <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">{t("transcript.visibilityLabel")}</label>
+                <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">
+                  {t("transcript.visibilityLabel")}
+                </label>
                 <SelectCombobox
                   items={[
                     { value: "off", label: t("transcript.visibilityOff") },
@@ -131,7 +137,9 @@ export function TranscriptTab({
                 </div>
 
                 <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                  <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">{t("transcript.notificationLines")}</label>
+                  <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">
+                    {t("transcript.notificationLines")}
+                  </label>
                   <input
                     type="number"
                     value={terminalNotifyLines}
@@ -161,7 +169,9 @@ export function TranscriptTab({
       <div className={settingsWorkspaceShellClass(_isDark)}>
         <div className={settingsWorkspaceHeaderClass(_isDark)}>
           <div className="min-w-0">
-            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("transcript.tailViewer")}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
+              {t("transcript.tailViewer")}
+            </div>
             <div className="mt-1 text-xs text-[var(--color-text-muted)]">
               {t("transcript.tailViewerHint")}
             </div>
@@ -189,11 +199,16 @@ export function TranscriptTab({
             <div className={settingsWorkspacePanelClass(_isDark)}>
               <div className="space-y-4">
                 <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                  <label className="block text-xs text-[var(--color-text-tertiary)]">{t("transcript.actor")}</label>
+                  <label className="block text-xs text-[var(--color-text-tertiary)]">
+                    {t("transcript.actor")}
+                  </label>
                   <SelectCombobox
                     items={
                       devActors.length
-                        ? devActors.map((a) => ({ value: a.id, label: `${a.id}${a.role ? ` (${a.role})` : ""}` }))
+                        ? devActors.map((a) => ({
+                            value: a.id,
+                            label: `${a.id}${a.role ? ` (${a.role})` : ""}`,
+                          }))
                         : [{ value: "", label: t("transcript.noActors"), disabled: true }]
                     }
                     value={tailActorId}
@@ -206,7 +221,9 @@ export function TranscriptTab({
 
                 <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
                   <div className={settingsWorkspaceSoftPanelClass(_isDark)}>
-                    <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">{t("transcript.maxChars")}</label>
+                    <label className="block text-xs mb-1 text-[var(--color-text-tertiary)]">
+                      {t("transcript.maxChars")}
+                    </label>
                     <input
                       type="number"
                       value={tailMaxChars}
@@ -258,7 +275,9 @@ export function TranscriptTab({
 
             <div className={settingsWorkspacePanelClass(_isDark)}>
               {!!tailCopyInfo && (
-                <div className="mb-3 text-xs text-emerald-600 dark:text-emerald-400">{tailCopyInfo}</div>
+                <div className="mb-3 text-xs text-emerald-600 dark:text-emerald-400">
+                  {tailCopyInfo}
+                </div>
               )}
               {tailErr && (
                 <div className="mb-3 text-xs text-rose-600 dark:text-rose-400">{tailErr}</div>

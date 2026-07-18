@@ -45,7 +45,9 @@ export function ImagePreview({
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const [resolvedHref, setResolvedHref] = useState<string>(isSvg ? "" : href);
   const [isResolvingSvg, setIsResolvingSvg] = useState<boolean>(isSvg);
-  const [aspectRatio, setAspectRatio] = useState<number | null>(() => IMAGE_ASPECT_RATIO_CACHE.get(href) ?? null);
+  const [aspectRatio, setAspectRatio] = useState<number | null>(
+    () => IMAGE_ASPECT_RATIO_CACHE.get(href) ?? null,
+  );
   const [displaySrc, setDisplaySrc] = useState<string>(isSvg ? "" : href);
   const { t } = useTranslation("chat");
   const isGridLayout = layout === "grid";
@@ -123,9 +125,12 @@ export function ImagePreview({
     img.onerror = fail;
     img.src = nextSrc;
     if (typeof img.decode === "function") {
-      void img.decode().then(finalize).catch(() => {
-        void 0;
-      });
+      void img
+        .decode()
+        .then(finalize)
+        .catch(() => {
+          void 0;
+        });
     }
 
     return () => {
@@ -218,15 +223,30 @@ export function ImagePreview({
               useDarkFailureTone ? "text-white" : "text-[rgb(71,85,105)]",
             )}
           />
-          <div className={classNames("text-xs font-semibold", useDarkFailureTone ? "text-white" : "text-[rgb(30,41,59)]")}>
+          <div
+            className={classNames(
+              "text-xs font-semibold",
+              useDarkFailureTone ? "text-white" : "text-[rgb(30,41,59)]",
+            )}
+          >
             {t("imagePreviewUnavailable", { defaultValue: "Image preview unavailable" })}
           </div>
-          <div className={classNames("mt-1 text-[11px]", useDarkFailureTone ? "text-white/72" : "text-[rgb(100,116,139)]")}>
+          <div
+            className={classNames(
+              "mt-1 text-[11px]",
+              useDarkFailureTone ? "text-white/72" : "text-[rgb(100,116,139)]",
+            )}
+          >
             {t("downloadOriginalImage", { defaultValue: "Open the original image" })}
           </div>
         </div>
         <div className="min-w-0 px-1 pt-2">
-          <div className={classNames("truncate text-[11px] font-medium", useDarkFailureTone ? "text-white/88" : "text-[rgb(51,65,85)]")}>
+          <div
+            className={classNames(
+              "truncate text-[11px] font-medium",
+              useDarkFailureTone ? "text-white/88" : "text-[rgb(51,65,85)]",
+            )}
+          >
             {alt}
           </div>
         </div>
@@ -273,7 +293,10 @@ export function ImagePreview({
             className={classNames(
               "cursor-zoom-in rounded-lg transition-opacity group-hover:opacity-95",
               isSvg
-                ? classNames("block h-auto w-full", isGridLayout ? "max-h-40" : "max-h-64 sm:max-h-80")
+                ? classNames(
+                    "block h-auto w-full",
+                    isGridLayout ? "max-h-40" : "max-h-64 sm:max-h-80",
+                  )
                 : "block h-full w-full object-cover",
               isSvg
                 ? null
@@ -290,9 +313,7 @@ export function ImagePreview({
                     aspectRatio: isGridLayout ? "4 / 3" : (aspectRatio ?? "4 / 3"),
                     maxHeight: isGridLayout ? "11rem" : "20rem",
                     ...rasterCanvasStyle,
-                    ...(!isUserMessage && !isDark
-                      ? LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE
-                      : null),
+                    ...(!isUserMessage && !isDark ? LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE : null),
                   }
             }
             loading={isSvg ? "lazy" : "eager"}
@@ -336,10 +357,24 @@ export function ImagePreview({
               aria-label={t("imagePreviewDialog")}
               onClick={(event) => event.stopPropagation()}
             >
-              <div className={classNames("flex items-center justify-between gap-3 border-b px-4 py-3", "border-[var(--glass-border-subtle)]")}>
+              <div
+                className={classNames(
+                  "flex items-center justify-between gap-3 border-b px-4 py-3",
+                  "border-[var(--glass-border-subtle)]",
+                )}
+              >
                 <div className="min-w-0">
-                  <p className={classNames("truncate text-sm font-medium", "text-[var(--color-text-primary)]")}>{alt}</p>
-                  <p className={classNames("text-xs", "text-[var(--color-text-tertiary)]")}>{t("imagePreviewHint")}</p>
+                  <p
+                    className={classNames(
+                      "truncate text-sm font-medium",
+                      "text-[var(--color-text-primary)]",
+                    )}
+                  >
+                    {alt}
+                  </p>
+                  <p className={classNames("text-xs", "text-[var(--color-text-tertiary)]")}>
+                    {t("imagePreviewHint")}
+                  </p>
                 </div>
 
                 <div className="flex items-center gap-2">
@@ -348,7 +383,9 @@ export function ImagePreview({
                     download
                     className={classNames(
                       "inline-flex items-center rounded-lg px-3 py-2 text-xs font-medium transition-colors",
-                      isDark ? "bg-slate-800 text-slate-100 hover:bg-slate-700" : "bg-gray-100 text-gray-700 hover:bg-gray-200",
+                      isDark
+                        ? "bg-slate-800 text-slate-100 hover:bg-slate-700"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200",
                     )}
                     title={t("download", { name: alt })}
                   >
@@ -360,7 +397,9 @@ export function ImagePreview({
                     onClick={() => setIsLightboxOpen(false)}
                     className={classNames(
                       "inline-flex items-center justify-center rounded-lg p-2 transition-colors",
-                      isDark ? "text-slate-300 hover:bg-slate-800 hover:text-slate-100" : "text-gray-500 hover:bg-gray-100 hover:text-gray-700",
+                      isDark
+                        ? "text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+                        : "text-gray-500 hover:bg-gray-100 hover:text-gray-700",
                     )}
                     aria-label={t("common:close")}
                   >

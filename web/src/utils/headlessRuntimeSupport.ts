@@ -2,13 +2,14 @@ const STANDARD_WEB_HEADLESS_RUNTIMES = new Set(["codex", "claude", "web_model"])
 
 export type ActorRunner = "pty" | "headless";
 
-type RunnerSource = {
-  runner?: unknown;
-  runner_effective?: unknown;
-} | null | undefined;
+type RunnerSource = { runner?: unknown; runner_effective?: unknown } | null | undefined;
 
 export function normalizeActorRunner(runner: unknown): ActorRunner {
-  return String(runner || "").trim().toLowerCase() === "headless" ? "headless" : "pty";
+  return String(runner || "")
+    .trim()
+    .toLowerCase() === "headless"
+    ? "headless"
+    : "pty";
 }
 
 export function getEffectiveActorRunner(actor: RunnerSource): ActorRunner {
@@ -21,5 +22,9 @@ export function isHeadlessActorRunner(actor: RunnerSource): boolean {
 }
 
 export function supportsStandardWebHeadlessRuntime(runtime: string | null | undefined): boolean {
-  return STANDARD_WEB_HEADLESS_RUNTIMES.has(String(runtime || "").trim().toLowerCase());
+  return STANDARD_WEB_HEADLESS_RUNTIMES.has(
+    String(runtime || "")
+      .trim()
+      .toLowerCase(),
+  );
 }

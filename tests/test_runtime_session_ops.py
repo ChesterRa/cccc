@@ -90,6 +90,81 @@ class TestRuntimeSessionOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_grok_first_start_generates_explicit_session_id(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.runtime_session_ops import (
+                prepare_initial_pty_session_command,
+                read_runtime_session,
+            )
+
+            cwd = home / "repo"
+            cwd.mkdir()
+            session_id = "019d6d3e-b066-7dc0-bd42-ed621a7ddccc"
+            with patch(
+                "cccc.daemon.runtime_session_ops.uuid.uuid4",
+                return_value=session_id,
+            ):
+                command, doc = prepare_initial_pty_session_command(
+                    group_id="g1",
+                    actor_id="peer1",
+                    runtime="grok",
+                    cwd=cwd,
+                    base_command=["grok", "--always-approve"],
+                    env={},
+                    max_backlog_bytes=1000,
+                )
+
+            self.assertEqual(
+                command, ["grok", "--session-id", session_id, "--always-approve"]
+            )
+            self.assertIsNotNone(doc)
+            stored = read_runtime_session("g1", "peer1")
+            self.assertEqual(stored.get("provider_session_id"), session_id)
+            self.assertEqual(stored.get("captured_from"), "grok_generated_session_id")
+            self.assertEqual(
+                stored.get("resume_command_hint"), f"grok --resume {session_id}"
+            )
+            self.assertTrue(bool(stored.get("resume_eligible")))
+        finally:
+            cleanup()
+
+    def test_grok_user_session_control_and_subcommands_are_not_rewritten(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.runtime_session_ops import (
+                prepare_initial_pty_session_command,
+                read_runtime_session,
+            )
+
+            cwd = home / "repo"
+            cwd.mkdir()
+            commands = [
+                ["grok", "--resume", "019d6d3e-b066-7dc0-bd42-ed621a7ddccc"],
+                ["grok", "--resume=019d6d3e-b066-7dc0-bd42-ed621a7ddccc"],
+                ["grok", "-r019d6d3e-b066-7dc0-bd42-ed621a7ddccc"],
+                ["grok", "--continue"],
+                ["grok", "--session-id", "019d6d3e-b066-7dc0-bd42-ed621a7ddccc"],
+                ["grok", "-s=019d6d3e-b066-7dc0-bd42-ed621a7ddccc"],
+                ["grok", "-s019d6d3e-b066-7dc0-bd42-ed621a7ddccc"],
+                ["grok", "sessions", "list"],
+            ]
+            for index, base_command in enumerate(commands):
+                command, doc = prepare_initial_pty_session_command(
+                    group_id="g1",
+                    actor_id=f"peer{index}",
+                    runtime="grok",
+                    cwd=cwd,
+                    base_command=base_command,
+                    env={},
+                    max_backlog_bytes=1000,
+                )
+                self.assertEqual(command, base_command)
+                self.assertIsNone(doc)
+                self.assertEqual(read_runtime_session("g1", f"peer{index}"), {})
+        finally:
+            cleanup()
+
     def test_claude_existing_session_control_is_not_rewritten(self) -> None:
         home, cleanup = self._with_home()
         try:
@@ -144,6 +219,43 @@ class TestRuntimeSessionOps(unittest.TestCase):
             self.assertEqual(
                 command,
                 ["claude", "--resume", "42e9ef0c-3b75-43a0-9056-eef13dd1061d", "--dangerously-skip-permissions"],
+            )
+        finally:
+            cleanup()
+
+    def test_existing_grok_session_prepares_explicit_resume(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.runtime_session_ops import (
+                prepare_pty_resume_command,
+                record_pty_runtime_session,
+            )
+
+            cwd = home / "repo"
+            cwd.mkdir()
+            session_id = "019d6d3e-b066-7dc0-bd42-ed621a7ddccc"
+            base_command = ["grok", "--always-approve"]
+            record_pty_runtime_session(
+                group_id="g1",
+                actor_id="peer1",
+                runtime="grok",
+                cwd=cwd,
+                command=base_command,
+                provider_session_id=session_id,
+                captured_from="grok_generated_session_id",
+            )
+
+            command, resume_doc = prepare_pty_resume_command(
+                group_id="g1",
+                actor_id="peer1",
+                runtime="grok",
+                cwd=cwd,
+                base_command=base_command,
+            )
+
+            self.assertIsNotNone(resume_doc)
+            self.assertEqual(
+                command, ["grok", "--resume", session_id, "--always-approve"]
             )
         finally:
             cleanup()
@@ -475,6 +587,81 @@ class TestRuntimeSessionOps(unittest.TestCase):
             self.assertEqual(stored.get("status"), "usable")
             self.assertTrue(bool(stored.get("resume_eligible")))
             self.assertEqual(str(stored.get("last_resume_error") or ""), "")
+        finally:
+            cleanup()
+
+    def test_grok_resume_failure_falls_back_to_new_managed_session(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.runtime_session_ops import (
+                read_runtime_session,
+                record_pty_runtime_session,
+                start_pty_actor_with_runtime_resume,
+            )
+
+            cwd = home / "repo"
+            cwd.mkdir()
+            old_session_id = "019d6d3e-b066-7dc0-bd42-ed621a7ddccc"
+            new_session_id = "a3df810a-6a19-48e8-b75b-772d3ee65721"
+            base_command = ["grok", "--always-approve"]
+            record_pty_runtime_session(
+                group_id="g1",
+                actor_id="peer1",
+                runtime="grok",
+                cwd=cwd,
+                command=base_command,
+                provider_session_id=old_session_id,
+                captured_from="grok_generated_session_id",
+            )
+
+            calls: list[list[str]] = []
+
+            class FreshSession:
+                pid = 222
+
+            def fake_start_actor(**kwargs):
+                calls.append(list(kwargs.get("command") or []))
+                if len(calls) == 1:
+                    raise RuntimeError("session not found")
+                return FreshSession()
+
+            with (
+                patch(
+                    "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
+                    side_effect=fake_start_actor,
+                ),
+                patch(
+                    "cccc.daemon.runtime_session_ops.uuid.uuid4",
+                    return_value=new_session_id,
+                ),
+            ):
+                session = start_pty_actor_with_runtime_resume(
+                    group_id="g1",
+                    actor_id="peer1",
+                    cwd=cwd,
+                    base_command=base_command,
+                    env={},
+                    runtime="grok",
+                    max_backlog_bytes=1000,
+                    runtime_start_preflight_error=lambda runtime, command, runner="pty": (
+                        ""
+                    ),
+                )
+
+            self.assertIsInstance(session, FreshSession)
+            self.assertEqual(
+                calls,
+                [
+                    ["grok", "--resume", old_session_id, "--always-approve"],
+                    ["grok", "--session-id", new_session_id, "--always-approve"],
+                ],
+            )
+            stored = read_runtime_session("g1", "peer1")
+            self.assertEqual(stored.get("runtime"), "grok")
+            self.assertEqual(stored.get("provider_session_id"), new_session_id)
+            self.assertEqual(stored.get("captured_from"), "grok_generated_session_id")
+            self.assertEqual(stored.get("status"), "usable")
+            self.assertTrue(bool(stored.get("resume_eligible")))
         finally:
             cleanup()
 

@@ -11,9 +11,16 @@ import {
   useFormStore,
   selectChatBucketState,
 } from "../stores";
-import { getEffectiveComposerDestGroupId, isComposerGroupSettled } from "../stores/useComposerStore";
+import {
+  getEffectiveComposerDestGroupId,
+  isComposerGroupSettled,
+} from "../stores/useComposerStore";
 import { getChatSession } from "../stores/useUIStore";
-import { useChatOutboxStore, selectOutboxEntries, type OutboxEntry } from "../stores/chatOutboxStore";
+import {
+  useChatOutboxStore,
+  selectOutboxEntries,
+  type OutboxEntry,
+} from "../stores/chatOutboxStore";
 import type {
   Actor,
   GroupMeta,
@@ -36,6 +43,7 @@ import {
   supportsChatStreamingPlaceholder,
 } from "../utils/chatSend";
 import { copyTextToClipboard } from "../utils/copy";
+import { appendSenderPerspective, getMessageInsight } from "../utils/messagePerspective";
 import { hasRenderableChatMessageContent } from "../utils/ledgerEventHandlers";
 import { useSlashCommands } from "./useSlashCommands";
 import { useSlashSkillDispatch } from "./useSlashSkillDispatch";
@@ -80,7 +88,8 @@ export function shouldLockChatToBottomForSend(input: {
   if (!input.currentAtBottom) return false;
   if (input.showScrollButton) return false;
   if (Math.max(0, Number(input.chatUnreadCount) || 0) > 0) return false;
-  if (shouldRestoreDetachedScrollSnapshot(input.scrollSnapshot, input.now ?? Date.now())) return false;
+  if (shouldRestoreDetachedScrollSnapshot(input.scrollSnapshot, input.now ?? Date.now()))
+    return false;
   return true;
 }
 
@@ -99,14 +108,17 @@ function canOpenSourceMessageLocally(groups: GroupMeta[], srcGroupId: string): b
 }
 
 export function shouldShowInConversation(event: LedgerEvent): boolean {
-  const data = event.data && typeof event.data === "object"
-    ? event.data as { hidden?: unknown; refs?: unknown }
-    : {};
+  const data =
+    event.data && typeof event.data === "object"
+      ? (event.data as { hidden?: unknown; refs?: unknown })
+      : {};
   if (data.hidden === true && !getSlashSkillDispatchRef(event)) return false;
   return !isDelegationSourceOutboundEvent(event.data);
 }
 
-function isSlashSkillDispatchRef(ref: unknown): ref is {
+function isSlashSkillDispatchRef(
+  ref: unknown,
+): ref is {
   hidden?: unknown;
   control_kind?: unknown;
   title?: unknown;
@@ -115,15 +127,16 @@ function isSlashSkillDispatchRef(ref: unknown): ref is {
 } {
   if (!ref || typeof ref !== "object") return false;
   const record = ref as { hidden?: unknown; control_kind?: unknown; title?: unknown };
-  return record.hidden === true
-    && (String(record.control_kind || "").trim() === "slash_skill_dispatch"
-      || String(record.title || "").trim() === "slash_skill_dispatch");
+  return (
+    record.hidden === true &&
+    (String(record.control_kind || "").trim() === "slash_skill_dispatch" ||
+      String(record.title || "").trim() === "slash_skill_dispatch")
+  );
 }
 
 function getSlashSkillDispatchRef(event: LedgerEvent) {
-  const data = event.data && typeof event.data === "object"
-    ? event.data as { refs?: unknown }
-    : {};
+  const data =
+    event.data && typeof event.data === "object" ? (event.data as { refs?: unknown }) : {};
   const refs = Array.isArray(data.refs) ? data.refs : [];
   return refs.find(isSlashSkillDispatchRef) || null;
 }
@@ -135,25 +148,27 @@ export function toVisibleConversationEvent(event: LedgerEvent): LedgerEvent {
   const taskText = String(ref.task_text || "").trim();
   const visibleText = [command, taskText].filter(Boolean).join(" ").trim();
   if (!visibleText) return event;
-  const data = event.data && typeof event.data === "object" ? event.data as ChatMessageData : {};
-  return {
-    ...event,
-    data: {
-      ...data,
-      text: visibleText,
-      refs: [],
-      attachments: [],
-    },
-  };
+  const data = event.data && typeof event.data === "object" ? (event.data as ChatMessageData) : {};
+  return { ...event, data: { ...data, text: visibleText, refs: [], attachments: [] } };
 }
 
 function mergeStreamingCandidates(primary: LedgerEvent, secondary: LedgerEvent): LedgerEvent {
-  const primaryData = primary.data && typeof primary.data === "object"
-    ? primary.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
-    : {};
-  const secondaryData = secondary.data && typeof secondary.data === "object"
-    ? secondary.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
-    : {};
+  const primaryData =
+    primary.data && typeof primary.data === "object"
+      ? (primary.data as ChatMessageData & {
+          pending_placeholder?: unknown;
+          pending_event_id?: unknown;
+          stream_id?: unknown;
+        })
+      : {};
+  const secondaryData =
+    secondary.data && typeof secondary.data === "object"
+      ? (secondary.data as ChatMessageData & {
+          pending_placeholder?: unknown;
+          pending_event_id?: unknown;
+          stream_id?: unknown;
+        })
+      : {};
   const primaryText = typeof primaryData.text === "string" ? primaryData.text.trim() : "";
   const secondaryText = typeof secondaryData.text === "string" ? secondaryData.text.trim() : "";
   const primaryTs = String(primary.ts || "");
@@ -178,12 +193,22 @@ function mergeStreamingCandidates(primary: LedgerEvent, secondary: LedgerEvent):
     }
   }
 
-  const displayData = display.data && typeof display.data === "object"
-    ? display.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
-    : {};
-  const supportData = support.data && typeof support.data === "object"
-    ? support.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
-    : {};
+  const displayData =
+    display.data && typeof display.data === "object"
+      ? (display.data as ChatMessageData & {
+          pending_placeholder?: unknown;
+          pending_event_id?: unknown;
+          stream_id?: unknown;
+        })
+      : {};
+  const supportData =
+    support.data && typeof support.data === "object"
+      ? (support.data as ChatMessageData & {
+          pending_placeholder?: unknown;
+          pending_event_id?: unknown;
+          stream_id?: unknown;
+        })
+      : {};
   const displayActivities = Array.isArray(displayData.activities) ? displayData.activities : [];
   const supportActivities = Array.isArray(supportData.activities) ? supportData.activities : [];
   return {
@@ -194,20 +219,29 @@ function mergeStreamingCandidates(primary: LedgerEvent, secondary: LedgerEvent):
       ...supportData,
       ...displayData,
       text:
-        typeof displayData.text === "string" ? displayData.text
-          : (typeof supportData.text === "string" ? supportData.text : ""),
+        typeof displayData.text === "string"
+          ? displayData.text
+          : typeof supportData.text === "string"
+            ? supportData.text
+            : "",
       activities: displayActivities.length > 0 ? displayActivities : supportActivities,
       pending_event_id:
-        String(displayData.pending_event_id || "").trim() || String(supportData.pending_event_id || "").trim() || undefined,
+        String(displayData.pending_event_id || "").trim() ||
+        String(supportData.pending_event_id || "").trim() ||
+        undefined,
       stream_id:
-        String(displayData.stream_id || "").trim() || String(supportData.stream_id || "").trim() || undefined,
+        String(displayData.stream_id || "").trim() ||
+        String(supportData.stream_id || "").trim() ||
+        undefined,
       pending_placeholder: Boolean(displayData.pending_placeholder),
     },
   };
 }
 
 function getNormalizedStreamPhase(data: { stream_phase?: unknown } | null | undefined): string {
-  return String(data?.stream_phase || "").trim().toLowerCase();
+  return String(data?.stream_phase || "")
+    .trim()
+    .toLowerCase();
 }
 
 function hasExplicitStreamingPhase(data: { stream_phase?: unknown } | null | undefined): boolean {
@@ -215,13 +249,15 @@ function hasExplicitStreamingPhase(data: { stream_phase?: unknown } | null | und
   return streamPhase === "commentary" || streamPhase === "final_answer";
 }
 
-function isPlaceholderLikeStreamingEvent(data: ChatMessageData & {
-  pending_placeholder?: unknown;
-  stream_id?: unknown;
-  stream_phase?: unknown;
-  text?: unknown;
-  activities?: unknown;
-}): boolean {
+function isPlaceholderLikeStreamingEvent(
+  data: ChatMessageData & {
+    pending_placeholder?: unknown;
+    stream_id?: unknown;
+    stream_phase?: unknown;
+    text?: unknown;
+    activities?: unknown;
+  },
+): boolean {
   const streamId = String(data.stream_id || "").trim();
   if (data.pending_placeholder) return true;
 
@@ -236,12 +272,15 @@ function isPlaceholderLikeStreamingEvent(data: ChatMessageData & {
 
 function hasOnlyQueuedActivities(value: unknown): boolean {
   const activities = Array.isArray(value) ? value : [];
-  return activities.length === 0 || activities.every((item) => {
-    if (!item || typeof item !== "object") return true;
-    const kind = String((item as { kind?: unknown }).kind || "").trim();
-    const summary = String((item as { summary?: unknown }).summary || "").trim();
-    return kind === "queued" && summary === "queued";
-  });
+  return (
+    activities.length === 0 ||
+    activities.every((item) => {
+      if (!item || typeof item !== "object") return true;
+      const kind = String((item as { kind?: unknown }).kind || "").trim();
+      const summary = String((item as { summary?: unknown }).summary || "").trim();
+      return kind === "queued" && summary === "queued";
+    })
+  );
 }
 
 function hasRichActivities(value: unknown): boolean {
@@ -255,9 +294,14 @@ function hasRichActivities(value: unknown): boolean {
 }
 
 function getStreamingEventDedupeKey(event: LedgerEvent): string {
-  const data = event.data && typeof event.data === "object"
-    ? event.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
-    : {};
+  const data =
+    event.data && typeof event.data === "object"
+      ? (event.data as ChatMessageData & {
+          pending_placeholder?: unknown;
+          pending_event_id?: unknown;
+          stream_id?: unknown;
+        })
+      : {};
   const actorId = String(event.by || "").trim();
   const pendingEventId = String(data.pending_event_id || "").trim();
   const streamId = String(data.stream_id || "").trim();
@@ -265,7 +309,10 @@ function getStreamingEventDedupeKey(event: LedgerEvent): string {
   // Placeholder lifecycle events still collapse by pending reply slot, but a
   // real text-bearing stream must keep stream_id identity or short streaming
   // messages will overwrite each other before they ever reach the list.
-  if (pendingEventId && (!hasRenderableChatMessageContent(event) || isPlaceholderLikeStreamingEvent(data))) {
+  if (
+    pendingEventId &&
+    (!hasRenderableChatMessageContent(event) || isPlaceholderLikeStreamingEvent(data))
+  ) {
     return `pending:${actorId}:${pendingEventId}`;
   }
   if (streamId) {
@@ -282,9 +329,14 @@ export function dedupeStreamingEvents(streamingEvents: LedgerEvent[]): LedgerEve
   const passthrough: LedgerEvent[] = [];
 
   for (const event of streamingEvents) {
-    const data = event.data && typeof event.data === "object"
-      ? event.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
-      : {};
+    const data =
+      event.data && typeof event.data === "object"
+        ? (event.data as ChatMessageData & {
+            pending_placeholder?: unknown;
+            pending_event_id?: unknown;
+            stream_id?: unknown;
+          })
+        : {};
     const streamId = String(data.stream_id || "").trim();
     const isPendingPlaceholder = Boolean(data.pending_placeholder);
     const dedupeKey = getStreamingEventDedupeKey(event);
@@ -300,18 +352,27 @@ export function dedupeStreamingEvents(streamingEvents: LedgerEvent[]): LedgerEve
       continue;
     }
 
-    const existingData = existing.data && typeof existing.data === "object"
-      ? existing.data as ChatMessageData & { pending_placeholder?: unknown; pending_event_id?: unknown; stream_id?: unknown }
-      : {};
+    const existingData =
+      existing.data && typeof existing.data === "object"
+        ? (existing.data as ChatMessageData & {
+            pending_placeholder?: unknown;
+            pending_event_id?: unknown;
+            stream_id?: unknown;
+          })
+        : {};
     const existingIsPendingPlaceholder = Boolean(existingData.pending_placeholder);
     const preferCurrent =
       existingIsPendingPlaceholder && !isPendingPlaceholder
         ? true
-        : existingIsPendingPlaceholder === isPendingPlaceholder && !!streamId && !String(existingData.stream_id || "").trim();
+        : existingIsPendingPlaceholder === isPendingPlaceholder &&
+          !!streamId &&
+          !String(existingData.stream_id || "").trim();
 
     byKey.set(
       dedupeKey,
-      preferCurrent ? mergeStreamingCandidates(event, existing) : mergeStreamingCandidates(existing, event),
+      preferCurrent
+        ? mergeStreamingCandidates(event, existing)
+        : mergeStreamingCandidates(existing, event),
     );
   }
 
@@ -337,17 +398,20 @@ export function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[
 
     const richReplySlots = new Set<string>();
     actorEvents.forEach((event) => {
-      const data = event.data && typeof event.data === "object"
-        ? event.data as ChatMessageData & { activities?: unknown[] }
-        : {};
+      const data =
+        event.data && typeof event.data === "object"
+          ? (event.data as ChatMessageData & { activities?: unknown[] })
+          : {};
       const text = typeof data.text === "string" ? data.text.trim() : "";
       const activities = Array.isArray(data.activities) ? data.activities : [];
-      const hasRichStreaming = text.length > 0 || activities.some((item) => {
-        if (!item || typeof item !== "object") return false;
-        const kind = String((item as { kind?: unknown }).kind || "").trim();
-        const summary = String((item as { summary?: unknown }).summary || "").trim();
-        return kind !== "queued" || summary !== "queued";
-      });
+      const hasRichStreaming =
+        text.length > 0 ||
+        activities.some((item) => {
+          if (!item || typeof item !== "object") return false;
+          const kind = String((item as { kind?: unknown }).kind || "").trim();
+          const summary = String((item as { summary?: unknown }).summary || "").trim();
+          return kind !== "queued" || summary !== "queued";
+        });
       if (!hasRichStreaming) return;
       const slotKey = getReplySlotKey(event);
       if (slotKey) {
@@ -359,13 +423,23 @@ export function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[
       for (const event of actorEvents) {
         const slotKey = getReplySlotKey(event);
         if (!slotKey || !richReplySlots.has(slotKey)) continue;
-        const data = event.data && typeof event.data === "object"
-          ? event.data as ChatMessageData & { pending_placeholder?: unknown; activities?: unknown[]; stream_id?: unknown; stream_phase?: unknown }
-          : {};
+        const data =
+          event.data && typeof event.data === "object"
+            ? (event.data as ChatMessageData & {
+                pending_placeholder?: unknown;
+                activities?: unknown[];
+                stream_id?: unknown;
+                stream_phase?: unknown;
+              })
+            : {};
         const text = typeof data.text === "string" ? data.text.trim() : "";
         const onlyQueuedActivities = hasOnlyQueuedActivities(data.activities);
         const isPlaceholderLike = isPlaceholderLikeStreamingEvent(data);
-        if (!text && !hasRichActivities(data.activities) && (isPlaceholderLike || (onlyQueuedActivities && !hasExplicitStreamingPhase(data)))) {
+        if (
+          !text &&
+          !hasRichActivities(data.activities) &&
+          (isPlaceholderLike || (onlyQueuedActivities && !hasExplicitStreamingPhase(data)))
+        ) {
           shouldDrop.add(event);
         }
       }
@@ -373,16 +447,18 @@ export function collapseActorStreamingPlaceholders(streamingEvents: LedgerEvent[
     }
 
     const placeholderOnlyEvents = actorEvents.filter((event) => {
-      const data = event.data && typeof event.data === "object"
-        ? event.data as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown; stream_phase?: unknown }
-        : {};
+      const data =
+        event.data && typeof event.data === "object"
+          ? (event.data as ChatMessageData & {
+              pending_placeholder?: unknown;
+              stream_id?: unknown;
+              stream_phase?: unknown;
+            })
+          : {};
       const text = typeof data.text === "string" ? data.text.trim() : "";
       if (text) return false;
       const onlyQueuedActivities = hasOnlyQueuedActivities(data.activities);
-      return (
-        onlyQueuedActivities &&
-        isPlaceholderLikeStreamingEvent(data)
-      );
+      return onlyQueuedActivities && isPlaceholderLikeStreamingEvent(data);
     });
     if (placeholderOnlyEvents.length <= 1) continue;
     const latestPlaceholder = placeholderOnlyEvents.reduce((latest, current) => {
@@ -414,9 +490,14 @@ function dropOrphanQueuedPlaceholders(
   return streamingEvents.filter((event) => {
     const slotKey = getReplySlotKey(event);
     if (!slotKey || !renderableCanonicalReplySlots.has(slotKey)) return true;
-    const data = event.data && typeof event.data === "object"
-      ? event.data as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown; stream_phase?: unknown }
-      : {};
+    const data =
+      event.data && typeof event.data === "object"
+        ? (event.data as ChatMessageData & {
+            pending_placeholder?: unknown;
+            stream_id?: unknown;
+            stream_phase?: unknown;
+          })
+        : {};
     const text = typeof data.text === "string" ? data.text.trim() : "";
     if (text) return true;
     const isPlaceholderLike = isPlaceholderLikeStreamingEvent(data);
@@ -429,12 +510,13 @@ function getCanonicalStreamingSupersededStreamIds(canonicalEvents: LedgerEvent[]
     canonicalEvents
       .filter((event) => hasRenderableChatMessageContent(event))
       .map((event) => {
-        const data = event.data && typeof event.data === "object"
-          ? event.data as { stream_id?: unknown }
-          : null;
+        const data =
+          event.data && typeof event.data === "object"
+            ? (event.data as { stream_id?: unknown })
+            : null;
         return data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
       })
-      .filter((streamId) => streamId.length > 0)
+      .filter((streamId) => streamId.length > 0),
   );
 }
 
@@ -442,9 +524,10 @@ export function getReplySlotKey(event: LedgerEvent): string {
   if (String(event.kind || "").trim() !== "chat.message") return "";
   const actorId = String(event.by || "").trim();
   if (!actorId || actorId === "user") return "";
-  const data = event.data && typeof event.data === "object"
-    ? event.data as ChatMessageData & { pending_event_id?: unknown; reply_to?: unknown }
-    : undefined;
+  const data =
+    event.data && typeof event.data === "object"
+      ? (event.data as ChatMessageData & { pending_event_id?: unknown; reply_to?: unknown })
+      : undefined;
   const replyAnchor =
     typeof data?.pending_event_id === "string" && data.pending_event_id.trim()
       ? data.pending_event_id.trim()
@@ -457,9 +540,10 @@ export function getReplySlotKey(event: LedgerEvent): string {
 
 function getReplyAnchorId(event: LedgerEvent): string {
   if (String(event.kind || "").trim() !== "chat.message") return "";
-  const data = event.data && typeof event.data === "object"
-    ? event.data as ChatMessageData & { pending_event_id?: unknown; reply_to?: unknown }
-    : undefined;
+  const data =
+    event.data && typeof event.data === "object"
+      ? (event.data as ChatMessageData & { pending_event_id?: unknown; reply_to?: unknown })
+      : undefined;
   if (typeof data?.pending_event_id === "string" && data.pending_event_id.trim()) {
     return data.pending_event_id.trim();
   }
@@ -500,9 +584,10 @@ export function buildReplyAnchorTsMap(
       const prev = anchorTsById.get(eventId) || "";
       if (!prev || ts < prev) anchorTsById.set(eventId, ts);
     }
-    const data = event.data && typeof event.data === "object"
-      ? event.data as ChatMessageData & { client_id?: unknown }
-      : undefined;
+    const data =
+      event.data && typeof event.data === "object"
+        ? (event.data as ChatMessageData & { client_id?: unknown })
+        : undefined;
     const clientId = typeof data?.client_id === "string" ? data.client_id.trim() : "";
     if (clientId) {
       const prev = anchorTsById.get(clientId) || "";
@@ -532,13 +617,7 @@ export function sortChatMessages(
       const slotKey = getReplySlotKey(event);
       const slotTs = slotKey ? String(replySlotTsByKey.get(slotKey) || "").trim() : "";
       const eventTs = String(event.ts || "").trim();
-      return {
-        event,
-        index,
-        hasReplySlot: slotKey.length > 0,
-        sortTs: slotTs || eventTs,
-        eventTs,
-      };
+      return { event, index, hasReplySlot: slotKey.length > 0, sortTs: slotTs || eventTs, eventTs };
     })
     .sort((a, b) => {
       if (a.sortTs && b.sortTs && a.sortTs !== b.sortTs) return a.sortTs.localeCompare(b.sortTs);
@@ -547,7 +626,8 @@ export function sortChatMessages(
       if (a.sortTs && b.sortTs && a.sortTs === b.sortTs && a.hasReplySlot !== b.hasReplySlot) {
         return a.hasReplySlot ? 1 : -1;
       }
-      if (a.eventTs && b.eventTs && a.eventTs !== b.eventTs) return a.eventTs.localeCompare(b.eventTs);
+      if (a.eventTs && b.eventTs && a.eventTs !== b.eventTs)
+        return a.eventTs.localeCompare(b.eventTs);
       return a.index - b.index;
     })
     .map((item) => item.event);
@@ -557,9 +637,15 @@ function getLogicalMessageOrderKey(event: LedgerEvent): string {
   if (String(event.kind || "").trim() !== "chat.message") {
     return `event:${String(event.id || "").trim() || String(event.ts || "").trim()}`;
   }
-  const data = event.data && typeof event.data === "object"
-    ? event.data as ChatMessageData & { client_id?: unknown; pending_event_id?: unknown; reply_to?: unknown; stream_id?: unknown }
-    : undefined;
+  const data =
+    event.data && typeof event.data === "object"
+      ? (event.data as ChatMessageData & {
+          client_id?: unknown;
+          pending_event_id?: unknown;
+          reply_to?: unknown;
+          stream_id?: unknown;
+        })
+      : undefined;
   const clientId = typeof data?.client_id === "string" ? data.client_id.trim() : "";
   if (clientId) return `client:${clientId}`;
 
@@ -571,7 +657,12 @@ function getLogicalMessageOrderKey(event: LedgerEvent): string {
         ? data.reply_to.trim()
         : "";
   const streamId = typeof data?.stream_id === "string" ? data.stream_id.trim() : "";
-  if (actorId && actorId !== "user" && replyAnchor && (event._streaming || !hasRenderableChatMessageContent(event) || streamId)) {
+  if (
+    actorId &&
+    actorId !== "user" &&
+    replyAnchor &&
+    (event._streaming || !hasRenderableChatMessageContent(event) || streamId)
+  ) {
     return `reply:${actorId}:${replyAnchor}`;
   }
 
@@ -586,9 +677,15 @@ function getLogicalMessageReplacementKey(event: LedgerEvent): string {
   if (String(event.kind || "").trim() !== "chat.message") {
     return `event:${String(event.id || "").trim() || String(event.ts || "").trim()}`;
   }
-  const data = event.data && typeof event.data === "object"
-    ? event.data as ChatMessageData & { client_id?: unknown; pending_event_id?: unknown; reply_to?: unknown; stream_id?: unknown }
-    : undefined;
+  const data =
+    event.data && typeof event.data === "object"
+      ? (event.data as ChatMessageData & {
+          client_id?: unknown;
+          pending_event_id?: unknown;
+          reply_to?: unknown;
+          stream_id?: unknown;
+        })
+      : undefined;
   const clientId = typeof data?.client_id === "string" ? data.client_id.trim() : "";
   if (clientId) return `client:${clientId}`;
 
@@ -600,10 +697,9 @@ function getLogicalMessageReplacementKey(event: LedgerEvent): string {
         ? data.reply_to.trim()
         : "";
   const streamId = typeof data?.stream_id === "string" ? data.stream_id.trim() : "";
-  const placeholderLike = isPlaceholderLikeStreamingEvent((data || {}) as ChatMessageData & {
-    pending_placeholder?: unknown;
-    stream_id?: unknown;
-  });
+  const placeholderLike = isPlaceholderLikeStreamingEvent(
+    (data || {}) as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown },
+  );
   if (actorId && actorId !== "user" && replyAnchor) {
     if (streamId && !placeholderLike) {
       return `stream:${streamId}`;
@@ -623,9 +719,10 @@ function getLogicalMessageReplacementKey(event: LedgerEvent): string {
 
 function getLogicalMessagePriority(event: LedgerEvent): number {
   const isStreaming = !!event._streaming;
-  const data = event.data && typeof event.data === "object"
-    ? event.data as { _optimistic?: unknown }
-    : undefined;
+  const data =
+    event.data && typeof event.data === "object"
+      ? (event.data as { _optimistic?: unknown })
+      : undefined;
   const isOptimistic = Boolean(data?._optimistic);
   if (!isStreaming && !isOptimistic) return 3;
   if (isOptimistic) return 2;
@@ -639,7 +736,11 @@ function shouldReplaceLogicalMessage(existing: LedgerEvent, incoming: LedgerEven
     return incomingRenderable;
   }
 
-  if (!existingRenderable && !incomingRenderable && !!existing._streaming !== !!incoming._streaming) {
+  if (
+    !existingRenderable &&
+    !incomingRenderable &&
+    !!existing._streaming !== !!incoming._streaming
+  ) {
     return !!incoming._streaming;
   }
 
@@ -650,7 +751,10 @@ export function mergeLogicalMessagesWithStableOrder(
   candidates: LedgerEvent[],
   orderState: { map: Map<string, number>; next: number },
 ): LedgerEvent[] {
-  const mergedByReplacementKey = new Map<string, { orderKey: string; event: LedgerEvent; index: number }>();
+  const mergedByReplacementKey = new Map<
+    string,
+    { orderKey: string; event: LedgerEvent; index: number }
+  >();
   candidates.forEach((event, index) => {
     const orderKey = getLogicalMessageOrderKey(event);
     if (!orderState.map.has(orderKey)) {
@@ -697,9 +801,10 @@ export function mergeVisibleChatMessages(
       .filter((key: string) => key.length > 0),
   );
   const liveStreaming = streamingEvents.filter((ev: LedgerEvent) => {
-    const data = ev.data && typeof ev.data === "object"
-      ? (ev.data as { stream_id?: unknown; pending_placeholder?: unknown; activities?: unknown })
-      : null;
+    const data =
+      ev.data && typeof ev.data === "object"
+        ? (ev.data as { stream_id?: unknown; pending_placeholder?: unknown; activities?: unknown })
+        : null;
     const streamId = data && typeof data.stream_id === "string" ? data.stream_id.trim() : "";
     const slotKey = getReplySlotKey(ev);
     const renderable = hasRenderableChatMessageContent(ev);
@@ -710,11 +815,14 @@ export function mergeVisibleChatMessages(
     if (!renderable) {
       if (slotKey && canonicalReplySlots.has(slotKey)) return hasRichActivityTimeline;
       if (slotKey && renderableStreamingReplySlots.has(slotKey)) {
-        const placeholderLike = isPlaceholderLikeStreamingEvent(((data || {}) as ChatMessageData & {
-          pending_placeholder?: unknown;
-          stream_id?: unknown;
-        }));
-        if (!hasRichActivityTimeline && (placeholderLike || hasOnlyQueuedActivities(data?.activities))) return false;
+        const placeholderLike = isPlaceholderLikeStreamingEvent(
+          (data || {}) as ChatMessageData & { pending_placeholder?: unknown; stream_id?: unknown },
+        );
+        if (
+          !hasRichActivityTimeline &&
+          (placeholderLike || hasOnlyQueuedActivities(data?.activities))
+        )
+          return false;
       }
     }
     return true;
@@ -733,24 +841,25 @@ export function buildUnfilteredLiveChatMessages(
   outboxEntries: Pick<OutboxEntry, "localId" | "event">[],
   orderState: LogicalMessageOrderState,
 ): LedgerEvent[] {
-  const all = events.filter(isFormalChatMessageEvent).filter(shouldShowInConversation).map(toVisibleConversationEvent);
+  const all = events
+    .filter(isFormalChatMessageEvent)
+    .filter(shouldShowInConversation)
+    .map(toVisibleConversationEvent);
   const renderableCanonicalClientIds = new Set(
     all
       .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))
       .map((ev: LedgerEvent) => {
-        const data = ev.data && typeof ev.data === "object" ? (ev.data as { client_id?: unknown }) : null;
+        const data =
+          ev.data && typeof ev.data === "object" ? (ev.data as { client_id?: unknown }) : null;
         return data && typeof data.client_id === "string" ? data.client_id.trim() : "";
       })
-      .filter((clientId: string) => clientId.length > 0)
+      .filter((clientId: string) => clientId.length > 0),
   );
   const pendingEvents = outboxEntries
     .filter((entry) => !renderableCanonicalClientIds.has(entry.localId))
     .map((entry) => entry.event);
 
-  return sortChatMessages(
-    mergeVisibleChatMessages(all, [], pendingEvents, orderState),
-    new Map(),
-  );
+  return sortChatMessages(mergeVisibleChatMessages(all, [], pendingEvents, orderState), new Map());
 }
 
 interface UseChatTabOptions {
@@ -808,7 +917,8 @@ export function restoreFailedSendComposerState(
   const restoreActions = actions || composerState;
   const currentSelectedGroupId = String(useGroupStore.getState().selectedGroupId || "").trim();
   const currentActiveGroupId = String(composerState.activeGroupId || "").trim();
-  const stillOnOriginGroup = currentSelectedGroupId === originGroupId && currentActiveGroupId === originGroupId;
+  const stillOnOriginGroup =
+    currentSelectedGroupId === originGroupId && currentActiveGroupId === originGroupId;
 
   if (stillOnOriginGroup) {
     restoreActions.setComposerText(snapshot.composerText);
@@ -864,7 +974,10 @@ export function buildComposerSendRoutingSnapshot({
   };
 }
 
-export function parseComposerRecipientTokens(toText: string, validRecipientSet: Set<string>): string[] {
+export function parseComposerRecipientTokens(
+  toText: string,
+  validRecipientSet: Set<string>,
+): string[] {
   const raw = String(toText || "")
     .split(",")
     .map((t) => t.trim())
@@ -917,14 +1030,26 @@ export function useChatTab({
   const [group_bridgeTrusts, setGroupBridgeTrusts] = useState<GroupBridgeTrust[]>([]);
   const [selectedRemoteGroupIds, setSelectedRemoteGroupIds] = useState<string[]>([]);
   // ============ Stores ============
-  const { events, streamingEvents, chatWindow, hasMoreHistory, hasLoadedTail, isLoadingHistory, isChatWindowLoading } = useGroupStore(
-    useCallback((state) => selectChatBucketState(state, selectedGroupId), [selectedGroupId])
+  const {
+    events,
+    streamingEvents,
+    chatWindow,
+    hasMoreHistory,
+    hasLoadedTail,
+    isLoadingHistory,
+    isChatWindowLoading,
+  } = useGroupStore(
+    useCallback((state) => selectChatBucketState(state, selectedGroupId), [selectedGroupId]),
   );
   const groups = useGroupStore((state) => state.groups);
   const appendEvent = useGroupStore((state) => state.appendEvent);
   const upsertStreamingEvent = useGroupStore((state) => state.upsertStreamingEvent);
-  const removeStreamingEventsByPrefix = useGroupStore((state) => state.removeStreamingEventsByPrefix);
-  const promoteStreamingEventsByPrefix = useGroupStore((state) => state.promoteStreamingEventsByPrefix);
+  const removeStreamingEventsByPrefix = useGroupStore(
+    (state) => state.removeStreamingEventsByPrefix,
+  );
+  const promoteStreamingEventsByPrefix = useGroupStore(
+    (state) => state.promoteStreamingEventsByPrefix,
+  );
   const groupDoc = useGroupStore((state) => state.groupDoc);
   const groupContext = useGroupStore((state) => state.groupContext);
   const groupSettings = useGroupStore((state) => state.groupSettings);
@@ -950,7 +1075,7 @@ export function useChatTab({
 
   const chatSession = useMemo(
     () => getChatSession(selectedGroupId, chatSessions),
-    [selectedGroupId, chatSessions]
+    [selectedGroupId, chatSessions],
   );
   const { chatFilter, showScrollButton, chatUnreadCount, scrollSnapshot } = chatSession;
 
@@ -983,56 +1108,66 @@ export function useChatTab({
 
   // Outbox (optimistic pending messages) — stable selector, no new array allocation.
   const outboxEntries = useChatOutboxStore(
-    useCallback((s) => selectOutboxEntries(s, selectedGroupId), [selectedGroupId])
+    useCallback((s) => selectOutboxEntries(s, selectedGroupId), [selectedGroupId]),
   );
   const enqueueOutbox = useChatOutboxStore((s) => s.enqueue);
   const removeOutbox = useChatOutboxStore((s) => s.remove);
   const sendInFlightRef = useRef(false);
-  const [composerGroupMentionTokens, setComposerGroupMentionTokens] = useState<ComposerGroupMentionToken[]>([]);
-  const [composerAgentMentionTokens, setComposerAgentMentionTokens] = useState<ComposerAgentMentionToken[]>([]);
+  const [composerGroupMentionTokens, setComposerGroupMentionTokens] = useState<
+    ComposerGroupMentionToken[]
+  >([]);
+  const [composerAgentMentionTokens, setComposerAgentMentionTokens] = useState<
+    ComposerAgentMentionToken[]
+  >([]);
 
   // ============ Computed Values ============
 
-  const resolveAssistantTargets = useCallback((tokens: string[]): Actor[] => {
-    const normalized = tokens.map((token) => String(token || "").trim()).filter((token) => token);
-    const resolved = new Map<string, Actor>();
-    const policy = groupSettings?.default_send_to || "foreman";
-    const effectiveTokens = normalized.length > 0 ? normalized : (policy === "foreman" ? ["@foreman"] : ["@all"]);
-    const allActors = actors.filter((actor) => {
-      const actorId = String(actor.id || "").trim();
-      const internalKind = String(actor.internal_kind || "").trim();
-      return actorId && actorId !== "user" && !internalKind;
-    });
-    const peers = allActors.filter((actor) => String(actor.role || "").trim() !== "foreman");
-    const foremen = allActors.filter((actor) => String(actor.role || "").trim() === "foreman");
-
-    const addActors = (items: Actor[]) => {
-      for (const actor of items) {
+  const resolveAssistantTargets = useCallback(
+    (tokens: string[]): Actor[] => {
+      const normalized = tokens.map((token) => String(token || "").trim()).filter((token) => token);
+      const resolved = new Map<string, Actor>();
+      const policy = groupSettings?.default_send_to || "foreman";
+      const effectiveTokens =
+        normalized.length > 0 ? normalized : policy === "foreman" ? ["@foreman"] : ["@all"];
+      const allActors = actors.filter((actor) => {
         const actorId = String(actor.id || "").trim();
-        if (!actorId || resolved.has(actorId)) continue;
-        resolved.set(actorId, actor);
-      }
-    };
+        const internalKind = String(actor.internal_kind || "").trim();
+        return actorId && actorId !== "user" && !internalKind;
+      });
+      const peers = allActors.filter((actor) => String(actor.role || "").trim() !== "foreman");
+      const foremen = allActors.filter((actor) => String(actor.role || "").trim() === "foreman");
 
-    for (const token of effectiveTokens) {
-      if (token === "@all") {
-        addActors(allActors);
-        continue;
-      }
-      if (token === "@peers") {
-        addActors(peers);
-        continue;
-      }
-      if (token === "@foreman") {
-        addActors(foremen);
-        continue;
-      }
-      const actor = allActors.find((item) => String(item.id || "").trim() === token);
-      if (actor) addActors([actor]);
-    }
+      const addActors = (items: Actor[]) => {
+        for (const actor of items) {
+          const actorId = String(actor.id || "").trim();
+          if (!actorId || resolved.has(actorId)) continue;
+          resolved.set(actorId, actor);
+        }
+      };
 
-    return Array.from(resolved.values()).filter((actor) => String(actor.runtime || "").trim() === "codex");
-  }, [actors, groupSettings?.default_send_to]);
+      for (const token of effectiveTokens) {
+        if (token === "@all") {
+          addActors(allActors);
+          continue;
+        }
+        if (token === "@peers") {
+          addActors(peers);
+          continue;
+        }
+        if (token === "@foreman") {
+          addActors(foremen);
+          continue;
+        }
+        const actor = allActors.find((item) => String(item.id || "").trim() === token);
+        if (actor) addActors([actor]);
+      }
+
+      return Array.from(resolved.values()).filter(
+        (actor) => String(actor.runtime || "").trim() === "codex",
+      );
+    },
+    [actors, groupSettings?.default_send_to],
+  );
 
   // Recipient parsing accepts tokens selected from either the current group or
   // the destination group, because @ suggestions can switch source by cursor
@@ -1083,7 +1218,7 @@ export function useChatTab({
     let cancelled = false;
     void api.fetchGroupBridgeTrusts(buildComposerTrustFetchGroupId(gid)).then((resp) => {
       if (cancelled) return;
-      setGroupBridgeTrusts(resp.ok ? (resp.result.trusts || []) : []);
+      setGroupBridgeTrusts(resp.ok ? resp.result.trusts || [] : []);
     });
     return () => {
       cancelled = true;
@@ -1098,24 +1233,33 @@ export function useChatTab({
     return subscribeGroupBridgePairingChanged(gid, refreshGroupBridgeTrusts);
   }, [refreshGroupBridgeTrusts, selectedGroupId]);
 
-  const remoteRouteGroups = useMemo(() => buildGroupBridgeRouteGroups(group_bridgeTrusts), [group_bridgeTrusts]);
+  const remoteRouteGroups = useMemo(
+    () => buildGroupBridgeRouteGroups(group_bridgeTrusts),
+    [group_bridgeTrusts],
+  );
 
-  const composerRouteGroups: GroupMeta[] = useMemo(() => (
-    mergeComposerRouteGroups(groups, remoteRouteGroups)
-  ), [remoteRouteGroups, groups]);
+  const composerRouteGroups: GroupMeta[] = useMemo(
+    () => mergeComposerRouteGroups(groups, remoteRouteGroups),
+    [remoteRouteGroups, groups],
+  );
 
   useEffect(() => {
     setSelectedRemoteGroupIds([]);
   }, [selectedGroupId]);
 
   useEffect(() => {
-    const validRemoteIds = new Set(remoteRouteGroups.map((group) => String(group.group_id || "").trim()).filter(Boolean));
-    setSelectedRemoteGroupIds((current) => current.filter((groupId) => validRemoteIds.has(groupId)));
+    const validRemoteIds = new Set(
+      remoteRouteGroups.map((group) => String(group.group_id || "").trim()).filter(Boolean),
+    );
+    setSelectedRemoteGroupIds((current) =>
+      current.filter((groupId) => validRemoteIds.has(groupId)),
+    );
   }, [remoteRouteGroups]);
 
   // Message-body mentions are text helpers: @ autocompletes names/references, # adds delegation hints.
   const mentionSuggestions = useMemo(() => {
-    const mentionActors = mentionKind === "agent" && mentionActorScope === "selected" ? actors : recipientActors;
+    const mentionActors =
+      mentionKind === "agent" && mentionActorScope === "selected" ? actors : recipientActors;
     return buildComposerMentionSuggestions({
       kind: mentionKind,
       filter: mentionFilter,
@@ -1145,15 +1289,18 @@ export function useChatTab({
   const showSetupCard = needsScope || needsActors || needsStart;
   const selectedGroupLifecycleState = useMemo(() => {
     if (!groupDoc || String(groupDoc.group_id || "") !== String(selectedGroupId || "")) return "";
-    return String(groupDoc.runtime_status?.lifecycle_state || groupDoc.state || "").trim().toLowerCase();
+    return String(groupDoc.runtime_status?.lifecycle_state || groupDoc.state || "")
+      .trim()
+      .toLowerCase();
   }, [groupDoc, selectedGroupId]);
   const groupSendBlockedReason = useMemo(
-    () => getGroupSendBlockedReason({
-      lifecycleState: selectedGroupLifecycleState,
-      runtimeRunning: selectedGroupRunning,
-      actorCount: actors.length,
-    }),
-    [actors.length, selectedGroupLifecycleState, selectedGroupRunning]
+    () =>
+      getGroupSendBlockedReason({
+        lifecycleState: selectedGroupLifecycleState,
+        runtimeRunning: selectedGroupRunning,
+        actorCount: actors.length,
+      }),
+    [actors.length, selectedGroupLifecycleState, selectedGroupRunning],
   );
 
   const dispatchSlashSkillMessage = useSlashSkillDispatch({
@@ -1197,17 +1344,13 @@ export function useChatTab({
     }
     return `${selectedGroupId}:live`;
   }, [inChatWindow, chatWindow, selectedGroupId]);
-  const logicalMessageOrderStateRef = useRef<{ viewKey: string; map: Map<string, number>; next: number }>({
-    viewKey: "",
-    map: new Map(),
-    next: 0,
-  });
+  const logicalMessageOrderStateRef = useRef<{
+    viewKey: string;
+    map: Map<string, number>;
+    next: number;
+  }>({ viewKey: "", map: new Map(), next: 0 });
   if (logicalMessageOrderStateRef.current.viewKey !== chatViewKey) {
-    logicalMessageOrderStateRef.current = {
-      viewKey: chatViewKey,
-      map: new Map(),
-      next: 0,
-    };
+    logicalMessageOrderStateRef.current = { viewKey: chatViewKey, map: new Map(), next: 0 };
   }
 
   const liveWorkEvents = useMemo(() => {
@@ -1215,27 +1358,34 @@ export function useChatTab({
     return dropOrphanQueuedPlaceholders(
       all,
       collapseActorStreamingPlaceholders(
-        dedupeStreamingEvents(streamingEvents.filter((ev: LedgerEvent) => ev.kind === "chat.message"))
+        dedupeStreamingEvents(
+          streamingEvents.filter((ev: LedgerEvent) => ev.kind === "chat.message"),
+        ),
       ),
     );
   }, [events, streamingEvents]);
 
   const unfilteredLiveChatMessages = useMemo(
-    () => buildUnfilteredLiveChatMessages(events, outboxEntries, logicalMessageOrderStateRef.current),
+    () =>
+      buildUnfilteredLiveChatMessages(events, outboxEntries, logicalMessageOrderStateRef.current),
     [events, outboxEntries],
   );
 
   // Filtered live chat messages (canonical + optimistic pending merged)
   const liveChatMessages = useMemo(() => {
-    const all = events.filter(isFormalChatMessageEvent).filter(shouldShowInConversation).map(toVisibleConversationEvent);
+    const all = events
+      .filter(isFormalChatMessageEvent)
+      .filter(shouldShowInConversation)
+      .map(toVisibleConversationEvent);
     const renderableCanonicalClientIds = new Set(
       all
         .filter((ev: LedgerEvent) => hasRenderableChatMessageContent(ev))
         .map((ev: LedgerEvent) => {
-          const data = ev.data && typeof ev.data === "object" ? (ev.data as { client_id?: unknown }) : null;
+          const data =
+            ev.data && typeof ev.data === "object" ? (ev.data as { client_id?: unknown }) : null;
           return data && typeof data.client_id === "string" ? data.client_id.trim() : "";
         })
-        .filter((clientId: string) => clientId.length > 0)
+        .filter((clientId: string) => clientId.length > 0),
     );
     const pendingEvents = outboxEntries
       .filter((entry) => !renderableCanonicalClientIds.has(entry.localId))
@@ -1282,8 +1432,11 @@ export function useChatTab({
   }, [chatWindow, inChatWindow, liveChatMessages]);
 
   const hasAnyChatMessages = useMemo(
-    () => events.some((event: LedgerEvent) => isFormalChatMessageEvent(event) && shouldShowInConversation(event)) || outboxEntries.length > 0,
-    [events, outboxEntries]
+    () =>
+      events.some(
+        (event: LedgerEvent) => isFormalChatMessageEvent(event) && shouldShowInConversation(event),
+      ) || outboxEntries.length > 0,
+    [events, outboxEntries],
   );
   const chatInitialScrollAnchorId = useMemo(() => {
     if (inChatWindow) return undefined;
@@ -1322,10 +1475,15 @@ export function useChatTab({
   }, [inChatWindow, chatWindow]);
 
   const effectiveIsLoadingHistory = inChatWindow ? isChatWindowLoading : isLoadingHistory;
-  const effectiveHasMoreHistory = !selectedGroupId ? false : inChatWindow ? false : (!hasLoadedTail || hasMoreHistory);
+  const effectiveHasMoreHistory = !selectedGroupId
+    ? false
+    : inChatWindow
+      ? false
+      : !hasLoadedTail || hasMoreHistory;
 
   const hasHydratedGroupDoc = useMemo(() => {
-    if (!groupDoc || String(groupDoc.group_id || "") !== String(selectedGroupId || "")) return false;
+    if (!groupDoc || String(groupDoc.group_id || "") !== String(selectedGroupId || ""))
+      return false;
     // Shell docs only carry title/topic/state; fetched docs also carry scope fields.
     return (
       Object.prototype.hasOwnProperty.call(groupDoc, "scopes") ||
@@ -1362,17 +1520,14 @@ export function useChatTab({
       if (!selectedGroupId) return;
       setChatFilter(selectedGroupId, nextFilter);
     },
-    [selectedGroupId, setChatFilter]
+    [selectedGroupId, setChatFilter],
   );
 
   // Agent state snapshot
-  const agentStates = useMemo(
-    () => groupContext?.agent_states || [],
-    [groupContext]
-  );
+  const agentStates = useMemo(() => groupContext?.agent_states || [], [groupContext]);
   const tasks = useMemo(
     () => (Array.isArray(groupContext?.coordination?.tasks) ? groupContext.coordination.tasks : []),
-    [groupContext]
+    [groupContext],
   );
   const taskById = useMemo(() => {
     const map = new Map<string, Task>();
@@ -1393,13 +1548,15 @@ export function useChatTab({
       const idx = cur.findIndex((x) => x === t);
       if (idx >= 0) {
         const next = cur.slice(0, idx).concat(cur.slice(idx + 1));
-        setComposerAgentMentionTokens((tokens) => tokens.filter((mention) => mention.scope !== "selected" || mention.actorId !== t));
+        setComposerAgentMentionTokens((tokens) =>
+          tokens.filter((mention) => mention.scope !== "selected" || mention.actorId !== t),
+        );
         setToText(next.join(", "));
       } else {
         setToText(cur.concat([t]).join(", "));
       }
     },
-    [toTokens, setToText]
+    [toTokens, setToText],
   );
 
   const toggleRemoteGroupRecipient = useCallback((groupId: string) => {
@@ -1418,9 +1575,13 @@ export function useChatTab({
 
   const syncMentionRecipientsFromComposerText = useCallback(
     (textOrUpdater: string | ((prev: string) => string)) => {
-      const text = typeof textOrUpdater === "function" ? textOrUpdater(composerText) : textOrUpdater;
+      const text =
+        typeof textOrUpdater === "function" ? textOrUpdater(composerText) : textOrUpdater;
       setComposerGroupMentionTokens((tokens) => pruneComposerGroupMentionTokens({ text, tokens }));
-      const liveAgentMentionTokens = pruneComposerAgentMentionTokens({ text, tokens: composerAgentMentionTokens });
+      const liveAgentMentionTokens = pruneComposerAgentMentionTokens({
+        text,
+        tokens: composerAgentMentionTokens,
+      });
       if (liveAgentMentionTokens.length !== composerAgentMentionTokens.length) {
         setComposerAgentMentionTokens(liveAgentMentionTokens);
       }
@@ -1433,7 +1594,7 @@ export function useChatTab({
     (idx: number) => {
       setComposerFiles(composerFiles.filter((_, i) => i !== idx));
     },
-    [composerFiles, setComposerFiles]
+    [composerFiles, setComposerFiles],
   );
 
   const sendMessage = useCallback(async () => {
@@ -1478,22 +1639,25 @@ export function useChatTab({
       groupMentionTokens: composerGroupMentionTokens,
       groups: composerRouteGroups,
       remoteGroupIds: selectedRemoteGroupIdsSnapshot,
-      includeSelectedGroup: selectedRemoteGroupIdsSnapshot.length > 0 && localToTokensSnapshot.length > 0,
+      includeSelectedGroup:
+        selectedRemoteGroupIdsSnapshot.length > 0 && localToTokensSnapshot.length > 0,
     });
     const sendsCrossGroup = sendPlanTargets.some((target) => target.isCrossGroup);
     const sendsLocal = sendPlanTargets.some((target) => !target.isCrossGroup);
     const slashGuardSendGroupId = sendsCrossGroup
-      ? (sendPlanTargets.find((target) => target.isCrossGroup)?.groupId || dstGroup)
+      ? sendPlanTargets.find((target) => target.isCrossGroup)?.groupId || dstGroup
       : dstGroup;
-    if (await tryExecuteSlashCommand({
-      text: composerStateSnapshot.composerText,
-      composerFilesCount: composerFilesSnapshot.length,
-      hasReplyTarget: !!composerStateSnapshot.replyTarget,
-      replyTarget: composerStateSnapshot.replyTarget,
-      replyRequired: composerStateSnapshot.replyRequired,
-      hasQuotedPresentationRef: !!composerStateSnapshot.quotedPresentationRef,
-      sendGroupId: slashGuardSendGroupId,
-    })) {
+    if (
+      await tryExecuteSlashCommand({
+        text: composerStateSnapshot.composerText,
+        composerFilesCount: composerFilesSnapshot.length,
+        hasReplyTarget: !!composerStateSnapshot.replyTarget,
+        replyTarget: composerStateSnapshot.replyTarget,
+        replyRequired: composerStateSnapshot.replyRequired,
+        hasQuotedPresentationRef: !!composerStateSnapshot.quotedPresentationRef,
+        sendGroupId: slashGuardSendGroupId,
+      })
+    ) {
       return;
     }
     if (groupSendBlockedReason) {
@@ -1519,8 +1683,9 @@ export function useChatTab({
     const replyRequiredSnapshot = composerStateSnapshot.replyRequired;
     const groupMentionTokensSnapshot = composerGroupMentionTokens;
     const agentMentionTokensSnapshot = composerAgentMentionTokens;
-    const prio = replyRequiredSnapshot ? "attention" : (prioritySnapshot || "normal");
-    const assistantTargets = sendsLocal && !sendsCrossGroup ? resolveAssistantTargets(localToTokensSnapshot) : [];
+    const prio = replyRequiredSnapshot ? "attention" : prioritySnapshot || "normal";
+    const assistantTargets =
+      sendsLocal && !sendsCrossGroup ? resolveAssistantTargets(localToTokensSnapshot) : [];
 
     // Generate a local ID for outbox tracking
     const localId = `local_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -1622,11 +1787,15 @@ export function useChatTab({
       setDestGroupId(selectedGroupId);
       return;
     }
-    if (shouldBlockLocalCrossGroupAttachments({
-      attachmentCount: composerFilesSnapshot.length,
-      targets: sendPlanTargets,
-    })) {
-      showError("Local cross-group send does not support attachments yet. Use a remote Group Bridge target or send without attachments.");
+    if (
+      shouldBlockLocalCrossGroupAttachments({
+        attachmentCount: composerFilesSnapshot.length,
+        targets: sendPlanTargets,
+      })
+    ) {
+      showError(
+        "Local cross-group send does not support attachments yet. Use a remote Group Bridge target or send without attachments.",
+      );
       return;
     }
 
@@ -1720,14 +1889,18 @@ export function useChatTab({
         if (!resp || resp.ok) {
           const crossGroupTargets = sendPlanTargets.filter((item) => item.isCrossGroup);
           if (sendsCrossGroup && crossGroupTargets.length === 0) {
-            resp = { ok: false, error: { code: "missing_cross_group_target", message: "missing cross-group target" } };
+            resp = {
+              ok: false,
+              error: { code: "missing_cross_group_target", message: "missing cross-group target" },
+            };
           }
           for (const target of crossGroupTargets) {
-            const targetTo = Array.isArray(target.recipientTokens) && target.recipientTokens.length > 0
-              ? target.recipientTokens
-              : target.isRemote
-                ? ["@foreman"]
-                : crossToTokensSnapshot;
+            const targetTo =
+              Array.isArray(target.recipientTokens) && target.recipientTokens.length > 0
+                ? target.recipientTokens
+                : target.isRemote
+                  ? ["@foreman"]
+                  : crossToTokensSnapshot;
             resp = await api.sendCrossGroupMessage(
               selectedGroupId,
               target.groupId,
@@ -1743,7 +1916,10 @@ export function useChatTab({
         }
       }
       if (!resp) {
-        resp = { ok: false, error: { code: "send_not_dispatched", message: "message send was not dispatched" } };
+        resp = {
+          ok: false,
+          error: { code: "send_not_dispatched", message: "message send was not dispatched" },
+        };
       }
       if (!resp.ok) {
         // Pending-only outbox: failed sends roll back to the composer.
@@ -1752,16 +1928,22 @@ export function useChatTab({
         const shouldRestoreComposer = successfulSendCount === 0;
         if (shouldRestoreComposer) restoreComposerState();
         const sendError = resp.error || { code: "send_failed", message: "send failed" };
-        showError(formatSendMessageError({
-          code: sendError.code,
-          message: sendError.message,
-          groupSendBlockedReason,
-          t,
-        }));
+        showError(
+          formatSendMessageError({
+            code: sendError.code,
+            message: sendError.message,
+            groupSendBlockedReason,
+            t,
+          }),
+        );
         return;
       }
       const canonicalEvent =
-        sendsLocal && !sendsCrossGroup && resp.result && typeof resp.result === "object" && "event" in resp.result
+        sendsLocal &&
+        !sendsCrossGroup &&
+        resp.result &&
+        typeof resp.result === "object" &&
+        "event" in resp.result
           ? (resp.result.event as LedgerEvent | null | undefined)
           : undefined;
 
@@ -1876,7 +2058,7 @@ export function useChatTab({
         showError("Failed to copy link");
       }
     },
-    [selectedGroupId, showNotice, showError]
+    [selectedGroupId, showNotice, showError],
   );
 
   const copyMessageText = useCallback(
@@ -1884,9 +2066,14 @@ export function useChatTab({
       if (ev.kind !== "chat.message") return;
       const data = ev.data as ChatMessageData | undefined;
       const text = String(data?.text || "");
-      if (!text.trim()) return;
+      const copyText = appendSenderPerspective(
+        text,
+        getMessageInsight(data),
+        t("chat:senderPerspective", { defaultValue: "Sender perspective" }),
+      );
+      if (!copyText) return;
 
-      const ok = await copyTextToClipboard(text);
+      const ok = await copyTextToClipboard(copyText);
 
       if (ok) {
         showNotice({ message: t("chat:contentCopied", { defaultValue: "Content copied" }) });
@@ -1894,14 +2081,23 @@ export function useChatTab({
         showError(t("common:copyFailed", { defaultValue: "Copy failed" }));
       }
     },
-    [showError, showNotice, t]
+    [showError, showNotice, t],
   );
 
   const startReply = useCallback(
     (ev: LedgerEvent) => {
-      const replyComposerState = buildReplyComposerState(ev, selectedGroupId, actors, groupSettings);
+      const replyComposerState = buildReplyComposerState(
+        ev,
+        selectedGroupId,
+        actors,
+        groupSettings,
+      );
       if (!replyComposerState) {
-        showError(t("replyTargetUnavailable", { defaultValue: "This message is not ready for replies yet." }));
+        showError(
+          t("replyTargetUnavailable", {
+            defaultValue: "This message is not ready for replies yet.",
+          }),
+        );
         return;
       }
 
@@ -1913,19 +2109,29 @@ export function useChatTab({
       setReplyTarget(replyComposerState.replyTarget);
       requestAnimationFrame(() => composerRef?.current?.focus());
     },
-    [selectedGroupId, actors, groupSettings, setDestGroupId, setReplyToText, setReplyTarget, composerRef, showError, t]
+    [
+      selectedGroupId,
+      actors,
+      groupSettings,
+      setDestGroupId,
+      setReplyToText,
+      setReplyTarget,
+      composerRef,
+      showError,
+      t,
+    ],
   );
 
   const cancelReply = useCallback(() => setReplyTarget(null), [setReplyTarget]);
 
   const showRecipients = useCallback(
     (eventId: string) => setRecipientsModal(eventId),
-    [setRecipientsModal]
+    [setRecipientsModal],
   );
 
   const relayMessage = useCallback(
     (ev: LedgerEvent) => setRelayModal(ev.id ?? null, selectedGroupId, ev),
-    [setRelayModal, selectedGroupId]
+    [setRelayModal, selectedGroupId],
   );
 
   const openSourceMessage = useCallback(
@@ -1934,7 +2140,13 @@ export function useChatTab({
       const eid = String(srcEventId || "").trim();
       if (!gid || !eid) return;
       if (!canOpenSourceMessageLocally(groups, gid)) {
-        showError(t("sourceMessageNotLocal", { groupId: gid, defaultValue: "Original message is in a remote group that is not open locally: {{groupId}}" }));
+        showError(
+          t("sourceMessageNotLocal", {
+            groupId: gid,
+            defaultValue:
+              "Original message is in a remote group that is not open locally: {{groupId}}",
+          }),
+        );
         return;
       }
 
@@ -1951,7 +2163,7 @@ export function useChatTab({
         useGroupStore.getState().setSelectedGroupId(gid);
       }
     },
-    [groups, openChatWindow, selectedGroupId, showError, t]
+    [groups, openChatWindow, selectedGroupId, showError, t],
   );
 
   const exitChatWindow = useCallback(() => {
@@ -1967,9 +2179,20 @@ export function useChatTab({
     if (selectedGroupId) {
       setShowScrollButton(selectedGroupId, false);
       setChatUnreadCount(selectedGroupId, 0);
-      setChatScrollSnapshot(selectedGroupId, { mode: "follow", anchorId: "", offsetPx: 0, updatedAt: Date.now() });
+      setChatScrollSnapshot(selectedGroupId, {
+        mode: "follow",
+        anchorId: "",
+        offsetPx: 0,
+        updatedAt: Date.now(),
+      });
     }
-  }, [chatAtBottomRef, selectedGroupId, setShowScrollButton, setChatUnreadCount, setChatScrollSnapshot]);
+  }, [
+    chatAtBottomRef,
+    selectedGroupId,
+    setShowScrollButton,
+    setChatUnreadCount,
+    setChatScrollSnapshot,
+  ]);
 
   const handleScrollChange = useCallback(
     (isAtBottom: boolean) => {
@@ -1978,7 +2201,7 @@ export function useChatTab({
       setShowScrollButton(selectedGroupId, !isAtBottom);
       if (isAtBottom) setChatUnreadCount(selectedGroupId, 0);
     },
-    [chatAtBottomRef, selectedGroupId, setShowScrollButton, setChatUnreadCount]
+    [chatAtBottomRef, selectedGroupId, setShowScrollButton, setChatUnreadCount],
   );
 
   const handleScrollSnapshot = useCallback(
@@ -1991,7 +2214,7 @@ export function useChatTab({
       if (!gid) return;
       setChatScrollSnapshot(gid, snap);
     },
-    [inChatWindow, selectedGroupId, setChatScrollSnapshot]
+    [inChatWindow, selectedGroupId, setChatScrollSnapshot],
   );
 
   const addAgent = useCallback(() => {

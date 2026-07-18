@@ -256,6 +256,69 @@ class TestBridgeStreamForwarding(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_chat_message_flattens_insight_once_for_legacy_im_adapter(self) -> None:
+        from cccc.kernel.peer_insight import PEER_PERSPECTIVE_TEXT_LABEL
+
+        adapter = FakeStreamAdapter()
+        bridge, cleanup = self._make_bridge(adapter)
+        try:
+            adapter.send_message = MagicMock(return_value=True)
+            bridge._forward_event({
+                "kind": "chat.message",
+                "by": "agent-1",
+                "data": {
+                    "text": "normal message",
+                    "insight": "The current plan may be wrong.",
+                    "to": ["user"],
+                    "attachments": [],
+                },
+            })
+
+            adapter.send_message.assert_called_once()
+            projected = str(adapter.send_message.call_args.args[1])
+            self.assertEqual(projected.count(PEER_PERSPECTIVE_TEXT_LABEL), 1)
+            self.assertIn("normal message", projected)
+            self.assertIn("The current plan may be wrong.", projected)
+        finally:
+            cleanup()
+
+    def test_completed_stream_sends_only_insight_continuation(self) -> None:
+        from cccc.kernel.peer_insight import PEER_PERSPECTIVE_TEXT_LABEL
+
+        adapter = FakeStreamAdapter()
+        bridge, cleanup = self._make_bridge(adapter)
+        try:
+            adapter.send_message = MagicMock(return_value=True)
+            bridge._forward_stream_event({
+                "kind": "chat.stream",
+                "by": "agent-1",
+                "data": {"op": "start", "stream_id": "s-insight", "text": ""},
+            })
+            bridge._forward_stream_event({
+                "kind": "chat.stream",
+                "by": "agent-1",
+                "data": {"op": "end", "stream_id": "s-insight", "text": "streamed body"},
+            })
+            bridge._forward_event({
+                "kind": "chat.message",
+                "by": "agent-1",
+                "data": {
+                    "text": "streamed body",
+                    "insight": "The evidence may still be insufficient.",
+                    "to": ["user"],
+                    "stream_id": "s-insight",
+                    "attachments": [],
+                },
+            })
+
+            adapter.send_message.assert_called_once()
+            continuation = str(adapter.send_message.call_args.args[1])
+            self.assertEqual(continuation.count(PEER_PERSPECTIVE_TEXT_LABEL), 1)
+            self.assertIn("The evidence may still be insufficient.", continuation)
+            self.assertNotIn("streamed body", continuation)
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

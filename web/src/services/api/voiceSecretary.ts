@@ -5,7 +5,8 @@ function normalizeVoiceDocument(value: unknown): AssistantVoiceDocument | null {
   const record = asRecord(value);
   if (!record) return null;
   const documentId = asString(record.document_id).trim();
-  const documentPath = asOptionalString(record.document_path) || asOptionalString(record.workspace_path) || undefined;
+  const documentPath =
+    asOptionalString(record.document_path) || asOptionalString(record.workspace_path) || undefined;
   if (!documentId && !documentPath) return null;
   return {
     document_id: documentId || String(documentPath || ""),
@@ -18,9 +19,15 @@ function normalizeVoiceDocument(value: unknown): AssistantVoiceDocument | null {
     workspace_path: asOptionalString(record.workspace_path) || undefined,
     content: asOptionalString(record.content) || undefined,
     content_sha256: asOptionalString(record.content_sha256) || undefined,
-    content_chars: Number.isFinite(Number(record.content_chars)) ? Number(record.content_chars) : undefined,
-    revision_count: Number.isFinite(Number(record.revision_count)) ? Number(record.revision_count) : undefined,
-    source_segment_count: Number.isFinite(Number(record.source_segment_count)) ? Number(record.source_segment_count) : undefined,
+    content_chars: Number.isFinite(Number(record.content_chars))
+      ? Number(record.content_chars)
+      : undefined,
+    revision_count: Number.isFinite(Number(record.revision_count))
+      ? Number(record.revision_count)
+      : undefined,
+    source_segment_count: Number.isFinite(Number(record.source_segment_count))
+      ? Number(record.source_segment_count)
+      : undefined,
     last_source_segment_id: asOptionalString(record.last_source_segment_id) || undefined,
     last_source_path: asOptionalString(record.last_source_path) || undefined,
     created_at: asOptionalString(record.created_at) || undefined,
@@ -46,13 +53,12 @@ export async function fetchVoiceAssistantDocumentContent(
   if (!resp.ok) return resp as ApiResponse<{ group_id: string; document?: AssistantVoiceDocument }>;
   const result = asRecord(resp.result) ?? {};
   const documents = Array.isArray(result.documents)
-    ? result.documents.map((item) => normalizeVoiceDocument(item)).filter((item): item is AssistantVoiceDocument => !!item)
+    ? result.documents
+        .map((item) => normalizeVoiceDocument(item))
+        .filter((item): item is AssistantVoiceDocument => !!item)
     : [];
   return {
     ok: true,
-    result: {
-      group_id: asString(result.group_id).trim() || gid,
-      document: documents[0],
-    },
+    result: { group_id: asString(result.group_id).trim() || gid, document: documents[0] },
   };
 }

@@ -157,6 +157,26 @@ def default_automation_ruleset_doc() -> Dict[str, Any]:
     return copy.deepcopy(_default_automation_ruleset())
 
 
+def default_new_group_automation_doc() -> Dict[str, Any]:
+    """Return new-group defaults without changing legacy repair/reset semantics."""
+    doc = default_automation_ruleset_doc()
+    doc.update(
+        {
+            "nudge_after_seconds": 0,
+            # Explicit message obligations retain reliability reminders.
+            "reply_required_nudge_after_seconds": 300,
+            "attention_ack_nudge_after_seconds": 600,
+            "unread_nudge_after_seconds": 0,
+            "actor_idle_timeout_seconds": 0,
+            "keepalive_delay_seconds": 0,
+            "silence_timeout_seconds": 0,
+            "help_nudge_interval_seconds": 0,
+            "help_nudge_min_messages": 0,
+        }
+    )
+    return doc
+
+
 def _new_group_id(seed: str) -> str:
     h = hashlib.sha256(seed.encode("utf-8")).hexdigest()
     return "g_" + h[:12]
@@ -226,7 +246,7 @@ def create_group(reg: Registry, *, title: str, topic: str = "") -> Group:
         "scopes": [],
         "actors": [],
         # Single-layer storage: automation rules/snippets live in group.yaml under CCCC_HOME.
-        "automation": default_automation_ruleset_doc(),
+        "automation": default_new_group_automation_doc(),
     }
     atomic_write_text(gp / "group.yaml", yaml.safe_dump(group_doc, allow_unicode=True, sort_keys=False))
 
@@ -373,7 +393,7 @@ def ensure_group_for_scope(reg: Registry, scope: ScopeIdentity) -> Group:
         "scopes": [],
         "actors": [],
         # Keep deterministic defaults consistent with create_group().
-        "automation": default_automation_ruleset_doc(),
+        "automation": default_new_group_automation_doc(),
     }
     atomic_write_text(gp / "group.yaml", yaml.safe_dump(group_doc, allow_unicode=True, sort_keys=False))
 

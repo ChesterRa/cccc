@@ -6,6 +6,7 @@ daemon-owned browser session.
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
 from pathlib import Path
@@ -72,6 +73,9 @@ def _record_projected_browser_state(group_id: str, actor_id: str, snapshot: dict
         "browser_binary": str(meta.get("browser_binary") or ""),
         "profile_dir": str(profile_dir),
         "visibility": "projected",
+        "display": str(meta.get("display") or ""),
+        "display_owned": bool(meta.get("display_owned")),
+        "display_owner": str(meta.get("display_owner") or ""),
         "started_at": str(meta.get("started_at") or snapshot.get("started_at") or ""),
         "last_tab_url": str(snapshot.get("url") or CHATGPT_URL),
     }
@@ -99,6 +103,9 @@ def _clear_projected_browser_state_if_matching(group_id: str, actor_id: str, sna
             "pid": 0,
             "cdp_port": 0,
             "visibility": "projected",
+            "display": "",
+            "display_owned": False,
+            "display_owner": "",
             "last_tab_url": str(snapshot.get("url") or current.get("last_tab_url") or CHATGPT_URL),
         }
     )
@@ -172,6 +179,12 @@ def _adoptable_shared_browser_state(group_id: str, actor_id: str) -> dict[str, A
     expected_profile = chatgpt_browser_profile_dir(group_id, actor_id)
     recorded_profile = str(state.get("profile_dir") or "").strip()
     if recorded_profile and not _same_path(recorded_profile, expected_profile):
+        return {}
+    if sys.platform.startswith("linux") and not (
+        bool(state.get("display_owned"))
+        and str(state.get("display_owner") or "").strip() == "cccc_xvfb"
+        and str(state.get("display") or "").strip()
+    ):
         return {}
     if not _wait_cdp_endpoint(port, timeout_seconds=0.7):
         return {}

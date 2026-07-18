@@ -34,10 +34,22 @@ const LOW_VALUE_BROWSER_SPEECH_FRAGMENTS = new Set([
   "はい。",
 ]);
 
-const VOICE_LANGUAGE_OPTION_VALUES = ["mixed", "auto", "zh-CN", "en-US", "ja-JP", "ko-KR", "fr-FR", "de-DE", "es-ES"] as const;
+const VOICE_LANGUAGE_OPTION_VALUES = [
+  "mixed",
+  "auto",
+  "zh-CN",
+  "en-US",
+  "ja-JP",
+  "ko-KR",
+  "fr-FR",
+  "de-DE",
+  "es-ES",
+] as const;
 
 export function promptDraftApplyMode(draft: AssistantVoicePromptDraft): "append" | "replace" {
-  const operation = String(draft.operation || "").trim().toLowerCase();
+  const operation = String(draft.operation || "")
+    .trim()
+    .toLowerCase();
   if (operation === "replace_with_refined_prompt" || operation === "replace") return "replace";
   return "append";
 }
@@ -74,7 +86,9 @@ export function compactVoiceTranscriptSummaryText(value: string): string {
 }
 
 export function askFeedbackStatusKey(status: string): string {
-  return String(status || "pending").trim().toLowerCase();
+  return String(status || "pending")
+    .trim()
+    .toLowerCase();
 }
 
 export function isActiveAskFeedbackStatus(status: string): boolean {
@@ -88,7 +102,9 @@ export function isFinalAskFeedbackStatus(status: string): boolean {
 }
 
 export function hasFinalAskReply(item?: AssistantVoiceAskFeedback | null): boolean {
-  return Boolean(item && isFinalAskFeedbackStatus(item.status) && String(item.reply_text || "").trim());
+  return Boolean(
+    item && isFinalAskFeedbackStatus(item.status) && String(item.reply_text || "").trim(),
+  );
 }
 
 export function voiceReplyDismissKey(item?: AssistantVoiceAskFeedback | null): string {
@@ -121,7 +137,8 @@ export function displayAskFeedbackStatus(item: AssistantVoiceAskFeedback, nowMs:
     if (status === "done") return "";
     return status;
   }
-  const touchedAt = assistantVoiceTimestampMs(item.updated_at) || assistantVoiceTimestampMs(item.created_at);
+  const touchedAt =
+    assistantVoiceTimestampMs(item.updated_at) || assistantVoiceTimestampMs(item.created_at);
   if (touchedAt > 0 && nowMs - touchedAt >= VOICE_ASK_ACTIVE_TIMEOUT_MS) return "";
   return status === "pending" ? "working" : status;
 }
@@ -141,8 +158,13 @@ export function slugifyVoiceDocumentDownloadName(value: string): string {
   );
 }
 
-export function voiceDocumentDownloadFileName(document: AssistantVoiceDocument | null, fallbackTitle: string): string {
-  const workspacePath = String(document?.document_path || document?.workspace_path || "").trim().replace(/\\/g, "/");
+export function voiceDocumentDownloadFileName(
+  document: AssistantVoiceDocument | null,
+  fallbackTitle: string,
+): string {
+  const workspacePath = String(document?.document_path || document?.workspace_path || "")
+    .trim()
+    .replace(/\\/g, "/");
   const workspaceName = workspacePath.split("/").filter(Boolean).pop() || "";
   if (workspaceName.toLowerCase().endsWith(".md")) return workspaceName;
   return `${slugifyVoiceDocumentDownloadName(fallbackTitle)}.md`;
@@ -160,19 +182,25 @@ export function voiceDocumentMatches(document: AssistantVoiceDocument, idOrPath:
   const target = String(idOrPath || "").trim();
   if (!target) return false;
   return (
-    voiceDocumentPath(document) === target
-    || voiceDocumentKey(document) === target
-    || String(document.document_id || "").trim() === target
+    voiceDocumentPath(document) === target ||
+    voiceDocumentKey(document) === target ||
+    String(document.document_id || "").trim() === target
   );
 }
 
-export function findVoiceDocument(documents: AssistantVoiceDocument[], idOrPath: string): AssistantVoiceDocument | null {
+export function findVoiceDocument(
+  documents: AssistantVoiceDocument[],
+  idOrPath: string,
+): AssistantVoiceDocument | null {
   const target = String(idOrPath || "").trim();
   if (!target) return null;
   return documents.find((document) => voiceDocumentMatches(document, target)) || null;
 }
 
-export function resolveVoiceDocumentPath(documents: AssistantVoiceDocument[], idOrPath: string): string {
+export function resolveVoiceDocumentPath(
+  documents: AssistantVoiceDocument[],
+  idOrPath: string,
+): string {
   const target = String(idOrPath || "").trim();
   if (!target) return "";
   const directPath = documents.some((document) => voiceDocumentPath(document) === target);
@@ -201,14 +229,21 @@ export function voiceLanguageOptionValues(configuredLanguage: string): string[] 
   return values;
 }
 
-export function numberFromUnknown(value: unknown, fallback: number, min: number, max: number): number {
+export function numberFromUnknown(
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return fallback;
   return Math.max(min, Math.min(max, Math.round(numberValue)));
 }
 
 export function recordFromUnknown(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }
 
 export function normalizeBrowserTranscriptChunk(value: string): string {
@@ -241,7 +276,8 @@ export function mergeTranscriptChunks(previous: string, nextText: string): strin
   if (next.endsWith(prev)) return next;
   const overlap = longestTranscriptOverlap(prev, next);
   if (overlap > 0) return `${prev}${next.slice(overlap)}`;
-  const cjkBoundary = /[\u3040-\u30ff\u3400-\u9fff]$/.test(prev) && /^[\u3040-\u30ff\u3400-\u9fff]/.test(next);
+  const cjkBoundary =
+    /[\u3040-\u30ff\u3400-\u9fff]$/.test(prev) && /^[\u3040-\u30ff\u3400-\u9fff]/.test(next);
   return cjkBoundary ? `${prev}${next}` : `${prev} ${next}`;
 }
 
@@ -251,7 +287,10 @@ export function stripUncertainSpeakerPrefix(value: string): string {
   ).trim();
 }
 
-export function nextUncommittedServiceTranscriptText(partialText: string, committedText: string): string {
+export function nextUncommittedServiceTranscriptText(
+  partialText: string,
+  committedText: string,
+): string {
   const partial = stripUncertainSpeakerPrefix(partialText);
   if (!partial) return "";
   const committed = normalizeBrowserTranscriptChunk(committedText);
@@ -265,7 +304,12 @@ export function voiceTranscriptItemsFromMeetingSession(
   session: AssistantVoiceMeetingSession,
   opts?: { documentPathFallback?: string },
 ): VoiceTranscriptItem[] {
-  if (String(session.capture_mode || "document").trim().toLowerCase() !== "document") return [];
+  if (
+    String(session.capture_mode || "document")
+      .trim()
+      .toLowerCase() !== "document"
+  )
+    return [];
   const documentPath = String(session.document_path || opts?.documentPathFallback || "").trim();
   if (!documentPath) return [];
   const diarization = recordFromUnknown(session.diarization);
@@ -275,7 +319,9 @@ export function voiceTranscriptItemsFromMeetingSession(
   const speakerTranscriptModelId = String(diarization.speaker_transcript_model_id || "").trim();
   const segments = speakerTranscriptSegments.length
     ? speakerTranscriptSegments
-    : Array.isArray(session.segments) ? session.segments : [];
+    : Array.isArray(session.segments)
+      ? session.segments
+      : [];
   const items = segments
     .map((segment, index): VoiceTranscriptItem | null => {
       const record = recordFromUnknown(segment);
@@ -287,7 +333,9 @@ export function voiceTranscriptItemsFromMeetingSession(
       const source = speakerTranscriptSegments.length
         ? "assistant_service_local_asr_final"
         : String(trigger.recognition_backend || "").trim();
-      const updatedAt = assistantVoiceTimestampMs(String(record.updated_at || record.created_at || "")) || Date.now() - index;
+      const updatedAt =
+        assistantVoiceTimestampMs(String(record.updated_at || record.created_at || "")) ||
+        Date.now() - index;
       const item = createVoiceTranscriptItem({
         id: String(record.segment_id || "").trim() || `${session.session_id}-segment-${index}`,
         cleanText: text,
@@ -300,10 +348,16 @@ export function voiceTranscriptItemsFromMeetingSession(
           sourceLabel: voiceTranscriptSourceLabel(source),
           sourceDetail: voiceTranscriptSourceDetail({
             source,
-            modelId: speakerTranscriptModelId || String(trigger.final_model_id || trigger.model_id || "").trim(),
-            engine: speakerTranscriptSegments.length ? "sense_voice" : String(trigger.engine || "").trim(),
+            modelId:
+              speakerTranscriptModelId ||
+              String(trigger.final_model_id || trigger.model_id || "").trim(),
+            engine: speakerTranscriptSegments.length
+              ? "sense_voice"
+              : String(trigger.engine || "").trim(),
             language: String(trigger.asr_language || trigger.language || "").trim(),
-            chunks: Number.isFinite(Number(trigger.chunk_count)) ? Number(trigger.chunk_count) : undefined,
+            chunks: Number.isFinite(Number(trigger.chunk_count))
+              ? Number(trigger.chunk_count)
+              : undefined,
             fallbackReason: String(trigger.fallback_reason || "").trim(),
           }),
         },

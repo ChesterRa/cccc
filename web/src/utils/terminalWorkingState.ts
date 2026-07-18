@@ -13,9 +13,7 @@ const ANSI_ESCAPE_RE = new RegExp(
 );
 
 function stripAnsi(text: string): string {
-  return text
-    .replace(ANSI_ESCAPE_RE, "")
-    .replace(/\r/g, "");
+  return text.replace(ANSI_ESCAPE_RE, "").replace(/\r/g, "");
 }
 
 function stripControlChars(text: string): string {
@@ -59,7 +57,9 @@ export function isTerminalPromptVisible(buffer: string): boolean {
 }
 
 export function isCodexWorkingBannerVisible(buffer: string): boolean {
-  return /(?:^|\n)\s*[◦·•]\s+Working\s*\([^)\n]*esc to interrupt[^)\n]*\)/i.test(String(buffer || ""));
+  return /(?:^|\n)\s*[◦·•]\s+Working\s*\([^)\n]*esc to interrupt[^)\n]*\)/i.test(
+    String(buffer || ""),
+  );
 }
 
 export function stripTerminalWorkingBanners(text: string): string {
@@ -75,7 +75,9 @@ export function stripInactiveTerminalWorkingBanners(text: string, _workingState?
 }
 
 function isTerminalWorkingBannerLine(line: string): boolean {
-  return /^\s*[◦·•]\s*(?:�\s*)?Working\b.*$/i.test(stripControlChars(stripAnsi(String(line || ""))));
+  return /^\s*[◦·•]\s*(?:�\s*)?Working\b.*$/i.test(
+    stripControlChars(stripAnsi(String(line || ""))),
+  );
 }
 
 function isTerminalWorkingBannerPrefix(line: string): boolean {
@@ -87,10 +89,7 @@ function isTerminalWorkingBannerPrefix(line: string): boolean {
 export function filterTerminalWorkingBannerChunk(
   previousTail: string,
   chunk: string,
-): {
-  visible: string;
-  nextTail: string;
-} {
+): { visible: string; nextTail: string } {
   const combined = `${previousTail || ""}${chunk || ""}`;
   if (!combined) return { visible: "", nextTail: "" };
 
@@ -132,7 +131,11 @@ function lastTerminalPromptOffset(text: string): number {
       continue;
     }
     const line = rawLine.trim();
-    if (/^(?:>|›)\s+\S.*$/.test(line) || /^(?:\$|%|#|❯|➜|›)\s+.*$/.test(line) || /^[\w.@:/~-]+\s*(?:\$|%|#)\s*$/.test(line)) {
+    if (
+      /^(?:>|›)\s+\S.*$/.test(line) ||
+      /^(?:\$|%|#|❯|➜|›)\s+.*$/.test(line) ||
+      /^[\w.@:/~-]+\s*(?:\$|%|#)\s*$/.test(line)
+    ) {
       lastOffset = offset;
     }
     offset += rawLine.length;
@@ -161,7 +164,10 @@ function tailWindowHasCodexWorkingBanner(text: string): boolean {
   return /\bworking\s*\(/i.test(compact);
 }
 
-function getTailWindow(text: string, maxChars: number = CODEX_TERMINAL_SIGNAL_WINDOW_CHARS): string {
+function getTailWindow(
+  text: string,
+  maxChars: number = CODEX_TERMINAL_SIGNAL_WINDOW_CHARS,
+): string {
   const value = String(text || "");
   if (maxChars <= 0 || value.length <= maxChars) return value;
   return value.slice(-maxChars);
@@ -176,12 +182,11 @@ export function getTerminalSignalFromChunk(
   previousBuffer: string,
   chunk: string,
   runtime: string = "",
-): {
-  nextBuffer: string;
-  signalKind: TerminalSignal["kind"] | null;
-} {
+): { nextBuffer: string; signalKind: TerminalSignal["kind"] | null } {
   const nextBuffer = appendTerminalSignalBuffer(previousBuffer, chunk);
-  const runtimeId = String(runtime || "").trim().toLowerCase();
+  const runtimeId = String(runtime || "")
+    .trim()
+    .toLowerCase();
   if (runtimeId === "codex") {
     if (isCodexIdlePromptAfterWorkingBanner(nextBuffer)) {
       return { nextBuffer, signalKind: "idle_prompt" };
@@ -215,9 +220,14 @@ export function getActorDisplayWorkingState(
   signal: TerminalSignal | null | undefined,
   now: number = Date.now(),
 ): string {
-  const backendState = String(actor.effective_working_state || "").trim().toLowerCase() || "idle";
+  const backendState =
+    String(actor.effective_working_state || "")
+      .trim()
+      .toLowerCase() || "idle";
   const effectiveRunner = getEffectiveActorRunner(actor);
-  const stateSource = String(actor.runtime_state_source || "").trim().toLowerCase();
+  const stateSource = String(actor.runtime_state_source || "")
+    .trim()
+    .toLowerCase();
   const isRunning = actor.running ?? actor.enabled ?? false;
 
   if (!isRunning || effectiveRunner === "headless" || stateSource === "app_server") {

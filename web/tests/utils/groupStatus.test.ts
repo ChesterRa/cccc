@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { getGroupStatusUnified } from "../../src/utils/groupStatus";
-import { QUIET_RUN_INDICATOR_DOT_CLASS, STOPPED_INDICATOR_DOT_CLASS } from "../../src/utils/statusIndicators";
+import {
+  QUIET_RUN_INDICATOR_DOT_CLASS,
+  STOPPED_INDICATOR_DOT_CLASS,
+} from "../../src/utils/statusIndicators";
 
 describe("getGroupStatusUnified", () => {
   it("maps quiet running to the shared hollow-ring indicator", () => {

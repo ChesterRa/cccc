@@ -1,7 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
 
 const MarkdownRenderer = lazy(() =>
-  import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer }))
+  import("./MarkdownRenderer").then((module) => ({ default: module.MarkdownRenderer })),
 );
 
 type LazyMarkdownRendererProps = {

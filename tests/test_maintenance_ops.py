@@ -268,6 +268,84 @@ class TestMaintenanceOps(unittest.TestCase):
         self.assertEqual((resp.result or {}).get("remote_group_id"), "g_remote")
         self.assertNotIn("dst_event", resp.result or {})
 
+    def test_strict_local_cross_group_gate_precedes_source_event_and_preserves_structured_insight(self) -> None:
+        from cccc.contracts.v1 import DaemonResponse
+        from cccc.daemon.ops import maintenance_ops
+
+        src_group = SimpleNamespace(group_id="g_src", doc={"actors": []})
+        dst_group = SimpleNamespace(
+            group_id="g_dst",
+            doc={
+                "actors": [
+                    {
+                        "id": "dst-foreman",
+                        "title": "Destination Foreman",
+                        "enabled": True,
+                    }
+                ]
+            },
+        )
+        dispatches: list[dict] = []
+
+        def fake_load_group(group_id: str):
+            return src_group if group_id == "g_src" else dst_group if group_id == "g_dst" else None
+
+        def fake_dispatch(op: str, args: dict):
+            dispatches.append({"op": op, "args": dict(args)})
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "event": {
+                        "id": f"evt-{len(dispatches)}",
+                        "kind": "chat.message",
+                        "group_id": args.get("group_id"),
+                        "data": dict(args),
+                    }
+                },
+            ), False
+
+        with (
+            patch.object(maintenance_ops, "load_group", side_effect=fake_load_group),
+            patch.object(maintenance_ops, "resolve_remote_group_route", return_value=None),
+            patch.object(maintenance_ops, "_append_cross_group_receipt"),
+        ):
+            missing = maintenance_ops.handle_send_cross_group(
+                {
+                    "group_id": "g_src",
+                    "dst_group_id": "g_dst",
+                    "by": "peer1",
+                    "text": "review plan",
+                    "to": ["@foreman"],
+                    "require_peer_insight": True,
+                },
+                dispatch_send=fake_dispatch,
+            )
+            self.assertFalse(missing.ok)
+            self.assertEqual(missing.error.code, "peer_insight_required")
+            self.assertEqual(dispatches, [])
+
+            sent = maintenance_ops.handle_send_cross_group(
+                {
+                    "group_id": "g_src",
+                    "dst_group_id": "g_dst",
+                    "by": "peer1",
+                    "text": "review plan",
+                    "to": ["@foreman"],
+                    "insight": "The destination should be free to reject the whole plan.",
+                    "require_peer_insight": True,
+                },
+                dispatch_send=fake_dispatch,
+            )
+
+        self.assertTrue(sent.ok, getattr(sent, "error", None))
+        self.assertEqual(len(dispatches), 2)
+        self.assertEqual(
+            dispatches[0]["args"]["insight"],
+            "The destination should be free to reject the whole plan.",
+        )
+        self.assertEqual(dispatches[1]["args"]["insight"], dispatches[0]["args"]["insight"])
+        self.assertTrue(dispatches[1]["args"]["require_peer_insight"])
+
     def test_send_cross_group_remote_bridge_records_source_receipt_anchor(self) -> None:
         from cccc.contracts.v1 import DaemonResponse
         from cccc.daemon.ops import maintenance_ops

@@ -2,7 +2,11 @@ import { create } from "zustand";
 
 import * as api from "../services/api";
 import type { WebBranding } from "../types";
-import { applyBrandingToDocument, DEFAULT_WEB_BRANDING, normalizeWebBranding } from "../utils/branding";
+import {
+  applyBrandingToDocument,
+  DEFAULT_WEB_BRANDING,
+  normalizeWebBranding,
+} from "../utils/branding";
 
 interface BrandingState {
   branding: WebBranding;
@@ -18,7 +22,9 @@ export const useBrandingStore = create<BrandingState>((set) => ({
   loading: false,
   setBranding: (value) =>
     set((state) => {
-      const branding = applyBrandingToDocument(normalizeWebBranding({ ...state.branding, ...(value || {}) }));
+      const branding = applyBrandingToDocument(
+        normalizeWebBranding({ ...state.branding, ...(value || {}) }),
+      );
       return { branding, loaded: true, loading: false };
     }),
   refreshBranding: async () => {

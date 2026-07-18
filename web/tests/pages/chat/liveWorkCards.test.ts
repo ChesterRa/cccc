@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { buildLiveWorkCards } from "../../../src/pages/chat/liveWorkCards";
 import type { Actor, LedgerEvent } from "../../../src/types";
@@ -29,10 +29,7 @@ describe("buildLiveWorkCards", () => {
         ts: "2025-01-01T00:00:01Z",
         by: "shell",
         _streaming: true,
-        data: {
-          stream_id: "stream-pty",
-          pending_event_id: "evt-pty",
-        },
+        data: { stream_id: "stream-pty", pending_event_id: "evt-pty" },
       },
     ];
 
@@ -48,15 +45,17 @@ describe("buildLiveWorkCards", () => {
           streamPhase: "commentary",
           updatedAt: "2025-01-01T00:00:02Z",
           latestText: "Inspecting the reducer chain",
-          transcriptBlocks: [{
-            id: "stream-1::commentary",
-            streamId: "stream-1",
-            streamPhase: "commentary",
-            text: "Inspecting the reducer chain",
-            updatedAt: "2025-01-01T00:00:02Z",
-            completed: false,
-            transient: true,
-          }],
+          transcriptBlocks: [
+            {
+              id: "stream-1::commentary",
+              streamId: "stream-1",
+              streamPhase: "commentary",
+              text: "Inspecting the reducer chain",
+              updatedAt: "2025-01-01T00:00:02Z",
+              completed: false,
+              transient: true,
+            },
+          ],
           activities: [{ id: "tool-1", kind: "tool", status: "started", summary: "search docs" }],
         },
       },
@@ -125,9 +124,7 @@ describe("buildLiveWorkCards", () => {
       actors,
       events,
       latestActorPreviewByActorId: {},
-      latestActorTextByActorId: {
-        reviewer: "Patch applied and verified",
-      },
+      latestActorTextByActorId: { reviewer: "Patch applied and verified" },
       latestActorActivitiesByActorId: {
         helper: [{ id: "queued-1", kind: "queued", status: "started", summary: "queued" }],
       },
@@ -169,10 +166,7 @@ describe("buildLiveWorkCards", () => {
         kind: "chat.message",
         ts: "2025-01-02T12:05:00Z",
         by: "reviewer",
-        data: {
-          text: "Visible reply",
-          stream_id: "stream-visible",
-        },
+        data: { text: "Visible reply", stream_id: "stream-visible" },
       },
     ];
 
@@ -189,9 +183,7 @@ describe("buildLiveWorkCards", () => {
   });
 
   it("preserves the recent headless activity trace instead of truncating to three items", () => {
-    const actors: Actor[] = [
-      { id: "coder", title: "Coder", runtime: "codex", runner: "headless" },
-    ];
+    const actors: Actor[] = [{ id: "coder", title: "Coder", runtime: "codex", runner: "headless" }];
     const events: LedgerEvent[] = [
       {
         id: "stream-activities",
@@ -209,10 +201,25 @@ describe("buildLiveWorkCards", () => {
 
     const activities = [
       { id: "activity-1", kind: "commentary", status: "started", summary: "Read runtime state" },
-      { id: "activity-2", kind: "commentary", status: "started", summary: "Compared reducer output" },
+      {
+        id: "activity-2",
+        kind: "commentary",
+        status: "started",
+        summary: "Compared reducer output",
+      },
       { id: "activity-3", kind: "commentary", status: "started", summary: "Matched pending reply" },
-      { id: "activity-4", kind: "commentary", status: "started", summary: "Prepared preview payload" },
-      { id: "activity-5", kind: "commentary", status: "started", summary: "Waiting for next token" },
+      {
+        id: "activity-4",
+        kind: "commentary",
+        status: "started",
+        summary: "Prepared preview payload",
+      },
+      {
+        id: "activity-5",
+        kind: "commentary",
+        status: "started",
+        summary: "Waiting for next token",
+      },
     ];
 
     const cards = buildLiveWorkCards({
@@ -237,9 +244,7 @@ describe("buildLiveWorkCards", () => {
   });
 
   it("uses session-scoped transcript blocks so commentary survives when final answer starts", () => {
-    const actors: Actor[] = [
-      { id: "coder", title: "Coder", runtime: "codex", runner: "headless" },
-    ];
+    const actors: Actor[] = [{ id: "coder", title: "Coder", runtime: "codex", runner: "headless" }];
     const events: LedgerEvent[] = [
       {
         id: "stream-final",
@@ -304,14 +309,15 @@ describe("buildLiveWorkCards", () => {
     });
 
     expect(cards).toHaveLength(1);
-    expect(cards[0]?.transcriptBlocks.map((block) => block.streamPhase)).toEqual(["commentary", "final_answer"]);
+    expect(cards[0]?.transcriptBlocks.map((block) => block.streamPhase)).toEqual([
+      "commentary",
+      "final_answer",
+    ]);
     expect(cards[0]?.text).toBe("Final answer body");
   });
 
   it("carries recent preview sessions through while using the newest session as the active preview", () => {
-    const actors: Actor[] = [
-      { id: "coder", title: "Coder", runtime: "codex", runner: "headless" },
-    ];
+    const actors: Actor[] = [{ id: "coder", title: "Coder", runtime: "codex", runner: "headless" }];
 
     const previewSessions = [
       {
@@ -322,15 +328,17 @@ describe("buildLiveWorkCards", () => {
         streamPhase: "final_answer",
         updatedAt: "2025-01-04T00:00:01Z",
         latestText: "Older answer",
-        transcriptBlocks: [{
-          id: "stream-1::final_answer",
-          streamId: "stream-1",
-          streamPhase: "final_answer",
-          text: "Older answer",
-          updatedAt: "2025-01-04T00:00:01Z",
-          completed: true,
-          transient: false,
-        }],
+        transcriptBlocks: [
+          {
+            id: "stream-1::final_answer",
+            streamId: "stream-1",
+            streamPhase: "final_answer",
+            text: "Older answer",
+            updatedAt: "2025-01-04T00:00:01Z",
+            completed: true,
+            transient: false,
+          },
+        ],
         activities: [],
       },
       {
@@ -341,37 +349,55 @@ describe("buildLiveWorkCards", () => {
         streamPhase: "commentary",
         updatedAt: "2025-01-04T00:00:03Z",
         latestText: "Current work",
-        transcriptBlocks: [{
-          id: "stream-2::commentary",
-          streamId: "stream-2",
-          streamPhase: "commentary",
-          text: "Current work",
-          updatedAt: "2025-01-04T00:00:03Z",
-          completed: false,
-          transient: true,
-        }],
-        activities: [{ id: "activity-2", kind: "tool", status: "started", summary: "search docs", ts: "2025-01-04T00:00:02Z" }],
+        transcriptBlocks: [
+          {
+            id: "stream-2::commentary",
+            streamId: "stream-2",
+            streamPhase: "commentary",
+            text: "Current work",
+            updatedAt: "2025-01-04T00:00:03Z",
+            completed: false,
+            transient: true,
+          },
+        ],
+        activities: [
+          {
+            id: "activity-2",
+            kind: "tool",
+            status: "started",
+            summary: "search docs",
+            ts: "2025-01-04T00:00:02Z",
+          },
+        ],
       },
     ];
 
     const cards = buildLiveWorkCards({
       actors,
-      events: [{
-        id: "stream-2",
-        kind: "chat.message",
-        ts: "2025-01-04T00:00:03Z",
-        by: "coder",
-        _streaming: true,
-        data: {
-          stream_id: "stream-2",
-          pending_event_id: "evt-2",
-          stream_phase: "commentary",
+      events: [
+        {
+          id: "stream-2",
+          kind: "chat.message",
+          ts: "2025-01-04T00:00:03Z",
+          by: "coder",
+          _streaming: true,
+          data: { stream_id: "stream-2", pending_event_id: "evt-2", stream_phase: "commentary" },
         },
-      }],
+      ],
       latestActorPreviewByActorId: { coder: previewSessions[1] },
       previewSessionsByActorId: { coder: previewSessions },
       latestActorTextByActorId: { coder: "Current work" },
-      latestActorActivitiesByActorId: { coder: [{ id: "activity-2", kind: "tool", status: "started", summary: "search docs", ts: "2025-01-04T00:00:02Z" }] },
+      latestActorActivitiesByActorId: {
+        coder: [
+          {
+            id: "activity-2",
+            kind: "tool",
+            status: "started",
+            summary: "search docs",
+            ts: "2025-01-04T00:00:02Z",
+          },
+        ],
+      },
       replySessionsByPendingEventId: {
         "evt-2": {
           pendingEventId: "evt-2",
@@ -386,6 +412,9 @@ describe("buildLiveWorkCards", () => {
     expect(cards).toHaveLength(1);
     expect(cards[0]?.text).toBe("Current work");
     expect(cards[0]?.pendingEventId).toBe("evt-2");
-    expect(cards[0]?.previewSessions?.map((session) => session.pendingEventId)).toEqual(["evt-1", "evt-2"]);
+    expect(cards[0]?.previewSessions?.map((session) => session.pendingEventId)).toEqual([
+      "evt-1",
+      "evt-2",
+    ]);
   });
 });

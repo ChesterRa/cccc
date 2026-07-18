@@ -1,5 +1,6 @@
 export const CHATGPT_APP_PERMISSION_HINT_DISMISSED_KEY = "cccc.chatgptAppPermissionHint.dismissed";
-export const CHATGPT_APP_PERMISSION_HINT_DISMISSED_EVENT = "cccc:chatgpt-app-permission-hint-dismissed";
+export const CHATGPT_APP_PERMISSION_HINT_DISMISSED_EVENT =
+  "cccc:chatgpt-app-permission-hint-dismissed";
 
 export function readChatGptAppPermissionHintDismissed(): boolean {
   if (typeof window === "undefined") return false;

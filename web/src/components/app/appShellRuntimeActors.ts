@@ -7,5 +7,9 @@ export function resolveRuntimeInspectorActor(
 ): Actor | null {
   const id = String(actorId || "").trim();
   if (!id) return null;
-  return runtimeActors.find((item) => String(item.id || "").trim() === id) || mountedActorsById[id] || null;
+  return (
+    runtimeActors.find((item) => String(item.id || "").trim() === id) ||
+    mountedActorsById[id] ||
+    null
+  );
 }

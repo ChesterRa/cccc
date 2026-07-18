@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   getCorrectedScrollTopForAnchor,
@@ -90,18 +90,10 @@ describe("virtualMessageListPrependCompensation", () => {
 
   it("does not rearm top history loading during prepend compensation", () => {
     expect(
-      shouldRearmTopHistoryLoad({
-        scrollTop: 320,
-        topRearmPx: 240,
-        isPrependCompensating: true,
-      }),
+      shouldRearmTopHistoryLoad({ scrollTop: 320, topRearmPx: 240, isPrependCompensating: true }),
     ).toBe(false);
     expect(
-      shouldRearmTopHistoryLoad({
-        scrollTop: 320,
-        topRearmPx: 240,
-        isPrependCompensating: false,
-      }),
+      shouldRearmTopHistoryLoad({ scrollTop: 320, topRearmPx: 240, isPrependCompensating: false }),
     ).toBe(true);
   });
 

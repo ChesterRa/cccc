@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { runReconnectCatchup, scheduleContextSummaryCatchup } from "../../src/hooks/sseCatchup";
 
 describe("sseCatchup", () => {

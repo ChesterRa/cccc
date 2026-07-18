@@ -48,14 +48,11 @@ export const settingsDialogPanelClass = (size: "lg" | "xl" = "lg") =>
       : "sm:w-[min(1040px,calc(100vw-2rem))] sm:h-[min(88dvh,860px)]"
   } sm:-translate-x-1/2 sm:-translate-y-1/2 rounded-none sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden`;
 
-export const settingsDialogHeaderClass =
-  `flex shrink-0 items-start gap-3 border-b border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5 sm:py-4`;
+export const settingsDialogHeaderClass = `flex shrink-0 items-start gap-3 border-b border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5 sm:py-4`;
 
-export const settingsDialogBodyClass =
-  `min-h-0 flex-1 overflow-y-auto scrollbar-subtle p-4 sm:p-6 lg:p-7 [scrollbar-gutter:stable]`;
+export const settingsDialogBodyClass = `min-h-0 flex-1 overflow-y-auto scrollbar-subtle p-4 sm:p-6 lg:p-7 [scrollbar-gutter:stable]`;
 
-export const settingsDialogFooterClass =
-  `flex shrink-0 items-center justify-end gap-2 border-t border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5 sm:py-4 safe-area-bottom-compact`;
+export const settingsDialogFooterClass = `flex shrink-0 items-center justify-end gap-2 border-t border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5 sm:py-4 safe-area-bottom-compact`;
 
 export const cardClass = (_isDark?: boolean) =>
   `glass-panel rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-4 shadow-sm`;
@@ -69,11 +66,12 @@ export const settingsWorkspaceShellClass = (_isDark?: boolean) =>
 
 export const settingsWorkspaceHeaderClass = (_isDark?: boolean) =>
   `flex items-start justify-between gap-4 px-4 py-4 sm:px-5 sm:py-4 ${
-    _isDark ? "border-b border-white/8 bg-black/[0.16]" : "border-b border-black/6 bg-[rgba(18,18,20,0.018)]"
+    _isDark
+      ? "border-b border-white/8 bg-black/[0.16]"
+      : "border-b border-black/6 bg-[rgba(18,18,20,0.018)]"
   }`;
 
-export const settingsWorkspaceBodyClass =
-  `px-4 py-4 sm:px-5 sm:py-5 space-y-4`;
+export const settingsWorkspaceBodyClass = `px-4 py-4 sm:px-5 sm:py-5 space-y-4`;
 
 export const settingsWorkspacePanelClass = (_isDark?: boolean) =>
   `rounded-2xl border border-[var(--glass-border-subtle)] p-4 sm:p-5 bg-[var(--glass-panel-bg)] shadow-[0_4px_24px_rgba(0,0,0,0.02)] dark:shadow-[0_4px_24px_rgba(0,0,0,0.15)]`;

@@ -18,9 +18,7 @@ export interface Observability {
     persist?: boolean;
     strip_ansi?: boolean;
   };
-  terminal_ui?: {
-    scrollback_lines?: number;
-  };
+  terminal_ui?: { scrollback_lines?: number };
   runtime_visibility?: {
     peer_runtime?: "hidden" | "visible" | string;
     assistant_runtime?: "hidden" | "visible" | string;
@@ -69,10 +67,8 @@ export async function fetchRemoteAccessState() {
 }
 
 export async function fetchWebAccessSession() {
-  return reuseRecentReadRequest(
-    webAccessSessionRequestKey(),
-    RECENT_BOOTSTRAP_READ_TTL_MS,
-    () => apiJson<{ web_access_session: WebAccessSession }>("/api/v1/web_access/session"),
+  return reuseRecentReadRequest(webAccessSessionRequestKey(), RECENT_BOOTSTRAP_READ_TTL_MS, () =>
+    apiJson<{ web_access_session: WebAccessSession }>("/api/v1/web_access/session"),
   );
 }
 
@@ -111,9 +107,7 @@ export async function clearWebBrandingAsset(assetKind: "logo_icon" | "favicon") 
 
 export async function logoutWebAccess() {
   clearWebAccessSessionReadRequest();
-  return apiJson<{ signed_out: boolean }>("/api/v1/web_access/logout", {
-    method: "POST",
-  });
+  return apiJson<{ signed_out: boolean }>("/api/v1/web_access/logout", { method: "POST" });
 }
 
 export async function updateRemoteAccessConfig(args: {
@@ -162,9 +156,7 @@ export async function applyRemoteAccess() {
     remote_access: RemoteAccessState;
     target_local_url?: string | null;
     target_remote_url?: string | null;
-  }>("/api/v1/remote_access/apply?by=user", {
-    method: "POST",
-  });
+  }>("/api/v1/remote_access/apply?by=user", { method: "POST" });
 }
 
 export async function fetchAccessTokens() {
@@ -190,12 +182,15 @@ export async function createAccessToken(
   });
 }
 
-export async function updateAccessToken(tokenId: string, updates: { allowed_groups?: string[]; is_admin?: boolean }) {
+export async function updateAccessToken(
+  tokenId: string,
+  updates: { allowed_groups?: string[]; is_admin?: boolean },
+) {
   clearWebAccessSessionReadRequest();
-  return apiJson<{ access_token: AccessTokenEntry }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}`, {
-    method: "PATCH",
-    body: JSON.stringify(updates),
-  });
+  return apiJson<{ access_token: AccessTokenEntry }>(
+    `/api/v1/access-tokens/${encodeURIComponent(tokenId)}`,
+    { method: "PATCH", body: JSON.stringify(updates) },
+  );
 }
 
 export async function revealAccessToken(tokenId: string) {
@@ -204,8 +199,9 @@ export async function revealAccessToken(tokenId: string) {
 
 export async function deleteAccessToken(tokenId: string) {
   clearWebAccessSessionReadRequest();
-  return apiJson<{ deleted: boolean; access_tokens_remain?: boolean; deleted_current_session?: boolean }>(
-    `/api/v1/access-tokens/${encodeURIComponent(tokenId)}`,
-    { method: "DELETE" },
-  );
+  return apiJson<{
+    deleted: boolean;
+    access_tokens_remain?: boolean;
+    deleted_current_session?: boolean;
+  }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}`, { method: "DELETE" });
 }

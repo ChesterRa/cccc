@@ -21,7 +21,9 @@ export async function executeRegistryReconcile(removeMissing = true) {
 }
 
 export async function fetchDebugSnapshot(groupId: string) {
-  return apiJson<Record<string, unknown>>(`/api/v1/debug/snapshot?group_id=${encodeURIComponent(groupId)}`);
+  return apiJson<Record<string, unknown>>(
+    `/api/v1/debug/snapshot?group_id=${encodeURIComponent(groupId)}`,
+  );
 }
 
 export async function fetchTerminalTail(
@@ -83,12 +85,12 @@ export async function clearTerminalTail(groupId: string, actorId: string) {
   );
 }
 
-export async function fetchLogTail(component: "daemon" | "web" | "im", groupId: string, lines = 200) {
-  const params = new URLSearchParams({
-    component,
-    group_id: groupId,
-    lines: String(lines),
-  });
+export async function fetchLogTail(
+  component: "daemon" | "web" | "im",
+  groupId: string,
+  lines = 200,
+) {
+  const params = new URLSearchParams({ component, group_id: groupId, lines: String(lines) });
   return apiJson<{ lines: string[] }>(`/api/v1/debug/tail_logs?${params.toString()}`);
 }
 

@@ -136,12 +136,13 @@ export function RelayMessageModal({
         className="w-full h-full min-h-0 sm:h-auto sm:max-h-[calc(100dvh-7rem)] sm:max-w-2xl sm:mt-14 shadow-2xl animate-scale-in overflow-hidden flex flex-col rounded-none sm:rounded-2xl glass-modal"
       >
         <div className="px-6 py-4 border-b safe-area-inset-top border-[var(--glass-border-subtle)]">
-          <div id="relay-modal-title" className="text-lg font-semibold text-[var(--color-text-primary)]">
+          <div
+            id="relay-modal-title"
+            className="text-lg font-semibold text-[var(--color-text-primary)]"
+          >
             {t("relay.title")}
           </div>
-          <div className="text-xs mt-1 text-[var(--color-text-muted)]">
-            {t("relay.subtitle")}
-          </div>
+          <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("relay.subtitle")}</div>
         </div>
 
         <div className="p-6 flex flex-1 min-h-0 flex-col gap-5">
@@ -179,7 +180,9 @@ export function RelayMessageModal({
                     setDstActorsLoadingFor(gid);
                   }}
                   placeholder={t("relay.destinationGroup")}
-                  searchPlaceholder={t("relay.searchDestinationGroup", { defaultValue: "Search destination groups..." })}
+                  searchPlaceholder={t("relay.searchDestinationGroup", {
+                    defaultValue: "Search destination groups...",
+                  })}
                   emptyText={t("relay.noMatchingGroups", { defaultValue: "No matching groups" })}
                   ariaLabel={t("relay.destinationGroup")}
                   triggerClassName="glass-input min-h-[44px] w-full px-3 py-2.5 text-sm"
@@ -187,7 +190,9 @@ export function RelayMessageModal({
                   disabled={busy || dstGroups.length === 0}
                 />
                 {dstGroups.length === 0 ? (
-                  <div className="mt-2 text-xs text-[var(--color-text-muted)]">{t("relay.noOtherGroups")}</div>
+                  <div className="mt-2 text-xs text-[var(--color-text-muted)]">
+                    {t("relay.noOtherGroups")}
+                  </div>
                 ) : null}
               </div>
 
@@ -209,7 +214,12 @@ export function RelayMessageModal({
                   </Button>
                 </div>
 
-                <div className={classNames("mt-2 flex flex-wrap gap-2", dstActorsBusy ? "opacity-60" : "")}>
+                <div
+                  className={classNames(
+                    "mt-2 flex flex-wrap gap-2",
+                    dstActorsBusy ? "opacity-60" : "",
+                  )}
+                >
                   {availableTokens.map((tok) => {
                     const active = toTokens.includes(tok);
                     return (
@@ -220,7 +230,7 @@ export function RelayMessageModal({
                           "text-xs px-2.5 py-1.5 rounded-full border transition-colors",
                           active
                             ? "bg-[var(--glass-accent-bg)] border-[var(--glass-accent-border)] text-[var(--color-accent-primary)]"
-                            : "bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                            : "bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]",
                         )}
                         onClick={() => toggleToken(tok)}
                         disabled={busy}
@@ -232,7 +242,9 @@ export function RelayMessageModal({
                   })}
                 </div>
                 <div className="mt-2 text-xs text-[var(--color-text-muted)]">
-                  {toTokens.length ? t("relay.selectedTokens", { tokens: toTokens.join(", ") }) : t("relay.selectedBroadcast")}
+                  {toTokens.length
+                    ? t("relay.selectedTokens", { tokens: toTokens.join(", ") })
+                    : t("relay.selectedBroadcast")}
                 </div>
               </div>
 
@@ -254,17 +266,10 @@ export function RelayMessageModal({
           </div>
 
           <div className="shrink-0 flex gap-3 pt-1 flex-wrap justify-end">
-            <Button
-              variant="secondary"
-              onClick={onCancel}
-              disabled={busy}
-            >
+            <Button variant="secondary" onClick={onCancel} disabled={busy}>
               {t("common:cancel")}
             </Button>
-            <Button
-              onClick={() => onSubmit(dstGroupId, toTokens, note)}
-              disabled={!canSubmit}
-            >
+            <Button onClick={() => onSubmit(dstGroupId, toTokens, note)} disabled={!canSubmit}>
               {busy ? t("relay.sending") : t("relay.relay")}
             </Button>
           </div>

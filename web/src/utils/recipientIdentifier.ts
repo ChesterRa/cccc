@@ -1,23 +1,12 @@
 export type RecipientIdentifierInput =
-  | {
-      kind: "selector";
-      selector?: string;
-    }
-  | {
-      kind: "actor";
-      label?: string;
-      id?: string;
-      role?: string;
-    }
-  | {
-      kind: "remote_group";
-      label?: string;
-      id?: string;
-      accessLevel?: string;
-    };
+  | { kind: "selector"; selector?: string }
+  | { kind: "actor"; label?: string; id?: string; role?: string }
+  | { kind: "remote_group"; label?: string; id?: string; accessLevel?: string };
 
 function cleanValue(value: unknown): string {
-  return String(value || "").replace(/\s+/g, " ").trim();
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function cleanRole(value: unknown): string {

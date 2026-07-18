@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   getEffectiveActorRunner,
@@ -19,7 +19,9 @@ describe("normalizeActorRunner", () => {
 
 describe("getEffectiveActorRunner", () => {
   it("prefers runner_effective over runner", () => {
-    expect(getEffectiveActorRunner({ runner: "pty", runner_effective: "headless" })).toBe("headless");
+    expect(getEffectiveActorRunner({ runner: "pty", runner_effective: "headless" })).toBe(
+      "headless",
+    );
   });
 
   it("lets callers check headless mode from partial actor objects", () => {

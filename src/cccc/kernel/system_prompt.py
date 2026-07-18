@@ -7,6 +7,7 @@ from ..util.conv import coerce_bool
 from .actors import get_effective_role, is_voice_secretary_actor, list_visible_actors
 from .group import Group
 from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_group_prompt_file
+from .peer_insight import TEAM_MODE_SEED
 
 
 def render_role_system_prompt(
@@ -127,26 +128,17 @@ def render_role_system_prompt(
         lines.append("scopes (* = active):")
         lines.extend(scope_lines)
     
-    # Keep this stable and short. Long-lived playbook details belong in cccc_help.
+    # Keep this stable and short. CCCC route details belong in cccc_help.
     visible_reply_line = "- Use cccc_message_reply for replies; use cccc_message_send for new messages."
 
     core_lines = [
-        "Working Style:",
-        "- Work like a sharp teammate, not a customer-service script.",
-        "- Prefer silence over low-signal chatter; speak for real changes, not filler or routine @all updates.",
-        "- For simple exchanges, use normal sentences and keep them brief unless structure helps.",
-        "- Skip empty ceremony; say the actual state, risk, or next move.",
-        "",
-        "Platform Invariants:",
-        "- No fabrication. Verify before claiming done.",
+        "CCCC Protocol:",
         visible_reply_line,
         "- Before sending, verify `reply_to` and `to`; make the audience explicit when it differs.",
         "- Terminal output is not delivered.",
-        "- A status message, plan, or promise is not task progress; for action requests, either start the work now or state the exact blocker.",
-        "- At key transitions, sync shared control-plane state and your cccc_agent_state.",
-        "- Once scope is approved, finish it end-to-end; do not ask to continue on obvious next steps.",
-        "- For strategy or scope discussion, align first; implement only after explicit action intent.",
     ]
+    if not is_solo:
+        core_lines.append(TEAM_MODE_SEED)
 
     # Group override: CCCC_PREAMBLE.md under CCCC_HOME.
     pf = read_group_prompt_file(group, PREAMBLE_FILENAME)
@@ -168,7 +160,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
     Design principles:
     - Minimal: Only session-specific context (identity, group, scopes)
     - No tool docs: Agent sees MCP tools automatically
-    - Ops playbook lives in MCP: see cccc_help
+    - Protocol reference lives in MCP: see cccc_help
     """
     actor_id = str(actor.get("id") or "").strip()
     if is_voice_secretary_actor(actor):

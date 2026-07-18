@@ -14,6 +14,13 @@ from ...contracts.v1.ipc import DaemonError, DaemonResponse
 from ...kernel.group_bridge.registration import get_registration
 from ...kernel.group_bridge.receipts import get_receipt
 from ...kernel.group_bridge.credentials import resolve_group_bridge_credential
+from ...kernel.peer_insight import (
+    append_peer_perspective,
+    normalized_insight_or_error,
+    peer_insight_required_details,
+    remote_recipients_include_peer,
+)
+from ...util.conv import coerce_bool
 from .receiver import receive_remote_send
 from .remote_dispatch import deliver_enqueued, enqueue_remote_send
 from .transports.base import RemoteSendTransport, get_transport
@@ -35,6 +42,38 @@ def _explicit_remote_recipients(to: Any) -> list[str]:
     return [str(item or "").strip() for item in to if str(item or "").strip()]
 
 
+def _deliver_remote_receipt(
+    *,
+    registration_id: str,
+    idempotency_key: str,
+    reg: Dict[str, Any],
+    initial_status: str,
+    transport_factory: Callable[[str], RemoteSendTransport],
+    credential_resolver: CredentialResolver,
+) -> DaemonResponse:
+    credential_ref = str(reg.get("credential_ref") or "").strip()
+    credential = ""
+    if credential_ref:
+        credential = str(credential_resolver(credential_ref) or "").strip()
+        if not credential:
+            receipt = deliver_enqueued(
+                registration_id=registration_id,
+                idempotency_key=idempotency_key,
+                transport_factory=lambda _name: _CredentialUnresolvedTransport(),
+            )
+            return DaemonResponse(ok=True, result={"queued": False, "receipt": receipt})
+    receipt = deliver_enqueued(
+        registration_id=registration_id,
+        idempotency_key=idempotency_key,
+        transport_factory=transport_factory,
+        credential=credential,
+    )
+    return DaemonResponse(
+        ok=True,
+        result={"queued": receipt.get("status") == initial_status == "queued", "receipt": receipt},
+    )
+
+
 def handle_remote_send(
     args: Dict[str, Any],
     *,
@@ -54,22 +93,6 @@ def handle_remote_send(
     if not idempotency_key:
         return _error("missing_idempotency_key", "idempotency_key is required for remote send")
 
-    # Validate payload shape up-front (rejects unknown fields, normalizes defaults).
-    try:
-        payload = RemoteSendPayload(**payload_raw)
-    except Exception as e:
-        return _error("invalid_payload", str(e))
-    source_by = str(args.get("by") or "").strip()
-    if source_by and not str(payload.source_by or "").strip():
-        payload = payload.model_copy(update={"source_by": source_by})
-    recipients = _explicit_remote_recipients(payload.to)
-    if not recipients:
-        return _error(
-            "missing_remote_recipient",
-            "remote_send requires explicit to across Group Bridge; use '@foreman', '@all', or a target actor",
-        )
-    payload = payload.model_copy(update={"to": recipients})
-
     reg = get_registration(registration_id)
     if not reg:
         return _error("registration_not_found", f"registration not found: {registration_id}")
@@ -86,6 +109,45 @@ def handle_remote_send(
             details={"registration_id": registration_id, "status": reg.get("status")},
         )
 
+    existing = get_receipt(registration_id, idempotency_key)
+    if existing is not None:
+        return _deliver_remote_receipt(
+            registration_id=registration_id,
+            idempotency_key=idempotency_key,
+            reg=reg,
+            initial_status=str(existing.get("status") or ""),
+            transport_factory=transport_factory,
+            credential_resolver=credential_resolver,
+        )
+
+    # New requests validate and flatten Insight before creating an outbox receipt.
+    try:
+        payload = RemoteSendPayload(**payload_raw)
+    except Exception as e:
+        return _error("invalid_payload", str(e))
+    source_by = str(args.get("by") or "").strip()
+    if source_by and not str(payload.source_by or "").strip():
+        payload = payload.model_copy(update={"source_by": source_by})
+    recipients = _explicit_remote_recipients(payload.to)
+    if not recipients:
+        return _error(
+            "missing_remote_recipient",
+            "remote_send requires explicit to across Group Bridge; use '@foreman', '@all', or a target actor",
+        )
+    payload = payload.model_copy(update={"to": recipients})
+    try:
+        insight = normalized_insight_or_error(args.get("insight"))
+    except ValueError as exc:
+        return _error("invalid_insight", str(exc))
+    if coerce_bool(args.get("require_peer_insight")) and remote_recipients_include_peer(recipients) and insight is None:
+        return _error(
+            "peer_insight_required",
+            "Not sent: this peer-facing message is missing `insight`.",
+            details=peer_insight_required_details(),
+        )
+    if insight is not None:
+        payload = payload.model_copy(update={"text": append_peer_perspective(payload.text, insight)})
+
     queued = enqueue_remote_send(
         src_group_id=src_group_id,
         registration_id=registration_id,
@@ -95,25 +157,14 @@ def handle_remote_send(
         reply_to_remote_event_id=reply_to_remote_event_id,
         group_bridge_thread=group_bridge_thread,
     )
-    credential_ref = str(reg.get("credential_ref") or "").strip()
-    credential = ""
-    if credential_ref:
-        credential = str(credential_resolver(credential_ref) or "").strip()
-        if not credential:
-            receipt = deliver_enqueued(
-                registration_id=registration_id,
-                idempotency_key=idempotency_key,
-                transport_factory=lambda _name: _CredentialUnresolvedTransport(),
-            )
-            return DaemonResponse(ok=True, result={"queued": False, "receipt": receipt})
-
-    receipt = deliver_enqueued(
+    return _deliver_remote_receipt(
         registration_id=registration_id,
         idempotency_key=idempotency_key,
+        reg=reg,
+        initial_status=str(queued.get("status") or ""),
         transport_factory=transport_factory,
-        credential=credential,
+        credential_resolver=credential_resolver,
     )
-    return DaemonResponse(ok=True, result={"queued": receipt.get("status") == queued.get("status") == "queued", "receipt": receipt})
 
 
 class _CredentialUnresolvedTransport(RemoteSendTransport):

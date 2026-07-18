@@ -150,6 +150,102 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_strict_remote_send_gates_before_receipt_and_flattens_one_insight_projection(self) -> None:
+        from cccc.daemon.group_bridge.ops import handle_remote_send
+        from cccc.daemon.group_bridge.transports.base import RemoteSendResult
+        from cccc.kernel.group_bridge.receipts import get_receipt
+        from cccc.kernel.peer_insight import PEER_PERSPECTIVE_TEXT_LABEL, SUPERVISOR_MAGIC_KERNEL
+
+        _, cleanup = self._with_home()
+        try:
+            reg = self._registration()
+            rid = reg["registration_id"]
+            fake = _CountingTransport(
+                RemoteSendResult(ok=True, status="sent", remote_event_id="remote-insight", transport="registry_hub")
+            )
+            missing = handle_remote_send(
+                {
+                    "group_id": "g_local",
+                    "by": "actor-a",
+                    "registration_id": rid,
+                    "idempotency_key": "strict-missing",
+                    "require_peer_insight": True,
+                    "payload": {"text": "review this", "to": ["@foreman"]},
+                },
+                transport_factory=lambda _name: fake,
+            )
+            self.assertFalse(missing.ok)
+            self.assertEqual(missing.error.code, "peer_insight_required")
+            self.assertIn(SUPERVISOR_MAGIC_KERNEL, missing.error.details["recommended_action"])
+            self.assertIsNone(get_receipt(rid, "strict-missing"))
+            self.assertEqual(fake.calls, 0)
+
+            sent = handle_remote_send(
+                {
+                    "group_id": "g_local",
+                    "by": "actor-a",
+                    "registration_id": rid,
+                    "idempotency_key": "strict-sent",
+                    "require_peer_insight": True,
+                    "insight": "The destination should challenge the entire plan.",
+                    "payload": {"text": "review this", "to": ["@foreman"]},
+                },
+                transport_factory=lambda _name: fake,
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            self.assertEqual(fake.calls, 1)
+            projected = fake.payloads[0]
+            self.assertEqual(projected.text.count(PEER_PERSPECTIVE_TEXT_LABEL), 1)
+            self.assertEqual(
+                projected.text,
+                "review this\n\n"
+                f"{PEER_PERSPECTIVE_TEXT_LABEL}\n"
+                "The destination should challenge the entire plan.",
+            )
+            self.assertNotIn("insight", projected.model_dump())
+
+            replay = handle_remote_send(
+                {
+                    "group_id": "g_local",
+                    "by": "actor-a",
+                    "registration_id": rid,
+                    "idempotency_key": "strict-sent",
+                    "require_peer_insight": True,
+                    "payload": {"text": "changed retry", "to": ["@foreman"]},
+                },
+                transport_factory=lambda _name: fake,
+            )
+            self.assertTrue(replay.ok, getattr(replay, "error", None))
+            self.assertEqual(fake.calls, 1)
+        finally:
+            cleanup()
+
+    def test_strict_remote_send_exempts_user_only_audience(self) -> None:
+        from cccc.daemon.group_bridge.ops import handle_remote_send
+        from cccc.daemon.group_bridge.transports.base import RemoteSendResult
+
+        _, cleanup = self._with_home()
+        try:
+            reg = self._registration()
+            fake = _CountingTransport(
+                RemoteSendResult(ok=True, status="sent", remote_event_id="remote-user", transport="registry_hub")
+            )
+            sent = handle_remote_send(
+                {
+                    "group_id": "g_local",
+                    "by": "actor-a",
+                    "registration_id": reg["registration_id"],
+                    "idempotency_key": "strict-user",
+                    "require_peer_insight": True,
+                    "payload": {"text": "answer for user", "to": ["user"]},
+                },
+                transport_factory=lambda _name: fake,
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            self.assertEqual(fake.payloads[0].text, "answer for user")
+        finally:
+            cleanup()
+
     def test_remote_send_records_failed_when_credential_ref_cannot_resolve(self) -> None:
         from cccc.daemon.group_bridge.ops import handle_remote_send
         from cccc.daemon.group_bridge.transports.base import RemoteSendResult

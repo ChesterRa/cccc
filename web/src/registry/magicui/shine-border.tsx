@@ -54,7 +54,10 @@ export function ShineBorder({
 
   return (
     <div
-      className={cn("pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]", className)}
+      className={cn(
+        "pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]",
+        className,
+      )}
       style={
         {
           ...style,
@@ -69,7 +72,8 @@ export function ShineBorder({
         className="absolute inset-0 rounded-[inherit]"
         style={{
           background: "var(--shine-border-bg)",
-          animation: "shine-border-spin var(--shine-duration) cubic-bezier(0.55, 0.08, 0.35, 0.98) infinite",
+          animation:
+            "shine-border-spin var(--shine-duration) cubic-bezier(0.55, 0.08, 0.35, 0.98) infinite",
           filter: "saturate(1.06) brightness(1.02)",
           transformOrigin: "center",
         }}
@@ -78,7 +82,8 @@ export function ShineBorder({
         className="absolute inset-0 rounded-[inherit]"
         style={{
           background: "var(--shine-border-trail)",
-          animation: "shine-border-drift calc(var(--shine-duration) * 0.72) cubic-bezier(0.4, 0, 0.2, 1) infinite",
+          animation:
+            "shine-border-drift calc(var(--shine-duration) * 0.72) cubic-bezier(0.4, 0, 0.2, 1) infinite",
           filter: "blur(1.2px) saturate(1.12)",
           opacity: 0.88,
           transformOrigin: "center",
@@ -91,7 +96,8 @@ export function ShineBorder({
           style={{
             background:
               "radial-gradient(ellipse at 50% -10%, rgba(255,255,255,0.95) 0%, rgba(255,255,255,0.22) 16%, transparent 42%)",
-            animation: "shine-border-top-glow calc(var(--shine-duration) * 0.9) ease-in-out infinite",
+            animation:
+              "shine-border-top-glow calc(var(--shine-duration) * 0.9) ease-in-out infinite",
             mixBlendMode: "screen",
             opacity: 0.78,
           }}
@@ -99,10 +105,7 @@ export function ShineBorder({
       ) : null}
       <div
         className="absolute rounded-[inherit] bg-transparent"
-        style={{
-          inset: borderWidth,
-          boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.03)",
-        }}
+        style={{ inset: borderWidth, boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.03)" }}
       />
       {children}
     </div>

@@ -8,7 +8,11 @@ import type {
 
 export type DigestHex = (value: string) => Promise<string>;
 
-export const GROUP_BRIDGE_ACCESS_LEVELS: readonly GroupBridgeAccessLevel[] = ["messages", "read", "full"];
+export const GROUP_BRIDGE_ACCESS_LEVELS: readonly GroupBridgeAccessLevel[] = [
+  "messages",
+  "read",
+  "full",
+];
 
 type PeerLike = {
   remote_peer_id?: string;
@@ -89,7 +93,11 @@ function stripCodeFence(value: string): string {
 }
 
 function normalizePairingCode(value: string): string {
-  return String(value || "").trim().replace(/^['"]|['"]$/g, "").trim().toUpperCase();
+  return String(value || "")
+    .trim()
+    .replace(/^['"]|['"]$/g, "")
+    .trim()
+    .toUpperCase();
 }
 
 function projectConnectionInfoPayload(parsed: Record<string, unknown>): {
@@ -102,12 +110,21 @@ function projectConnectionInfoPayload(parsed: Record<string, unknown>): {
   isRemote?: boolean;
   payload?: Record<string, unknown>;
 } {
-  const issuerEndpoint = String(parsed.issuer_endpoint || parsed.issuerEndpoint || "").trim() || undefined;
-  const pairingCode = normalizePairingCode(String(parsed.code || parsed.pairing_code || parsed.pairingCode || ""));
+  const issuerEndpoint =
+    String(parsed.issuer_endpoint || parsed.issuerEndpoint || "").trim() || undefined;
+  const pairingCode = normalizePairingCode(
+    String(parsed.code || parsed.pairing_code || parsed.pairingCode || ""),
+  );
   return {
     pairingCode,
-    remoteGroupId: String(parsed.issuer_group_id || parsed.issuerGroupId || parsed.group_id || parsed.groupId || "").trim() || undefined,
-    remotePeerId: String(parsed.issuer_peer_id || parsed.issuerPeerId || parsed.peer_id || parsed.peerId || "").trim() || undefined,
+    remoteGroupId:
+      String(
+        parsed.issuer_group_id || parsed.issuerGroupId || parsed.group_id || parsed.groupId || "",
+      ).trim() || undefined,
+    remotePeerId:
+      String(
+        parsed.issuer_peer_id || parsed.issuerPeerId || parsed.peer_id || parsed.peerId || "",
+      ).trim() || undefined,
     issuerEndpoint,
     nonce: String(parsed.nonce || parsed.invite_id || parsed.inviteId || "").trim() || undefined,
     integrity: String(parsed.integrity || "").trim() || undefined,
@@ -122,34 +139,48 @@ export function projectIncomingRequests(
   return (requests || []).filter((request) => String(request.status || "") === "pending");
 }
 
-export function projectTrustedPeers(trusts: GroupBridgeTrust[] | undefined | null): GroupBridgeTrust[] {
+export function projectTrustedPeers(
+  trusts: GroupBridgeTrust[] | undefined | null,
+): GroupBridgeTrust[] {
   return (trusts || []).filter((trust) => String(trust.status || "") === "active");
 }
 
 export function normalizeGroupBridgeAccessLevel(value: unknown): GroupBridgeAccessLevel {
-  const normalized = String(value || "").trim().toLowerCase();
+  const normalized = String(value || "")
+    .trim()
+    .toLowerCase();
   if (normalized === "read" || normalized === "full") return normalized;
   return "messages";
 }
 
-export function projectRecentOutbounds(outbounds: GroupBridgePairingOutbound[] | undefined | null, limit = 3): GroupBridgePairingOutbound[] {
+export function projectRecentOutbounds(
+  outbounds: GroupBridgePairingOutbound[] | undefined | null,
+  limit = 3,
+): GroupBridgePairingOutbound[] {
   const latestByIssuer = new Map<string, GroupBridgePairingOutbound>();
   for (const outbound of outbounds || []) {
     if (String(outbound.status || "").trim() === "approved") continue;
-    const key = [outbound.issuer_endpoint, outbound.issuer_group_id, outbound.issuer_peer_id]
-      .map((part) => String(part || "").trim())
-      .join("|") || outbound.outbound_id;
+    const key =
+      [outbound.issuer_endpoint, outbound.issuer_group_id, outbound.issuer_peer_id]
+        .map((part) => String(part || "").trim())
+        .join("|") || outbound.outbound_id;
     const existing = latestByIssuer.get(key);
     if (!existing || outboundSortTime(outbound) >= outboundSortTime(existing)) {
       latestByIssuer.set(key, outbound);
     }
   }
   return [...latestByIssuer.values()]
-    .sort((a, b) => outboundSortTime(b) - outboundSortTime(a) || String(b.outbound_id || "").localeCompare(String(a.outbound_id || "")))
+    .sort(
+      (a, b) =>
+        outboundSortTime(b) - outboundSortTime(a) ||
+        String(b.outbound_id || "").localeCompare(String(a.outbound_id || "")),
+    )
     .slice(0, Math.max(0, limit));
 }
 
-export function projectSyncableOutbounds(outbounds: GroupBridgePairingOutbound[] | undefined | null): GroupBridgePairingOutbound[] {
+export function projectSyncableOutbounds(
+  outbounds: GroupBridgePairingOutbound[] | undefined | null,
+): GroupBridgePairingOutbound[] {
   return (outbounds || []).filter((outbound) => {
     const status = String(outbound.status || "").trim();
     return status === "submitted" || status === "pending";
@@ -173,28 +204,48 @@ export function projectPairingOverview(opts: {
   };
 }
 
-export function safePairingCodeText(code: string | undefined | null, fallback = "Code unavailable"): string {
+export function safePairingCodeText(
+  code: string | undefined | null,
+  fallback = "Code unavailable",
+): string {
   return String(code || "").trim() || fallback;
 }
 
 export function shouldUsePairingCodeHelp(errorMessage: string | undefined | null): boolean {
   const msg = String(errorMessage || "").toLowerCase();
-  return msg.includes("pairing code not found") || msg.includes("pairing code expired") || msg.includes("pairing code already used");
+  return (
+    msg.includes("pairing code not found") ||
+    msg.includes("pairing code expired") ||
+    msg.includes("pairing code already used")
+  );
 }
 
 export function userFacingPairingErrorKey(errorMessage: string | undefined | null): string | null {
   const msg = String(errorMessage || "").toLowerCase();
-  if (msg.includes("unsafe issuer_endpoint") || msg.includes("link-local") || msg.includes("metadata")) {
+  if (
+    msg.includes("unsafe issuer_endpoint") ||
+    msg.includes("link-local") ||
+    msg.includes("metadata")
+  ) {
     return "group_bridge.unsafeIssuerEndpointBlocked";
   }
   return null;
 }
 
-export function isSameInstancePairingInput(parsed: { pairingCode: string; isRemote?: boolean }): boolean {
+export function isSameInstancePairingInput(parsed: {
+  pairingCode: string;
+  isRemote?: boolean;
+}): boolean {
   return Boolean(String(parsed.pairingCode || "").trim() && !parsed.isRemote);
 }
 
-export function isSessionConnectionInfoInput(parsed: { pairingCode: string; isRemote?: boolean; issuerEndpoint?: string; nonce?: string; integrity?: string }): boolean {
+export function isSessionConnectionInfoInput(parsed: {
+  pairingCode: string;
+  isRemote?: boolean;
+  issuerEndpoint?: string;
+  nonce?: string;
+  integrity?: string;
+}): boolean {
   return Boolean(
     String(parsed.pairingCode || "").trim() &&
     parsed.isRemote === true &&

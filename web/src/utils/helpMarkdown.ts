@@ -1,4 +1,9 @@
-export type HelpChangedBlock = "common" | "role:foreman" | "role:peer" | "voice_secretary" | `actor:${string}`;
+export type HelpChangedBlock =
+  | "common"
+  | "role:foreman"
+  | "role:peer"
+  | "voice_secretary"
+  | `actor:${string}`;
 
 export type ParsedHelpMarkdown = {
   common: string;
@@ -50,7 +55,9 @@ function parseTaggedSection(section: string): TaggedSection | null {
   const header = String(lines[0] || "");
   const roleMatch = header.match(ROLE_TAG_RE);
   if (roleMatch) {
-    const role = String(roleMatch[1] || "").trim().toLowerCase();
+    const role = String(roleMatch[1] || "")
+      .trim()
+      .toLowerCase();
     const body = trimBlock(lines.slice(1).join("\n"));
     if (role === "foreman" || role === "peer") {
       return { kind: "role", key: `role:${role}`, raw: trimBlock(normalized), body };
@@ -144,7 +151,9 @@ export function buildHelpMarkdown(input: {
   const peer = trimBlock(input.peer);
   const voiceSecretary = trimBlock(input.voiceSecretary || "");
   const actorNotes = input.actorNotes || {};
-  const extraTaggedBlocks = Array.isArray(input.extraTaggedBlocks) ? input.extraTaggedBlocks.map(trimBlock).filter(Boolean) : [];
+  const extraTaggedBlocks = Array.isArray(input.extraTaggedBlocks)
+    ? input.extraTaggedBlocks.map(trimBlock).filter(Boolean)
+    : [];
 
   if (common) parts.push(common);
   if (foreman) parts.push(`## @role: foreman\n\n${foreman}`);
@@ -174,7 +183,12 @@ export function buildHelpMarkdown(input: {
   return out ? `${out}\n` : "";
 }
 
-export function updateActorHelpNote(markdown: string, actorId: string, note: string, actorOrder?: string[]): string {
+export function updateActorHelpNote(
+  markdown: string,
+  actorId: string,
+  note: string,
+  actorOrder?: string[],
+): string {
   const parsed = parseHelpMarkdown(markdown);
   const nextActorNotes = { ...parsed.actorNotes };
   const aid = String(actorId || "").trim();
@@ -191,7 +205,11 @@ export function updateActorHelpNote(markdown: string, actorId: string, note: str
   });
 }
 
-export function updateVoiceSecretaryHelpNote(markdown: string, note: string, actorOrder?: string[]): string {
+export function updateVoiceSecretaryHelpNote(
+  markdown: string,
+  note: string,
+  actorOrder?: string[],
+): string {
   const parsed = parseHelpMarkdown(markdown);
   return buildHelpMarkdown({
     common: parsed.common,

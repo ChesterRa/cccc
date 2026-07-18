@@ -9,7 +9,11 @@ type CapabilitySourceInstancesProps = {
   onDelete: (instance: CapabilitySourceInstance) => void;
 };
 
-export function CapabilitySourceInstances({ instances, busyKey, onDelete }: CapabilitySourceInstancesProps) {
+export function CapabilitySourceInstances({
+  instances,
+  busyKey,
+  onDelete,
+}: CapabilitySourceInstancesProps) {
   const { t } = useTranslation("settings");
   if (!instances.length) return null;
 
@@ -27,7 +31,9 @@ export function CapabilitySourceInstances({ instances, busyKey, onDelete }: Capa
               className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2 text-sm"
             >
               <div className="min-w-0">
-                <div className="break-words font-medium [overflow-wrap:anywhere]">{instance.label || key}</div>
+                <div className="break-words font-medium [overflow-wrap:anywhere]">
+                  {instance.label || key}
+                </div>
                 <div className="mt-0.5 line-clamp-2 text-xs text-[var(--color-text-muted)]">
                   {t("capabilityCenter.sources.instanceMeta", {
                     source: instance.source_id || "-",

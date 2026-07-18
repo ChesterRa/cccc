@@ -394,6 +394,7 @@
   "openMessageContext": "メッセージコンテキストを開く",
   "closeSearchModal": "検索モーダルを閉じる",
   "to": "宛先",
+  "senderPerspective": "送信者の見解",
   "presentationTitle": "Presentation",
   "presentationOpenDockAction": "Presentation を開く",
   "presentationCloseDockAction": "Presentation を閉じる",
@@ -508,5 +509,7 @@
   "presentationBrowserViewerReasonDisplayNotOwned": "CCCC 専用 display ではありません",
   "presentationBrowserViewerReasonDisabled": "VNC 無効",
   "presentationBrowserViewerReasonUnsupportedPlatform": "未対応プラットフォーム",
-  "presentationBrowserViewerReasonStartupTimeout": "VNC 起動タイムアウト"
+  "presentationBrowserViewerReasonStartupTimeout": "VNC 起動タイムアウト",
+  "presentationBrowserViewerIsolationXvfb": "Xvfb で分離",
+  "presentationBrowserViewerTooltipIsolationXvfb": "ブラウザーはホストのデスクトップではなく、CCCC 専用の仮想ディスプレイ上で実行されています。"
 }

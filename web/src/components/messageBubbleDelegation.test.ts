@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   destinationChipKey,
@@ -68,14 +68,8 @@ describe("delegation natural body / protocol split", () => {
   });
 
   it("source-side outbound delegation is a status, not visible relay prose", () => {
-    expect(isDelegationSourceOutbound({
-      rawText: RAW_REQUEST,
-      dstGroupId: "g_dst",
-    })).toBe(true);
-    expect(isDelegationSourceOutbound({
-      rawText: RAW_REQUEST,
-      srcGroupId: "g_src",
-    })).toBe(false);
+    expect(isDelegationSourceOutbound({ rawText: RAW_REQUEST, dstGroupId: "g_dst" })).toBe(true);
+    expect(isDelegationSourceOutbound({ rawText: RAW_REQUEST, srcGroupId: "g_src" })).toBe(false);
     const status = getDelegationSourceOutboundStatus(RAW_REQUEST);
     expect(status).toContain("已联系目标组");
     expect(status).not.toContain("用户让我来联系你");
@@ -84,17 +78,21 @@ describe("delegation natural body / protocol split", () => {
   });
 
   it("classifies source outbound relay audit events separately from target inbound delegation", () => {
-    expect(isDelegationSourceOutboundEvent({
-      text: RAW_REQUEST,
-      dst_group_id: "g_dst",
-      dst_to: ["target"],
-    })).toBe(true);
-    expect(isDelegationSourceOutboundEvent({
-      text: RAW_REQUEST,
-      src_group_id: "g_src",
-      src_event_id: "ev_src",
-      to: ["target"],
-    })).toBe(false);
+    expect(
+      isDelegationSourceOutboundEvent({
+        text: RAW_REQUEST,
+        dst_group_id: "g_dst",
+        dst_to: ["target"],
+      }),
+    ).toBe(true);
+    expect(
+      isDelegationSourceOutboundEvent({
+        text: RAW_REQUEST,
+        src_group_id: "g_src",
+        src_event_id: "ev_src",
+        to: ["target"],
+      }),
+    ).toBe(false);
   });
 
   it("a plain message is unchanged by getDelegationDisplayText", () => {
@@ -108,7 +106,10 @@ describe("MessageBubble delegation display wiring", () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, join } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"), "utf8");
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"),
+      "utf8",
+    );
     expect(source).toContain("isDelegationSourceOutbound({");
     expect(source).toContain("getDelegationSourceOutboundStatus(displayMessageText)");
     expect(source.indexOf("getDelegationSourceOutboundStatus(displayMessageText)")).toBeLessThan(
@@ -120,10 +121,15 @@ describe("MessageBubble delegation display wiring", () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, join } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"), "utf8");
-    expect(source).toContain('remoteBadgeLabel={remoteBadgeLabel || undefined}');
-    expect(source).toContain('const isGroupBridgeSource = isGroupBridgeInboundMessage(ev.by, msgData);');
-    expect(source).toContain('hasSource && !isGroupBridgeSource');
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"),
+      "utf8",
+    );
+    expect(source).toContain("remoteBadgeLabel={remoteBadgeLabel || undefined}");
+    expect(source).toContain(
+      "const isGroupBridgeSource = isGroupBridgeInboundMessage(ev.by, msgData);",
+    );
+    expect(source).toContain("hasSource && !isGroupBridgeSource");
     expect(source).toContain('t("remoteBadge"');
     expect(source).toContain('t("relayedFrom", { label: sourceLabel })');
     expect(source).not.toContain("openOriginalMessage");
@@ -136,15 +142,27 @@ describe("MessageBubble delegation display wiring", () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, join } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    const bubbleSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"), "utf8");
-    const listSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "VirtualMessageList.tsx"), "utf8");
-    const chatTabSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../pages/chat/ChatTab.tsx"), "utf8");
-    const tabSource = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../hooks/useChatTab.ts"), "utf8");
+    const bubbleSource = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "MessageBubble.tsx"),
+      "utf8",
+    );
+    const listSource = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "VirtualMessageList.tsx"),
+      "utf8",
+    );
+    const chatTabSource = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../pages/chat/ChatTab.tsx"),
+      "utf8",
+    );
+    const tabSource = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../hooks/useChatTab.ts"),
+      "utf8",
+    );
 
-    expect(bubbleSource).toContain('onClick={() => onOpenSource?.(srcGroupId, srcEventId)}');
-    expect(bubbleSource).toContain('disabled={!onOpenSource}');
-    expect(listSource).toContain('onOpenSource={onOpenSource}');
-    expect(chatTabSource).toContain('onOpenSource={openSourceMessage}');
+    expect(bubbleSource).toContain("onClick={() => onOpenSource?.(srcGroupId, srcEventId)}");
+    expect(bubbleSource).toContain("disabled={!onOpenSource}");
+    expect(listSource).toContain("onOpenSource={onOpenSource}");
+    expect(chatTabSource).toContain("onOpenSource={openSourceMessage}");
     expect(tabSource).toContain("function canOpenSourceMessageLocally");
     expect(tabSource).toContain("return !group.group_bridge_remote");
     expect(tabSource).toContain("openSourceMessage");
@@ -154,7 +172,10 @@ describe("MessageBubble delegation display wiring", () => {
     const { readFileSync } = await import("node:fs");
     const { dirname, join } = await import("node:path");
     const { fileURLToPath } = await import("node:url");
-    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../hooks/useChatTab.ts"), "utf8");
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../hooks/useChatTab.ts"),
+      "utf8",
+    );
     expect(source).toContain("shouldShowInConversation");
     expect(source).toContain("filter(shouldShowInConversation)");
     expect(source).toContain("isDelegationSourceOutboundEvent(event.data)");
@@ -163,13 +184,15 @@ describe("MessageBubble delegation display wiring", () => {
 
 describe("messageBubbleDelegation", () => {
   it("classifies a delegation request message", () => {
-    const text = "[cccc-delegation:v1]\ndelegation_id: dlg_1\nOriginal request:\ndo x\n[/cccc-delegation]";
+    const text =
+      "[cccc-delegation:v1]\ndelegation_id: dlg_1\nOriginal request:\ndo x\n[/cccc-delegation]";
     expect(isDelegationRequestText(text)).toBe(true);
     expect(destinationChipKey(text)).toBe("relayedTo");
   });
 
   it("classifies a delegation result message", () => {
-    const text = "[cccc-delegation-result:v1]\ndelegation_id: dlg_1\nstatus: done\n[/cccc-delegation-result]";
+    const text =
+      "[cccc-delegation-result:v1]\ndelegation_id: dlg_1\nstatus: done\n[/cccc-delegation-result]";
     expect(isDelegationResultText(text)).toBe(true);
     expect(isDelegationRequestText(text)).toBe(false);
   });

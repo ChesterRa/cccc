@@ -118,6 +118,36 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertIn("UTF-8 text", str((file_props.get("rel_path") or {}).get("description") or ""))
         self.assertIn("active scope", str((file_props.get("path") or {}).get("description") or ""))
 
+    def test_messaging_toolspec_exposes_optional_higher_order_insight_without_advertising_the_gate(self) -> None:
+        for tool_name in (
+            "cccc_message_send",
+            "cccc_message_reply",
+            "cccc_tracked_send",
+            "cccc_file",
+        ):
+            spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == tool_name), None)
+            self.assertIsInstance(spec, dict, msg=f"missing toolspec for {tool_name}")
+            schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+            props = schema.get("properties") if isinstance(schema, dict) else {}
+            field = props.get("insight") if isinstance(props, dict) else {}
+            self.assertEqual(field.get("type"), "string")
+            self.assertEqual(field.get("maxLength"), 1200)
+            required = schema.get("required") if isinstance(schema, dict) else []
+            self.assertNotIn("insight", required or [])
+            self.assertLess(list(props).index("text"), list(props).index("insight"))
+            field_copy = str(field.get("description") or "").lower()
+            self.assertIn("insight is second in the json, not second in thought", field_copy)
+            self.assertIn("reconstruct from first principles", field_copy)
+            self.assertIn("what real outcome the work serves", field_copy)
+            self.assertIn("step materially above the message's working level", field_copy)
+            self.assertIn("single consequential judgment", field_copy)
+            self.assertIn("change level or frame", field_copy)
+            self.assertIn("never recap or btw", field_copy)
+            self.assertIn("do not pretend to see every layer", field_copy)
+            public_copy = f"{spec.get('description', '')} {field.get('description', '')}".lower()
+            self.assertNotIn("insight is required", public_copy)
+            self.assertNotIn("must include insight", public_copy)
+
     def test_message_toolspec_exposes_suggested_user_message_as_optional_hint(self) -> None:
         for tool_name in ("cccc_message_send", "cccc_message_reply"):
             spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == tool_name), None)
@@ -223,6 +253,26 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertTrue(web_model_only_tools <= set(WEB_MODEL_CORE_TOOLS))
         self.assertFalse(web_model_only_tools & resolve_core_tool_names(actor_role="peer"))
         self.assertTrue(web_model_only_tools <= resolve_core_tool_names(actor_role="peer", is_web_model=True))
+
+    def test_web_model_keeps_fixed_schema_fallbacks_outside_generic_lean_core(self) -> None:
+        from cccc.kernel.capabilities import CORE_BASIC_TOOLS, WEB_MODEL_CORE_TOOLS
+
+        fixed_schema_fallbacks = {
+            "cccc_repo",
+            "cccc_capability_enable",
+            "cccc_memory",
+        }
+        self.assertFalse(fixed_schema_fallbacks & set(CORE_BASIC_TOOLS))
+        self.assertTrue(fixed_schema_fallbacks <= set(WEB_MODEL_CORE_TOOLS))
+
+    def test_bootstrap_description_matches_on_demand_help_and_hidden_tool_routes(self) -> None:
+        bootstrap = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_bootstrap"), None)
+        self.assertIsInstance(bootstrap, dict)
+        description = str((bootstrap or {}).get("description") or "")
+
+        self.assertIn("Call cccc_help only when", description)
+        self.assertIn("hidden tools are routed through cccc_capability_use", description)
+        self.assertNotIn("usually follow with cccc_help once", description)
 
     def test_web_model_turn_tools_describe_transport_boundary(self) -> None:
         wait = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_runtime_wait_next_turn"), None)

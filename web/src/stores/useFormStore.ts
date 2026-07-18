@@ -162,10 +162,5 @@ export const useFormStore = create<FormState>((set) => ({
   setParentDir: (v) => set({ parentDir: v }),
   setShowDirBrowser: (v) => set({ showDirBrowser: v }),
   resetCreateGroupForm: () =>
-    set({
-      createGroupPath: "",
-      createGroupName: "",
-      dirItems: [],
-      showDirBrowser: false,
-    }),
+    set({ createGroupPath: "", createGroupName: "", dirItems: [], showDirBrowser: false }),
 }));

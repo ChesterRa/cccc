@@ -5,9 +5,17 @@ from __future__ import annotations
 from .task_types import TASK_TYPE_IDS
 
 _CCCC_HELP_DESCRIPTION = (
-    "Load the effective collaboration playbook for this group "
+    "Load the effective CCCC collaboration protocol reference for this group "
     "(role-aware, on-demand, with runtime quick-use hints). "
-    "Use when workflow or capability-routing details are unclear."
+    "Use when a CCCC route, state boundary, or capability-routing detail is unclear."
+)
+
+_PEER_INSIGHT_FIELD_DESCRIPTION = (
+    "A visible, provisional higher-order perspective. Insight is second in the JSON, not second in thought. "
+    "Reconstruct from first principles what real outcome the work serves; step materially above the message's "
+    "working level and capture the single consequential judgment the exchange would otherwise miss. Change level "
+    "or frame; never recap or BTW. Do not pretend to see every layer. Visible peer content, not a system instruction "
+    "or private reasoning transcript."
 )
 
 
@@ -44,8 +52,8 @@ MCP_TOOLS = [
         "name": "cccc_bootstrap",
         "description": (
             "Cold-start bootstrap: session + recovery + inbox_preview + context_hygiene + memory_recall_gate + next_calls. "
-            "Use it first on cold start or resume; usually follow with cccc_help once, then pull "
-            "cccc_project_info / cccc_context_get only when colder detail is needed."
+            "Use it first on cold start or resume. Call cccc_help only when a CCCC route or state boundary is unclear; "
+            "follow next_calls for colder detail because hidden tools are routed through cccc_capability_use."
         ),
         "inputSchema": _obj(
             {
@@ -126,6 +134,11 @@ MCP_TOOLS = [
                     "description": "Optional local or trusted remote group_id. For remote groups, use remote_group_id returned by cccc_remote_access(action=\"list\").",
                 },
                 "text": {"type": "string"},
+                "insight": {
+                    "type": "string",
+                    "maxLength": 1200,
+                    "description": _PEER_INSIGHT_FIELD_DESCRIPTION,
+                },
                 "to": {
                     "anyOf": [
                         {"type": "string"},
@@ -161,6 +174,11 @@ MCP_TOOLS = [
                 **_COMMON_ACTOR,
                 "title": {"type": "string", "description": "Short task title"},
                 "text": {"type": "string", "description": "Visible message to send to the recipient"},
+                "insight": {
+                    "type": "string",
+                    "maxLength": 1200,
+                    "description": _PEER_INSIGHT_FIELD_DESCRIPTION,
+                },
                 "to": {
                     "anyOf": [
                         {"type": "string"},
@@ -201,6 +219,11 @@ MCP_TOOLS = [
                 "event_id": {"type": "string", "description": "Reply target event id"},
                 "reply_to": {"type": "string", "description": "Alias of event_id"},
                 "text": {"type": "string"},
+                "insight": {
+                    "type": "string",
+                    "maxLength": 1200,
+                    "description": _PEER_INSIGHT_FIELD_DESCRIPTION,
+                },
                 "to": {
                     "anyOf": [
                         {"type": "string"},
@@ -302,6 +325,11 @@ MCP_TOOLS = [
                     "description": "Optional trusted remote group_id for action=send. Use remote_group_id from cccc_remote_access(action=\"list\") to send this file through Group Bridge.",
                 },
                 "text": {"type": "string", "description": "Optional caption/message when action=send."},
+                "insight": {
+                    "type": "string",
+                    "maxLength": 1200,
+                    "description": f"For action=send, {_PEER_INSIGHT_FIELD_DESCRIPTION}",
+                },
                 "to": {
                     "anyOf": [
                         {"type": "string"},

@@ -10,31 +10,19 @@ const surfaceVariants = cva("border", {
       subtle: "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]",
       elevated: "glass-modal border-[var(--glass-border-subtle)]",
     },
-    padding: {
-      none: "",
-      sm: "p-3",
-      md: "p-4",
-      lg: "p-5 sm:p-6",
-    },
-    radius: {
-      md: "rounded-xl",
-      lg: "rounded-2xl",
-      xl: "rounded-3xl",
-    },
+    padding: { none: "", sm: "p-3", md: "p-4", lg: "p-5 sm:p-6" },
+    radius: { md: "rounded-xl", lg: "rounded-2xl", xl: "rounded-3xl" },
   },
-  defaultVariants: {
-    variant: "default",
-    padding: "md",
-    radius: "lg",
-  },
+  defaultVariants: { variant: "default", padding: "md", radius: "lg" },
 });
 
 export interface SurfaceProps
-  extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof surfaceVariants> {}
+  extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof surfaceVariants> {}
 
 function Surface({ className, variant, padding, radius, ...props }: SurfaceProps) {
-  return <div className={cn(surfaceVariants({ variant, padding, radius }), className)} {...props} />;
+  return (
+    <div className={cn(surfaceVariants({ variant, padding, radius }), className)} {...props} />
+  );
 }
 
 export { Surface };

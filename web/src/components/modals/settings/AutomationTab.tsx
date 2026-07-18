@@ -64,10 +64,7 @@ interface AutomationTabProps {
   onResetPolicies: () => void;
 }
 
-type PersistCopy = {
-  failureMessage: string;
-  versionConflictMessage: string;
-};
+type PersistCopy = { failureMessage: string; versionConflictMessage: string };
 
 function cloneRule(rule: AutomationRule): AutomationRule {
   return JSON.parse(JSON.stringify(rule)) as AutomationRule;
@@ -127,11 +124,15 @@ export function AutomationTab(props: AutomationTabProps) {
         return;
       }
       setRuleset(resp.result.ruleset);
-      setSnippetCatalog(resp.result.snippet_catalog || { built_in: {}, built_in_overrides: {}, custom: {} });
+      setSnippetCatalog(
+        resp.result.snippet_catalog || { built_in: {}, built_in_overrides: {}, custom: {} },
+      );
       setRulesVersion(typeof resp.result.version === "number" ? resp.result.version : undefined);
       setStatus(resp.result.status || {});
       setConfigPath(String(resp.result.config_path || ""));
-      setSupportedVars(Array.isArray(resp.result.supported_vars) ? resp.result.supported_vars.map(String) : []);
+      setSupportedVars(
+        Array.isArray(resp.result.supported_vars) ? resp.result.supported_vars.map(String) : [],
+      );
     } catch {
       setRulesErr(t("automation.failedToLoad"));
     } finally {
@@ -145,7 +146,10 @@ export function AutomationTab(props: AutomationTabProps) {
   }, [props.groupId]);
 
   const draft: AutomationRuleSet = ruleset || { rules: [], snippets: {} };
-  const builtinSnippetDefaults = useMemo(() => ({ ...(snippetCatalog.built_in || {}) }), [snippetCatalog.built_in]);
+  const builtinSnippetDefaults = useMemo(
+    () => ({ ...(snippetCatalog.built_in || {}) }),
+    [snippetCatalog.built_in],
+  );
   const builtinOverrideIds = useMemo(
     () => new Set(Object.keys(snippetCatalog.built_in_overrides || {})),
     [snippetCatalog.built_in_overrides],
@@ -155,8 +159,12 @@ export function AutomationTab(props: AutomationTabProps) {
       ...Object.keys(builtinSnippetDefaults || {}),
       ...Object.keys(draft.snippets || {}),
     ]);
-    const builtInIds = Array.from(all).filter((id) => builtinSnippetDefaults[id] !== undefined).sort();
-    const customIds = Array.from(all).filter((id) => builtinSnippetDefaults[id] === undefined).sort();
+    const builtInIds = Array.from(all)
+      .filter((id) => builtinSnippetDefaults[id] !== undefined)
+      .sort();
+    const customIds = Array.from(all)
+      .filter((id) => builtinSnippetDefaults[id] === undefined)
+      .sort();
     return [...builtInIds, ...customIds];
   }, [builtinSnippetDefaults, draft.snippets]);
   const snippetModalIds = useMemo(() => {
@@ -164,8 +172,12 @@ export function AutomationTab(props: AutomationTabProps) {
       ...Object.keys(builtinSnippetDefaults || {}),
       ...Object.keys(snippetDrafts || {}),
     ]);
-    const builtInIds = Array.from(all).filter((id) => builtinSnippetDefaults[id] !== undefined).sort();
-    const customIds = Array.from(all).filter((id) => builtinSnippetDefaults[id] === undefined).sort();
+    const builtInIds = Array.from(all)
+      .filter((id) => builtinSnippetDefaults[id] !== undefined)
+      .sort();
+    const customIds = Array.from(all)
+      .filter((id) => builtinSnippetDefaults[id] === undefined)
+      .sort();
     return [...builtInIds, ...customIds];
   }, [builtinSnippetDefaults, snippetDrafts]);
 
@@ -232,12 +244,17 @@ export function AutomationTab(props: AutomationTabProps) {
     return next;
   };
 
-  const openRuleEditor = (rule: AutomationRule, options: { sourceId: string | null; isNew: boolean }) => {
+  const openRuleEditor = (
+    rule: AutomationRule,
+    options: { sourceId: string | null; isNew: boolean },
+  ) => {
     const normalized = normalizeRuleForEditor(rule);
     setEditingRuleDraft(normalized);
     setEditingRuleSourceId(options.sourceId);
     setEditingRuleIsNew(options.isNew);
-    setEditingOneShotMode(String(normalized.trigger?.kind || "interval") === "at" && !options.isNew ? "exact" : "after");
+    setEditingOneShotMode(
+      String(normalized.trigger?.kind || "interval") === "at" && !options.isNew ? "exact" : "after",
+    );
     setEditingOneShotAfterMinutes(30);
     setRulesErr("");
   };
@@ -267,9 +284,12 @@ export function AutomationTab(props: AutomationTabProps) {
       prev
         ? {
             ...prev,
-            trigger: { kind: "at", at: new Date(Date.now() + editingOneShotAfterMinutes * 60 * 1000).toISOString() },
+            trigger: {
+              kind: "at",
+              at: new Date(Date.now() + editingOneShotAfterMinutes * 60 * 1000).toISOString(),
+            },
           }
-        : prev
+        : prev,
     );
   };
 
@@ -280,9 +300,12 @@ export function AutomationTab(props: AutomationTabProps) {
       prev
         ? {
             ...prev,
-            trigger: { kind: "at", at: new Date(Date.now() + nextMinutes * 60 * 1000).toISOString() },
+            trigger: {
+              kind: "at",
+              at: new Date(Date.now() + nextMinutes * 60 * 1000).toISOString(),
+            },
           }
-        : prev
+        : prev,
     );
   };
 
@@ -357,10 +380,15 @@ export function AutomationTab(props: AutomationTabProps) {
 
       const triggerKind = String(rule.trigger?.kind || "interval");
       if (triggerKind === "interval") {
-        const every = Number(rule.trigger && "every_seconds" in rule.trigger ? rule.trigger.every_seconds : 0);
-        if (!Number.isFinite(every) || every < 1) return t("automation.validationIntervalMin", { id });
+        const every = Number(
+          rule.trigger && "every_seconds" in rule.trigger ? rule.trigger.every_seconds : 0,
+        );
+        if (!Number.isFinite(every) || every < 1)
+          return t("automation.validationIntervalMin", { id });
       } else if (triggerKind === "cron") {
-        const cronExpr = String(rule.trigger && "cron" in rule.trigger ? rule.trigger.cron : "").trim();
+        const cronExpr = String(
+          rule.trigger && "cron" in rule.trigger ? rule.trigger.cron : "",
+        ).trim();
         if (!cronExpr) return t("automation.validationScheduleRequired", { id });
       } else if (triggerKind === "at") {
         const atRaw = String(rule.trigger && "at" in rule.trigger ? rule.trigger.at : "").trim();
@@ -372,37 +400,53 @@ export function AutomationTab(props: AutomationTabProps) {
       }
 
       const scope = String(rule.scope || "group");
-      if (scope !== "group" && scope !== "personal") return t("automation.validationScopeInvalid", { id });
+      if (scope !== "group" && scope !== "personal")
+        return t("automation.validationScopeInvalid", { id });
       if (scope === "personal" && !String(rule.owner_actor_id || "").trim()) {
         return t("automation.validationOwnerRequired", { id });
       }
 
-      const recipients = Array.isArray(rule.to) ? rule.to.map((item) => String(item || "").trim()).filter(Boolean) : [];
+      const recipients = Array.isArray(rule.to)
+        ? rule.to.map((item) => String(item || "").trim()).filter(Boolean)
+        : [];
       const kind = actionKind(rule.action);
       if (kind === "notify") {
         if (recipients.length === 0) return t("automation.validationRecipientRequired", { id });
-        const snippetRef = String(rule.action && "snippet_ref" in rule.action ? rule.action.snippet_ref || "" : "").trim();
-        const message = String(rule.action && "message" in rule.action ? rule.action.message || "" : "").trim();
+        const snippetRef = String(
+          rule.action && "snippet_ref" in rule.action ? rule.action.snippet_ref || "" : "",
+        ).trim();
+        const message = String(
+          rule.action && "message" in rule.action ? rule.action.message || "" : "",
+        ).trim();
         if (snippetRef && candidate.snippets[snippetRef] === undefined) {
           return t("automation.validationSnippetMissing", { id, snippet: snippetRef });
         }
         if (!snippetRef && !message) return t("automation.validationMessageRequired", { id });
       } else if (kind === "group_state") {
         if (triggerKind !== "at") return t("automation.validationGroupStateOneTimeOnly", { id });
-        const targetState = String(rule.action && "state" in rule.action ? rule.action.state || "" : "").trim();
+        const targetState = String(
+          rule.action && "state" in rule.action ? rule.action.state || "" : "",
+        ).trim();
         if (!["active", "idle", "paused", "stopped"].includes(targetState)) {
           return t("automation.validationGroupStateTargetRequired", { id });
         }
       } else if (kind === "actor_control") {
         if (triggerKind !== "at") return t("automation.validationActorControlOneTimeOnly", { id });
-        const operation = String(rule.action && "operation" in rule.action ? rule.action.operation || "" : "").trim();
+        const operation = String(
+          rule.action && "operation" in rule.action ? rule.action.operation || "" : "",
+        ).trim();
         if (!["start", "stop", "restart"].includes(operation)) {
           return t("automation.validationActorControlOperationRequired", { id });
         }
-        const targets = Array.isArray(rule.action && "targets" in rule.action ? rule.action.targets : [])
-          ? (rule.action as { targets?: string[] }).targets?.map((item) => String(item || "").trim()).filter(Boolean) || []
+        const targets = Array.isArray(
+          rule.action && "targets" in rule.action ? rule.action.targets : [],
+        )
+          ? (rule.action as { targets?: string[] }).targets
+              ?.map((item) => String(item || "").trim())
+              .filter(Boolean) || []
           : [];
-        if (targets.length === 0) return t("automation.validationActorControlTargetRequired", { id });
+        if (targets.length === 0)
+          return t("automation.validationActorControlTargetRequired", { id });
       }
     }
 
@@ -414,7 +458,10 @@ export function AutomationTab(props: AutomationTabProps) {
     return null;
   };
 
-  const persistRuleset = async (nextDraft: AutomationRuleSet, copy: PersistCopy): Promise<boolean> => {
+  const persistRuleset = async (
+    nextDraft: AutomationRuleSet,
+    copy: PersistCopy,
+  ): Promise<boolean> => {
     if (!props.groupId) return false;
     const err = validateRuleset(nextDraft);
     if (err) {
@@ -425,7 +472,11 @@ export function AutomationTab(props: AutomationTabProps) {
     setRulesBusy(true);
     setRulesErr("");
     try {
-      const resp = await api.updateAutomation(props.groupId, buildPersistedRuleset(nextDraft), rulesVersion);
+      const resp = await api.updateAutomation(
+        props.groupId,
+        buildPersistedRuleset(nextDraft),
+        rulesVersion,
+      );
       if (!resp.ok) {
         const code = String(resp.error?.code || "").trim();
         if (code === "version_conflict") {
@@ -455,14 +506,16 @@ export function AutomationTab(props: AutomationTabProps) {
   const saveRuleEditor = async (): Promise<void> => {
     if (!editingRuleDraft) return;
     const nextRules = editingRuleSourceId
-      ? draft.rules.map((rule) => (String(rule.id || "").trim() === editingRuleSourceId ? editingRuleDraft : rule))
+      ? draft.rules.map((rule) =>
+          String(rule.id || "").trim() === editingRuleSourceId ? editingRuleDraft : rule,
+        )
       : [...draft.rules, editingRuleDraft];
     const ok = await persistRuleset(
       { ...draft, rules: nextRules },
       {
         failureMessage: t("automation.failedToSave"),
         versionConflictMessage: t("automation.versionConflict"),
-      }
+      },
     );
     if (ok) closeRuleEditor();
   };
@@ -473,7 +526,7 @@ export function AutomationTab(props: AutomationTabProps) {
       {
         failureMessage: t("automation.failedToSave"),
         versionConflictMessage: t("automation.versionConflict"),
-      }
+      },
     );
     if (ok) closeSnippetManager();
   };
@@ -489,7 +542,9 @@ export function AutomationTab(props: AutomationTabProps) {
       setRulesErr(t("automation.noCompletedToClear"));
       return;
     }
-    const ok = window.confirm(t("automation.clearCompletedConfirm", { count: completedOneTimeRuleIds.length }));
+    const ok = window.confirm(
+      t("automation.clearCompletedConfirm", { count: completedOneTimeRuleIds.length }),
+    );
     if (!ok) return;
 
     const removing = new Set(completedOneTimeRuleIds);
@@ -538,7 +593,9 @@ export function AutomationTab(props: AutomationTabProps) {
   if (!props.groupId) {
     return (
       <div className={cardClass()}>
-        <div className="text-sm text-[var(--color-text-secondary)]">{t("automation.openFromGroup")}</div>
+        <div className="text-sm text-[var(--color-text-secondary)]">
+          {t("automation.openFromGroup")}
+        </div>
       </div>
     );
   }
@@ -549,10 +606,15 @@ export function AutomationTab(props: AutomationTabProps) {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div>
-        <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{t("automation.title")}</h3>
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">
+          {t("automation.title")}
+        </h3>
         <p className="text-xs mt-1 text-[var(--color-text-muted)]">
           {t("automation.description")}{" "}
-          <span className="font-mono break-all">{configPath || t("automation.configPathFallback")}</span>.
+          <span className="font-mono break-all">
+            {configPath || t("automation.configPathFallback")}
+          </span>
+          .
         </p>
       </div>
 
@@ -595,7 +657,9 @@ export function AutomationTab(props: AutomationTabProps) {
         title={t("automation.rulesTitle")}
         description={t("automation.rulesDescription")}
       >
-        {rulesErr ? <div className="text-xs text-rose-600 dark:text-rose-300">{rulesErr}</div> : null}
+        {rulesErr ? (
+          <div className="text-xs text-rose-600 dark:text-rose-300">{rulesErr}</div>
+        ) : null}
 
         <div className="space-y-2">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">

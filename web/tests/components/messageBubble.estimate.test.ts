@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { estimateMessageRowHeight } from "../../src/components/messageBubble/estimate";
 import type { LedgerEvent } from "../../src/types";
@@ -34,10 +34,7 @@ describe("estimateMessageRowHeight", () => {
       data: {
         text: "带附件和引用的消息",
         quote_text: "上一条消息",
-        attachments: [
-          { mime_type: "image/png" },
-          { mime_type: "application/pdf" },
-        ],
+        attachments: [{ mime_type: "image/png" }, { mime_type: "application/pdf" }],
       },
     };
 
@@ -45,12 +42,8 @@ describe("estimateMessageRowHeight", () => {
   });
 
   it("adds extra code block height for markdown code fences", () => {
-    const normal = estimateMessageRowHeight({
-      data: { text: "普通文本" },
-    });
-    const withCode = estimateMessageRowHeight({
-      data: { text: "```ts\nconst x = 1;\n```" },
-    });
+    const normal = estimateMessageRowHeight({ data: { text: "普通文本" } });
+    const withCode = estimateMessageRowHeight({ data: { text: "```ts\nconst x = 1;\n```" } });
 
     expect(withCode).toBeGreaterThan(normal);
   });

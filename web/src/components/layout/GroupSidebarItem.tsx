@@ -37,7 +37,7 @@ export function GroupSidebarItem({
       <button
         className={classNames(
           "w-11 h-11 rounded-xl flex items-center justify-center transition-all relative",
-          isActive ? "glass-group-item-active" : "glass-group-item hover:scale-105"
+          isActive ? "glass-group-item-active" : "glass-group-item hover:scale-105",
         )}
         onClick={onSelect}
         onMouseEnter={onWarm}
@@ -50,7 +50,9 @@ export function GroupSidebarItem({
         <span
           className={classNames(
             "text-sm font-semibold",
-            isActive ? "text-[rgb(35,36,37)] dark:text-white" : "text-[var(--color-text-secondary)]"
+            isActive
+              ? "text-[rgb(35,36,37)] dark:text-white"
+              : "text-[var(--color-text-secondary)]",
           )}
         >
           {initial}
@@ -58,7 +60,7 @@ export function GroupSidebarItem({
         <span
           className={classNames(
             "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-[var(--color-bg-primary)]",
-            status.dotClass
+            status.dotClass,
           )}
         />
       </button>
@@ -74,7 +76,7 @@ export function GroupSidebarItem({
         className={classNames(
           "w-full pr-3 py-3 rounded-xl transition-all min-h-[48px] flex items-center gap-2 relative",
           isActive ? "glass-group-item-active pl-5.5" : "glass-group-item pl-3",
-          isArchived && !isActive && "opacity-90"
+          isArchived && !isActive && "opacity-90",
         )}
         role="button"
         tabIndex={0}
@@ -91,13 +93,15 @@ export function GroupSidebarItem({
           onFocus={onWarm}
         >
           <div className="flex items-center gap-2 min-w-0">
-            <span className={classNames("w-2.5 h-2.5 rounded-full flex-shrink-0", status.dotClass)} />
+            <span
+              className={classNames("w-2.5 h-2.5 rounded-full flex-shrink-0", status.dotClass)}
+            />
             <span
               className={classNames(
                 "text-sm font-medium truncate",
                 isActive
                   ? "text-[rgb(35,36,37)] dark:text-white"
-                  : "text-[var(--color-text-primary)] group-hover/item:text-[var(--color-text-primary)]"
+                  : "text-[var(--color-text-primary)] group-hover/item:text-[var(--color-text-primary)]",
               )}
             >
               {group.title || gid}
@@ -112,9 +116,11 @@ export function GroupSidebarItem({
               className={classNames(
                 "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent bg-transparent transition-all duration-150",
                 "text-[var(--color-text-tertiary)] opacity-0 md:group-hover/item:opacity-100 focus-visible:opacity-100",
-                menuOpen && "opacity-100 bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-sm",
+                menuOpen &&
+                  "opacity-100 bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-sm",
                 !menuOpen && isActive && "opacity-100 text-[rgb(35,36,37)] dark:text-white",
-                !menuOpen && "hover:bg-[var(--glass-tab-bg-hover)] hover:border-[var(--glass-border-subtle)] hover:text-[var(--color-text-primary)]"
+                !menuOpen &&
+                  "hover:bg-[var(--glass-tab-bg-hover)] hover:border-[var(--glass-border-subtle)] hover:text-[var(--color-text-primary)]",
               )}
               aria-label={menuAriaLabel || menuActionLabel}
               title={menuAriaLabel || menuActionLabel}
@@ -131,7 +137,7 @@ export function GroupSidebarItem({
                   type="button"
                   className={classNames(
                     "w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
-                    "text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                    "text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]",
                   )}
                   onClick={(event) => {
                     event.stopPropagation();

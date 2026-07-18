@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List
 
+from ...kernel.peer_insight import PEER_PERSPECTIVE_AGENT_LABEL, append_peer_perspective
+
 from .inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
 
 
@@ -175,6 +177,7 @@ def render_delivery_refs(refs: list[dict[str, Any]]) -> list[str]:
 def build_actor_delivery_text(
     *,
     text: str,
+    insight: str | None = None,
     priority: str,
     reply_required: bool,
     event_id: str,
@@ -214,7 +217,7 @@ def build_actor_delivery_text(
         if len(attachments) > 8:
             lines.append(f"- … ({len(attachments) - 8} more)")
         delivery_text = (delivery_text.rstrip("\n") + "\n\n" + "\n".join(lines)).strip()
-    return delivery_text
+    return append_peer_perspective(delivery_text, insight, label=PEER_PERSPECTIVE_AGENT_LABEL)
 
 
 def build_actor_headless_delivery_text(
@@ -261,6 +264,7 @@ def render_actor_event_for_delivery(event: Dict[str, Any], *, actor_id: str = ""
     if kind == "chat.message":
         body = build_actor_delivery_text(
             text=str(data.get("text") or ""),
+            insight=data.get("insight"),
             priority=str(data.get("priority") or "normal"),
             reply_required=bool(data.get("reply_required")),
             event_id=event_id,

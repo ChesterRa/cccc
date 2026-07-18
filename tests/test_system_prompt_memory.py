@@ -62,26 +62,20 @@ class TestSystemPromptMemory(unittest.TestCase):
             self.assertIsNotNone(actor)
             prompt = render_system_prompt(group=group, actor=actor or {})
 
-            self.assertIn("Working Style:", prompt)
-            self.assertIn("Platform Invariants:", prompt)
-            self.assertIn("Work like a sharp teammate, not a customer-service script.", prompt)
-            self.assertIn("Prefer silence over low-signal chatter; speak for real changes, not filler or routine @all updates.", prompt)
-            self.assertIn("No fabrication. Verify before claiming done.", prompt)
+            self.assertIn("CCCC Protocol:", prompt)
+            self.assertNotIn("Working Style:", prompt)
+            self.assertNotIn("Platform Invariants:", prompt)
             self.assertIn("Use cccc_message_reply for replies; use cccc_message_send for new messages.", prompt)
             self.assertNotIn("Visible replies must go through MCP: cccc_message_send / cccc_message_reply.", prompt)
             self.assertNotIn("your final answer streams to Chat automatically", prompt)
-            self.assertIn("A status message, plan, or promise is not task progress", prompt)
-            self.assertIn("Cold start or resume: use MCP tools `cccc_bootstrap`, then `cccc_help`.", prompt)
-            self.assertIn("At key transitions, sync shared control-plane state and your cccc_agent_state.", prompt)
-            self.assertIn("Once scope is approved, finish it end-to-end; do not ask to continue on obvious next steps.", prompt)
-            self.assertIn("For strategy or scope discussion, align first; implement only after explicit action intent.", prompt)
-            self.assertIn("Execution default:", prompt)
-            self.assertIn("Reuse working paths first.", prompt)
-            self.assertNotIn("Working stance:", prompt)
-            self.assertNotIn("Cold start or resume: call cccc_bootstrap first", prompt)
-            self.assertEqual(prompt.count("Prefer silence over low-signal chatter"), 1)
-            self.assertEqual(prompt.count("finish it end-to-end"), 1)
-            self.assertEqual(prompt.count("Cold start or resume:"), 1)
+            self.assertIn("On cold start or resume, use MCP tool `cccc_bootstrap`.", prompt)
+            self.assertIn("Call `cccc_help` only when you need a CCCC-specific route or a missing capability.", prompt)
+            self.assertNotIn("A status message, plan, or promise is not task progress", prompt)
+            self.assertNotIn("sync shared control-plane state", prompt)
+            self.assertNotIn("finish it end-to-end", prompt)
+            self.assertNotIn("implement only after explicit action intent", prompt)
+            self.assertNotIn("Execution default:", prompt)
+            self.assertEqual(prompt.count("cold start or resume"), 1)
 
             self.assertNotIn("Memory:", prompt)
             self.assertNotIn("state/memory/MEMORY.md + state/memory/daily/*.md", prompt)
@@ -89,6 +83,32 @@ class TestSystemPromptMemory(unittest.TestCase):
             self.assertNotIn("Planning gate (6D)", prompt)
             self.assertNotIn("Todo discipline:", prompt)
             self.assertNotIn("Gap policy:", prompt)
+        finally:
+            cleanup()
+
+    def test_team_seed_is_one_small_non_solo_activation_not_full_insight_doctrine(self) -> None:
+        from cccc.kernel.actors import add_actor, find_actor
+        from cccc.kernel.group import load_group
+        from cccc.kernel.peer_insight import SUPERVISOR_MAGIC_KERNEL, TEAM_MODE_SEED
+        from cccc.kernel.system_prompt import render_system_prompt
+
+        _, cleanup = self._with_home()
+        try:
+            gid, aid = self._create_group_with_actor(title="team-seed")
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            assert group is not None
+            actor = find_actor(group, aid)
+            self.assertIsNotNone(actor)
+            solo_prompt = render_system_prompt(group=group, actor=actor or {})
+            self.assertNotIn(TEAM_MODE_SEED, solo_prompt)
+
+            add_actor(group, actor_id="agent2", runner="headless", runtime="codex")
+            actor = find_actor(group, aid)
+            team_prompt = render_system_prompt(group=group, actor=actor or {})
+            self.assertEqual(team_prompt.count(TEAM_MODE_SEED), 1)
+            self.assertNotIn(SUPERVISOR_MAGIC_KERNEL, team_prompt)
+            self.assertNotIn("Peer Insight Contract", team_prompt)
         finally:
             cleanup()
 

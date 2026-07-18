@@ -34,7 +34,9 @@ export function GroupBridgeConnectionsSection({
   const syncSubmittedOutbounds = useCallback(async (items: GroupBridgePairingOutbound[]) => {
     const syncable = projectSyncableOutbounds(items);
     if (syncable.length === 0) return false;
-    await Promise.allSettled(syncable.map((outbound) => api.syncGroupBridgePairingOutbound(outbound.outbound_id)));
+    await Promise.allSettled(
+      syncable.map((outbound) => api.syncGroupBridgePairingOutbound(outbound.outbound_id)),
+    );
     return true;
   }, []);
 
@@ -46,16 +48,17 @@ export function GroupBridgeConnectionsSection({
     }
     refreshInFlightRef.current = true;
     try {
-      const [identityResp, initialRequestResp, initialTrustResp, initialOutboundResp] = await Promise.all([
-        api.fetchGroupBridgeIdentity(),
-        api.fetchGroupBridgePairingRequests(groupId),
-        api.fetchGroupBridgeTrusts(groupId),
-        api.fetchGroupBridgePairingOutbounds(groupId),
-      ]);
+      const [identityResp, initialRequestResp, initialTrustResp, initialOutboundResp] =
+        await Promise.all([
+          api.fetchGroupBridgeIdentity(),
+          api.fetchGroupBridgePairingRequests(groupId),
+          api.fetchGroupBridgeTrusts(groupId),
+          api.fetchGroupBridgePairingOutbounds(groupId),
+        ]);
       let requestResp = initialRequestResp;
       let trustResp = initialTrustResp;
       let outboundResp = initialOutboundResp;
-      if (outboundResp.ok && await syncSubmittedOutbounds(outboundResp.result.outbounds || [])) {
+      if (outboundResp.ok && (await syncSubmittedOutbounds(outboundResp.result.outbounds || []))) {
         [requestResp, trustResp, outboundResp] = await Promise.all([
           api.fetchGroupBridgePairingRequests(groupId),
           api.fetchGroupBridgeTrusts(groupId),

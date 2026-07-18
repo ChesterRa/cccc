@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { buildReplyComposerState } from "./chatReply";
 import type { LedgerEvent } from "../types";
@@ -19,7 +19,9 @@ describe("buildReplyComposerState", () => {
       },
     };
 
-    const state = buildReplyComposerState(event, "g_local", [], { default_send_to: "foreman" } as never);
+    const state = buildReplyComposerState(event, "g_local", [], {
+      default_send_to: "foreman",
+    } as never);
 
     expect(state?.toText).toBe("");
     expect(state?.replyTarget?.eventId).toBe("evt_local");
@@ -40,12 +42,9 @@ describe("buildReplyComposerState", () => {
       },
     };
 
-    const state = buildReplyComposerState(
-      event,
-      "g_local",
-      [{ id: "peer1" } as never],
-      { default_send_to: "foreman" } as never,
-    );
+    const state = buildReplyComposerState(event, "g_local", [{ id: "peer1" } as never], {
+      default_send_to: "foreman",
+    } as never);
 
     expect(state?.toText).toBe("peer1");
     expect(state?.replyTarget?.eventId).toBe("evt_reply");

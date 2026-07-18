@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { LedgerEvent } from "../../src/types";
 import {
@@ -22,11 +22,7 @@ function chatMessage(
     kind: "chat.message",
     by,
     ts: `2026-06-14T00:00:${id.slice(-1) || "0"}Z`,
-    data: {
-      text,
-      to: ["user"],
-      ...extra,
-    },
+    data: { text, to: ["user"], ...extra },
   };
 }
 
@@ -61,11 +57,7 @@ describe("suggestedUserMessage", () => {
       chatMessage("evt-1", "peer1", "Done.", { suggested_user_message: "Try the next step." }),
     ]);
 
-    expect(suggestion).toMatchObject({
-      eventId: "evt-1",
-      by: "peer1",
-      text: "Try the next step.",
-    });
+    expect(suggestion).toMatchObject({ eventId: "evt-1", by: "peer1", text: "Try the next step." });
   });
 
   it("does not resurrect older suggestions after a newer user-addressed chat message", () => {
@@ -118,9 +110,12 @@ describe("suggestedUserMessage", () => {
       JSON.stringify(["evt-1"]),
     );
     expect(readConsumedSuggestedUserMessageIds()).toEqual(new Set(["evt-1"]));
-    expect(latestSuggestedUserMessage([
-      chatMessage("evt-1", "peer1", "Done.", { suggested_user_message: "Try the next step." }),
-    ], readConsumedSuggestedUserMessageIds())).toBeNull();
+    expect(
+      latestSuggestedUserMessage(
+        [chatMessage("evt-1", "peer1", "Done.", { suggested_user_message: "Try the next step." })],
+        readConsumedSuggestedUserMessageIds(),
+      ),
+    ).toBeNull();
   });
 
   it("does not throw when localStorage cannot persist dismissal", () => {
@@ -130,22 +125,28 @@ describe("suggestedUserMessage", () => {
   });
 
   it("only allows composer suggestions for the selected group target", () => {
-    expect(composerTargetAllowsSuggestedUserMessage({
-      selectedGroupId: "g-current",
-      destGroupId: "g-current",
-      composerGroupSettled: true,
-    })).toBe(true);
+    expect(
+      composerTargetAllowsSuggestedUserMessage({
+        selectedGroupId: "g-current",
+        destGroupId: "g-current",
+        composerGroupSettled: true,
+      }),
+    ).toBe(true);
 
-    expect(composerTargetAllowsSuggestedUserMessage({
-      selectedGroupId: "g-current",
-      destGroupId: "g-other",
-      composerGroupSettled: true,
-    })).toBe(false);
+    expect(
+      composerTargetAllowsSuggestedUserMessage({
+        selectedGroupId: "g-current",
+        destGroupId: "g-other",
+        composerGroupSettled: true,
+      }),
+    ).toBe(false);
 
-    expect(composerTargetAllowsSuggestedUserMessage({
-      selectedGroupId: "g-current",
-      destGroupId: "g-current",
-      composerGroupSettled: false,
-    })).toBe(false);
+    expect(
+      composerTargetAllowsSuggestedUserMessage({
+        selectedGroupId: "g-current",
+        destGroupId: "g-current",
+        composerGroupSettled: false,
+      }),
+    ).toBe(false);
   });
 });

@@ -51,26 +51,17 @@ run_whitespace_check() {
 }
 
 run_frontend_checks() {
-  echo "Running web lint and typecheck..."
-  npm -C web run lint
-  npm -C web run typecheck
+  echo "Running web format, lint, and type checks..."
+  npm -C web run check
   echo "✓ Web checks passed"
   echo ""
 }
 
 run_full_python_tests() {
-  local pytest_workers="${PYTEST_WORKERS:-auto}"
   local pytest_common=("-x" "-q" "--durations=20" "--timeout=120" "--timeout-method=thread")
 
-  echo "Running full Python tests with pytest-xdist (-n ${pytest_workers})..."
-  if uv run --with pytest-xdist --with pytest-timeout python -m pytest tests/ "${pytest_common[@]}" -n "${pytest_workers}"; then
-    echo "✓ Full Python tests passed"
-    echo ""
-    return
-  fi
-
-  echo "Parallel pytest failed, falling back to serial run..."
-  uv run --with pytest-timeout python -m pytest tests/ "${pytest_common[@]}"
+  echo "Running the full Python suite serially..."
+  env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID uv run --with pytest-timeout python -m pytest tests/ "${pytest_common[@]}"
   echo "✓ Full Python tests passed"
   echo ""
 }
@@ -121,7 +112,7 @@ run_targeted_python_tests() {
 
   echo "Running impacted Python tests:"
   printf '  %s\n' "${python_tests[@]}"
-  uv run --with pytest-timeout python -m pytest -q --durations=20 --timeout=120 --timeout-method=thread "${python_tests[@]}"
+  env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID uv run --with pytest-timeout python -m pytest -q --durations=20 --timeout=120 --timeout-method=thread "${python_tests[@]}"
   echo "✓ Impacted Python tests passed"
   echo ""
 }

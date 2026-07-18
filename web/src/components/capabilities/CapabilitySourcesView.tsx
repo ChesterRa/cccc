@@ -24,11 +24,16 @@ function TooltipIconButton({
   children,
 }: {
   label: React.ReactNode;
-  children: (referenceProps: Record<string, unknown>, setReference: (node: HTMLElement | null) => void) => React.ReactNode;
+  children: (
+    referenceProps: Record<string, unknown>,
+    setReference: (node: HTMLElement | null) => void,
+  ) => React.ReactNode;
 }) {
   return (
     <HoverTooltip label={label}>
-      {(getReferenceProps, setReference) => children(getReferenceProps({ className: "inline-flex" }), setReference)}
+      {(getReferenceProps, setReference) =>
+        children(getReferenceProps({ className: "inline-flex" }), setReference)
+      }
     </HoverTooltip>
   );
 }
@@ -57,7 +62,9 @@ export function SourcesView(props: {
   onDeleteInstance: (instance: CapabilitySourceInstance) => void;
 }) {
   const { t } = useTranslation("settings");
-  const rows = Object.values(props.sources || {}).sort((left, right) => String(left.source_id || "").localeCompare(String(right.source_id || "")));
+  const rows = Object.values(props.sources || {}).sort((left, right) =>
+    String(left.source_id || "").localeCompare(String(right.source_id || "")),
+  );
   return (
     <div className="h-full min-h-0 overflow-auto p-4 lg:p-6">
       <div className="grid gap-2">
@@ -65,17 +72,29 @@ export function SourcesView(props: {
           const sourceId = String(source.source_id || "");
           const enabled = Boolean(source.enabled);
           const canDelete = capabilityCenterSourceRemovalAction(source) !== "none";
-          const toggleLabel = enabled ? t("capabilityCenter.sources.disable") : t("capabilityCenter.sources.enable");
+          const toggleLabel = enabled
+            ? t("capabilityCenter.sources.disable")
+            : t("capabilityCenter.sources.enable");
           const ToggleIcon = enabled ? PowerOff : Power;
           return (
             <div key={sourceId} className={capabilityCenterSourcesGridClass()}>
               <div className="min-w-0">
-                <div className="break-words font-medium [overflow-wrap:anywhere] md:truncate">{sourceId}</div>
-                <div className="mt-0.5 line-clamp-2 text-xs text-[var(--color-text-muted)] md:truncate">{source.rationale || source.error || t("capabilityCenter.emptyDash")}</div>
+                <div className="break-words font-medium [overflow-wrap:anywhere] md:truncate">
+                  {sourceId}
+                </div>
+                <div className="mt-0.5 line-clamp-2 text-xs text-[var(--color-text-muted)] md:truncate">
+                  {source.rationale || source.error || t("capabilityCenter.emptyDash")}
+                </div>
               </div>
-              <div className="flex justify-end md:block"><SourceStatusBadge enabled={enabled} /></div>
-              <span className="col-span-2 text-xs text-[var(--color-text-secondary)] md:col-span-1">{t("capabilityCenter.sources.records", { count: source.record_count || 0 })}</span>
-              <span className="col-span-2 truncate text-xs text-[var(--color-text-muted)] md:col-span-1">{t("capabilityCenter.sources.sync", { state: source.sync_state || "unknown" })}</span>
+              <div className="flex justify-end md:block">
+                <SourceStatusBadge enabled={enabled} />
+              </div>
+              <span className="col-span-2 text-xs text-[var(--color-text-secondary)] md:col-span-1">
+                {t("capabilityCenter.sources.records", { count: source.record_count || 0 })}
+              </span>
+              <span className="col-span-2 truncate text-xs text-[var(--color-text-muted)] md:col-span-1">
+                {t("capabilityCenter.sources.sync", { state: source.sync_state || "unknown" })}
+              </span>
               <div className="col-span-2 flex w-full items-center justify-start gap-2 md:col-span-1 md:justify-end">
                 <TooltipIconButton label={toggleLabel}>
                   {(referenceProps, setReference) => (
@@ -100,7 +119,11 @@ export function SourcesView(props: {
                           type="button"
                           className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-rose-500/30 bg-rose-500/10 text-xs text-rose-600 hover:bg-rose-500/15 disabled:opacity-60 dark:text-rose-300 md:h-8 md:w-8"
                           disabled={props.busyKey === `source-delete:${sourceId}`}
-                          aria-label={props.busyKey === `source-delete:${sourceId}` ? t("capabilityCenter.sources.deleting") : t("capabilityCenter.sources.delete")}
+                          aria-label={
+                            props.busyKey === `source-delete:${sourceId}`
+                              ? t("capabilityCenter.sources.deleting")
+                              : t("capabilityCenter.sources.delete")
+                          }
                           onClick={() => props.onDelete(source)}
                         >
                           <Trash2 size={14} aria-hidden="true" />
@@ -113,7 +136,11 @@ export function SourcesView(props: {
             </div>
           );
         })}
-        {rows.length === 0 ? <div className="text-sm text-[var(--color-text-muted)]">{t("capabilityCenter.sources.empty")}</div> : null}
+        {rows.length === 0 ? (
+          <div className="text-sm text-[var(--color-text-muted)]">
+            {t("capabilityCenter.sources.empty")}
+          </div>
+        ) : null}
       </div>
       <CapabilitySourceInstances
         instances={props.sourceInstances}
@@ -124,16 +151,27 @@ export function SourcesView(props: {
   );
 }
 
-export function SourcesSummary({ sources, sourceInstances }: { sources: Record<string, CapabilitySourceState>; sourceInstances: CapabilitySourceInstance[] }) {
+export function SourcesSummary({
+  sources,
+  sourceInstances,
+}: {
+  sources: Record<string, CapabilitySourceState>;
+  sourceInstances: CapabilitySourceInstance[];
+}) {
   const { t } = useTranslation("settings");
   const stats = sourceSummary(sources);
   return (
     <aside className="hidden min-h-0 min-w-0 overflow-x-hidden overflow-y-auto bg-[var(--glass-panel-bg)] p-5 lg:block">
-      <div className="text-xs uppercase tracking-[0.08em] text-[var(--color-text-muted)]">{t("capabilityCenter.sections.sources.label")}</div>
+      <div className="text-xs uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
+        {t("capabilityCenter.sections.sources.label")}
+      </div>
       <h3 className="mt-1 text-lg font-semibold">{t("capabilityCenter.sections.sources.hint")}</h3>
       <div className="mt-5 grid gap-2">
         <SourceStat label={t("capabilityCenter.sources.total")} value={stats.total} />
-        <SourceStat label={t("capabilityCenter.sources.instances")} value={sourceInstances.length} />
+        <SourceStat
+          label={t("capabilityCenter.sources.instances")}
+          value={sourceInstances.length}
+        />
         <SourceStat label={t("capabilityCenter.status.enabled")} value={stats.enabled} />
         <SourceStat label={t("capabilityCenter.status.disabled")} value={stats.disabled} />
       </div>

@@ -90,6 +90,17 @@ def disabled_recipient_actor_ids(group: Group, to: List[str]) -> List[str]:
     return [aid for aid in disabled_ids if is_message_for_actor(group, actor_id=aid, event=ev)]
 
 
+def recipient_actor_ids(group: Group, to: List[str]) -> List[str]:
+    """Return all visible actor ids addressed by a message, regardless of enabled state."""
+    out: List[str] = []
+    seen: set[str] = set()
+    for actor_id in enabled_recipient_actor_ids(group, to) + disabled_recipient_actor_ids(group, to):
+        if actor_id and actor_id not in seen:
+            seen.add(actor_id)
+            out.append(actor_id)
+    return out
+
+
 def default_reply_recipients(group: Group, *, by: str, original_event: Dict[str, Any]) -> List[str]:
     """Compute default recipients for a reply when 'to' is omitted.
 

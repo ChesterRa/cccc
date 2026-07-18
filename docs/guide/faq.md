@@ -73,6 +73,12 @@ cccc doctor
 
 This checks Python version, available runtimes, and daemon status.
 
+### Why does an embedded browser open a physical Chrome window on Linux?
+
+Projected browsers require `Xvfb` to stay off the host desktop. Install `xvfb` (and optionally
+`x11vnc` for the VNC viewer), run `cccc doctor`, then use **Restart ChatGPT browser**. Current CCCC
+fails browser startup when Xvfb is missing instead of silently falling back to the host `DISPLAY`.
+
 ## Agents
 
 ### Which AI agents are supported?

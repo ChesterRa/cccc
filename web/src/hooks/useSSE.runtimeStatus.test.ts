@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import type { Actor } from "../types";
 import {
@@ -9,13 +9,7 @@ import {
 describe("SSE actor activity runtime projection", () => {
   it("does not derive stopped lifecycle from zero running actors", () => {
     const actors: Actor[] = [
-      {
-        id: "claude-1",
-        role: "foreman",
-        runtime: "codex",
-        runner: "pty",
-        running: true,
-      },
+      { id: "claude-1", role: "foreman", runtime: "codex", runner: "pty", running: true },
     ];
 
     const runtime = computeGroupRuntimeFromActorActivityUpdates(
@@ -78,36 +72,41 @@ describe("SSE actor activity runtime projection", () => {
       has_running_foreman: false,
     };
 
-    const fallback = getRuntimeStatusFallbackForGroup({
-      groupDoc: {
-        group_id: "selected",
-        state: "active",
-        running: true,
-        runtime_status: selectedRuntime,
-      },
-      groups: [
-        {
-          group_id: "target",
-          state: "stopped",
-          running: false,
-          runtime_status: targetRuntime,
+    const fallback = getRuntimeStatusFallbackForGroup(
+      {
+        groupDoc: {
+          group_id: "selected",
+          state: "active",
+          running: true,
+          runtime_status: selectedRuntime,
         },
-      ],
-    } as ReturnType<typeof import("../stores").useGroupStore.getState>, "target");
+        groups: [
+          { group_id: "target", state: "stopped", running: false, runtime_status: targetRuntime },
+        ],
+      } as ReturnType<typeof import("../stores").useGroupStore.getState>,
+      "target",
+    );
 
     expect(fallback).toBe(targetRuntime);
-    expect(computeGroupRuntimeFromActorActivityUpdates(
-      [],
-      [{ id: "claude-1", running: false }],
-      fallback,
-    ).lifecycle_state).toBe("stopped");
+    expect(
+      computeGroupRuntimeFromActorActivityUpdates(
+        [],
+        [{ id: "claude-1", running: false }],
+        fallback,
+      ).lifecycle_state,
+    ).toBe("stopped");
   });
 
   it("does not keep a stopped lifecycle once actors are running (wake from stopped)", () => {
     const runtime = computeGroupRuntimeFromActorActivityUpdates(
       [],
       [{ id: "claude-1", running: true, effective_working_state: "working" }],
-      { lifecycle_state: "stopped", runtime_running: false, running_actor_count: 0, has_running_foreman: false },
+      {
+        lifecycle_state: "stopped",
+        runtime_running: false,
+        running_actor_count: 0,
+        has_running_foreman: false,
+      },
     );
 
     // A running actor contradicts "stopped"; the projection must re-derive
@@ -120,7 +119,12 @@ describe("SSE actor activity runtime projection", () => {
     const runtime = computeGroupRuntimeFromActorActivityUpdates(
       [],
       [{ id: "claude-1", running: true, effective_working_state: "idle" }],
-      { lifecycle_state: "stopped", runtime_running: false, running_actor_count: 0, has_running_foreman: false },
+      {
+        lifecycle_state: "stopped",
+        runtime_running: false,
+        running_actor_count: 0,
+        has_running_foreman: false,
+      },
     );
 
     expect(runtime.runtime_running).toBe(true);

@@ -257,29 +257,12 @@
     "failedSlashVisibility": "Failed to update slash command visibility.",
     "sectionNavigation": "Capability sections",
     "sections": {
-      "library": {
-        "label": "Library",
-        "hint": "All capabilities"
-      },
-      "skill": {
-        "label": "Skills",
-        "hint": "Procedural skills"
-      },
-      "mcp": {
-        "label": "MCP",
-        "hint": "Tool servers"
-      },
-      "sources": {
-        "label": "Sources",
-        "hint": "Feeds and origins"
-      }
+      "library": { "label": "Library", "hint": "All capabilities" },
+      "skill": { "label": "Skills", "hint": "Procedural skills" },
+      "mcp": { "label": "MCP", "hint": "Tool servers" },
+      "sources": { "label": "Sources", "hint": "Feeds and origins" }
     },
-    "typeOptions": {
-      "all": "All",
-      "skill": "Skills",
-      "mcp": "MCP",
-      "pack": "Packs"
-    },
+    "typeOptions": { "all": "All", "skill": "Skills", "mcp": "MCP", "pack": "Packs" },
     "stateOptions": {
       "all": "All states",
       "enabled": "Enabled",
@@ -288,12 +271,7 @@
       "blocked": "Blocked",
       "needs_setup": "Needs setup"
     },
-    "stats": {
-      "skills": "Skills",
-      "mcp": "MCP",
-      "packs": "Packs",
-      "enabled": "Enabled"
-    },
+    "stats": { "skills": "Skills", "mcp": "MCP", "packs": "Packs", "enabled": "Enabled" },
     "sidebarSummary": "{{capabilities}} capabilities · {{sources}} sources",
     "loading": "Loading...",
     "emptyDash": "-",
@@ -426,10 +404,7 @@
       "confirmDisableTitle": "Disable {{name}} for this group?",
       "confirmDisableDescription": "This turns off {{id}} only in the current group. It does not block future enablement."
     },
-    "confirm": {
-      "cancel": "Cancel",
-      "confirm": "Confirm"
-    },
+    "confirm": { "cancel": "Cancel", "confirm": "Confirm" },
     "showSystem": "System"
   },
   "assistants": {
@@ -1232,9 +1207,7 @@
         "bindTarget": "Save an existing ChatGPT conversation, paste a target URL, or choose new-chat delivery.",
         "ready": "Ready for browser delivery."
       },
-      "queue": {
-        "queued": "{{count}} queued"
-      },
+      "queue": { "queued": "{{count}} queued" },
       "warnings": {
         "rotateOldConnector": "Rotate this older connector once to generate a copyable ChatGPT MCP URL.",
         "localMcpUrl": "MCP URL is local-only. Browser-hosted models need a public HTTPS URL.",
@@ -1301,9 +1274,7 @@
         "seen": "seen",
         "seenAt": "seen {{time}}"
       },
-      "copyLabels": {
-        "mcpUrl": "MCP URL"
-      },
+      "copyLabels": { "mcpUrl": "MCP URL" },
       "notices": {
         "connectorRotated": "Connector rotated. Previous connector revoked.",
         "connectorCreated": "Connector created.",
@@ -1341,10 +1312,7 @@
         "inspect_error": "Inspect error",
         "login_chatgpt": "Sign in to ChatGPT"
       },
-      "common": {
-        "none": "none",
-        "notSet": "Not set"
-      }
+      "common": { "none": "none", "notSet": "Not set" }
     }
   },
   "webAccess": {
@@ -1491,11 +1459,7 @@
     "presetLanTitle": "Private network",
     "presetLanHint": "Bind Web to 0.0.0.0 so localhost and other devices on your private network can reach it after restart.",
     "providerLabel": "Remote method",
-    "providers": {
-      "off": "Off",
-      "manual": "Direct bind / proxy",
-      "tailscale": "Tailscale"
-    },
+    "providers": { "off": "Off", "manual": "Direct bind / proxy", "tailscale": "Tailscale" },
     "remoteMethodLanHint": "Choose how this private-network route reaches Web: direct binding or Tailscale.",
     "privateMethodTailscaleTitle": "Tailscale selected",
     "privateMethodTailscaleHint": "This private route will use your tailnet instead of plain LAN reachability. Advanced still contains the Tailscale start/stop controls and raw binding diagnostics.",
@@ -1670,11 +1634,7 @@
     "refreshRemoteInfoFailed": "Could not refresh remote info.",
     "unknownAccess": "Unknown",
     "updateAccessFailed": "Failed to update access",
-    "accessLevels": {
-      "messages": "Messages",
-      "read": "Read",
-      "full": "Full"
-    },
+    "accessLevels": { "messages": "Messages", "read": "Read", "full": "Full" },
     "accessDescriptions": {
       "messages": "Messages only: the remote group must send explicit messages and cannot read local resources through remote MCP.",
       "read": "Read access: the remote group can inspect context, repo files, search results, and read-only git status without waking local actors.",

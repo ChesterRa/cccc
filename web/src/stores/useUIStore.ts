@@ -1,6 +1,9 @@
 // UI state store (tabs, sidebar, toasts, etc.).
 import { create } from "zustand";
-import { clampPresentationSplitWidth, PRESENTATION_SPLIT_DEFAULT_WIDTH } from "../utils/presentationSplitLayout";
+import {
+  clampPresentationSplitWidth,
+  PRESENTATION_SPLIT_DEFAULT_WIDTH,
+} from "../utils/presentationSplitLayout";
 
 export const SIDEBAR_COLLAPSED_WIDTH = 60;
 export const SIDEBAR_DEFAULT_WIDTH = 248;
@@ -43,7 +46,10 @@ const DEFAULT_CHAT_SESSION: ChatSessionState = {
   presentationDisplayMode: "modal",
 };
 
-export function getChatSession(groupId: string | null | undefined, sessions: Record<string, ChatSessionState>): ChatSessionState {
+export function getChatSession(
+  groupId: string | null | undefined,
+  sessions: Record<string, ChatSessionState>,
+): ChatSessionState {
   const gid = String(groupId || "").trim();
   if (!gid) return DEFAULT_CHAT_SESSION;
   return sessions[gid] || DEFAULT_CHAT_SESSION;
@@ -168,8 +174,12 @@ function sanitizeChatScrollSnapshot(value: unknown): ChatScrollSnapshot | null {
   };
   const mode = snapshot.mode === "detached" ? "detached" : "follow";
   const anchorId = typeof snapshot.anchorId === "string" ? snapshot.anchorId.trim() : "";
-  const offsetPx = Number.isFinite(Number(snapshot.offsetPx)) ? Math.max(0, Number(snapshot.offsetPx)) : 0;
-  const updatedAt = Number.isFinite(Number(snapshot.updatedAt)) ? Math.max(0, Number(snapshot.updatedAt)) : 0;
+  const offsetPx = Number.isFinite(Number(snapshot.offsetPx))
+    ? Math.max(0, Number(snapshot.offsetPx))
+    : 0;
+  const updatedAt = Number.isFinite(Number(snapshot.updatedAt))
+    ? Math.max(0, Number(snapshot.updatedAt))
+    : 0;
   if (mode === "follow") {
     return { mode, anchorId: "", offsetPx: 0, updatedAt };
   }
@@ -242,17 +252,11 @@ function saveChatSessions(sessions: Record<string, ChatSessionState>): void {
 function updateChatSession(
   sessions: Record<string, ChatSessionState>,
   groupId: string,
-  patch: Partial<ChatSessionState>
+  patch: Partial<ChatSessionState>,
 ): Record<string, ChatSessionState> {
   const gid = String(groupId || "").trim();
   if (!gid) return sessions;
-  return {
-    ...sessions,
-    [gid]: {
-      ...(sessions[gid] || DEFAULT_CHAT_SESSION),
-      ...patch,
-    },
-  };
+  return { ...sessions, [gid]: { ...(sessions[gid] || DEFAULT_CHAT_SESSION), ...patch } };
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -340,7 +344,9 @@ export const useUIStore = create<UIState>((set) => ({
     }),
   setChatUnreadCount: (groupId, v) =>
     set((state) => ({
-      chatSessions: updateChatSession(state.chatSessions, groupId, { chatUnreadCount: Math.max(0, Number(v || 0)) }),
+      chatSessions: updateChatSession(state.chatSessions, groupId, {
+        chatUnreadCount: Math.max(0, Number(v || 0)),
+      }),
     })),
   incrementChatUnread: (groupId) =>
     set((state) => {
@@ -377,13 +383,17 @@ export const useUIStore = create<UIState>((set) => ({
     }),
   setChatPresentationDockOpen: (groupId, v) =>
     set((state) => {
-      const chatSessions = updateChatSession(state.chatSessions, groupId, { presentationDockOpen: v });
+      const chatSessions = updateChatSession(state.chatSessions, groupId, {
+        presentationDockOpen: v,
+      });
       saveChatSessions(chatSessions);
       return { chatSessions };
     }),
   setChatPresentationDisplayMode: (groupId, v) =>
     set((state) => {
-      const chatSessions = updateChatSession(state.chatSessions, groupId, { presentationDisplayMode: v });
+      const chatSessions = updateChatSession(state.chatSessions, groupId, {
+        presentationDisplayMode: v,
+      });
       saveChatSessions(chatSessions);
       return { chatSessions };
     }),

@@ -12,7 +12,7 @@ const Command = React.forwardRef<
     ref={ref}
     className={cn(
       "flex h-full w-full flex-col overflow-hidden rounded-2xl bg-transparent text-[var(--color-text-primary)]",
-      className
+      className,
     )}
     {...props}
   />
@@ -22,17 +22,18 @@ Command.displayName = CommandPrimitive.displayName;
 const CommandInput = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.Input>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
->(({ className, ...props }, ref) => (
+>(({ className, style, ...props }, ref) => (
   <div className="border-b border-[var(--glass-border-subtle)] p-2">
     <div className="flex items-center gap-2 rounded-xl bg-[var(--glass-tab-bg)] px-3">
       <Search className="h-4 w-4 shrink-0 text-[var(--color-text-muted)]" />
       <CommandPrimitive.Input
         ref={ref}
+        style={{ border: "none", outline: "none", boxShadow: "none", ...style }}
         className={cn(
-          "flex h-10 w-full appearance-none border-0 bg-transparent px-0 py-0 text-sm shadow-none outline-none ring-0",
-          "placeholder:text-[var(--color-text-muted)] focus:border-0 focus:outline-none focus:ring-0",
+          "flex h-10 w-full appearance-none border-none bg-transparent px-0 py-0 text-sm shadow-none outline-none ring-0",
+          "placeholder:text-[var(--color-text-muted)] focus:border-none focus:outline-none focus:ring-0",
           "disabled:cursor-not-allowed disabled:opacity-50",
-          className
+          className,
         )}
         {...props}
       />
@@ -49,7 +50,7 @@ const CommandList = React.forwardRef<
     ref={ref}
     className={cn(
       "scrollbar-subtle max-h-[min(22rem,calc(100dvh-12rem))] overflow-y-auto overflow-x-hidden [scrollbar-gutter:stable]",
-      className
+      className,
     )}
     {...props}
   />
@@ -76,7 +77,7 @@ const CommandGroup = React.forwardRef<
     ref={ref}
     className={cn(
       "overflow-hidden p-1.5 text-[var(--color-text-primary)] [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-[var(--color-text-muted)]",
-      className
+      className,
     )}
     {...props}
   />
@@ -105,7 +106,7 @@ const CommandItem = React.forwardRef<
       "relative flex cursor-default select-none items-center gap-2 rounded-xl px-3 py-2 text-sm outline-none transition-colors",
       "data-[selected=true]:bg-[var(--glass-tab-bg-hover)] data-[selected=true]:text-[var(--color-text-primary)]",
       "data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50",
-      className
+      className,
     )}
     {...props}
   />

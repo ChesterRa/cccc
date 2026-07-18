@@ -1,11 +1,6 @@
 import type { LedgerEvent } from "../types";
 
-export type SuggestedUserMessage = {
-  eventId: string;
-  text: string;
-  by: string;
-  ts: string;
-};
+export type SuggestedUserMessage = { eventId: string; text: string; by: string; ts: string };
 
 export const SUGGESTED_USER_MESSAGE_CONSUMED_KEY = "cccc.suggestedUserMessage.consumed.v1";
 export const SUGGESTED_USER_MESSAGE_MAX_CHARS = 4000;
@@ -71,16 +66,12 @@ export function latestSuggestedUserMessage(
     const by = String(event.by || "").trim();
     if (by === "user") return null;
     const eventId = String(event.id || "").trim();
-    const data = event.data && typeof event.data === "object" ? event.data as Record<string, unknown> : {};
+    const data =
+      event.data && typeof event.data === "object" ? (event.data as Record<string, unknown>) : {};
     if (!messageTargetsUser(data)) continue;
     const text = normalizeSuggestedUserMessage(data.suggested_user_message);
     if (!eventId || !text || consumedIds.has(eventId)) return null;
-    return {
-      eventId,
-      text,
-      by,
-      ts: String(event.ts || "").trim(),
-    };
+    return { eventId, text, by, ts: String(event.ts || "").trim() };
   }
   return null;
 }

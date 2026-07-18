@@ -50,28 +50,44 @@ export function mergeStreamingActivity(
 
   const previousFilePaths = normalizeActivityStringList(previous?.file_paths);
   const nextFilePaths = normalizeActivityStringList(next?.file_paths);
-  const mergedFilePaths = previousFilePaths || nextFilePaths
-    ? normalizeActivityStringList([...(previousFilePaths || []), ...(nextFilePaths || [])])
-    : undefined;
+  const mergedFilePaths =
+    previousFilePaths || nextFilePaths
+      ? normalizeActivityStringList([...(previousFilePaths || []), ...(nextFilePaths || [])])
+      : undefined;
 
   return {
     id: activityId,
     kind: normalizeActivityText(next?.kind) || normalizeActivityText(previous?.kind) || "thinking",
-    status: normalizeActivityText(next?.status) || normalizeActivityText(previous?.status) || "updated",
+    status:
+      normalizeActivityText(next?.status) || normalizeActivityText(previous?.status) || "updated",
     summary,
-    detail: normalizeActivityText(next?.detail) || normalizeActivityText(previous?.detail) || undefined,
+    detail:
+      normalizeActivityText(next?.detail) || normalizeActivityText(previous?.detail) || undefined,
     ts: normalizeActivityText(previous?.ts) || normalizeActivityText(next?.ts) || undefined,
-    raw_item_type: normalizeActivityText(next?.raw_item_type) || normalizeActivityText(previous?.raw_item_type) || undefined,
-    tool_name: normalizeActivityText(next?.tool_name) || normalizeActivityText(previous?.tool_name) || undefined,
-    server_name: normalizeActivityText(next?.server_name) || normalizeActivityText(previous?.server_name) || undefined,
-    command: normalizeActivityText(next?.command) || normalizeActivityText(previous?.command) || undefined,
+    raw_item_type:
+      normalizeActivityText(next?.raw_item_type) ||
+      normalizeActivityText(previous?.raw_item_type) ||
+      undefined,
+    tool_name:
+      normalizeActivityText(next?.tool_name) ||
+      normalizeActivityText(previous?.tool_name) ||
+      undefined,
+    server_name:
+      normalizeActivityText(next?.server_name) ||
+      normalizeActivityText(previous?.server_name) ||
+      undefined,
+    command:
+      normalizeActivityText(next?.command) || normalizeActivityText(previous?.command) || undefined,
     cwd: normalizeActivityText(next?.cwd) || normalizeActivityText(previous?.cwd) || undefined,
     file_paths: mergedFilePaths,
-    query: normalizeActivityText(next?.query) || normalizeActivityText(previous?.query) || undefined,
+    query:
+      normalizeActivityText(next?.query) || normalizeActivityText(previous?.query) || undefined,
   };
 }
 
-export function dedupeStreamingActivities(activities: StreamingActivity[] | undefined): StreamingActivity[] {
+export function dedupeStreamingActivities(
+  activities: StreamingActivity[] | undefined,
+): StreamingActivity[] {
   if (!Array.isArray(activities) || activities.length <= 0) return [];
 
   const activityOrder: string[] = [];
@@ -97,11 +113,15 @@ export function dedupeStreamingActivities(activities: StreamingActivity[] | unde
     .filter((activity): activity is StreamingActivity => Boolean(activity));
 }
 
-export function sliceStreamingActivities(activities: StreamingActivity[] | undefined): StreamingActivity[] {
+export function sliceStreamingActivities(
+  activities: StreamingActivity[] | undefined,
+): StreamingActivity[] {
   return dedupeStreamingActivities(activities).slice(-STREAMING_ACTIVITY_LOG_LIMIT);
 }
 
-export function normalizeStreamingActivityLog(activities: StreamingActivity[] | undefined): StreamingActivity[] {
+export function normalizeStreamingActivityLog(
+  activities: StreamingActivity[] | undefined,
+): StreamingActivity[] {
   return dedupeStreamingActivities(activities);
 }
 
@@ -119,20 +139,14 @@ export function pruneReplySessions(
 } {
   const values = Object.values(sessions);
   if (values.length <= STREAMING_REPLY_SESSION_LIMIT) {
-    return {
-      replySessionsByPendingEventId: sessions,
-      pendingEventIdByStreamId,
-    };
+    return { replySessionsByPendingEventId: sessions, pendingEventIdByStreamId };
   }
 
   const removable = values
     .filter((session) => session.phase === "completed" || session.phase === "failed")
     .sort((left, right) => left.updatedAt - right.updatedAt);
   if (removable.length <= 0) {
-    return {
-      replySessionsByPendingEventId: sessions,
-      pendingEventIdByStreamId,
-    };
+    return { replySessionsByPendingEventId: sessions, pendingEventIdByStreamId };
   }
 
   const overflow = Math.max(0, values.length - STREAMING_REPLY_SESSION_LIMIT);
@@ -172,28 +186,29 @@ export function upsertReplySession(
   const actorId = String(args.actorId || "").trim();
   const streamId = String(args.streamId || "").trim();
   if (!pendingEventId || !actorId) {
-    return {
-      replySessionsByPendingEventId,
-      pendingEventIdByStreamId,
-    };
+    return { replySessionsByPendingEventId, pendingEventIdByStreamId };
   }
 
   const existing = replySessionsByPendingEventId[pendingEventId];
   const requestedPhase = args.phase || existing?.phase || "pending";
   const keepTerminalSession =
-    Boolean(existing)
-    && isTerminalReplySessionPhase(existing?.phase)
-    && !isTerminalReplySessionPhase(requestedPhase);
+    Boolean(existing) &&
+    isTerminalReplySessionPhase(existing?.phase) &&
+    !isTerminalReplySessionPhase(requestedPhase);
   const nextPhase = keepTerminalSession ? existing?.phase || "completed" : requestedPhase;
   const nextSession: StreamingReplySession = {
     pendingEventId,
     actorId,
-    currentStreamId: keepTerminalSession ? existing?.currentStreamId || streamId : streamId || existing?.currentStreamId,
+    currentStreamId: keepTerminalSession
+      ? existing?.currentStreamId || streamId
+      : streamId || existing?.currentStreamId,
     canonicalEventId: args.canonicalEventId || existing?.canonicalEventId,
     phase: nextPhase,
     updatedAt: keepTerminalSession
       ? Number(existing?.updatedAt || 0)
-      : Number.isFinite(Number(args.updatedAt)) ? Number(args.updatedAt) : Date.now(),
+      : Number.isFinite(Number(args.updatedAt))
+        ? Number(args.updatedAt)
+        : Date.now(),
   };
 
   const nextReplySessionsByPendingEventId = {
@@ -219,18 +234,12 @@ export function migrateReplySession(
   const fromKey = String(previousPendingEventId || "").trim();
   const toKey = String(nextPendingEventId || "").trim();
   if (!fromKey || !toKey || fromKey === toKey) {
-    return {
-      replySessionsByPendingEventId,
-      pendingEventIdByStreamId,
-    };
+    return { replySessionsByPendingEventId, pendingEventIdByStreamId };
   }
 
   const source = replySessionsByPendingEventId[fromKey];
   if (!source) {
-    return {
-      replySessionsByPendingEventId,
-      pendingEventIdByStreamId,
-    };
+    return { replySessionsByPendingEventId, pendingEventIdByStreamId };
   }
 
   const target = replySessionsByPendingEventId[toKey];

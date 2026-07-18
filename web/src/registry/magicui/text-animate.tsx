@@ -32,9 +32,8 @@ export function TextAnimate({
   stablePrefixLength = 0,
 }: TextAnimateProps) {
   const text = String(children || "");
-  const prefixLength = animate === "append"
-    ? Math.max(0, Math.min(text.length, Math.round(stablePrefixLength)))
-    : 0;
+  const prefixLength =
+    animate === "append" ? Math.max(0, Math.min(text.length, Math.round(stablePrefixLength))) : 0;
   const stablePrefix = prefixLength > 0 ? text.slice(0, prefixLength) : "";
   const animatedText = stablePrefix ? text.slice(stablePrefix.length) : text;
   const parts = splitText(animatedText, by).map((part) => ({ part, itemIndex: -1 }));
@@ -46,10 +45,7 @@ export function TextAnimate({
     return count;
   }, 0);
   return (
-    <span
-      className={cn("stream-text-animate", className)}
-      aria-label={text}
-    >
+    <span className={cn("stream-text-animate", className)} aria-label={text}>
       {stablePrefix ? <span aria-hidden="true">{stablePrefix}</span> : null}
       {parts.map(({ part, itemIndex }, index) => {
         if (part === "\n") return <br key={`break-${index}`} />;
@@ -63,10 +59,12 @@ export function TextAnimate({
               animation === "blurInUp" && "stream-text-animate-segment",
               segmentClassName,
             )}
-            style={{
-              "--stream-text-duration": `${duration}s`,
-              "--stream-text-delay": `${itemIndex * delay}s`,
-            } as CSSProperties}
+            style={
+              {
+                "--stream-text-duration": `${duration}s`,
+                "--stream-text-delay": `${itemIndex * delay}s`,
+              } as CSSProperties
+            }
           >
             {part}
           </span>

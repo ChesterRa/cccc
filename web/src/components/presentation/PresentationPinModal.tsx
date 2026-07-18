@@ -14,9 +14,24 @@ type PresentationPinModalProps = {
   slot: PresentationSlot | null;
   busy: boolean;
   onClose: () => void;
-  onSubmitUrl: (payload: { slotId: string; url: string; title: string; summary: string }) => Promise<void> | void;
-  onSubmitWorkspace: (payload: { slotId: string; path: string; title: string; summary: string }) => Promise<void> | void;
-  onSubmitFile: (payload: { slotId: string; file: File; title: string; summary: string }) => Promise<void> | void;
+  onSubmitUrl: (payload: {
+    slotId: string;
+    url: string;
+    title: string;
+    summary: string;
+  }) => Promise<void> | void;
+  onSubmitWorkspace: (payload: {
+    slotId: string;
+    path: string;
+    title: string;
+    summary: string;
+  }) => Promise<void> | void;
+  onSubmitFile: (payload: {
+    slotId: string;
+    file: File;
+    title: string;
+    summary: string;
+  }) => Promise<void> | void;
 };
 
 type PinSource = "url" | "workspace" | "upload";
@@ -34,7 +49,8 @@ function dirname(pathText: string): string {
 function initialSource(slot: PresentationSlot | null): PinSource {
   const card = slot?.card;
   if (card?.content?.url) return "url";
-  if (card?.content?.workspace_rel_path || card?.content?.mode === "workspace_link") return "workspace";
+  if (card?.content?.workspace_rel_path || card?.content?.mode === "workspace_link")
+    return "workspace";
   return card ? "upload" : "url";
 }
 
@@ -89,7 +105,11 @@ function WorkspaceList({
         {buildWorkspacePathLabel(rootPath, currentPath)}
       </div>
       {error ? (
-        <div className={classNames("px-4 py-4 text-sm", isDark ? "text-rose-300" : "text-rose-600")}>{error}</div>
+        <div
+          className={classNames("px-4 py-4 text-sm", isDark ? "text-rose-300" : "text-rose-600")}
+        >
+          {error}
+        </div>
       ) : (
         <div className="max-h-64 overflow-auto">
           {parentPath !== null ? (
@@ -107,11 +127,21 @@ function WorkspaceList({
             </button>
           ) : null}
           {busy ? (
-            <div className={classNames("px-4 py-4 text-sm", isDark ? "text-slate-400" : "text-gray-500")}>
+            <div
+              className={classNames(
+                "px-4 py-4 text-sm",
+                isDark ? "text-slate-400" : "text-gray-500",
+              )}
+            >
               Loading…
             </div>
           ) : items.length === 0 ? (
-            <div className={classNames("px-4 py-4 text-sm", isDark ? "text-slate-400" : "text-gray-500")}>
+            <div
+              className={classNames(
+                "px-4 py-4 text-sm",
+                isDark ? "text-slate-400" : "text-gray-500",
+              )}
+            >
               No files here.
             </div>
           ) : (
@@ -124,16 +154,37 @@ function WorkspaceList({
                   onClick={() => (item.is_dir ? onOpenDir(item.path) : onSelectFile(item.path))}
                   className={classNames(
                     "flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition-colors",
-                    isDark ? "text-slate-200 hover:bg-slate-900/70" : "text-gray-800 hover:bg-gray-50",
-                    isSelected && (isDark ? "bg-white/[0.08] text-white" : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"),
+                    isDark
+                      ? "text-slate-200 hover:bg-slate-900/70"
+                      : "text-gray-800 hover:bg-gray-50",
+                    isSelected &&
+                      (isDark
+                        ? "bg-white/[0.08] text-white"
+                        : "bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"),
                   )}
                 >
-                  <span className={classNames("w-5 text-center text-xs", item.is_dir ? (isDark ? "text-white" : "text-[rgb(35,36,37)]") : isDark ? "text-slate-500" : "text-gray-400")}>
+                  <span
+                    className={classNames(
+                      "w-5 text-center text-xs",
+                      item.is_dir
+                        ? isDark
+                          ? "text-white"
+                          : "text-[rgb(35,36,37)]"
+                        : isDark
+                          ? "text-slate-500"
+                          : "text-gray-400",
+                    )}
+                  >
                     {item.is_dir ? "DIR" : "FILE"}
                   </span>
                   <span className="min-w-0 flex-1 truncate">{item.name}</span>
                   {!item.is_dir && item.mime_type ? (
-                    <span className={classNames("text-[11px]", isDark ? "text-slate-500" : "text-gray-400")}>
+                    <span
+                      className={classNames(
+                        "text-[11px]",
+                        isDark ? "text-slate-500" : "text-gray-400",
+                      )}
+                    >
                       {item.mime_type}
                     </span>
                   ) : null}
@@ -252,7 +303,9 @@ export function PresentationPinModal({
     if (source === "workspace") {
       const trimmedPath = String(workspaceSelection || "").trim();
       if (!trimmedPath) {
-        setError(t("presentationWorkspaceRequired", { defaultValue: "Choose a workspace file first." }));
+        setError(
+          t("presentationWorkspaceRequired", { defaultValue: "Choose a workspace file first." }),
+        );
         return;
       }
       await onSubmitWorkspace({
@@ -291,7 +344,9 @@ export function PresentationPinModal({
               defaultValue: `Pin to slot ${slotIndex}`,
             })
       }
-      closeAriaLabel={t("presentationClosePinModal", { defaultValue: "Close presentation pin dialog" })}
+      closeAriaLabel={t("presentationClosePinModal", {
+        defaultValue: "Close presentation pin dialog",
+      })}
       panelClassName="h-full w-full sm:h-auto sm:max-w-3xl"
       modalRef={modalRef}
     >
@@ -305,7 +360,8 @@ export function PresentationPinModal({
           <div className="font-medium">
             {replaceMode
               ? t("presentationReplaceHelp", {
-                  defaultValue: "Edit the current slot by updating it with a URL, a workspace file, or an uploaded snapshot.",
+                  defaultValue:
+                    "Edit the current slot by updating it with a URL, a workspace file, or an uploaded snapshot.",
                 })
               : t("presentationPinHelp", {
                   defaultValue:
@@ -313,7 +369,9 @@ export function PresentationPinModal({
                 })}
           </div>
           {card ? (
-            <div className={classNames("mt-2 text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+            <div
+              className={classNames("mt-2 text-xs", isDark ? "text-slate-500" : "text-gray-500")}
+            >
               {t("presentationCurrentCard", {
                 title: card.title,
                 defaultValue: `Current: ${card.title}`,
@@ -331,11 +389,21 @@ export function PresentationPinModal({
             role="tablist"
             aria-label={t("presentationPinSourceLabel", { defaultValue: "Choose a source type" })}
           >
-            {([
-              ["url", t("presentationPinSourceUrl", { defaultValue: "URL" })],
-              ["workspace", t("presentationPinSourceWorkspace", { defaultValue: "Pick from workspace (host)" })],
-              ["upload", t("presentationPinSourceUpload", { defaultValue: "Upload from this device" })],
-            ] as const).map(([value, label]) => {
+            {(
+              [
+                ["url", t("presentationPinSourceUrl", { defaultValue: "URL" })],
+                [
+                  "workspace",
+                  t("presentationPinSourceWorkspace", {
+                    defaultValue: "Pick from workspace (host)",
+                  }),
+                ],
+                [
+                  "upload",
+                  t("presentationPinSourceUpload", { defaultValue: "Upload from this device" }),
+                ],
+              ] as const
+            ).map(([value, label]) => {
               const active = source === value;
               return (
                 <button
@@ -351,7 +419,9 @@ export function PresentationPinModal({
                   className={classNames(
                     "rounded-full px-4 py-2 text-sm font-medium transition-colors",
                     active
-                      ? isDark ? "border border-white/12 bg-white/[0.08] text-white shadow-sm" : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
+                      ? isDark
+                        ? "border border-white/12 bg-white/[0.08] text-white shadow-sm"
+                        : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] shadow-sm"
                       : isDark
                         ? "text-slate-300 hover:bg-slate-800/70"
                         : "text-gray-700 hover:bg-white",
@@ -366,7 +436,12 @@ export function PresentationPinModal({
 
           {source === "url" ? (
             <label className="block space-y-2">
-              <span className={classNames("text-sm font-medium", isDark ? "text-slate-200" : "text-gray-900")}>
+              <span
+                className={classNames(
+                  "text-sm font-medium",
+                  isDark ? "text-slate-200" : "text-gray-900",
+                )}
+              >
                 {t("presentationUrlLabel", { defaultValue: "URL" })}
               </span>
               <input
@@ -388,7 +463,12 @@ export function PresentationPinModal({
 
           {source === "workspace" ? (
             <div className="space-y-3">
-              <div className={classNames("text-xs leading-5", isDark ? "text-slate-400" : "text-gray-600")}>
+              <div
+                className={classNames(
+                  "text-xs leading-5",
+                  isDark ? "text-slate-400" : "text-gray-600",
+                )}
+              >
                 {t("presentationWorkspaceHint", {
                   defaultValue:
                     "Link a file from this group's active workspace. Updates to that file will show up here without re-pinning.",
@@ -410,13 +490,20 @@ export function PresentationPinModal({
                 }}
               />
               <div className="space-y-2">
-                <span className={classNames("text-sm font-medium", isDark ? "text-slate-200" : "text-gray-900")}>
+                <span
+                  className={classNames(
+                    "text-sm font-medium",
+                    isDark ? "text-slate-200" : "text-gray-900",
+                  )}
+                >
                   {t("presentationWorkspaceSelectionLabel", { defaultValue: "Selected file" })}
                 </span>
                 <div
                   className={classNames(
                     "rounded-2xl border px-4 py-3 text-sm font-mono",
-                    isDark ? "border-white/10 bg-slate-950/70 text-slate-100" : "border-black/10 bg-white text-gray-900",
+                    isDark
+                      ? "border-white/10 bg-slate-950/70 text-slate-100"
+                      : "border-black/10 bg-white text-gray-900",
                   )}
                 >
                   {currentWorkspaceLabel}
@@ -427,7 +514,12 @@ export function PresentationPinModal({
 
           {source === "upload" ? (
             <label className="block space-y-2">
-              <span className={classNames("text-sm font-medium", isDark ? "text-slate-200" : "text-gray-900")}>
+              <span
+                className={classNames(
+                  "text-sm font-medium",
+                  isDark ? "text-slate-200" : "text-gray-900",
+                )}
+              >
                 {t("presentationFileLabel", { defaultValue: "Upload from this device" })}
               </span>
               <input
@@ -452,14 +544,21 @@ export function PresentationPinModal({
           ) : null}
 
           <label className="block space-y-2">
-            <span className={classNames("text-sm font-medium", isDark ? "text-slate-200" : "text-gray-900")}>
+            <span
+              className={classNames(
+                "text-sm font-medium",
+                isDark ? "text-slate-200" : "text-gray-900",
+              )}
+            >
               {t("presentationTitleLabel", { defaultValue: "Title" })}
             </span>
             <input
               type="text"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder={t("presentationTitlePlaceholder", { defaultValue: "Optional title override" })}
+              placeholder={t("presentationTitlePlaceholder", {
+                defaultValue: "Optional title override",
+              })}
               className={classNames(
                 "w-full rounded-2xl border px-4 py-3 text-sm outline-none transition-colors",
                 isDark
@@ -470,7 +569,12 @@ export function PresentationPinModal({
           </label>
 
           <label className="block space-y-2">
-            <span className={classNames("text-sm font-medium", isDark ? "text-slate-200" : "text-gray-900")}>
+            <span
+              className={classNames(
+                "text-sm font-medium",
+                isDark ? "text-slate-200" : "text-gray-900",
+              )}
+            >
               {t("presentationSummaryLabel", { defaultValue: "Summary" })}
             </span>
             <textarea
@@ -490,7 +594,9 @@ export function PresentationPinModal({
           </label>
 
           {error ? (
-            <div className={classNames("text-sm", isDark ? "text-rose-300" : "text-rose-600")}>{error}</div>
+            <div className={classNames("text-sm", isDark ? "text-rose-300" : "text-rose-600")}>
+              {error}
+            </div>
           ) : null}
         </div>
 
@@ -518,7 +624,9 @@ export function PresentationPinModal({
             disabled={busy}
             className={classNames(
               "rounded-full px-4 py-2 text-sm font-medium text-white transition-colors",
-              busy ? "bg-black/40 dark:bg-white/40" : "border border-[rgb(35,36,37)] bg-[rgb(35,36,37)] hover:bg-black dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:bg-white/92",
+              busy
+                ? "bg-black/40 dark:bg-white/40"
+                : "border border-[rgb(35,36,37)] bg-[rgb(35,36,37)] hover:bg-black dark:border-white dark:bg-white dark:text-[rgb(35,36,37)] dark:hover:bg-white/92",
             )}
           >
             {replaceMode

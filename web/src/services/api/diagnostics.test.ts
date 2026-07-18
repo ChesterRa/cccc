@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { fetchTerminalHistory } from "./diagnostics";
 
@@ -10,15 +10,23 @@ describe("diagnostics terminal history api", () => {
 
   it("requests latest terminal history page with cursor options", async () => {
     vi.stubGlobal("window", { location: { search: "" } });
-    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({
-        ok: true,
-        result: { text: "tail", start_cursor: 4, end_cursor: 8, has_more: true, cursor_expired: false },
-      }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      }),
-    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: {
+              text: "tail",
+              start_cursor: 4,
+              end_cursor: 8,
+              has_more: true,
+              cursor_expired: false,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
 
     const resp = await fetchTerminalHistory("g 1", "actor/1", {
       before: 12,

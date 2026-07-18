@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { SUPPORTED_RUNTIMES } from "../../src/types";
 import { getRuntimeLogoSrc, RUNTIME_LOGO_FILE_BY_RUNTIME } from "../../src/utils/runtimeLogos";
@@ -19,7 +19,8 @@ describe("runtimeLogos", () => {
 
   it("maps built-in runtimes to local logo assets that exist", () => {
     for (const runtime of Object.keys(RUNTIME_LOGO_FILE_BY_RUNTIME)) {
-      const relativePath = RUNTIME_LOGO_FILE_BY_RUNTIME[runtime as keyof typeof RUNTIME_LOGO_FILE_BY_RUNTIME];
+      const relativePath =
+        RUNTIME_LOGO_FILE_BY_RUNTIME[runtime as keyof typeof RUNTIME_LOGO_FILE_BY_RUNTIME];
       expect(getRuntimeLogoSrc(runtime)).toBe(`${import.meta.env.BASE_URL}${relativePath}`);
       expect(existsSync(resolve(PUBLIC_ROOT, relativePath))).toBe(true);
     }

@@ -9,13 +9,13 @@ import {
 export async function fetchPing(options?: { includeHome?: boolean }) {
   const includeHome = Boolean(options?.includeHome);
   const suffix = includeHome ? "?include_home=1" : "";
-  return reuseRecentReadRequest(
-    pingRequestKey(includeHome),
-    RECENT_BOOTSTRAP_READ_TTL_MS,
-    () =>
-      apiJson<{ home?: string; daemon: unknown; version: string; web?: { mode?: string; read_only?: boolean } }>(
-        `/api/v1/ping${suffix}`,
-      ),
+  return reuseRecentReadRequest(pingRequestKey(includeHome), RECENT_BOOTSTRAP_READ_TTL_MS, () =>
+    apiJson<{
+      home?: string;
+      daemon: unknown;
+      version: string;
+      web?: { mode?: string; read_only?: boolean };
+    }>(`/api/v1/ping${suffix}`),
   );
 }
 

@@ -11,7 +11,14 @@ import { mergeStreamingActivity } from "../stores/chatStreamingSessions";
 import { beginContextRequest, isLatestContextRequest } from "../stores/groupStoreCore";
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
-import type { Actor, ChatMessageData, HeadlessStreamEvent, GroupContext, GroupRuntimeStatus, StreamingActivity } from "../types";
+import type {
+  Actor,
+  ChatMessageData,
+  HeadlessStreamEvent,
+  GroupContext,
+  GroupRuntimeStatus,
+  StreamingActivity,
+} from "../types";
 import { runReconnectCatchup, scheduleContextSummaryCatchup } from "./sseCatchup";
 import {
   isContextSyncEvent,
@@ -73,10 +80,13 @@ function mergeCanonicalAttachmentsWithOptimisticPreview(
   }
 
   const outboxEntry = getOutboxEntry(groupId, clientId);
-  const optimisticData = outboxEntry?.event?.data && typeof outboxEntry.event.data === "object"
-    ? (outboxEntry.event.data as { attachments?: unknown[] })
-    : null;
-  const optimisticAttachments = Array.isArray(optimisticData?.attachments) ? optimisticData.attachments : [];
+  const optimisticData =
+    outboxEntry?.event?.data && typeof outboxEntry.event.data === "object"
+      ? (outboxEntry.event.data as { attachments?: unknown[] })
+      : null;
+  const optimisticAttachments = Array.isArray(optimisticData?.attachments)
+    ? optimisticData.attachments
+    : [];
   const canonicalAttachments = Array.isArray(data?.attachments) ? data.attachments : [];
   if (optimisticAttachments.length <= 0 || canonicalAttachments.length <= 0) {
     return { event: ev, transferredPreviewUrls: [] };
@@ -86,25 +96,17 @@ function mergeCanonicalAttachmentsWithOptimisticPreview(
     if (!attachment || typeof attachment !== "object") return attachment;
     const optimistic = optimisticAttachments[index];
     if (!optimistic || typeof optimistic !== "object") return attachment;
-    const previewUrl = typeof (optimistic as { local_preview_url?: unknown }).local_preview_url === "string"
-      ? String((optimistic as { local_preview_url?: string }).local_preview_url || "").trim()
-      : "";
+    const previewUrl =
+      typeof (optimistic as { local_preview_url?: unknown }).local_preview_url === "string"
+        ? String((optimistic as { local_preview_url?: string }).local_preview_url || "").trim()
+        : "";
     if (!previewUrl.startsWith("blob:")) return attachment;
-    return {
-      ...attachment,
-      local_preview_url: previewUrl,
-    };
+    return { ...attachment, local_preview_url: previewUrl };
   });
 
   const transferredPreviewUrls = transferOutboxPreviewUrls(groupId, clientId);
   return {
-    event: {
-      ...ev,
-      data: {
-        ...data,
-        attachments: mergedAttachments,
-      },
-    },
+    event: { ...ev, data: { ...data, attachments: mergedAttachments } },
     transferredPreviewUrls,
   };
 }
@@ -128,7 +130,10 @@ export function getRuntimeStatusFallbackForGroup(
   if (String(state.groupDoc?.group_id || "").trim() === gid) {
     return state.groupDoc?.runtime_status || null;
   }
-  return state.groups.find((group) => String(group.group_id || "").trim() === gid)?.runtime_status || null;
+  return (
+    state.groups.find((group) => String(group.group_id || "").trim() === gid)?.runtime_status ||
+    null
+  );
 }
 
 type ActorActivityUpdate = {
@@ -152,7 +157,10 @@ export function computeGroupRuntimeFromActorActivityUpdate(
   return computeGroupRuntimeFromActorActivityUpdates(actors, [update], fallback);
 }
 
-function deriveActivityLifecycleState(runningActors: Actor[], fallback?: GroupRuntimeStatus | null): string {
+function deriveActivityLifecycleState(
+  runningActors: Actor[],
+  fallback?: GroupRuntimeStatus | null,
+): string {
   const fallbackLifecycle = String(fallback?.lifecycle_state || "active");
   if (runningActors.length === 0) {
     // Nothing running: preserve the prior lifecycle (stopped/paused/active/idle).
@@ -167,9 +175,13 @@ function deriveActivityLifecycleState(runningActors: Actor[], fallback?: GroupRu
     return "paused";
   }
   return runningActors.some((actor) => {
-    const state = String(actor.effective_working_state || "").trim().toLowerCase();
+    const state = String(actor.effective_working_state || "")
+      .trim()
+      .toLowerCase();
     return state === "working" || state === "waiting" || state === "stuck";
-  }) ? "active" : "idle";
+  })
+    ? "active"
+    : "idle";
 }
 
 export function computeGroupRuntimeFromActorActivityUpdates(
@@ -201,7 +213,12 @@ export function computeGroupRuntimeFromActorActivityUpdates(
     lifecycle_state: deriveActivityLifecycleState(runningActors, fallback),
     runtime_running: runningActors.length > 0,
     running_actor_count: runningActors.length,
-    has_running_foreman: runningActors.some((actor) => String(actor.role || "").trim().toLowerCase() === "foreman"),
+    has_running_foreman: runningActors.some(
+      (actor) =>
+        String(actor.role || "")
+          .trim()
+          .toLowerCase() === "foreman",
+    ),
   };
 }
 
@@ -234,8 +251,12 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const completeStreamingEventsForActor = useGroupStore((s) => s.completeStreamingEventsForActor);
   const removeStreamingEvent = useGroupStore((s) => s.removeStreamingEvent);
   const clearStreamingEventsForActor = useGroupStore((s) => s.clearStreamingEventsForActor);
-  const clearEmptyStreamingEventsForActor = useGroupStore((s) => s.clearEmptyStreamingEventsForActor);
-  const clearTransientStreamingEventsForActor = useGroupStore((s) => s.clearTransientStreamingEventsForActor);
+  const clearEmptyStreamingEventsForActor = useGroupStore(
+    (s) => s.clearEmptyStreamingEventsForActor,
+  );
+  const clearTransientStreamingEventsForActor = useGroupStore(
+    (s) => s.clearTransientStreamingEventsForActor,
+  );
   const setGroupContext = useGroupStore((s) => s.setGroupContext);
   const updateGroupRuntimeState = useGroupStore((s) => s.updateGroupRuntimeState);
   const refreshActors = useGroupStore((s) => s.refreshActors);
@@ -261,25 +282,35 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const headlessThreadIdByActorRef = useRef(new Map<string, string>());
   const pendingHeadlessMessageFlushRef = useRef<number | null>(null);
   const pendingHeadlessActivityFlushRef = useRef<number | null>(null);
-  const pendingHeadlessMessagesRef = useRef(new Map<string, {
-    groupId: string;
-    actorId: string;
-    streamId: string;
-    pendingEventId: string;
-    ts: string;
-    explicitText: string | null;
-    deltaText: string;
-    completed: boolean;
-    shouldClearPlaceholder: boolean;
-    transientStream: boolean;
-    phase: string;
-  }>());
-  const pendingHeadlessActivitiesRef = useRef(new Map<string, {
-    actorId: string;
-    groupId: string;
-    match: { pendingEventId?: string; streamId?: string };
-    activities: Map<string, StreamingActivity>;
-  }>());
+  const pendingHeadlessMessagesRef = useRef(
+    new Map<
+      string,
+      {
+        groupId: string;
+        actorId: string;
+        streamId: string;
+        pendingEventId: string;
+        ts: string;
+        explicitText: string | null;
+        deltaText: string;
+        completed: boolean;
+        shouldClearPlaceholder: boolean;
+        transientStream: boolean;
+        phase: string;
+      }
+    >(),
+  );
+  const pendingHeadlessActivitiesRef = useRef(
+    new Map<
+      string,
+      {
+        actorId: string;
+        groupId: string;
+        match: { pendingEventId?: string; streamId?: string };
+        activities: Map<string, StreamingActivity>;
+      }
+    >(),
+  );
 
   useEffect(() => {
     selectedGroupIdRef.current = selectedGroupId;
@@ -291,7 +322,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     if (kind !== "system.notify") return "";
     const data = (ev as { data?: unknown }).data;
     if (!data || typeof data !== "object") return "";
-    const targetActorId = String((data as { target_actor_id?: unknown }).target_actor_id || "").trim();
+    const targetActorId = String(
+      (data as { target_actor_id?: unknown }).target_actor_id || "",
+    ).trim();
     return targetActorId && targetActorId !== "user" ? targetActorId : "";
   }
 
@@ -317,7 +350,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   }
 
   async function reconcileLedgerTail(groupId: string) {
-    const resp = await api.fetchLedgerTail(groupId, RECONNECT_LEDGER_TAIL_LIMIT, { includeStatuses: false });
+    const resp = await api.fetchLedgerTail(groupId, RECONNECT_LEDGER_TAIL_LIMIT, {
+      includeStatuses: false,
+    });
     if (!resp.ok || selectedGroupIdRef.current !== groupId) return;
 
     const store = useGroupStore.getState();
@@ -326,10 +361,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     const fetchedEvents = Array.isArray(resp.result.events) ? resp.result.events : [];
     const nextEvents = mergeLedgerEvents(currentEvents, fetchedEvents, MAX_RECONCILED_EVENTS);
 
-    store.setEvents(
-      nextEvents,
-      groupId
-    );
+    store.setEvents(nextEvents, groupId);
     store.setHasMoreHistory(!!resp.result.has_more, groupId);
     const eventIds = nextEvents
       .filter((event) => event.kind === "chat.message")
@@ -362,48 +394,60 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     for (const [key, entry] of pendingEntries.entries()) {
       if (targetGroupId && entry.groupId !== targetGroupId) continue;
       if (targetActorId && entry.actorId !== targetActorId) continue;
-      const streamingEvents = useGroupStore.getState().chatByGroup[entry.groupId]?.streamingEvents || [];
+      const streamingEvents =
+        useGroupStore.getState().chatByGroup[entry.groupId]?.streamingEvents || [];
       const placeholder = entry.pendingEventId
         ? streamingEvents.find((item) => {
             if (String(item.by || "").trim() !== entry.actorId) return false;
-            const itemData = item.data && typeof item.data === "object"
-              ? item.data as { pending_event_id?: unknown; pending_placeholder?: unknown }
-              : undefined;
-            return Boolean(itemData?.pending_placeholder) && String(itemData?.pending_event_id || "").trim() === entry.pendingEventId;
+            const itemData =
+              item.data && typeof item.data === "object"
+                ? (item.data as { pending_event_id?: unknown; pending_placeholder?: unknown })
+                : undefined;
+            return (
+              Boolean(itemData?.pending_placeholder) &&
+              String(itemData?.pending_event_id || "").trim() === entry.pendingEventId
+            );
           })
         : undefined;
       const existing = streamingEvents.find((item) => {
-        const itemStreamId = item.data && typeof item.data === "object"
-          ? String((item.data as { stream_id?: unknown }).stream_id || "").trim()
-          : "";
+        const itemStreamId =
+          item.data && typeof item.data === "object"
+            ? String((item.data as { stream_id?: unknown }).stream_id || "").trim()
+            : "";
         return itemStreamId === entry.streamId;
       });
       const bucket = useGroupStore.getState().chatByGroup[entry.groupId];
       const previousStreamText = String(bucket?.streamingTextByStreamId?.[entry.streamId] || "");
-      const previousEventText = existing?.data && typeof existing.data === "object"
-        ? String((existing.data as { text?: unknown }).text || "")
-        : "";
-      const existingData = existing?.data && typeof existing.data === "object"
-        ? existing.data as {
-            pending_event_id?: unknown;
-            pending_placeholder?: unknown;
-            text?: unknown;
-            transient_stream?: unknown;
-            stream_phase?: unknown;
-          }
-        : undefined;
-      const previousPhase = String(existingData?.stream_phase || "").trim().toLowerCase();
-      const nextPhase = String(entry.phase || "").trim().toLowerCase();
+      const previousEventText =
+        existing?.data && typeof existing.data === "object"
+          ? String((existing.data as { text?: unknown }).text || "")
+          : "";
+      const existingData =
+        existing?.data && typeof existing.data === "object"
+          ? (existing.data as {
+              pending_event_id?: unknown;
+              pending_placeholder?: unknown;
+              text?: unknown;
+              transient_stream?: unknown;
+              stream_phase?: unknown;
+            })
+          : undefined;
+      const previousPhase = String(existingData?.stream_phase || "")
+        .trim()
+        .toLowerCase();
+      const nextPhase = String(entry.phase || "")
+        .trim()
+        .toLowerCase();
       const hasIncomingPhaseText =
-        entry.explicitText != null
-          ? entry.explicitText.length > 0
-          : entry.deltaText.length > 0;
+        entry.explicitText != null ? entry.explicitText.length > 0 : entry.deltaText.length > 0;
       const shouldResetTextForPhaseTransition =
         !!nextPhase &&
         previousPhase !== nextPhase &&
         previousPhase.length > 0 &&
         hasIncomingPhaseText;
-      const previousText = shouldResetTextForPhaseTransition ? "" : (previousStreamText || previousEventText);
+      const previousText = shouldResetTextForPhaseTransition
+        ? ""
+        : previousStreamText || previousEventText;
       const previousActivities = (() => {
         const source = existing ?? placeholder;
         if (!source?.data || typeof source.data !== "object") return [];
@@ -412,12 +456,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       })();
       const fullText = entry.explicitText ?? `${previousText}${entry.deltaText}`;
       const nextPlaceholderState = !fullText.trim() && previousActivities.length <= 0;
-      const nextEventText =
-        fullText
-          ? fullText
-          : shouldResetTextForPhaseTransition
-            ? ""
-            : previousEventText;
+      const nextEventText = fullText
+        ? fullText
+        : shouldResetTextForPhaseTransition
+          ? ""
+          : previousEventText;
       const existingPendingEventId = String(existingData?.pending_event_id || "").trim();
       const needsEventUpsert =
         !existing ||
@@ -497,11 +540,17 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       }
     }
 
-    if (pendingHeadlessMessagesRef.current.size === 0 && pendingHeadlessMessageFlushRef.current != null) {
+    if (
+      pendingHeadlessMessagesRef.current.size === 0 &&
+      pendingHeadlessMessageFlushRef.current != null
+    ) {
       window.cancelAnimationFrame(pendingHeadlessMessageFlushRef.current);
       pendingHeadlessMessageFlushRef.current = null;
     }
-    if (pendingHeadlessActivitiesRef.current.size === 0 && pendingHeadlessActivityFlushRef.current != null) {
+    if (
+      pendingHeadlessActivitiesRef.current.size === 0 &&
+      pendingHeadlessActivityFlushRef.current != null
+    ) {
       window.cancelAnimationFrame(pendingHeadlessActivityFlushRef.current);
       pendingHeadlessActivityFlushRef.current = null;
     }
@@ -529,8 +578,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       if (!isHeadlessActorRunner(actor)) continue;
       const actorId = String(actor.id || "").trim();
       if (!actorId) continue;
-      const hasLiveStream = Array.isArray(bucket?.streamingEvents)
-        && bucket.streamingEvents.some((event) => String(event.by || "").trim() === actorId && !!event._streaming);
+      const hasLiveStream =
+        Array.isArray(bucket?.streamingEvents) &&
+        bucket.streamingEvents.some(
+          (event) => String(event.by || "").trim() === actorId && !!event._streaming,
+        );
       if (hasLiveStream) {
         liveActorIds.add(actorId);
       }
@@ -557,11 +609,14 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         const storeState = useGroupStore.getState();
         const actorsSnapshot = storeState.actors;
         updateActorActivity([update]);
-        updateGroupRuntimeState(groupId, computeGroupRuntimeFromActorActivityUpdate(
-          actorsSnapshot.length > 0 ? actorsSnapshot : actorsRef.current,
-          update,
-          getRuntimeStatusFallbackForGroup(storeState, groupId),
-        ));
+        updateGroupRuntimeState(
+          groupId,
+          computeGroupRuntimeFromActorActivityUpdate(
+            actorsSnapshot.length > 0 ? actorsSnapshot : actorsRef.current,
+            update,
+            getRuntimeStatusFallbackForGroup(storeState, groupId),
+          ),
+        );
       }
 
       function queueHeadlessActivity(activity: StreamingActivity) {
@@ -570,7 +625,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         if (existingActivityBatch) {
           existingActivityBatch.match = { pendingEventId, streamId };
           const existingActivity = existingActivityBatch.activities.get(activity.id);
-          existingActivityBatch.activities.set(activity.id, mergeStreamingActivity(existingActivity, activity) || activity);
+          existingActivityBatch.activities.set(
+            activity.id,
+            mergeStreamingActivity(existingActivity, activity) || activity,
+          );
         } else {
           pendingHeadlessActivitiesRef.current.set(activityKey, {
             actorId,
@@ -582,7 +640,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         schedulePendingHeadlessActivityFlush();
       }
 
-      if (eventType === "headless.thread.resume_failed" || eventType === "headless.session.resume_failed") {
+      if (
+        eventType === "headless.thread.resume_failed" ||
+        eventType === "headless.session.resume_failed"
+      ) {
         const resumeError = String(data.error || data.message || data.detail || "").trim();
         updateHeadlessActorRuntime({
           id: actorId,
@@ -602,7 +663,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       if (eventType === "headless.thread.started" || eventType === "headless.thread.resumed") {
         const threadId = typeof data.thread_id === "string" ? data.thread_id.trim() : "";
         const actorKey = headlessActorKey(groupId, actorId);
-        const previousThreadId = String(headlessThreadIdByActorRef.current.get(actorKey) || "").trim();
+        const previousThreadId = String(
+          headlessThreadIdByActorRef.current.get(actorKey) || "",
+        ).trim();
         if (eventType === "headless.thread.started" && threadId && threadId !== previousThreadId) {
           clearHeadlessLiveOutput(groupId, actorId);
         }
@@ -614,7 +677,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           running: true,
           idle_seconds: null,
           effective_working_state: "idle",
-          effective_working_reason: eventType === "headless.thread.resumed" ? "headless_thread_resumed" : "headless_thread_started",
+          effective_working_reason:
+            eventType === "headless.thread.resumed"
+              ? "headless_thread_resumed"
+              : "headless_thread_started",
           effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
           effective_active_task_id: null,
           runtime_session_status: "usable",
@@ -694,7 +760,12 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
                 kind: "error",
                 status: "completed",
                 summary: translateActorLabel("headlessTurnFailed", "Model request failed"),
-                detail: errorMessage || translateActorLabel("headlessTurnFailedFallback", "The model runtime reported an error."),
+                detail:
+                  errorMessage ||
+                  translateActorLabel(
+                    "headlessTurnFailedFallback",
+                    "The model runtime reported an error.",
+                  ),
                 ts: typeof ev.ts === "string" ? ev.ts : new Date().toISOString(),
                 raw_item_type: "turn_error",
               },
@@ -708,14 +779,15 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       }
 
       if (
-        eventType === "headless.control.queued"
-        || eventType === "headless.control.started"
-        || eventType === "headless.control.requeued"
-        || eventType === "headless.control.stalled"
-        || eventType === "headless.control.completed"
-        || eventType === "headless.control.failed"
+        eventType === "headless.control.queued" ||
+        eventType === "headless.control.started" ||
+        eventType === "headless.control.requeued" ||
+        eventType === "headless.control.stalled" ||
+        eventType === "headless.control.completed" ||
+        eventType === "headless.control.failed"
       ) {
-        const controlKind = typeof data.control_kind === "string" ? data.control_kind.trim() : "control";
+        const controlKind =
+          typeof data.control_kind === "string" ? data.control_kind.trim() : "control";
         const turnId = typeof data.turn_id === "string" ? data.turn_id.trim() : "";
         const controlEventId = typeof data.event_id === "string" ? data.event_id.trim() : "";
         const errorMessage = formatHeadlessErrorMessage(data.error);
@@ -747,7 +819,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
                 ? "started"
                 : "updated",
           summary: controlStatusLabel,
-          detail: [controlKind ? `kind ${controlKind}` : "", errorMessage].filter(Boolean).join(" | ") || undefined,
+          detail:
+            [controlKind ? `kind ${controlKind}` : "", errorMessage].filter(Boolean).join(" | ") ||
+            undefined,
           ts: typeof ev.ts === "string" ? ev.ts : new Date().toISOString(),
         };
         queueHeadlessActivity(activity);
@@ -761,7 +835,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
             running: true,
             idle_seconds: null,
             effective_working_state: "idle",
-            effective_working_reason: eventType === "headless.control.failed" ? "headless_control_failed" : "headless_control_idle",
+            effective_working_reason:
+              eventType === "headless.control.failed"
+                ? "headless_control_failed"
+                : "headless_control_idle",
             effective_working_updated_at: typeof ev.ts === "string" ? ev.ts : null,
             effective_active_task_id: null,
           });
@@ -790,7 +867,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         return;
       }
 
-      if (eventType === "headless.activity.started" || eventType === "headless.activity.updated" || eventType === "headless.activity.completed") {
+      if (
+        eventType === "headless.activity.started" ||
+        eventType === "headless.activity.updated" ||
+        eventType === "headless.activity.completed"
+      ) {
         const activityId = typeof data.activity_id === "string" ? data.activity_id.trim() : "";
         const summary = typeof data.summary === "string" ? data.summary.trim() : "";
         if (!activityId || !summary) return;
@@ -802,7 +883,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           summary,
           detail: typeof data.detail === "string" ? data.detail.trim() : undefined,
           ts: activityTs,
-          raw_item_type: typeof data.raw_item_type === "string" ? data.raw_item_type.trim() : undefined,
+          raw_item_type:
+            typeof data.raw_item_type === "string" ? data.raw_item_type.trim() : undefined,
           tool_name: typeof data.tool_name === "string" ? data.tool_name.trim() : undefined,
           server_name: typeof data.server_name === "string" ? data.server_name.trim() : undefined,
           command: typeof data.command === "string" ? data.command.trim() : undefined,
@@ -816,11 +898,18 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         return;
       }
 
-      if (eventType === "headless.message.started" || eventType === "headless.message.delta" || eventType === "headless.message.completed") {
+      if (
+        eventType === "headless.message.started" ||
+        eventType === "headless.message.delta" ||
+        eventType === "headless.message.completed"
+      ) {
         if (!streamId) return;
         const delta = typeof data.delta === "string" ? data.delta : "";
         const explicitTextRaw = typeof data.text === "string" ? data.text : null;
-        const explicitText = explicitTextRaw === "" && eventType === "headless.message.started" ? null : explicitTextRaw;
+        const explicitText =
+          explicitTextRaw === "" && eventType === "headless.message.started"
+            ? null
+            : explicitTextRaw;
         const phase = typeof data.phase === "string" ? data.phase.trim().toLowerCase() : "";
         const transientStream = !!phase && phase !== "final_answer";
         const shouldBindToPendingPlaceholder = !!pendingEventId;
@@ -830,7 +919,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         const messageKey = `${groupId}:${streamId}`;
         const existingMessageBatch = pendingHeadlessMessagesRef.current.get(messageKey);
         if (existingMessageBatch) {
-          existingMessageBatch.pendingEventId = pendingEventId || existingMessageBatch.pendingEventId;
+          existingMessageBatch.pendingEventId =
+            pendingEventId || existingMessageBatch.pendingEventId;
           existingMessageBatch.ts = typeof ev.ts === "string" ? ev.ts : existingMessageBatch.ts;
           existingMessageBatch.transientStream = transientStream;
           existingMessageBatch.phase = phase || existingMessageBatch.phase;
@@ -973,7 +1063,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
 
     setSSEStatus("connecting");
-    const es = new EventSource(api.withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/ledger/stream`));
+    const es = new EventSource(
+      api.withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/ledger/stream`),
+    );
     const ledgerToken = sseRegistryRef.current.set("ledger", groupId, es);
 
     const isReconnect = hasConnectedOnceRef.current || needsVisibilityCatchupRef.current;
@@ -1058,9 +1150,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
         if (isPresentationClearEvent(ev)) {
           void refreshPresentation(groupId);
-          const clearedSlots = Array.isArray(ev.data?.cleared_slots)
-            ? ev.data.cleared_slots
-            : [];
+          const clearedSlots = Array.isArray(ev.data?.cleared_slots) ? ev.data.cleared_slots : [];
           for (const slot of clearedSlots) {
             const slotId = String(slot || "").trim();
             if (slotId) {
@@ -1091,7 +1181,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           return;
         }
 
-        const reconciled = mergeCanonicalAttachmentsWithOptimisticPreview(ev as Record<string, unknown>, groupId);
+        const reconciled = mergeCanonicalAttachmentsWithOptimisticPreview(
+          ev as Record<string, unknown>,
+          groupId,
+        );
         const nextEvent = reconciled.event;
 
         // Initialize read/ack status for new messages
@@ -1101,10 +1194,12 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
         appendEvent(nextEvent, groupId);
         if (isChatMessageEvent(nextEvent)) {
-          const msgData = nextEvent.data && typeof nextEvent.data === "object"
-            ? (nextEvent.data as { stream_id?: unknown })
-            : null;
-          const streamId = msgData && typeof msgData.stream_id === "string" ? msgData.stream_id.trim() : "";
+          const msgData =
+            nextEvent.data && typeof nextEvent.data === "object"
+              ? (nextEvent.data as { stream_id?: unknown })
+              : null;
+          const streamId =
+            msgData && typeof msgData.stream_id === "string" ? msgData.stream_id.trim() : "";
           if (streamId) {
             removeStreamingEvent(streamId, groupId);
           }
@@ -1112,9 +1207,17 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
         // Reconcile outbox: when a user's chat.message arrives via SSE,
         // remove only the exact optimistic entry that produced this canonical event.
-        if (isChatMessageEvent(nextEvent) && String(nextEvent.by || "") === "user" && hasRenderableChatMessageContent(nextEvent)) {
-          const msgData = nextEvent.data && typeof nextEvent.data === "object" ? (nextEvent.data as { client_id?: unknown }) : null;
-          const clientId = msgData && typeof msgData.client_id === "string" ? msgData.client_id.trim() : "";
+        if (
+          isChatMessageEvent(nextEvent) &&
+          String(nextEvent.by || "") === "user" &&
+          hasRenderableChatMessageContent(nextEvent)
+        ) {
+          const msgData =
+            nextEvent.data && typeof nextEvent.data === "object"
+              ? (nextEvent.data as { client_id?: unknown })
+              : null;
+          const clientId =
+            msgData && typeof msgData.client_id === "string" ? msgData.client_id.trim() : "";
           const canonicalEventId = String(nextEvent.id || "").trim();
           if (clientId) {
             if (canonicalEventId) {
@@ -1127,8 +1230,14 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
         // Reply to an earlier message updates its obligation status in-place.
         if (isChatMessageEvent(nextEvent)) {
-          const msgData = nextEvent.data && typeof nextEvent.data === "object" ? (nextEvent.data as { reply_to?: unknown }) : null;
-          const replyTo = msgData && typeof msgData.reply_to === "string" ? String(msgData.reply_to || "").trim() : "";
+          const msgData =
+            nextEvent.data && typeof nextEvent.data === "object"
+              ? (nextEvent.data as { reply_to?: unknown })
+              : null;
+          const replyTo =
+            msgData && typeof msgData.reply_to === "string"
+              ? String(msgData.reply_to || "").trim()
+              : "";
           const replyBy = String(nextEvent.by || "").trim();
           if (replyTo && replyBy) {
             updateReplyStatus(replyTo, replyBy, groupId);
@@ -1147,7 +1256,10 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         }
 
         if (isChatMessageEvent(nextEvent) && String(nextEvent.by || "").trim() !== "user") {
-          const msgData = nextEvent.data && typeof nextEvent.data === "object" ? (nextEvent.data as ChatMessageData) : null;
+          const msgData =
+            nextEvent.data && typeof nextEvent.data === "object"
+              ? (nextEvent.data as ChatMessageData)
+              : null;
           const presentationRefs = getPresentationMessageRefs(msgData?.refs);
           const needsAttention =
             String(msgData?.priority || "normal").trim() === "attention" ||
@@ -1170,7 +1282,9 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         }
 
         // Update unread count
-        if (shouldIncrementUnread(nextEvent, activeTabRef.current === "chat", chatAtBottomRef.current)) {
+        if (
+          shouldIncrementUnread(nextEvent, activeTabRef.current === "chat", chatAtBottomRef.current)
+        ) {
           incrementChatUnread(groupId);
         }
 
@@ -1284,10 +1398,5 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     disconnectGroupStreams({ resetConnected: true });
   }
 
-  return {
-    connectStream,
-    fetchContext,
-    cleanup,
-    contextRefreshTimerRef,
-  };
+  return { connectStream, fetchContext, cleanup, contextRefreshTimerRef };
 }

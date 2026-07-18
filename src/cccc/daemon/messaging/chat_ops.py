@@ -25,8 +25,15 @@ from ...kernel.ledger import append_event, read_last_lines
 from ...kernel.messaging import (
     default_reply_recipients,
     enabled_recipient_actor_ids,
-    get_default_send_to,
+    recipient_actor_ids,
     targets_any_agent,
+)
+from ...kernel.peer_insight import (
+    PeerRecipientError,
+    normalized_insight_or_error,
+    peer_insight_required_details,
+    preflight_local_peer_audience,
+    remote_recipients_include_peer,
 )
 from ...kernel.message_sender_snapshot import build_sender_snapshot
 from ...kernel.scope import detect_scope
@@ -324,7 +331,6 @@ def handle_send(
         token = to_raw.strip()
         if token:
             to_tokens = [token]
-    to_explicitly_set = len(to_tokens) > 0
     install_slash_command = parse_install_slash_command(text)
 
     if priority not in ("normal", "attention"):
@@ -337,6 +343,34 @@ def handle_send(
     if group is None:
         resp = _error("group_not_found", f"group not found: {group_id}")
         return diag.finish_response(resp)
+    if client_id:
+        existing = _tracked_send_existing_result(group, client_id=client_id, by=by)
+        if existing is not None:
+            return diag.finish_response(DaemonResponse(ok=True, result=existing))
+
+    try:
+        insight = normalized_insight_or_error(args.get("insight"))
+    except ValueError as exc:
+        return diag.finish_response(_error("invalid_insight", str(exc)))
+    try:
+        audience = preflight_local_peer_audience(
+            group,
+            to_tokens=to_tokens,
+            by=by,
+            apply_default_send=True,
+        )
+    except PeerRecipientError as exc:
+        return diag.finish_response(_error(exc.code, exc.message, details=exc.details))
+    to = audience.recipients
+    if coerce_bool(args.get("require_peer_insight")) and audience.peer_actor_ids and insight is None:
+        return diag.finish_response(
+            _error(
+                "peer_insight_required",
+                "Not sent: this peer-facing message is missing `insight`.",
+                details=peer_insight_required_details(),
+            )
+        )
+
     if source_multiaddrs and src_group_id and source_user_id:
         try:
             from ..group_bridge.peer_address_sync import sync_group_bridge_peer_multiaddrs
@@ -354,10 +388,6 @@ def handle_send(
                 src_group_id,
                 source_user_id,
             )
-    if client_id:
-        existing = _tracked_send_existing_result(group, client_id=client_id, by=by)
-        if existing is not None:
-            return diag.finish_response(DaemonResponse(ok=True, result=existing))
 
     group = _wake_group_on_human_message(
         group,
@@ -368,15 +398,7 @@ def handle_send(
     )
     diag.mark("wake_group")
 
-    try:
-        to = resolve_recipient_tokens(group, to_tokens)
-    except Exception as e:
-        resp = _error("invalid_recipient", str(e))
-        return diag.finish_response(resp)
     diag.mark("resolve_recipients")
-
-    if not to and not to_explicitly_set and get_default_send_to(group.doc) == "foreman":
-        to = ["@foreman"]
 
     woken: list[str] = []
     if targets_any_agent(to):
@@ -454,6 +476,7 @@ def handle_send(
         data=ChatMessageData(
             text=text,
             format="plain",
+            insight=insight,
             priority=priority,
             reply_required=reply_required,
             reply_to=reply_to or None,
@@ -488,6 +511,7 @@ def handle_send(
             by=by,
             effective_to=effective_to,
             text=delivery_body_text,
+            insight=insight,
             priority=priority,
             reply_required=reply_required,
             refs=refs,
@@ -559,6 +583,27 @@ def handle_tracked_send(
     else:
         existing_task = None
 
+    try:
+        insight = normalized_insight_or_error(args.get("insight"))
+    except ValueError as exc:
+        return _error("invalid_insight", str(exc))
+    try:
+        audience = preflight_local_peer_audience(
+            group,
+            to_tokens=_normalize_to_tokens(args.get("to")),
+            by=by,
+            apply_default_send=True,
+        )
+    except PeerRecipientError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    if coerce_bool(args.get("require_peer_insight")) and audience.peer_actor_ids and insight is None:
+        existing_task_id = str(getattr(existing_task, "id", "") or "").strip() if existing_task is not None else ""
+        return _error(
+            "peer_insight_required",
+            "Not sent: this peer-facing message is missing `insight`.",
+            details=peer_insight_required_details(existing_task_id=existing_task_id),
+        )
+
     assignee = _derive_tracked_send_assignee(args)
     outcome = str(args.get("outcome") or args.get("goal") or "").strip() or text
     status = str(args.get("status") or "planned").strip() or "planned"
@@ -575,11 +620,13 @@ def handle_tracked_send(
         "group_id": group_id,
         "text": text,
         "by": by,
-        "to": _normalize_to_tokens(args.get("to")),
+        "to": audience.recipients,
         "path": str(args.get("path") or ""),
         "priority": message_priority,
         "reply_required": reply_required,
         "refs": base_refs,
+        "insight": insight,
+        "require_peer_insight": coerce_bool(args.get("require_peer_insight")),
     }
     if client_id:
         message_args["client_id"] = client_id
@@ -609,6 +656,12 @@ def handle_tracked_send(
             clear_pending_system_notifies=clear_pending_system_notifies,
         )
         if not send_resp.ok:
+            if send_resp.error is not None and send_resp.error.code == "peer_insight_required":
+                return _error(
+                    "peer_insight_required",
+                    send_resp.error.message,
+                    details=peer_insight_required_details(existing_task_id=existing_task_id),
+                )
             err = send_resp.error.model_dump() if send_resp.error is not None else None
             return DaemonResponse(
                 ok=True,
@@ -787,15 +840,10 @@ def handle_reply(
         existing = find_existing_reply_result(group, client_id=client_id, by=by, reply_to=target_event_id or reply_to)
         if existing is not None:
             return diag.finish_response(DaemonResponse(ok=True, result=existing))
-
-    group = _wake_group_on_human_message(
-        group,
-        by=by,
-        state_at_accept=str(args.get("__group_state_at_accept") or ""),
-        automation_on_resume=automation_on_resume,
-        clear_pending_system_notifies=clear_pending_system_notifies,
-    )
-    diag.mark("wake_group")
+    try:
+        insight = normalized_insight_or_error(args.get("insight"))
+    except ValueError as exc:
+        return diag.finish_response(_error("invalid_insight", str(exc)))
     original_data = original.get("data") if isinstance(original.get("data"), dict) else {}
     quote_text = _quote_text_from_message_data(original_data, max_len=100)
     original_source_platform = str(original_data.get("source_platform") or "").strip()
@@ -825,12 +873,53 @@ def handle_reply(
                 )
         else:
             to_tokens = default_reply_recipients(group, by=by, original_event=original)
-    try:
-        to = resolve_recipient_tokens(group, to_tokens)
-    except Exception as e:
-        resp = _error("invalid_recipient", str(e))
-        return diag.finish_response(resp)
+    if relayable_group_bridge_reply:
+        try:
+            to = resolve_recipient_tokens(group, to_tokens)
+        except Exception as exc:
+            return diag.finish_response(_error("invalid_recipient", str(exc)))
+        local_peer_actor_ids = [actor_id for actor_id in recipient_actor_ids(group, to) if actor_id != by]
+    else:
+        try:
+            audience = preflight_local_peer_audience(
+                group,
+                to_tokens=to_tokens,
+                by=by,
+                apply_default_send=False,
+            )
+        except PeerRecipientError as exc:
+            return diag.finish_response(_error(exc.code, exc.message, details=exc.details))
+        to = audience.recipients
+        local_peer_actor_ids = audience.peer_actor_ids
     diag.mark("resolve_recipients")
+
+    group_bridge_remote_to = (
+        group_bridge_reply_return_recipients(
+            original_data=original_data,
+            fallback=to,
+            fallback_was_explicit=to_explicitly_set,
+        )
+        if relayable_group_bridge_reply
+        else []
+    )
+    peer_facing = bool(local_peer_actor_ids) or remote_recipients_include_peer(group_bridge_remote_to)
+    if coerce_bool(args.get("require_peer_insight")) and peer_facing and insight is None:
+        return diag.finish_response(
+            _error(
+                "peer_insight_required",
+                "Not sent: this peer-facing message is missing `insight`.",
+                details=peer_insight_required_details(),
+            )
+        )
+
+    group = _wake_group_on_human_message(
+        group,
+        by=by,
+        state_at_accept=str(args.get("__group_state_at_accept") or ""),
+        automation_on_resume=automation_on_resume,
+        clear_pending_system_notifies=clear_pending_system_notifies,
+    )
+    diag.mark("wake_group")
 
     woken: list[str] = []
     if targets_any_agent(to):
@@ -862,15 +951,6 @@ def handle_reply(
     refs = _normalize_refs(args.get("refs"))
     if not text.strip() and not attachments:
         return diag.finish_response(_error("empty_message", "message text cannot be empty"))
-    group_bridge_remote_to = (
-        group_bridge_reply_return_recipients(
-            original_data=original_data,
-            fallback=to,
-            fallback_was_explicit=to_explicitly_set,
-        )
-        if relayable_group_bridge_reply
-        else []
-    )
     group_bridge_remote_group_id = (
         str(original_data.get("src_group_id") or "").strip()
         if relayable_group_bridge_reply
@@ -886,6 +966,7 @@ def handle_reply(
         data=ChatMessageData(
             text=text,
             format="plain",
+            insight=insight,
             priority=priority,
             reply_required=reply_required,
             to=to,
@@ -910,12 +991,14 @@ def handle_reply(
         original_data=original_data,
         reply_event_id=str(event.get("id") or ""),
         text=text,
+        insight=insight,
         by=by,
         to=to,
         priority=priority,
         reply_required=reply_required,
         refs=refs,
         to_was_explicit=to_explicitly_set,
+        require_peer_insight=coerce_bool(args.get("require_peer_insight")),
     )
     diag.mark("group_bridge_reply")
 
@@ -951,6 +1034,7 @@ def handle_reply(
             by=by,
             effective_to=effective_to,
             text=text,
+            insight=insight,
             priority=priority,
             reply_required=reply_required,
             refs=refs,

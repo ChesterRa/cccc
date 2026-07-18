@@ -45,10 +45,7 @@ export async function setIMConfig(
     weixin_account_id?: string;
   },
 ) {
-  const body: Record<string, unknown> = {
-    group_id: groupId,
-    platform,
-  };
+  const body: Record<string, unknown> = { group_id: groupId, platform };
 
   if (platform === "telegram" || platform === "slack" || platform === "discord") {
     body.bot_token_env = botTokenEnv;
@@ -78,35 +75,25 @@ export async function setIMConfig(
     body.weixin_account_id = extra.weixin_account_id;
   }
 
-  return apiJson("/api/im/set", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return apiJson("/api/im/set", { method: "POST", body: JSON.stringify(body) });
 }
 
 export async function unsetIMConfig(groupId: string) {
-  return apiJson("/api/im/unset", {
-    method: "POST",
-    body: JSON.stringify({ group_id: groupId }),
-  });
+  return apiJson("/api/im/unset", { method: "POST", body: JSON.stringify({ group_id: groupId }) });
 }
 
 export async function startIMBridge(groupId: string) {
-  return apiJson("/api/im/start", {
-    method: "POST",
-    body: JSON.stringify({ group_id: groupId }),
-  });
+  return apiJson("/api/im/start", { method: "POST", body: JSON.stringify({ group_id: groupId }) });
 }
 
 export async function stopIMBridge(groupId: string) {
-  return apiJson("/api/im/stop", {
-    method: "POST",
-    body: JSON.stringify({ group_id: groupId }),
-  });
+  return apiJson("/api/im/stop", { method: "POST", body: JSON.stringify({ group_id: groupId }) });
 }
 
 export async function fetchWeixinLoginStatus(groupId: string) {
-  return apiJson<WeixinLoginStatus>(`/api/im/weixin/login/status?group_id=${encodeURIComponent(groupId)}`);
+  return apiJson<WeixinLoginStatus>(
+    `/api/im/weixin/login/status?group_id=${encodeURIComponent(groupId)}`,
+  );
 }
 
 export async function startWeixinLogin(groupId: string) {
@@ -130,7 +117,9 @@ export async function fetchIMAuthorized(groupId: string) {
 }
 
 export async function fetchIMPending(groupId: string) {
-  return apiJson<{ pending: IMPendingRequest[] }>(`/api/im/pending?group_id=${encodeURIComponent(groupId)}`);
+  return apiJson<{ pending: IMPendingRequest[] }>(
+    `/api/im/pending?group_id=${encodeURIComponent(groupId)}`,
+  );
 }
 
 export async function revokeIMChat(groupId: string, chatId: string, threadId: number = 0) {
@@ -154,7 +143,12 @@ export async function bindIMChat(groupId: string, key: string) {
   });
 }
 
-export async function setIMVerbose(groupId: string, chatId: string, verbose: boolean, threadId: number = 0) {
+export async function setIMVerbose(
+  groupId: string,
+  chatId: string,
+  verbose: boolean,
+  threadId: number = 0,
+) {
   return apiJson<{ chat_id: string; thread_id: number; verbose: boolean }>(
     `/api/im/verbose?group_id=${encodeURIComponent(groupId)}&chat_id=${encodeURIComponent(chatId)}&verbose=${verbose}&thread_id=${threadId}`,
     { method: "POST" },

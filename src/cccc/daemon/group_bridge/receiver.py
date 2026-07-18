@@ -192,6 +192,7 @@ def receive_remote_send(
             by=f"group_bridge:{peer_id}",
             effective_to=effective_to,
             text=msg.text,
+            insight=None,
             priority=msg.priority,
             reply_required=msg.reply_required,
             refs=[],

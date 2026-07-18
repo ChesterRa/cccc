@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   filterVisibleRuntimeActors,
   isAssistantRuntimeActor,
@@ -21,21 +21,13 @@ describe("runtimeVisibility", () => {
   });
 
   it("applies peer runtime visibility only to standard runtime actors", () => {
-    expect(
-      isRuntimeSurfaceActorVisible(peer, {
-        peerRuntimeVisibility: "visible",
-      })
-    ).toBe(true);
-    expect(
-      isRuntimeSurfaceActorVisible(peer, {
-        peerRuntimeVisibility: "hidden",
-      })
-    ).toBe(false);
+    expect(isRuntimeSurfaceActorVisible(peer, { peerRuntimeVisibility: "visible" })).toBe(true);
+    expect(isRuntimeSurfaceActorVisible(peer, { peerRuntimeVisibility: "hidden" })).toBe(false);
     expect(
       isRuntimeSurfaceActorVisible(voice, {
         peerRuntimeVisibility: "hidden",
         assistantRuntimeVisibility: "visible",
-      })
+      }),
     ).toBe(true);
   });
 
@@ -44,13 +36,13 @@ describe("runtimeVisibility", () => {
       isRuntimeSurfaceActorVisible(voice, {
         peerRuntimeVisibility: "visible",
         assistantRuntimeVisibility: "hidden",
-      })
+      }),
     ).toBe(false);
     expect(
       isRuntimeSurfaceActorVisible(legacy, {
         peerRuntimeVisibility: "visible",
         assistantRuntimeVisibility: "visible",
-      })
+      }),
     ).toBe(false);
   });
 
@@ -59,13 +51,13 @@ describe("runtimeVisibility", () => {
       filterVisibleRuntimeActors([foreman, peer, voice, legacy], {
         peerRuntimeVisibility: "visible",
         assistantRuntimeVisibility: "visible",
-      }).map((actor) => actor.id)
+      }).map((actor) => actor.id),
     ).toEqual(["foreman", "peer-1", "voice-secretary"]);
     expect(
       filterVisibleRuntimeActors([foreman, peer, voice, legacy], {
         peerRuntimeVisibility: "hidden",
         assistantRuntimeVisibility: "visible",
-      }).map((actor) => actor.id)
+      }).map((actor) => actor.id),
     ).toEqual(["voice-secretary"]);
   });
 });

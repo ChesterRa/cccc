@@ -36,12 +36,14 @@ const _fromObs = (obs: Observability) => {
     loaded: true,
     developerMode: Boolean(obs.developer_mode),
     logLevel: (lvl === "DEBUG" ? "DEBUG" : "INFO") as "INFO" | "DEBUG",
-    terminalBacklogMiB: Number.isFinite(perActorBytes) && perActorBytes > 0
-      ? Math.max(1, Math.round(perActorBytes / (1024 * 1024)))
-      : DEFAULT_PTY_BACKLOG_MIB,
-    terminalScrollbackLines: Number.isFinite(scrollbackLines) && scrollbackLines > 0
-      ? Math.max(1000, Math.round(scrollbackLines))
-      : DEFAULT_SCROLLBACK_LINES,
+    terminalBacklogMiB:
+      Number.isFinite(perActorBytes) && perActorBytes > 0
+        ? Math.max(1, Math.round(perActorBytes / (1024 * 1024)))
+        : DEFAULT_PTY_BACKLOG_MIB,
+    terminalScrollbackLines:
+      Number.isFinite(scrollbackLines) && scrollbackLines > 0
+        ? Math.max(1000, Math.round(scrollbackLines))
+        : DEFAULT_SCROLLBACK_LINES,
     peerRuntimeVisibility: normalizeRuntimeVisibilityMode(
       runtimeVisibility.peer_runtime,
       DEFAULT_PEER_RUNTIME_VISIBILITY,
@@ -90,7 +92,7 @@ export const useObservabilityStore = create<ObservabilityState>((set) => ({
       if (resp.error?.code !== "permission_denied") {
         console.error(
           "Failed to load observability settings:",
-          resp.error?.message || resp.error?.code || "unknown error"
+          resp.error?.message || resp.error?.code || "unknown error",
         );
       }
     } catch (e) {

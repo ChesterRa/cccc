@@ -7,8 +7,12 @@ export function getRuntimeRingTone(
   isRunning: boolean,
   workingState: string,
 ): RuntimeRingTone {
-  const actorState = String(workingState || "").trim().toLowerCase();
-  const stateSource = String(item.actor?.runtime_state_source || "").trim().toLowerCase();
+  const actorState = String(workingState || "")
+    .trim()
+    .toLowerCase();
+  const stateSource = String(item.actor?.runtime_state_source || "")
+    .trim()
+    .toLowerCase();
   if (item.liveWorkCard?.phase === "failed") return "attention";
   if (!isRunning) return "stopped";
 

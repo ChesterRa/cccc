@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import {
   createRuntimeDockTickerCache,
@@ -9,7 +9,10 @@ import {
 import { buildRuntimeDockTickerEntries } from "../../../src/pages/chat/runtimeDockTickerEntries";
 import type { RuntimeDockTickerEntry } from "../../../src/pages/chat/runtimeDockTickerEntries";
 import type { LiveWorkCard } from "../../../src/pages/chat/liveWorkCards";
-import { buildRuntimeDockItems, type RuntimeDockItem } from "../../../src/pages/chat/runtimeDockItems";
+import {
+  buildRuntimeDockItems,
+  type RuntimeDockItem,
+} from "../../../src/pages/chat/runtimeDockItems";
 import { getRuntimeRingTone } from "../../../src/pages/chat/runtimeDockRingTone";
 import type { Actor, HeadlessPreviewBlock, StreamingActivity } from "../../../src/types";
 
@@ -20,11 +23,7 @@ function makeActivity(args: {
   summary: string;
   ts?: string;
 }): StreamingActivity {
-  return {
-    kind: "thinking",
-    status: "updated",
-    ...args,
-  };
+  return { kind: "thinking", status: "updated", ...args };
 }
 
 function makeMessageBlock(args: {
@@ -69,17 +68,19 @@ function makeLiveWorkCard(args: {
     transcriptBlocks: args.transcriptBlocks || [],
     activities: args.activities || [],
     previewSessions: hasPreviewSession
-      ? [{
-          actorId: args.actorId,
-          pendingEventId: `pending-${args.actorId}`,
-          currentStreamId: `stream-${args.actorId}`,
-          phase: args.phase || "streaming",
-          streamPhase: args.streamPhase || "commentary",
-          updatedAt: args.updatedAt || "2025-01-02T12:00:00Z",
-          latestText: String(args.previewBlocks?.[args.previewBlocks.length - 1]?.text || ""),
-          transcriptBlocks: args.previewBlocks || [],
-          activities: args.previewActivities || [],
-        }]
+      ? [
+          {
+            actorId: args.actorId,
+            pendingEventId: `pending-${args.actorId}`,
+            currentStreamId: `stream-${args.actorId}`,
+            phase: args.phase || "streaming",
+            streamPhase: args.streamPhase || "commentary",
+            updatedAt: args.updatedAt || "2025-01-02T12:00:00Z",
+            latestText: String(args.previewBlocks?.[args.previewBlocks.length - 1]?.text || ""),
+            transcriptBlocks: args.previewBlocks || [],
+            activities: args.previewActivities || [],
+          },
+        ]
       : [],
     updatedAt: args.updatedAt || "2025-01-02T12:00:00Z",
     streamId: `stream-${args.actorId}`,
@@ -150,7 +151,13 @@ describe("runtimeDockItems", () => {
   it("uses runner_effective when deciding whether an actor is headless", () => {
     const actors: Actor[] = [
       { id: "shell", title: "Shell", runtime: "codex", runner: "pty" },
-      { id: "coder", title: "Coder", runtime: "codex", runner: "pty", runner_effective: "headless" },
+      {
+        id: "coder",
+        title: "Coder",
+        runtime: "codex",
+        runner: "pty",
+        runner_effective: "headless",
+      },
     ];
 
     const items = buildRuntimeDockItems({
@@ -256,12 +263,20 @@ describe("runtimeDockItems", () => {
       }),
     ];
 
-    expect(buildRuntimeDockTickerEntries(items, 4).map((entry) => [entry.kind, entry.actorLabel, entry.text])).toEqual([
+    expect(
+      buildRuntimeDockTickerEntries(items, 4).map((entry) => [
+        entry.kind,
+        entry.actorLabel,
+        entry.text,
+      ]),
+    ).toEqual([
       ["activity", "Reviewer", "Preparing response"],
       ["message", "Coder", "I found the ticker data source issue."],
       ["activity", "Coder", "Inspected RuntimeDock"],
     ]);
-    expect(buildRuntimeDockTickerEntries(items, 2).map((entry) => [entry.actorLabel, entry.text])).toEqual([
+    expect(
+      buildRuntimeDockTickerEntries(items, 2).map((entry) => [entry.actorLabel, entry.text]),
+    ).toEqual([
       ["Reviewer", "Preparing response"],
       ["Coder", "I found the ticker data source issue."],
     ]);
@@ -306,12 +321,7 @@ describe("runtimeDockItems", () => {
     ];
 
     expect(buildRuntimeDockTickerEntries(items)).toMatchObject([
-      {
-        kind: "activity",
-        actorId: "active",
-        actorLabel: "Active",
-        text: "Reading logs",
-      },
+      { kind: "activity", actorId: "active", actorLabel: "Active", text: "Reading logs" },
     ]);
   });
 
@@ -370,7 +380,10 @@ describe("runtimeDockItems", () => {
       }),
     ];
 
-    expect(buildRuntimeDockTickerEntries(items).map((entry) => entry.text)).toEqual(["Fresh step", "Old faded step"]);
+    expect(buildRuntimeDockTickerEntries(items).map((entry) => entry.text)).toEqual([
+      "Fresh step",
+      "Old faded step",
+    ]);
   });
 
   it("preserves long streaming message text without summarizing it", () => {
@@ -384,11 +397,7 @@ describe("runtimeDockItems", () => {
           actorLabel: "Active",
           phase: "streaming",
           previewBlocks: [
-            makeMessageBlock({
-              id: "long",
-              text: longText,
-              updatedAt: "2025-01-02T12:00:00Z",
-            }),
+            makeMessageBlock({ id: "long", text: longText, updatedAt: "2025-01-02T12:00:00Z" }),
           ],
         }),
       }),
@@ -483,15 +492,14 @@ describe("runtimeDockItems", () => {
     ];
 
     const cache = createRuntimeDockTickerCache();
-    const firstVisible = upsertRuntimeDockTickerCache(cache, buildRuntimeDockTickerEntries(items), 1000);
+    const firstVisible = upsertRuntimeDockTickerCache(
+      cache,
+      buildRuntimeDockTickerEntries(items),
+      1000,
+    );
     const secondVisible = pruneRuntimeDockTickerCache(cache, 1250);
-    expect(firstVisible.map((entry) => entry.text)).toEqual([
-      "First line",
-    ]);
-    expect(secondVisible.map((entry) => entry.text)).toEqual([
-      "First line",
-      "Second line",
-    ]);
+    expect(firstVisible.map((entry) => entry.text)).toEqual(["First line"]);
+    expect(secondVisible.map((entry) => entry.text)).toEqual(["First line", "Second line"]);
   });
 
   it("buffers a short growing message until it reaches a natural boundary", () => {
@@ -507,11 +515,11 @@ describe("runtimeDockItems", () => {
     };
 
     const firstVisible = upsertRuntimeDockTickerCache(cache, [entry], 1000);
-    const secondVisible = upsertRuntimeDockTickerCache(cache, [{
-      ...entry,
-      text: "hello world.",
-      updatedAt: "2025-01-02T12:00:01Z",
-    }], 1200);
+    const secondVisible = upsertRuntimeDockTickerCache(
+      cache,
+      [{ ...entry, text: "hello world.", updatedAt: "2025-01-02T12:00:01Z" }],
+      1200,
+    );
 
     expect(firstVisible).toEqual([]);
     expect(secondVisible.map((visibleEntry) => visibleEntry.text)).toEqual(["hello world."]);
@@ -550,9 +558,9 @@ describe("runtimeDockItems", () => {
 
     expect(upsertRuntimeDockTickerCache(cache, [entry], 1000)).toEqual([]);
     expect(hasRuntimeDockTickerWork(cache)).toBe(true);
-    expect(pruneRuntimeDockTickerCache(cache, 1420).map((visibleEntry) => visibleEntry.text)).toEqual([
-      "investigating ticker rendering",
-    ]);
+    expect(
+      pruneRuntimeDockTickerCache(cache, 1420).map((visibleEntry) => visibleEntry.text),
+    ).toEqual(["investigating ticker rendering"]);
     expect(hasRuntimeDockTickerWork(cache)).toBe(true);
     expect(pruneRuntimeDockTickerCache(cache, 6421)).toEqual([]);
     expect(hasRuntimeDockTickerWork(cache)).toBe(false);
@@ -572,9 +580,11 @@ describe("runtimeDockItems", () => {
     };
 
     expect(upsertRuntimeDockTickerCache(cache, [entry], 1000)).toEqual([]);
-    expect(upsertRuntimeDockTickerCache(cache, [{ ...entry, completed: true }], 1200).map((visibleEntry) => visibleEntry.text)).toEqual([
-      "thinking",
-    ]);
+    expect(
+      upsertRuntimeDockTickerCache(cache, [{ ...entry, completed: true }], 1200).map(
+        (visibleEntry) => visibleEntry.text,
+      ),
+    ).toEqual(["thinking"]);
   });
 
   it("lets completed transcript cards flush a buffered final ticker fragment", () => {
@@ -587,13 +597,7 @@ describe("runtimeDockItems", () => {
           actorId: "active",
           actorLabel: "Active",
           phase: "streaming",
-          previewBlocks: [
-            makeMessageBlock({
-              id: "tail",
-              text: "thinking",
-              completed: false,
-            }),
-          ],
+          previewBlocks: [makeMessageBlock({ id: "tail", text: "thinking", completed: false })],
         }),
       }),
     ];
@@ -606,54 +610,58 @@ describe("runtimeDockItems", () => {
           actorLabel: "Active",
           phase: "completed",
           previewBlocks: [
-            makeMessageBlock({
-              id: "tail",
-              text: "thinking",
-              completed: true,
-              transient: false,
-            }),
+            makeMessageBlock({ id: "tail", text: "thinking", completed: true, transient: false }),
           ],
         }),
       }),
     ];
 
-    expect(upsertRuntimeDockTickerCache(cache, buildRuntimeDockTickerEntries(streamingItems), 1000)).toEqual([]);
+    expect(
+      upsertRuntimeDockTickerCache(cache, buildRuntimeDockTickerEntries(streamingItems), 1000),
+    ).toEqual([]);
     const completedEntries = buildRuntimeDockTickerEntries(completedItems);
     expect(completedEntries).toMatchObject([
-      {
-        kind: "message",
-        text: "thinking",
-        completed: true,
-      },
+      { kind: "message", text: "thinking", completed: true },
     ]);
-    expect(upsertRuntimeDockTickerCache(cache, completedEntries, 1200).map((entry) => entry.text)).toEqual([
-      "thinking",
-    ]);
+    expect(
+      upsertRuntimeDockTickerCache(cache, completedEntries, 1200).map((entry) => entry.text),
+    ).toEqual(["thinking"]);
   });
 
   it("flushes slow-growing transcript text in readable chunks instead of tiny fragments", () => {
     const cache = createRuntimeDockTickerCache();
-    const longText = "我已经在真实 UI 里抓到现象了，现在正在继续检查 ticker 的 transcript 展示是否会被过早截断。";
+    const longText =
+      "我已经在真实 UI 里抓到现象了，现在正在继续检查 ticker 的 transcript 展示是否会被过早截断。";
     let visible: RuntimeDockTickerEntry[] = [];
 
     for (let index = 1; index <= longText.length; index += 1) {
       const nowMs = 1000 + index * 100;
-      visible = upsertRuntimeDockTickerCache(cache, [{
-        id: "message:active:pending:block",
-        kind: "message",
-        actorId: "active",
-        actorLabel: "Active",
-        text: longText.slice(0, index),
-        updatedAt: "2025-01-02T12:00:00Z",
-        sourceId: "message:active:pending:block",
-        completed: false,
-      }], nowMs);
+      visible = upsertRuntimeDockTickerCache(
+        cache,
+        [
+          {
+            id: "message:active:pending:block",
+            kind: "message",
+            actorId: "active",
+            actorLabel: "Active",
+            text: longText.slice(0, index),
+            updatedAt: "2025-01-02T12:00:00Z",
+            sourceId: "message:active:pending:block",
+            completed: false,
+          },
+        ],
+        nowMs,
+      );
     }
 
     const visibleText = visible.map((visibleEntry) => visibleEntry.text).join("");
     expect(visible.length).toBeGreaterThan(1);
     expect(visibleText).toBe(longText);
-    expect(visible.every((visibleEntry) => visibleEntry.text.length >= 12 || visibleEntry.text.endsWith("。"))).toBe(true);
+    expect(
+      visible.every(
+        (visibleEntry) => visibleEntry.text.length >= 12 || visibleEntry.text.endsWith("。"),
+      ),
+    ).toBe(true);
   });
 
   it("flushes punctuation-free transcript text after the timed delay", () => {
@@ -671,9 +679,9 @@ describe("runtimeDockItems", () => {
 
     expect(upsertRuntimeDockTickerCache(cache, [entry], 1000)).toEqual([]);
     expect(pruneRuntimeDockTickerCache(cache, 1300)).toEqual([]);
-    expect(pruneRuntimeDockTickerCache(cache, 1420).map((visibleEntry) => visibleEntry.text)).toEqual([
-      "investigating ticker rendering",
-    ]);
+    expect(
+      pruneRuntimeDockTickerCache(cache, 1420).map((visibleEntry) => visibleEntry.text),
+    ).toEqual(["investigating ticker rendering"]);
   });
 
   it("does not reinsert an expired ticker entry when old preview history is returned again", () => {
@@ -697,9 +705,15 @@ describe("runtimeDockItems", () => {
       sourceId: "message:active:pending:block-fresh",
     };
 
-    expect(upsertRuntimeDockTickerCache(cache, [expiredEntry], 1000).map((entry) => entry.text)).toEqual(["Old line."]);
+    expect(
+      upsertRuntimeDockTickerCache(cache, [expiredEntry], 1000).map((entry) => entry.text),
+    ).toEqual(["Old line."]);
     expect(pruneRuntimeDockTickerCache(cache, 7001)).toEqual([]);
-    expect(upsertRuntimeDockTickerCache(cache, [freshEntry, expiredEntry], 7002).map((entry) => entry.text)).toEqual(["Fresh line."]);
+    expect(
+      upsertRuntimeDockTickerCache(cache, [freshEntry, expiredEntry], 7002).map(
+        (entry) => entry.text,
+      ),
+    ).toEqual(["Fresh line."]);
   });
 
   it("allows an expired ticker entry id to reappear when its streamed text changes", () => {
@@ -713,16 +727,16 @@ describe("runtimeDockItems", () => {
       updatedAt: "2025-01-02T12:00:00Z",
       sourceId: "message:active:pending:block",
     };
-    const updatedEntry = {
-      ...entry,
-      text: "Draft updated.",
-      updatedAt: "2025-01-02T12:00:08Z",
-    };
+    const updatedEntry = { ...entry, text: "Draft updated.", updatedAt: "2025-01-02T12:00:08Z" };
 
     upsertRuntimeDockTickerCache(cache, [entry], 1000);
     pruneRuntimeDockTickerCache(cache, 7001);
 
-    expect(upsertRuntimeDockTickerCache(cache, [updatedEntry], 7002).map((visibleEntry) => visibleEntry.text)).toEqual(["Draft updated."]);
+    expect(
+      upsertRuntimeDockTickerCache(cache, [updatedEntry], 7002).map(
+        (visibleEntry) => visibleEntry.text,
+      ),
+    ).toEqual(["Draft updated."]);
   });
 
   it("starts a new message revision when the accumulated text is rewritten", () => {
@@ -738,11 +752,11 @@ describe("runtimeDockItems", () => {
     };
 
     upsertRuntimeDockTickerCache(cache, [entry], 1000);
-    const visible = upsertRuntimeDockTickerCache(cache, [{
-      ...entry,
-      text: "Rewritten answer.",
-      updatedAt: "2025-01-02T12:00:01Z",
-    }], 1200);
+    const visible = upsertRuntimeDockTickerCache(
+      cache,
+      [{ ...entry, text: "Rewritten answer.", updatedAt: "2025-01-02T12:00:01Z" }],
+      1200,
+    );
 
     expect(visible.map((visibleEntry) => visibleEntry.text)).toEqual([
       "First draft.",
@@ -754,11 +768,7 @@ describe("runtimeDockItems", () => {
     const failedItem = makeRuntimeDockItem({
       actorId: "failed",
       actorLabel: "Failed",
-      liveWorkCard: makeLiveWorkCard({
-        actorId: "failed",
-        actorLabel: "Failed",
-        phase: "failed",
-      }),
+      liveWorkCard: makeLiveWorkCard({ actorId: "failed", actorLabel: "Failed", phase: "failed" }),
     });
     const pendingItem = makeRuntimeDockItem({
       actorId: "pending",

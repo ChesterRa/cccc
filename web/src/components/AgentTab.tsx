@@ -3,7 +3,14 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { useTranslation } from "react-i18next";
-import { Actor, AgentState, HeadlessPreviewSession, HeadlessStreamEvent, StreamingActivity, RUNTIME_INFO } from "../types";
+import {
+  Actor,
+  AgentState,
+  HeadlessPreviewSession,
+  HeadlessStreamEvent,
+  StreamingActivity,
+  RUNTIME_INFO,
+} from "../types";
 import { useActorDisplayState } from "../hooks/useActorDisplayState";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
@@ -11,7 +18,17 @@ import { formatFullTime, formatTime } from "../utils/time";
 import { useGroupStore, useObservabilityStore, useTerminalSignalsStore } from "../stores";
 import { HeadlessRuntimePanel } from "./headless/HeadlessRuntimePanel";
 import { WebModelRuntimePanel } from "./webModel/WebModelRuntimePanel";
-import { AlertIcon, StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, TerminalIcon, PlusIcon } from "./Icons";
+import {
+  AlertIcon,
+  StopIcon,
+  RefreshIcon,
+  InboxIcon,
+  TrashIcon,
+  PlayIcon,
+  EditIcon,
+  TerminalIcon,
+  PlusIcon,
+} from "./Icons";
 import { ScrollFade } from "./ScrollFade";
 import { getRuntimeIndicatorState } from "../utils/statusIndicators";
 import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
@@ -19,7 +36,11 @@ import { copyTextToClipboard } from "../utils/copy";
 import { getStoppedTerminalOutputText } from "../utils/stoppedTerminalOutput";
 import { fetchTerminalTail } from "../services/api/diagnostics";
 import { useAgentTerminalConnection } from "./agentTerminal/useAgentTerminalConnection";
-import { actorHasRuntimeResumeFailure, shouldFetchStoppedTerminalTail } from "./AgentTab.model";
+import {
+  actorHasRuntimeResumeFailure,
+  actorSupportsNewSession,
+  shouldFetchStoppedTerminalTail,
+} from "./AgentTab.model";
 import { ActorAvatar } from "./ActorAvatar";
 
 const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
@@ -30,7 +51,11 @@ const STOPPED_TAIL_FETCH_DELAY_MS = 350;
 const copyToClipboard = copyTextToClipboard;
 
 function normalizeActorGroupRole(role: unknown): "foreman" | "peer" {
-  return String(role || "").trim().toLowerCase() === "foreman" ? "foreman" : "peer";
+  return String(role || "")
+    .trim()
+    .toLowerCase() === "foreman"
+    ? "foreman"
+    : "peer";
 }
 
 function actorGroupRoleBadgeClass(role: "foreman" | "peer"): string {
@@ -96,13 +121,16 @@ export function AgentTab({
   isSmallScreen,
   onStatusChange,
 }: AgentTabProps) {
-  const { t } = useTranslation('actors');
+  const { t } = useTranslation("actors");
   // Derived state (must be defined before refs that use them)
   const { isRunning, workingState } = useActorDisplayState({ groupId, actor });
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
-  const isWebModel = String(actor.runtime || "").trim().toLowerCase() === "web_model";
-  const canStartNewSession = ["claude", "codex"].includes(String(actor.runtime || "").trim().toLowerCase());
+  const isWebModel =
+    String(actor.runtime || "")
+      .trim()
+      .toLowerCase() === "web_model";
+  const canStartNewSession = actorSupportsNewSession(actor.runtime);
   const hasRuntimeResumeFailure = actorHasRuntimeResumeFailure(actor);
   const runtimeResumeError = String(actor.runtime_session_last_resume_error || "").trim();
   const canControl = !readOnly;
@@ -147,13 +175,22 @@ export function AgentTab({
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  // Initialization snapshot; live option effects below keep it current without recreating xterm.
+  const terminalOptionsSnapshotRef = useRef({
+    isDark,
+    canControl,
+    scrollbackLines: terminalScrollbackLines,
+  });
   const [activated, setActivated] = useState(false);
   // Bumped to trigger a fresh WebSocket connection from the reconnect button
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
   const [stoppedTerminalText, setStoppedTerminalText] = useState("");
   const [stoppedTerminalLoading, setStoppedTerminalLoading] = useState(false);
 
-  const pasteStateRef = useRef<{ inFlight: boolean; lastAt: number }>({ inFlight: false, lastAt: 0 });
+  const pasteStateRef = useRef<{ inFlight: boolean; lastAt: number }>({
+    inFlight: false,
+    lastAt: 0,
+  });
 
   // Ref to avoid stale closure in WebSocket callbacks
   const canControlRef = useRef(canControl);
@@ -204,7 +241,9 @@ export function AgentTab({
       fetchTerminalTail(groupId, actor.id, 8000, true, true)
         .then((resp) => {
           if (cancelled) return;
-          setStoppedTerminalText(resp.ok ? getStoppedTerminalOutputText(resp.result.text || "", workingState) : "");
+          setStoppedTerminalText(
+            resp.ok ? getStoppedTerminalOutputText(resp.result.text || "", workingState) : "",
+          );
         })
         .catch(() => {
           if (!cancelled) setStoppedTerminalText("");
@@ -227,7 +266,8 @@ export function AgentTab({
     void loadObservability();
   }, [activated, loadObservability, observabilityLoaded]);
 
-  const rtInfo = (actor.runtime && RUNTIME_INFO[actor.runtime]) ? RUNTIME_INFO[actor.runtime] : RUNTIME_INFO.codex;
+  const rtInfo =
+    actor.runtime && RUNTIME_INFO[actor.runtime] ? RUNTIME_INFO[actor.runtime] : RUNTIME_INFO.codex;
   const unreadCount = actor.unread_count ?? 0;
   const statusClamp2Style: CSSProperties = {
     display: "-webkit-box",
@@ -236,7 +276,10 @@ export function AgentTab({
     overflow: "hidden",
   };
 
-  const runtimeIndicator = getRuntimeIndicatorState({ isRunning: Boolean(isRunning), workingState });
+  const runtimeIndicator = getRuntimeIndicatorState({
+    isRunning: Boolean(isRunning),
+    workingState,
+  });
   const statusTone = (() => {
     switch (runtimeIndicator.tone) {
       case "stop":
@@ -270,7 +313,7 @@ export function AgentTab({
     return t("running");
   })();
   const handleNewSession = () => {
-    if (!window.confirm(t('newSessionConfirm'))) return;
+    if (!window.confirm(t("newSessionConfirm"))) return;
     onNewSession();
   };
   const stoppedTerminalOutputText = getStoppedTerminalOutputText(stoppedTerminalText, workingState);
@@ -279,21 +322,21 @@ export function AgentTab({
       className={classNames(
         "flex w-full max-w-xl flex-col items-center rounded-lg border px-4 py-4 text-center",
         "border-amber-500/30 bg-amber-500/10 text-amber-700",
-        "dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-100"
+        "dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-100",
       )}
     >
       <AlertIcon size={40} />
       <div className="mt-3 text-lg font-semibold text-[var(--color-text-primary)]">
-        {t('runtimeResumeFailedTitle')}
+        {t("runtimeResumeFailedTitle")}
       </div>
       <div className="mt-2 max-w-md text-sm leading-relaxed text-[var(--color-text-secondary)]">
-        {t('runtimeResumeFailedDescription')}
+        {t("runtimeResumeFailedDescription")}
       </div>
       {runtimeResumeError ? (
         <pre
           className={classNames(
             "mt-3 max-h-28 w-full overflow-auto whitespace-pre-wrap break-words rounded-md border px-3 py-2 text-left font-mono text-xs leading-relaxed",
-            "border-amber-500/25 bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"
+            "border-amber-500/25 bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]",
           )}
         >
           {runtimeResumeError}
@@ -308,45 +351,44 @@ export function AgentTab({
   const ghostActionButtonClass =
     "inline-flex items-center gap-1.5 rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-[var(--color-text-tertiary)] transition-colors hover:border-[var(--glass-border-subtle)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-50 disabled:cursor-not-allowed";
 
-  // Update terminal theme when isDark changes
   useEffect(() => {
+    terminalOptionsSnapshotRef.current.isDark = isDark;
     if (terminalRef.current) {
       terminalRef.current.options.theme = getTerminalTheme(isDark);
     }
   }, [isDark]);
 
   useEffect(() => {
+    terminalOptionsSnapshotRef.current.canControl = canControl;
     if (terminalRef.current) {
       terminalRef.current.options.disableStdin = !canControl;
       terminalRef.current.options.cursorBlink = canControl;
     }
   }, [canControl]);
 
-  // Update terminal scrollback when global settings change.
   useEffect(() => {
+    terminalOptionsSnapshotRef.current.scrollbackLines = terminalScrollbackLines;
     if (terminalRef.current) {
       terminalRef.current.options.scrollback = terminalScrollbackLines;
     }
   }, [terminalScrollbackLines]);
 
-  // Initialize terminal. Theme, stdin, and scrollback changes are applied by
-  // option-update effects above; they must not dispose/recreate the live xterm
-  // instance because the WebSocket input/resize subscriptions are bound to it.
+  // Initialize once; live option changes above must not recreate the WebSocket-bound xterm.
   useEffect(() => {
     if (!termRef.current || isHeadless || !isRunning || !activated) return;
 
     const term = new Terminal({
-      cursorBlink: canControl,
+      cursorBlink: terminalOptionsSnapshotRef.current.canControl,
       // Avoid an extra blinking "outline" cursor when the terminal isn't focused.
       // Some runtimes render their own cursor; xterm's inactive cursor can look like a second cursor.
       cursorInactiveStyle: "none",
       fontSize: 13,
       fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, monospace',
-      theme: getTerminalTheme(isDark),
-      disableStdin: !canControl,
+      theme: getTerminalTheme(terminalOptionsSnapshotRef.current.isDark),
+      disableStdin: !terminalOptionsSnapshotRef.current.canControl,
       // Bigger scrollback improves history browsing without going "infinite" and hurting perf.
       // Default is 8k lines; the user can override it in Global → Developer settings.
-      scrollback: terminalScrollbackLines || 8000,
+      scrollback: terminalOptionsSnapshotRef.current.scrollbackLines || 8000,
       allowProposedApi: true,
     });
 
@@ -399,19 +441,23 @@ export function AgentTab({
           pasteStateRef.current.inFlight = true;
           pasteStateRef.current.lastAt = now;
 
-          void readText.call(navigator.clipboard).then((text: string) => {
-            const t = (text || "").toString();
-            if (!t) return;
-            try {
-              term.paste(t);
-            } catch {
-              // ignore
-            }
-          }).catch(() => {
-            // If clipboard read is blocked, fall back to default behavior.
-          }).finally(() => {
-            pasteStateRef.current.inFlight = false;
-          });
+          void readText
+            .call(navigator.clipboard)
+            .then((text: string) => {
+              const t = (text || "").toString();
+              if (!t) return;
+              try {
+                term.paste(t);
+              } catch {
+                // ignore
+              }
+            })
+            .catch(() => {
+              // If clipboard read is blocked, fall back to default behavior.
+            })
+            .finally(() => {
+              pasteStateRef.current.inFlight = false;
+            });
           return false;
         }
       }
@@ -451,35 +497,30 @@ export function AgentTab({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [actor.id, groupId, isHeadless, isRunning, activated, canControl]);
+  }, [actor.id, groupId, isHeadless, isRunning, activated]);
 
   const fitTerminalBeforeAttach = useCallback(() => {
     fitTerminalToContainer(fitAddonRef.current, termRef.current);
   }, []);
 
-  const {
-    connectionStatus,
-    terminalReady,
-    terminalWritable,
-    requestReconnect,
-    sendInterrupt,
-  } = useAgentTerminalConnection({
-    activated,
-    isRunning,
-    isHeadless,
-    groupId,
-    actorId: actor.id,
-    actorRuntime: actor.runtime,
-    canControl,
-    termEpoch,
-    reconnectTrigger,
-    terminalRef,
-    fitBeforeAttach: fitTerminalBeforeAttach,
-    onStatusChange,
-    setTerminalSignal,
-    clearTerminalSignal,
-    setReconnectTrigger,
-  });
+  const { connectionStatus, terminalReady, terminalWritable, requestReconnect, sendInterrupt } =
+    useAgentTerminalConnection({
+      activated,
+      isRunning,
+      isHeadless,
+      groupId,
+      actorId: actor.id,
+      actorRuntime: actor.runtime,
+      canControl,
+      termEpoch,
+      reconnectTrigger,
+      terminalRef,
+      fitBeforeAttach: fitTerminalBeforeAttach,
+      onStatusChange,
+      setTerminalSignal,
+      clearTerminalSignal,
+      setReconnectTrigger,
+    });
 
   // Fit terminal on visibility change and resize (with debounce to reduce jitter)
   useEffect(() => {
@@ -543,21 +584,27 @@ export function AgentTab({
     return () => clearTimeout(t);
   }, [canControl, isVisible, isSmallScreen, terminalReady, terminalWritable]);
 
-  const stateHeadline = String(agentState?.hot?.focus || agentState?.hot?.next_action || "").trim() || t('noAgentStateYet');
+  const stateHeadline =
+    String(agentState?.hot?.focus || agentState?.hot?.next_action || "").trim() ||
+    t("noAgentStateYet");
   const stateTask = String(agentState?.hot?.active_task_id || "").trim();
-  const blockerCount = Array.isArray(agentState?.hot?.blockers) ? agentState.hot.blockers.length : 0;
+  const blockerCount = Array.isArray(agentState?.hot?.blockers)
+    ? agentState.hot.blockers.length
+    : 0;
   const stateNext = String(agentState?.hot?.next_action || "").trim();
   const actorGroupRole = normalizeActorGroupRole(actor.role);
 
   return (
     <div className="flex flex-col h-full">
       {/* Agent Header */}
-      <div className={classNames(
-        "border-b px-4 py-2 sm:px-5",
-        isDark
-          ? "border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))]"
-          : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.88))]"
-      )}>
+      <div
+        className={classNames(
+          "border-b px-4 py-2 sm:px-5",
+          isDark
+            ? "border-white/8 bg-[linear-gradient(180deg,rgba(255,255,255,0.025),rgba(255,255,255,0.01))]"
+            : "border-black/6 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.88))]",
+        )}
+      >
         <div className="flex items-center justify-between gap-4">
           <div className="flex min-w-0 items-center gap-4">
             <div className="relative flex-shrink-0">
@@ -577,7 +624,7 @@ export function AgentTab({
                 className={classNames(
                   "absolute -bottom-0.5 -right-0.5 inline-flex h-2.5 w-2.5 rounded-full ring-2 transition-all",
                   isDark ? "ring-slate-950" : "ring-white",
-                  statusTone.dotClass
+                  statusTone.dotClass,
                 )}
               >
                 {statusTone.pulse && (
@@ -586,7 +633,7 @@ export function AgentTab({
                       "absolute inset-[-3px] rounded-full motion-reduce:animate-none",
                       statusTone.strongPulse
                         ? "animate-ping bg-emerald-300/35"
-                        : "animate-pulse bg-current/20"
+                        : "animate-pulse bg-current/20",
                     )}
                   />
                 )}
@@ -599,24 +646,31 @@ export function AgentTab({
             <div className="flex min-w-0 items-center gap-3">
               <div className="min-w-0 shrink-0">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="min-w-0 truncate font-semibold text-[var(--color-text-primary)]">{actor.title || actor.id}</span>
+                  <span className="min-w-0 truncate font-semibold text-[var(--color-text-primary)]">
+                    {actor.title || actor.id}
+                  </span>
                   <span className={actorGroupRoleBadgeClass(actorGroupRole)}>
                     {actorGroupRole === "foreman"
                       ? t("groupRoleForeman", { defaultValue: "Foreman" })
                       : t("groupRolePeer", { defaultValue: "Peer" })}
                   </span>
                 </div>
-                <div className={classNames("mt-0.5 text-xs truncate", "text-[var(--color-text-tertiary)]")}>
-                  {rtInfo?.label || t('custom')} • {runtimeStatusText}
-                  {isHeadless && ` • ${t('headless')}`}
+                <div
+                  className={classNames(
+                    "mt-0.5 text-xs truncate",
+                    "text-[var(--color-text-tertiary)]",
+                  )}
+                >
+                  {rtInfo?.label || t("custom")} • {runtimeStatusText}
+                  {isHeadless && ` • ${t("headless")}`}
                 </div>
                 {/* Mobile-only: condensed single-line agent state */}
                 <div
                   className={classNames(
                     "sm:hidden mt-1 text-[11px] truncate leading-tight",
-                    stateHeadline !== t('noAgentStateYet')
+                    stateHeadline !== t("noAgentStateYet")
                       ? "text-[var(--color-text-secondary)]"
-                      : "text-[var(--color-text-muted)] italic"
+                      : "text-[var(--color-text-muted)] italic",
                   )}
                   title={stateHeadline}
                 >
@@ -629,19 +683,19 @@ export function AgentTab({
                   "hidden sm:grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-start gap-2 rounded-xl border px-3 py-1.5 backdrop-blur-sm",
                   isDark
                     ? "max-w-[min(660px,54vw)] border-white/10 bg-white/[0.035]"
-                    : "max-w-[min(660px,54vw)] border-black/8 bg-white/78"
+                    : "max-w-[min(660px,54vw)] border-black/8 bg-white/78",
                 )}
-                aria-label={t('agentState')}
+                aria-label={t("agentState")}
               >
                 <div className="min-w-0">
                   <div
                     className={classNames(
                       "min-w-0 text-sm font-medium leading-[1.15rem]",
-                      stateHeadline !== t('noAgentStateYet')
+                      stateHeadline !== t("noAgentStateYet")
                         ? "text-[var(--color-text-primary)]"
                         : isDark
                           ? "text-slate-500 italic"
-                          : "text-gray-500 italic"
+                          : "text-gray-500 italic",
                     )}
                     style={statusClamp2Style}
                     title={
@@ -652,21 +706,32 @@ export function AgentTab({
                   >
                     <span>{stateHeadline}</span>
                   </div>
-                  {(stateTask || blockerCount > 0 || stateNext) ? (
+                  {stateTask || blockerCount > 0 || stateNext ? (
                     <div className="mt-0.5 flex min-w-0 items-center gap-1.5">
                       {stateTask ? (
-                        <span className={classNames("shrink-0 rounded-full bg-[var(--glass-tab-bg)] px-2 py-0.5 text-[10px] text-[var(--color-text-secondary)]")}>
+                        <span
+                          className={classNames(
+                            "shrink-0 rounded-full bg-[var(--glass-tab-bg)] px-2 py-0.5 text-[10px] text-[var(--color-text-secondary)]",
+                          )}
+                        >
                           {t("taskShort", { id: stateTask })}
                         </span>
                       ) : null}
                       {blockerCount > 0 ? (
-                        <span className={classNames("shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] text-rose-600 dark:text-rose-300")}>
+                        <span
+                          className={classNames(
+                            "shrink-0 rounded-full bg-rose-500/15 px-2 py-0.5 text-[10px] text-rose-600 dark:text-rose-300",
+                          )}
+                        >
                           {t("blockersShort", { count: blockerCount })}
                         </span>
                       ) : null}
                       {stateNext ? (
                         <span
-                          className={classNames("min-w-0 truncate text-[10px] leading-4", "text-[var(--color-text-tertiary)]")}
+                          className={classNames(
+                            "min-w-0 truncate text-[10px] leading-4",
+                            "text-[var(--color-text-tertiary)]",
+                          )}
                           title={stateNext}
                         >
                           {t("nextShort", { value: stateNext })}
@@ -683,18 +748,22 @@ export function AgentTab({
               </div>
             </div>
           </div>
-
         </div>
       </div>
 
       {/* Terminal or Status Area */}
       {/* contain: layout prevents terminal content changes from triggering parent layout recalculation */}
-      <div className={classNames("flex-1 min-h-0 relative", "bg-[var(--color-bg-secondary)]")} style={{ contain: 'layout', overflow: 'hidden' }}>
+      <div
+        className={classNames("flex-1 min-h-0 relative", "bg-[var(--color-bg-secondary)]")}
+        style={{ contain: "layout", overflow: "hidden" }}
+      >
         {isHeadless ? (
           <div
             className={classNames(
               "flex h-full min-h-0 flex-col",
-              isWebModel ? "px-3 pb-3 pt-2 sm:px-4 sm:pb-4" : "px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3",
+              isWebModel
+                ? "px-3 pb-3 pt-2 sm:px-4 sm:pb-4"
+                : "px-5 pb-5 pt-3 sm:px-7 sm:pb-6 sm:pt-3",
             )}
           >
             <div
@@ -725,7 +794,9 @@ export function AgentTab({
                       fallbackText={latestHeadlessText}
                       fallbackActivities={latestHeadlessActivities}
                       rawEvents={rawHeadlessEvents}
-                      emptyLabel={t('noStreamingOutputYet', { defaultValue: 'There is no streaming output to show yet.' })}
+                      emptyLabel={t("noStreamingOutputYet", {
+                        defaultValue: "There is no streaming output to show yet.",
+                      })}
                       isDark={isDark}
                     />
                   )}
@@ -742,21 +813,25 @@ export function AgentTab({
               ref={termRef}
               className="h-full w-full transition-opacity duration-100"
               style={{
-                contain: 'layout paint',
-                overflow: 'hidden',
+                contain: "layout paint",
+                overflow: "hidden",
                 opacity: terminalReady ? 1 : 0,
               }}
             />
             {/* Connection error overlay — shown when all reconnect attempts failed and terminal never became ready */}
-            {connectionStatus === 'disconnected' && !terminalReady && (
-              <div className={classNames(
-                "absolute inset-0 flex flex-col items-center justify-center p-8",
-                "text-[var(--color-text-tertiary)] bg-[var(--glass-panel-bg)]"
-              )}>
-                <div className="mb-4"><TerminalIcon size={48} /></div>
-                <div className="text-lg font-medium mb-2">{t('connectionLost')}</div>
+            {connectionStatus === "disconnected" && !terminalReady && (
+              <div
+                className={classNames(
+                  "absolute inset-0 flex flex-col items-center justify-center p-8",
+                  "text-[var(--color-text-tertiary)] bg-[var(--glass-panel-bg)]",
+                )}
+              >
+                <div className="mb-4">
+                  <TerminalIcon size={48} />
+                </div>
+                <div className="text-lg font-medium mb-2">{t("connectionLost")}</div>
                 <div className="text-sm text-center max-w-md mb-4">
-                  {t('connectionLostDescription')}
+                  {t("connectionLostDescription")}
                 </div>
                 {canControl && (
                   <button
@@ -764,29 +839,41 @@ export function AgentTab({
                     className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium min-h-[44px] transition-colors"
                   >
                     <RefreshIcon size={16} />
-                    {t('reconnect')}
+                    {t("reconnect")}
                   </button>
                 )}
               </div>
             )}
-            {canControl && connectionStatus === 'connected' && terminalReady && !terminalWritable ? (
+            {canControl &&
+            connectionStatus === "connected" &&
+            terminalReady &&
+            !terminalWritable ? (
               <div className="absolute right-4 top-4 z-10 rounded-lg border border-amber-500/30 bg-amber-500/12 px-3 py-2 text-xs font-medium text-amber-700 shadow-sm backdrop-blur dark:text-amber-200">
-                {t('terminalReadOnlyNotice', { defaultValue: 'Terminal is connected read-only. Reconnect to take control.' })}
+                {t("terminalReadOnlyNotice", {
+                  defaultValue: "Terminal is connected read-only. Reconnect to take control.",
+                })}
               </div>
             ) : null}
           </>
         ) : (
           // Stopped agent
-          <div className={classNames("flex flex-col items-center h-full p-8 overflow-y-auto", "text-[var(--color-text-tertiary)]")}>
+          <div
+            className={classNames(
+              "flex flex-col items-center h-full p-8 overflow-y-auto",
+              "text-[var(--color-text-tertiary)]",
+            )}
+          >
             <div className="flex flex-col items-center flex-shrink-0">
               {resumeFailureNotice ? (
                 <div className="mb-4">{resumeFailureNotice}</div>
               ) : (
                 <>
-                  <div className="mb-4"><TerminalIcon size={48} /></div>
-                  <div className="text-lg font-medium mb-2">{t('agentNotRunning')}</div>
+                  <div className="mb-4">
+                    <TerminalIcon size={48} />
+                  </div>
+                  <div className="text-lg font-medium mb-2">{t("agentNotRunning")}</div>
                   <div className="text-sm text-center max-w-md mb-4">
-                    {t('agentStoppedDescription')}
+                    {t("agentStoppedDescription")}
                   </div>
                 </>
               )}
@@ -795,22 +882,22 @@ export function AgentTab({
                   onClick={onLaunch}
                   disabled={isBusy}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium disabled:opacity-50 min-h-[44px] transition-colors"
-                  aria-label={t('launchAgentLabel')}
+                  aria-label={t("launchAgentLabel")}
                 >
                   <PlayIcon size={16} />
-                  {isBusy ? t('launching') : t('launchAgent')}
+                  {isBusy ? t("launching") : t("launchAgent")}
                 </button>
               ) : null}
             </div>
             <div className="mt-6 w-full max-w-xl flex-shrink-0 rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-4 py-3 text-sm text-[var(--color-text-secondary)]">
               {stoppedTerminalLoading ? (
-                t('loadingLastTerminalOutput')
+                t("loadingLastTerminalOutput")
               ) : stoppedTerminalOutputText ? (
                 <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-left font-mono text-xs leading-relaxed">
                   {stoppedTerminalOutputText}
                 </pre>
               ) : (
-                t('noRecentTerminalOutput')
+                t("noRecentTerminalOutput")
               )}
             </div>
           </div>
@@ -820,10 +907,7 @@ export function AgentTab({
       {/* Action Buttons - Scrollable on mobile with fade edges */}
       {canControl ? (
         <ScrollFade
-          className={classNames(
-            "border-t select-none",
-            "glass-header"
-          )}
+          className={classNames("border-t select-none", "glass-header")}
           innerClassName="flex items-center gap-2 px-4 py-3 sm:px-5"
           fadeWidth={20}
         >
@@ -833,17 +917,17 @@ export function AgentTab({
                 onClick={onQuit}
                 disabled={isBusy}
                 className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                aria-label={t('quitAgent')}
+                aria-label={t("quitAgent")}
               >
                 <StopIcon size={16} />
-                {!isSmallScreen && t('quit')}
+                {!isSmallScreen && t("quit")}
               </button>
               <button
                 onClick={sendInterrupt}
-                disabled={connectionStatus !== 'connected' || !terminalWritable}
+                disabled={connectionStatus !== "connected" || !terminalWritable}
                 className={`${ghostActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                title={t('sendInterruptTitle')}
-                aria-label={t('sendInterruptLabel')}
+                title={t("sendInterruptTitle")}
+                aria-label={t("sendInterruptLabel")}
               >
                 ⌃C
               </button>
@@ -851,30 +935,30 @@ export function AgentTab({
                 onClick={onRelaunch}
                 disabled={isBusy}
                 className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                aria-label={t('relaunchAgent')}
+                aria-label={t("relaunchAgent")}
               >
                 <RefreshIcon size={16} />
-                {!isSmallScreen && t('relaunch')}
+                {!isSmallScreen && t("relaunch")}
               </button>
               {canStartNewSession ? (
                 <button
                   onClick={handleNewSession}
                   disabled={isBusy}
                   className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                  aria-label={t('newSessionAgent')}
+                  aria-label={t("newSessionAgent")}
                 >
                   <PlusIcon size={16} />
-                  {!isSmallScreen && t('newSession')}
+                  {!isSmallScreen && t("newSession")}
                 </button>
               ) : null}
               <button
                 onClick={onEdit}
                 disabled={isBusy}
                 className={`${ghostActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                aria-label={t('editAgentConfig')}
+                aria-label={t("editAgentConfig")}
               >
                 <EditIcon size={16} />
-                {!isSmallScreen && t('common:edit')}
+                {!isSmallScreen && t("common:edit")}
               </button>
             </>
           ) : (
@@ -883,29 +967,29 @@ export function AgentTab({
                 onClick={onLaunch}
                 disabled={isBusy}
                 className={`${primaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                aria-label={t('launchAgentLabel')}
+                aria-label={t("launchAgentLabel")}
               >
                 <PlayIcon size={16} />
-                {isBusy ? t('launching') : t('launch')}
+                {isBusy ? t("launching") : t("launch")}
               </button>
               {canStartNewSession ? (
                 <button
                   onClick={handleNewSession}
                   disabled={isBusy}
                   className={`${secondaryActionButtonClass} flex-shrink-0 whitespace-nowrap`}
-                  aria-label={t('newSessionAgent')}
+                  aria-label={t("newSessionAgent")}
                 >
                   <PlusIcon size={16} />
-                  {t('newSession')}
+                  {t("newSession")}
                 </button>
               ) : null}
               <button
                 onClick={onEdit}
                 disabled={isBusy}
                 className={ghostActionButtonClass}
-                aria-label={t('editAgentConfig')}
+                aria-label={t("editAgentConfig")}
               >
-                <EditIcon size={16} /> {t('common:edit')}
+                <EditIcon size={16} /> {t("common:edit")}
               </button>
             </>
           )}
@@ -919,17 +1003,17 @@ export function AgentTab({
                   : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] hover:bg-white"
                 : isDark
                   ? "border-white/10 bg-white/[0.06] hover:bg-white/[0.1] text-white"
-                  : "border-black/10 bg-white hover:bg-[rgb(245,245,245)] text-[rgb(35,36,37)]"
+                  : "border-black/10 bg-white hover:bg-[rgb(245,245,245)] text-[rgb(35,36,37)]",
             )}
-            aria-label={`${t('openInbox')}${unreadCount > 0 ? t('unreadMessages', { count: unreadCount }) : ""}`}
+            aria-label={`${t("openInbox")}${unreadCount > 0 ? t("unreadMessages", { count: unreadCount }) : ""}`}
           >
             <InboxIcon size={16} />
-            {!isSmallScreen && t('inbox')}
+            {!isSmallScreen && t("inbox")}
             {unreadCount > 0 && (
               <span
                 className={classNames(
                   "text-[10px] px-1.5 py-0.5 rounded-full font-semibold tracking-tight shadow-sm",
-                  isDark ? "bg-white text-[rgb(20,20,22)]" : "bg-[rgb(35,36,37)] text-white"
+                  isDark ? "bg-white text-[rgb(20,20,22)]" : "bg-[rgb(35,36,37)] text-white",
                 )}
                 aria-hidden="true"
               >
@@ -942,13 +1026,13 @@ export function AgentTab({
             disabled={isBusy || isRunning}
             className={classNames(
               "flex items-center gap-1.5 rounded-xl px-3 py-2.5 text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-              "text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+              "text-rose-600 hover:bg-rose-500/10 dark:text-rose-400",
             )}
-            title={isRunning ? t('stopBeforeRemoving') : t('removeAgent')}
-            aria-label={t('removeAgent')}
+            title={isRunning ? t("stopBeforeRemoving") : t("removeAgent")}
+            aria-label={t("removeAgent")}
           >
             <TrashIcon size={16} />
-            {!isSmallScreen && t('common:remove')}
+            {!isSmallScreen && t("common:remove")}
           </button>
         </ScrollFade>
       ) : null}

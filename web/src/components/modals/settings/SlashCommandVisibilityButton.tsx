@@ -11,7 +11,8 @@ export function SlashCommandVisibilityButton(props: {
   hideActionLabel: string;
   onToggle: (nextVisible: boolean) => void;
 }) {
-  const { hidden, busy, visibleLabel, hiddenLabel, showActionLabel, hideActionLabel, onToggle } = props;
+  const { hidden, busy, visibleLabel, hiddenLabel, showActionLabel, hideActionLabel, onToggle } =
+    props;
   const Icon = hidden ? EyeOff : Eye;
   const label = hidden ? hiddenLabel : visibleLabel;
   const actionLabel = hidden ? showActionLabel : hideActionLabel;

@@ -2,10 +2,25 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 SUGGESTED_USER_MESSAGE_MAX_CHARS = 4000
+INSIGHT_MAX_CHARS = 1200
+
+
+def normalize_insight(value: Any) -> Optional[str]:
+    """Normalize the optional sender perspective carried by a chat message."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("insight must be a string")
+    normalized = value.strip()
+    if not normalized:
+        return None
+    if len(normalized) > INSIGHT_MAX_CHARS:
+        raise ValueError(f"insight must be at most {INSIGHT_MAX_CHARS} characters")
+    return normalized
 
 
 class Reference(BaseModel):
@@ -40,6 +55,7 @@ class ChatMessageData(BaseModel):
     # Core content
     text: str
     format: Literal["plain", "markdown"] = "plain"
+    insight: Optional[str] = Field(default=None, max_length=INSIGHT_MAX_CHARS)
 
     # Priority / workflow semantics
     priority: Literal["normal", "attention"] = "normal"
@@ -84,6 +100,11 @@ class ChatMessageData(BaseModel):
         default=None,
         max_length=SUGGESTED_USER_MESSAGE_MAX_CHARS,
     )  # Optional human-owned next-message suggestion; never auto-sent.
+
+    @field_validator("insight", mode="before")
+    @classmethod
+    def _normalize_insight(cls, value: Any) -> Optional[str]:
+        return normalize_insight(value)
 
     model_config = ConfigDict(extra="forbid")
 

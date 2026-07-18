@@ -1,8 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
-import { actorHasRuntimeResumeFailure, shouldFetchStoppedTerminalTail } from "../../src/components/AgentTab.model";
+import {
+  actorHasRuntimeResumeFailure,
+  actorSupportsNewSession,
+  shouldFetchStoppedTerminalTail,
+} from "../../src/components/AgentTab.model";
 
 describe("AgentTab stopped terminal tail model", () => {
+  it("offers explicit new-session control for every managed resume runtime", () => {
+    for (const runtime of ["claude", "codex", "grok"]) {
+      expect(actorSupportsNewSession(runtime)).toBe(true);
+    }
+    expect(actorSupportsNewSession("opencode")).toBe(false);
+  });
+
   it("detects persisted runtime resume failures from actor state", () => {
     expect(actorHasRuntimeResumeFailure({ runtime_session_status: "resume_failed" })).toBe(true);
     expect(actorHasRuntimeResumeFailure({ runtime_session_status: "usable" })).toBe(false);

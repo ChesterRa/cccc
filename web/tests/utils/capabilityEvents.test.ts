@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   CAPABILITY_CHANGED_STORAGE_KEY,
@@ -29,14 +29,17 @@ function makeStorageEvent(key: string, newValue: string | null, storageArea: Sto
 beforeEach(() => {
   const target = new EventTarget();
   const storage = makeStorage() as unknown as Storage;
-  vi.stubGlobal("CustomEvent", class TestCustomEvent extends Event {
-    detail: unknown;
+  vi.stubGlobal(
+    "CustomEvent",
+    class TestCustomEvent extends Event {
+      detail: unknown;
 
-    constructor(type: string, init?: CustomEventInit) {
-      super(type);
-      this.detail = init?.detail;
-    }
-  });
+      constructor(type: string, init?: CustomEventInit) {
+        super(type);
+        this.detail = init?.detail;
+      }
+    },
+  );
   vi.stubGlobal("window", {
     localStorage: storage,
     addEventListener: target.addEventListener.bind(target),
@@ -64,11 +67,13 @@ describe("capabilityEvents", () => {
     const listener = vi.fn();
     const unsubscribe = subscribeCapabilityChanged("g1", listener);
 
-    window.dispatchEvent(makeStorageEvent(
-      CAPABILITY_CHANGED_STORAGE_KEY,
-      JSON.stringify({ group_id: "g1", nonce: "n1" }),
-      window.localStorage,
-    ));
+    window.dispatchEvent(
+      makeStorageEvent(
+        CAPABILITY_CHANGED_STORAGE_KEY,
+        JSON.stringify({ group_id: "g1", nonce: "n1" }),
+        window.localStorage,
+      ),
+    );
 
     expect(listener).toHaveBeenCalledTimes(1);
     unsubscribe();
@@ -79,11 +84,13 @@ describe("capabilityEvents", () => {
     const unsubscribe = subscribeCapabilityChanged("g1", listener);
 
     publishCapabilityChanged("g2");
-    window.dispatchEvent(makeStorageEvent(
-      CAPABILITY_CHANGED_STORAGE_KEY,
-      JSON.stringify({ group_id: "g2", nonce: "n2" }),
-      window.localStorage,
-    ));
+    window.dispatchEvent(
+      makeStorageEvent(
+        CAPABILITY_CHANGED_STORAGE_KEY,
+        JSON.stringify({ group_id: "g2", nonce: "n2" }),
+        window.localStorage,
+      ),
+    );
 
     expect(listener).not.toHaveBeenCalled();
     unsubscribe();

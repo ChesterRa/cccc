@@ -147,9 +147,10 @@ def _start_virtual_display(*, width: int, height: int) -> _VirtualDisplay | None
         return None
     binary = shutil.which("Xvfb")
     if not binary:
-        if str(os.environ.get("DISPLAY") or "").strip():
-            return None
-        raise RuntimeError("headed browser surface requires DISPLAY or Xvfb")
+        raise RuntimeError(
+            "Linux projected browser requires Xvfb to stay off the host desktop; "
+            "install it (Debian/Ubuntu: sudo apt install xvfb) and restart the browser session"
+        )
     proc = subprocess.Popen(
         [
             binary,
@@ -849,18 +850,20 @@ def launch_projected_browser_runtime(
     existing_port = int(existing_cdp_port or 0)
     if existing_port > 0:
         try:
+            metadata = dict(existing_browser_metadata or {})
+            display_owner = str(metadata.get("display_owner") or "").strip()
+            display_owned = bool(metadata.get("display_owned")) and display_owner == "cccc_xvfb"
+            metadata.update(
+                {
+                    "cdp_port": existing_port,
+                    "profile_dir": str(metadata.get("profile_dir") or profile_dir),
+                    "adopted": True,
+                    "display_owned": display_owned,
+                    "display_owner": "cccc_xvfb" if display_owned else "",
+                }
+            )
             if startup_metadata_callback is not None:
-                metadata = dict(existing_browser_metadata or {})
-                metadata.update(
-                    {
-                        "cdp_port": existing_port,
-                        "profile_dir": str(metadata.get("profile_dir") or profile_dir),
-                        "adopted": True,
-                        "display_owned": False,
-                        "display_owner": "",
-                    }
-                )
-                startup_metadata_callback(metadata)
+                startup_metadata_callback(dict(metadata))
             if not _wait_cdp_endpoint(existing_port, timeout_seconds=1.0):
                 raise RuntimeError("existing CDP endpoint is not reachable")
             browser = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{existing_port}", timeout=15000)
@@ -884,16 +887,6 @@ def launch_projected_browser_runtime(
                 cdp_session.send("Page.enable")
             except Exception:
                 pass
-            metadata = dict(existing_browser_metadata or {})
-            metadata.update(
-                {
-                    "cdp_port": existing_port,
-                    "profile_dir": str(metadata.get("profile_dir") or profile_dir),
-                    "adopted": True,
-                    "display_owned": False,
-                    "display_owner": "",
-                }
-            )
             return PlaywrightProjectedRuntime(
                 playwright_cm=playwright_cm,
                 context=context,
@@ -914,14 +907,27 @@ def launch_projected_browser_runtime(
             raise
 
     if not bool(headless):
-        virtual_display = _start_virtual_display(width=width, height=height)
+        try:
+            virtual_display = _start_virtual_display(width=width, height=height)
+        except Exception:
+            try:
+                playwright_cm.__exit__(None, None, None)
+            except Exception:
+                pass
+            raise
         if virtual_display is not None:
             browser_env.update(virtual_display.env_overlay())
+            browser_env.pop("WAYLAND_DISPLAY", None)
+            browser_env.pop("WAYLAND_SOCKET", None)
+            browser_env["XDG_SESSION_TYPE"] = "x11"
             cleanup_callbacks.append(virtual_display.close)
             strategy_suffix = "_xvfb"
             display_owned = True
     browser_display = str(browser_env.get("DISPLAY") or "").strip()
     display_owner = "cccc_xvfb" if display_owned else ""
+    browser_app_args = _browser_app_launch_args(str(url or ""), width=width, height=height)
+    if display_owned:
+        browser_app_args.insert(0, "--ozone-platform=x11")
 
     def _launch_system_browser_once(channel: str) -> PlaywrightProjectedRuntime | None:
         if bool(headless):
@@ -946,7 +952,7 @@ def launch_projected_browser_runtime(
                         f"--user-data-dir={system_profile_dir}",
                         "--no-first-run",
                         "--no-default-browser-check",
-                        *_browser_app_launch_args(str(url or ""), width=width, height=height),
+                        *browser_app_args,
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -1029,7 +1035,7 @@ def launch_projected_browser_runtime(
             "env": browser_env,
         }
         if not bool(headless):
-            launch_kwargs["args"] = _browser_app_launch_args(str(url or ""), width=width, height=height)
+            launch_kwargs["args"] = list(browser_app_args)
         if channel:
             launch_kwargs["channel"] = str(channel)
         context = pw.chromium.launch_persistent_context(**launch_kwargs)

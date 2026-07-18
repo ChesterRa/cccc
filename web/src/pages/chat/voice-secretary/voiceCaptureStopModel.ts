@@ -4,8 +4,5 @@ export type VoiceCaptureStopAction = {
 };
 
 export function voiceCaptureStopAction(): VoiceCaptureStopAction {
-  return {
-    releaseLocalMicrophoneNow: true,
-    waitForRemoteFinalization: true,
-  };
+  return { releaseLocalMicrophoneNow: true, waitForRemoteFinalization: true };
 }

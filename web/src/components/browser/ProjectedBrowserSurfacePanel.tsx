@@ -1,4 +1,11 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type WheelEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type WheelEvent,
+} from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import type { ApiResponse } from "../../services/api";
@@ -16,7 +23,11 @@ type RfbInstance = {
   addEventListener: (type: string, listener: (event: Event) => void) => void;
 };
 
-type RfbConstructor = new (target: HTMLElement, url: string, options?: Record<string, unknown>) => RfbInstance;
+type RfbConstructor = new (
+  target: HTMLElement,
+  url: string,
+  options?: Record<string, unknown>,
+) => RfbInstance;
 
 export type ProjectedBrowserFrame = {
   seq: number;
@@ -34,7 +45,10 @@ type ProjectedBrowserSurfacePanelProps = {
   viewportClassName?: string;
   onFrameUpdate?: (frame: ProjectedBrowserFrame | null) => void;
   loadSession: () => Promise<ApiResponse<{ browser_surface: PresentationBrowserSurfaceState }>>;
-  startSession?: (size: { width: number; height: number }) => Promise<ApiResponse<{ browser_surface: PresentationBrowserSurfaceState }>>;
+  startSession?: (size: {
+    width: number;
+    height: number;
+  }) => Promise<ApiResponse<{ browser_surface: PresentationBrowserSurfaceState }>>;
   webSocketUrl: string;
   fallbackUrl?: string;
   labels?: Partial<{
@@ -63,6 +77,8 @@ type ProjectedBrowserSurfacePanelProps = {
     viewerReasonDisabled: string;
     viewerReasonUnsupportedPlatform: string;
     viewerReasonStartupTimeout: string;
+    viewerIsolationXvfb: string;
+    viewerTooltipIsolationXvfb: string;
   }>;
 };
 
@@ -78,11 +94,7 @@ type BrowserEventPayload =
       url?: string | null;
       mime?: string | null;
     }
-  | {
-      t: "error";
-      code?: string | null;
-      message?: string | null;
-    };
+  | { t: "error"; code?: string | null; message?: string | null };
 
 const SPECIAL_KEY_MAP: Record<string, string> = {
   Enter: "Enter",
@@ -100,7 +112,9 @@ const SPECIAL_KEY_MAP: Record<string, string> = {
   PageDown: "PageDown",
 };
 
-function normalizeState(raw: PresentationBrowserSurfaceState | null | undefined): PresentationBrowserSurfaceState {
+function normalizeState(
+  raw: PresentationBrowserSurfaceState | null | undefined,
+): PresentationBrowserSurfaceState {
   return {
     active: !!raw?.active,
     state: String(raw?.state || "idle").trim() || "idle",
@@ -120,6 +134,7 @@ function normalizeState(raw: PresentationBrowserSurfaceState | null | undefined)
     last_frame_seq: Number.isFinite(Number(raw?.last_frame_seq)) ? Number(raw?.last_frame_seq) : 0,
     last_frame_at: String(raw?.last_frame_at || "").trim(),
     controller_attached: !!raw?.controller_attached,
+    metadata: raw?.metadata || null,
     viewer: raw?.viewer || null,
   };
 }
@@ -192,27 +207,47 @@ export function ProjectedBrowserSurfacePanel({
   const lastRefreshNonceRef = useRef(refreshNonce);
 
   const texts = {
-    starting: labels?.starting || t("presentationBrowserStarting", { defaultValue: "Preparing interactive view..." }),
-    waiting: labels?.waiting || t("presentationBrowserWaiting", { defaultValue: "Waiting for interactive view..." }),
-    ready: labels?.ready || t("presentationBrowserReady", { defaultValue: "Interactive view ready" }),
-    failed: labels?.failed || t("presentationBrowserFailed", { defaultValue: "Interactive view failed" }),
-    closed: labels?.closed || t("presentationBrowserClosed", { defaultValue: "Interactive view closed." }),
+    starting:
+      labels?.starting ||
+      t("presentationBrowserStarting", { defaultValue: "Preparing interactive view..." }),
+    waiting:
+      labels?.waiting ||
+      t("presentationBrowserWaiting", { defaultValue: "Waiting for interactive view..." }),
+    ready:
+      labels?.ready || t("presentationBrowserReady", { defaultValue: "Interactive view ready" }),
+    failed:
+      labels?.failed || t("presentationBrowserFailed", { defaultValue: "Interactive view failed" }),
+    closed:
+      labels?.closed ||
+      t("presentationBrowserClosed", { defaultValue: "Interactive view closed." }),
     reconnecting:
-      labels?.reconnecting || t("presentationBrowserReconnecting", { defaultValue: "Reconnecting interactive view..." }),
-    reconnect: labels?.reconnect || t("presentationBrowserReconnect", { defaultValue: "Reconnect" }),
+      labels?.reconnecting ||
+      t("presentationBrowserReconnecting", { defaultValue: "Reconnecting interactive view..." }),
+    reconnect:
+      labels?.reconnect || t("presentationBrowserReconnect", { defaultValue: "Reconnect" }),
     back: labels?.back || t("presentationBrowserBack", { defaultValue: "Back" }),
-    frameAlt: labels?.frameAlt || t("presentationBrowserFrameAlt", { defaultValue: "Interactive view frame" }),
-    fullScreen: labels?.fullScreen || t("presentationFullScreenAction", { defaultValue: "Full screen" }),
-    exitFullScreen: labels?.exitFullScreen || t("presentationExitFullScreenAction", { defaultValue: "Exit full screen" }),
-    viewerLabel: labels?.viewerLabel || t("presentationBrowserViewerLabel", { defaultValue: "Viewer" }),
+    frameAlt:
+      labels?.frameAlt ||
+      t("presentationBrowserFrameAlt", { defaultValue: "Interactive view frame" }),
+    fullScreen:
+      labels?.fullScreen || t("presentationFullScreenAction", { defaultValue: "Full screen" }),
+    exitFullScreen:
+      labels?.exitFullScreen ||
+      t("presentationExitFullScreenAction", { defaultValue: "Exit full screen" }),
+    viewerLabel:
+      labels?.viewerLabel || t("presentationBrowserViewerLabel", { defaultValue: "Viewer" }),
     viewerVnc: labels?.viewerVnc || t("presentationBrowserViewerVnc", { defaultValue: "VNC" }),
     viewerScreencast:
-      labels?.viewerScreencast || t("presentationBrowserViewerScreencast", { defaultValue: "CDP screencast" }),
-    viewerFallback: labels?.viewerFallback || t("presentationBrowserViewerFallback", { defaultValue: "CDP fallback" }),
+      labels?.viewerScreencast ||
+      t("presentationBrowserViewerScreencast", { defaultValue: "CDP screencast" }),
+    viewerFallback:
+      labels?.viewerFallback ||
+      t("presentationBrowserViewerFallback", { defaultValue: "CDP fallback" }),
     viewerTooltipVnc:
       labels?.viewerTooltipVnc ||
       t("presentationBrowserViewerTooltipVnc", {
-        defaultValue: "Interactive view is using the VNC stream. Browser automation still uses the daemon-controlled browser session.",
+        defaultValue:
+          "Interactive view is using the VNC stream. Browser automation still uses the daemon-controlled browser session.",
       }),
     viewerTooltipScreencast:
       labels?.viewerTooltipScreencast ||
@@ -221,31 +256,47 @@ export function ProjectedBrowserSurfacePanel({
           "Interactive view is using the CDP screencast fallback. Browser automation still uses the daemon-controlled browser session.",
       }),
     viewerFallbackReason:
-      labels?.viewerFallbackReason || t("presentationBrowserViewerFallbackReason", { defaultValue: "Fallback reason" }),
+      labels?.viewerFallbackReason ||
+      t("presentationBrowserViewerFallbackReason", { defaultValue: "Fallback reason" }),
     viewerReasonX11vncNotFound:
-      labels?.viewerReasonX11vncNotFound || t("presentationBrowserViewerReasonX11vncNotFound", { defaultValue: "x11vnc not installed" }),
+      labels?.viewerReasonX11vncNotFound ||
+      t("presentationBrowserViewerReasonX11vncNotFound", { defaultValue: "x11vnc not installed" }),
     viewerReasonWaylandEnv:
-      labels?.viewerReasonWaylandEnv || t("presentationBrowserViewerReasonWaylandEnv", { defaultValue: "Wayland env inherited" }),
+      labels?.viewerReasonWaylandEnv ||
+      t("presentationBrowserViewerReasonWaylandEnv", { defaultValue: "Wayland env inherited" }),
     viewerReasonMissingDisplay:
-      labels?.viewerReasonMissingDisplay || t("presentationBrowserViewerReasonMissingDisplay", { defaultValue: "No X display" }),
+      labels?.viewerReasonMissingDisplay ||
+      t("presentationBrowserViewerReasonMissingDisplay", { defaultValue: "No X display" }),
     viewerReasonDisplayNotOwned:
       labels?.viewerReasonDisplayNotOwned ||
-      t("presentationBrowserViewerReasonDisplayNotOwned", { defaultValue: "Display is not CCCC-owned" }),
+      t("presentationBrowserViewerReasonDisplayNotOwned", {
+        defaultValue: "Display is not CCCC-owned",
+      }),
     viewerReasonDisabled:
-      labels?.viewerReasonDisabled || t("presentationBrowserViewerReasonDisabled", { defaultValue: "VNC disabled" }),
+      labels?.viewerReasonDisabled ||
+      t("presentationBrowserViewerReasonDisabled", { defaultValue: "VNC disabled" }),
     viewerReasonUnsupportedPlatform:
-      labels?.viewerReasonUnsupportedPlatform || t("presentationBrowserViewerReasonUnsupportedPlatform", { defaultValue: "Unsupported platform" }),
+      labels?.viewerReasonUnsupportedPlatform ||
+      t("presentationBrowserViewerReasonUnsupportedPlatform", {
+        defaultValue: "Unsupported platform",
+      }),
     viewerReasonStartupTimeout:
-      labels?.viewerReasonStartupTimeout || t("presentationBrowserViewerReasonStartupTimeout", { defaultValue: "VNC startup timeout" }),
+      labels?.viewerReasonStartupTimeout ||
+      t("presentationBrowserViewerReasonStartupTimeout", { defaultValue: "VNC startup timeout" }),
+    viewerIsolationXvfb:
+      labels?.viewerIsolationXvfb ||
+      t("presentationBrowserViewerIsolationXvfb", { defaultValue: "Xvfb isolated" }),
+    viewerTooltipIsolationXvfb:
+      labels?.viewerTooltipIsolationXvfb ||
+      t("presentationBrowserViewerTooltipIsolationXvfb", {
+        defaultValue:
+          "The browser is running on a CCCC-owned virtual display, not the host desktop.",
+      }),
   };
 
   const [runNonce, setRunNonce] = useState(0);
   const [sessionState, setSessionState] = useState<PresentationBrowserSurfaceState>(() =>
-    normalizeState({
-      active: true,
-      state: "starting",
-      message: texts.starting,
-    }),
+    normalizeState({ active: true, state: "starting", message: texts.starting }),
   );
   const [renderedFrame, setRenderedFrame] = useState<ProjectedBrowserFrame | null>(null);
   const [panelError, setPanelError] = useState("");
@@ -371,7 +422,11 @@ export function ProjectedBrowserSurfacePanel({
               imageRef.current.src = nextFrame.dataUrl;
             }
             const rendered = renderedFrameRef.current;
-            if (!rendered || rendered.width !== nextFrame.width || rendered.height !== nextFrame.height) {
+            if (
+              !rendered ||
+              rendered.width !== nextFrame.width ||
+              rendered.height !== nextFrame.height
+            ) {
               renderedFrameRef.current = nextFrame;
               setRenderedFrame(nextFrame);
             }
@@ -402,15 +457,13 @@ export function ProjectedBrowserSurfacePanel({
           if (
             info.ok &&
             info.result.browser_surface.active &&
-            (info.result.browser_surface.state === "ready" || info.result.browser_surface.state === "starting") &&
+            (info.result.browser_surface.state === "ready" ||
+              info.result.browser_surface.state === "starting") &&
             reconnectAttemptsRef.current < 3
           ) {
             reconnectAttemptsRef.current += 1;
             setSessionState(
-              normalizeState({
-                ...info.result.browser_surface,
-                message: texts.reconnecting,
-              }),
+              normalizeState({ ...info.result.browser_surface, message: texts.reconnecting }),
             );
             reconnectTimerRef.current = window.setTimeout(() => {
               reconnectTimerRef.current = null;
@@ -424,10 +477,17 @@ export function ProjectedBrowserSurfacePanel({
                 ...info.result.browser_surface,
                 active: false,
                 state: info.result.browser_surface.state === "failed" ? "failed" : "closed",
-                message: info.result.browser_surface.state === "failed" ? info.result.browser_surface.message : texts.closed,
+                message:
+                  info.result.browser_surface.state === "failed"
+                    ? info.result.browser_surface.message
+                    : texts.closed,
               }),
             );
-            const message = String(info.result.browser_surface.error?.message || info.result.browser_surface.message || "").trim();
+            const message = String(
+              info.result.browser_surface.error?.message ||
+                info.result.browser_surface.message ||
+                "",
+            ).trim();
             if (message && info.result.browser_surface.state === "failed") {
               setPanelError(message);
             }
@@ -524,15 +584,29 @@ export function ProjectedBrowserSurfacePanel({
     };
   }, [onFrameUpdate, runNonce, texts.closed, texts.reconnecting, vncFailed, webSocketUrl]);
 
-  const vncAvailable = String(sessionState.viewer?.kind || "").trim().toLowerCase() === "vnc" && !vncFailed;
-  const viewerKindLabel = vncAvailable ? texts.viewerVnc : texts.viewerFallback;
+  const vncAvailable =
+    String(sessionState.viewer?.kind || "")
+      .trim()
+      .toLowerCase() === "vnc" && !vncFailed;
+  const displayIsolated =
+    !!sessionState.metadata?.display_owned &&
+    String(sessionState.metadata?.display_owner || "").trim() === "cccc_xvfb";
+  const viewerKind = vncAvailable ? texts.viewerVnc : texts.viewerFallback;
+  const viewerKindLabel = displayIsolated
+    ? `${viewerKind} · ${texts.viewerIsolationXvfb}`
+    : viewerKind;
   const vncFallbackReason = String(sessionState.viewer?.vnc?.error || "").trim();
-  const vncFallbackReasonLabel = vncAvailable ? "" : formatVncFallbackReason(vncFallbackReason, texts);
-  const viewerTooltip = vncAvailable
+  const vncFallbackReasonLabel = vncAvailable
+    ? ""
+    : formatVncFallbackReason(vncFallbackReason, texts);
+  const viewerTransportTooltip = vncAvailable
     ? texts.viewerTooltipVnc
     : vncFallbackReason
       ? `${texts.viewerTooltipScreencast} ${texts.viewerFallbackReason}: ${vncFallbackReason}`
       : texts.viewerTooltipScreencast;
+  const viewerTooltip = displayIsolated
+    ? `${viewerTransportTooltip} ${texts.viewerTooltipIsolationXvfb}`
+    : viewerTransportTooltip;
 
   useEffect(() => {
     if (!vncAvailable || sessionState.state !== "ready") {
@@ -549,7 +623,7 @@ export function ProjectedBrowserSurfacePanel({
     let cancelled = false;
     void (async () => {
       try {
-        const mod = await import("@novnc/novnc/lib/rfb");
+        const mod = await import("@novnc/novnc");
         if (cancelled || rfbRef.current) return;
         const RFB = mod.default as RfbConstructor;
         target.replaceChildren();
@@ -593,7 +667,12 @@ export function ProjectedBrowserSurfacePanel({
     if (!container || typeof ResizeObserver === "undefined") return;
 
     const sendResize = () => {
-      if (String(sessionState.viewer?.kind || "").trim().toLowerCase() === "vnc" && !vncFailed) {
+      if (
+        String(sessionState.viewer?.kind || "")
+          .trim()
+          .toLowerCase() === "vnc" &&
+        !vncFailed
+      ) {
         return;
       }
       const width = Math.max(640, Math.round(container.clientWidth || 0));
@@ -644,13 +723,7 @@ export function ProjectedBrowserSurfacePanel({
     setVncFailed(false);
     setPanelError("");
     reconnectAttemptsRef.current = 0;
-    setSessionState(
-      normalizeState({
-        active: true,
-        state: "starting",
-        message: texts.starting,
-      }),
-    );
+    setSessionState(normalizeState({ active: true, state: "starting", message: texts.starting }));
     setRunNonce((value) => value + 1);
   };
 
@@ -672,11 +745,7 @@ export function ProjectedBrowserSurfacePanel({
         setPanelError("");
         reconnectAttemptsRef.current = 0;
         setSessionState(
-          normalizeState({
-            active: true,
-            state: "starting",
-            message: texts.starting,
-          }),
+          normalizeState({ active: true, state: "starting", message: texts.starting }),
         );
         setRunNonce((value) => value + 1);
       }, 0);
@@ -710,11 +779,7 @@ export function ProjectedBrowserSurfacePanel({
 
   const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (vncAvailable) return;
-    sendCommand({
-      t: "scroll",
-      dx: Math.round(event.deltaX),
-      dy: Math.round(event.deltaY),
-    });
+    sendCommand({ t: "scroll", dx: Math.round(event.deltaX), dy: Math.round(event.deltaY) });
     event.preventDefault();
   };
 
@@ -738,8 +803,15 @@ export function ProjectedBrowserSurfacePanel({
     "relative flex flex-col overflow-hidden outline-none",
     chromeMode === "embedded"
       ? "rounded-none"
-      : classNames("rounded-3xl border", isDark ? "border-white/10 bg-slate-950/80" : "border-black/10 bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fb_100%)]"),
-    isExpanded ? "h-full w-full shadow-2xl sm:h-[min(92dvh,980px)] sm:w-[min(96vw,1600px)]" : viewportClassName || "flex-1 min-h-0",
+      : classNames(
+          "rounded-3xl border",
+          isDark
+            ? "border-white/10 bg-slate-950/80"
+            : "border-black/10 bg-[linear-gradient(180deg,#ffffff_0%,#f6f8fb_100%)]",
+        ),
+    isExpanded
+      ? "h-full w-full shadow-2xl sm:h-[min(92dvh,980px)] sm:w-[min(96vw,1600px)]"
+      : viewportClassName || "flex-1 min-h-0",
   );
 
   const panelBody = (
@@ -754,17 +826,27 @@ export function ProjectedBrowserSurfacePanel({
         className={classNames(
           "flex flex-wrap items-center gap-2 text-xs",
           chromeMode === "embedded"
-            ? classNames("border-b px-2 py-1.5", isDark ? "border-white/[0.06] bg-slate-950/50 text-slate-400" : "border-black/[0.05] bg-black/[0.03] text-gray-600")
-            : classNames("border-b px-4 py-3", isDark ? "border-white/10 bg-slate-950/70 text-slate-300" : "border-black/10 bg-white/75 text-gray-700"),
+            ? classNames(
+                "border-b px-2 py-1.5",
+                isDark
+                  ? "border-white/[0.06] bg-slate-950/50 text-slate-400"
+                  : "border-black/[0.05] bg-black/[0.03] text-gray-600",
+              )
+            : classNames(
+                "border-b px-4 py-3",
+                isDark
+                  ? "border-white/10 bg-slate-950/70 text-slate-300"
+                  : "border-black/10 bg-white/75 text-gray-700",
+              ),
         )}
       >
         <span
           className={classNames(
             "rounded-full px-2.5 py-1 font-medium",
             sessionState.state === "ready"
-                ? isDark
-                  ? "bg-emerald-500/15 text-emerald-200"
-                  : "bg-emerald-50 text-emerald-700"
+              ? isDark
+                ? "bg-emerald-500/15 text-emerald-200"
+                : "bg-emerald-50 text-emerald-700"
               : sessionState.state === "failed"
                 ? isDark
                   ? "bg-rose-500/15 text-rose-200"
@@ -792,7 +874,9 @@ export function ProjectedBrowserSurfacePanel({
           <span className="text-[0.68rem] uppercase opacity-70">{texts.viewerLabel}</span>
           <span className="truncate">{viewerKindLabel}</span>
           {vncFallbackReasonLabel ? (
-            <span className="hidden max-w-[180px] truncate opacity-70 sm:inline">· {vncFallbackReasonLabel}</span>
+            <span className="hidden max-w-[180px] truncate opacity-70 sm:inline">
+              · {vncFallbackReasonLabel}
+            </span>
           ) : null}
         </span>
         <span className="min-w-0 flex-1 truncate">{sessionState.url || fallbackUrl || ""}</span>
@@ -802,7 +886,9 @@ export function ProjectedBrowserSurfacePanel({
             onClick={() => setIsExpanded((value) => !value)}
             className={classNames(
               "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
-              isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200",
+              isDark
+                ? "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                : "bg-gray-100 text-gray-800 hover:bg-gray-200",
             )}
             aria-label={fullScreenLabel}
             title={fullScreenLabel}
@@ -815,7 +901,9 @@ export function ProjectedBrowserSurfacePanel({
           onClick={handleBack}
           className={classNames(
             "rounded-full px-3 py-1 font-medium transition-colors",
-            isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200",
+            isDark
+              ? "bg-slate-800 text-slate-200 hover:bg-slate-700"
+              : "bg-gray-100 text-gray-800 hover:bg-gray-200",
           )}
         >
           {texts.back}
@@ -826,7 +914,9 @@ export function ProjectedBrowserSurfacePanel({
             onClick={handleReconnect}
             className={classNames(
               "rounded-full px-3 py-1 font-medium transition-colors",
-              isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-800 hover:bg-gray-200",
+              isDark
+                ? "bg-slate-800 text-slate-200 hover:bg-slate-700"
+                : "bg-gray-100 text-gray-800 hover:bg-gray-200",
             )}
           >
             {texts.reconnect}
@@ -834,7 +924,12 @@ export function ProjectedBrowserSurfacePanel({
         ) : null}
       </div>
 
-      <div className={classNames("relative flex min-h-0 flex-1 items-center justify-center overflow-hidden", chromeMode === "embedded" ? "bg-white" : "p-4")}>
+      <div
+        className={classNames(
+          "relative flex min-h-0 flex-1 items-center justify-center overflow-hidden",
+          chromeMode === "embedded" ? "bg-white" : "p-4",
+        )}
+      >
         {vncAvailable ? (
           <div className="relative h-full w-full">
             <div
@@ -879,7 +974,8 @@ export function ProjectedBrowserSurfacePanel({
               isDark ? "border-white/10 text-slate-400" : "border-black/10 text-gray-500",
             )}
           >
-            {sessionState.message || (sessionState.state === "starting" ? texts.starting : texts.waiting)}
+            {sessionState.message ||
+              (sessionState.state === "starting" ? texts.starting : texts.waiting)}
           </div>
         )}
 
@@ -887,7 +983,9 @@ export function ProjectedBrowserSurfacePanel({
           <div
             className={classNames(
               "pointer-events-none absolute bottom-4 left-4 right-4 rounded-2xl border px-4 py-3 text-sm shadow-xl",
-              isDark ? "border-rose-500/20 bg-rose-500/10 text-rose-100" : "border-rose-200 bg-white/90 text-rose-700",
+              isDark
+                ? "border-rose-500/20 bg-rose-500/10 text-rose-100"
+                : "border-rose-200 bg-white/90 text-rose-700",
             )}
           >
             {panelError}
@@ -908,7 +1006,9 @@ export function ProjectedBrowserSurfacePanel({
             }
           }}
         />
-        <div className="absolute inset-0 flex items-stretch justify-center p-0 sm:items-center sm:p-6">{panelBody}</div>
+        <div className="absolute inset-0 flex items-stretch justify-center p-0 sm:items-center sm:p-6">
+          {panelBody}
+        </div>
       </div>,
       document.body,
     );

@@ -257,29 +257,12 @@
     "failedSlashVisibility": "更新 / 命令显示状态失败。",
     "sectionNavigation": "能力分区",
     "sections": {
-      "library": {
-        "label": "能力库",
-        "hint": "全部能力"
-      },
-      "skill": {
-        "label": "Skills",
-        "hint": "流程型能力"
-      },
-      "mcp": {
-        "label": "MCP",
-        "hint": "工具服务"
-      },
-      "sources": {
-        "label": "来源",
-        "hint": "同步与出处"
-      }
+      "library": { "label": "能力库", "hint": "全部能力" },
+      "skill": { "label": "Skills", "hint": "流程型能力" },
+      "mcp": { "label": "MCP", "hint": "工具服务" },
+      "sources": { "label": "来源", "hint": "同步与出处" }
     },
-    "typeOptions": {
-      "all": "全部",
-      "skill": "Skills",
-      "mcp": "MCP",
-      "pack": "Packs"
-    },
+    "typeOptions": { "all": "全部", "skill": "Skills", "mcp": "MCP", "pack": "Packs" },
     "stateOptions": {
       "all": "全部状态",
       "enabled": "已启用",
@@ -288,12 +271,7 @@
       "blocked": "已阻止",
       "needs_setup": "需配置"
     },
-    "stats": {
-      "skills": "Skills",
-      "mcp": "MCP",
-      "packs": "Packs",
-      "enabled": "已启用"
-    },
+    "stats": { "skills": "Skills", "mcp": "MCP", "packs": "Packs", "enabled": "已启用" },
     "sidebarSummary": "{{capabilities}} 个能力 · {{sources}} 个来源",
     "loading": "加载中...",
     "emptyDash": "-",
@@ -373,12 +351,7 @@
     "remove": {
       "busy": "处理中",
       "failed": "移除能力失败。",
-      "label": {
-        "delete": "删除",
-        "remove": "移除",
-        "uninstall": "卸载",
-        "disable": "停用"
-      },
+      "label": { "delete": "删除", "remove": "移除", "uninstall": "卸载", "disable": "停用" },
       "title": {
         "delete": "删除这个 Skill",
         "remove": "移除这个 Skill 的当前组引用",
@@ -426,10 +399,7 @@
       "confirmDisableTitle": "为当前工作组停用 {{name}}？",
       "confirmDisableDescription": "这只会在当前工作组关闭 {{id}}，不会阻止之后再次启用。"
     },
-    "confirm": {
-      "cancel": "取消",
-      "confirm": "确认"
-    },
+    "confirm": { "cancel": "取消", "confirm": "确认" },
     "showSystem": "系统项"
   },
   "assistants": {
@@ -1232,9 +1202,7 @@
         "bindTarget": "保存已有 ChatGPT 会话、粘贴目标 URL，或选择下次投递时新建会话。",
         "ready": "已可进行浏览器投递。"
       },
-      "queue": {
-        "queued": "{{count}} 条排队"
-      },
+      "queue": { "queued": "{{count}} 条排队" },
       "warnings": {
         "rotateOldConnector": "请轮换一次这个旧 connector，以生成可复制的 ChatGPT MCP URL。",
         "localMcpUrl": "MCP URL 仍是本地地址。网页端模型需要公网 HTTPS URL。",
@@ -1301,9 +1269,7 @@
         "seen": "已访问",
         "seenAt": "访问于 {{time}}"
       },
-      "copyLabels": {
-        "mcpUrl": "MCP URL"
-      },
+      "copyLabels": { "mcpUrl": "MCP URL" },
       "notices": {
         "connectorRotated": "Connector 已轮换，旧 connector 已撤销。",
         "connectorCreated": "Connector 已创建。",
@@ -1341,10 +1307,7 @@
         "inspect_error": "检查错误",
         "login_chatgpt": "登录 ChatGPT"
       },
-      "common": {
-        "none": "无",
-        "notSet": "未设置"
-      }
+      "common": { "none": "无", "notSet": "未设置" }
     }
   },
   "webAccess": {
@@ -1491,11 +1454,7 @@
     "presetLanTitle": "私有网络",
     "presetLanHint": "绑定到 0.0.0.0，重启后 localhost 和私有网络里的其它设备都能访问。",
     "providerLabel": "远程接入方式",
-    "providers": {
-      "off": "关闭",
-      "manual": "直接绑定 / 代理",
-      "tailscale": "Tailscale"
-    },
+    "providers": { "off": "关闭", "manual": "直接绑定 / 代理", "tailscale": "Tailscale" },
     "remoteMethodLanHint": "为这条私有网络访问路径选择接入方式，可以用直接绑定，也可以用 Tailscale。",
     "privateMethodTailscaleTitle": "当前使用 Tailscale",
     "privateMethodTailscaleHint": "这条私有访问路径会通过 tailnet 到达 Web，而不是依赖普通局域网直连。高级设置里仍然保留 Tailscale 的启动/停止控制和原始绑定诊断。",
@@ -1670,11 +1629,7 @@
     "refreshRemoteInfoFailed": "无法刷新远端信息。",
     "unknownAccess": "未知",
     "updateAccessFailed": "更新访问权限失败",
-    "accessLevels": {
-      "messages": "消息",
-      "read": "只读",
-      "full": "完整"
-    },
+    "accessLevels": { "messages": "消息", "read": "只读", "full": "完整" },
     "accessDescriptions": {
       "messages": "仅消息：远端工作组必须发送显式消息，不能通过 remote MCP 读取本地资源。",
       "read": "只读访问：远端工作组可以查看上下文、repo 文件、搜索结果和只读 git 状态，不会唤醒本地 actors。",

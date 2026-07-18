@@ -12,7 +12,16 @@ export function SlashCommandMenu(props: {
   onHover: (index: number) => void;
   onLoadMore?: () => void;
 }) {
-  const { isDark, suggestions, selectedIndex, hasMore = false, loadMoreLabel, onSelect, onHover, onLoadMore } = props;
+  const {
+    isDark,
+    suggestions,
+    selectedIndex,
+    hasMore = false,
+    loadMoreLabel,
+    onSelect,
+    onHover,
+    onLoadMore,
+  } = props;
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -51,12 +60,16 @@ export function SlashCommandMenu(props: {
             }}
             className={classNames(
               "relative w-full px-4 py-3 text-left text-sm outline-none transition-colors",
-              isDark ? "border-b border-white/5 text-slate-200" : "border-b border-black/5 text-gray-700",
+              isDark
+                ? "border-b border-white/5 text-slate-200"
+                : "border-b border-black/5 text-gray-700",
               isSelected
                 ? isDark
                   ? "bg-white/10 font-medium text-white shadow-[inset_3px_0_0_rgba(203,213,225,0.9),inset_0_0_0_1px_rgba(255,255,255,0.14)]"
                   : "bg-slate-100 font-medium text-slate-950 shadow-[inset_3px_0_0_rgba(71,85,105,0.82),inset_0_0_0_1px_rgba(71,85,105,0.18)]"
-                : isDark ? "hover:bg-white/5" : "hover:bg-gray-50",
+                : isDark
+                  ? "hover:bg-white/5"
+                  : "hover:bg-gray-50",
             )}
             role="option"
             aria-selected={isSelected}
@@ -74,8 +87,12 @@ export function SlashCommandMenu(props: {
                     className={classNames(
                       "truncate text-[11px]",
                       isSelected
-                        ? isDark ? "text-slate-200" : "text-slate-600"
-                        : isDark ? "text-slate-400" : "text-gray-500",
+                        ? isDark
+                          ? "text-slate-200"
+                          : "text-slate-600"
+                        : isDark
+                          ? "text-slate-400"
+                          : "text-gray-500",
                     )}
                   >
                     {item.description}
@@ -86,12 +103,20 @@ export function SlashCommandMenu(props: {
                 className={classNames(
                   "flex-shrink-0 rounded-md px-2 py-0.5 text-[10px] uppercase tracking-wide",
                   isSelected
-                    ? isDark ? "bg-white/12 text-slate-100" : "bg-white text-slate-700 shadow-sm"
+                    ? isDark
+                      ? "bg-white/12 text-slate-100"
+                      : "bg-white text-slate-700 shadow-sm"
                     : displayKind === "command"
-                    ? isDark ? "bg-sky-400/12 text-sky-200" : "bg-sky-50 text-sky-700"
-                    : displayKind === "skill"
-                    ? isDark ? "bg-emerald-400/12 text-emerald-200" : "bg-emerald-50 text-emerald-700"
-                    : isDark ? "bg-white/8 text-slate-400" : "bg-black/5 text-gray-500",
+                      ? isDark
+                        ? "bg-sky-400/12 text-sky-200"
+                        : "bg-sky-50 text-sky-700"
+                      : displayKind === "skill"
+                        ? isDark
+                          ? "bg-emerald-400/12 text-emerald-200"
+                          : "bg-emerald-50 text-emerald-700"
+                        : isDark
+                          ? "bg-white/8 text-slate-400"
+                          : "bg-black/5 text-gray-500",
                 )}
               >
                 {displayKind}
@@ -101,7 +126,12 @@ export function SlashCommandMenu(props: {
         );
       })}
       {hasMore ? (
-        <div className={classNames("px-4 py-2 text-center text-[11px]", isDark ? "text-slate-500" : "text-gray-400")}>
+        <div
+          className={classNames(
+            "px-4 py-2 text-center text-[11px]",
+            isDark ? "text-slate-500" : "text-gray-400",
+          )}
+        >
           {loadMoreLabel}
         </div>
       ) : null}

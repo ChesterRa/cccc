@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
   getEffectiveComposerDestGroupId,
   isComposerGroupSettled,
@@ -94,9 +94,6 @@ describe("useComposerStore recipient memory", () => {
     expect(state.activeGroupId).toBe("g-b");
     expect(state.composerText).toBe("fresh text for b");
     expect(state.toText).toBe("");
-    expect(state.drafts["g-a"]).toMatchObject({
-      composerText: "draft for a",
-      toText: "@all",
-    });
+    expect(state.drafts["g-a"]).toMatchObject({ composerText: "draft for a", toText: "@all" });
   });
 });

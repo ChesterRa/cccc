@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 import {
   BUILTIN_ROLE_PRESETS,
   getRolePresetApplyState,
@@ -30,7 +30,9 @@ describe("rolePresets", () => {
 
   it("keeps the high-leverage gstack transplant kernels in the most relevant presets", () => {
     const planner = getRolePresetById("planner")?.content || "";
-    expect(planner).toContain("what existing code, workflow, or pattern already solves part of this?");
+    expect(planner).toContain(
+      "what existing code, workflow, or pattern already solves part of this?",
+    );
     expect(planner).toContain("minimum set of changes");
     expect(planner).toContain("complete version");
     expect(planner).toContain("post-review version, not the first draft");

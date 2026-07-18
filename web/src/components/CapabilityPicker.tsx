@@ -16,7 +16,8 @@ interface CapabilityPickerProps {
   hint?: string;
 }
 
-const BADGE_CLASS = "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]";
+const BADGE_CLASS =
+  "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]";
 const CAPABILITY_PICKER_FETCH_LIMIT = 200;
 const CAPABILITY_PICKER_QUERY_DEBOUNCE_MS = 250;
 
@@ -89,7 +90,9 @@ export function CapabilityPicker({
   }, [active, debouncedQuery]);
 
   const candidateRows = useMemo(() => {
-    const q = String(query || "").trim().toLowerCase();
+    const q = String(query || "")
+      .trim()
+      .toLowerCase();
     const filtered = rows.filter((row) => {
       const capId = String(row.capability_id || "").trim();
       if (!capId) return false;
@@ -137,11 +140,17 @@ export function CapabilityPicker({
 
   return (
     <div>
-      {label ? <label className="block text-xs font-medium mb-2 text-[var(--color-text-tertiary)]">{label}</label> : null}
+      {label ? (
+        <label className="block text-xs font-medium mb-2 text-[var(--color-text-tertiary)]">
+          {label}
+        </label>
+      ) : null}
 
       <div className="flex flex-wrap gap-1.5 mb-2">
         {selected.length === 0 ? (
-          <span className="text-xs text-[var(--color-text-muted)]">{t("capabilities.noneSelected")}</span>
+          <span className="text-xs text-[var(--color-text-muted)]">
+            {t("capabilities.noneSelected")}
+          </span>
         ) : (
           selected.map((capId) => (
             <button
@@ -174,13 +183,21 @@ export function CapabilityPicker({
         className="mt-2 max-h-56 overflow-auto border-[var(--glass-border-subtle)]"
       >
         {!active ? (
-          <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">{t("capabilities.openToLoad", { defaultValue: "Open this section to load capabilities." })}</div>
+          <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">
+            {t("capabilities.openToLoad", {
+              defaultValue: "Open this section to load capabilities.",
+            })}
+          </div>
         ) : loading ? (
-          <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">{t("capabilities.loading")}</div>
+          <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">
+            {t("capabilities.loading")}
+          </div>
         ) : error ? (
           <div className="px-3 py-3 text-xs text-rose-700 dark:text-rose-300">{error}</div>
         ) : candidateRows.length === 0 ? (
-          <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">{t("capabilities.noCandidates")}</div>
+          <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">
+            {t("capabilities.noCandidates")}
+          </div>
         ) : (
           candidateRows.map((row) => {
             const capId = String(row.capability_id || "").trim();
@@ -189,10 +206,18 @@ export function CapabilityPicker({
             const disabledItem = disabled || blocked;
             const recommendationMeta = [
               { label: t("capabilities.useWhen"), value: firstRecommendationLine(row.use_when) },
-              { label: t("capabilities.verifyWith"), value: String(row.evidence_kind || "").trim() },
+              {
+                label: t("capabilities.verifyWith"),
+                value: String(row.evidence_kind || "").trim(),
+              },
               { label: t("capabilities.gotcha"), value: firstRecommendationLine(row.gotchas) },
-              { label: t("capabilities.avoidWhen"), value: firstRecommendationLine(row.avoid_when) },
-            ].filter((entry) => entry.value).slice(0, 2);
+              {
+                label: t("capabilities.avoidWhen"),
+                value: firstRecommendationLine(row.avoid_when),
+              },
+            ]
+              .filter((entry) => entry.value)
+              .slice(0, 2);
             return (
               <label
                 key={capId}
@@ -207,26 +232,45 @@ export function CapabilityPicker({
                 />
                 <div className="min-w-0">
                   <div className="text-xs font-medium truncate">{String(row.name || capId)}</div>
-                  <div className="text-[11px] truncate text-[var(--color-text-tertiary)]">{capId}</div>
+                  <div className="text-[11px] truncate text-[var(--color-text-tertiary)]">
+                    {capId}
+                  </div>
                   {String(row.description_short || "").trim() ? (
-                    <div className="text-[11px] mt-0.5 text-[var(--color-text-tertiary)]">{String(row.description_short || "")}</div>
+                    <div className="text-[11px] mt-0.5 text-[var(--color-text-tertiary)]">
+                      {String(row.description_short || "")}
+                    </div>
                   ) : null}
                   {recommendationMeta.length ? (
                     <div className="mt-1 space-y-0.5">
                       {recommendationMeta.map((entry) => (
-                        <div key={`${capId}:${entry.label}`} className="text-[10px] leading-4 text-[var(--color-text-muted)]">
-                          <span className="font-medium text-[var(--color-text-tertiary)]">{entry.label}: </span>
+                        <div
+                          key={`${capId}:${entry.label}`}
+                          className="text-[10px] leading-4 text-[var(--color-text-muted)]"
+                        >
+                          <span className="font-medium text-[var(--color-text-tertiary)]">
+                            {entry.label}:{" "}
+                          </span>
                           <span>{entry.value}</span>
                         </div>
                       ))}
                     </div>
                   ) : null}
                   <div className="flex flex-wrap gap-1 mt-1">
-                    {row.kind ? <span className={`px-1.5 py-0.5 rounded text-[10px] ${BADGE_CLASS}`}>{row.kind}</span> : null}
-                    {row.source_id ? <span className={`px-1.5 py-0.5 rounded text-[10px] ${BADGE_CLASS}`}>{row.source_id}</span> : null}
+                    {row.kind ? (
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${BADGE_CLASS}`}>
+                        {row.kind}
+                      </span>
+                    ) : null}
+                    {row.source_id ? (
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${BADGE_CLASS}`}>
+                        {row.source_id}
+                      </span>
+                    ) : null}
                     {row.recent_success?.success_count ? (
                       <span className={`px-1.5 py-0.5 rounded text-[10px] ${BADGE_CLASS}`}>
-                        {t("capabilities.recentCount", { count: Number(row.recent_success?.success_count || 0) })}
+                        {t("capabilities.recentCount", {
+                          count: Number(row.recent_success?.success_count || 0),
+                        })}
                       </span>
                     ) : null}
                     {blocked ? (

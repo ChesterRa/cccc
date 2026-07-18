@@ -88,7 +88,11 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
                         "ts": "2026-03-07T00:00:00Z",
                         "kind": "chat.message",
                         "by": "user",
-                        "data": {"text": "please verify memory lane", "reply_required": True},
+                        "data": {
+                            "text": "please verify memory lane",
+                            "insight": "The current recovery frame may omit a higher-value task.",
+                            "reply_required": True,
+                        },
                     }
                 ]
             },
@@ -120,6 +124,13 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
         self.assertTrue(bool(session["project_md"]["found"]))
 
         recovery = out["recovery"]
+        from cccc.ports.mcp.handlers.cccc_core import _BOOTSTRAP_TAKEOVER_NUDGE
+
+        self.assertEqual(next(iter(recovery)), "takeover_nudge")
+        self.assertEqual(recovery["takeover_nudge"], _BOOTSTRAP_TAKEOVER_NUDGE)
+        self.assertIn("Treat the material below as testimony, not authority", recovery["takeover_nudge"])
+        self.assertIn("preserve only what still earns preservation", recovery["takeover_nudge"])
+        self.assertIn("materially warrants it", recovery["takeover_nudge"])
         self.assertEqual(recovery["self_state"]["hot"]["active_task_id"], "T001")
         self.assertEqual(recovery["self_state"]["recovery"]["open_loops"], ["verify recall gate evidence", "do not forget scoped dirty repo"])
         self.assertEqual(recovery["self_state"]["recovery"]["commitments"], ["report validation evidence to user"])
@@ -140,6 +151,10 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
         self.assertEqual(inbox_preview["messages"][0]["id"], "ev1")
         self.assertTrue(inbox_preview["messages"][0]["reply_required"] is True)
         self.assertEqual(inbox_preview["messages"][0]["text_preview"], "please verify memory lane")
+        self.assertEqual(
+            inbox_preview["messages"][0]["insight_preview"],
+            "The current recovery frame may omit a higher-value task.",
+        )
 
         gate = out["memory_recall_gate"]
         self.assertTrue(bool(gate.get("required")))
@@ -148,9 +163,26 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
         self.assertGreaterEqual(len(hits), 1)
 
         next_calls = out["next_calls"]
+        self.assertIn("when a CCCC route or state boundary is unclear", next_calls["help"])
+        self.assertEqual(
+            next_calls["project_info"],
+            'cccc_capability_use(tool_name="cccc_project_info", tool_arguments={})',
+        )
         self.assertEqual(next_calls["inbox_list"], 'cccc_inbox_list(kind_filter="all")')
+        self.assertIn('tool_name="cccc_memory"', next_calls["memory_search"])
+        self.assertIn('"action":"search"', next_calls["memory_search"])
+        self.assertNotEqual(next_calls["memory_search"], 'cccc_memory(action="search", query=...)')
         self.assertIn('signal_family="interrupt"', next_calls["interrupt_triage"])
         self.assertIn('resume the current task', next_calls["interrupt_triage"])
+
+        from cccc.kernel.capabilities import CORE_BASIC_TOOLS
+
+        core = set(CORE_BASIC_TOOLS)
+        for key, route in next_calls.items():
+            if key == "interrupt_triage":
+                continue
+            called_tool = str(route or "").split("(", 1)[0].strip()
+            self.assertIn(called_tool, core, f"bootstrap next_call {key} points outside the visible core: {route}")
 
     def test_recall_gate_query_uses_rich_warm_cues_when_hot_cues_are_missing(self) -> None:
         from cccc.ports.mcp import server as mcp_server
@@ -286,6 +318,62 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
         self.assertTrue(assigned_active)
         self.assertEqual(assigned_active[0].get("task_type"), "optimization")
         self.assertEqual(assigned_active[0].get("parent_id"), "T000")
+
+    def test_bootstrap_takeover_nudge_requires_unfinished_recovery_material(self) -> None:
+        from cccc.ports.mcp.handlers.cccc_core import _BOOTSTRAP_TAKEOVER_NUDGE, _build_bootstrap_recovery
+
+        def _pack(*, hot=None, warm=None, current_focus="", assigned=None, attention=None):
+            return {
+                "agent_state": {"hot": hot or {}, "warm": warm or {}},
+                "coordination_brief": {
+                    "objective": "Ship the real outcome",
+                    "current_focus": current_focus,
+                },
+                "tasks": {"assigned_active": assigned or [], "attention": attention or []},
+                "recent_decisions": [{"summary": "Keep the previous route."}],
+                "recent_handoffs": [{"summary": "Historical handoff only."}],
+            }
+
+        objective_only = _build_bootstrap_recovery(
+            pack={
+                "agent_state": {"hot": {}, "warm": {}},
+                "coordination_brief": {"objective": "Ship the real outcome"},
+                "tasks": {"assigned_active": [], "attention": []},
+                "recent_decisions": [],
+                "recent_handoffs": [],
+            }
+        )
+        self.assertNotIn("takeover_nudge", objective_only)
+
+        blank = _build_bootstrap_recovery(
+            pack=_pack(
+                hot={"blockers": []},
+                warm={
+                    "what_changed": "Historical context only",
+                    "environment_summary": "The workspace exists",
+                    "user_model": "Prefers high ROI",
+                    "persona_notes": "Stay concise",
+                },
+            )
+        )
+        self.assertNotIn("takeover_nudge", blank)
+
+        cases = {
+            "active_task": _pack(hot={"active_task_id": "T001"}),
+            "focus": _pack(hot={"focus": "finish recovery"}),
+            "next_action": _pack(hot={"next_action": "verify the current artifact"}),
+            "coordination_current_focus": _pack(current_focus="recover the shared delivery path"),
+            "blocker": _pack(hot={"blockers": ["waiting for evidence"]}),
+            "open_loop": _pack(warm={"open_loops": ["revisit the direction"]}),
+            "commitment": _pack(warm={"commitments": ["report evidence"]}),
+            "assigned_task": _pack(assigned=[{"id": "T001"}]),
+            "attention_task": _pack(attention=[{"id": "T002"}]),
+        }
+        for name, pack in cases.items():
+            with self.subTest(name=name):
+                recovery = _build_bootstrap_recovery(pack=pack)
+                self.assertEqual(next(iter(recovery)), "takeover_nudge")
+                self.assertEqual(recovery["takeover_nudge"], _BOOTSTRAP_TAKEOVER_NUDGE)
 
 
 if __name__ == "__main__":

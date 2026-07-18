@@ -722,7 +722,7 @@ def _start_actor_process(
     group: Any,
     actor_id: str,
     *,
-    command: List[str],
+    command: list[str],
     env: Dict[str, str],
     runner: str,
     runtime: str,

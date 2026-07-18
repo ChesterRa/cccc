@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { computeSelectedGroupRuntime } from "../../src/hooks/useSelectedGroupRuntime";
 import { computeGroupRuntimePatch } from "../../src/utils/groupRuntimeProjection";

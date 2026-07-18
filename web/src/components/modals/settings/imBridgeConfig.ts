@@ -16,10 +16,7 @@ export type IMConfigDraft = {
   weixinAccountId: string;
 };
 
-export type IMConfigSaveRequest = IMConfigDraft & {
-  groupId: string;
-  platform: IMPlatform;
-};
+export type IMConfigSaveRequest = IMConfigDraft & { groupId: string; platform: IMPlatform };
 
 function toIMConfigExtra(config: IMConfigDraft) {
   return {
@@ -45,7 +42,9 @@ export function saveIMConfigDraft(config: IMConfigSaveRequest) {
   );
 }
 
-export async function saveAndStartIMBridge(config: IMConfigSaveRequest): Promise<ApiResponse<unknown>> {
+export async function saveAndStartIMBridge(
+  config: IMConfigSaveRequest,
+): Promise<ApiResponse<unknown>> {
   const saveResp = await saveIMConfigDraft(config);
   if (!saveResp.ok) return saveResp;
   return api.startIMBridge(config.groupId);

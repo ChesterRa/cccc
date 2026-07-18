@@ -50,7 +50,9 @@ function StatusPill({ children, tone }: { children: React.ReactNode; tone: Statu
         ? "bg-slate-500/12 text-[var(--color-text-muted)]"
         : "border border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white";
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ${classes}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-medium ${classes}`}
+    >
       {children}
     </span>
   );
@@ -61,7 +63,11 @@ function modelStatusLabel(
   model: AssistantServiceModel | null,
   t: (key: string, options?: Record<string, unknown>) => string,
 ) {
-  if (status === "downloading" && Number(model?.progress_percent || 0) >= 100 && model?.installed !== true) {
+  if (
+    status === "downloading" &&
+    Number(model?.progress_percent || 0) >= 100 &&
+    model?.installed !== true
+  ) {
     return t("assistants.serviceRuntimeStatusShort", { status: "installing" });
   }
   if (status === "installing") return t("assistants.serviceRuntimeStatusShort", { status });
@@ -69,7 +75,13 @@ function modelStatusLabel(
   return `${t("assistants.serviceRuntimeStatusShort", { status })} ${Math.round(Number(model?.progress_percent || 0))}%`;
 }
 
-export function VoiceSecretaryStatusPill({ children, tone }: { children: React.ReactNode; tone: StatusTone }) {
+export function VoiceSecretaryStatusPill({
+  children,
+  tone,
+}: {
+  children: React.ReactNode;
+  tone: StatusTone;
+}) {
   return <StatusPill tone={tone}>{children}</StatusPill>;
 }
 
@@ -100,12 +112,22 @@ function AsrModelCard({
 }) {
   const { t } = useTranslation(["settings", "common"]);
   const size = formatModelSize(model?.total_size_bytes);
-  const titleKey = role === "final" ? "assistants.finalAsrModelTitle" : "assistants.streamingAsrModelTitle";
-  const missingKey = role === "final" ? "assistants.finalAsrModelMissing" : "assistants.streamingAsrModelMissing";
-  const hintKey = role === "final" ? "assistants.finalAsrModelHint" : "assistants.streamingAsrModelHint";
-  const installKey = role === "final" ? "assistants.finalAsrModelInstall" : "assistants.streamingAsrModelInstall";
-  const installingKey = role === "final" ? "assistants.finalAsrModelInstalling" : "assistants.streamingAsrModelInstalling";
-  const installedKey = role === "final" ? "assistants.finalAsrModelInstalled" : "assistants.streamingAsrModelInstalled";
+  const titleKey =
+    role === "final" ? "assistants.finalAsrModelTitle" : "assistants.streamingAsrModelTitle";
+  const missingKey =
+    role === "final" ? "assistants.finalAsrModelMissing" : "assistants.streamingAsrModelMissing";
+  const hintKey =
+    role === "final" ? "assistants.finalAsrModelHint" : "assistants.streamingAsrModelHint";
+  const installKey =
+    role === "final" ? "assistants.finalAsrModelInstall" : "assistants.streamingAsrModelInstall";
+  const installingKey =
+    role === "final"
+      ? "assistants.finalAsrModelInstalling"
+      : "assistants.streamingAsrModelInstalling";
+  const installedKey =
+    role === "final"
+      ? "assistants.finalAsrModelInstalled"
+      : "assistants.streamingAsrModelInstalled";
   const disabled = busy || voiceSaveBusy || deleting || !modelId || installing;
 
   return (
@@ -123,9 +145,7 @@ function AsrModelCard({
         <p className="mt-1 break-words text-[11px] leading-5 text-[var(--color-text-muted)]">
           {model?.title || modelId || t(missingKey)}
         </p>
-        <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">
-          {t(hintKey)}
-        </p>
+        <p className="mt-1 text-[11px] leading-5 text-[var(--color-text-muted)]">{t(hintKey)}</p>
         {model?.error?.message ? (
           <p className="mt-1 text-[11px] leading-5 text-rose-700 dark:text-rose-300">
             {t("assistants.serviceRuntimeError", { message: String(model.error.message || "") })}
@@ -201,7 +221,9 @@ export function VoiceSecretaryLocalAsrControls({
           </p>
           {runtime?.error?.message ? (
             <p className="mt-1 text-[11px] leading-5 text-rose-700 dark:text-rose-300">
-              {t("assistants.serviceRuntimeError", { message: String(runtime.error.message || "") })}
+              {t("assistants.serviceRuntimeError", {
+                message: String(runtime.error.message || ""),
+              })}
             </p>
           ) : null}
         </div>

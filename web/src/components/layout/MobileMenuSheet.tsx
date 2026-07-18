@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, TextScale, Theme } from "../../types";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
-import { getGroupControlVisual, getLaunchControlMode, resolveGroupControls } from "../../utils/groupControls";
+import {
+  getGroupControlVisual,
+  getLaunchControlMode,
+  resolveGroupControls,
+} from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { LanguageSwitcher } from "../LanguageSwitcher";
@@ -65,14 +69,16 @@ export function MobileMenuSheet({
   onSetGroupState,
 }: MobileMenuSheetProps) {
   const { modalRef } = useModalA11y(isOpen, onClose);
-  const { t } = useTranslation('layout');
+  const { t } = useTranslation("layout");
   const [pendingToggleAction, setPendingToggleAction] = useState<"launch" | "pause" | null>(null);
   const [hasObservedGroupBusy, setHasObservedGroupBusy] = useState(false);
-  const selectedStatus = selectedGroupId ? getGroupStatusFromSource({
-    running: selectedGroupRunning,
-    state: groupDoc?.state,
-    runtime_status: groupDoc?.runtime_status,
-  }) : null;
+  const selectedStatus = selectedGroupId
+    ? getGroupStatusFromSource({
+        running: selectedGroupRunning,
+        state: groupDoc?.state,
+        runtime_status: groupDoc?.runtime_status,
+      })
+    : null;
   const selectedStatusKey = selectedStatus?.key ?? null;
   const launchMode = getLaunchControlMode(selectedStatusKey);
   const launchControl = getGroupControlVisual(selectedStatusKey, "launch", busy);
@@ -93,23 +99,29 @@ export function MobileMenuSheet({
   });
   const isPauseAction = selectedStatusKey === "run";
   const toggleControl = isPauseAction ? pauseControl : launchControl;
-  const toggleDisabled = (isPauseAction ? pauseDisabled : launchDisabled) || pendingToggleAction !== null;
+  const toggleDisabled =
+    (isPauseAction ? pauseDisabled : launchDisabled) || pendingToggleAction !== null;
   const toggleHardUnavailable = isPauseAction ? pauseHardUnavailable : launchHardUnavailable;
-  const toggleLabel = isPauseAction ? t('pauseState') : t('runState');
+  const toggleLabel = isPauseAction ? t("pauseState") : t("runState");
   const isGroupBusy = busy.startsWith("group-");
-  const themeLabel = theme === "system" ? t('themeSystem') : theme === "dark" ? t('themeDark') : t('themeLight');
+  const themeLabel =
+    theme === "system" ? t("themeSystem") : theme === "dark" ? t("themeDark") : t("themeLight");
   const ThemeIcon = theme === "system" ? MonitorIcon : theme === "dark" ? MoonIcon : SunIcon;
   const nextTheme: Theme = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
-  const runtimeHint = selectedStatusKey === "paused"
-    ? t('runtimeHintPaused')
-    : selectedStatusKey === "stop"
-      ? t('runtimeHintStop')
-      : selectedStatusKey === "idle"
-        ? t('runtimeHintIdle')
-        : t('runtimeHintRun');
-  const sectionCardClass = "rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-2 shadow-sm backdrop-blur-xl";
-  const sectionTitleClass = "px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]";
-  const rowButtonClass = "w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-3 text-sm transition-all text-[var(--color-text-primary)] hover:bg-black/5 disabled:opacity-45 dark:hover:bg-white/6";
+  const runtimeHint =
+    selectedStatusKey === "paused"
+      ? t("runtimeHintPaused")
+      : selectedStatusKey === "stop"
+        ? t("runtimeHintStop")
+        : selectedStatusKey === "idle"
+          ? t("runtimeHintIdle")
+          : t("runtimeHintRun");
+  const sectionCardClass =
+    "rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-2 shadow-sm backdrop-blur-xl";
+  const sectionTitleClass =
+    "px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--color-text-muted)]";
+  const rowButtonClass =
+    "w-full flex items-center justify-between gap-3 rounded-xl px-3.5 py-3 text-sm transition-all text-[var(--color-text-primary)] hover:bg-black/5 disabled:opacity-45 dark:hover:bg-white/6";
 
   useEffect(() => {
     if (!pendingToggleAction) return;
@@ -137,7 +149,9 @@ export function MobileMenuSheet({
         if (timerId !== null) window.clearTimeout(timerId);
       };
     }
-    const launchSettled = pendingToggleAction === "launch" && (selectedStatusKey === "run" || selectedStatusKey === "idle");
+    const launchSettled =
+      pendingToggleAction === "launch" &&
+      (selectedStatusKey === "run" || selectedStatusKey === "idle");
     const pauseSettled = pendingToggleAction === "pause" && selectedStatusKey === "paused";
     if (launchSettled || pauseSettled || hasObservedGroupBusy) {
       resetPendingState();
@@ -197,7 +211,7 @@ export function MobileMenuSheet({
         className="absolute bottom-0 left-0 right-0 rounded-t-3xl glass-modal animate-slide-up transform transition-transform"
         role="dialog"
         aria-modal="true"
-        aria-label={t('menu')}
+        aria-label={t("menu")}
       >
         <div className="flex justify-center pt-3 pb-1" onClick={onClose}>
           <div className="w-12 h-1.5 rounded-full bg-black/15 dark:bg-white/20" />
@@ -205,12 +219,22 @@ export function MobileMenuSheet({
 
         <div className="px-6 pb-4 flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className={classNames("text-lg font-bold truncate", "text-[var(--color-text-primary)]")}>
-              {groupDoc?.title || (selectedGroupId ? selectedGroupId : t('menu'))}
+            <div
+              className={classNames(
+                "text-lg font-bold truncate",
+                "text-[var(--color-text-primary)]",
+              )}
+            >
+              {groupDoc?.title || (selectedGroupId ? selectedGroupId : t("menu"))}
             </div>
             {selectedStatus && (
               <div className="flex items-center gap-2 mt-1">
-                <span className={classNames("text-xs px-2 py-0.5 rounded-full font-medium", selectedStatus.pillClass)}>
+                <span
+                  className={classNames(
+                    "text-xs px-2 py-0.5 rounded-full font-medium",
+                    selectedStatus.pillClass,
+                  )}
+                >
                   {selectedStatus.label}
                 </span>
               </div>
@@ -220,9 +244,9 @@ export function MobileMenuSheet({
             onClick={onClose}
             className={classNames(
               "p-2 rounded-full transition-colors glass-btn",
-              "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+              "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]",
             )}
-            aria-label={t('closeMenu')}
+            aria-label={t("closeMenu")}
           >
             <CloseIcon size={20} />
           </button>
@@ -231,14 +255,14 @@ export function MobileMenuSheet({
         <div className="p-4 space-y-4 safe-area-inset-bottom">
           {!selectedGroupId && (
             <div className={classNames("text-sm px-1 pb-2", "text-[var(--color-text-tertiary)]")}>
-              {t('selectGroupToEnable')}
+              {t("selectGroupToEnable")}
             </div>
           )}
 
           <button
             className={classNames(
               "w-full flex items-center justify-between gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn shadow-sm",
-              "text-[var(--color-text-primary)]"
+              "text-[var(--color-text-primary)]",
             )}
             onClick={() => {
               onClose();
@@ -248,12 +272,12 @@ export function MobileMenuSheet({
           >
             <div className="flex items-center gap-3">
               <SearchIcon size={18} />
-              <span>{t('searchMessagesButton')}</span>
+              <span>{t("searchMessagesButton")}</span>
             </div>
           </button>
 
           <section className={sectionCardClass}>
-            <div className={sectionTitleClass}>{t('workspaceSection')}</div>
+            <div className={sectionTitleClass}>{t("workspaceSection")}</div>
             <button
               className={rowButtonClass}
               onClick={() => {
@@ -264,7 +288,7 @@ export function MobileMenuSheet({
             >
               <div className="flex items-center gap-3">
                 <ClipboardIcon size={18} />
-                <span>{t('contextButton')}</span>
+                <span>{t("contextButton")}</span>
               </div>
             </button>
             <button
@@ -277,7 +301,7 @@ export function MobileMenuSheet({
             >
               <div className="flex items-center gap-3">
                 <SettingsIcon size={18} />
-                <span>{t('settingsButton')}</span>
+                <span>{t("settingsButton")}</span>
               </div>
             </button>
             {onOpenGroupEdit ? (
@@ -291,37 +315,33 @@ export function MobileMenuSheet({
               >
                 <div className="flex items-center gap-3">
                   <EditIcon size={18} />
-                  <span>{t('editGroupDetails')}</span>
+                  <span>{t("editGroupDetails")}</span>
                 </div>
               </button>
             ) : null}
           </section>
 
           <section className={sectionCardClass}>
-            <div className={sectionTitleClass}>{t('appearanceSection')}</div>
-            <button
-              className={rowButtonClass}
-              onClick={() => onThemeChange(nextTheme)}
-            >
+            <div className={sectionTitleClass}>{t("appearanceSection")}</div>
+            <button className={rowButtonClass} onClick={() => onThemeChange(nextTheme)}>
               <div className="flex items-center gap-3">
                 <ThemeIcon size={18} />
-                <span>{t('themeLabel')}</span>
+                <span>{t("themeLabel")}</span>
               </div>
-              <span className="text-[13px] font-medium text-[var(--color-text-tertiary)]">{themeLabel}</span>
+              <span className="text-[13px] font-medium text-[var(--color-text-tertiary)]">
+                {themeLabel}
+              </span>
             </button>
             <TextScaleSwitcher
               textScale={textScale}
               onTextScaleChange={onTextScaleChange}
               variant="row"
             />
-            <LanguageSwitcher
-              isDark={isDark}
-              variant="row"
-            />
+            <LanguageSwitcher isDark={isDark} variant="row" />
           </section>
 
           <section className={sectionCardClass}>
-            <div className={sectionTitleClass}>{t('runtimeSection')}</div>
+            <div className={sectionTitleClass}>{t("runtimeSection")}</div>
             <div className="px-2.5 pb-1 text-[12px] leading-5 text-[var(--color-text-tertiary)]">
               {runtimeHint}
             </div>
@@ -330,7 +350,7 @@ export function MobileMenuSheet({
                 className={classNames(
                   "flex-1 flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-medium transition-all min-h-[48px]",
                   toggleControl.className,
-                  toggleHardUnavailable && "opacity-45"
+                  toggleHardUnavailable && "opacity-45",
                 )}
                 onClick={handleToggleClick}
                 disabled={toggleDisabled}
@@ -343,14 +363,14 @@ export function MobileMenuSheet({
                 className={classNames(
                   "flex-1 flex items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-medium transition-all min-h-[48px]",
                   stopControl.className,
-                  stopHardUnavailable && "opacity-45"
+                  stopHardUnavailable && "opacity-45",
                 )}
                 onClick={handleStopClick}
                 disabled={stopDisabled}
                 aria-pressed={stopControl.active}
               >
                 <StopIcon size={18} />
-                <span>{t('stopState')}</span>
+                <span>{t("stopState")}</span>
               </button>
             </div>
           </section>

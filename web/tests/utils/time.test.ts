@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { formatMessageTimestamp } from "../../src/utils/time";
 
 function pad2(value: number): string {
@@ -6,11 +6,10 @@ function pad2(value: number): string {
 }
 
 function expectedMessageTimestamp(date: Date, now: Date): string {
-  const sameDay = (
-    date.getFullYear() === now.getFullYear()
-    && date.getMonth() === now.getMonth()
-    && date.getDate() === now.getDate()
-  );
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
   if (sameDay) {
     return `${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
   }

@@ -190,14 +190,21 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                 captured.update(payload)
                 return {"ok": True}
 
-            with patch.object(cccc_messaging, "load_group", return_value=_FakeGroup(str(scope_root), str(group_path))), patch.object(
-                cccc_messaging, "_call_daemon_or_raise", side_effect=_fake_call
+            with (
+                patch.object(
+                    cccc_messaging,
+                    "load_group",
+                    return_value=_FakeGroup(str(scope_root), str(group_path)),
+                ),
+                patch.object(cccc_messaging, "resolve_remote_group_route", return_value=object()),
+                patch.object(cccc_messaging, "_call_daemon_or_raise", side_effect=_fake_call),
             ):
                 out = mcp_server.file_send(
                     group_id="g_test",
                     actor_id="peer1",
                     path="shot.png",
                     text="remote screenshot",
+                    insight="The remote team should challenge whether this evidence is sufficient.",
                     dst_group_id="g_remote",
                     to=["@foreman"],
                 )
@@ -208,6 +215,10 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             self.assertIsInstance(args, dict)
             self.assertEqual(args.get("dst_group_id"), "g_remote")
             self.assertEqual(args.get("to"), ["@foreman"])
+            self.assertEqual(
+                args.get("insight"),
+                "The remote team should challenge whether this evidence is sufficient.",
+            )
             attachments = args.get("attachments")
             self.assertIsInstance(attachments, list)
             self.assertEqual(len(attachments), 1)

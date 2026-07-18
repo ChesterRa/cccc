@@ -23,7 +23,10 @@ interface CapabilityControlsPanelProps {
   onToggleEnable: (row: CapabilityOverviewItem) => void;
   onToggleSlash: (row: CapabilityOverviewItem) => void;
   onToggleBlock: (row: CapabilityOverviewItem) => void;
-  onRemove: (row: CapabilityOverviewItem, action: Exclude<CapabilityCenterRemovalAction, "none">) => void;
+  onRemove: (
+    row: CapabilityOverviewItem,
+    action: Exclude<CapabilityCenterRemovalAction, "none">,
+  ) => void;
 }
 
 export function CapabilityControlsPanel({
@@ -52,21 +55,37 @@ export function CapabilityControlsPanel({
         {t("capabilityCenter.controls.title")}
       </div>
       <div className="mt-1 text-xs leading-5 text-[var(--color-text-muted)]">
-        {type === "mcp" ? t("capabilityCenter.controls.mcpHint") : t("capabilityCenter.controls.skillHint")}
+        {type === "mcp"
+          ? t("capabilityCenter.controls.mcpHint")
+          : t("capabilityCenter.controls.skillHint")}
       </div>
       <div className="mt-3 grid gap-2">
         <ControlButton
           icon={enabled ? PowerOff : Power}
-          label={enabled ? t("capabilityCenter.enable.disable") : t("capabilityCenter.enable.enable")}
-          meta={enabled ? t("capabilityCenter.controls.enabledMeta") : t("capabilityCenter.controls.disabledMeta")}
+          label={
+            enabled ? t("capabilityCenter.enable.disable") : t("capabilityCenter.enable.enable")
+          }
+          meta={
+            enabled
+              ? t("capabilityCenter.controls.enabledMeta")
+              : t("capabilityCenter.controls.disabledMeta")
+          }
           busy={busyKey === `enable:${capId}` || disabled}
           onClick={() => onToggleEnable(row)}
         />
         {canShowSlashToggle ? (
           <ControlButton
             icon={hidden ? Eye : EyeOff}
-            label={hidden ? t("capabilityCenter.showInSlashCommands") : t("capabilityCenter.hideFromSlashCommands")}
-            meta={hidden ? t("capabilityCenter.controls.slashHiddenMeta") : t("capabilityCenter.controls.slashVisibleMeta")}
+            label={
+              hidden
+                ? t("capabilityCenter.showInSlashCommands")
+                : t("capabilityCenter.hideFromSlashCommands")
+            }
+            meta={
+              hidden
+                ? t("capabilityCenter.controls.slashHiddenMeta")
+                : t("capabilityCenter.controls.slashVisibleMeta")
+            }
             busy={busyKey === `slash:${capId}` || disabled}
             onClick={() => onToggleSlash(row)}
           />
@@ -74,7 +93,11 @@ export function CapabilityControlsPanel({
         <ControlButton
           icon={Shield}
           label={blocked ? t("capabilityCenter.block.unblock") : t("capabilityCenter.block.block")}
-          meta={blocked ? t("capabilityCenter.controls.blockedMeta") : t("capabilityCenter.controls.blockMeta")}
+          meta={
+            blocked
+              ? t("capabilityCenter.controls.blockedMeta")
+              : t("capabilityCenter.controls.blockMeta")
+          }
           tone={blocked ? "neutral" : "warn"}
           busy={busyKey === `block:${capId}` || disabled}
           onClick={() => onToggleBlock(row)}
@@ -83,7 +106,9 @@ export function CapabilityControlsPanel({
           <ControlButton
             icon={Trash2}
             label={t(`capabilityCenter.remove.label.${removalAction}`)}
-            meta={t(`capabilityCenter.remove.title.${removalAction}`, { name: capabilityCenterDisplayName(row) })}
+            meta={t(`capabilityCenter.remove.title.${removalAction}`, {
+              name: capabilityCenterDisplayName(row),
+            })}
             tone="danger"
             busy={busyKey === `remove:${capId}` || disabled}
             onClick={() => onRemove(row, removalAction)}
@@ -91,7 +116,9 @@ export function CapabilityControlsPanel({
         ) : null}
       </div>
       {disabled ? (
-        <p className="mt-2 text-xs text-[var(--color-text-muted)]">{t("capabilityCenter.controls.openGroup")}</p>
+        <p className="mt-2 text-xs text-[var(--color-text-muted)]">
+          {t("capabilityCenter.controls.openGroup")}
+        </p>
       ) : null}
     </section>
   );

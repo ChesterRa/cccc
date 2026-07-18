@@ -2029,11 +2029,13 @@ class TestMCPToCoercion(unittest.TestCase):
                             "to": "user",
                             "path": "/tmp/test.txt",
                             "text": "file caption",
+                            "insight": "The attachment may not prove the conclusion.",
                         })
                     except Exception:
                         pass
 
         self.assertEqual(captured.get("to"), ["user"])
+        self.assertEqual(captured.get("insight"), "The attachment may not prove the conclusion.")
 
     def test_mcp_file_send_handler_forwards_dst_group_id(self) -> None:
         from cccc.ports.mcp.server import _handle_cccc_namespace

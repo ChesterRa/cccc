@@ -31,6 +31,10 @@ class TestCapabilityOps(unittest.TestCase):
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
+    def _search_local(self, args: dict):
+        with patch.dict(os.environ, {"CCCC_CAPABILITY_SEARCH_REMOTE_FALLBACK": "0"}, clear=False):
+            return self._call("capability_search", args)
+
     def _write_allowlist_override(self, *, mcp_registry_level: str = "mounted", extra: str = "") -> Path:
         home = Path(str(os.environ.get("CCCC_HOME") or "")).expanduser()
         cfg_dir = home / "config"
@@ -2131,8 +2135,7 @@ class TestCapabilityOps(unittest.TestCase):
             gid = self._create_group()
             self._add_actor(gid, "peer-1", by="user")
 
-            search_resp, _ = self._call(
-                "capability_search",
+            search_resp, _ = self._search_local(
                 {
                     "group_id": gid,
                     "actor_id": "peer-1",
@@ -2173,8 +2176,7 @@ class TestCapabilityOps(unittest.TestCase):
             gid = self._create_group()
             self._add_actor(gid, "peer-1", by="user")
 
-            search_resp, _ = self._call(
-                "capability_search",
+            search_resp, _ = self._search_local(
                 {
                     "group_id": gid,
                     "actor_id": "peer-1",
@@ -2507,8 +2509,7 @@ class TestCapabilityOps(unittest.TestCase):
             }
             ops._save_catalog_doc(catalog_path, catalog_doc)
 
-            resp, _ = self._call(
-                "capability_search",
+            resp, _ = self._search_local(
                 {
                     "group_id": gid,
                     "actor_id": "peer-1",
@@ -5505,8 +5506,7 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertIn("Patch the active capability_id in place.", str(active_row.get("capsule_text") or ""))
             self.assertIn("Verification:", str(active_row.get("capsule_text") or ""))
 
-            search_resp, _ = self._call(
-                "capability_search",
+            search_resp, _ = self._search_local(
                 {
                     "group_id": gid,
                     "actor_id": "peer-1",
@@ -7319,8 +7319,7 @@ class TestCapabilityOps(unittest.TestCase):
             )
             self.assertTrue(import_resp.ok, getattr(import_resp, "error", None))
 
-            search_resp, _ = self._call(
-                "capability_search",
+            search_resp, _ = self._search_local(
                 {
                     "group_id": gid,
                     "actor_id": "peer-1",

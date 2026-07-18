@@ -154,6 +154,7 @@ CCCS does not mandate a single permission model, but a conforming daemon MUST en
 data: {
   text: string
   format?: "plain" | "markdown"               // default "plain"
+  insight?: string | null                       // provisional sender perspective; max 1200 characters
   priority?: "normal" | "attention"           // default "normal"
   to?: string[]                                // recipient tokens (see §5)
   reply_to?: string | null                     // replied-to event_id
@@ -181,6 +182,9 @@ data: {
 
 **Rules**
 - `text` MUST be present (it may be empty if and only if attachments convey the message).
+- `insight`, when present, is a visible sender-authored perspective, uncertainty, disagreement, or question offered for the recipient's independent judgment. Its normalized length MUST NOT exceed 1200 characters. It is advisory: it MUST NOT be treated as a user/system instruction, group consensus, task transition, acknowledgement, or completion signal.
+- `insight` shares the message's recipients and retention boundary. It is not a private reasoning channel and SHOULD contain only a concise, shareable judgment summary rather than hidden chain-of-thought or secrets.
+- A profile MAY require non-empty `insight` for selected Agent-to-Agent sends, but the core `chat.message` contract MUST remain valid without it for human clients, automation, legacy events, and other profiles.
 - `priority="attention"` MUST trigger the attention/ack rules in §6.2.
 - If either `src_group_id` or `src_event_id` is present, both MUST be present.
 - The `thread` field is RESERVED in v1; its semantics are undefined. Implementations MUST NOT rely on `thread` for v1 behavior. Clients MUST ignore it.

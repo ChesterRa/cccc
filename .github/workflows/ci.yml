@@ -1,13 +1,43 @@
-name: CI Build
+name: CI
 
 on:
   push:
     branches:
       - main
   pull_request:
+  schedule:
+    - cron: "17 2 * * *"
 
 jobs:
-  build:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install quality dependencies
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e . pytest ruff
+
+      - name: Run Ruff error checks
+        run: python -m ruff check src scripts tests
+
+      - name: Test quality tooling and workflow contracts
+        run: >-
+          python -m pytest -q
+          tests/test_quality_pytest_shards.py
+          tests/test_quality_configuration.py
+          tests/test_quality_ci_workflow.py
+
+  web:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -16,35 +46,83 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20.19.5"
+          cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - name: Build Web UI (bundled)
-        run: |
-          npm ci --prefix web
-          npm -C web run lint
-          npm -C web run typecheck
-          npm -C web run build
-          test -f src/cccc/ports/web/dist/index.html
+      - name: Install Web dependencies
+        run: npm ci --prefix web
+
+      - name: Check Web
+        run: npm -C web run check
+
+      - name: Test Web
+        run: npm -C web test
+
+      - name: Build Web bundle
+        run: npm -C web run build
+
+      - name: Upload Web bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundled-web
+          path: src/cccc/ports/web/dist
+          if-no-files-found: error
+
+  python-tests:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
-      - name: Install build deps
+      - name: Install test dependencies
         run: |
-          python -m pip install -U pip build twine
+          python -m pip install -U pip
           python -m pip install -e . pytest pytest-timeout
 
-      - name: Run test suite
-        timeout-minutes: 15
+      - name: Run stable Python test shard
+        shell: bash
         run: |
-          python -m pytest -q --timeout=120 --timeout-method=thread --durations=20
+          mapfile -t TEST_FILES < <(python scripts/quality/pytest_shards.py --total 4 --index "${{ matrix.shard }}")
+          test "${#TEST_FILES[@]}" -gt 0
+          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest -q -m "not packaged_web_dist" --timeout=120 --timeout-method=thread --durations=20 "${TEST_FILES[@]}"
 
-      - name: Build
+  package:
+    if: github.event_name != 'schedule'
+    needs: [quality, web, python-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: bundled-web
+          path: src/cccc/ports/web/dist
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Build and check package
         run: |
+          python -m pip install -U pip build twine pytest
           python -m compileall -q src/cccc
           python -m build
           python -m twine check dist/*
@@ -61,11 +139,14 @@ jobs:
 
           assert web_index.is_file(), f"missing bundled web UI: {web_index}"
           assert help_md.is_file(), f"missing bundled help playbook: {help_md}"
-
           print("OK: bundled web UI + help playbook")
           PY
 
+      - name: Verify packaged Web bundle contract
+        run: python -m pytest -q -m packaged_web_dist tests/test_web_manifest_static.py
+
   windows-smoke:
+    if: github.event_name != 'schedule'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -74,14 +155,39 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install -U pip
           python -m pip install -e . pytest pytest-timeout
 
       - name: Run Windows PTY smoke tests
         timeout-minutes: 10
+        run: >-
+          python -m pytest -q --timeout=90 --timeout-method=thread
+          tests/test_socket_special_ops.py tests/test_windows_pty_backend.py
+
+  nightly-serial:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install test dependencies
         run: |
-          python -m pytest -q --timeout=90 --timeout-method=thread tests/test_socket_special_ops.py tests/test_windows_pty_backend.py
+          python -m pip install -U pip
+          python -m pip install -e . pytest pytest-timeout
+
+      - name: Run full Python suite serially
+        timeout-minutes: 30
+        run: >-
+          env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest tests/ -q -m "not packaged_web_dist" --timeout=120 --timeout-method=thread --durations=20

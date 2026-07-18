@@ -35,7 +35,7 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
         appendComposerFiles(ok);
       }
     },
-    [showError, appendComposerFiles]
+    [showError, appendComposerFiles],
   );
 
   // Drag/drop event listeners.
@@ -104,10 +104,5 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
     setDropOverlayOpen(false);
   }, []);
 
-  return {
-    dropOverlayOpen,
-    handleAppendComposerFiles,
-    resetDragDrop,
-    WEB_MAX_FILE_MB,
-  };
+  return { dropOverlayOpen, handleAppendComposerFiles, resetDragDrop, WEB_MAX_FILE_MB };
 }

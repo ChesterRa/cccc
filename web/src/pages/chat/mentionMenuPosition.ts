@@ -6,7 +6,11 @@ export interface MentionMenuPositionInput {
   menuWidth: number;
 }
 
-export function getMentionMenuLeft({ triggerX, containerWidth, menuWidth }: MentionMenuPositionInput): number {
+export function getMentionMenuLeft({
+  triggerX,
+  containerWidth,
+  menuWidth,
+}: MentionMenuPositionInput): number {
   const maxLeft = Math.max(MENU_GUTTER, containerWidth - menuWidth - MENU_GUTTER);
   const preferredLeft = triggerX - menuWidth / 2 + MENU_GUTTER / 2;
   return Math.round(Math.min(Math.max(preferredLeft, MENU_GUTTER), maxLeft));
@@ -20,7 +24,9 @@ export function getMentionTriggerX(textarea: HTMLTextAreaElement, text: string):
     style.fontWeight,
     style.fontSize,
     style.fontFamily,
-  ].filter(Boolean).join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
   if (!context) return textarea.clientWidth / 2;
@@ -31,5 +37,8 @@ export function getMentionTriggerX(textarea: HTMLTextAreaElement, text: string):
   const usableWidth = Math.max(1, textarea.clientWidth - paddingLeft - paddingRight);
   const currentLine = text.slice(text.lastIndexOf("\n") + 1);
   const measuredX = paddingLeft + context.measureText(currentLine).width - textarea.scrollLeft;
-  return Math.min(Math.max(measuredX, MENU_GUTTER), textarea.clientWidth - MENU_GUTTER || usableWidth);
+  return Math.min(
+    Math.max(measuredX, MENU_GUTTER),
+    textarea.clientWidth - MENU_GUTTER || usableWidth,
+  );
 }

@@ -55,6 +55,23 @@ Both approaches require:
 - Or a ChatGPT account with remote MCP connector support for the ChatGPT Web Model runtime
 - Or a custom runtime command if you wire MCP manually
 
+The ChatGPT Web Model also needs a system Google Chrome or Microsoft Edge browser. On native Linux,
+install `Xvfb` so CCCC can keep projected browser windows off the host desktop; `x11vnc` is optional
+and enables the VNC viewer instead of the built-in CDP screencast fallback:
+
+```bash
+# Debian / Ubuntu
+sudo apt install xvfb x11vnc
+
+# Fedora
+sudo dnf install xorg-x11-server-Xvfb x11vnc
+
+# Arch Linux
+sudo pacman -S xorg-server-xvfb x11vnc
+```
+
+Run `cccc doctor` to verify these dependencies. CCCC does not install OS packages automatically.
+
 ## Installation
 
 ### Upgrading from older versions

@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -70,6 +71,7 @@ class TestWebManifestStatic(unittest.TestCase):
         finally:
             cleanup()
 
+    @pytest.mark.packaged_web_dist
     def test_packaged_ui_dist_contains_remote_pairing_flow(self) -> None:
         dist = Path(__file__).resolve().parents[1] / "src" / "cccc" / "ports" / "web" / "dist"
         bundles = list((dist / "assets").glob("*.js"))

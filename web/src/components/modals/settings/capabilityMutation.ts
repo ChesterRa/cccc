@@ -8,7 +8,9 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function readState(value: Record<string, unknown>): string {
-  return String(value.state || "").trim().toLowerCase();
+  return String(value.state || "")
+    .trim()
+    .toLowerCase();
 }
 
 function readReason(value: Record<string, unknown> | null): string {
@@ -23,7 +25,7 @@ function failFrom(value: Record<string, unknown> | null): CapabilityMutationVali
 
 export function validateCapabilityToggleResult(
   result: unknown,
-  expectedEnabled: boolean
+  expectedEnabled: boolean,
 ): CapabilityMutationValidation {
   const payload = asRecord(result);
   if (!payload) return { ok: false };
@@ -34,7 +36,7 @@ export function validateCapabilityToggleResult(
 
 export function validateCapabilityImportResult(
   result: unknown,
-  opts?: { enableAfterImport?: boolean }
+  opts?: { enableAfterImport?: boolean },
 ): CapabilityMutationValidation {
   const payload = asRecord(result);
   if (!payload) return { ok: false };

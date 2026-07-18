@@ -3,9 +3,7 @@ import { InfoIcon } from "../../Icons";
 import { ScrollFade } from "../../ScrollFade";
 import type { SettingsScope } from "./types";
 import { ScopeTooltip } from "./ScopeTooltip";
-import {
-  settingsWorkspaceSoftPanelClass,
-} from "./types";
+import { settingsWorkspaceSoftPanelClass } from "./types";
 
 interface SettingsTabOption {
   id: string;
@@ -36,8 +34,12 @@ export function SettingsNavigation({
   onTabChange,
 }: SettingsNavigationProps) {
   const { t } = useTranslation("settings");
-  const globalScopeTitle = globalEnabled ? t("navigation.globalScopeTitle") : t("navigation.globalLockedTitle");
-  const globalScopeContent = globalEnabled ? t("navigation.globalScopeContent") : t("navigation.globalLockedContent");
+  const globalScopeTitle = globalEnabled
+    ? t("navigation.globalScopeTitle")
+    : t("navigation.globalLockedTitle");
+  const globalScopeContent = globalEnabled
+    ? t("navigation.globalScopeContent")
+    : t("navigation.globalLockedContent");
   const scopeButtonClass = (active: boolean) =>
     `w-full flex items-center justify-between rounded-[16px] border px-3.5 py-2.5 text-left text-sm font-semibold transition-[background-color,border-color,color,box-shadow] ${
       active
@@ -87,17 +89,13 @@ export function SettingsNavigation({
                 isDark={isDark}
                 title={t("navigation.groupScopeTitle")}
                 content={
-                  <>
-                    {t("navigation.groupScopeContent", { scopeRoot: scopeRootUrl || groupId })}
-                  </>
+                  <>{t("navigation.groupScopeContent", { scopeRoot: scopeRootUrl || groupId })}</>
                 }
               >
                 {(getReferenceProps, setReference) => (
                   <div
                     ref={setReference}
-                    {...getReferenceProps({
-                      onClick: (e) => e.stopPropagation(),
-                    })}
+                    {...getReferenceProps({ onClick: (e) => e.stopPropagation() })}
                     className="p-1 -mr-1 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors opacity-50"
                   >
                     <InfoIcon size={12} />
@@ -126,9 +124,7 @@ export function SettingsNavigation({
                 {(getReferenceProps, setReference) => (
                   <div
                     ref={setReference}
-                    {...getReferenceProps({
-                      onClick: (e) => e.stopPropagation(),
-                    })}
+                    {...getReferenceProps({ onClick: (e) => e.stopPropagation() })}
                     className="p-1 -mr-1 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors opacity-50"
                   >
                     <InfoIcon size={12} />
@@ -144,15 +140,15 @@ export function SettingsNavigation({
             {t("navigation.sections", { defaultValue: "Sections" })}
           </div>
           <div className="space-y-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => onTabChange(tab.id)}
-              className={tabButtonClass(activeTab === tab.id)}
-            >
-              {tab.label}
-            </button>
-          ))}
+            {tabs.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => onTabChange(tab.id)}
+                className={tabButtonClass(activeTab === tab.id)}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
         </nav>
       </aside>
@@ -172,17 +168,13 @@ export function SettingsNavigation({
                   isDark={isDark}
                   title={t("navigation.groupScopeTitle")}
                   content={
-                    <>
-                      {t("navigation.groupScopeContent", { scopeRoot: scopeRootUrl || groupId })}
-                    </>
+                    <>{t("navigation.groupScopeContent", { scopeRoot: scopeRootUrl || groupId })}</>
                   }
                 >
                   {(getReferenceProps, setReference) => (
                     <div
                       ref={setReference}
-                      {...getReferenceProps({
-                        onClick: (e) => e.stopPropagation(),
-                      })}
+                      {...getReferenceProps({ onClick: (e) => e.stopPropagation() })}
                       className="p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors opacity-50"
                     >
                       <InfoIcon size={14} />
@@ -208,9 +200,7 @@ export function SettingsNavigation({
                   {(getReferenceProps, setReference) => (
                     <div
                       ref={setReference}
-                      {...getReferenceProps({
-                        onClick: (e) => e.stopPropagation(),
-                      })}
+                      {...getReferenceProps({ onClick: (e) => e.stopPropagation() })}
                       className="p-1.5 hover:bg-black/5 dark:hover:bg-white/5 rounded-full transition-colors opacity-50"
                     >
                       <InfoIcon size={14} />

@@ -394,6 +394,7 @@
   "openMessageContext": "Open message context",
   "closeSearchModal": "Close search modal",
   "to": "To",
+  "senderPerspective": "Sender perspective",
   "presentationTitle": "Presentation",
   "presentationOpenDockAction": "Open presentation",
   "presentationCloseDockAction": "Hide presentation",
@@ -508,5 +509,7 @@
   "presentationBrowserViewerReasonDisplayNotOwned": "Display is not CCCC-owned",
   "presentationBrowserViewerReasonDisabled": "VNC disabled",
   "presentationBrowserViewerReasonUnsupportedPlatform": "Unsupported platform",
-  "presentationBrowserViewerReasonStartupTimeout": "VNC startup timeout"
+  "presentationBrowserViewerReasonStartupTimeout": "VNC startup timeout",
+  "presentationBrowserViewerIsolationXvfb": "Xvfb isolated",
+  "presentationBrowserViewerTooltipIsolationXvfb": "The browser is running on a CCCC-owned virtual display, not the host desktop."
 }

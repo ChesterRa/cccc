@@ -35,7 +35,7 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
   editAriaLabel,
   onEditValueChange,
 }: MarkdownDocumentSurfaceProps) {
-  const value = String(editing ? editValue ?? content : content || "");
+  const value = String(editing ? (editValue ?? content) : content || "");
   const hasContent = value.trim().length > 0;
 
   return (
@@ -49,7 +49,9 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
       )}
     >
       {error ? (
-        <div className={classNames("text-sm", isDark ? "text-rose-300" : "text-rose-600")}>{error}</div>
+        <div className={classNames("text-sm", isDark ? "text-rose-300" : "text-rose-600")}>
+          {error}
+        </div>
       ) : loading ? (
         <div
           className={classNames(
@@ -84,7 +86,9 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
           className={classNames(
             "block h-full w-full resize-y overflow-y-auto rounded-3xl border-0 bg-transparent p-5 font-mono text-[12px] leading-5 outline-none scrollbar-subtle",
             minHeightClassName,
-            isDark ? "text-slate-100 placeholder:text-slate-500" : "text-gray-900 placeholder:text-gray-400",
+            isDark
+              ? "text-slate-100 placeholder:text-slate-500"
+              : "text-gray-900 placeholder:text-gray-400",
           )}
         />
       ) : hasContent ? (
@@ -92,10 +96,19 @@ export const MarkdownDocumentSurface = memo(function MarkdownDocumentSurface({
           content={value}
           isDark={isDark}
           className={classNames("break-words [overflow-wrap:anywhere]", previewClassName)}
-          fallback={<div className={classNames("whitespace-pre-wrap break-words", previewClassName)}>{value}</div>}
+          fallback={
+            <div className={classNames("whitespace-pre-wrap break-words", previewClassName)}>
+              {value}
+            </div>
+          }
         />
       ) : (
-        <div className={classNames("flex h-full items-center justify-center text-sm", isDark ? "text-slate-500" : "text-gray-500")}>
+        <div
+          className={classNames(
+            "flex h-full items-center justify-center text-sm",
+            isDark ? "text-slate-500" : "text-gray-500",
+          )}
+        >
           {emptyLabel || ""}
         </div>
       )}

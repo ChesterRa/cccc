@@ -62,10 +62,7 @@ export type OptimisticAttachment = {
 
 export type MessageAttachment = EventAttachment | OptimisticAttachment;
 
-export type MessageRef = {
-  kind?: string;
-  [key: string]: unknown;
-};
+export type MessageRef = { kind?: string; [key: string]: unknown };
 
 export type PresentationRefStatus = "open" | "needs_user" | "resolved";
 
@@ -158,6 +155,7 @@ export type HeadlessPreviewSession = {
 // Chat message payload
 export type ChatMessageData = {
   text?: string;
+  insight?: string;
   to?: string[];
   priority?: "normal" | "attention";
   reply_required?: boolean;
@@ -194,10 +192,7 @@ export type ObligationStatus = {
 };
 
 // Chat read receipt payload
-export type ChatReadData = {
-  actor_id?: string;
-  event_id?: string;
-};
+export type ChatReadData = { actor_id?: string; event_id?: string };
 
 // Ledger event data union
 export type LedgerEventData = ChatMessageData | ChatReadData | Record<string, unknown>;
@@ -248,8 +243,8 @@ export type Actor = {
   avatar_url?: string | null;
   has_custom_avatar?: boolean;
   enabled?: boolean;
-  running?: boolean;  // Actual process running status
-  idle_seconds?: number | null;  // Seconds since last PTY output (null if not running/headless)
+  running?: boolean; // Actual process running status
+  idle_seconds?: number | null; // Seconds since last PTY output (null if not running/headless)
   effective_working_state?: "stopped" | "idle" | "working" | "waiting" | "stuck" | string;
   effective_working_reason?: string;
   effective_working_updated_at?: string | null;
@@ -548,11 +543,7 @@ export type ChecklistStatus = "pending" | "in_progress" | "done" | string;
 
 export type TaskWaitingOn = "none" | "user" | "actor" | "external" | string;
 
-export type TaskChecklistItem = {
-  id: string;
-  text: string;
-  status?: ChecklistStatus | null;
-};
+export type TaskChecklistItem = { id: string; text: string; status?: ChecklistStatus | null };
 
 export type Task = {
   id: string;
@@ -607,10 +598,7 @@ export type TaskBoardEntry = string | Partial<Task>;
 
 export type PresentationCardType = "markdown" | "table" | "image" | "pdf" | "file" | "web_preview";
 
-export type PresentationTableData = {
-  columns: string[];
-  rows: string[][];
-};
+export type PresentationTableData = { columns: string[]; rows: string[][] };
 
 export type PresentationContent = {
   mode?: "inline" | "reference" | "workspace_link";
@@ -635,11 +623,7 @@ export type PresentationCard = {
   content: PresentationContent;
 };
 
-export type PresentationSlot = {
-  slot_id: string;
-  index: number;
-  card?: PresentationCard | null;
-};
+export type PresentationSlot = { slot_id: string; index: number; card?: PresentationCard | null };
 
 export type GroupPresentation = {
   v: number;
@@ -652,10 +636,7 @@ export type PresentationBrowserSurfaceState = {
   active: boolean;
   state: string;
   message?: string | null;
-  error?: {
-    code?: string | null;
-    message?: string | null;
-  } | null;
+  error?: { code?: string | null; message?: string | null } | null;
   strategy?: string | null;
   url?: string | null;
   width?: number;
@@ -665,13 +646,15 @@ export type PresentationBrowserSurfaceState = {
   last_frame_seq?: number;
   last_frame_at?: string | null;
   controller_attached?: boolean;
+  metadata?: {
+    display?: string | null;
+    display_owned?: boolean;
+    display_owner?: string | null;
+    adopted?: boolean;
+  } | null;
   viewer?: {
     kind?: string | null;
-    vnc?: {
-      available?: boolean;
-      error?: string | null;
-      started_at?: string | null;
-    } | null;
+    vnc?: { available?: boolean; error?: string | null; started_at?: string | null } | null;
   } | null;
 };
 
@@ -703,10 +686,7 @@ export type GroupContext = {
   attention?: ContextAttention | null;
   board?: ContextBoard | null;
   tasks_summary?: GroupTasksSummary;
-  meta?: {
-    project_status?: string | null;
-    [key: string]: unknown;
-  };
+  meta?: { project_status?: string | null; [key: string]: unknown };
 };
 
 export type ProjectMdInfo = {
@@ -787,7 +767,13 @@ export type AssistantServiceModel = {
   last_update_error?: Record<string, unknown>;
   installed_manifest_sha256?: string;
   update_available?: boolean;
-  artifacts?: Array<{ path?: string; url?: string; sha256?: string; size_bytes?: number; archive?: string }>;
+  artifacts?: Array<{
+    path?: string;
+    url?: string;
+    sha256?: string;
+    size_bytes?: number;
+    archive?: string;
+  }>;
 };
 
 export type AssistantServiceRuntime = {
@@ -1023,8 +1009,28 @@ export type RemoteAccessState = {
   mode: string;
   require_access_token: boolean;
   enabled: boolean;
-  status: "stopped" | "running" | "not_installed" | "not_authenticated" | "misconfigured" | "error" | string;
-  status_reason?: "local_only" | "apply_pending" | "missing_access_token" | "binding_unreachable" | "unsupported_mode" | "provider_not_installed" | "provider_not_authenticated" | "provider_error" | "stopped" | "running" | "misconfigured" | "unknown" | string;
+  status:
+    | "stopped"
+    | "running"
+    | "not_installed"
+    | "not_authenticated"
+    | "misconfigured"
+    | "error"
+    | string;
+  status_reason?:
+    | "local_only"
+    | "apply_pending"
+    | "missing_access_token"
+    | "binding_unreachable"
+    | "unsupported_mode"
+    | "provider_not_installed"
+    | "provider_not_authenticated"
+    | "provider_error"
+    | "stopped"
+    | "running"
+    | "misconfigured"
+    | "unknown"
+    | string;
   endpoint?: string | null;
   updated_at?: string | null;
   restart_required?: boolean;
@@ -1181,11 +1187,7 @@ export type GroupSpaceArtifact = {
   url?: string;
 };
 
-export type GroupSpaceQueueSummary = {
-  pending: number;
-  running: number;
-  failed: number;
-};
+export type GroupSpaceQueueSummary = { pending: number; running: number; failed: number };
 
 export type GroupSpaceMemorySyncSummary = {
   lane: "memory" | string;
@@ -1198,10 +1200,7 @@ export type GroupSpaceMemorySyncSummary = {
   blocked_files: number;
 };
 
-export type GroupSpaceJobError = {
-  code?: string;
-  message?: string;
-};
+export type GroupSpaceJobError = { code?: string; message?: string };
 
 export type GroupSpaceJob = {
   job_id: string;
@@ -1269,42 +1268,28 @@ export type GroupSpaceSyncResult = {
   errors?: Array<Record<string, unknown>>;
 };
 
-export type AutomationRuleTriggerInterval = {
-  kind: "interval";
-  every_seconds: number;
-};
+export type AutomationRuleTriggerInterval = { kind: "interval"; every_seconds: number };
 
-export type AutomationRuleTriggerCron = {
-  kind: "cron";
-  cron: string;
-  timezone?: string;
-};
+export type AutomationRuleTriggerCron = { kind: "cron"; cron: string; timezone?: string };
 
-export type AutomationRuleTriggerAt = {
-  kind: "at";
-  at: string;
-};
+export type AutomationRuleTriggerAt = { kind: "at"; at: string };
 
 export type AutomationRuleTrigger =
   | AutomationRuleTriggerInterval
   | AutomationRuleTriggerCron
   | AutomationRuleTriggerAt;
 
-export type AutomationRuleAction = {
-  kind: "notify";
-  title?: string;
-  snippet_ref?: string | null;
-  message?: string;
-  priority?: "low" | "normal" | "high" | "urgent";
-  requires_ack?: boolean;
-} | {
-  kind: "group_state";
-  state: "active" | "idle" | "paused" | "stopped";
-} | {
-  kind: "actor_control";
-  operation: "start" | "stop" | "restart";
-  targets?: string[];
-};
+export type AutomationRuleAction =
+  | {
+      kind: "notify";
+      title?: string;
+      snippet_ref?: string | null;
+      message?: string;
+      priority?: "low" | "normal" | "high" | "urgent";
+      requires_ack?: boolean;
+    }
+  | { kind: "group_state"; state: "active" | "idle" | "paused" | "stopped" }
+  | { kind: "actor_control"; operation: "start" | "stop" | "restart"; targets?: string[] };
 
 export type AutomationRule = {
   id: string;
@@ -1316,10 +1301,7 @@ export type AutomationRule = {
   action?: AutomationRuleAction;
 };
 
-export type AutomationRuleSet = {
-  rules: AutomationRule[];
-  snippets: Record<string, string>;
-};
+export type AutomationRuleSet = { rules: AutomationRule[]; snippets: Record<string, string> };
 
 export type AutomationSnippetCatalog = {
   built_in: Record<string, string>;
@@ -1346,7 +1328,14 @@ export type GroupAutomation = {
   server_now?: string;
 };
 
-export type IMPlatform = "telegram" | "slack" | "discord" | "feishu" | "dingtalk" | "wecom" | "weixin";
+export type IMPlatform =
+  | "telegram"
+  | "slack"
+  | "discord"
+  | "feishu"
+  | "dingtalk"
+  | "wecom"
+  | "weixin";
 
 export type IMConfig = {
   platform?: IMPlatform;
@@ -1403,7 +1392,12 @@ export type WeixinLoginStatus = {
 
 export type DirItem = { name: string; path: string; is_dir: boolean };
 export type DirSuggestion = { name: string; path: string; icon: string };
-export type PresentationWorkspaceItem = { name: string; path: string; is_dir: boolean; mime_type?: string | null };
+export type PresentationWorkspaceItem = {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  mime_type?: string | null;
+};
 export type PresentationWorkspaceListing = {
   root_path: string;
   path: string;
@@ -1432,7 +1426,7 @@ export const SUPPORTED_RUNTIMES = [
   "custom",
 ] as const;
 
-export type SupportedRuntime = typeof SUPPORTED_RUNTIMES[number];
+export type SupportedRuntime = (typeof SUPPORTED_RUNTIMES)[number];
 
 export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   amp: { label: "Amp", desc: "" },
@@ -1440,106 +1434,229 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   claude: { label: "Claude Code", desc: "" },
   codex: { label: "Codex CLI", desc: "" },
   copilot: { label: "GitHub Copilot CLI", desc: "Uses Copilot CLI MCP setup with the PTY runner" },
-  cursor: { label: "Cursor CLI", desc: "Uses an idempotent MCP setup prompt inside the PTY runner" },
+  cursor: {
+    label: "Cursor CLI",
+    desc: "Uses an idempotent MCP setup prompt inside the PTY runner",
+  },
   devin: { label: "Devin CLI", desc: "Uses Devin MCP CLI setup with the PTY runner" },
   kiro: { label: "Kiro CLI", desc: "Uses Kiro MCP CLI setup with the PTY runner" },
-  kilo: { label: "Kilo Code CLI", desc: "Uses an idempotent MCP setup prompt inside the PTY runner" },
-  antigravity: { label: "Antigravity CLI", desc: "Uses an idempotent MCP setup prompt inside the PTY runner" },
+  kilo: {
+    label: "Kilo Code CLI",
+    desc: "Uses an idempotent MCP setup prompt inside the PTY runner",
+  },
+  antigravity: {
+    label: "Antigravity CLI",
+    desc: "Uses an idempotent MCP setup prompt inside the PTY runner",
+  },
   droid: { label: "Droid", desc: "" },
   grok: { label: "Grok Build", desc: "Uses Grok MCP CLI setup with the PTY runner" },
   hermes: { label: "Hermes Agent", desc: "Uses your Hermes profile with CCCC MCP" },
   kimi: { label: "Kimi CLI", desc: "" },
   opencode: { label: "OpenCode", desc: "Uses inline OpenCode MCP config at actor launch" },
-  web_model: { label: "ChatGPT Web Model", desc: "ChatGPT browser delivery + remote MCP connector" },
+  web_model: {
+    label: "ChatGPT Web Model",
+    desc: "ChatGPT browser delivery + remote MCP connector",
+  },
   custom: { label: "Custom", desc: "Manual MCP installation needed" },
 };
 
 // Runtime colors for visual distinction
 // Dark theme: semi-transparent dark backgrounds with bright text
 // Light theme: semi-transparent light backgrounds with darker text
-export const RUNTIME_COLORS: Record<string, { 
-  // Dark theme
-  bg: string; 
-  text: string; 
-  border: string; 
-  dot: string;
-  // Light theme
-  bgLight: string;
-  textLight: string;
-  borderLight: string;
-  dotLight: string;
-}> = {
+export const RUNTIME_COLORS: Record<
+  string,
+  {
+    // Dark theme
+    bg: string;
+    text: string;
+    border: string;
+    dot: string;
+    // Light theme
+    bgLight: string;
+    textLight: string;
+    borderLight: string;
+    dotLight: string;
+  }
+> = {
   amp: {
-    bg: "bg-rose-900/30", text: "text-rose-300", border: "border-rose-600/50", dot: "bg-rose-400",
-    bgLight: "bg-rose-50", textLight: "text-rose-700", borderLight: "border-rose-300", dotLight: "bg-rose-500"
+    bg: "bg-rose-900/30",
+    text: "text-rose-300",
+    border: "border-rose-600/50",
+    dot: "bg-rose-400",
+    bgLight: "bg-rose-50",
+    textLight: "text-rose-700",
+    borderLight: "border-rose-300",
+    dotLight: "bg-rose-500",
   },
   auggie: {
-    bg: "bg-teal-900/30", text: "text-teal-300", border: "border-teal-600/50", dot: "bg-teal-400",
-    bgLight: "bg-teal-50", textLight: "text-teal-700", borderLight: "border-teal-300", dotLight: "bg-teal-500"
+    bg: "bg-teal-900/30",
+    text: "text-teal-300",
+    border: "border-teal-600/50",
+    dot: "bg-teal-400",
+    bgLight: "bg-teal-50",
+    textLight: "text-teal-700",
+    borderLight: "border-teal-300",
+    dotLight: "bg-teal-500",
   },
-  claude: { 
-    bg: "bg-orange-900/30", text: "text-orange-300", border: "border-orange-600/50", dot: "bg-orange-400",
-    bgLight: "bg-orange-50", textLight: "text-orange-700", borderLight: "border-orange-300", dotLight: "bg-orange-500"
+  claude: {
+    bg: "bg-orange-900/30",
+    text: "text-orange-300",
+    border: "border-orange-600/50",
+    dot: "bg-orange-400",
+    bgLight: "bg-orange-50",
+    textLight: "text-orange-700",
+    borderLight: "border-orange-300",
+    dotLight: "bg-orange-500",
   },
-  codex: { 
-    bg: "bg-emerald-900/30", text: "text-emerald-300", border: "border-emerald-600/50", dot: "bg-emerald-400",
-    bgLight: "bg-emerald-50", textLight: "text-emerald-700", borderLight: "border-emerald-300", dotLight: "bg-emerald-500"
+  codex: {
+    bg: "bg-emerald-900/30",
+    text: "text-emerald-300",
+    border: "border-emerald-600/50",
+    dot: "bg-emerald-400",
+    bgLight: "bg-emerald-50",
+    textLight: "text-emerald-700",
+    borderLight: "border-emerald-300",
+    dotLight: "bg-emerald-500",
   },
   copilot: {
-    bg: "bg-slate-900/40", text: "text-slate-200", border: "border-slate-500/60", dot: "bg-slate-300",
-    bgLight: "bg-slate-100", textLight: "text-slate-800", borderLight: "border-slate-300", dotLight: "bg-slate-600"
+    bg: "bg-slate-900/40",
+    text: "text-slate-200",
+    border: "border-slate-500/60",
+    dot: "bg-slate-300",
+    bgLight: "bg-slate-100",
+    textLight: "text-slate-800",
+    borderLight: "border-slate-300",
+    dotLight: "bg-slate-600",
   },
   cursor: {
-    bg: "bg-zinc-900/40", text: "text-zinc-200", border: "border-zinc-500/60", dot: "bg-zinc-300",
-    bgLight: "bg-zinc-100", textLight: "text-zinc-800", borderLight: "border-zinc-300", dotLight: "bg-zinc-600"
+    bg: "bg-zinc-900/40",
+    text: "text-zinc-200",
+    border: "border-zinc-500/60",
+    dot: "bg-zinc-300",
+    bgLight: "bg-zinc-100",
+    textLight: "text-zinc-800",
+    borderLight: "border-zinc-300",
+    dotLight: "bg-zinc-600",
   },
   devin: {
-    bg: "bg-sky-900/30", text: "text-sky-300", border: "border-sky-600/50", dot: "bg-sky-400",
-    bgLight: "bg-sky-50", textLight: "text-sky-700", borderLight: "border-sky-300", dotLight: "bg-sky-500"
+    bg: "bg-sky-900/30",
+    text: "text-sky-300",
+    border: "border-sky-600/50",
+    dot: "bg-sky-400",
+    bgLight: "bg-sky-50",
+    textLight: "text-sky-700",
+    borderLight: "border-sky-300",
+    dotLight: "bg-sky-500",
   },
   kiro: {
-    bg: "bg-purple-900/30", text: "text-purple-300", border: "border-purple-600/50", dot: "bg-purple-400",
-    bgLight: "bg-purple-50", textLight: "text-purple-700", borderLight: "border-purple-300", dotLight: "bg-purple-500"
+    bg: "bg-purple-900/30",
+    text: "text-purple-300",
+    border: "border-purple-600/50",
+    dot: "bg-purple-400",
+    bgLight: "bg-purple-50",
+    textLight: "text-purple-700",
+    borderLight: "border-purple-300",
+    dotLight: "bg-purple-500",
   },
   kilo: {
-    bg: "bg-lime-900/30", text: "text-lime-300", border: "border-lime-600/50", dot: "bg-lime-400",
-    bgLight: "bg-lime-50", textLight: "text-lime-800", borderLight: "border-lime-300", dotLight: "bg-lime-500"
+    bg: "bg-lime-900/30",
+    text: "text-lime-300",
+    border: "border-lime-600/50",
+    dot: "bg-lime-400",
+    bgLight: "bg-lime-50",
+    textLight: "text-lime-800",
+    borderLight: "border-lime-300",
+    dotLight: "bg-lime-500",
   },
   antigravity: {
-    bg: "bg-blue-900/30", text: "text-blue-300", border: "border-blue-600/50", dot: "bg-blue-400",
-    bgLight: "bg-blue-50", textLight: "text-blue-700", borderLight: "border-blue-300", dotLight: "bg-blue-500"
+    bg: "bg-blue-900/30",
+    text: "text-blue-300",
+    border: "border-blue-600/50",
+    dot: "bg-blue-400",
+    bgLight: "bg-blue-50",
+    textLight: "text-blue-700",
+    borderLight: "border-blue-300",
+    dotLight: "bg-blue-500",
   },
-  droid: { 
-    bg: "bg-violet-900/30", text: "text-violet-300", border: "border-violet-600/50", dot: "bg-violet-400",
-    bgLight: "bg-violet-50", textLight: "text-violet-700", borderLight: "border-violet-300", dotLight: "bg-violet-500"
+  droid: {
+    bg: "bg-violet-900/30",
+    text: "text-violet-300",
+    border: "border-violet-600/50",
+    dot: "bg-violet-400",
+    bgLight: "bg-violet-50",
+    textLight: "text-violet-700",
+    borderLight: "border-violet-300",
+    dotLight: "bg-violet-500",
   },
   grok: {
-    bg: "bg-neutral-900/40", text: "text-neutral-200", border: "border-neutral-500/60", dot: "bg-neutral-300",
-    bgLight: "bg-neutral-100", textLight: "text-neutral-800", borderLight: "border-neutral-300", dotLight: "bg-neutral-600"
+    bg: "bg-neutral-900/40",
+    text: "text-neutral-200",
+    border: "border-neutral-500/60",
+    dot: "bg-neutral-300",
+    bgLight: "bg-neutral-100",
+    textLight: "text-neutral-800",
+    borderLight: "border-neutral-300",
+    dotLight: "bg-neutral-600",
   },
   hermes: {
-    bg: "bg-cyan-900/30", text: "text-cyan-300", border: "border-cyan-600/50", dot: "bg-cyan-400",
-    bgLight: "bg-cyan-50", textLight: "text-cyan-700", borderLight: "border-cyan-300", dotLight: "bg-cyan-500"
+    bg: "bg-cyan-900/30",
+    text: "text-cyan-300",
+    border: "border-cyan-600/50",
+    dot: "bg-cyan-400",
+    bgLight: "bg-cyan-50",
+    textLight: "text-cyan-700",
+    borderLight: "border-cyan-300",
+    dotLight: "bg-cyan-500",
   },
   kimi: {
-    bg: "bg-lime-900/30", text: "text-lime-300", border: "border-lime-600/50", dot: "bg-lime-400",
-    bgLight: "bg-lime-50", textLight: "text-lime-700", borderLight: "border-lime-300", dotLight: "bg-lime-500"
+    bg: "bg-lime-900/30",
+    text: "text-lime-300",
+    border: "border-lime-600/50",
+    dot: "bg-lime-400",
+    bgLight: "bg-lime-50",
+    textLight: "text-lime-700",
+    borderLight: "border-lime-300",
+    dotLight: "bg-lime-500",
   },
   opencode: {
-    bg: "bg-stone-900/40", text: "text-stone-200", border: "border-stone-500/60", dot: "bg-stone-300",
-    bgLight: "bg-stone-100", textLight: "text-stone-800", borderLight: "border-stone-300", dotLight: "bg-stone-600"
+    bg: "bg-stone-900/40",
+    text: "text-stone-200",
+    border: "border-stone-500/60",
+    dot: "bg-stone-300",
+    bgLight: "bg-stone-100",
+    textLight: "text-stone-800",
+    borderLight: "border-stone-300",
+    dotLight: "bg-stone-600",
   },
   web_model: {
-    bg: "bg-indigo-900/30", text: "text-indigo-300", border: "border-indigo-600/50", dot: "bg-indigo-400",
-    bgLight: "bg-indigo-50", textLight: "text-indigo-700", borderLight: "border-indigo-300", dotLight: "bg-indigo-500"
+    bg: "bg-indigo-900/30",
+    text: "text-indigo-300",
+    border: "border-indigo-600/50",
+    dot: "bg-indigo-400",
+    bgLight: "bg-indigo-50",
+    textLight: "text-indigo-700",
+    borderLight: "border-indigo-300",
+    dotLight: "bg-indigo-500",
   },
   custom: {
-    bg: "bg-zinc-800/50", text: "text-zinc-300", border: "border-zinc-500/50", dot: "bg-zinc-400",
-    bgLight: "bg-zinc-100", textLight: "text-zinc-700", borderLight: "border-zinc-300", dotLight: "bg-zinc-500"
+    bg: "bg-zinc-800/50",
+    text: "text-zinc-300",
+    border: "border-zinc-500/50",
+    dot: "bg-zinc-400",
+    bgLight: "bg-zinc-100",
+    textLight: "text-zinc-700",
+    borderLight: "border-zinc-300",
+    dotLight: "bg-zinc-500",
   },
-  user: { 
-    bg: "bg-sky-900/30", text: "text-sky-300", border: "border-sky-600/50", dot: "bg-sky-400",
-    bgLight: "bg-sky-50", textLight: "text-sky-700", borderLight: "border-sky-300", dotLight: "bg-sky-500"
+  user: {
+    bg: "bg-sky-900/30",
+    text: "text-sky-300",
+    border: "border-sky-600/50",
+    dot: "bg-sky-400",
+    bgLight: "bg-sky-50",
+    textLight: "text-sky-700",
+    borderLight: "border-sky-300",
+    dotLight: "bg-sky-500",
   },
 };
 
@@ -1547,12 +1664,7 @@ export const RUNTIME_COLORS: Record<string, {
 export function getRuntimeColor(runtime?: string, isDark: boolean = true) {
   const colors = RUNTIME_COLORS[runtime || "codex"] || RUNTIME_COLORS.codex;
   if (isDark) {
-    return {
-      bg: colors.bg,
-      text: colors.text,
-      border: colors.border,
-      dot: colors.dot,
-    };
+    return { bg: colors.bg, text: colors.text, border: colors.border, dot: colors.dot };
   }
   return {
     bg: colors.bgLight,
@@ -1564,14 +1676,54 @@ export function getRuntimeColor(runtime?: string, isDark: boolean = true) {
 
 const ACTOR_ACCENTS = [
   // Dark theme accents are intentionally soft (low-saturation ring + readable name color).
-  { ring: "ring-sky-400/35", text: "text-sky-300", ringLight: "ring-sky-300", textLight: "text-sky-700" },
-  { ring: "ring-indigo-400/35", text: "text-indigo-300", ringLight: "ring-indigo-300", textLight: "text-indigo-700" },
-  { ring: "ring-violet-400/35", text: "text-violet-300", ringLight: "ring-violet-300", textLight: "text-violet-700" },
-  { ring: "ring-fuchsia-400/35", text: "text-fuchsia-300", ringLight: "ring-fuchsia-300", textLight: "text-fuchsia-700" },
-  { ring: "ring-cyan-400/35", text: "text-cyan-300", ringLight: "ring-cyan-300", textLight: "text-cyan-700" },
-  { ring: "ring-teal-400/35", text: "text-teal-300", ringLight: "ring-teal-300", textLight: "text-teal-700" },
-  { ring: "ring-emerald-400/35", text: "text-emerald-300", ringLight: "ring-emerald-300", textLight: "text-emerald-700" },
-  { ring: "ring-amber-400/35", text: "text-amber-300", ringLight: "ring-amber-300", textLight: "text-amber-700" },
+  {
+    ring: "ring-sky-400/35",
+    text: "text-sky-300",
+    ringLight: "ring-sky-300",
+    textLight: "text-sky-700",
+  },
+  {
+    ring: "ring-indigo-400/35",
+    text: "text-indigo-300",
+    ringLight: "ring-indigo-300",
+    textLight: "text-indigo-700",
+  },
+  {
+    ring: "ring-violet-400/35",
+    text: "text-violet-300",
+    ringLight: "ring-violet-300",
+    textLight: "text-violet-700",
+  },
+  {
+    ring: "ring-fuchsia-400/35",
+    text: "text-fuchsia-300",
+    ringLight: "ring-fuchsia-300",
+    textLight: "text-fuchsia-700",
+  },
+  {
+    ring: "ring-cyan-400/35",
+    text: "text-cyan-300",
+    ringLight: "ring-cyan-300",
+    textLight: "text-cyan-700",
+  },
+  {
+    ring: "ring-teal-400/35",
+    text: "text-teal-300",
+    ringLight: "ring-teal-300",
+    textLight: "text-teal-700",
+  },
+  {
+    ring: "ring-emerald-400/35",
+    text: "text-emerald-300",
+    ringLight: "ring-emerald-300",
+    textLight: "text-emerald-700",
+  },
+  {
+    ring: "ring-amber-400/35",
+    text: "text-amber-300",
+    ringLight: "ring-amber-300",
+    textLight: "text-amber-700",
+  },
 ];
 
 function _fnv1a32(input: string): number {
