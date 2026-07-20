@@ -49,7 +49,7 @@ http-body-util = "0.1"
 portable-pty = "0.9"
 percent-encoding = "2.3"
 regex = "1.11"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks", "system-proxy"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "socks", "system-proxy"] }
 rust-embed = "8.7"
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
 serde = { version = "1.0", features = ["derive"] }

@@ -79,22 +79,25 @@ pub(super) fn update(
     registration: &Value,
     grant: &AccessGrant,
     response: &Value,
+    requested_session_id: Option<&str>,
+    terminate_requested: bool,
 ) -> Result<(), ApiError> {
-    let Some(session_id) = response
+    let response_session_id = response
         .pointer("/result/structuredContent/session_id")
         .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-    else {
-        return Ok(());
-    };
+        .filter(|value| !value.is_empty());
     let mut bindings = bindings().lock().map_err(lock_error)?;
-    if tool_name == "cccc_remote_exec_command" {
+    if tool_name == "cccc_remote_exec_command"
+        && let Some(session_id) = response_session_id
+    {
         bindings.insert(session_id.to_owned(), binding(registration, grant));
     } else if tool_name == "cccc_remote_write_stdin"
-        && response
-            .pointer("/result/structuredContent/status/running")
-            .and_then(Value::as_bool)
-            == Some(false)
+        && (terminate_requested
+            || response
+                .pointer("/result/structuredContent/status/running")
+                .and_then(Value::as_bool)
+                == Some(false))
+        && let Some(session_id) = response_session_id.or(requested_session_id)
     {
         bindings.remove(session_id);
     }
@@ -123,4 +126,68 @@ fn bindings() -> &'static Mutex<HashMap<String, SessionBinding>> {
 
 fn lock_error<T>(_: std::sync::PoisonError<T>) -> ApiError {
     ApiError::unavailable("bridge_session_store_error", "session lock poisoned")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminate_request_revokes_binding_without_running_status() {
+        let session_id = format!("s_{}", uuid::Uuid::new_v4().simple());
+        let registration = registration();
+        let grant = grant();
+        let started = json!({
+            "result":{"structuredContent":{"session_id":session_id}}
+        });
+        update(
+            "cccc_remote_exec_command",
+            &registration,
+            &grant,
+            &started,
+            None,
+            false,
+        )
+        .expect("bind session");
+
+        let arguments = json!({"session_id":session_id})
+            .as_object()
+            .expect("arguments")
+            .clone();
+        require(&arguments, &registration, &grant).expect("binding exists");
+
+        let terminated = json!({
+            "jsonrpc":"2.0",
+            "error":{"code":-32602,"message":"runtime session not found"}
+        });
+        update(
+            "cccc_remote_write_stdin",
+            &registration,
+            &grant,
+            &terminated,
+            Some(&session_id),
+            true,
+        )
+        .expect("revoke binding");
+
+        assert!(
+            require(&arguments, &registration, &grant).is_err(),
+            "binding should be removed"
+        );
+    }
+
+    fn registration() -> Value {
+        json!({
+            "registration_id":"greg_test",
+            "group_id":"g_target",
+            "remote_group_id":"g_source"
+        })
+    }
+
+    fn grant() -> AccessGrant {
+        AccessGrant {
+            level: "full".into(),
+            trust_id: "trust_test".into(),
+        }
+    }
 }

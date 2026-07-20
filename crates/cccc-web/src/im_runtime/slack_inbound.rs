@@ -1,8 +1,8 @@
-use cccc_core::{HomeLayout, blobs::BlobUpload};
-use futures_util::StreamExt;
-use serde_json::{Value, json};
-
-const MAX_ATTACHMENT_BYTES: usize = 10 * 1024 * 1024;
+use super::inbound_attachments::{AttachmentSpec, download_response, ensure_size};
+use cccc_core::HomeLayout;
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 
 pub(super) fn has_files(event: &Value) -> bool {
     event
@@ -54,13 +54,8 @@ async fn materialize_file(
     bot_token: &str,
     file: &Value,
 ) -> Result<Value, String> {
-    if file
-        .get("size")
-        .and_then(Value::as_u64)
-        .is_some_and(|size| size > MAX_ATTACHMENT_BYTES as u64)
-    {
-        return Err("attachment exceeds 10 MiB before download".into());
-    }
+    let advertised_size = file.get("size").and_then(Value::as_u64);
+    ensure_size(advertised_size)?;
     let url = file
         .get("url_private_download")
         .or_else(|| file.get("url_private"))
@@ -72,28 +67,7 @@ async fn materialize_file(
         .bearer_auth(bot_token)
         .send()
         .await
-        .map_err(|error| error.to_string())?
-        .error_for_status()
         .map_err(|error| error.to_string())?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > MAX_ATTACHMENT_BYTES as u64)
-    {
-        return Err("attachment exceeds 10 MiB before read".into());
-    }
-
-    let mut upload = BlobUpload::new(home, group_id).map_err(|error| error.to_string())?;
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| error.to_string())?;
-        if upload.bytes().saturating_add(chunk.len()) > MAX_ATTACHMENT_BYTES {
-            return Err("attachment exceeds 10 MiB while downloading".into());
-        }
-        upload
-            .write_chunk(&chunk)
-            .map_err(|error| error.to_string())?;
-    }
-    let blob = upload.finish().map_err(|error| error.to_string())?;
     let mime_type = file
         .get("mimetype")
         .and_then(Value::as_str)
@@ -104,14 +78,17 @@ async fn materialize_file(
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .unwrap_or("file");
-    Ok(json!({
-        "kind": if mime_type.starts_with("image/") { "image" } else { "file" },
-        "path": blob.path,
-        "title": title,
-        "mime_type": mime_type,
-        "bytes": blob.bytes,
-        "sha256": blob.sha256,
-    }))
+    let spec = AttachmentSpec::new(
+        if mime_type.starts_with("image/") {
+            "image"
+        } else {
+            "file"
+        },
+        title,
+        mime_type,
+    )
+    .with_source_id(file.get("id").and_then(Value::as_str).unwrap_or_default());
+    download_response(home, group_id, response, advertised_size, spec).await
 }
 
 #[cfg(test)]
@@ -183,7 +160,7 @@ mod tests {
             .create("slack", "")
             .expect("group");
         let event = json!({"files":[{
-            "id":"F1","name":"large.bin","size":MAX_ATTACHMENT_BYTES + 1,
+            "id":"F1","name":"large.bin","size":super::super::inbound_attachments::MAX_ATTACHMENT_BYTES + 1,
             "url_private_download":"http://127.0.0.1:1/unreachable"
         }]});
 

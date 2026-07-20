@@ -345,7 +345,7 @@ export function IMBridgeTab({
     if (imStatus?.configured) {
       loadIMAuthState();
     }
-  }, [imStatus?.configured, loadIMAuthState]);
+  }, [imStatus?.configured, loadIMAuthState, weixinLoggedIn]);
 
   useEffect(() => {
     if (!imStatus?.configured) return;

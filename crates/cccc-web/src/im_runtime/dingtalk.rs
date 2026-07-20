@@ -1,7 +1,8 @@
+use super::dingtalk_inbound::{DingTalkAttachmentDownloader, has_attachments, inbound_text};
 use super::dingtalk_outbound::{DingTalkAttachmentSender, DingTalkTarget};
 use super::{
-    InboundDecision, dispatch_inbound, inbound_decision, outbound_text, resolve_credential,
-    spawn_outbound, string,
+    InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, outbound_text,
+    resolve_credential, spawn_outbound, string,
 };
 use async_trait::async_trait;
 use cccc_client::DaemonClient;
@@ -31,13 +32,18 @@ pub(super) async fn start(
         value => resolve_credential(&value)?,
     };
     let sessions = Arc::new(Mutex::new(load_sessions(&home, group_id)));
+    let credential = Credential::new(app_key, app_secret);
+    let inbound_media = Arc::new(DingTalkStreamClient::builder(credential.clone()).build());
     let handler = Handler {
         daemon,
         home: home.clone(),
         group_id: group_id.to_owned(),
         sessions: Arc::clone(&sessions),
+        attachments: DingTalkAttachmentDownloader::new(
+            Arc::clone(&inbound_media),
+            robot_code.clone(),
+        ),
     };
-    let credential = Credential::new(app_key, app_secret);
     let media = DingTalkStreamClient::builder(credential.clone()).build();
     let mut stream = DingTalkStreamClient::builder(credential)
         .register_callback_handler(ChatbotMessage::TOPIC, handler)
@@ -73,6 +79,7 @@ struct Handler {
     home: HomeLayout,
     group_id: String,
     sessions: Arc<Mutex<HashMap<String, SessionWebhook>>>,
+    attachments: DingTalkAttachmentDownloader,
 }
 
 #[async_trait]
@@ -90,14 +97,9 @@ impl CallbackHandler for Handler {
             Err(error) => return (AckMessage::STATUS_BAD_REQUEST, error.to_string()),
         };
         let chat_id = message.conversation_id.clone().unwrap_or_default();
-        let text = message
-            .text
-            .as_ref()
-            .and_then(|text| text.content.as_deref())
-            .map(str::trim)
-            .unwrap_or_default();
-        if chat_id.is_empty() || text.is_empty() {
-            return (AckMessage::STATUS_OK, "ignored non-text message".into());
+        let text = inbound_text(&message);
+        if chat_id.is_empty() || (text.is_empty() && !has_attachments(&message)) {
+            return (AckMessage::STATUS_OK, "ignored empty message".into());
         }
         if let Some(url) = message
             .session_webhook
@@ -129,7 +131,7 @@ impl CallbackHandler for Handler {
                 .expect("DingTalk session registry poisoned")
                 .insert(chat_id.clone(), session);
         }
-        match inbound_decision(&self.home, &self.group_id, PLATFORM, &chat_id, text).await {
+        match inbound_decision(&self.home, &self.group_id, PLATFORM, &chat_id, &text).await {
             InboundDecision::Forward => {}
             InboundDecision::Reply(body) => {
                 return match self.send_command_reply(&chat_id, &body).await {
@@ -144,17 +146,29 @@ impl CallbackHandler for Handler {
                 return (AckMessage::STATUS_OK, "ignored unauthorized chat".into());
             }
         }
+        let message_id = message.message_id.clone().unwrap_or_default();
+        let attachments = self
+            .attachments
+            .materialize(&self.home, &self.group_id, &message)
+            .await;
+        if text.is_empty() && attachments.is_empty() {
+            return (AckMessage::STATUS_OK, "attachment download failed".into());
+        }
         let sender = message
             .sender_staff_id
             .or(message.sender_id)
             .unwrap_or_else(|| "user".into());
-        match dispatch_inbound(
+        match dispatch_inbound_with(
             &self.daemon,
             &self.group_id,
             PLATFORM,
             &chat_id,
             &sender,
-            text,
+            &text,
+            InboundMetadata {
+                message_id,
+                attachments,
+            },
         )
         .await
         {

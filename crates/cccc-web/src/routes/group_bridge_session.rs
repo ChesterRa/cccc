@@ -72,6 +72,8 @@ async fn mcp(
         .unwrap_or("")
         .to_owned();
     let mut bridge_tool_name = None;
+    let mut terminate_session = false;
+    let mut bridge_session_id = None;
     if method == "tools/call" {
         let request_id = request["id"].clone();
         let params = request
@@ -115,6 +117,14 @@ async fn mcp(
         );
         if name == "cccc_remote_write_stdin" {
             group_bridge_command_sessions::require(arguments, &registration, &grant)?;
+            bridge_session_id = arguments
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            terminate_session = arguments
+                .get("terminate")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
         }
         bridge_tool_name = Some(name.clone());
         if name == "cccc_remote_git" {
@@ -130,7 +140,14 @@ async fn mcp(
     }
     let mut response = cccc_mcp::handle_request(&state.home, &request).await;
     if let Some(name) = bridge_tool_name.as_deref() {
-        group_bridge_command_sessions::update(name, &registration, &grant, &response)?;
+        group_bridge_command_sessions::update(
+            name,
+            &registration,
+            &grant,
+            &response,
+            bridge_session_id.as_deref(),
+            terminate_session,
+        )?;
     }
     if method == "tools/list"
         && let Some(tools) = response

@@ -1,5 +1,7 @@
+use super::feishu_inbound::materialize_resources;
+use super::feishu_outbound::FeishuOutbound;
 use super::{
-    InboundDecision, dispatch_inbound, inbound_decision, outbound_text, resolve_credential,
+    InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, resolve_credential,
     spawn_outbound, string,
 };
 use cccc_client::DaemonClient;
@@ -30,12 +32,21 @@ pub(super) async fn start(
     if string(config, "feishu_domain").contains("larksuite") {
         channel_config.domain = Domain::Lark;
     }
+    let base_url = channel_config.base_url().to_string();
     let openapi = OpenApiClient::new(channel_config, ReqwestOpenApiTransport::new());
     openapi
         .tenant_access_token()
         .await
         .map_err(|error| format!("Feishu credential verification failed: {error}"))?;
     let sender = MessageSender::new(openapi.clone());
+    let outbound_sender = FeishuOutbound::new(
+        home.clone(),
+        group_id,
+        reqwest::Client::new(),
+        base_url.clone(),
+        sender.clone(),
+    );
+    let inbound_openapi = openapi.clone();
     let connector =
         OpenApiWebSocketEventConnector::new(openapi, TokioTungsteniteWebSocketTransport::new());
     let mut event_loop = EventLoop::with_options(
@@ -48,6 +59,7 @@ pub(super) async fn start(
     let inbound_home = home.clone();
     let inbound_group = group_id.to_owned();
     let inbound_sender = sender.clone();
+    let inbound_http = reqwest::Client::new();
     let connection = tokio::spawn(async move {
         let result = event_loop
             .run(move |event| {
@@ -55,6 +67,9 @@ pub(super) async fn start(
                 let daemon = daemon.clone();
                 let group_id = inbound_group.clone();
                 let sender = inbound_sender.clone();
+                let openapi = inbound_openapi.clone();
+                let http = inbound_http.clone();
+                let base_url = base_url.clone();
                 async move {
                     let ChannelEvent::Message(message) = event.event else {
                         return Ok(WebSocketEventAck::ok());
@@ -63,7 +78,7 @@ pub(super) async fn start(
                         return Ok(WebSocketEventAck::ok());
                     }
                     let text = message.text.trim();
-                    if text.is_empty() {
+                    if text.is_empty() && message.resources.is_empty() {
                         return Ok(WebSocketEventAck::ok());
                     }
                     match inbound_decision(&home, &group_id, PLATFORM, &message.chat_id, text).await
@@ -81,13 +96,29 @@ pub(super) async fn start(
                         }
                         InboundDecision::Ignore => return Ok(WebSocketEventAck::ok()),
                     }
-                    if let Err(error) = dispatch_inbound(
+                    let attachments = materialize_resources(
+                        &home,
+                        &group_id,
+                        &http,
+                        &openapi,
+                        &base_url,
+                        &message.resources,
+                    )
+                    .await;
+                    if text.is_empty() && attachments.is_empty() {
+                        return Ok(WebSocketEventAck::ok());
+                    }
+                    if let Err(error) = dispatch_inbound_with(
                         &daemon,
                         &group_id,
                         PLATFORM,
                         &message.chat_id,
                         &message.sender.open_id,
                         text,
+                        InboundMetadata {
+                            message_id: message.message_id,
+                            attachments,
+                        },
                     )
                     .await
                     {
@@ -105,20 +136,9 @@ pub(super) async fn start(
         home,
         group_id.to_owned(),
         ledger_events,
-        sender,
+        outbound_sender,
         |sender, targets, event| async move {
-            let Some(body) = outbound_text(&event, false) else {
-                return;
-            };
-            for chat_id in targets {
-                if let Err(error) = sender
-                    .text_message(Recipient::Chat(chat_id), &body)
-                    .send()
-                    .await
-                {
-                    tracing::warn!(%error, "failed to send Feishu IM message");
-                }
-            }
+            sender.send(&targets, &event).await;
         },
     );
     Ok(vec![connection, outbound])

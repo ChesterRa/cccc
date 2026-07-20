@@ -1,6 +1,7 @@
+use super::discord_inbound::materialize_attachments;
 use super::{
-    InboundDecision, dispatch_inbound, inbound_decision, outbound_text, resolve_credential,
-    spawn_outbound, string,
+    InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, outbound_text,
+    resolve_credential, spawn_outbound, string,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -30,6 +31,7 @@ pub(super) async fn start(
         home: home.clone(),
         daemon,
         group_id: group_id.to_owned(),
+        download_http: reqwest::Client::new(),
     };
     let intents = GatewayIntents::GUILD_MESSAGES
         | GatewayIntents::DIRECT_MESSAGES
@@ -69,6 +71,7 @@ struct Handler {
     home: HomeLayout,
     daemon: DaemonClient,
     group_id: String,
+    download_http: reqwest::Client,
 }
 
 #[async_trait]
@@ -79,7 +82,7 @@ impl EventHandler for Handler {
         }
         let chat_id = message.channel_id.get().to_string();
         let text = message.content.trim();
-        if text.is_empty() {
+        if text.is_empty() && message.attachments.is_empty() {
             return;
         }
         match inbound_decision(&self.home, &self.group_id, PLATFORM, &chat_id, text).await {
@@ -92,13 +95,27 @@ impl EventHandler for Handler {
             }
             InboundDecision::Ignore => return,
         }
-        if let Err(error) = dispatch_inbound(
+        let attachments = materialize_attachments(
+            &self.home,
+            &self.group_id,
+            &self.download_http,
+            &message.attachments,
+        )
+        .await;
+        if text.is_empty() && attachments.is_empty() {
+            return;
+        }
+        if let Err(error) = dispatch_inbound_with(
             &self.daemon,
             &self.group_id,
             PLATFORM,
             &chat_id,
             &message.author.id.get().to_string(),
             text,
+            InboundMetadata {
+                message_id: message.id.to_string(),
+                attachments,
+            },
         )
         .await
         {

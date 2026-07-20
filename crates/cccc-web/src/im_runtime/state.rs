@@ -83,26 +83,6 @@ pub(super) fn string(config: &Map<String, Value>, key: &str) -> String {
         .to_owned()
 }
 
-pub(super) async fn dispatch_inbound(
-    client: &DaemonClient,
-    group_id: &str,
-    platform: &str,
-    chat_id: &str,
-    sender: &str,
-    text: &str,
-) -> Result<(), String> {
-    dispatch_inbound_with(
-        client,
-        group_id,
-        platform,
-        chat_id,
-        sender,
-        text,
-        InboundMetadata::default(),
-    )
-    .await
-}
-
 #[derive(Default)]
 pub(super) struct InboundMetadata {
     pub message_id: String,

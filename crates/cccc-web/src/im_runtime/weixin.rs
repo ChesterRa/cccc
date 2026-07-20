@@ -1,4 +1,8 @@
-use super::{InboundDecision, dispatch_inbound, inbound_decision, outbound_text, spawn_outbound};
+use super::weixin_inbound::{has_media, materialize_media};
+use super::weixin_outbound::WeixinOutbound;
+use super::{
+    InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, spawn_outbound,
+};
 use async_trait::async_trait;
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -51,23 +55,12 @@ pub(super) async fn start(
         return Err("Weixin monitor failed during startup".into());
     }
     let outbound = spawn_outbound(
-        home,
+        home.clone(),
         group_id.to_owned(),
         ledger_events,
-        Arc::clone(&sdk),
-        |sdk, targets, event| async move {
-            let Some(body) = outbound_text(&event, false) else {
-                return;
-            };
-            for user_id in targets {
-                let context_token = sdk.context_tokens().get(&user_id);
-                if let Err(error) = sdk
-                    .send_text(&user_id, &body, context_token.as_deref())
-                    .await
-                {
-                    tracing::warn!(%error, "failed to send Weixin IM message");
-                }
-            }
+        WeixinOutbound::new(home, group_id, Arc::clone(&sdk)),
+        |outbound, targets, event| async move {
+            outbound.send(&targets, &event).await;
         },
     );
     Ok((vec![connection, outbound], sdk))
@@ -83,7 +76,7 @@ struct Handler {
 impl MessageHandler for Handler {
     async fn on_message(&self, context: &MessageContext) -> weixin_agent::Result<()> {
         let text = context.body.as_deref().unwrap_or("").trim();
-        if text.is_empty() {
+        if text.is_empty() && !has_media(context) {
             return Ok(());
         }
         match inbound_decision(&self.home, &self.group_id, PLATFORM, &context.from, text).await {
@@ -94,13 +87,21 @@ impl MessageHandler for Handler {
             }
             InboundDecision::Ignore => return Ok(()),
         }
-        if let Err(error) = dispatch_inbound(
+        let attachments = materialize_media(&self.home, &self.group_id, context).await;
+        if text.is_empty() && attachments.is_empty() {
+            return Ok(());
+        }
+        if let Err(error) = dispatch_inbound_with(
             &self.daemon,
             &self.group_id,
             PLATFORM,
             &context.from,
             &context.from,
             text,
+            InboundMetadata {
+                message_id: context.message_id.clone(),
+                attachments,
+            },
         )
         .await
         {

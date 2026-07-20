@@ -9,23 +9,32 @@ use tokio::task::JoinHandle;
 
 mod commands;
 mod dingtalk;
+mod dingtalk_inbound;
 mod dingtalk_outbound;
 mod dingtalk_outbound_media;
 mod dingtalk_outbound_report;
 mod discord;
+mod discord_inbound;
 mod feishu;
+mod feishu_inbound;
+mod feishu_outbound;
+mod inbound_attachments;
 mod slack;
 mod slack_inbound;
 mod slack_outbound;
 mod state;
 mod telegram;
+mod telegram_inbound;
 mod wecom;
 mod wecom_client;
 mod wecom_media;
 mod wecom_message;
 mod wecom_outbound;
 mod weixin;
+mod weixin_authorization;
+mod weixin_inbound;
 mod weixin_login;
+mod weixin_outbound;
 mod worker;
 
 use commands::*;
@@ -136,6 +145,12 @@ impl ImWorkerRegistry {
     pub(crate) async fn logout_weixin(&self, home: &HomeLayout, group_id: &str) -> Value {
         self.stop(group_id).await;
         self.weixin_logins.clear(group_id);
+        if let Some(user_id) = weixin_login::stored_user_id(home, group_id)
+            && let Err(error) =
+                weixin_authorization::revoke_login_authorization(home, group_id, &user_id)
+        {
+            tracing::warn!(%error, %group_id, "failed to revoke Weixin login authorization");
+        }
         weixin_login::remove_credentials(home, group_id);
         json!({
             "status":"logged_out","logged_in":false,"running":false,
