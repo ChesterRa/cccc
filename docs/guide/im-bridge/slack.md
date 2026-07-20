@@ -135,12 +135,12 @@ cccc im start
    ```
    /invite @your-bot-name
    ```
-2. Send `/subscribe` in the channel
+2. Send `@your-bot-name /subscribe` in the channel
 3. You should receive a confirmation
 
 For direct messages:
 1. Find the bot in your DMs
-2. Send `/subscribe`
+2. Send `@your-bot-name /subscribe`. Slack reserves bare `/subscribe` for registered slash commands.
 
 ## Usage
 
@@ -181,7 +181,7 @@ After subscribing, you will automatically receive:
 - Status updates
 - Error notifications
 
-Use `/verbose` to toggle whether you see agent-to-agent messages.
+Use `/verbose` or `/verbose on` to see agent-to-agent messages, and `/verbose off` to disable them.
 
 ### Thread Replies
 
@@ -204,7 +204,7 @@ Attach files to your message. They're uploaded to CCCC's blob storage, then forw
 | `/status` | Show group and agent status |
 | `/pause` | Pause delivery |
 | `/resume` | Resume delivery |
-| `/verbose` | Toggle verbose mode |
+| `/verbose [on\|off]` | Enable or disable verbose mode |
 | `/help` | Show help |
 
 ## Troubleshooting
@@ -234,7 +234,13 @@ Add the required scope:
 
 ### Connection drops
 
-Socket Mode connections may drop occasionally. CCCC auto-reconnects, but if issues persist:
+Socket Mode connections may drop occasionally. CCCC auto-reconnects established connections and
+retries transient Slack API failures during startup with bounded exponential backoff. Credential
+and permission errors fail immediately so they remain visible in `cccc im status`. If the configured
+system proxy cannot be reached, Slack startup falls back to a direct connection and retains errors
+from both paths if neither is available.
+
+If issues persist:
 
 ```bash
 cccc im stop

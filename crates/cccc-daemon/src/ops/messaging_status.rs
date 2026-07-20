@@ -13,69 +13,62 @@ pub fn statuses(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if event_ids.is_empty() {
         return object(json!({"statuses": {}}));
     }
-    let snapshot = StatusSnapshot::load(home, &group_id)?;
-    object(json!({"statuses": snapshot.for_events(&event_ids)}))
+    let statuses =
+        StatusSnapshot::with(home, &group_id, |snapshot| snapshot.for_events(&event_ids))?;
+    object(json!({"statuses": statuses}))
 }
 
 pub fn read_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let event_id = required_arg(request, "event_id")?;
-    let snapshot = StatusSnapshot::load(home, &group_id)?;
-    let read_status = snapshot
-        .for_events(std::slice::from_ref(&event_id))
-        .remove(&event_id)
-        .and_then(|value| value.get("read_status").cloned())
-        .unwrap_or_else(|| json!({}));
+    let read_status = StatusSnapshot::with(home, &group_id, |snapshot| {
+        snapshot
+            .for_events(std::slice::from_ref(&event_id))
+            .remove(&event_id)
+            .and_then(|value| value.get("read_status").cloned())
+            .unwrap_or_else(|| json!({}))
+    })?;
     object(json!({"event_id": event_id, "read_status": read_status}))
 }
 
-struct StatusSnapshot {
+struct StatusSnapshot<'a> {
     group: GroupDoc,
-    events: Vec<Event>,
-    positions: HashMap<String, usize>,
+    events: &'a [Event],
+    positions: &'a HashMap<String, usize>,
     cursor_positions: HashMap<String, usize>,
-    acked_by: HashMap<String, BTreeSet<String>>,
-    replied_by: HashMap<String, BTreeSet<String>>,
+    acked_by: &'a HashMap<String, BTreeSet<String>>,
+    replied_by: &'a HashMap<String, BTreeSet<String>>,
 }
 
-impl StatusSnapshot {
-    fn load(home: &HomeLayout, group_id: &str) -> Result<Self, OpError> {
+impl StatusSnapshot<'_> {
+    fn with<T>(
+        home: &HomeLayout,
+        group_id: &str,
+        use_snapshot: impl FnOnce(&StatusSnapshot<'_>) -> T,
+    ) -> Result<T, OpError> {
         let group = store(home)?.load(group_id).map_err(OpError::not_found)?;
         let path = store(home)?.ledger_path(group_id).map_err(OpError::io)?;
-        let events = ledger::read_all(&path).map_err(OpError::io)?;
-        let positions = events
-            .iter()
-            .enumerate()
-            .map(|(index, event)| (event.id.clone(), index))
-            .collect::<HashMap<_, _>>();
-        let cursor_positions = inbox::cursors(home, group_id)
-            .map_err(OpError::io)?
-            .into_iter()
-            .filter_map(|(actor_id, event_id)| {
-                positions
-                    .get(&event_id)
-                    .copied()
-                    .map(|index| (actor_id, index))
+        let cursors = inbox::cursors(home, group_id).map_err(OpError::io)?;
+        ledger::inspect_status(&path, |events, positions, acked_by, replied_by| {
+            let cursor_positions = cursors
+                .into_iter()
+                .filter_map(|(actor_id, event_id)| {
+                    positions
+                        .get(&event_id)
+                        .copied()
+                        .map(|index| (actor_id, index))
+                })
+                .collect();
+            use_snapshot(&StatusSnapshot {
+                group,
+                events,
+                positions,
+                cursor_positions,
+                acked_by,
+                replied_by,
             })
-            .collect();
-        let mut acked_by: HashMap<String, BTreeSet<String>> = HashMap::new();
-        let mut replied_by: HashMap<String, BTreeSet<String>> = HashMap::new();
-        for event in &events {
-            if event.kind == "chat.ack" {
-                let actor_id = event.data.get("actor_id").and_then(Value::as_str);
-                relation(&mut acked_by, event, "event_id", actor_id);
-            } else if event.kind == "chat.message" {
-                relation(&mut replied_by, event, "reply_to", Some(&event.by));
-            }
-        }
-        Ok(Self {
-            group,
-            events,
-            positions,
-            cursor_positions,
-            acked_by,
-            replied_by,
         })
+        .map_err(OpError::io)
     }
 
     fn for_events(&self, event_ids: &[String]) -> BTreeMap<String, Value> {
@@ -180,24 +173,6 @@ impl StatusSnapshot {
         self.cursor_positions
             .get(actor_id)
             .is_some_and(|cursor| cursor >= event_position)
-    }
-}
-
-fn relation(
-    target: &mut HashMap<String, BTreeSet<String>>,
-    event: &Event,
-    key: &str,
-    actor_id: Option<&str>,
-) {
-    let Some(target_id) = event.data.get(key).and_then(Value::as_str) else {
-        return;
-    };
-    let actor_id = actor_id.unwrap_or_default();
-    if !target_id.is_empty() && !actor_id.is_empty() {
-        target
-            .entry(target_id.to_owned())
-            .or_default()
-            .insert(actor_id.to_owned());
     }
 }
 

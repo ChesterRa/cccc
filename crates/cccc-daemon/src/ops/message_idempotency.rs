@@ -19,11 +19,9 @@ pub fn find(
         .ok()?
         .ledger_path(group_id)
         .ok()?;
-    ledger::read_all(&path).ok()?.into_iter().find(|event| {
-        event.kind == kind
-            && event.by == by
-            && event.data.get("client_id").and_then(Value::as_str) == Some(client_id)
-    })
+    ledger::find_idempotent(&path, kind, by, client_id)
+        .ok()
+        .flatten()
 }
 
 pub fn find_relay(home: &HomeLayout, group_id: &str, source_event_id: &str) -> Option<Event> {
@@ -31,10 +29,7 @@ pub fn find_relay(home: &HomeLayout, group_id: &str, source_event_id: &str) -> O
         .ok()?
         .ledger_path(group_id)
         .ok()?;
-    ledger::read_all(&path).ok()?.into_iter().find(|event| {
-        event.kind == "chat.message"
-            && event.data.get("src_event_id").and_then(Value::as_str) == Some(source_event_id)
-    })
+    ledger::find_relay(&path, source_event_id).ok().flatten()
 }
 
 pub fn tracked_client_id(group_id: &str, by: &str, key: &str) -> String {

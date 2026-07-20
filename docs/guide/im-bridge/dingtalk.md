@@ -122,7 +122,7 @@ im:
 1. Find the robot in your DingTalk application
 2. Add it to a group chat or start a direct conversation
 3. Send `/subscribe`
-4. Confirm the subscription
+4. Copy the pairing key returned immediately by the bot and approve it in Web Pending Requests or with `cccc im bind --key KEY --group GROUP_ID`
 
 ## Usage
 
@@ -164,7 +164,7 @@ After subscribing, you will automatically receive:
 - Status updates
 - Error notifications
 
-Use `/verbose` to toggle whether you see agent-to-agent messages.
+Use `/verbose` or `/verbose on` to see agent-to-agent messages, and `/verbose off` to disable them.
 
 ### Message Types
 
@@ -195,7 +195,7 @@ Attach files to your message. DingTalk files are downloaded and stored in CCCC's
 | `/status` | Show group and agent status |
 | `/pause` | Pause message delivery |
 | `/resume` | Resume message delivery |
-| `/verbose` | Toggle verbose mode (see all agent messages) |
+| `/verbose [on\|off]` | Enable or disable verbose mode (see all agent messages) |
 | `/help` | Show available commands |
 
 ## Troubleshooting

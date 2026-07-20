@@ -58,6 +58,7 @@ pub fn write(args: &Map<String, Value>) -> Result<Value, String> {
     {
         let status =
             cccc_runtime::stop(&group_id, &session_id).map_err(|error| error.to_string())?;
+        remove_session(&session_id)?;
         return Ok(json!({"session_id":session_id,"status":status}));
     }
     payload(&group_id, &session_id)
@@ -80,9 +81,20 @@ fn payload(group_id: &str, session_id: &str) -> Result<Value, String> {
     let status = cccc_runtime::status(group_id, session_id).map_err(|error| error.to_string())?;
     let history = cccc_runtime::history(group_id, session_id, None, 2_000_000)
         .map_err(|error| error.to_string())?;
+    if !status.running {
+        remove_session(session_id)?;
+    }
     Ok(
         json!({"session_id":session_id,"status":status,"output":history.data,"cursor":history.end_cursor}),
     )
+}
+
+fn remove_session(session_id: &str) -> Result<(), String> {
+    sessions()
+        .lock()
+        .map_err(|_| "session lock poisoned")?
+        .remove(session_id);
+    Ok(())
 }
 
 fn session(args: &Map<String, Value>) -> Result<(String, String), String> {
@@ -97,6 +109,13 @@ fn session(args: &Map<String, Value>) -> Result<(String, String), String> {
         .get(&id)
         .cloned()
         .ok_or("session not found")?;
+    if args
+        .get("group_id")
+        .and_then(Value::as_str)
+        .is_some_and(|requested| requested != group)
+    {
+        return Err("session does not belong to the requested group".into());
+    }
     Ok((id, group))
 }
 

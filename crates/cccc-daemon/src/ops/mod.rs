@@ -43,7 +43,6 @@ use cccc_core::HomeLayout;
 use crate::dispatch::{OpError, OpResult};
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Result<Option<OpResult>, OpError> {
-    actor_delivery::drain(home);
     for handler in [
         groups::handle,
         group_copy::handle,

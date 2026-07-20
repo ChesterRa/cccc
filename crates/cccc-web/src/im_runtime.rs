@@ -7,6 +7,7 @@ use std::future::Future;
 use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
+mod commands;
 mod dingtalk;
 mod dingtalk_outbound;
 mod dingtalk_outbound_media;
@@ -14,6 +15,8 @@ mod dingtalk_outbound_report;
 mod discord;
 mod feishu;
 mod slack;
+mod slack_inbound;
+mod slack_outbound;
 mod state;
 mod telegram;
 mod wecom;
@@ -25,6 +28,7 @@ mod weixin;
 mod weixin_login;
 mod worker;
 
+use commands::*;
 use state::*;
 use worker::{Stopper, WorkerHandles, no_op_stopper};
 
@@ -296,9 +300,7 @@ impl ImWorkerRegistry {
                 .map(|(_, worker)| worker)
                 .collect::<Vec<_>>()
         };
-        for worker in workers {
-            worker.shutdown().await;
-        }
+        futures_util::future::join_all(workers.into_iter().map(WorkerHandles::shutdown)).await;
         self.restoring
             .lock()
             .expect("IM restore registry poisoned")
@@ -474,7 +476,13 @@ async fn deliver_outbound<S, P, F, Fut>(
         state.seen.clear();
         state.seen.insert(event.id.clone());
     }
-    let targets = authorized_chat_ids(home, group_id).into_iter().collect();
+    let home = home.clone();
+    let group_id = group_id.to_owned();
+    let targets = tokio::task::spawn_blocking(move || authorized_chat_ids(&home, &group_id))
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
     send(Arc::clone(sender), targets, event).await;
 }
 
@@ -615,26 +623,20 @@ mod tests {
         );
     }
 
-    #[test]
-    fn subscribe_creates_pending_request_without_authorizing_chat() {
+    #[tokio::test]
+    async fn subscribe_creates_pending_request_without_authorizing_chat() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("test", "").expect("group");
-        assert!(!accepts_inbound(
-            &home,
-            &group.group_id,
-            "telegram",
-            "chat-1",
-            "/subscribe"
+        assert!(matches!(
+            inbound_decision(&home, &group.group_id, "telegram", "chat-1", "/subscribe").await,
+            InboundDecision::Reply(_)
         ));
-        assert!(!accepts_inbound(
-            &home,
-            &group.group_id,
-            "telegram",
-            "chat-2",
-            "hello"
+        assert!(matches!(
+            inbound_decision(&home, &group.group_id, "telegram", "chat-2", "hello").await,
+            InboundDecision::Ignore
         ));
         let state = cccc_core::integration_state::group_get(&store, &group.group_id, "im_bridge")
             .expect("state");

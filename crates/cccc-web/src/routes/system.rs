@@ -1,6 +1,5 @@
-use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
-use axum::http::{HeaderValue, Response, header};
+use axum::http::Response;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::{Value, json};
@@ -111,7 +110,7 @@ async fn branding_update(State(state): State<AppState>, Json(body): Json<Value>)
 async fn branding_asset_get(
     State(state): State<AppState>,
     Path(kind): Path<String>,
-) -> Result<Response<Body>, crate::api::ApiError> {
+) -> Result<Response<axum::body::Body>, crate::api::ApiError> {
     let global = cccc_core::settings::load(&state.home)
         .map_err(|error| crate::api::ApiError::bad(error.to_string()))?;
     let relative = cccc_core::branding::asset_relative(&global.branding, &kind)
@@ -123,21 +122,12 @@ async fn branding_asset_get(
     }
     let path = cccc_core::branding::resolve(&state.home, &relative)
         .map_err(|error| crate::api::ApiError::not_found(error.to_string()))?;
-    let bytes =
-        std::fs::read(&path).map_err(|error| crate::api::ApiError::not_found(error.to_string()))?;
-    let mime = mime_guess::from_path(path)
+    let mime = mime_guess::from_path(&path)
         .first_or_octet_stream()
         .to_string();
-    let mut response = Response::new(Body::from(bytes));
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_str(&mime)
-            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
-    );
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
-    Ok(response)
+    super::file_response::stream(&path, &mime, Some("no-cache"), None)
+        .await
+        .map_err(|error| crate::api::ApiError::not_found(error.to_string()))
 }
 
 async fn branding_asset_upload(

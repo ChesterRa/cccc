@@ -61,7 +61,17 @@ def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance(
 def test_pr_python_matrix_uses_four_stable_file_shards_without_xdist() -> None:
     job = _workflow()["jobs"]["python-tests"]
     runs = _runs(job)
+    web_bundle = next(
+        step
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/download-artifact")
+    )
 
+    assert job["needs"] == "web"
+    assert web_bundle["with"] == {
+        "name": "bundled-web",
+        "path": "src/cccc/ports/web/dist",
+    }
     assert job["strategy"]["matrix"]["shard"] == ["0", "1", "2", "3"]
     assert "scripts/quality/pytest_shards.py" in runs
     assert "--total 4" in runs

@@ -13,6 +13,7 @@ use serde_json::{Map, Value, json};
 use std::collections::HashSet;
 use uuid::Uuid;
 
+use super::group_bridge_command_sessions;
 use super::group_bridge_store::{BridgeStore, items, items_mut};
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, call, success};
@@ -63,13 +64,16 @@ async fn mcp(
     Json(mut request): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let registration = authorize(&state, bearer(&headers).unwrap_or(""))?;
-    let access = access_level(&state, &registration)?;
+    let grant = group_bridge_command_sessions::access_grant(&state, &registration)?;
+    let access = grant.level.as_str();
     let method = request
         .get("method")
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_owned();
+    let mut bridge_tool_name = None;
     if method == "tools/call" {
+        let request_id = request["id"].clone();
         let params = request
             .get_mut("params")
             .and_then(Value::as_object_mut)
@@ -79,12 +83,14 @@ async fn mcp(
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_owned();
+        let local_name = local_bridge_tool(&name);
+        params.insert("name".into(), json!(local_name));
         let arguments = params
             .entry("arguments")
             .or_insert_with(|| json!({}))
             .as_object_mut()
             .ok_or_else(|| ApiError::bad("tools/call arguments must be an object"))?;
-        if !allowed_call(&access, &name, arguments) {
+        if !allowed_call(access, &name, arguments) {
             return Err(ApiError::forbidden(format!(
                 "tool is not allowed for group bridge access={access}: {name}"
             )));
@@ -107,16 +113,32 @@ async fn mcp(
                 registration["remote_peer_id"].as_str().unwrap_or("remote")
             )),
         );
+        if name == "cccc_remote_write_stdin" {
+            group_bridge_command_sessions::require(arguments, &registration, &grant)?;
+        }
+        bridge_tool_name = Some(name.clone());
+        if name == "cccc_remote_git" {
+            normalize_remote_git(arguments)?;
+        }
+        if name == "cccc_remote_access" {
+            let payload = bridge_access_payload(&registration, access);
+            return Ok(Json(json!({
+                "jsonrpc":"2.0","id":request_id,
+                "result":bridge_tool_result(payload)
+            })));
+        }
     }
     let mut response = cccc_mcp::handle_request(&state.home, &request).await;
+    if let Some(name) = bridge_tool_name.as_deref() {
+        group_bridge_command_sessions::update(name, &registration, &grant, &response)?;
+    }
     if method == "tools/list"
         && let Some(tools) = response
             .get_mut("result")
             .and_then(|value| value.get_mut("tools"))
             .and_then(Value::as_array_mut)
     {
-        tools
-            .retain(|tool| allowed_call(&access, tool["name"].as_str().unwrap_or(""), &Map::new()));
+        tools.retain(|tool| allowed_call(access, tool["name"].as_str().unwrap_or(""), &Map::new()));
     }
     Ok(Json(response))
 }
@@ -325,7 +347,7 @@ pub(super) async fn send_remote(
     let response = match client
         .post(format!("{endpoint}/api/group-bridge/session/send"))
         .bearer_auth(credential)
-        .json(&Value::Object(payload))
+        .json(&Value::Object(payload.clone()))
         .send()
         .await
     {
@@ -339,6 +361,32 @@ pub(super) async fn send_remote(
     let status = response.status();
     let remote = match response.json::<Value>().await {
         Ok(value) if status.is_success() => value,
+        Ok(value)
+            if matches!(
+                status,
+                StatusCode::UNAUTHORIZED
+                    | StatusCode::FORBIDDEN
+                    | StatusCode::NOT_FOUND
+                    | StatusCode::METHOD_NOT_ALLOWED
+            ) =>
+        {
+            match send_via_remote_mcp(
+                &client,
+                endpoint,
+                credential,
+                Value::Object(payload),
+                &idempotency_key,
+            )
+            .await
+            {
+                Ok(value) => value,
+                Err(error) => {
+                    return Some(Err(ApiError::bad(format!(
+                        "remote delivery rejected: {value}; MCP fallback failed: {error}"
+                    ))));
+                }
+            }
+        }
         Ok(value) => {
             return Some(Err(ApiError::bad(format!(
                 "remote delivery rejected: {value}"
@@ -350,22 +398,80 @@ pub(super) async fn send_remote(
             ))));
         }
     };
+    let receipt = remote
+        .pointer("/result/receipt")
+        .or_else(|| remote.get("receipt"))
+        .cloned()
+        .unwrap_or_else(|| json!({"status":"delivered","idempotency_key":idempotency_key}));
     let mut record = body.as_object().cloned().unwrap_or_default();
     record.insert("group_id".into(), json!(source_group_id));
     record.insert("dst_group_id".into(), json!(destination_group_id));
-    record.insert(
-        "delivery_receipt".into(),
-        remote["result"]["receipt"].clone(),
-    );
+    record.insert("delivery_receipt".into(), receipt.clone());
     let local = match call(state, "send_cross_group_remote_record", record).await {
         Ok(value) => value,
         Err(error) => return Some(Err(error)),
     };
     Some(Ok(success(json!({
         "source_event":local.0["result"]["source_event"],
-        "receipt":remote["result"]["receipt"],
+        "receipt":receipt,
         "transport":"group_bridge_session"
     }))))
+}
+
+async fn send_via_remote_mcp(
+    client: &reqwest::Client,
+    endpoint: &str,
+    credential: &str,
+    payload: Value,
+    idempotency_key: &str,
+) -> Result<Value, String> {
+    let mut arguments = payload.as_object().cloned().unwrap_or_default();
+    for key in [
+        "source_group_id",
+        "source_group_title",
+        "idempotency_key",
+        "dst_group_id",
+        "group_id",
+        "by",
+    ] {
+        arguments.remove(key);
+    }
+    arguments.insert("client_id".into(), json!(idempotency_key));
+    let response = client
+        .post(format!("{endpoint}/mcp/group-bridge"))
+        .bearer_auth(credential)
+        .json(&json!({
+            "jsonrpc":"2.0","id":idempotency_key,"method":"tools/call",
+            "params":{"name":"cccc_message_send","arguments":arguments}
+        }))
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    let status = response.status();
+    let value = response
+        .json::<Value>()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !status.is_success() || value.get("error").is_some() || value["result"]["isError"] == true {
+        return Err(value.to_string());
+    }
+    let event_id = value["result"]["content"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["text"].as_str())
+        .find_map(|text| serde_json::from_str::<Value>(text).ok())
+        .and_then(|result| {
+            result
+                .pointer("/event/id")
+                .or_else(|| result.pointer("/result/event/id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+    Ok(json!({"receipt":{
+        "status":"delivered","idempotency_key":idempotency_key,
+        "remote_event_id":event_id,"transport":"group_bridge_mcp"
+    }}))
 }
 
 fn authorize(state: &AppState, credential: &str) -> Result<Value, ApiError> {
@@ -382,44 +488,89 @@ fn authorize(state: &AppState, credential: &str) -> Result<Value, ApiError> {
     .ok_or_else(|| ApiError::forbidden("invalid group bridge credential"))
 }
 
-fn access_level(state: &AppState, registration: &Value) -> Result<String, ApiError> {
-    Ok(items(
-        &BridgeStore::new(&state.home).load().map_err(io_error)?,
-        "trusts",
-    )
-    .iter()
-    .find(|item| {
-        item["registration_id"] == registration["registration_id"] && item["status"] == "active"
-    })
-    .and_then(|item| item["access_level"].as_str())
-    .unwrap_or("messages")
-    .to_owned())
-}
-
 fn allowed_call(access: &str, name: &str, arguments: &Map<String, Value>) -> bool {
-    if access == "full" {
-        return true;
-    }
+    let _ = arguments;
     if matches!(
         name,
-        "cccc_message_send" | "cccc_tracked_send" | "cccc_message_reply"
+        "cccc_message_send" | "cccc_tracked_send" | "cccc_message_reply" | "cccc_remote_access"
     ) {
         return true;
     }
-    if access != "read" {
-        return false;
+    if matches!(access, "read" | "full")
+        && matches!(
+            name,
+            "cccc_remote_context" | "cccc_remote_repo" | "cccc_remote_git"
+        )
+    {
+        return true;
     }
+    access == "full"
+        && matches!(
+            name,
+            "cccc_remote_repo_edit"
+                | "cccc_remote_apply_patch"
+                | "cccc_remote_shell"
+                | "cccc_remote_exec_command"
+                | "cccc_remote_write_stdin"
+        )
+}
+
+fn local_bridge_tool(name: &str) -> &str {
     match name {
-        "cccc_help" | "cccc_project_info" | "cccc_context_get" | "cccc_repo" => true,
-        "cccc_memory" => matches!(
-            arguments
-                .get("action")
-                .and_then(Value::as_str)
-                .unwrap_or("search"),
-            "search" | "get" | "read" | "profile" | "health"
-        ),
-        _ => false,
+        "cccc_remote_context" => "cccc_context_get",
+        "cccc_remote_repo" => "cccc_repo",
+        "cccc_remote_git" => "cccc_git",
+        "cccc_remote_repo_edit" => "cccc_repo_edit",
+        "cccc_remote_apply_patch" => "cccc_apply_patch",
+        "cccc_remote_shell" => "cccc_shell",
+        "cccc_remote_exec_command" => "cccc_exec_command",
+        "cccc_remote_write_stdin" => "cccc_write_stdin",
+        _ => name,
     }
+}
+
+fn normalize_remote_git(arguments: &mut Map<String, Value>) -> Result<(), ApiError> {
+    let action = arguments
+        .remove("action")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "status".into());
+    let mut args = match action.as_str() {
+        "status" => vec![json!("status"), json!("--short")],
+        "diff" => vec![json!("diff")],
+        "log" => vec![json!("log"), json!("--oneline"), json!("-n"), json!("50")],
+        _ => {
+            return Err(ApiError::bad(
+                "remote git action must be status, diff, or log",
+            ));
+        }
+    };
+    if let Some(path) = arguments
+        .remove("path")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .filter(|value| !value.is_empty())
+    {
+        args.push(json!("--"));
+        args.push(json!(path));
+    }
+    arguments.insert("args".into(), Value::Array(args));
+    Ok(())
+}
+
+fn bridge_access_payload(registration: &Value, access: &str) -> Value {
+    json!({
+        "remote_group_id":registration["group_id"],
+        "access_level":access,
+        "permissions":{
+            "messages":true,
+            "read":matches!(access,"read"|"full"),
+            "full":access=="full"
+        }
+    })
+}
+
+fn bridge_tool_result(payload: Value) -> Value {
+    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into());
+    json!({"content":[{"type":"text","text":text}],"structuredContent":payload})
 }
 
 fn bearer(headers: &HeaderMap) -> Option<&str> {

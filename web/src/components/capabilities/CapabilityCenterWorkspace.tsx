@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type React from "react";
 import {
   BookOpen,
@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
+import { useDebouncedValue } from "../../hooks/useDebouncedValue";
 import * as api from "../../services/api";
 import { publishCapabilityChanged } from "../../utils/capabilityEvents";
 import { HoverTooltip } from "../HoverTooltip";
@@ -64,12 +65,12 @@ import {
   type CapabilityCenterSection,
   type CapabilityCenterSurface,
   type CapabilityCenterStateFilter,
-  type CapabilityCenterStats,
 } from "./capabilityCenterModel";
 import {
   canManageSlashCommandVisibility,
   isCapabilityHiddenFromSlashCommands,
 } from "../modals/settings/capabilityManagementModel";
+import { useCapabilityCenterData } from "./useCapabilityCenterData";
 
 interface CapabilityCenterWorkspaceProps {
   isOpen: boolean;
@@ -88,7 +89,7 @@ const stateFilters: Array<{ id: CapabilityCenterStateFilter; label: string }> = 
   { id: "needs_setup", label: "Needs setup" },
 ];
 
-const CAPABILITY_CENTER_CLIENT_FILTER_LIMIT = 2000;
+const CAPABILITY_CENTER_QUERY_DEBOUNCE_MS = 200;
 
 type CapabilityCenterConfirmDialogState = {
   title: string;
@@ -164,32 +165,18 @@ export function CapabilityCenterWorkspace({
   const { t } = useTranslation("settings");
   const [section, setSection] = useState<CapabilityCenterSection>("skill");
   const [query, setQuery] = useState("");
+  const debouncedQuery = useDebouncedValue(query.trim(), CAPABILITY_CENTER_QUERY_DEBOUNCE_MS);
   const [stateFilter, setStateFilter] = useState<CapabilityCenterStateFilter>("all");
   const [showSystem, setShowSystem] = useState(false);
-  const [items, setItems] = useState<CapabilityOverviewItem[]>([]);
-  const [sources, setSources] = useState<Record<string, CapabilitySourceState>>({});
-  const [sourceInstances, setSourceInstances] = useState<CapabilitySourceInstance[]>([]);
-  const [state, setState] = useState<CapabilityStateResult | null>(null);
-  const [summaryStats, setSummaryStats] = useState<CapabilityCenterStats | null>(null);
-  const [selectedId, setSelectedId] = useState("");
   const [stickyItems, setStickyItems] = useState<CapabilityOverviewItem[]>([]);
   const [removedCapabilityIds, setRemovedCapabilityIds] = useState<Set<string>>(() => new Set());
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(CAPABILITY_CENTER_DEFAULT_PAGE_SIZE);
-  const [totalCount, setTotalCount] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [busyKey, setBusyKey] = useState("");
-  const [err, setErr] = useState("");
   const [mobileControlsOpen, setMobileControlsOpen] = useState(false);
   const [confirmDialog, setConfirmDialog] = useState<CapabilityCenterConfirmDialogState | null>(
     null,
   );
-  const requestSeqRef = useRef(0);
-
-  const hiddenIds = useMemo(() => capabilityCenterHiddenIds(state), [state]);
-  const loadedStats = useMemo(() => summarizeCapabilityCenter(items, state), [items, state]);
-  const stats = summaryStats || loadedStats;
   const localizedSections = useMemo(
     () =>
       sectionItems.map((item) => ({
@@ -215,6 +202,42 @@ export function CapabilityCenterWorkspace({
     [section, scopedStateFilter],
   );
   const clientPagination = paginationMode === "client";
+  const {
+    error: err,
+    hasMore,
+    items,
+    loading,
+    refresh,
+    selectedId,
+    setError: setErr,
+    setSelectedId,
+    setState,
+    sourceInstances,
+    sources,
+    state,
+    summaryStats,
+    totalCount,
+  } = useCapabilityCenterData({
+    clientPagination,
+    failedLoadMessage: t("capabilityCenter.failedLoad"),
+    failedStateMessage: t("capabilityCenter.failedLoadState"),
+    groupId,
+    isOpen,
+    pageIndex,
+    pageSize,
+    query: debouncedQuery,
+    stateFilter,
+    typeFilter: scopedTypeFilter,
+  });
+  const hiddenIds = useMemo(() => capabilityCenterHiddenIds(state), [state]);
+  const loadedStats = useMemo(() => summarizeCapabilityCenter(items, state), [items, state]);
+  const stats = useMemo(
+    () =>
+      summaryStats
+        ? { ...summaryStats, enabled: loadedStats.enabled, slashHidden: loadedStats.slashHidden }
+        : loadedStats,
+    [loadedStats, summaryStats],
+  );
   const filteredItems = useMemo(
     () =>
       filterCapabilityCenterRemovedItems(
@@ -284,80 +307,6 @@ export function CapabilityCenterWorkspace({
     [effectiveTotalCount, normalizedPage.pageIndex, normalizedPage.pageSize, visibleItems.length],
   );
 
-  const load = useCallback(async () => {
-    const seq = ++requestSeqRef.current;
-    const nextPageSize = normalizeCapabilityCenterPagination({
-      pageIndex: 0,
-      pageSize,
-      totalCount: 0,
-    }).pageSize;
-    const nextOffset = clientPagination
-      ? 0
-      : Math.max(0, Math.trunc(Number(pageIndex) || 0)) * nextPageSize;
-    const nextLimit = clientPagination ? CAPABILITY_CENTER_CLIENT_FILTER_LIMIT : nextPageSize;
-    setLoading(true);
-    setErr("");
-    try {
-      const overviewQuery = String(query || "").trim();
-      const [overviewResp, stateResp] = await Promise.all([
-        api.fetchCapabilityOverview({
-          includeIndexed: true,
-          limit: nextLimit,
-          offset: nextOffset,
-          query: overviewQuery || undefined,
-          kind: scopedTypeFilter,
-          policy: stateFilter === "blocked" ? "blocked" : "all",
-          groupId,
-        }),
-        groupId
-          ? api.fetchGroupCapabilityState(groupId, "user", { noCache: true })
-          : Promise.resolve(null),
-      ]);
-      if (seq !== requestSeqRef.current) return;
-      if (!overviewResp.ok) {
-        setErr(overviewResp.error?.message || t("capabilityCenter.failedLoad"));
-        return;
-      }
-      if (stateResp && !stateResp.ok) {
-        setErr(stateResp.error?.message || t("capabilityCenter.failedLoadState"));
-      }
-      const nextItems = overviewResp.result.items || [];
-      const nextState = stateResp?.ok ? stateResp.result : null;
-      const nextStats = summarizeCapabilityCenter(nextItems, nextState);
-      setItems(nextItems);
-      setTotalCount(Number(overviewResp.result.total_count || nextItems.length) || 0);
-      setHasMore(Boolean(overviewResp.result.has_more));
-      setSources(overviewResp.result.sources || {});
-      setSourceInstances(overviewResp.result.source_instances || []);
-      setState(nextState);
-      const enabledCount = capabilityCenterEnabledIds(nextState).size;
-      const kindCounts = overviewResp.result.kind_counts || {};
-      setSummaryStats({
-        total: Number(overviewResp.result.total_count || nextItems.length) || 0,
-        skills: Number(kindCounts.skill || 0),
-        mcp: Number(kindCounts.mcp || 0),
-        packs: Number(kindCounts.pack || 0),
-        enabled: enabledCount,
-        slashHidden: nextStats.slashHidden,
-        blocked: nextStats.blocked,
-        needsSetup: nextStats.needsSetup,
-        sources: Object.keys(overviewResp.result.sources || {}).length,
-      });
-      setSelectedId((current) =>
-        current && nextItems.some((item) => item.capability_id === current)
-          ? current
-          : String(nextItems[0]?.capability_id || ""),
-      );
-    } finally {
-      if (seq === requestSeqRef.current) setLoading(false);
-    }
-  }, [clientPagination, groupId, pageIndex, pageSize, query, scopedTypeFilter, stateFilter, t]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    void load();
-  }, [isOpen, load]);
-
   useEffect(() => {
     setPageIndex(0);
   }, [query, section, stateFilter]);
@@ -399,7 +348,7 @@ export function CapabilityCenterWorkspace({
         setBusyKey("");
       }
     },
-    [groupId, hiddenIds, rememberStickyItem, t],
+    [groupId, hiddenIds, rememberStickyItem, setErr, setState, t],
   );
 
   const executeRemoveCapability = useCallback(
@@ -429,13 +378,13 @@ export function CapabilityCenterWorkspace({
           return;
         }
         setRemovedCapabilityIds((current) => new Set([...current, capId]));
-        await load();
+        await refresh();
         publishCapabilityChanged(groupId);
       } finally {
         setBusyKey("");
       }
     },
-    [groupId, load, t],
+    [groupId, refresh, setErr, t],
   );
 
   const removeCapability = useCallback(
@@ -486,13 +435,13 @@ export function CapabilityCenterWorkspace({
               ? "ready"
               : row.qualification_status,
         });
-        await load();
+        await refresh();
         publishCapabilityChanged(groupId);
       } finally {
         setBusyKey("");
       }
     },
-    [groupId, load, rememberStickyItem, t],
+    [groupId, refresh, rememberStickyItem, setErr, t],
   );
 
   const toggleBlockCapability = useCallback(
@@ -541,13 +490,13 @@ export function CapabilityCenterWorkspace({
           return;
         }
         rememberStickyItem(row);
-        await load();
+        await refresh();
         publishCapabilityChanged(groupId);
       } finally {
         setBusyKey("");
       }
     },
-    [groupId, load, rememberStickyItem, t],
+    [groupId, refresh, rememberStickyItem, setErr, t],
   );
 
   const toggleEnableCapability = useCallback(
@@ -599,13 +548,13 @@ export function CapabilityCenterWorkspace({
           setErr(resp.error?.message || t("capabilityCenter.sources.toggleFailed"));
           return;
         }
-        await load();
+        await refresh();
         publishCapabilityChanged(groupId);
       } finally {
         setBusyKey("");
       }
     },
-    [groupId, load, sources, t],
+    [groupId, refresh, setErr, sources, t],
   );
 
   const deleteSource = useCallback(
@@ -623,13 +572,13 @@ export function CapabilityCenterWorkspace({
           setErr(resp.error?.message || t("capabilityCenter.sources.deleteFailed"));
           return;
         }
-        await load();
+        await refresh();
         publishCapabilityChanged(groupId);
       } finally {
         setBusyKey("");
       }
     },
-    [groupId, load, t],
+    [groupId, refresh, setErr, t],
   );
 
   const confirmDeleteSource = useCallback(
@@ -670,13 +619,13 @@ export function CapabilityCenterWorkspace({
           setErr(resp.error?.message || t("capabilityCenter.sources.deleteFailed"));
           return;
         }
-        await load();
+        await refresh();
         publishCapabilityChanged(groupId);
       } finally {
         setBusyKey("");
       }
     },
-    [groupId, load, t],
+    [groupId, refresh, setErr, t],
   );
 
   const confirmDeleteSourceInstance = useCallback(
@@ -778,7 +727,7 @@ export function CapabilityCenterWorkspace({
                 onClick={() => {
                   setStickyItems([]);
                   setRemovedCapabilityIds(new Set());
-                  void load();
+                  void refresh();
                 }}
               >
                 <RefreshCcw size={15} aria-hidden="true" />

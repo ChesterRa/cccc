@@ -25,7 +25,7 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
 }
 
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
-    serde_json::from_reader(File::open(path)?).map_err(io::Error::other)
+    serde_json::from_slice(&fs::read(path)?).map_err(io::Error::other)
 }
 
 pub fn write_yaml<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {

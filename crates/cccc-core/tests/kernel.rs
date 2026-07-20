@@ -157,3 +157,51 @@ fn internal_assistant_is_not_a_peer_recipient() {
         .expect("notify data");
     assert!(inbox::is_for_actor(&group, &notify, "voice-secretary"));
 }
+
+#[test]
+fn system_notification_respects_its_explicit_actor_target() {
+    let (_temp, _home, store, group_id) = fixture();
+    store
+        .mutate(&group_id, |group| {
+            actors::add(group, Actor::new("lead"))?;
+            actors::add(group, Actor::new("peer"))?;
+            Ok(())
+        })
+        .expect("actors");
+    let group = store.load(&group_id).expect("load");
+    let mut notification = Event::new("system.notify", &group_id);
+    notification.by = "system".into();
+    notification.data = json!({
+        "target_actor_id": "peer",
+        "title": "New message",
+        "message": "Check your inbox."
+    })
+    .as_object()
+    .cloned()
+    .expect("notification data");
+
+    assert!(inbox::is_for_actor(&group, &notification, "peer"));
+    assert!(!inbox::is_for_actor(&group, &notification, "lead"));
+}
+
+#[test]
+fn legacy_chat_notice_is_folded_into_its_source_message() {
+    let (_temp, _home, store, group_id) = fixture();
+    store
+        .mutate(&group_id, |group| actors::add(group, Actor::new("peer")))
+        .expect("actor");
+    let group = store.load(&group_id).expect("load");
+    let mut notification = Event::new("system.notify", &group_id);
+    notification.by = "system".into();
+    notification.data = json!({
+        "target_actor_id": "peer",
+        "title": "New message",
+        "message": "New message from user. Check your inbox.",
+        "context": {"event_id": "source-message", "from": "user"}
+    })
+    .as_object()
+    .cloned()
+    .expect("notification data");
+
+    assert!(!inbox::is_for_actor(&group, &notification, "peer"));
+}

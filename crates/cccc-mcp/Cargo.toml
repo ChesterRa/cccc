@@ -13,6 +13,7 @@ cccc-contracts = { path = "../cccc-contracts" }
 cccc-core = { path = "../cccc-core" }
 cccc-runtime = { path = "../cccc-runtime" }
 regex.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 mime_guess.workspace = true
@@ -22,6 +23,7 @@ tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+axum.workspace = true
 tempfile.workspace = true
 
 [lints]

@@ -37,11 +37,10 @@ pub(super) fn update(home: &HomeLayout, group_id: &str, body: &Value) -> Result<
         match action {
             "status" => {}
             "acquire" => {
-                if active
-                    .as_ref()
-                    .is_some_and(|lease| lease["owner_id"] != owner_id)
-                {
-                    return Ok(Err(active.clone().unwrap_or(Value::Null)));
+                if active.as_ref().is_some_and(|lease| {
+                    lease["owner_id"] != owner_id || lease["group_id"] != group_id
+                }) {
+                    return Ok(Err(redact_lease(active.clone().unwrap_or(Value::Null))));
                 }
                 let expires_at_ms = now_ms + ttl_seconds * 1000;
                 let existing_id = active
@@ -72,7 +71,7 @@ pub(super) fn update(home: &HomeLayout, group_id: &str, body: &Value) -> Result<
                 acquired = true;
             }
             "heartbeat" => {
-                if !matches_lease(active.as_ref(), owner_id, lease_id) {
+                if !matches_lease(active.as_ref(), group_id, owner_id, lease_id) {
                     lost = true;
                 } else if let Some(lease) = active.as_mut() {
                     let expires_at_ms = now_ms + ttl_seconds * 1000;
@@ -82,7 +81,7 @@ pub(super) fn update(home: &HomeLayout, group_id: &str, body: &Value) -> Result<
                 }
             }
             "release" => {
-                if matches_lease(active.as_ref(), owner_id, lease_id) {
+                if matches_lease(active.as_ref(), group_id, owner_id, lease_id) {
                     active = None;
                     released = true;
                 } else {
@@ -93,14 +92,27 @@ pub(super) fn update(home: &HomeLayout, group_id: &str, body: &Value) -> Result<
         }
 
         *stored = active.clone().unwrap_or(Value::Null);
+        let response_lease = if action == "status" {
+            active.clone().map(redact_lease)
+        } else {
+            active.clone()
+        };
+        let response_lease_id = if acquired || action == "heartbeat" && !lost {
+            active
+                .as_ref()
+                .and_then(|lease| lease["lease_id"].as_str())
+                .unwrap_or("")
+        } else {
+            ""
+        };
         Ok(Ok(json!({
             "group_id": group_id,
             "action": action,
             "acquired": acquired,
             "released": released,
             "lost": lost,
-            "lease_id": active.as_ref().map_or("", |lease| lease["lease_id"].as_str().unwrap_or("")),
-            "lease": active,
+            "lease_id": response_lease_id,
+            "lease": response_lease,
         })))
     })
     .map_err(|error| ApiError::bad(error.to_string()))?;
@@ -115,6 +127,10 @@ pub(super) fn update(home: &HomeLayout, group_id: &str, body: &Value) -> Result<
 }
 
 pub(super) fn current(home: &HomeLayout) -> Value {
+    redact_lease(current_private(home))
+}
+
+fn current_private(home: &HomeLayout) -> Value {
     let now_ms = chrono::Utc::now().timestamp_millis();
     let stored = integration_state::global_get(home, STORE_KEY).unwrap_or(Value::Null);
     if let Some(active) = active_lease(&stored, now_ms) {
@@ -129,6 +145,26 @@ pub(super) fn current(home: &HomeLayout) -> Value {
     Value::Null
 }
 
+pub(super) fn validate(
+    home: &HomeLayout,
+    group_id: &str,
+    owner_id: &str,
+    lease_id: &str,
+) -> Result<(), ApiError> {
+    let active = current_private(home);
+    if active["group_id"].as_str() == Some(group_id)
+        && active["owner_id"].as_str() == Some(owner_id)
+        && active["lease_id"].as_str() == Some(lease_id)
+    {
+        return Ok(());
+    }
+    Err(ApiError::conflict(
+        "assistant_voice_recording_lease_lost",
+        "voice secretary recording lease is missing, expired, or owned by another client",
+        json!({"active_lease":redact_lease(active)}),
+    ))
+}
+
 fn active_lease(stored: &Value, now_ms: i64) -> Option<Value> {
     stored.is_object().then(|| stored.clone()).filter(|lease| {
         lease["expires_at_ms"]
@@ -137,10 +173,19 @@ fn active_lease(stored: &Value, now_ms: i64) -> Option<Value> {
     })
 }
 
-fn matches_lease(active: Option<&Value>, owner_id: &str, lease_id: &str) -> bool {
+fn matches_lease(active: Option<&Value>, group_id: &str, owner_id: &str, lease_id: &str) -> bool {
     active.is_some_and(|lease| {
-        lease["owner_id"].as_str() == Some(owner_id) && lease["lease_id"].as_str() == Some(lease_id)
+        lease["group_id"].as_str() == Some(group_id)
+            && lease["owner_id"].as_str() == Some(owner_id)
+            && lease["lease_id"].as_str() == Some(lease_id)
     })
+}
+
+fn redact_lease(mut lease: Value) -> Value {
+    if let Some(value) = lease.as_object_mut() {
+        value.remove("lease_id");
+    }
+    lease
 }
 
 fn iso_from_millis(value: i64) -> String {
@@ -184,5 +229,38 @@ mod tests {
                 .unwrap_or(false)
         );
         assert!(current(&home).is_object());
+        assert!(current(&home).get("lease_id").is_none());
+        assert!(
+            validate(
+                &home,
+                &first.group_id,
+                "tab-1",
+                acquired["lease_id"].as_str().expect("lease id")
+            )
+            .is_ok()
+        );
+        assert!(validate(&home, &first.group_id, "tab-2", "wrong").is_err());
+        let redacted = redact_lease(current_private(&home));
+        assert!(redacted.is_object());
+        assert!(redacted.get("lease_id").is_none());
+        assert!(
+            update(
+                &home,
+                &second.group_id,
+                &json!({"action":"release","owner_id":"tab-1","lease_id":acquired["lease_id"]}),
+            )
+            .expect("cross-group release")["lost"]
+                .as_bool()
+                .unwrap_or(false)
+        );
+        assert!(
+            validate(
+                &home,
+                &first.group_id,
+                "tab-1",
+                acquired["lease_id"].as_str().expect("lease")
+            )
+            .is_ok()
+        );
     }
 }

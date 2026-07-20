@@ -730,20 +730,25 @@ export async function updateAssistantStatus(
 
 export async function transcribeVoiceAssistantAudio(
   groupId: string,
-  payload: { audioBase64: string; mimeType: string; language?: string; by?: string },
+  payload: { audio: Blob | ArrayBuffer; mimeType?: string; language?: string; by?: string },
 ): Promise<ApiResponse<AssistantVoiceTranscriptionResult>> {
   const gid = String(groupId || "").trim();
   clearAssistantStateRequest(gid);
+  const params = new URLSearchParams();
+  const language = String(payload.language || "").trim();
+  if (language) params.set("language", language);
+  params.set("by", String(payload.by || "user").trim() || "user");
   const resp = await apiJson<unknown>(
-    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/transcriptions`,
+    `/api/v1/groups/${encodeURIComponent(gid)}/assistants/voice_secretary/transcriptions?${params.toString()}`,
     {
       method: "POST",
-      body: JSON.stringify({
-        audio_base64: String(payload.audioBase64 || ""),
-        mime_type: String(payload.mimeType || "application/octet-stream"),
-        language: String(payload.language || ""),
-        by: String(payload.by || "user").trim() || "user",
-      }),
+      headers: {
+        "content-type":
+          String(payload.mimeType || "").trim() ||
+          (payload.audio instanceof Blob && payload.audio.type) ||
+          "application/octet-stream",
+      },
+      body: payload.audio,
     },
   );
   clearAssistantStateRequest(gid);

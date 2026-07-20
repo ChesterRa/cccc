@@ -70,6 +70,7 @@ jobs:
 
   python-tests:
     if: github.event_name != 'schedule'
+    needs: web
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -78,6 +79,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download Web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: bundled-web
+          path: src/cccc/ports/web/dist
 
       - name: Set up Python
         uses: actions/setup-python@v5

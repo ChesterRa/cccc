@@ -21,7 +21,8 @@ use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
+const COMPONENT_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
 #[derive(RustEmbed)]
 #[folder = "../../web/dist/"]
@@ -155,7 +156,12 @@ where
             }
         }
     };
-    im_workers.shutdown().await;
+    if tokio::time::timeout(COMPONENT_SHUTDOWN_TIMEOUT, im_workers.shutdown())
+        .await
+        .is_err()
+    {
+        tracing::warn!("Web component shutdown timed out; cancelling remaining IM workers");
+    }
     server_result?;
     Ok(address)
 }

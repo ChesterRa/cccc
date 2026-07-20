@@ -8,10 +8,10 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SourceRevision {
-    path: PathBuf,
-    len: u64,
-    modified: Option<SystemTime>,
+pub(crate) struct SourceRevision {
+    pub(crate) path: PathBuf,
+    pub(crate) len: u64,
+    pub(crate) modified: Option<SystemTime>,
 }
 
 #[derive(Debug, Default)]
@@ -110,9 +110,12 @@ pub fn append(path: &Path, event: &Event) -> io::Result<()> {
         .read(true)
         .open(path)?;
     file.lock_exclusive()?;
+    let encoded_len = serde_json::to_vec(event).map_err(io::Error::other)?.len() + 1;
     let result = append_locked(&mut file, event);
     let unlock_result = FileExt::unlock(&file);
-    result.and(unlock_result)
+    result.and(unlock_result)?;
+    crate::ledger_index::note_append(path, event, encoded_len);
+    Ok(())
 }
 
 fn append_locked(file: &mut File, event: &Event) -> io::Result<()> {
@@ -122,6 +125,10 @@ fn append_locked(file: &mut File, event: &Event) -> io::Result<()> {
 }
 
 pub fn read_all(path: &Path) -> io::Result<Vec<Event>> {
+    crate::ledger_index::inspect(path, |events, _| events.to_vec())
+}
+
+pub(crate) fn read_all_uncached(path: &Path) -> io::Result<Vec<Event>> {
     let mut events = Vec::new();
     for source in source_paths(path)? {
         events.extend(read_source(&source)?);
@@ -155,7 +162,7 @@ fn source_paths(path: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn revisions(path: &Path) -> io::Result<Vec<SourceRevision>> {
+pub(crate) fn revisions(path: &Path) -> io::Result<Vec<SourceRevision>> {
     source_paths(path)?
         .into_iter()
         .map(|source| {
@@ -252,15 +259,53 @@ pub fn events_after(path: &Path, event_id: &str, limit: usize) -> io::Result<Vec
     if event_id.trim().is_empty() || limit == 0 {
         return Ok(Vec::new());
     }
-    let events = read_all(path)?;
-    let Some(index) = events.iter().position(|event| event.id == event_id) else {
-        return Ok(Vec::new());
-    };
-    Ok(events
-        .into_iter()
-        .skip(index.saturating_add(1))
-        .take(limit)
-        .collect())
+    crate::ledger_index::inspect(path, |events, positions| {
+        let Some(index) = positions.get(event_id).copied() else {
+            return Vec::new();
+        };
+        events
+            .iter()
+            .skip(index.saturating_add(1))
+            .take(limit)
+            .cloned()
+            .collect()
+    })
+}
+
+pub fn inspect<T>(
+    path: &Path,
+    inspect: impl FnOnce(&[Event], &std::collections::HashMap<String, usize>) -> T,
+) -> io::Result<T> {
+    crate::ledger_index::inspect(path, inspect)
+}
+
+pub fn inspect_status<T>(
+    path: &Path,
+    inspect: impl FnOnce(
+        &[Event],
+        &std::collections::HashMap<String, usize>,
+        &std::collections::HashMap<String, std::collections::BTreeSet<String>>,
+        &std::collections::HashMap<String, std::collections::BTreeSet<String>>,
+    ) -> T,
+) -> io::Result<T> {
+    crate::ledger_index::inspect_status(path, inspect)
+}
+
+pub fn find_event(path: &Path, event_id: &str) -> io::Result<Option<Event>> {
+    crate::ledger_index::find_event(path, event_id)
+}
+
+pub fn find_idempotent(
+    path: &Path,
+    kind: &str,
+    by: &str,
+    client_id: &str,
+) -> io::Result<Option<Event>> {
+    crate::ledger_index::find_idempotent(path, kind, by, client_id)
+}
+
+pub fn find_relay(path: &Path, source_event_id: &str) -> io::Result<Option<Event>> {
+    crate::ledger_index::find_relay(path, source_event_id)
 }
 
 fn read_source_reverse(path: &Path, limit: usize, kind: Option<&str>) -> io::Result<Vec<Event>> {
@@ -421,6 +466,43 @@ mod tests {
             replay.iter().map(|event| &event.id).collect::<Vec<_>>(),
             vec![&second.id, &third.id]
         );
+    }
+
+    #[test]
+    fn cached_index_observes_api_appends() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let first = Event::new("chat.message", "g_test");
+        let second = Event::new("chat.message", "g_test");
+        append(&path, &first).expect("append first");
+        assert_eq!(read_all(&path).expect("warm index").len(), 1);
+
+        append(&path, &second).expect("append second");
+
+        let events = read_all(&path).expect("read incrementally updated index");
+        assert_eq!(events.len(), 2);
+        assert_eq!(find_event(&path, &second.id).expect("find"), Some(second));
+    }
+
+    #[test]
+    fn cached_index_invalidates_after_external_write() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let first = Event::new("chat.message", "g_test");
+        let external = Event::new("actor.activity", "g_test");
+        append(&path, &first).expect("append first");
+        assert_eq!(read_all(&path).expect("warm index").len(), 1);
+        let mut file = OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open externally");
+        serde_json::to_writer(&mut file, &external).expect("write external event");
+        file.write_all(b"\n").expect("write newline");
+        file.sync_data().expect("sync external event");
+
+        let events = read_all(&path).expect("read invalidated index");
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1], external);
     }
 
     #[test]

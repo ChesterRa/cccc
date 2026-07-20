@@ -1,6 +1,7 @@
 use super::dingtalk_outbound::{DingTalkAttachmentSender, DingTalkTarget};
 use super::{
-    accepts_inbound, dispatch_inbound, outbound_text, resolve_credential, spawn_outbound, string,
+    InboundDecision, dispatch_inbound, inbound_decision, outbound_text, resolve_credential,
+    spawn_outbound, string,
 };
 use async_trait::async_trait;
 use cccc_client::DaemonClient;
@@ -128,8 +129,20 @@ impl CallbackHandler for Handler {
                 .expect("DingTalk session registry poisoned")
                 .insert(chat_id.clone(), session);
         }
-        if !accepts_inbound(&self.home, &self.group_id, PLATFORM, &chat_id, text) {
-            return (AckMessage::STATUS_OK, "ignored unauthorized chat".into());
+        match inbound_decision(&self.home, &self.group_id, PLATFORM, &chat_id, text).await {
+            InboundDecision::Forward => {}
+            InboundDecision::Reply(body) => {
+                return match self.send_command_reply(&chat_id, &body).await {
+                    Ok(()) => (AckMessage::STATUS_OK, "command reply sent".into()),
+                    Err(error) => {
+                        tracing::warn!(%error, %chat_id, "failed to send DingTalk command reply");
+                        (AckMessage::STATUS_SYSTEM_EXCEPTION, error)
+                    }
+                };
+            }
+            InboundDecision::Ignore => {
+                return (AckMessage::STATUS_OK, "ignored unauthorized chat".into());
+            }
         }
         let sender = message
             .sender_staff_id
@@ -148,6 +161,25 @@ impl CallbackHandler for Handler {
             Ok(()) => (AckMessage::STATUS_OK, "OK".into()),
             Err(error) => (AckMessage::STATUS_SYSTEM_EXCEPTION, error),
         }
+    }
+}
+
+impl Handler {
+    async fn send_command_reply(&self, chat_id: &str, body: &str) -> Result<(), String> {
+        let now = chrono::Utc::now().timestamp();
+        let url = self
+            .sessions
+            .lock()
+            .expect("DingTalk session registry poisoned")
+            .get(chat_id)
+            .filter(|session| session.expires_at > now)
+            .map(|session| session.url.clone())
+            .ok_or_else(|| "DingTalk session webhook is unavailable or expired".to_owned())?;
+        let payload = json!({
+            "msgtype":"markdown",
+            "markdown":{"title":"CCCC","text":body}
+        });
+        post_webhook(&reqwest::Client::new(), &url, &payload).await
     }
 }
 

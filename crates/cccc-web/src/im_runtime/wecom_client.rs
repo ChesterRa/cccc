@@ -1,6 +1,7 @@
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{SinkExt, StreamExt, future::BoxFuture};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
+use std::future::Future;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -25,7 +26,7 @@ pub(super) const UPLOAD_MEDIA_FINISH: &str = "aibot_upload_media_finish";
 const MESSAGE_CALLBACK: &str = "aibot_msg_callback";
 const EVENT_CALLBACK: &str = "aibot_event_callback";
 
-type MessageHandler = Arc<dyn Fn(Value) + Send + Sync>;
+type MessageHandler = Arc<dyn Fn(Value) -> BoxFuture<'static, ()> + Send + Sync>;
 type StatusHandler = Arc<dyn Fn(String) + Send + Sync>;
 
 #[derive(Clone, Debug)]
@@ -90,12 +91,16 @@ impl Default for ClientOptions {
 }
 
 impl WecomClient {
-    pub(super) async fn connect_with_status(
+    pub(super) async fn connect_with_status<H, Fut>(
         bot_id: String,
         secret: String,
-        handler: impl Fn(Value) + Send + Sync + 'static,
+        handler: H,
         on_terminal_error: impl Fn(String) + Send + Sync + 'static,
-    ) -> Result<(Arc<Self>, JoinHandle<()>), String> {
+    ) -> Result<(Arc<Self>, JoinHandle<()>), String>
+    where
+        H: Fn(Value) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
         Self::connect_configured(
             bot_id,
             secret,
@@ -107,22 +112,30 @@ impl WecomClient {
     }
 
     #[cfg(test)]
-    async fn connect_with_options(
+    async fn connect_with_options<H, Fut>(
         bot_id: String,
         secret: String,
-        handler: impl Fn(Value) + Send + Sync + 'static,
+        handler: H,
         options: ClientOptions,
-    ) -> Result<(Arc<Self>, JoinHandle<()>), String> {
+    ) -> Result<(Arc<Self>, JoinHandle<()>), String>
+    where
+        H: Fn(Value) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
         Self::connect_configured(bot_id, secret, handler, |_| {}, options).await
     }
 
-    async fn connect_configured(
+    async fn connect_configured<H, Fut>(
         bot_id: String,
         secret: String,
-        handler: impl Fn(Value) + Send + Sync + 'static,
+        handler: H,
         on_terminal_error: impl Fn(String) + Send + Sync + 'static,
         options: ClientOptions,
-    ) -> Result<(Arc<Self>, JoinHandle<()>), String> {
+    ) -> Result<(Arc<Self>, JoinHandle<()>), String>
+    where
+        H: Fn(Value) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
         let (command_tx, command_rx) = mpsc::channel(128);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let (state_tx, mut state_rx) = watch::channel(ClientState::Connecting);
@@ -138,7 +151,7 @@ impl WecomClient {
         let runtime = ClientRuntime {
             bot_id,
             secret,
-            handler: Arc::new(handler),
+            handler: Arc::new(move |frame| Box::pin(handler(frame))),
             options: options.clone(),
             state: state_tx,
             authenticated,
@@ -475,12 +488,12 @@ async fn run_session(
                     if cmd == EVENT_CALLBACK
                         && frame.pointer("/body/event/eventtype").and_then(Value::as_str) == Some("disconnected_event")
                     {
-                        (runtime.handler)(frame);
+                        (runtime.handler)(frame).await;
                         reject_pending(&mut pending, "WeCom connection was replaced by a new connection");
                         return SessionEnd::Replaced;
                     }
                     capture_reply_ref(runtime, &frame);
-                    (runtime.handler)(frame);
+                    (runtime.handler)(frame).await;
                     continue;
                 }
                 let req_id = frame.pointer("/headers/req_id").and_then(Value::as_str).unwrap_or_default();
@@ -730,7 +743,10 @@ mod tests {
             "bot-id".into(),
             "bot-secret".into(),
             move |frame| {
-                let _ = callback_tx.send(frame);
+                let callback_tx = callback_tx.clone();
+                async move {
+                    let _ = callback_tx.send(frame);
+                }
             },
             options,
         )
@@ -787,7 +803,7 @@ mod tests {
         let result = WecomClient::connect_configured(
             "bad-bot".into(),
             "bad-secret".into(),
-            |_| {},
+            |_| async {},
             move |error| {
                 let _ = status_tx.send(error);
             },
@@ -835,7 +851,7 @@ mod tests {
         let (client, task) = WecomClient::connect_with_options(
             "bot-id".into(),
             "bot-secret".into(),
-            |_| {},
+            |_| async {},
             options,
         )
         .await
@@ -885,7 +901,7 @@ mod tests {
         let (client, task) = WecomClient::connect_configured(
             "bot-id".into(),
             "bot-secret".into(),
-            |_| {},
+            |_| async {},
             move |error| {
                 let _ = status_tx.send(error);
             },
@@ -947,7 +963,10 @@ mod tests {
             "bot-id".into(),
             "bot-secret".into(),
             move |frame| {
-                let _ = callback_tx.send(frame);
+                let callback_tx = callback_tx.clone();
+                async move {
+                    let _ = callback_tx.send(frame);
+                }
             },
             options,
         )
@@ -959,6 +978,71 @@ mod tests {
             .expect("reconnect callback timeout")
             .expect("reconnect callback");
         assert_eq!(callback["body"]["text"]["content"], "again");
+        client.shutdown();
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("client stop timeout")
+            .expect("client task");
+        server.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn async_callback_applies_backpressure_without_dropping_bursts() {
+        const MESSAGE_COUNT: usize = 256;
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+        let address = listener.local_addr().expect("listener address");
+        let (server_done_tx, server_done_rx) = oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("accept");
+            let mut socket = tokio_tungstenite::accept_async(stream)
+                .await
+                .expect("websocket");
+            let subscribe = next_json(&mut socket).await;
+            acknowledge(&mut socket, &subscribe).await;
+            for index in 0..MESSAGE_COUNT {
+                socket
+                    .send(text_message(&json!({
+                        "cmd":MESSAGE_CALLBACK,
+                        "headers":{"req_id":format!("callback-{index}")},
+                        "body":{"chatid":"chat","msgid":format!("msg-{index}"),
+                            "msgtype":"text","from":{"userid":"user"},
+                            "text":{"content":index.to_string()}}
+                    })))
+                    .await
+                    .expect("callback");
+            }
+            let _ = server_done_rx.await;
+        });
+        let (callback_tx, mut callback_rx) = mpsc::channel(1);
+        let options = ClientOptions {
+            url: format!("ws://{address}"),
+            heartbeat_interval: Duration::from_secs(30),
+            reconnect_base_delay: Duration::from_millis(20),
+            connect_timeout: Duration::from_secs(2),
+            reply_timeout: Duration::from_secs(1),
+        };
+        let (client, task) = WecomClient::connect_with_options(
+            "bot-id".into(),
+            "bot-secret".into(),
+            move |frame| {
+                let callback_tx = callback_tx.clone();
+                async move {
+                    callback_tx.send(frame).await.expect("callback receiver");
+                }
+            },
+            options,
+        )
+        .await
+        .expect("client");
+
+        for index in 0..MESSAGE_COUNT {
+            let frame = tokio::time::timeout(Duration::from_secs(2), callback_rx.recv())
+                .await
+                .expect("callback timeout")
+                .expect("callback");
+            assert_eq!(frame["body"]["text"]["content"], index.to_string());
+        }
+        let _ = server_done_tx.send(());
         client.shutdown();
         tokio::time::timeout(Duration::from_secs(1), task)
             .await
@@ -1046,7 +1130,10 @@ mod tests {
             "bot-id".into(),
             "bot-secret".into(),
             move |frame| {
-                let _ = callback_tx.send(frame);
+                let callback_tx = callback_tx.clone();
+                async move {
+                    let _ = callback_tx.send(frame);
+                }
             },
             options,
         )
@@ -1134,7 +1221,10 @@ mod tests {
             "bot-id".into(),
             "bot-secret".into(),
             move |frame| {
-                let _ = callback_tx.send(frame);
+                let callback_tx = callback_tx.clone();
+                async move {
+                    let _ = callback_tx.send(frame);
+                }
             },
             options,
         )

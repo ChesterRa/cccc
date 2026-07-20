@@ -80,7 +80,11 @@ The provider adapter is unavailable or not authenticated, so CCCC used its local
 
 ## Why does local voice transcription return `asr_unavailable`?
 
-No local ASR backend is configured. Browser ASR remains the default usable path. An unavailable response must not be treated as an empty transcript.
+Rust builds include the native sherpa-onnx runtime. Browser ASR remains the
+zero-download default; local ASR becomes ready after the final and live models
+are installed in **Settings > Assistants**. Model downloads are staged and
+SHA-256 verified, and an unavailable/error response must not be treated as an
+empty transcript.
 
 ## Why is IM configured but not running?
 

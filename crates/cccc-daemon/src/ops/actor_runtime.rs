@@ -1,11 +1,15 @@
-use cccc_contracts::{Actor, ActorRuntime, Event, RuntimeStateSource};
-use cccc_core::ledger;
+use cccc_contracts::{Actor, ActorRuntime, RuntimeStateSource};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout};
 use cccc_runtime::{LaunchSpec, SessionStatus};
 use std::path::PathBuf;
 
 use crate::dispatch::OpError;
 use crate::ops::{actor_delivery, actor_secrets, runtime_session};
+
+mod persistence;
+mod reconcile;
+pub use persistence::persist_lifecycle;
+pub use reconcile::{reap_exited, reconcile_exited};
 
 pub fn apply(
     home: &HomeLayout,
@@ -89,6 +93,8 @@ fn launch(
     env: &std::collections::BTreeMap<String, String>,
     mut command: Vec<String>,
 ) -> Result<SessionStatus, OpError> {
+    let _start_permit = crate::runtime_start_gate::permit(home)
+        .map_err(|message| OpError::new("runtime_shutting_down", message))?;
     let mut launch_env = env.clone();
     if actor.runtime == ActorRuntime::Codex {
         crate::ops::codex_mcp::configure(
@@ -239,89 +245,6 @@ pub fn stop_group(group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {
         }
     }
     Ok(stopped)
-}
-
-pub fn reconcile(home: &HomeLayout) -> Result<(), OpError> {
-    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    for status in cccc_runtime::reap().map_err(runtime_error)? {
-        let Ok(group) = store.load(&status.group_id) else {
-            continue;
-        };
-        let Some(actor) = group
-            .actors
-            .iter()
-            .find(|actor| actor.id == status.actor_id)
-        else {
-            continue;
-        };
-        if actor.runtime_state_source != RuntimeStateSource::Terminal {
-            continue;
-        }
-        store
-            .mutate(&status.group_id, |doc| {
-                if let Some(actor) = doc
-                    .actors
-                    .iter_mut()
-                    .find(|actor| actor.id == status.actor_id)
-                {
-                    actor.enabled = false;
-                }
-                doc.running = doc.actors.iter().any(|actor| actor.enabled);
-                Ok(())
-            })
-            .map_err(OpError::io)?;
-        let mut event = Event::new("actor.stop", &status.group_id);
-        event.by = "system".into();
-        event.data = serde_json::json!({
-            "actor_id": status.actor_id,
-            "reason": "process_exit",
-            "exit_code": status.exit_code,
-        })
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
-        ledger::append(
-            &store.ledger_path(&status.group_id).map_err(OpError::io)?,
-            &event,
-        )
-        .map_err(OpError::io)?;
-    }
-    Ok(())
-}
-
-pub fn persist_lifecycle(
-    home: &HomeLayout,
-    group: &GroupDoc,
-    actor_id: &str,
-    enabled: bool,
-    target_status: Option<&SessionStatus>,
-) -> Result<Actor, OpError> {
-    let running = group.actors.iter().any(|actor| {
-        if actor.id == actor_id {
-            enabled
-                && (actor.runtime == ActorRuntime::WebModel
-                    || target_status.is_some_and(|status| status.running))
-        } else {
-            actor.enabled
-                && (actor.runtime == ActorRuntime::WebModel
-                    || status(&group.group_id, &actor.id).is_some_and(|status| status.running))
-        }
-    });
-    GroupStore::new(home.clone())
-        .map_err(OpError::io)?
-        .mutate(&group.group_id, |doc| {
-            let mut patch = serde_json::Map::new();
-            patch.insert("enabled".into(), serde_json::Value::Bool(enabled));
-            let actor = cccc_core::actors::update(doc, actor_id, &patch)?;
-            doc.running = running;
-            if enabled && doc.state == cccc_contracts::GroupState::Stopped {
-                doc.state = cccc_contracts::GroupState::Active;
-            } else if !running {
-                doc.state = cccc_contracts::GroupState::Stopped;
-            }
-            Ok(actor)
-        })
-        .map_err(OpError::invalid)
 }
 
 fn working_directory(group: &GroupDoc, actor: &Actor) -> PathBuf {

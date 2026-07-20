@@ -285,9 +285,10 @@ pub(super) fn find_event(
     group_id: &str,
     event_id: &str,
 ) -> Result<Event, OpError> {
-    cccc_core::ledger::read_all(&store(home)?.ledger_path(group_id).map_err(OpError::io)?)
-        .map_err(OpError::io)?
-        .into_iter()
-        .find(|event| event.id == event_id)
-        .ok_or_else(|| OpError::new("event_not_found", format!("event not found: {event_id}")))
+    cccc_core::ledger::find_event(
+        &store(home)?.ledger_path(group_id).map_err(OpError::io)?,
+        event_id,
+    )
+    .map_err(OpError::io)?
+    .ok_or_else(|| OpError::new("event_not_found", format!("event not found: {event_id}")))
 }

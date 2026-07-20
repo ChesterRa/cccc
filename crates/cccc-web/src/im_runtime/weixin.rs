@@ -1,4 +1,4 @@
-use super::{accepts_inbound, dispatch_inbound, outbound_text, spawn_outbound};
+use super::{InboundDecision, dispatch_inbound, inbound_decision, outbound_text, spawn_outbound};
 use async_trait::async_trait;
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -83,10 +83,16 @@ struct Handler {
 impl MessageHandler for Handler {
     async fn on_message(&self, context: &MessageContext) -> weixin_agent::Result<()> {
         let text = context.body.as_deref().unwrap_or("").trim();
-        if text.is_empty()
-            || !accepts_inbound(&self.home, &self.group_id, PLATFORM, &context.from, text)
-        {
+        if text.is_empty() {
             return Ok(());
+        }
+        match inbound_decision(&self.home, &self.group_id, PLATFORM, &context.from, text).await {
+            InboundDecision::Forward => {}
+            InboundDecision::Reply(body) => {
+                context.reply_text(&body).await?;
+                return Ok(());
+            }
+            InboundDecision::Ignore => return Ok(()),
         }
         if let Err(error) = dispatch_inbound(
             &self.daemon,

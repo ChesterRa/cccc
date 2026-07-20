@@ -112,10 +112,17 @@ pub fn input(name: &str) -> Value {
                 "options":{"type":"object","properties":{"source_ids":{"type":"array","items":{"type":"string"}}},"additionalProperties":false}
             }),
         ),
-        "cccc_repo" | "cccc_remote_repo" => {
-            action(&["info", "list", "list_dir", "read", "search"], repo_read())
-        }
-        "cccc_repo_edit" | "cccc_remote_repo_edit" => action(
+        "cccc_remote_access" => action(
+            &["list", "status", "explain_permissions"],
+            remote(json!({})),
+        ),
+        "cccc_remote_context" => object(remote(json!({})), &[]),
+        "cccc_repo" => action(&["info", "list", "list_dir", "read", "search"], repo_read()),
+        "cccc_remote_repo" => action(
+            &["info", "list", "list_dir", "read", "search"],
+            remote(repo_read()),
+        ),
+        "cccc_repo_edit" => action(
             &[
                 "replace",
                 "multi_replace",
@@ -128,6 +135,40 @@ pub fn input(name: &str) -> Value {
                 "path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},
                 "content":{"type":"string"},"replacements":{"type":"array"},"expected_sha256":{"type":"string"}
             }),
+        ),
+        "cccc_remote_repo_edit" => action(
+            &[
+                "replace",
+                "multi_replace",
+                "write",
+                "mkdir",
+                "delete",
+                "move",
+            ],
+            remote(json!({
+                "path":{"type":"string"},"old_text":{"type":"string"},"new_text":{"type":"string"},
+                "content":{"type":"string"},"replacements":{"type":"array"},"expected_sha256":{"type":"string"}
+            })),
+        ),
+        "cccc_remote_git" => action(
+            &["status", "diff", "log"],
+            remote(json!({"path":{"type":"string"}})),
+        ),
+        "cccc_remote_apply_patch" => object(remote(json!({"patch":{"type":"string"}})), &["patch"]),
+        "cccc_remote_shell" | "cccc_remote_exec_command" => object(
+            remote(json!({
+                "cmd":{"type":"string"},
+                "command":{"oneOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}]},
+                "timeout_s":{"type":"integer","minimum":1,"maximum":600}
+            })),
+            &[],
+        ),
+        "cccc_remote_write_stdin" => object(
+            remote(json!({
+                "session_id":{"type":"string"},"chars":{"type":"string"},
+                "terminate":{"type":"boolean"},"yield_time_ms":{"type":"integer"}
+            })),
+            &["session_id"],
         ),
         "cccc_capability_search" => object(
             json!({
@@ -193,6 +234,13 @@ fn repo_read() -> Value {
 
 fn common() -> Value {
     json!({"group_id":{"type":"string"},"actor_id":{"type":"string"},"by":{"type":"string"}})
+}
+
+fn remote(extra: Value) -> Value {
+    merge(
+        json!({"remote_group_id":{"type":"string","description":"Target trusted remote group ID."}}),
+        extra,
+    )
 }
 
 fn object(properties: Value, required: &[&str]) -> Value {

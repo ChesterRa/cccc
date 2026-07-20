@@ -127,7 +127,7 @@ cccc im start
 
 1. Go to a channel where the bot has access
 2. Send `/subscribe`
-3. You should receive a confirmation
+3. Copy the pairing key returned immediately by the bot and approve it in Web Pending Requests or with `cccc im bind --key KEY --group GROUP_ID`
 
 ## Usage
 
@@ -168,7 +168,7 @@ After subscribing, you will automatically receive:
 - Status updates
 - Error notifications
 
-Use `/verbose` to toggle whether you see agent-to-agent messages.
+Use `/verbose` or `/verbose on` to see agent-to-agent messages, and `/verbose off` to disable them.
 
 ### Thread Support
 
@@ -195,7 +195,7 @@ CCCC formats responses with Discord embeds for better readability when appropria
 | `/status` | Show group and agent status |
 | `/pause` | Pause message delivery |
 | `/resume` | Resume message delivery |
-| `/verbose` | Toggle verbose mode (see all agent messages) |
+| `/verbose [on\|off]` | Enable or disable verbose mode (see all agent messages) |
 | `/help` | Show available commands |
 
 ## Slash Commands (Optional)

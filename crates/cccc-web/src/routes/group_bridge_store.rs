@@ -16,6 +16,7 @@ impl<'a> BridgeStore<'a> {
     }
 
     pub fn load(&self) -> io::Result<Value> {
+        self.import_legacy_if_changed()?;
         let mut value = integration_state::global_get(self.home, STORE_KEY)?;
         normalize(&mut value);
         Ok(value)
@@ -25,10 +26,15 @@ impl<'a> BridgeStore<'a> {
         &self,
         change: impl FnOnce(&mut Map<String, Value>) -> io::Result<T>,
     ) -> io::Result<T> {
+        self.import_legacy_if_changed()?;
         integration_state::global_update(self.home, STORE_KEY, |value| {
             normalize(value);
             change(value.as_object_mut().expect("bridge store initialized"))
         })
+    }
+
+    fn import_legacy_if_changed(&self) -> io::Result<()> {
+        cccc_core::group_bridge_legacy::import_if_changed(self.home)
     }
 
     pub fn identity(&self) -> io::Result<Value> {

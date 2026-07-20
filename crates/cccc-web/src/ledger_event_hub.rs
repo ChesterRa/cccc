@@ -13,6 +13,7 @@ use tokio::sync::{broadcast, mpsc, watch};
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
 const WATCH_QUEUE_CAPACITY: usize = 1024;
 const WATCH_COALESCE_DELAY: Duration = Duration::from_millis(20);
+const ACTIVE_FEED_RESCAN_INTERVAL: Duration = Duration::from_secs(1);
 const DELETED_GROUP_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
@@ -156,6 +157,8 @@ async fn run_watcher(
     mut shutdown: watch::Receiver<bool>,
     rescan_required: Arc<AtomicBool>,
 ) {
+    let mut rescan_interval = tokio::time::interval(ACTIVE_FEED_RESCAN_INTERVAL);
+    rescan_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut prune_interval = tokio::time::interval(DELETED_GROUP_PRUNE_INTERVAL);
     prune_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
@@ -169,6 +172,11 @@ async fn run_watcher(
             path = receiver.recv() => {
                 let Some(path) = path else { break; };
                 path
+            }
+            _ = rescan_interval.tick() => {
+                let Some(inner) = inner.upgrade() else { break; };
+                publish_active_feed_changes(&inner);
+                continue;
             }
             _ = prune_interval.tick() => {
                 let Some(inner) = inner.upgrade() else { break; };
@@ -268,6 +276,20 @@ fn publish_all_changes(inner: &HubInner) {
     };
     for group in groups {
         publish_group_changes(inner, &group.group_id);
+    }
+}
+
+fn publish_active_feed_changes(inner: &HubInner) {
+    let mut group_ids = inner
+        .feeds
+        .lock()
+        .map(|feeds| feeds.keys().cloned().collect::<HashSet<_>>())
+        .unwrap_or_default();
+    if let Ok(followers) = inner.global_followers.lock() {
+        group_ids.extend(followers.keys().cloned());
+    }
+    for group_id in group_ids {
+        publish_group_changes(inner, &group_id);
     }
 }
 
@@ -445,6 +467,30 @@ mod tests {
                 .expect("broadcast event");
             assert_eq!(received.id, event.id);
         }
+    }
+
+    #[tokio::test]
+    async fn active_feed_rescan_recovers_an_unobserved_append() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("rescan", "").expect("group");
+        let hub = LedgerEventHub::new(home);
+        let mut receiver = hub
+            .subscribe_group(&group.group_id)
+            .expect("group subscriber");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.data.insert("text".into(), serde_json::json!("hello"));
+        ledger::append(
+            &store.ledger_path(&group.group_id).expect("ledger path"),
+            &event,
+        )
+        .expect("append");
+
+        publish_active_feed_changes(&hub.inner);
+
+        let received = receiver.recv().await.expect("rescanned event");
+        assert_eq!(received.id, event.id);
     }
 
     #[tokio::test]

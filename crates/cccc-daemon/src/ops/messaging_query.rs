@@ -17,64 +17,71 @@ pub fn tail(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 pub fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let events = load(home, request)?;
-    let page = page(
-        &events,
-        Query {
-            kind: kind(request, "all"),
-            text: string_arg(request, "q").unwrap_or_default(),
-            by: string_arg(request, "by").unwrap_or_default(),
-            before: nonempty(request, "before"),
-            after: nonempty(request, "after"),
-            limit: integer(request, "limit", 50).clamp(1, 200),
-        },
-    )?;
+    let path = ledger_path(home, request)?;
+    let query = Query {
+        kind: kind(request, "all"),
+        text: string_arg(request, "q").unwrap_or_default(),
+        by: string_arg(request, "by").unwrap_or_default(),
+        before: nonempty(request, "before"),
+        after: nonempty(request, "after"),
+        limit: integer(request, "limit", 50).clamp(1, 200),
+    };
+    let page = ledger::inspect(&path, |events, _| page(events, query)).map_err(OpError::io)??;
     result(page)
 }
 
 pub fn window(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let center_id = required_arg(request, "center")?;
-    let events = load(home, request)?;
-    let center = events
-        .iter()
-        .find(|event| event.id == center_id)
-        .cloned()
-        .ok_or_else(|| OpError::new("event_not_found", format!("event not found: {center_id}")))?;
+    let path = ledger_path(home, request)?;
     let kind = kind(request, "chat");
-    if !matches_kind(&center, kind) {
-        return Err(OpError::new(
-            "invalid_center_kind",
-            format!("center event kind must match kind={}", kind.name()),
-        ));
-    }
-    let before = page(
-        &events,
-        Query {
-            kind,
-            before: Some(center_id.clone()),
-            limit: integer(request, "before", 30).min(200),
-            ..Query::default()
-        },
-    )?;
-    let after = page(
-        &events,
-        Query {
-            kind,
-            after: Some(center_id.clone()),
-            limit: integer(request, "after", 30).min(200),
-            ..Query::default()
-        },
-    )?;
-    let center_index = before.events.len();
-    let mut combined = before.events;
-    combined.push(center);
-    combined.extend(after.events);
+    let before_limit = integer(request, "before", 30).min(200);
+    let after_limit = integer(request, "after", 30).min(200);
+    let (combined, center_index, has_more_before, has_more_after) =
+        ledger::inspect(&path, |events, positions| -> Result<_, OpError> {
+            let center = positions
+                .get(&center_id)
+                .and_then(|position| events.get(*position))
+                .cloned()
+                .ok_or_else(|| {
+                    OpError::new("event_not_found", format!("event not found: {center_id}"))
+                })?;
+            if !matches_kind(&center, kind) {
+                return Err(OpError::new(
+                    "invalid_center_kind",
+                    format!("center event kind must match kind={}", kind.name()),
+                ));
+            }
+            let before = page(
+                events,
+                Query {
+                    kind,
+                    before: Some(center_id.clone()),
+                    limit: before_limit,
+                    ..Query::default()
+                },
+            )?;
+            let after = page(
+                events,
+                Query {
+                    kind,
+                    after: Some(center_id.clone()),
+                    limit: after_limit,
+                    ..Query::default()
+                },
+            )?;
+            let center_index = before.events.len();
+            let mut combined = before.events;
+            combined.push(center);
+            combined.extend(after.events);
+            Ok((combined, center_index, before.has_more, after.has_more))
+        })
+        .map_err(OpError::io)??;
     object(json!({
         "center_id":center_id,
         "center_index":center_index,
         "events":combined,
-        "has_more_before":before.has_more,
-        "has_more_after":after.has_more,
+        "has_more_before":has_more_before,
+        "has_more_after":has_more_after,
         "count":combined.len(),
     }))
 }
@@ -165,10 +172,6 @@ fn matches_kind(event: &Event, kind: Kind) -> bool {
         Kind::Chat => event.kind == "chat.message",
         Kind::Notify => event.kind == "system.notify",
     }
-}
-
-fn load(home: &HomeLayout, request: &DaemonRequest) -> Result<Vec<Event>, OpError> {
-    ledger::read_all(&ledger_path(home, request)?).map_err(OpError::io)
 }
 
 fn ledger_path(home: &HomeLayout, request: &DaemonRequest) -> Result<std::path::PathBuf, OpError> {

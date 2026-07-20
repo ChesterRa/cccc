@@ -16,6 +16,10 @@ export function createVoiceCaptureOwnerId(): string {
   return `voice-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+export function createVoiceRecordingSessionId(): string {
+  return `voice-session-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function readVoiceCaptureLock(): VoiceCaptureLock | null {
   if (typeof window === "undefined") return null;
   try {

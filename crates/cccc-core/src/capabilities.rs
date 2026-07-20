@@ -1,14 +1,19 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io;
 
 use crate::HomeLayout;
 use crate::capability_builtin;
 use crate::fs::{read_json, write_json};
 
+mod state;
+pub use state::CapabilityState;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Capability {
     pub id: String,
+    #[serde(default)]
+    pub kind: String,
     pub name: String,
     #[serde(default)]
     pub description: String,
@@ -20,18 +25,8 @@ pub struct Capability {
     pub capsule_text: String,
     #[serde(default)]
     pub source: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CapabilityState {
     #[serde(default)]
-    pub enabled: BTreeSet<String>,
-    #[serde(default)]
-    pub blocked: BTreeSet<String>,
-    #[serde(default)]
-    pub hidden: BTreeSet<String>,
-    #[serde(default)]
-    pub custom: BTreeMap<String, Capability>,
+    pub source_uri: String,
 }
 
 #[derive(Debug, Clone)]
@@ -59,10 +54,15 @@ impl CapabilityStore {
     }
 
     pub fn catalog(&self) -> io::Result<Vec<Capability>> {
-        let mut items = capability_builtin::all();
-        items.extend(self.load()?.custom.into_values());
-        items.sort_by(|left, right| left.id.cmp(&right.id));
-        Ok(items)
+        let mut items = BTreeMap::new();
+        for capability in capability_builtin::all()
+            .into_iter()
+            .chain(crate::capability_legacy::catalog(&self.home)?)
+            .chain(self.load()?.custom.into_values())
+        {
+            items.insert(capability.id.clone(), capability);
+        }
+        Ok(items.into_values().collect())
     }
 
     pub fn search(&self, query: &str) -> io::Result<Vec<Capability>> {
@@ -99,8 +99,10 @@ impl CapabilityStore {
                 return Err(io::Error::other("capability is blocked"));
             }
             state.enabled.insert(id.into());
+            state.disabled.remove(id);
         } else {
             state.enabled.remove(id);
+            state.disabled.insert(id.into());
         }
         self.save(&state)?;
         Ok(state)
@@ -111,9 +113,12 @@ impl CapabilityStore {
         let mut state = self.load()?;
         if blocked {
             state.blocked.insert(id.into());
+            state.unblocked.remove(id);
             state.enabled.remove(id);
+            state.disabled.insert(id.into());
         } else {
             state.blocked.remove(id);
+            state.unblocked.insert(id.into());
         }
         self.save(&state)?;
         Ok(state)
@@ -124,8 +129,10 @@ impl CapabilityStore {
         let mut state = self.load()?;
         if hidden {
             state.hidden.insert(id.into());
+            state.visible.remove(id);
         } else {
             state.hidden.remove(id);
+            state.visible.insert(id.into());
         }
         self.save(&state)?;
         Ok(state)
@@ -143,8 +150,11 @@ impl CapabilityStore {
         let mut state = self.load()?;
         let removed = state.custom.remove(id).is_some();
         state.enabled.remove(id);
+        state.disabled.remove(id);
         state.blocked.remove(id);
+        state.unblocked.remove(id);
         state.hidden.remove(id);
+        state.visible.remove(id);
         self.save(&state)?;
         Ok(removed)
     }
@@ -160,8 +170,11 @@ impl CapabilityStore {
         for id in &removed {
             state.custom.remove(id);
             state.enabled.remove(id);
+            state.disabled.remove(id);
             state.blocked.remove(id);
+            state.unblocked.remove(id);
             state.hidden.remove(id);
+            state.visible.remove(id);
         }
         self.save(&state)?;
         Ok(removed)

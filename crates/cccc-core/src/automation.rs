@@ -1,15 +1,15 @@
 use cccc_contracts::{Event, GroupState, utc_now};
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
 use std::io;
 
 use crate::actors;
 use crate::automation_render::notify_event;
 use crate::automation_schedule::is_due;
-use crate::fs::{read_json, write_json};
 use crate::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
+
+mod state;
+use state::RuntimeState;
 
 #[derive(Debug, Clone)]
 pub enum ScheduledAction {
@@ -30,37 +30,52 @@ pub struct TickResult {
     pub actions: Vec<ScheduledAction>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-struct RuntimeState {
-    #[serde(default)]
-    last_rule: BTreeMap<String, i64>,
-    #[serde(default)]
-    last_nudge: BTreeMap<String, i64>,
-}
-
 pub fn tick(home: &HomeLayout) -> io::Result<TickResult> {
     tick_scheduled(home, true)
 }
 
 pub fn tick_scheduled(home: &HomeLayout, include_unread: bool) -> io::Result<TickResult> {
+    let mut result = TickResult::default();
+    for group_id in group_ids(home)? {
+        let group_result = match tick_group(home, &group_id, include_unread) {
+            Ok(result) => result,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        result.notifications.extend(group_result.notifications);
+        result.actions.extend(group_result.actions);
+    }
+    Ok(result)
+}
+
+pub fn group_ids(home: &HomeLayout) -> io::Result<Vec<String>> {
+    let store = GroupStore::new(home.clone())?;
+    Ok(store
+        .list()?
+        .into_iter()
+        .map(|group| group.group_id)
+        .collect())
+}
+
+pub fn tick_group(
+    home: &HomeLayout,
+    group_id: &str,
+    include_unread: bool,
+) -> io::Result<TickResult> {
     let store = GroupStore::new(home.clone())?;
     let mut result = TickResult::default();
-    for meta in store.list()? {
-        let Ok(group) = store.load(&meta.group_id) else {
-            continue;
-        };
-        if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
-            continue;
-        }
-        let mut state = load_state(&store, &group.group_id)?;
-        let previous = state.clone();
-        tick_rules(&store, &group, &mut state, &mut result)?;
-        if include_unread && group.state == GroupState::Active {
-            tick_unread(home, &store, &group, &mut state, &mut result)?;
-        }
-        if state != previous {
-            save_state(&store, &group.group_id, &state)?;
-        }
+    let group = store.load(group_id)?;
+    if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
+        return Ok(result);
+    }
+    let mut state = state::load(&store, group_id)?;
+    let previous = state.clone();
+    tick_rules(&store, &group, &mut state, &mut result)?;
+    if include_unread && group.state == GroupState::Active {
+        tick_unread(home, &store, &group, &mut state, &mut result)?;
+    }
+    if state != previous {
+        state::save(&store, group_id, &state)?;
     }
     Ok(result)
 }
@@ -188,20 +203,4 @@ fn tick_unread(
         state.last_nudge.insert(key, now);
     }
     Ok(())
-}
-
-fn load_state(store: &GroupStore, group_id: &str) -> io::Result<RuntimeState> {
-    let path = store.state_dir(group_id)?.join("automation-runtime.json");
-    if path.exists() {
-        read_json(&path)
-    } else {
-        Ok(RuntimeState::default())
-    }
-}
-
-fn save_state(store: &GroupStore, group_id: &str, state: &RuntimeState) -> io::Result<()> {
-    write_json(
-        &store.state_dir(group_id)?.join("automation-runtime.json"),
-        state,
-    )
 }

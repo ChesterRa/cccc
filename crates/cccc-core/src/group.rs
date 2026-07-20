@@ -149,6 +149,7 @@ impl GroupStore {
     pub fn delete(&self, group_id: &str) -> io::Result<bool> {
         let dir = self.group_dir(group_id)?;
         let existed = dir.exists();
+        crate::ledger_index::invalidate_path(&dir.join("ledger.jsonl"));
         if existed {
             fs::remove_dir_all(dir)?;
         }

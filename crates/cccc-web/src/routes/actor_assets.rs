@@ -1,5 +1,4 @@
 use axum::extract::{Multipart, Path, State};
-use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::{Value, json};
@@ -62,12 +61,9 @@ async fn avatar_get(
         .unwrap_or("");
     let path = cccc_core::blobs::resolve(&state.home, &group_id, relative)
         .map_err(|error| ApiError::not_found(error.to_string()))?;
-    let bytes = std::fs::read(path).map_err(|error| ApiError::not_found(error.to_string()))?;
-    Ok((
-        [(axum::http::header::CONTENT_TYPE, "application/octet-stream")],
-        bytes,
-    )
-        .into_response())
+    super::file_response::stream(&path, "application/octet-stream", None, None)
+        .await
+        .map_err(|error| ApiError::not_found(error.to_string()))
 }
 
 async fn avatar_upload(

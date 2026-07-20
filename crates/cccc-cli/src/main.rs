@@ -123,11 +123,19 @@ async fn launch(home: HomeLayout, host: Option<String>, port: Option<u16>) -> Re
         wait_for_daemon_loss(&monitor, &daemon_address).await;
         eprintln!("CCCC daemon stopped; Web server closed");
     };
+    let shutdown_feedback = tokio::spawn(report_interrupt());
     let result = cccc_web::serve_until(home, &host, port, shutdown)
         .await
         .map(|_| ());
+    shutdown_feedback.abort();
     finish_embedded_daemon(&client, embedded_daemon.take()).await;
     result
+}
+
+async fn report_interrupt() {
+    if tokio::signal::ctrl_c().await.is_ok() {
+        eprintln!("Stopping CCCC...");
+    }
 }
 
 async fn finish_embedded_daemon(

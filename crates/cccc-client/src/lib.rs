@@ -1,13 +1,14 @@
-use cccc_contracts::{DaemonAddress, DaemonRequest, DaemonResponse, Transport};
+use cccc_contracts::{DaemonAddress, DaemonRequest, DaemonResponse};
 use cccc_core::HomeLayout;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use thiserror::Error;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
+use tokio::sync::{Mutex, RwLock};
 
-#[cfg(unix)]
-use tokio::net::UnixStream;
+mod connection;
+use connection::Connection;
 
 #[derive(Debug, Error)]
 pub enum ClientError {
@@ -21,12 +22,35 @@ pub enum ClientError {
     Protocol(#[from] serde_json::Error),
     #[error("daemon request timed out")]
     Timeout,
+    #[error("daemon request outcome is unknown for {op}: {message}")]
+    OutcomeUnknown { op: String, message: String },
 }
 
 #[derive(Debug, Clone)]
 pub struct DaemonClient {
     home: HomeLayout,
     timeout: Duration,
+    shared: Arc<ClientShared>,
+}
+
+#[derive(Debug, Default)]
+struct ClientShared {
+    address: RwLock<Option<DaemonAddress>>,
+    pool: Mutex<Vec<Connection>>,
+}
+
+#[derive(Debug)]
+enum CallFailure {
+    Connect(ClientError),
+    Exchange(ClientError),
+}
+
+impl CallFailure {
+    fn into_client_error(self) -> ClientError {
+        match self {
+            Self::Connect(error) | Self::Exchange(error) => error,
+        }
+    }
 }
 
 impl DaemonClient {
@@ -35,6 +59,7 @@ impl DaemonClient {
         Self {
             home,
             timeout: Duration::from_secs(60),
+            shared: Arc::new(ClientShared::default()),
         }
     }
 
@@ -45,77 +70,107 @@ impl DaemonClient {
     }
 
     pub async fn call(&self, request: &DaemonRequest) -> Result<DaemonResponse, ClientError> {
-        tokio::time::timeout(self.timeout, self.call_inner(request))
-            .await
-            .map_err(|_| ClientError::Timeout)?
-    }
-
-    async fn call_inner(&self, request: &DaemonRequest) -> Result<DaemonResponse, ClientError> {
-        let address = self.read_address().await?;
-        match address.transport {
-            Transport::Tcp => {
-                if address.host.is_empty() || address.port == 0 {
-                    return Err(ClientError::InvalidAddress(
-                        "missing TCP host or port".into(),
-                    ));
-                }
-                let stream = TcpStream::connect((address.host.as_str(), address.port)).await?;
-                exchange(stream, request).await
+        let exchange_started = AtomicBool::new(false);
+        match tokio::time::timeout(self.timeout, self.call_inner(request, &exchange_started)).await
+        {
+            Ok(result) => result,
+            Err(_) if exchange_started.load(Ordering::Acquire) => {
+                Err(ClientError::OutcomeUnknown {
+                    op: request.op.clone(),
+                    message: "request timed out after exchange started".into(),
+                })
             }
-            Transport::Unix => self.call_unix(&address, request).await,
+            Err(_) => Err(ClientError::Timeout),
         }
     }
 
-    #[cfg(unix)]
-    async fn call_unix(
+    async fn call_inner(
         &self,
-        address: &DaemonAddress,
         request: &DaemonRequest,
+        exchange_started: &AtomicBool,
     ) -> Result<DaemonResponse, ClientError> {
-        if address.path.is_empty() {
-            return Err(ClientError::InvalidAddress(
-                "missing Unix socket path".into(),
-            ));
+        match self.call_once(request, exchange_started).await {
+            Err(CallFailure::Connect(ClientError::Transport(_))) => {
+                self.invalidate_transport().await;
+                match self.call_once(request, exchange_started).await {
+                    Err(CallFailure::Exchange(error)) => {
+                        self.invalidate_transport().await;
+                        Err(outcome_unknown(request, error))
+                    }
+                    Err(error) => Err(error.into_client_error()),
+                    Ok(response) => Ok(response),
+                }
+            }
+            Err(CallFailure::Exchange(error)) => {
+                self.invalidate_transport().await;
+                Err(outcome_unknown(request, error))
+            }
+            Err(error) => Err(error.into_client_error()),
+            Ok(response) => Ok(response),
         }
-        exchange(UnixStream::connect(&address.path).await?, request).await
     }
 
-    #[cfg(not(unix))]
-    async fn call_unix(
+    async fn call_once(
         &self,
-        _address: &DaemonAddress,
-        _request: &DaemonRequest,
-    ) -> Result<DaemonResponse, ClientError> {
-        Err(ClientError::InvalidAddress(
-            "Unix sockets are unsupported".into(),
-        ))
+        request: &DaemonRequest,
+        exchange_started: &AtomicBool,
+    ) -> Result<DaemonResponse, CallFailure> {
+        let mut connection = loop {
+            match self.shared.pool.lock().await.pop() {
+                Some(connection) if connection.is_usable() => break connection,
+                Some(_) => continue,
+                None => break self.connect().await.map_err(CallFailure::Connect)?,
+            }
+        };
+        exchange_started.store(true, Ordering::Release);
+        let response = connection
+            .exchange(request)
+            .await
+            .map_err(CallFailure::Exchange)?;
+        let mut pool = self.shared.pool.lock().await;
+        if pool.len() < 8 {
+            pool.push(connection);
+        }
+        Ok(response)
     }
 
-    async fn read_address(&self) -> Result<DaemonAddress, ClientError> {
+    async fn connect(&self) -> Result<Connection, ClientError> {
+        let address = self.address().await?;
+        Connection::connect(&address).await
+    }
+
+    async fn address(&self) -> Result<DaemonAddress, ClientError> {
+        if let Some(address) = self.shared.address.read().await.clone() {
+            return Ok(address);
+        }
         let path = self.home.daemon_dir().join("ccccd.addr.json");
         let raw = tokio::fs::read(&path)
             .await
             .map_err(|_| ClientError::AddressUnavailable(path))?;
-        Ok(serde_json::from_slice(&raw)?)
+        let address: DaemonAddress = serde_json::from_slice(&raw)?;
+        *self.shared.address.write().await = Some(address.clone());
+        Ok(address)
+    }
+
+    async fn invalidate_transport(&self) {
+        *self.shared.address.write().await = None;
+        self.shared.pool.lock().await.clear();
     }
 }
 
-async fn exchange<S>(stream: S, request: &DaemonRequest) -> Result<DaemonResponse, ClientError>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-{
-    let (read, mut write) = tokio::io::split(stream);
-    let mut payload = serde_json::to_vec(request)?;
-    payload.push(b'\n');
-    write.write_all(&payload).await?;
-    write.shutdown().await?;
-
-    let mut line = String::new();
-    BufReader::new(read).read_line(&mut line).await?;
-    if line.is_empty() {
-        return Err(ClientError::InvalidAddress(
-            "daemon closed without response".into(),
-        ));
+fn outcome_unknown(request: &DaemonRequest, error: ClientError) -> ClientError {
+    match error {
+        ClientError::Transport(error) => ClientError::OutcomeUnknown {
+            op: request.op.clone(),
+            message: error.to_string(),
+        },
+        ClientError::Protocol(error) => ClientError::OutcomeUnknown {
+            op: request.op.clone(),
+            message: error.to_string(),
+        },
+        other => other,
     }
-    Ok(serde_json::from_str(&line)?)
 }
+
+#[cfg(test)]
+mod tests;

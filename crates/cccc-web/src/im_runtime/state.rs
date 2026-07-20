@@ -10,156 +10,6 @@ pub(super) fn authorized_chat_ids(home: &HomeLayout, group_id: &str) -> HashSet<
         .unwrap_or_default()
 }
 
-pub(super) fn accepts_inbound(
-    home: &HomeLayout,
-    group_id: &str,
-    platform: &str,
-    chat_id: &str,
-    text: &str,
-) -> bool {
-    let authorized = authorized_chat_ids(home, group_id).contains(chat_id);
-    let command = text
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .split('@')
-        .next()
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    match command.as_str() {
-        "/subscribe" | "/sub" => {
-            if !authorized {
-                create_pending_subscription(home, group_id, platform, chat_id);
-            }
-            false
-        }
-        "/unsubscribe" | "/unsub" => {
-            update_authorized_chat(home, group_id, platform, chat_id, AuthorizedUpdate::Remove);
-            false
-        }
-        "/pause" => {
-            update_authorized_chat(
-                home,
-                group_id,
-                platform,
-                chat_id,
-                AuthorizedUpdate::Paused(true),
-            );
-            false
-        }
-        "/resume" => {
-            update_authorized_chat(
-                home,
-                group_id,
-                platform,
-                chat_id,
-                AuthorizedUpdate::Paused(false),
-            );
-            false
-        }
-        "/verbose" => {
-            update_authorized_chat(
-                home,
-                group_id,
-                platform,
-                chat_id,
-                AuthorizedUpdate::ToggleVerbose,
-            );
-            false
-        }
-        "/status" | "/help" => false,
-        "/send" => authorized && send_payload(text).is_some(),
-        command if command.starts_with('/') => false,
-        _ => authorized,
-    }
-}
-
-fn create_pending_subscription(home: &HomeLayout, group_id: &str, platform: &str, chat_id: &str) {
-    let Ok(store) = GroupStore::new(home.clone()) else {
-        return;
-    };
-    let now = chrono::Utc::now().timestamp() as f64;
-    let key: String = uuid::Uuid::new_v4()
-        .simple()
-        .to_string()
-        .chars()
-        .take(12)
-        .collect();
-    let _ = cccc_core::integration_state::group_update(&store, group_id, "im_bridge", |value| {
-        if !value.is_object() {
-            *value = json!({});
-        }
-        let state = value.as_object_mut().expect("IM state initialized");
-        let pending = state.entry("pending").or_insert_with(|| json!([]));
-        if !pending.is_array() {
-            *pending = json!([]);
-        }
-        let items = pending.as_array_mut().expect("pending initialized");
-        items.retain(|item| item["expires_at"].as_f64().unwrap_or(0.0) > now);
-        if !items
-            .iter()
-            .any(|item| item["chat_id"] == chat_id && item["platform"] == platform)
-        {
-            items.push(json!({
-                "key":key,"chat_id":chat_id,"thread_id":0,"platform":platform,
-                "created_at":now,"expires_at":now+600.0,"expires_in_seconds":600
-            }));
-        }
-        Ok(())
-    });
-}
-
-#[derive(Clone, Copy)]
-enum AuthorizedUpdate {
-    Remove,
-    Paused(bool),
-    ToggleVerbose,
-}
-
-fn update_authorized_chat(
-    home: &HomeLayout,
-    group_id: &str,
-    platform: &str,
-    chat_id: &str,
-    update: AuthorizedUpdate,
-) {
-    let Ok(store) = GroupStore::new(home.clone()) else {
-        return;
-    };
-    let _ = cccc_core::integration_state::group_update(&store, group_id, "im_bridge", |value| {
-        if !value.is_object() {
-            return Ok(());
-        }
-        let Some(items) = value.get_mut("authorized").and_then(Value::as_array_mut) else {
-            return Ok(());
-        };
-        if matches!(update, AuthorizedUpdate::Remove) {
-            items.retain(|item| {
-                item["chat_id"].as_str() != Some(chat_id)
-                    || item["platform"]
-                        .as_str()
-                        .is_some_and(|value| value != platform)
-            });
-            return Ok(());
-        }
-        if let Some(item) = items.iter_mut().find(|item| {
-            item["chat_id"].as_str() == Some(chat_id)
-                && item["platform"]
-                    .as_str()
-                    .is_none_or(|value| value == platform)
-        }) {
-            match update {
-                AuthorizedUpdate::Paused(paused) => item["paused"] = json!(paused),
-                AuthorizedUpdate::ToggleVerbose => {
-                    item["verbose"] = json!(!item["verbose"].as_bool().unwrap_or(false));
-                }
-                AuthorizedUpdate::Remove => {}
-            }
-        }
-        Ok(())
-    });
-}
-
 pub(super) fn authorized_chat_ids_from_store(
     store: &GroupStore,
     group_id: &str,
@@ -296,7 +146,10 @@ fn inbound_args(
     text: &str,
     metadata: InboundMetadata,
 ) -> Option<Map<String, Value>> {
-    let (text, to) = send_payload(text)?;
+    let (text, to) = send_payload(text).or_else(|| {
+        (!metadata.attachments.is_empty())
+            .then(|| ("[attachment]".to_owned(), vec!["@foreman".into()]))
+    })?;
     let mut args = Map::new();
     args.insert("group_id".into(), json!(group_id));
     args.insert("by".into(), json!("user"));
@@ -413,26 +266,20 @@ mod tests {
     }
 
     #[test]
-    fn unsubscribe_is_consumed_and_removes_authorization() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let store = GroupStore::new(home.clone()).expect("store");
-        let group = store.create("commands", "").expect("group");
-        cccc_core::integration_state::group_update(&store, &group.group_id, "im_bridge", |state| {
-            *state = json!({"authorized":[{
-                "chat_id":"chat-1","platform":"telegram","thread_id":0
-            }]});
-            Ok(())
-        })
-        .expect("state");
-
-        assert!(!accepts_inbound(
-            &home,
-            &group.group_id,
-            "telegram",
+    fn attachment_only_inbound_uses_a_visible_placeholder() {
+        let args = inbound_args(
+            "g_test",
+            "slack",
             "chat-1",
-            "/unsubscribe"
-        ));
-        assert!(!authorized_chat_ids(&home, &group.group_id).contains("chat-1"));
+            "staff-1",
+            "",
+            InboundMetadata {
+                message_id: "msg-1".into(),
+                attachments: vec![json!({"kind":"image","path":"state/blobs/hash"})],
+            },
+        )
+        .expect("args");
+        assert_eq!(args["text"], "[attachment]");
+        assert_eq!(args["to"], json!(["@foreman"]));
     }
 }

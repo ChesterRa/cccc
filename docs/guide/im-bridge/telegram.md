@@ -164,7 +164,7 @@ After authorization, you will automatically receive:
 - Status updates
 - Error notifications
 
-Use `/verbose` to toggle whether you see agent-to-agent messages.
+Use `/verbose` or `/verbose on` to see agent-to-agent messages, and `/verbose off` to disable them.
 
 ### File Attachments
 
@@ -183,7 +183,7 @@ Attach files to your message. They're downloaded and stored in CCCC's blob stora
 | `/status` | Show group and agent status |
 | `/pause` | Pause message delivery |
 | `/resume` | Resume message delivery |
-| `/verbose` | Toggle verbose mode (see all agent messages) |
+| `/verbose [on\|off]` | Enable or disable verbose mode (see all agent messages) |
 | `/help` | Show available commands |
 
 ## Troubleshooting
@@ -221,7 +221,7 @@ Your token is invalid. Get a new one from BotFather:
 
 Telegram has rate limits. If you're sending many messages:
 - Messages may be delayed
-- Consider using `/verbose` to disable verbose mode and reduce traffic
+- Use `/verbose off` to disable verbose mode and reduce traffic
 
 ## Security Notes
 

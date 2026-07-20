@@ -443,6 +443,7 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 | [Getting Started](https://chesterra.github.io/cccc/guide/getting-started/) | Install, launch, create your first group |
 | [Use Cases](https://chesterra.github.io/cccc/guide/use-cases) | Practical multi-agent scenarios |
 | [Web UI Guide](https://chesterra.github.io/cccc/guide/web-ui) | Navigating the dashboard |
+| [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | Native Rust ASR, models, transcripts, and documents |
 | [IM Bridge Setup](https://chesterra.github.io/cccc/guide/im-bridge/) | Connect Telegram, Slack, Discord, Feishu, DingTalk, WeCom, Weixin |
 | [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM knowledge integration |
 | [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | Connect MCP-capable ChatGPT GPT-5.x as a CCCC actor |

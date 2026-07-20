@@ -366,7 +366,7 @@ export function IMBridgeTab({
     setAuthInfo("");
     try {
       const resp = await api.revokeIMChat(groupId, chatId, threadId);
-      if (!resp.ok) {
+      if (!resp.ok || resp.result?.revoked !== true) {
         setAuthError(
           resp.error?.message || t("imBridge.revokeError", "Failed to revoke chat authorization."),
         );

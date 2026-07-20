@@ -1,5 +1,6 @@
 use super::{
-    accepts_inbound, dispatch_inbound, outbound_text, resolve_credential, spawn_outbound, string,
+    InboundDecision, dispatch_inbound, inbound_decision, outbound_text, resolve_credential,
+    spawn_outbound, string,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -72,15 +73,24 @@ struct Handler {
 
 #[async_trait]
 impl EventHandler for Handler {
-    async fn message(&self, _context: Context, message: Message) {
+    async fn message(&self, context: Context, message: Message) {
         if message.author.bot {
             return;
         }
         let chat_id = message.channel_id.get().to_string();
         let text = message.content.trim();
-        if text.is_empty() || !accepts_inbound(&self.home, &self.group_id, PLATFORM, &chat_id, text)
-        {
+        if text.is_empty() {
             return;
+        }
+        match inbound_decision(&self.home, &self.group_id, PLATFORM, &chat_id, text).await {
+            InboundDecision::Forward => {}
+            InboundDecision::Reply(body) => {
+                if let Err(error) = message.channel_id.say(&context.http, body).await {
+                    tracing::warn!(%error, "failed to send Discord command reply");
+                }
+                return;
+            }
+            InboundDecision::Ignore => return,
         }
         if let Err(error) = dispatch_inbound(
             &self.daemon,

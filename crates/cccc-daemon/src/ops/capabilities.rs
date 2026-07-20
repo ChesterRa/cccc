@@ -6,14 +6,17 @@ use serde_json::{Value, json};
 
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 
+mod effective_state;
+mod overview;
+
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
-        "capability_overview" => overview(home),
+        "capability_overview" => overview::run(home, request),
         "capability_search" => search(home, request),
         "capability_enable" => enable(home, request),
         "capability_visibility" => visibility(home, request),
         "capability_block" => block(home, request),
-        "capability_state" => state(home),
+        "capability_state" => state(home, request),
         "capability_import" => import(home, request),
         "capability_uninstall" => uninstall(home, request),
         "capability_install" => install(home, request),
@@ -30,12 +33,6 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     })
 }
 
-fn overview(home: &HomeLayout) -> OpResult {
-    let store = CapabilityStore::new(home.clone());
-    object(
-        json!({"capabilities": store.catalog().map_err(OpError::io)?, "state": store.load().map_err(OpError::io)?}),
-    )
-}
 fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let query = string_arg(request, "query").unwrap_or_default();
     object(
@@ -65,8 +62,57 @@ fn block(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(OpError::invalid)?;
     object(json!({"capability_id": id, "state": state}))
 }
-fn state(home: &HomeLayout) -> OpResult {
-    object(json!({"state": CapabilityStore::new(home.clone()).load().map_err(OpError::io)?}))
+fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group_id = string_arg(request, "group_id").unwrap_or_default();
+    let actor_id = string_arg(request, "actor_id").unwrap_or_else(|| "user".into());
+    let store = CapabilityStore::new(home.clone());
+    let native = store.load().map_err(OpError::io)?;
+    let effective =
+        effective_state::load(home, &group_id, &actor_id, &native).map_err(OpError::io)?;
+    let enabled = effective.enabled;
+    let blocked = effective.blocked;
+    let hidden = effective.hidden;
+    let enabled_capabilities = enabled.difference(&blocked).cloned().collect::<Vec<_>>();
+    let enabled_rows = enabled_capabilities
+        .iter()
+        .map(|id| json!({"capability_id":id,"scope":"group"}))
+        .collect::<Vec<_>>();
+    let active_capsule_skills = store
+        .catalog()
+        .map_err(OpError::io)?
+        .into_iter()
+        .filter(|capability| {
+            enabled.contains(&capability.id)
+                && !blocked.contains(&capability.id)
+                && !hidden.contains(&capability.id)
+                && (capability.id.starts_with("skill:") || !capability.capsule_text.is_empty())
+        })
+        .map(|capability| {
+            let preview = capability
+                .capsule_text
+                .chars()
+                .take(240)
+                .collect::<String>();
+            json!({
+                "capability_id":capability.id,
+                "name":capability.name,
+                "description_short":capability.description,
+                "capsule_preview":preview,
+                "source_uri":capability.source_uri,
+            })
+        })
+        .collect::<Vec<_>>();
+    object(json!({
+        "group_id":group_id,
+        "actor_id":actor_id,
+        "view":string_arg(request, "view").unwrap_or_default(),
+        "enabled":enabled_rows,
+        "enabled_capabilities":enabled_capabilities,
+        "dynamic_tools":[],
+        "active_capsule_skills":active_capsule_skills,
+        "actor_hidden_capabilities":hidden.into_iter().collect::<Vec<_>>(),
+        "state":native,
+    }))
 }
 fn import(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let raw = request

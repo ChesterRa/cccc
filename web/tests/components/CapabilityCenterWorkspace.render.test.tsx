@@ -76,11 +76,11 @@ describe("CapabilityCenterWorkspace rendering", () => {
 
   it("uses overview kind counts instead of extra stats-only overview calls", () => {
     const source = readFileSync(
-      resolve(process.cwd(), "src/components/capabilities/CapabilityCenterWorkspace.tsx"),
+      resolve(process.cwd(), "src/components/capabilities/useCapabilityCenterData.ts"),
       "utf8",
     );
 
-    expect(source).toContain("overviewResp.result.kind_counts");
+    expect(source).toContain("response.result.kind_counts");
     expect(source).not.toContain("skillStatsResp");
     expect(source).not.toContain("mcpStatsResp");
     expect(source).not.toContain("packStatsResp");

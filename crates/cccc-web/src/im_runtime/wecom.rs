@@ -2,15 +2,15 @@ use super::wecom_client::WecomClient;
 use super::wecom_message::{MessageDeduper, materialize_attachments, parse_inbound};
 use super::wecom_outbound::WecomOutbound;
 use super::{
-    InboundMetadata, accepts_inbound, dispatch_inbound_with, is_outbound_or_stream,
-    resolve_credential, spawn_outbound_matching, string,
+    InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision,
+    is_outbound_or_stream, resolve_credential, spawn_outbound_matching, string,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 
 const PLATFORM: &str = "wecom";
 
@@ -27,28 +27,74 @@ pub(super) async fn start(
     let deduper = Arc::new(MessageDeduper::default());
     let (inbound_tx, mut inbound_rx) = mpsc::channel(128);
     let callback = move |frame: Value| {
-        let Some(message) = parse_inbound(&frame) else {
-            return;
-        };
-        if !deduper.accept(&message.chat_id, &message.message_id) {
-            return;
+        let inbound_tx = inbound_tx.clone();
+        let deduper = Arc::clone(&deduper);
+        async move {
+            let Some(message) = parse_inbound(&frame) else {
+                return;
+            };
+            if !deduper.accept(&message.chat_id, &message.message_id) {
+                return;
+            }
+            if let Err(error) = inbound_tx.send(message).await {
+                tracing::debug!(%error, "WeCom inbound worker stopped");
+            }
         }
-        if let Err(error) = inbound_tx.try_send(message) {
-            tracing::warn!(%error, "dropped WeCom message because inbound queue is full or closed");
-        }
+    };
+    let status_home = home.clone();
+    let status_group = group_id.to_owned();
+    let connection_result =
+        WecomClient::connect_with_status(bot_id, secret, callback, move |error| {
+            on_terminal_error(&status_home, &status_group, &error)
+        })
+        .await;
+    let (sdk, connection) = match connection_result {
+        Ok(connection) => connection,
+        Err(error) => return Err(error),
     };
     let inbound_home = home.clone();
     let inbound_group = group_id.to_owned();
+    let inbound_sdk = Arc::clone(&sdk);
     let inbound = tokio::spawn(async move {
-        while let Some(message) = inbound_rx.recv().await {
-            if !accepts_inbound(
+        let mut command_replies = JoinSet::new();
+        loop {
+            let message = tokio::select! {
+                message = inbound_rx.recv() => {
+                    let Some(message) = message else {
+                        command_replies.abort_all();
+                        break;
+                    };
+                    message
+                }
+                Some(_) = command_replies.join_next(), if !command_replies.is_empty() => continue,
+            };
+            match inbound_decision(
                 &inbound_home,
                 &inbound_group,
                 PLATFORM,
                 &message.chat_id,
                 &message.text,
-            ) {
-                continue;
+            )
+            .await
+            {
+                InboundDecision::Forward => {}
+                InboundDecision::Reply(body) => {
+                    let sdk = Arc::clone(&inbound_sdk);
+                    let chat_id = message.chat_id.clone();
+                    command_replies.spawn(async move {
+                        if let Err(error) = sdk
+                            .send_message(
+                                &chat_id,
+                                json!({"msgtype":"markdown","markdown":{"content":body}}),
+                            )
+                            .await
+                        {
+                            tracing::warn!(%error, "failed to send WeCom command reply");
+                        }
+                    });
+                    continue;
+                }
+                InboundDecision::Ignore => continue,
             }
             let attachments =
                 materialize_attachments(&inbound_home, &inbound_group, &message.attachments).await;
@@ -70,21 +116,6 @@ pub(super) async fn start(
             }
         }
     });
-    let status_home = home.clone();
-    let status_group = group_id.to_owned();
-    let connection_result =
-        WecomClient::connect_with_status(bot_id, secret, callback, move |error| {
-            on_terminal_error(&status_home, &status_group, &error)
-        })
-        .await;
-    let (sdk, connection) = match connection_result {
-        Ok(connection) => connection,
-        Err(error) => {
-            inbound.abort();
-            let _ = inbound.await;
-            return Err(error);
-        }
-    };
     let outbound_sender = WecomOutbound::new(home.clone(), group_id.to_owned(), Arc::clone(&sdk));
     let outbound = spawn_outbound_matching(
         home,

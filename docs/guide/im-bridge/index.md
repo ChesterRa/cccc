@@ -30,6 +30,19 @@ cccc im revoke --chat-id ID [--thread-id N] [--group ID]
 
 Secrets should be supplied through environment variable names rather than literal values. Configuration is isolated per group under `CCCC_HOME`.
 
+## Chat Subscription
+
+Send `/subscribe` to the bot. The bot immediately replies with the real 12-character pairing key, which expires after 10 minutes. Repeating `/subscribe` from the same chat and platform during that window returns the same pending key instead of creating duplicates.
+
+Approve the request from Web **Pending Requests**, or use:
+
+```bash
+cccc im pending --group GROUP_ID
+cccc im bind --key KEY --group GROUP_ID
+```
+
+The bot also replies immediately to `/unsubscribe`, `/pause`, `/resume`, `/verbose [on|off]`, `/status`, `/help`, invalid `/send` usage, and unknown commands. `/verbose` is idempotent: no argument or `on` enables it, while `off` disables it.
+
 ## Security
 
 - One configuration belongs to one group.

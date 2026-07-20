@@ -1,5 +1,6 @@
 [package]
 name = "cccc-cli"
+default-run = "cccc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

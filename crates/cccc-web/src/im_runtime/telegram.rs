@@ -1,5 +1,6 @@
 use super::{
-    accepts_inbound, dispatch_inbound, outbound_text, resolve_credential, spawn_outbound, string,
+    InboundDecision, dispatch_inbound, inbound_decision, outbound_text, resolve_credential,
+    spawn_outbound, string,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -27,7 +28,7 @@ pub(super) async fn start(
     let inbound_client = client.clone();
     let inbound_group = group_id.to_owned();
     let inbound = tokio::spawn(async move {
-        let handler = Update::filter_message().endpoint(move |_bot: Bot, message: Message| {
+        let handler = Update::filter_message().endpoint(move |bot: Bot, message: Message| {
             let home = inbound_home.clone();
             let client = inbound_client.clone();
             let group_id = inbound_group.clone();
@@ -40,8 +41,15 @@ pub(super) async fn start(
                 else {
                     return respond(());
                 };
-                if !accepts_inbound(&home, &group_id, PLATFORM, &chat_id, text) {
-                    return respond(());
+                match inbound_decision(&home, &group_id, PLATFORM, &chat_id, text).await {
+                    InboundDecision::Forward => {}
+                    InboundDecision::Reply(body) => {
+                        if let Err(error) = bot.send_message(message.chat.id, body).await {
+                            tracing::warn!(%error, "failed to send Telegram command reply");
+                        }
+                        return respond(());
+                    }
+                    InboundDecision::Ignore => return respond(()),
                 }
                 let sender = message
                     .from

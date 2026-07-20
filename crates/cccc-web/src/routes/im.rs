@@ -433,25 +433,29 @@ fn migrate_legacy_im_state(store: &GroupStore, group_id: &str) -> io::Result<()>
     let current = group.extra.get(STORE_KEY).cloned().unwrap_or(Value::Null);
     let legacy = group.extra.get("im").and_then(Value::as_object).cloned();
     let needs_config = !current.get("config").is_some_and(Value::is_object);
-    let needs_authorized = current
-        .get("authorized")
-        .and_then(Value::as_array)
-        .is_none_or(Vec::is_empty);
-    let needs_pending = current
-        .get("pending")
-        .and_then(Value::as_array)
-        .is_none_or(Vec::is_empty);
+    let needs_authorized = !current.get("authorized").is_some_and(Value::is_array);
+    let needs_pending = !current.get("pending").is_some_and(Value::is_array);
     if !needs_config && !needs_authorized && !needs_pending {
         return Ok(());
     }
     let state_dir = store.state_dir(group_id)?;
     let authorized = if needs_authorized {
-        read_legacy_im_items(&state_dir.join("im_authorized_chats.json"), false)
+        let current_items = normalize_im_items(current.get("authorized"), false);
+        if current_items.is_empty() {
+            read_legacy_im_items(&state_dir.join("im_authorized_chats.json"), false)
+        } else {
+            current_items
+        }
     } else {
         Vec::new()
     };
     let pending = if needs_pending {
-        read_legacy_im_items(&state_dir.join("im_pending_keys.json"), true)
+        let current_items = normalize_im_items(current.get("pending"), true);
+        if current_items.is_empty() {
+            read_legacy_im_items(&state_dir.join("im_pending_keys.json"), true)
+        } else {
+            current_items
+        }
     } else {
         Vec::new()
     };
@@ -470,10 +474,10 @@ fn migrate_legacy_im_state(store: &GroupStore, group_id: &str) -> io::Result<()>
                 .entry("adapter_available")
                 .or_insert(Value::Bool(false));
         }
-        if needs_authorized && !authorized.is_empty() {
+        if needs_authorized {
             state.insert("authorized".into(), Value::Array(authorized.clone()));
         }
-        if needs_pending && !pending.is_empty() {
+        if needs_pending {
             state.insert("pending".into(), Value::Array(pending.clone()));
         }
         Ok(())
@@ -487,11 +491,15 @@ fn read_legacy_im_items(path: &std::path::Path, include_key: bool) -> Vec<Value>
     let Ok(value) = serde_json::from_str::<Value>(&raw) else {
         return Vec::new();
     };
-    if let Some(items) = value.as_array() {
+    normalize_im_items(Some(&value), include_key)
+}
+
+fn normalize_im_items(value: Option<&Value>, include_key: bool) -> Vec<Value> {
+    if let Some(items) = value.and_then(Value::as_array) {
         return items.clone();
     }
     value
-        .as_object()
+        .and_then(Value::as_object)
         .into_iter()
         .flatten()
         .map(|(key, item)| {
@@ -611,6 +619,68 @@ mod tests {
         assert_eq!(state["config"]["platform"], "telegram");
         assert_eq!(state["config"]["bot_token_env"], "TOKEN_ENV");
         assert_eq!(state["authorized"][0]["chat_id"], "chat-1");
+    }
+
+    #[test]
+    fn explicit_empty_authorized_and_pending_state_is_not_reimported() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("legacy", "").expect("group");
+        std::fs::write(
+            store
+                .state_dir(&group.group_id)
+                .expect("state dir")
+                .join("im_authorized_chats.json"),
+            r#"{"chat-1":{"chat_id":"chat-1","thread_id":0,"platform":"telegram"}}"#,
+        )
+        .expect("legacy auth");
+        std::fs::write(
+            store
+                .state_dir(&group.group_id)
+                .expect("state dir")
+                .join("im_pending_keys.json"),
+            r#"{"key-1":{"chat_id":"chat-1","thread_id":0,"platform":"telegram"}}"#,
+        )
+        .expect("legacy pending");
+        integration_state::group_update(&store, &group.group_id, STORE_KEY, |value| {
+            value["authorized"] = json!([]);
+            value["pending"] = json!([]);
+            Ok(())
+        })
+        .expect("revoked state");
+
+        migrate_legacy_im_state(&store, &group.group_id).expect("migrate");
+
+        let state =
+            integration_state::group_get(&store, &group.group_id, STORE_KEY).expect("state");
+        assert_eq!(state["authorized"], json!([]));
+        assert_eq!(state["pending"], json!([]));
+    }
+
+    #[test]
+    fn canonical_object_items_are_normalized_without_legacy_files() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("object state", "").expect("group");
+        integration_state::group_update(&store, &group.group_id, STORE_KEY, |value| {
+            *value = json!({
+                "authorized":{"chat-1":{"chat_id":"chat-1","platform":"telegram"}},
+                "pending":{"key-1":{"chat_id":"chat-2","platform":"telegram",
+                    "expires_at":chrono_now() as f64 + 600.0}}
+            });
+            Ok(())
+        })
+        .expect("object state");
+
+        migrate_legacy_im_state(&store, &group.group_id).expect("normalize");
+        let state =
+            integration_state::group_get(&store, &group.group_id, STORE_KEY).expect("state");
+        assert_eq!(state["authorized"][0]["chat_id"], "chat-1");
+        assert_eq!(state["pending"][0]["key"], "key-1");
     }
 
     #[test]

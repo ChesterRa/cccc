@@ -9,6 +9,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::ops::actor_delivery_worker;
 
+mod drain;
+mod lifecycle;
+pub(crate) use drain::{drain_group, pending_group_ids};
+pub use lifecycle::{shutdown_actor, shutdown_all, shutdown_group};
+
 const QUEUE_CAPACITY: usize = 256;
 const COMPLETION_CAPACITY: usize = 4096;
 
@@ -96,65 +101,6 @@ pub(super) fn record_completion(completion: DeliveryCompletion) {
     }
 }
 
-pub fn shutdown_actor(group_id: &str, actor_id: &str) {
-    let worker = workers()
-        .lock()
-        .ok()
-        .and_then(|mut workers| workers.remove(&(group_id.to_owned(), actor_id.to_owned())));
-    if let Some(worker) = worker {
-        worker.shutdown();
-    }
-    remove_completions(|item| item.group_id == group_id && item.actor_id == actor_id);
-    clear_in_flight(|item| item.0 == group_id && item.1 == actor_id);
-}
-
-pub fn shutdown_group(group_id: &str) {
-    let removed = workers()
-        .lock()
-        .map(|mut workers| {
-            let keys = workers
-                .keys()
-                .filter(|(worker_group_id, _)| worker_group_id == group_id)
-                .cloned()
-                .collect::<Vec<_>>();
-            keys.into_iter()
-                .filter_map(|key| workers.remove(&key))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    for worker in removed {
-        worker.shutdown();
-    }
-    remove_completions(|item| item.group_id == group_id);
-    clear_in_flight(|item| item.0 == group_id);
-}
-
-pub fn shutdown_all() {
-    let removed = workers()
-        .lock()
-        .map(|mut workers| {
-            std::mem::take(&mut *workers)
-                .into_values()
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    for worker in removed {
-        worker.shutdown();
-    }
-    if let Ok(mut completions) = completions().lock() {
-        completions.clear();
-    }
-    if let Ok(mut pending) = in_flight().lock() {
-        pending.clear();
-    }
-}
-
-fn remove_completions(mut remove: impl FnMut(&DeliveryCompletion) -> bool) {
-    if let Ok(mut completions) = completions().lock() {
-        completions.retain(|item| !remove(item));
-    }
-}
-
 fn clear_in_flight(mut remove: impl FnMut(&(String, String, String)) -> bool) {
     if let Ok(mut pending) = in_flight().lock() {
         pending.retain(|item| !remove(item));
@@ -229,108 +175,6 @@ pub fn replay_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> usi
             })
         })
         .count()
-}
-
-pub fn drain(home: &HomeLayout) {
-    let pending = completions()
-        .lock()
-        .map(|mut queue| queue.drain(..).collect::<Vec<_>>())
-        .unwrap_or_default();
-    if pending.is_empty() {
-        return;
-    }
-    let Ok(store) = GroupStore::new(home.clone()) else {
-        return;
-    };
-    let mut grouped = HashMap::<Key, Vec<DeliveryCompletion>>::new();
-    for completion in pending {
-        grouped
-            .entry((completion.group_id.clone(), completion.actor_id.clone()))
-            .or_default()
-            .push(completion);
-    }
-    let mut deferred = VecDeque::new();
-    let mut refill = HashSet::new();
-    for ((group_id, actor_id), batch) in grouped {
-        let Ok(group) = store.load(&group_id) else {
-            clear_in_flight(|item| item.0 == group_id && item.1 == actor_id);
-            continue;
-        };
-        if !auto_mark_on_delivery(&group) {
-            clear_in_flight(|item| item.0 == group_id && item.1 == actor_id);
-            continue;
-        }
-        let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
-            clear_in_flight(|item| item.0 == group_id && item.1 == actor_id);
-            continue;
-        };
-        let unread = inbox::list_unread(home, &group, &actor_id, 1000)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|event| actor.created_at.is_empty() || event.ts >= actor.created_at)
-            .collect::<Vec<_>>();
-        let unread_ids = unread
-            .iter()
-            .map(|event| event.id.clone())
-            .collect::<HashSet<_>>();
-        let completed_ids = batch
-            .iter()
-            .map(|completion| completion.event_id.clone())
-            .collect::<HashSet<_>>();
-        let delivered = unread
-            .iter()
-            .take_while(|event| completed_ids.contains(&event.id))
-            .map(|event| event.id.clone())
-            .collect::<Vec<_>>();
-        let delivered_ids = delivered.iter().cloned().collect::<HashSet<_>>();
-        let resolved_ids = batch
-            .iter()
-            .filter(|completion| {
-                delivered_ids.contains(&completion.event_id)
-                    || !unread_ids.contains(&completion.event_id)
-            })
-            .map(|completion| completion.event_id.clone())
-            .collect::<HashSet<_>>();
-        for completion in batch {
-            if !resolved_ids.contains(&completion.event_id) {
-                deferred.push_back(completion);
-            }
-        }
-        clear_in_flight(|item| {
-            item.0 == group_id && item.1 == actor_id && resolved_ids.contains(&item.2)
-        });
-        if !resolved_ids.is_empty() {
-            refill.insert((group_id.clone(), actor_id.clone()));
-        }
-        let advanced = delivered.last().is_some_and(|event_id| {
-            inbox::advance(home, &group_id, &actor_id, event_id).unwrap_or(false)
-        });
-        if advanced {
-            let event_id = delivered.last().cloned().unwrap_or_default();
-            let mut event = Event::new("chat.read", &group_id);
-            event.by.clone_from(&actor_id);
-            event.data = json!({
-                "actor_id": actor_id,
-                "event_id": event_id,
-                "delivered_count": delivered.len(),
-                "source": "runtime_delivery",
-            })
-            .as_object()
-            .cloned()
-            .unwrap_or_default();
-            if let Ok(path) = store.ledger_path(&event.group_id) {
-                let _ = ledger::append(&path, &event);
-            }
-        }
-    }
-    if let Ok(mut completions) = completions().lock() {
-        completions.extend(deferred);
-    }
-    for (group_id, actor_id) in refill {
-        if let Ok(group) = store.load(&group_id) {
-            replay_unread(home, &group, &actor_id);
-        }
-    }
 }
 
 fn report(targeted: usize, online: usize, queued: usize) -> DispatchReport {
@@ -426,7 +270,12 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 if thread_cancelled.load(Ordering::Acquire) {
                     break;
                 }
-                std::thread::sleep(std::time::Duration::from_millis(250 * (attempt + 1)));
+                if !actor_delivery_worker::interruptible_sleep(
+                    std::time::Duration::from_millis(250 * (attempt + 1)),
+                    &thread_cancelled,
+                ) {
+                    break;
+                }
             }
             if !delivered {
                 release_in_flight(&job);
@@ -445,34 +294,5 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
         sender: thread.as_ref().map(|_| sender),
         cancelled,
         thread,
-    }
-}
-
-fn auto_mark_on_delivery(group: &GroupDoc) -> bool {
-    group
-        .extra
-        .get("settings")
-        .and_then(|value| value.get("auto_mark_on_delivery"))
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true)
-}
-
-#[cfg(test)]
-mod lifecycle_tests {
-    use super::*;
-
-    #[test]
-    fn actor_and_group_shutdown_remove_workers() {
-        let first = ("g_cleanup".to_owned(), "actor-1".to_owned());
-        let second = ("g_cleanup".to_owned(), "actor-2".to_owned());
-        workers().lock().expect("workers").extend([
-            (first.clone(), spawn_worker(&first)),
-            (second.clone(), spawn_worker(&second)),
-        ]);
-
-        shutdown_actor(&first.0, &first.1);
-        assert!(!workers().lock().expect("workers").contains_key(&first));
-        shutdown_group(&second.0);
-        assert!(!workers().lock().expect("workers").contains_key(&second));
     }
 }

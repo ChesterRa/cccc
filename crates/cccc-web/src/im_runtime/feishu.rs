@@ -1,5 +1,6 @@
 use super::{
-    accepts_inbound, dispatch_inbound, outbound_text, resolve_credential, spawn_outbound, string,
+    InboundDecision, dispatch_inbound, inbound_decision, outbound_text, resolve_credential,
+    spawn_outbound, string,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -46,12 +47,14 @@ pub(super) async fn start(
     );
     let inbound_home = home.clone();
     let inbound_group = group_id.to_owned();
+    let inbound_sender = sender.clone();
     let connection = tokio::spawn(async move {
         let result = event_loop
             .run(move |event| {
                 let home = inbound_home.clone();
                 let daemon = daemon.clone();
                 let group_id = inbound_group.clone();
+                let sender = inbound_sender.clone();
                 async move {
                     let ChannelEvent::Message(message) = event.event else {
                         return Ok(WebSocketEventAck::ok());
@@ -60,10 +63,23 @@ pub(super) async fn start(
                         return Ok(WebSocketEventAck::ok());
                     }
                     let text = message.text.trim();
-                    if text.is_empty()
-                        || !accepts_inbound(&home, &group_id, PLATFORM, &message.chat_id, text)
-                    {
+                    if text.is_empty() {
                         return Ok(WebSocketEventAck::ok());
+                    }
+                    match inbound_decision(&home, &group_id, PLATFORM, &message.chat_id, text).await
+                    {
+                        InboundDecision::Forward => {}
+                        InboundDecision::Reply(body) => {
+                            if let Err(error) = sender
+                                .text_message(Recipient::Chat(message.chat_id.clone()), &body)
+                                .send()
+                                .await
+                            {
+                                tracing::warn!(%error, "failed to send Feishu command reply");
+                            }
+                            return Ok(WebSocketEventAck::ok());
+                        }
+                        InboundDecision::Ignore => return Ok(WebSocketEventAck::ok()),
                     }
                     if let Err(error) = dispatch_inbound(
                         &daemon,

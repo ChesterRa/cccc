@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Fixed
+- **Stopping the combined Web and daemon process is now bounded and responsive with active actors**. Runtime starts close behind a shutdown gate, automation observes cooperative cancellation, actor delivery delays are interruptible, and IM/connection cleanup uses short shared deadlines.
+- **Actors no longer replay already-read Python-era inbox history after upgrading to the Rust runtime**. Legacy read cursors are merged monotonically, actor-targeted notifications stay scoped to their intended actor, and obsolete `New message` control notices are folded into their source chat message.
+- **Revoking the final migrated IM chat authorization now persists across refreshes** instead of immediately restoring the chat from legacy authorization files; unmatched revoke requests also surface as failures in Web settings.
+
 ## [0.4.31] — 2026-07-12
 
 ### Added

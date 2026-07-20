@@ -1,6 +1,7 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::AppState;
@@ -51,8 +52,25 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-async fn overview(State(state): State<AppState>) -> ApiResult {
-    call(&state, "capability_overview", Default::default()).await
+#[derive(Default, Deserialize, Serialize)]
+struct OverviewQuery {
+    query: Option<String>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+    include_indexed: Option<bool>,
+    include_source_instances: Option<bool>,
+    kind: Option<String>,
+    policy: Option<String>,
+    source_id: Option<String>,
+    group_id: Option<String>,
+}
+
+async fn overview(State(state): State<AppState>, Query(query): Query<OverviewQuery>) -> ApiResult {
+    let args = serde_json::to_value(query)
+        .ok()
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    call(&state, "capability_overview", args).await
 }
 async fn allowlist_get(State(state): State<AppState>) -> ApiResult {
     call(&state, "capability_allowlist_get", Default::default()).await
@@ -69,13 +87,29 @@ async fn allowlist_validate(State(state): State<AppState>, Json(body): Json<Valu
 async fn block(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
     call(&state, "capability_block", body_object(body)?).await
 }
-async fn state(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
-    call(
-        &state,
-        "capability_state",
-        object(json!({"group_id":group_id})),
-    )
-    .await
+#[derive(Default, Deserialize)]
+struct StateQuery {
+    actor_id: Option<String>,
+    view: Option<String>,
+    capability_id: Option<String>,
+}
+
+async fn state(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<StateQuery>,
+) -> ApiResult {
+    let mut args = object(json!({"group_id":group_id}));
+    if let Some(actor_id) = query.actor_id {
+        args.insert("actor_id".into(), json!(actor_id));
+    }
+    if let Some(view) = query.view {
+        args.insert("view".into(), json!(view));
+    }
+    if let Some(capability_id) = query.capability_id {
+        args.insert("capability_id".into(), json!(capability_id));
+    }
+    call(&state, "capability_state", args).await
 }
 async fn enable(
     State(state): State<AppState>,

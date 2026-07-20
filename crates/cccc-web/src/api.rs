@@ -63,6 +63,24 @@ impl ApiError {
             details: json!({}),
         }
     }
+
+    pub fn payload_too_large(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            code: code.into(),
+            message: message.into(),
+            details: json!({}),
+        }
+    }
+
+    pub fn bad_code(code: impl Into<String>, message: impl Into<String>, details: Value) -> Self {
+        Self {
+            status: StatusCode::BAD_REQUEST,
+            code: code.into(),
+            message: message.into(),
+            details,
+        }
+    }
 }
 
 impl IntoResponse for ApiError {

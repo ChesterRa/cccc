@@ -1,5 +1,4 @@
 use axum::extract::{DefaultBodyLimit, Multipart, Path, State};
-use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
@@ -313,9 +312,13 @@ async fn blob_download(
 ) -> Result<axum::response::Response, ApiError> {
     let path = cccc_core::blobs::resolve(&state.home, &group_id, &blob_name)
         .map_err(|error| ApiError::not_found(error.to_string()))?;
-    let bytes = std::fs::read(path).map_err(|error| ApiError::not_found(error.to_string()))?;
-    let content_type = blob_content_type(&blob_name, &bytes);
-    Ok(([(axum::http::header::CONTENT_TYPE, content_type)], bytes).into_response())
+    let prefix = super::file_response::prefix(&path, 16)
+        .await
+        .map_err(|error| ApiError::not_found(error.to_string()))?;
+    let content_type = blob_content_type(&blob_name, &prefix);
+    super::file_response::stream(&path, &content_type, None, None)
+        .await
+        .map_err(|error| ApiError::not_found(error.to_string()))
 }
 
 fn blob_content_type(blob_name: &str, bytes: &[u8]) -> String {

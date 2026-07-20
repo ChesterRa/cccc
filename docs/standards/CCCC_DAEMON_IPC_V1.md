@@ -1,6 +1,6 @@
 # CCCC Daemon API/IPC Contract v1
 
-Status: Draft (for CCCC v0.4.x ecosystem)
+Status: Draft (for CCCC v0.5.x ecosystem)
 
 This document defines the **daemon-facing client contract** for CCCC: how a client (CLI/Web/MCP bridge/SDK) discovers the daemon endpoint, frames requests, and calls daemon operations.
 
@@ -106,15 +106,11 @@ For all non-streaming operations, requests and responses are framed as:
 - **One JSON object per line**, delimited by a single `\n` (newline).
 - Encoding MUST be UTF‑8.
 
-Baseline behavior (implemented by CCCC v0.4.x):
-- Each connection processes exactly **one** request line and produces exactly **one** response line.
-- The daemon then closes the connection.
-
-Clients MUST assume the daemon may close the connection after any successful response and MUST NOT rely on persistent connections.
-
-Forward-compatible extension (not required for v1):
-- A daemon MAY accept multiple request lines over a single connection (strictly serial, no pipelining).
+Baseline behavior (implemented by CCCC v0.5.x):
+- A connection accepts multiple request lines and produces one response line for each request.
+- Requests on one connection are processed strictly serially.
 - Clients MUST NOT pipeline requests (there is no request id / multiplexing in v1).
+- Clients SHOULD reuse successful connections, but MUST tolerate the daemon closing a connection after any response and reconnect through endpoint discovery.
 
 ### 4.3 Size Limits
 
@@ -122,7 +118,10 @@ Implementations MUST respect practical line limits to avoid truncation:
 - **Request line limit (daemon receive):** the daemon MAY stop reading after ~2,000,000 bytes without a newline; clients MUST keep request lines comfortably below this bound.
 - **Response line limit (typical clients):** the reference client reader MAY cap a response line at ~4,000,000 bytes; daemons SHOULD keep single-response payloads below this bound.
 
-Clients SHOULD treat truncated/invalid JSON as a transport failure.
+Clients SHOULD treat truncated/invalid JSON as a transport failure. Once any request bytes
+have been written, clients MUST NOT automatically replay the request after a send, read, or
+decode failure unless the operation carries a daemon-enforced idempotency key. Retrying a
+failure that occurred while establishing the connection is safe because no request was sent.
 
 ### 4.4 Streaming Upgrade: `term_attach`
 
@@ -1375,8 +1374,9 @@ Result:
 #### `assistant_state`
 
 Read the group-scoped state for first-party built-in assistants. Voice
-Secretary service-local ASR runs in a daemon-managed first-party service
-process; heavy ASR runtimes remain behind an explicit local command adapter.
+Secretary service-local ASR runs in-process through the Rust `sherpa-onnx`
+binding. The native runtime is linked into the CCCC binary; model weights remain
+explicit, checksummed downloads under `CCCC_HOME/cache/voice-models`.
 
 Args:
 ```ts
@@ -1410,8 +1410,10 @@ Result:
 Voice service runtime records may include `primary_package`, `package_versions`,
 `installed_version`, `latest_version`, `latest_checked_at`,
 `latest_check_error`, and `update_available` so local ASR settings can show the
-installed sherpa-onnx version and whether a newer official PyPI release is
-available. Voice model records may include `installed_manifest_sha256`,
+linked sherpa-onnx version. Rust reports the stable runtime ID
+`sherpa_onnx_streaming` for Web/API compatibility and `implementation="rust"`;
+runtime install/remove calls are idempotent compatibility operations because the
+linked runtime cannot be removed independently. Voice model records may include `installed_manifest_sha256`,
 `update_available`, `last_update_error`, and artifact source fields (`url`,
 `sha256`, `archive`) so model updates remain explicit and inspectable.
 
@@ -1457,8 +1459,8 @@ Args:
 
 `browser_asr` means browser-managed speech recognition and does not guarantee
 browser-device-local model execution. `assistant_service_local_asr` means ASR
-runs on the daemon host through the first-party Voice Secretary service and uses
-an installed local ASR model. The returned assistant health may include `health.service` with
+runs on the daemon host through native Rust and uses an installed local ASR
+model. The returned assistant health may include `health.service` with
 `status`, `alive`, `asr_command_configured`, `asr_mock_configured`,
 `selected_model_id`, `managed_model`, and `last_error` so Web can show whether
 service-local ASR is actually usable. `service_model_id` is optional and
@@ -1533,32 +1535,31 @@ Result:
 }
 ```
 
-#### `assistant_voice_transcribe`
+#### HTTP Voice Secretary transcription
 
 Transcribe a push-to-talk audio payload through the daemon-managed first-party
-Voice Secretary service. This endpoint only returns transcript text and service
+Voice Secretary native Rust runtime. This endpoint only returns transcript text and service
 health; it does not create a chat message, proposal, or working document by
 itself. Call `assistant_voice_transcript_append` after transcription so the
 daemon can append stable transcript source material and update the current
 working document.
 
-Args:
+Request:
 ```ts
-{
-  group_id: string
-  by?: string
-  audio_base64: string
-  mime_type?: string
-  language?: string
-}
+POST /api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions
+  ?language={language}&by={actor_id}
+Content-Type: audio/pcm | audio/wav | application/octet-stream
+
+<streamed binary audio body>
 ```
 
 Preconditions:
 - `voice_secretary` is enabled for the group.
 - `recognition_backend` is `assistant_service_local_asr`.
-- The selected `service_model_id` is installed and exposes a managed command via
-  the manifest. The effective command receives the audio path as the final
-  argument unless it includes `{audio_path}` / `{input_path}` / `{input}`.
+- The selected offline `service_model_id` is installed and its manifest exposes
+  a supported sherpa-onnx model configuration. HTTP transcription accepts mono
+  PCM16 or WAV up to 100 MiB. The HTTP body and WebSocket PCM16 frames are streamed to auto-deleted
+  temporary file; browser service capture sends binary PCM16 WebSocket frames.
 
 Result:
 ```ts
@@ -1583,6 +1584,13 @@ daemon lease is the final cross-tab / cross-browser / cross-device guard that
 prevents two Voice Secretary recording streams from running at the same time.
 The lease is TTL-based so a crashed tab or disconnected browser eventually
 expires without manual cleanup.
+
+The service-local ASR WebSocket requires the active `owner_id` and `lease_id` as
+query parameters and revalidates them while audio is streaming. Opening the
+transcription WebSocket directly cannot bypass the daemon lease.
+Lease mutations match `group_id`, `owner_id`, and `lease_id`; public status and
+conflict payloads redact `lease_id`. The stable browser owner identifies the
+lease holder, while every recording uses a fresh `session_id`.
 
 Args:
 ```ts
@@ -1647,6 +1655,17 @@ best-effort wake error separately. If wake-up succeeds after the notify was
 created while the actor was stopped, the daemon re-dispatches that same notify:
 headless runtimes receive it as a control turn, and PTY runtimes receive it
 through the pending delivery queue so lazy preamble delivery is triggered.
+
+Rust commits an input under the group lock in this order: validate or create the
+Markdown target, append the stable segment log, append the semantic input log,
+then advance group session/cursor state. Retrying the same `session_id` and
+`segment_id` is idempotent. Document paths must be repository-relative `.md`
+paths and must not traverse symbolic links.
+
+Idempotency is checked against the complete semantic input log, not the bounded
+session display window. If the input log was committed but its ledger input or
+notify event was interrupted, retrying the same segment reuses the canonical
+input record and completes only the missing delivery work.
 
 The public document identity for Voice Secretary APIs is `document_path`, a
 repository-relative markdown path. `document_id` may exist in daemon sidecar

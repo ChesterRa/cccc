@@ -1,26 +1,31 @@
 #![cfg(unix)]
 
+use cccc_client::DaemonClient;
 use cccc_contracts::{DaemonRequest, DaemonResponse};
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-#[test]
-fn serializes_delivery_notifies_and_advances_cursor() {
+#[tokio::test]
+async fn serializes_delivery_notifies_and_advances_cursor() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     home.initialize().expect("initialize");
-    let created = call(
-        &home,
+    let daemon = tokio::spawn(cccc_daemon::run(home.clone()));
+    wait_until(|| cccc_daemon::DaemonPaths::new(home.clone()).address.exists()).await;
+    let client = DaemonClient::new(home.clone());
+    let created = daemon_call(
+        &client,
         "group_create",
         json!({"title":"message-delivery-test","by":"user"}),
-    );
+    )
+    .await;
     let group_id = created.result["group"]["group_id"]
         .as_str()
         .expect("group id")
         .to_owned();
-    call(
-        &home,
+    daemon_call(
+        &client,
         "actor_add",
         json!({
             "group_id":group_id,
@@ -31,30 +36,35 @@ fn serializes_delivery_notifies_and_advances_cursor() {
             "command":["sh","-c","stty -echo; IFS= read -r first; IFS= read -r second; IFS= read -r third; IFS= read -r fourth; printf 'FIRST:%s\\nSECOND:%s\\nTHIRD:%s\\nFOURTH:%s' \"$first\" \"$second\" \"$third\" \"$fourth\"; sleep 2"],
             "by":"user"
         }),
-    );
-    call(
-        &home,
+    )
+    .await;
+    daemon_call(
+        &client,
         "actor_start",
         json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-    );
+    )
+    .await;
 
-    let first = call(
-        &home,
+    let first = daemon_call(
+        &client,
         "send",
         json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"one"}),
-    );
-    let second = call(
-        &home,
+    )
+    .await;
+    let second = daemon_call(
+        &client,
         "tracked_send",
         json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"two"}),
-    );
-    let notify = call(
-        &home,
+    )
+    .await;
+    let notify = daemon_call(
+        &client,
         "system_notify",
         json!({"group_id":group_id,"by":"system","to":["peer1"],"text":"notice"}),
-    );
-    let reply = call(
-        &home,
+    )
+    .await;
+    let reply = daemon_call(
+        &client,
         "reply",
         json!({
             "group_id":group_id,
@@ -63,30 +73,52 @@ fn serializes_delivery_notifies_and_advances_cursor() {
             "reply_to":first.result["event"]["id"],
             "text":"fix it"
         }),
-    );
+    )
+    .await;
     assert_eq!(first.result["delivery"]["state"], "queued");
     assert_eq!(second.result["delivery"]["queued"], 1);
     assert_eq!(notify.result["delivery"]["state"], "queued");
     assert_eq!(reply.result["delivery"]["state"], "queued");
 
-    wait_for(&home, &group_id, "FOURTH:[cccc] user → peer1 (reply:");
-    let tail = call(
-        &home,
+    wait_for(&client, &group_id, "FOURTH:[cccc] user → peer1 (reply:").await;
+    let tail = daemon_call(
+        &client,
         "terminal_tail",
         json!({"group_id":group_id,"actor_id":"peer1"}),
-    );
+    )
+    .await;
     let text = tail.result["text"].as_str().unwrap_or_default();
     assert!(text.contains("SECOND:[cccc] user → peer1: two"));
     assert!(text.contains("THIRD:[cccc] SYSTEM (info): notice"));
     assert!(text.contains("FOURTH:[cccc] user → peer1 (reply:"));
     assert!(text.contains("> \"one\": fix it"));
 
-    let inbox = call(
-        &home,
+    wait_until_async(|| async {
+        let inbox = daemon_call(
+            &client,
+            "inbox_list",
+            json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+        )
+        .await;
+        inbox.result["messages"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    })
+    .await;
+    let inbox = daemon_call(
+        &client,
         "inbox_list",
         json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-    );
+    )
+    .await;
     assert_eq!(inbox.result["messages"].as_array().map(Vec::len), Some(0));
+
+    daemon_call(&client, "shutdown", json!({})).await;
+    tokio::time::timeout(Duration::from_secs(5), daemon)
+        .await
+        .expect("daemon shutdown timeout")
+        .expect("daemon task")
+        .expect("daemon result");
 }
 
 #[test]
@@ -132,14 +164,15 @@ fn empty_recipients_follow_the_group_default_policy() {
     assert_eq!(broadcast.result["event"]["data"]["to"], json!(["@all"]));
 }
 
-fn wait_for(home: &HomeLayout, group_id: &str, expected: &str) {
-    let deadline = Instant::now() + Duration::from_secs(7);
+async fn wait_for(client: &DaemonClient, group_id: &str, expected: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(7);
     loop {
-        let tail = call(
-            home,
+        let tail = daemon_call(
+            client,
             "terminal_tail",
             json!({"group_id":group_id,"actor_id":"peer1"}),
-        );
+        )
+        .await;
         if tail.result["text"]
             .as_str()
             .unwrap_or_default()
@@ -148,10 +181,51 @@ fn wait_for(home: &HomeLayout, group_id: &str, expected: &str) {
             return;
         }
         assert!(
-            Instant::now() < deadline,
+            tokio::time::Instant::now() < deadline,
             "PTY did not receive {expected:?}"
         );
-        std::thread::sleep(Duration::from_millis(50));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+async fn daemon_call(client: &DaemonClient, op: &str, args: Value) -> DaemonResponse {
+    let request = DaemonRequest {
+        v: 1,
+        op: op.into(),
+        args: args.as_object().cloned().unwrap_or_else(Map::new),
+    };
+    let response = client.call(&request).await.expect("daemon request");
+    assert!(
+        response.ok,
+        "{op} failed: {:?}",
+        response.error.as_ref().map(|error| &error.message)
+    );
+    response
+}
+
+async fn wait_until(mut condition: impl FnMut() -> bool) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while !condition() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "condition timed out"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+async fn wait_until_async<F, Fut>(mut condition: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(7);
+    while !condition().await {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "condition timed out"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
 }
 

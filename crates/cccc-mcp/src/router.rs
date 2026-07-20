@@ -25,6 +25,9 @@ pub async fn call(
         name if is_repo_tool(name) => {
             return crate::local_tools::call(home, client, name, arguments).await;
         }
+        name if crate::remote_tools::is_remote_tool(name) => {
+            return crate::remote_tools::call(home, name, arguments).await;
+        }
         _ => {
             let (op, args) = mapping::daemon_call(name, arguments)?;
             Value::Object(daemon(client, &op, args).await?)

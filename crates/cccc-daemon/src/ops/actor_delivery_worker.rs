@@ -115,8 +115,15 @@ fn submit_text(group_id: &str, actor: &Actor, text: &str, cancelled: &AtomicBool
     } else {
         SUBMIT_DELAY
     };
-    !cancelled.load(Ordering::Acquire)
-        && cccc_runtime::submit(group_id, &actor.id, payload.as_bytes(), submit, delay).is_ok()
+    cccc_runtime::submit_interruptible(
+        group_id,
+        &actor.id,
+        payload.as_bytes(),
+        submit,
+        delay,
+        cancelled,
+    )
+    .unwrap_or(false)
 }
 
 fn wait_for_input_mode(group_id: &str, actor_id: &str, cancelled: &AtomicBool) -> bool {
@@ -135,7 +142,7 @@ fn wait_for_input_mode(group_id: &str, actor_id: &str, cancelled: &AtomicBool) -
     !cancelled.load(Ordering::Acquire)
 }
 
-fn interruptible_sleep(duration: Duration, cancelled: &AtomicBool) -> bool {
+pub(super) fn interruptible_sleep(duration: Duration, cancelled: &AtomicBool) -> bool {
     let deadline = std::time::Instant::now().checked_add(duration);
     while !cancelled.load(Ordering::Acquire) {
         let remaining = deadline.map_or(Duration::from_millis(50), |deadline| {

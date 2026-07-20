@@ -328,10 +328,11 @@ fn action(args: &Map<String, Value>) -> &str {
     args.get("action").and_then(Value::as_str).unwrap_or("read")
 }
 fn timeout(args: &Map<String, Value>) -> u64 {
-    args.get("timeout_seconds")
+    args.get("timeout_s")
+        .or_else(|| args.get("timeout_seconds"))
         .and_then(Value::as_u64)
         .unwrap_or(30)
-        .clamp(1, 120)
+        .clamp(1, 600)
 }
 fn bounded(bytes: &[u8]) -> String {
     String::from_utf8_lossy(&bytes[..bytes.len().min(2_000_000)]).into_owned()
@@ -339,7 +340,22 @@ fn bounded(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_codex_patch;
+    use super::{apply_codex_patch, timeout};
+    use serde_json::json;
+
+    #[test]
+    fn shell_timeout_uses_the_schema_field_and_keeps_the_legacy_alias() {
+        let current = json!({"timeout_s":600,"timeout_seconds":15})
+            .as_object()
+            .cloned()
+            .expect("arguments");
+        assert_eq!(timeout(&current), 600);
+        let legacy = json!({"timeout_seconds":45})
+            .as_object()
+            .cloned()
+            .expect("legacy arguments");
+        assert_eq!(timeout(&legacy), 45);
+    }
 
     #[test]
     fn applies_codex_add_update_and_delete_sections() {

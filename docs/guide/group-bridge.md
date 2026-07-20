@@ -69,6 +69,12 @@ Group Bridge pairing is managed in the Web UI.
 
 After the first bridge setup, restart already-running actor runtimes once if you want them to see newly available remote read/full MCP tools.
 
+### Python/Rust Upgrade Compatibility
+
+The Rust service reads the legacy `group_bridge_identity.yaml`, `group_bridge_pairing.yaml`, `group_bridge_registrations.yaml`, and `group_bridge_credentials.yaml` files from the same CCCC home. Imports are idempotent and leave the legacy files unchanged, so switching branches does not require deleting or recreating bridge data. Existing peer identity is retained when legacy identity data is present.
+
+Pairing and message delivery also support mixed Python/Rust peers. Rust accepts both pairing response shapes used by the two implementations and falls back to the authorized remote MCP message route when an older Python peer does not accept cross-machine session HTTP delivery.
+
 ## Sending Messages
 
 Once paired, remote groups appear as explicit remote recipients in the Web composer and in MCP group resolution. Prefer sending to the remote foreman:
@@ -113,6 +119,9 @@ Full tools:
 | `cccc_remote_write_stdin` | Poll, write to, or terminate a remote exec session. |
 
 `cccc_remote_git` also allows mutation actions such as `add` and `commit` when the remote group grants **Full** access.
+`cccc_remote_shell` accepts `timeout_s` from 1 to 600 seconds. Every session returned by
+`cccc_remote_exec_command` is bound to the target group, registration, and active trust;
+only the same authorized bridge may poll, write to, or terminate it.
 
 All remote tools require `remote_group_id`. Use `cccc_remote_access(action="list")` to get the exact id and current permission level before calling them.
 
@@ -135,6 +144,7 @@ Runtime state, credentials, and browser sessions remain local to each CCCC insta
 |---------|-------|
 | Pairing request cannot be submitted | The requester must paste the full JSON pairing invitation, and the issuer endpoint must be reachable from the requester. |
 | Pairing code is invalid or expired | Generate a fresh pairing invitation from the issuer group. Raw codes are mainly for same-instance diagnostics. |
+| Outbound remains `submitted` after approval | Refresh or sync the outbound record. Do not delete legacy YAML files; current Rust builds normalize older pairing responses and retain the existing request. |
 | Remote group does not appear in recipients | Refresh **Settings > Group Bridge**, confirm the trust is active, then refresh the Web UI group list. |
 | Agents cannot see remote read/full tools | Restart already-running actor runtimes after setup and check the capability allowlist. |
 | `bridge_remote_mcp_unavailable` | The bridge exists for messages, but the HTTP(S) remote MCP endpoint or token is not available. Refresh the bridge state and verify the remote endpoint. |

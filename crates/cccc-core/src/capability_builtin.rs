@@ -81,11 +81,13 @@ pub fn all() -> Vec<Capability> {
 fn pack(id: &str, title: &str, tools: &[&str], tags: &[&str]) -> Capability {
     Capability {
         id: id.into(),
+        kind: "pack".into(),
         name: title.into(),
         description: format!("Built-in CCCC capability pack: {title}."),
         tool_names: tools.iter().map(|value| (*value).into()).collect(),
         tags: tags.iter().map(|value| (*value).into()).collect(),
         capsule_text: String::new(),
-        source: "builtin".into(),
+        source: "cccc_builtin".into(),
+        source_uri: String::new(),
     }
 }

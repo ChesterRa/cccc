@@ -5,34 +5,38 @@ use cccc_core::fs::write_json;
 use fs2::FileExt;
 use std::fs::{File, OpenOptions};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
-use tokio::task::JoinHandle;
 
 #[cfg(unix)]
 use tokio::net::UnixListener;
 
+use crate::dispatch_concurrency::DispatchLocks;
 use crate::paths::DaemonPaths;
-use crate::server_connection::{DispatchLock, spawn_connection};
+use crate::server_automation::AutomationScheduler;
+use crate::server_connection::spawn_connection;
+use crate::server_connections::ConnectionTasks;
+use crate::server_lifecycle::{DaemonLifecycle, cleanup_stale};
 
 pub async fn run(home: HomeLayout) -> Result<()> {
     home.initialize().context("initialize Rust home")?;
     let paths = DaemonPaths::new(home);
     std::fs::create_dir_all(&paths.daemon_dir)?;
     let lock = acquire_daemon_lock(&paths.lock)?;
+    crate::runtime_start_gate::allow(&paths.home).map_err(anyhow::Error::msg)?;
     cleanup_stale(&paths);
     let mut lifecycle = DaemonLifecycle::new(paths, lock);
     std::fs::write(&lifecycle.paths.pid, format!("{}\n", std::process::id()))?;
     crate::ops::runtime_restore::restore_running(&lifecycle.paths.home)
         .map_err(|error| anyhow::anyhow!(error.message))?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
-    let dispatch_lock: DispatchLock = Default::default();
+    let dispatch_locks = DispatchLocks::default();
 
     let result = if use_tcp() {
-        serve_tcp(&lifecycle.paths, shutdown_tx, shutdown_rx, dispatch_lock).await
+        serve_tcp(&lifecycle.paths, shutdown_tx, shutdown_rx, dispatch_locks).await
     } else {
-        serve_platform_default(&lifecycle.paths, shutdown_tx, shutdown_rx, dispatch_lock).await
+        serve_platform_default(&lifecycle.paths, shutdown_tx, shutdown_rx, dispatch_locks).await
     };
     lifecycle.finish(result)
 }
@@ -41,7 +45,7 @@ async fn serve_tcp(
     paths: &DaemonPaths,
     shutdown_tx: watch::Sender<bool>,
     mut shutdown_rx: watch::Receiver<bool>,
-    dispatch_lock: DispatchLock,
+    dispatch_locks: DispatchLocks,
 ) -> Result<()> {
     let host = std::env::var("CCCC_DAEMON_HOST").unwrap_or_else(|_| "127.0.0.1".into());
     let port = std::env::var("CCCC_DAEMON_PORT")
@@ -57,9 +61,9 @@ async fn serve_tcp(
         local.ip().to_string(),
         local.port(),
     )?;
-    let mut automation = tokio::time::interval(Duration::from_secs(5));
-    automation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut unread_cadence = UnreadCadence::new();
+    let mut automation_interval = tokio::time::interval(Duration::from_secs(5));
+    automation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut automation = AutomationScheduler::new();
     let mut connections = ConnectionTasks::default();
     let signal = shutdown_signal();
     tokio::pin!(signal);
@@ -67,7 +71,7 @@ async fn serve_tcp(
         tokio::select! {
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
-                connections.push(spawn_connection(stream, paths.home.clone(), shutdown_tx.clone(), dispatch_lock.clone()));
+                connections.push(spawn_connection(stream, paths.home.clone(), shutdown_tx.clone(), dispatch_locks.clone()));
             }
             changed = shutdown_rx.changed() => {
                 changed?;
@@ -77,12 +81,13 @@ async fn serve_tcp(
                 signal?;
                 break;
             }
-            _ = automation.tick() => {
-                let _guard = dispatch_lock.lock().await;
-                tick_automation(&paths.home, unread_cadence.take_due());
+            _ = automation_interval.tick() => {
+                automation.trigger(paths.home.clone(), dispatch_locks.clone());
             },
         }
     }
+    let _ = crate::runtime_start_gate::prevent(&paths.home);
+    automation.finish().await;
     connections.finish().await;
     Ok(())
 }
@@ -92,7 +97,7 @@ async fn serve_platform_default(
     paths: &DaemonPaths,
     shutdown_tx: watch::Sender<bool>,
     mut shutdown_rx: watch::Receiver<bool>,
-    dispatch_lock: DispatchLock,
+    dispatch_locks: DispatchLocks,
 ) -> Result<()> {
     let listener = UnixListener::bind(&paths.socket)?;
     write_address(
@@ -102,9 +107,9 @@ async fn serve_platform_default(
         String::new(),
         0,
     )?;
-    let mut automation = tokio::time::interval(Duration::from_secs(5));
-    automation.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut unread_cadence = UnreadCadence::new();
+    let mut automation_interval = tokio::time::interval(Duration::from_secs(5));
+    automation_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut automation = AutomationScheduler::new();
     let mut connections = ConnectionTasks::default();
     let signal = shutdown_signal();
     tokio::pin!(signal);
@@ -112,7 +117,7 @@ async fn serve_platform_default(
         tokio::select! {
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
-                connections.push(spawn_connection(stream, paths.home.clone(), shutdown_tx.clone(), dispatch_lock.clone()));
+                connections.push(spawn_connection(stream, paths.home.clone(), shutdown_tx.clone(), dispatch_locks.clone()));
             }
             changed = shutdown_rx.changed() => {
                 changed?;
@@ -122,12 +127,13 @@ async fn serve_platform_default(
                 signal?;
                 break;
             }
-            _ = automation.tick() => {
-                let _guard = dispatch_lock.lock().await;
-                tick_automation(&paths.home, unread_cadence.take_due());
+            _ = automation_interval.tick() => {
+                automation.trigger(paths.home.clone(), dispatch_locks.clone());
             },
         }
     }
+    let _ = crate::runtime_start_gate::prevent(&paths.home);
+    automation.finish().await;
     connections.finish().await;
     Ok(())
 }
@@ -137,9 +143,9 @@ async fn serve_platform_default(
     paths: &DaemonPaths,
     shutdown_tx: watch::Sender<bool>,
     shutdown_rx: watch::Receiver<bool>,
-    dispatch_lock: DispatchLock,
+    dispatch_locks: DispatchLocks,
 ) -> Result<()> {
-    serve_tcp(paths, shutdown_tx, shutdown_rx, dispatch_lock).await
+    serve_tcp(paths, shutdown_tx, shutdown_rx, dispatch_locks).await
 }
 
 fn acquire_daemon_lock(path: &Path) -> Result<File> {
@@ -178,53 +184,6 @@ fn write_address(
     Ok(())
 }
 
-fn cleanup_stale(paths: &DaemonPaths) {
-    for path in [&paths.socket, &paths.address, &paths.pid] {
-        if let Err(error) = std::fs::remove_file(path)
-            && error.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(path = %path.display(), %error, "failed to remove daemon state");
-        }
-    }
-}
-
-#[derive(Default)]
-struct ConnectionTasks(Vec<JoinHandle<()>>);
-
-impl ConnectionTasks {
-    fn push(&mut self, task: JoinHandle<()>) {
-        self.0.retain(|task| !task.is_finished());
-        self.0.push(task);
-    }
-
-    async fn finish(&mut self) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        while let Some(mut task) = self.0.pop() {
-            if tokio::time::timeout_at(deadline, &mut task).await.is_err() {
-                task.abort();
-                let _ = task.await;
-                break;
-            }
-        }
-        self.abort_all();
-        for task in self.0.drain(..) {
-            let _ = task.await;
-        }
-    }
-
-    fn abort_all(&self) {
-        for task in &self.0 {
-            task.abort();
-        }
-    }
-}
-
-impl Drop for ConnectionTasks {
-    fn drop(&mut self) {
-        self.abort_all();
-    }
-}
-
 async fn shutdown_signal() -> Result<()> {
     #[cfg(unix)]
     {
@@ -240,93 +199,6 @@ async fn shutdown_signal() -> Result<()> {
     Ok(())
 }
 
-struct DaemonLifecycle {
-    paths: DaemonPaths,
-    lock: Option<File>,
-    active: bool,
-}
-
-impl DaemonLifecycle {
-    fn new(paths: DaemonPaths, lock: File) -> Self {
-        Self {
-            paths,
-            lock: Some(lock),
-            active: true,
-        }
-    }
-
-    fn finish(&mut self, result: Result<()>) -> Result<()> {
-        let stop_result = self.cleanup();
-        if let Err(error) = stop_result {
-            if result.is_ok() {
-                return Err(error.into());
-            }
-            tracing::warn!(%error, "failed to stop every runtime during daemon shutdown");
-        }
-        result
-    }
-
-    fn cleanup(&mut self) -> Result<Vec<cccc_runtime::SessionStatus>, cccc_runtime::RuntimeError> {
-        if !self.active {
-            return Ok(Vec::new());
-        }
-        self.active = false;
-        crate::ops::actor_delivery::shutdown_all();
-        let result = cccc_runtime::stop_all();
-        cleanup_stale(&self.paths);
-        self.lock.take();
-        result
-    }
-}
-
-impl Drop for DaemonLifecycle {
-    fn drop(&mut self) {
-        if let Err(error) = self.cleanup() {
-            tracing::warn!(%error, "failed to stop every runtime during cancelled daemon shutdown");
-        }
-    }
-}
-
 fn use_tcp() -> bool {
     cfg!(not(unix)) || std::env::var("CCCC_DAEMON_TRANSPORT").is_ok_and(|value| value == "tcp")
-}
-
-fn tick_automation(home: &HomeLayout, include_unread: bool) {
-    crate::ops::automation_runtime::tick(home, include_unread);
-}
-
-struct UnreadCadence {
-    last_tick: Instant,
-}
-
-impl UnreadCadence {
-    const INTERVAL: Duration = Duration::from_secs(60);
-
-    fn new() -> Self {
-        Self {
-            last_tick: Instant::now(),
-        }
-    }
-
-    fn take_due(&mut self) -> bool {
-        if self.last_tick.elapsed() < Self::INTERVAL {
-            return false;
-        }
-        self.last_tick = Instant::now();
-        true
-    }
-}
-
-#[cfg(test)]
-mod cadence_tests {
-    use super::*;
-
-    #[test]
-    fn unread_work_runs_at_most_once_per_interval() {
-        let mut cadence = UnreadCadence {
-            last_tick: Instant::now() - UnreadCadence::INTERVAL,
-        };
-        assert!(cadence.take_due());
-        assert!(!cadence.take_due());
-    }
 }

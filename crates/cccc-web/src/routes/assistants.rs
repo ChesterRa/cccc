@@ -1,22 +1,27 @@
+use axum::body::Body;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
+use axum::http::{HeaderMap, header};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use base64::Engine;
-use cccc_contracts::utc_now;
+use cccc_contracts::DaemonRequest;
 use cccc_core::GroupStore;
 use cccc_core::integration_state;
-use cccc_core::settings;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use sha2::{Digest, Sha256};
 use std::io;
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::api::{ApiError, ApiResult, success};
+use crate::api::{ApiError, ApiResult, call, object, success};
 
+mod voice_asr;
+mod voice_audio_upload;
+mod voice_diarization;
+mod voice_final_asr;
+mod voice_inference;
+mod voice_pcm_recording;
 mod voice_recording_lease;
 
 const STORE_KEY: &str = "assistants";
@@ -27,6 +32,22 @@ struct DocumentQuery {
     document_path: String,
     #[serde(default)]
     include_archived: bool,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct TranscriptionWsQuery {
+    #[serde(default)]
+    owner_id: String,
+    #[serde(default)]
+    lease_id: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct TranscriptionQuery {
+    #[serde(default)]
+    language: String,
+    #[serde(default)]
+    by: String,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -46,7 +67,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions",
-            post(transcribe),
+            post(transcribe).layer(DefaultBodyLimit::disable()),
         )
         .route(
             "/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws",
@@ -144,24 +165,7 @@ async fn update_settings(
     Json(body): Json<Value>,
 ) -> ApiResult {
     validate_assistant(&assistant_id)?;
-    let assistant = update(&state, &group_id, |value| {
-        let root = root(value);
-        let assistant = assistant_mut(root);
-        if let Some(enabled) = body["enabled"].as_bool() {
-            assistant["enabled"] = json!(enabled);
-            assistant["lifecycle"] = json!(if enabled { "running" } else { "disabled" });
-        }
-        if let Some(patch) = body["config"].as_object() {
-            let config = assistant
-                .get_mut("config")
-                .and_then(Value::as_object_mut)
-                .expect("config initialized");
-            settings::merge(config, patch);
-        }
-        assistant["updated_at"] = json!(utc_now());
-        Ok(assistant.clone())
-    })?;
-    Ok(success(json!({"group_id":group_id,"assistant":assistant})))
+    call(&state,"assistant_settings_update",object(json!({"group_id":group_id,"assistant_id":assistant_id,"by":body["by"].as_str().unwrap_or("user"),"patch":body}))).await
 }
 async fn update_status(
     State(state): State<AppState>,
@@ -169,37 +173,174 @@ async fn update_status(
     Json(body): Json<Value>,
 ) -> ApiResult {
     validate_assistant(&assistant_id)?;
-    let assistant = update(&state, &group_id, |value| {
-        let assistant = assistant_mut(root(value));
-        assistant["lifecycle"] = body.get("lifecycle").cloned().unwrap_or(json!("idle"));
-        assistant["health"] = body.get("health").cloned().unwrap_or(json!({}));
-        assistant["updated_at"] = json!(utc_now());
-        Ok(assistant.clone())
-    })?;
-    Ok(success(json!({"group_id":group_id,"assistant":assistant})))
+    call(&state,"assistant_status_update",object(json!({"group_id":group_id,"assistant_id":assistant_id,"by":body["by"].as_str().unwrap_or("user"),"lifecycle":body["lifecycle"],"health":body["health"]}))).await
 }
 async fn transcribe(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
-    Json(body): Json<Value>,
+    Query(query): Query<TranscriptionQuery>,
+    headers: HeaderMap,
+    body: Body,
 ) -> ApiResult {
-    let raw = body["audio_base64"].as_str().unwrap_or("");
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(raw)
-        .map_err(|_| ApiError::bad("audio_base64 is invalid"))?;
-    let assistant = assistant(&load(&state, &group_id)?);
-    Ok(success(
-        json!({"group_id":group_id,"assistant":assistant,"transcript":"","mime_type":body["mime_type"],"language":body["language"],"bytes":bytes.len(),"backend":"unavailable","service":{"available":false,"reason":"sherpa-onnx runtime is not installed"},"asr":{"available":false}}),
-    ))
-}
-async fn transcription_ws(Path(_group_id): Path<String>, ws: WebSocketUpgrade) -> Response {
-    ws.on_upgrade(serve_transcription_ws)
+    voice_audio_upload::validate_content_length(&headers)?;
+    let current = load(&state, &group_id)?;
+    let assistant = assistant(&current);
+    require_voice_backend(&assistant)?;
+    let selected = assistant["config"]["service_model_id"]
+        .as_str()
+        .unwrap_or("");
+    let mime_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_owned();
+    let language = query.language.trim().to_owned();
+    let audio_file = voice_audio_upload::receive(&state.home, body).await?;
+    let permit = voice_final_asr::try_acquire().ok_or_else(|| {
+        ApiError::unavailable("asr_busy", "final ASR is busy with another recording")
+    })?;
+    let home = state.home.clone();
+    let selected = selected.to_owned();
+    let result = voice_final_asr::transcribe_file(
+        permit,
+        home,
+        selected,
+        language.clone(),
+        audio_file,
+        mime_type.clone(),
+    )
+    .await
+    .map_err(|error| ApiError::unavailable("asr_task_failed", error.to_string()))?
+    .map_err(voice_error)?;
+    Ok(success(json!({
+        "group_id":group_id,"assistant":assistant,"transcript":result["text"],
+        "mime_type":mime_type,"language":language,"by":if query.by.trim().is_empty(){"user"}else{query.by.trim()},"bytes":result["bytes"],
+        "backend":"assistant_service_local_asr","service":voice_asr::runtime_status(),
+        "asr":{"available":true,"model_id":result["model_id"],"sample_rate":result["sample_rate"],"implementation":"rust"}
+    })))
 }
 
-async fn serve_transcription_ws(mut socket: WebSocket) {
+async fn transcription_ws(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<TranscriptionWsQuery>,
+    ws: WebSocketUpgrade,
+) -> Result<Response, ApiError> {
+    voice_recording_lease::validate(
+        &state.home,
+        &group_id,
+        query.owner_id.trim(),
+        query.lease_id.trim(),
+    )?;
+    Ok(ws.on_upgrade(move |socket| {
+        serve_transcription_ws(state, group_id, query.owner_id, query.lease_id, socket)
+    }))
+}
+
+async fn serve_transcription_ws(
+    state: AppState,
+    group_id: String,
+    owner_id: String,
+    lease_id: String,
+    mut socket: WebSocket,
+) {
+    let loaded = load(&state, &group_id);
+    let assistant = match loaded
+        .map(|value| assistant(&value))
+        .and_then(|item| require_voice_backend(&item).map(|_| item))
+    {
+        Ok(value) => value,
+        Err(error) => {
+            let _=socket.send(Message::Text(json!({"type":"error","ok":false,"error":{"code":"assistant_unavailable","message":error.to_string()}}).to_string().into())).await;
+            return;
+        }
+    };
+    let selected = assistant["config"]["service_model_id"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    let diarization_model = assistant["config"]["service_diarization_model_id"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    let mut session: Option<voice_asr::StreamingSession> = None;
+    let mut client_session_id = String::new();
+    let mut document_path = String::new();
+    let mut language = String::new();
+    let mut recording: Option<voice_pcm_recording::PcmRecording> = None;
+    let mut stopped = false;
+    let mut audio_seq = 0_u64;
+    let mut lease_checked_at = std::time::Instant::now();
     while let Some(Ok(message)) = socket.recv().await {
         if matches!(message, Message::Close(_)) {
             break;
+        }
+        if let Message::Binary(bytes) = message {
+            if session.is_none() {
+                let error = voice_asr::VoiceError {
+                    code: "audio_before_start",
+                    message: "binary audio received before the start command".into(),
+                    details: Map::new(),
+                };
+                let _ = send_voice_ws_error(&mut socket, &error).await;
+                break;
+            }
+            if lease_checked_at.elapsed() >= std::time::Duration::from_secs(5) {
+                if let Err(error) =
+                    voice_recording_lease::validate(&state.home, &group_id, &owner_id, &lease_id)
+                {
+                    let _=socket.send(Message::Text(json!({"type":"error","ok":false,"error":{"code":"assistant_voice_recording_lease_lost","message":error.to_string()}}).to_string().into())).await;
+                    break;
+                }
+                lease_checked_at = std::time::Instant::now();
+            }
+            let Some(active_recording) = recording.as_mut() else {
+                let error = voice_asr::VoiceError {
+                    code: "audio_before_start",
+                    message: "recording storage is not initialized".into(),
+                    details: Map::new(),
+                };
+                let _ = send_voice_ws_error(&mut socket, &error).await;
+                break;
+            };
+            if let Err(error) = active_recording.append(&bytes).await {
+                let _ = send_voice_ws_error(&mut socket, &error).await;
+                break;
+            }
+            let Some(mut active) = session.take() else {
+                continue;
+            };
+            let decoded = tokio::task::spawn_blocking(move || {
+                let result = active.accept_pcm16(16_000, &bytes);
+                (active, result)
+            })
+            .await;
+            let (active, result) = match decoded {
+                Ok(value) => value,
+                Err(error) => {
+                    let wrapped = voice_asr::VoiceError {
+                        code: "asr_task_failed",
+                        message: error.to_string(),
+                        details: Map::new(),
+                    };
+                    let _ = send_voice_ws_error(&mut socket, &wrapped).await;
+                    break;
+                }
+            };
+            session = Some(active);
+            audio_seq = audio_seq.saturating_add(1);
+            match result {
+                Ok(Some(mut event)) => {
+                    event["seq"] = json!(audio_seq);
+                    let _ = socket.send(Message::Text(event.to_string().into())).await;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = send_voice_ws_error(&mut socket, &error).await;
+                    break;
+                }
+            }
+            continue;
         }
         let Message::Text(text) = message else {
             continue;
@@ -208,17 +349,148 @@ async fn serve_transcription_ws(mut socket: WebSocket) {
             continue;
         };
         if command["type"] == "start" {
+            if command["sample_rate"].as_i64().unwrap_or(16_000) != 16_000 {
+                let error = voice_asr::VoiceError {
+                    code: "unsupported_sample_rate",
+                    message: "streaming ASR requires 16000 Hz PCM16".into(),
+                    details: Map::new(),
+                };
+                let _ = send_voice_ws_error(&mut socket, &error).await;
+                break;
+            }
+            client_session_id = command["session_id"].as_str().unwrap_or("").to_owned();
+            document_path = command["document_path"].as_str().unwrap_or("").to_owned();
+            language = command["language"].as_str().unwrap_or("").to_owned();
+            let home = state.home.clone();
+            let selected = selected.clone();
+            match tokio::task::spawn_blocking(move || {
+                voice_asr::StreamingSession::open(&home, &selected)
+            })
+            .await
+            {
+                Err(error) => {
+                    let wrapped = voice_asr::VoiceError {
+                        code: "asr_task_failed",
+                        message: error.to_string(),
+                        details: Map::new(),
+                    };
+                    let _ = send_voice_ws_error(&mut socket, &wrapped).await;
+                    break;
+                }
+                Ok(Err(error)) => {
+                    let _ = send_voice_ws_error(&mut socket, &error).await;
+                    break;
+                }
+                Ok(Ok(opened)) => {
+                    let opened_recording =
+                        match voice_pcm_recording::PcmRecording::create(&state.home) {
+                            Ok(value) => value,
+                            Err(error) => {
+                                let _ = send_voice_ws_error(&mut socket, &error).await;
+                                break;
+                            }
+                        };
+                    let model_id = opened.model_id.clone();
+                    session = Some(opened);
+                    recording = Some(opened_recording);
+                    let _=socket.send(Message::Text(json!({"type":"ready","ok":true,"seq":command["seq"],"sample_rate":16000,"audio_transport":"binary_pcm16","model_id":model_id,"backend":"assistant_service_local_asr"}).to_string().into())).await;
+                }
+            }
+        } else if command["type"] == "audio" {
+            let error = voice_asr::VoiceError {
+                code: "binary_audio_required",
+                message: "send PCM16 audio as binary WebSocket frames".into(),
+                details: Map::new(),
+            };
+            let _ = send_voice_ws_error(&mut socket, &error).await;
+            break;
+        } else if command["type"] == "stop" {
+            if let Some(mut active) = session.take() {
+                if let Ok((active, event)) = tokio::task::spawn_blocking(move || {
+                    let event = active.finish();
+                    (active, event)
+                })
+                .await
+                {
+                    session = Some(active);
+                    if let Some(mut event) = event {
+                        event["seq"] = command["seq"].clone();
+                        let _ = socket.send(Message::Text(event.to_string().into())).await;
+                    }
+                }
+            }
+            if recording.as_ref().is_some_and(|value| !value.is_empty()) {
+                let Some(active_recording) = recording.take() else {
+                    continue;
+                };
+                let recording_file = match active_recording.finish().await {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let _ = send_voice_ws_error(&mut socket, &error).await;
+                        break;
+                    }
+                };
+                let (recording_file, mut final_asr) = voice_final_asr::transcribe_pcm16_file(
+                    state.home.clone(),
+                    selected.clone(),
+                    language.clone(),
+                    recording_file,
+                )
+                .await;
+                final_asr["seq"] = command["seq"].clone();
+                let _ = socket
+                    .send(Message::Text(final_asr.to_string().into()))
+                    .await;
+                let status = voice_diarization::spawn(
+                    state.clone(),
+                    group_id.clone(),
+                    client_session_id.clone(),
+                    document_path.clone(),
+                    diarization_model.clone(),
+                    recording_file,
+                );
+                let payload = match status {
+                    voice_diarization::SpawnStatus::Started => {
+                        json!({"type":"diarization_status","ok":true,"seq":command["seq"],"status":"separating_speakers"})
+                    }
+                    voice_diarization::SpawnStatus::Skipped(reason) => {
+                        json!({"type":"diarization_skipped","ok":true,"seq":command["seq"],"reason":reason})
+                    }
+                };
+                let _ = socket.send(Message::Text(payload.to_string().into())).await;
+            }
             let _ = socket
                 .send(Message::Text(
-                    json!({"type":"error","ok":false,"error":{"code":"asr_unavailable","message":"sherpa-onnx runtime is not installed"}})
+                    json!({"type":"closed","ok":true,"seq":command["seq"]})
                         .to_string()
                         .into(),
                 ))
                 .await;
+            stopped = true;
             break;
         }
     }
+    if !stopped
+        && let Some(mut active) = session.take()
+        && let Ok(Some(final_event)) = tokio::task::spawn_blocking(move || active.finish()).await
+        && let Some(text) = final_event["text"]
+            .as_str()
+            .filter(|value| !value.trim().is_empty())
+    {
+        let args = object(
+            json!({"group_id":group_id,"by":"user","session_id":if client_session_id.is_empty(){format!("ws_{}",short_id())}else{client_session_id},"segment_id":format!("ws-final-{}",short_id()),"text":text,"language":language,"document_path":document_path,"is_final":true,"flush":true,"trigger":{"trigger_kind":"websocket_disconnect","capture_mode":"service","recognition_backend":"assistant_service_local_asr"}}),
+        );
+        let _ = state
+            .client
+            .call(&DaemonRequest {
+                v: 1,
+                op: "assistant_voice_transcript_append".into(),
+                args,
+            })
+            .await;
+    }
 }
+
 async fn recording_lease(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
@@ -236,48 +508,30 @@ async fn model_install(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    model_change(&state, &group_id, &body, true)
+    let model_id = required(&body, "model_id")?;
+    let model = voice_asr::begin_install(state.home.clone(), model_id).map_err(voice_error)?;
+    Ok(success(
+        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"model":model,"service_runtime":voice_asr::runtime_status()}),
+    ))
 }
 async fn model_remove(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    model_change(&state, &group_id, &body, false)
-}
-fn model_change(state: &AppState, group_id: &str, body: &Value, install: bool) -> ApiResult {
-    let model_id = body["model_id"]
-        .as_str()
-        .unwrap_or("sherpa-onnx")
-        .to_owned();
-    let model = update(state, group_id, |value| {
-        let models = array_mut(root(value), "service_models");
-        if install {
-            models.retain(|item| item["model_id"] != model_id);
-            models.push(json!({"model_id":model_id,"status":"unavailable","installed":false,"reason":"Install sherpa-onnx model files externally and configure their path."}));
-        } else {
-            models.retain(|item| item["model_id"] != model_id);
-        }
-        Ok(
-            json!({"model_id":model_id,"status":if install{"unavailable"}else{"removed"},"installed":false}),
-        )
-    })?;
-    Ok(success(json!({
-        "group_id":group_id,"assistant":assistant(&load(state,group_id)?),
-        "model":model,"service_runtime":runtime_payload(false)
-    })))
+    let model_id = required(&body, "model_id")?;
+    let model = voice_asr::remove_model(&state.home, &model_id).map_err(voice_error)?;
+    Ok(success(
+        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"model":model,"service_runtime":voice_asr::runtime_status()}),
+    ))
 }
 async fn runtime_install(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
     Json(_body): Json<Value>,
 ) -> ApiResult {
-    update(&state, &group_id, |value| {
-        root(value).insert("service_runtime".into(), runtime_payload(false));
-        Ok(())
-    })?;
     Ok(success(
-        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"service_runtime":runtime_payload(false)}),
+        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"service_runtime":voice_asr::runtime_status()}),
     ))
 }
 async fn runtime_remove(
@@ -285,12 +539,8 @@ async fn runtime_remove(
     Path(group_id): Path<String>,
     Json(_body): Json<Value>,
 ) -> ApiResult {
-    update(&state, &group_id, |value| {
-        root(value).remove("service_runtime");
-        Ok(())
-    })?;
     Ok(success(
-        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"service_runtime":runtime_payload(false)}),
+        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"service_runtime":voice_asr::runtime_status()}),
     ))
 }
 
@@ -333,42 +583,12 @@ async fn transcript_segment(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let session_id = body["session_id"]
-        .as_str()
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("vs_{}", short_id()));
-    let text = body["text"].as_str().unwrap_or("").to_owned();
-    let document_path = body["document_path"].as_str().unwrap_or("").to_owned();
-    let result = update(&state, &group_id, |value| {
-        let root = root(value);
-        let sessions = array_mut(root, "sessions");
-        let index=sessions.iter().position(|item|item["session_id"]==session_id).unwrap_or_else(||{sessions.push(json!({"session_id":session_id,"created_at":utc_now(),"updated_at":utc_now(),"segments":[],"transcript":""}));sessions.len()-1});
-        let segment = json!({"segment_id":body["segment_id"],"text":text,"language":body["language"],"is_final":body["is_final"],"start_ms":body["start_ms"],"end_ms":body["end_ms"],"speaker_label":body["speaker_label"],"created_at":utc_now()});
-        let session = &mut sessions[index];
-        let segments = session
-            .get_mut("segments")
-            .and_then(Value::as_array_mut)
-            .expect("segments initialized");
-        segments.push(segment.clone());
-        session["transcript"] = json!(
-            segments
-                .iter()
-                .filter_map(|item| item["text"].as_str())
-                .collect::<Vec<_>>()
-                .join("\n")
-        );
-        session["updated_at"] = json!(utc_now());
-        let document = if document_path.is_empty() {
-            Value::Null
-        } else {
-            upsert_document(root, &document_path, "", Some(&text), false)
-        };
-        Ok((segment, document))
-    })?;
-    Ok(success(
-        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"session_id":session_id,"segment":result.0,"document":result.1,"document_updated":result.1.is_object(),"input_event_created":false,"input_notify_emitted":false,"actor_woken":false,"actor_notify_delivered":false}),
-    ))
+    let mut args = object(body);
+    args.insert("group_id".into(), json!(group_id));
+    args.entry("session_id")
+        .or_insert_with(|| json!(format!("vs_{}", short_id())));
+    args.entry("by").or_insert_with(|| json!("user"));
+    call(&state, "assistant_voice_transcript_append", args).await
 }
 
 async fn documents(
@@ -394,89 +614,40 @@ async fn document_save(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let path = body["document_path"]
-        .as_str()
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("voice/{}.md", short_id()));
-    validate_document_path(&path)?;
-    let document = update(&state, &group_id, |value| {
-        let root = root(value);
-        let document = upsert_document(
-            root,
-            &path,
-            body["title"].as_str().unwrap_or(""),
-            body.get("content").and_then(Value::as_str),
-            body["create_new"].as_bool().unwrap_or(false),
-        );
-        root.insert("active_document_id".into(), document["document_id"].clone());
-        root.insert("active_document_path".into(), json!(path));
-        Ok(document)
-    })?;
-    Ok(success(document_result(
-        &group_id,
-        assistant(&load(&state, &group_id)?),
-        document,
-    )))
+    let mut args = object(body);
+    args.insert("group_id".into(), json!(group_id));
+    args.entry("by").or_insert_with(|| json!("user"));
+    call(&state, "assistant_voice_document_save", args).await
 }
 async fn document_select(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let path = required(&body, "document_path")?;
-    let document = update(&state, &group_id, |value| {
-        let root = root(value);
-        let document = array_mut(root, "documents")
-            .iter()
-            .find(|item| item["document_path"] == path)
-            .cloned()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "document not found"))?;
-        root.insert("active_document_id".into(), document["document_id"].clone());
-        root.insert("active_document_path".into(), json!(path));
-        Ok(document)
-    })?;
-    Ok(success(document_result(
-        &group_id,
-        assistant(&load(&state, &group_id)?),
-        document,
-    )))
+    let mut args = object(body);
+    args.insert("group_id".into(), json!(group_id));
+    args.entry("by").or_insert_with(|| json!("user"));
+    call(&state, "assistant_voice_document_select", args).await
 }
 async fn document_instruction(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let path = required(&body, "document_path")?;
-    let instruction = required(&body, "instruction")?;
-    let request = input_record(&state, &group_id, "voice_instruction", &instruction, &path)?;
-    Ok(success(document_result_extra(
-        &group_id,
-        assistant(&load(&state, &group_id)?),
-        request.0,
-        request.1,
-    )))
+    let mut args = object(body);
+    args.insert("group_id".into(), json!(group_id));
+    args.entry("by").or_insert_with(|| json!("user"));
+    call(&state, "assistant_voice_document_instruction", args).await
 }
 async fn document_archive(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let path = required(&body, "document_path")?;
-    let document = update(&state, &group_id, |value| {
-        let item = array_mut(root(value), "documents")
-            .iter_mut()
-            .find(|item| item["document_path"] == path)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "document not found"))?;
-        item["status"] = json!("archived");
-        item["updated_at"] = json!(utc_now());
-        Ok(item.clone())
-    })?;
-    Ok(success(document_result(
-        &group_id,
-        assistant(&load(&state, &group_id)?),
-        document,
-    )))
+    let mut args = object(body);
+    args.insert("group_id".into(), json!(group_id));
+    args.entry("by").or_insert_with(|| json!("user"));
+    call(&state, "assistant_voice_document_archive", args).await
 }
 async fn input(
     State(state): State<AppState>,
@@ -484,108 +655,80 @@ async fn input(
     Json(body): Json<Value>,
 ) -> ApiResult {
     let kind = required(&body, "kind")?;
-    let text = body["text"]
-        .as_str()
-        .or_else(|| body["instruction"].as_str())
-        .or_else(|| body["voice_transcript"].as_str())
-        .unwrap_or("");
-    let path = body["document_path"].as_str().unwrap_or("");
-    let result = input_record(&state, &group_id, &kind, text, path)?;
-    Ok(success(document_result_extra(
-        &group_id,
-        assistant(&load(&state, &group_id)?),
-        result.0,
-        result.1,
-    )))
+    let mut args = object(body);
+    args.insert("group_id".into(), json!(group_id));
+    args.entry("by").or_insert_with(|| json!("user"));
+    match kind.as_str() {
+        "voice_instruction" => {
+            if args
+                .get("instruction")
+                .and_then(Value::as_str)
+                .is_none_or(|value| value.trim().is_empty())
+            {
+                let text = args.get("text").cloned().unwrap_or(Value::Null);
+                args.insert("instruction".into(), text);
+            }
+            call(&state, "assistant_voice_document_instruction", args).await
+        }
+        "prompt_refine" => call(&state, "assistant_voice_prompt_draft_submit", args).await,
+        _ => Err(ApiError::bad_code(
+            "invalid_input_kind",
+            format!("unsupported Voice Secretary input kind: {kind}"),
+            json!({"kind":kind}),
+        )),
+    }
 }
 async fn prompt_ack(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let request_id = required(&body, "request_id")?;
-    let status = required(&body, "status")?;
-    let draft = update(&state, &group_id, |value| {
-        let root = root(value);
-        let draft = root
-            .get_mut("prompt_draft")
-            .filter(|item| item["request_id"] == request_id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "prompt draft not found"))?;
-        draft["status"] = json!(status);
-        Ok(draft.clone())
-    })?;
-    Ok(success(
-        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"prompt_draft":draft}),
-    ))
+    let mut args = object(body);
+    args.insert("group_id".into(), json!(group_id));
+    args.entry("by").or_insert_with(|| json!("user"));
+    call(&state, "assistant_voice_prompt_draft_ack", args).await
 }
 async fn clear_asks(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let keep = body["keep_active"].as_bool().unwrap_or(false);
-    update(&state, &group_id, |value| {
-        let asks = array_mut(root(value), "ask_requests");
-        asks.retain(|item| {
-            keep && matches!(
-                item["status"].as_str(),
-                Some("pending" | "working" | "needs_user")
-            )
-        });
-        Ok(())
-    })?;
-    Ok(success(payload(
-        &state,
-        &group_id,
-        &load(&state, &group_id)?,
-    )))
-}
-
-fn input_record(
-    state: &AppState,
-    group_id: &str,
-    kind: &str,
-    text: &str,
-    path: &str,
-) -> Result<(Value, Value), ApiError> {
-    update(state, group_id, |value| {
-        let root = root(value);
-        let document = if path.is_empty() {
-            Value::Null
-        } else {
-            array_mut(root, "documents")
-                .iter()
-                .find(|item| item["document_path"] == path)
-                .cloned()
-                .unwrap_or(Value::Null)
-        };
-        let request_id = format!("var_{}", short_id());
-        let request = json!({"request_id":request_id,"kind":kind,"request_text":text,"document_path":path,"status":"pending","created_at":utc_now(),"updated_at":utc_now()});
-        if kind == "prompt_refine" {
-            root.insert("prompt_draft".into(),json!({"request_id":request_id,"status":"pending","operation":"refine","draft_text":text,"draft_preview":text,"created_at":utc_now()}));
-        } else {
-            array_mut(root, "ask_requests").push(request.clone());
-        }
-        Ok((document, request))
-    })
+    let mut args = object(body);
+    args.insert("group_id".into(), json!(group_id));
+    args.entry("by").or_insert_with(|| json!("user"));
+    call(&state, "assistant_voice_ask_requests_clear", args).await
 }
 fn payload(state: &AppState, group_id: &str, value: &Value) -> Value {
-    let assistant = assistant(value);
+    let mut assistant = assistant(value);
     let documents = array(value, "documents").to_vec();
     let asks = array(value, "ask_requests").to_vec();
-    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":!asks.is_empty(),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":array(value,"service_models"),"service_runtime":value["service_runtime"],"recording_lease":voice_recording_lease::current(&state.home)})
+    let models=voice_asr::list_models(&state.home).unwrap_or_else(|error|vec![json!({"model_id":"","status":"failed","available":false,"error":{"code":error.code,"message":error.message,"details":error.details}})]);
+    let models_by_id = models
+        .iter()
+        .filter_map(|item| {
+            item["model_id"]
+                .as_str()
+                .map(|id| (id.to_owned(), item.clone()))
+        })
+        .collect::<Map<_, _>>();
+    let runtime = voice_asr::runtime_status();
+    assistant["health"]["service"] = json!({"status":"ready","alive":true,"asr_command_configured":true,"asr_mock_configured":std::env::var_os("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT").is_some(),"implementation":"rust","runtime":runtime});
+    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"documents_by_path":documents.iter().filter_map(|item|item["document_path"].as_str().map(|path|(path.to_owned(),item.clone()))).collect::<Map<_,_>>(),"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":value["input_latest_seq"].as_u64().unwrap_or(0)>value["input_read_cursor"].as_u64().unwrap_or(0),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":models,"service_models_by_id":models_by_id,"service_runtime":runtime,"service_runtimes":[runtime],"service_runtimes_by_id":{"sherpa_onnx_streaming":runtime},"recording_lease":voice_recording_lease::current(&state.home)})
 }
 fn assistant(value: &Value) -> Value {
     value
         .get("assistant")
         .cloned()
+        .or_else(|| value.get("voice_secretary").cloned())
         .unwrap_or_else(default_assistant)
 }
 fn default_assistant() -> Value {
-    json!({"assistant_id":"voice_secretary","kind":"voice_secretary","enabled":false,"principal":"assistant:voice_secretary","lifecycle":"disabled","health":{},"policy":{"action_allowlist":[],"requires_user_confirmation":[]},"config":{"capture_mode":"document","recognition_backend":"browser"},"ui":{"title":"Voice Secretary"}})
+    json!({"assistant_id":"voice_secretary","kind":"voice_secretary","enabled":false,"principal":"assistant:voice_secretary","lifecycle":"disabled","health":{"service":voice_asr::runtime_status()},"policy":{"action_allowlist":[],"requires_user_confirmation":[]},"config":{"capture_mode":"document","recognition_backend":"browser_asr","recognition_language":"auto","retention_ttl_seconds":604800,"auto_document_enabled":true,"document_default_dir":"docs/voice-secretary","auto_document_quiet_ms":1200,"auto_document_min_chars":80,"auto_document_max_window_seconds":30,"service_model_id":voice_asr::DEFAULT_OFFLINE_MODEL_ID,"tts_enabled":false},"ui":{"title":"Voice Secretary"}})
 }
 fn assistant_mut(root: &mut Map<String, Value>) -> &mut Value {
-    root.entry("assistant").or_insert_with(default_assistant)
+    let legacy = root.get("voice_secretary").cloned();
+    root.entry("assistant")
+        .or_insert_with(|| legacy.unwrap_or_else(default_assistant))
 }
 fn root(value: &mut Value) -> &mut Map<String, Value> {
     if !value.is_object() {
@@ -598,47 +741,34 @@ fn root(value: &mut Value) -> &mut Map<String, Value> {
     }
     root
 }
-fn upsert_document(
-    root: &mut Map<String, Value>,
-    path: &str,
-    title: &str,
-    content: Option<&str>,
-    create_new: bool,
-) -> Value {
-    let docs = array_mut(root, "documents");
-    let index = (!create_new)
-        .then(|| docs.iter().position(|item| item["document_path"] == path))
-        .flatten();
-    let old = index
-        .and_then(|index| docs.get(index))
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let text = content.unwrap_or_else(|| old["content"].as_str().unwrap_or(""));
-    let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
-    let document = json!({"document_id":old["document_id"].as_str().map(str::to_owned).unwrap_or_else(||format!("vdoc_{}",short_id())),"document_path":path,"workspace_path":path,"filename":path.rsplit('/').next().unwrap_or(path),"assistant_id":"voice_secretary","title":if title.is_empty(){old["title"].as_str().unwrap_or("Untitled document")}else{title},"status":old["status"].as_str().unwrap_or("active"),"storage_kind":"rust_home","content":text,"content_sha256":digest,"content_chars":text.chars().count(),"revision_count":old["revision_count"].as_u64().unwrap_or(0)+1,"created_at":old["created_at"].as_str().unwrap_or(""),"updated_at":utc_now(),"created_by":"user"});
-    if let Some(index) = index {
-        docs[index] = document.clone();
-    } else {
-        docs.push(document.clone());
+fn require_voice_backend(assistant: &Value) -> Result<(), ApiError> {
+    if !assistant["enabled"].as_bool().unwrap_or(false) {
+        return Err(ApiError::bad_code(
+            "assistant_disabled",
+            "voice_secretary is disabled",
+            json!({}),
+        ));
     }
-    document
+    let backend = assistant["config"]["recognition_backend"]
+        .as_str()
+        .unwrap_or("browser_asr");
+    if backend != "assistant_service_local_asr" {
+        return Err(ApiError::bad_code(
+            "assistant_voice_backend_mismatch",
+            "voice transcription requires recognition_backend=assistant_service_local_asr",
+            json!({"recognition_backend":backend}),
+        ));
+    }
+    Ok(())
 }
-fn document_result(group_id: &str, assistant: Value, document: Value) -> Value {
-    json!({"group_id":group_id,"assistant":assistant,"document":document,"input_event_created":false,"input_notify_emitted":false,"actor_woken":false,"actor_notify_delivered":false})
+fn voice_error(error: voice_asr::VoiceError) -> ApiError {
+    ApiError::bad_code(error.code, error.message, Value::Object(error.details))
 }
-fn document_result_extra(
-    group_id: &str,
-    assistant: Value,
-    document: Value,
-    request: Value,
-) -> Value {
-    let mut result = document_result(group_id, assistant, document);
-    result["request_id"] = request["request_id"].clone();
-    result["input_event"] = request;
-    result
-}
-fn runtime_payload(installed: bool) -> Value {
-    json!({"runtime_id":"sherpa-onnx","installed":installed,"status":if installed{"ready"}else{"unavailable"},"available":installed,"reason":if installed{""}else{"sherpa-onnx runtime is not bundled"}})
+async fn send_voice_ws_error(
+    socket: &mut WebSocket,
+    error: &voice_asr::VoiceError,
+) -> Result<(), axum::Error> {
+    socket.send(Message::Text(json!({"type":"error","ok":false,"error":{"code":error.code,"message":error.message,"details":error.details}}).to_string().into())).await
 }
 fn load(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
@@ -670,16 +800,6 @@ fn validate_assistant(value: &str) -> Result<(), ApiError> {
     (value == "voice_secretary")
         .then_some(())
         .ok_or_else(|| ApiError::not_found("assistant not found"))
-}
-fn validate_document_path(value: &str) -> Result<(), ApiError> {
-    let path = std::path::Path::new(value);
-    (!path.is_absolute()
-        && !value.contains('\0')
-        && !path
-            .components()
-            .any(|part| matches!(part, std::path::Component::ParentDir)))
-    .then_some(())
-    .ok_or_else(|| ApiError::bad("invalid document_path"))
 }
 fn required(body: &Value, key: &str) -> Result<String, ApiError> {
     body.get(key)

@@ -13,6 +13,7 @@ async-stream.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
+bzip2.workspace = true
 cccc-client = { path = "../cccc-client" }
 cccc-contracts = { path = "../cccc-contracts" }
 cccc-core = { path = "../cccc-core" }
@@ -23,6 +24,8 @@ chrono.workspace = true
 cbc.workspace = true
 dingtalk-stream.workspace = true
 futures-util.workspace = true
+flate2.workspace = true
+fs2.workspace = true
 mime_guess.workspace = true
 md-5.workspace = true
 lark-channel.workspace = true
@@ -35,6 +38,10 @@ serde.workspace = true
 serde_json.workspace = true
 serenity.workspace = true
 sha2.workspace = true
+sherpa-onnx.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+hound.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 tower-http.workspace = true
@@ -47,7 +54,6 @@ weixin-agent.workspace = true
 [dev-dependencies]
 cccc-daemon = { path = "../cccc-daemon" }
 http-body-util.workspace = true
-tempfile.workspace = true
 tower.workspace = true
 
 [lints]

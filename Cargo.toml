@@ -1,5 +1,6 @@
 [workspace]
 resolver = "2"
+default-members = ["crates/cccc-cli"]
 members = [
   "crates/cccc-contracts",
   "crates/cccc-core",
@@ -10,6 +11,9 @@ members = [
   "crates/cccc-web",
   "crates/cccc-cli",
 ]
+
+[patch.crates-io]
+sherpa-onnx-sys = { path = "crates/third-party/sherpa-onnx-sys" }
 
 [workspace.package]
 version = "0.5.0"
@@ -25,6 +29,7 @@ async-stream = "0.3"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["form", "json", "multipart", "ws"] }
 base64 = "0.22"
+bzip2 = "0.6"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = "0.10"
 cbc = "0.1"
@@ -44,14 +49,16 @@ http-body-util = "0.1"
 portable-pty = "0.9"
 percent-encoding = "2.3"
 regex = "1.11"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks", "system-proxy"] }
 rust-embed = "8.7"
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 sha2 = "0.10"
+sherpa-onnx = "1.13.4"
 shell-words = "1.1"
+tar = "0.4"
 tempfile = "3.20"
 thiserror = "2.0"
 tokio = { version = "1.47", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
@@ -65,6 +72,7 @@ md-5 = "0.10"
 notify = "8.2"
 uuid = { version = "1.17", features = ["v4", "serde"] }
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
+hound = "3.5"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

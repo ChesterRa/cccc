@@ -379,12 +379,13 @@ async fn remote_submit(
         "requester_group_title":body["local_group_title"],"requester_endpoint":"",
         "requester_peer_id":identity["peer_id"],"requester_node_id":identity["node_id"],"requester_multiaddrs":[]
     });
-    let (remote_request, error) = post_remote(
+    let (remote_response, error) = post_remote(
         &endpoint,
         "/api/group-bridge/pairing/requests/remote",
         &request_body,
     )
     .await;
+    let remote_request = normalize_remote_request(&remote_response);
     let outbound = json!({
         "outbound_id":format!("pout_{}",short_id()),"local_group_id":local_group_id,
         "issuer_endpoint":endpoint,"issuer_group_id":payload.get("issuer_group_id").cloned().unwrap_or(json!("")),
@@ -417,26 +418,45 @@ async fn sync_outbound(
         "local_group_id",
     )?;
     let endpoint = normalize_endpoint(current["issuer_endpoint"].as_str().unwrap_or(""))?;
-    let request_id = current["remote_request"]["request_id"]
-        .as_str()
-        .unwrap_or("");
+    let current_request = normalize_remote_request(&current["remote_request"]);
+    let request_id = current_request["request_id"].as_str().unwrap_or("");
+    if request_id.is_empty() {
+        return Err(ApiError::bad(
+            "pairing outbound is missing remote request identity",
+        ));
+    }
     let invite_id = current["invite_id"].as_str().unwrap_or("");
     let path = format!(
         "/api/group-bridge/pairing/requests/remote/status?request_id={request_id}&invite_id={invite_id}"
     );
-    let (remote, mut error) = get_remote(&endpoint, &path).await;
-    let approved = remote["request"]["status"] == "approved";
+    let (remote_response, mut error) = get_remote(&endpoint, &path).await;
+    let remote_request = normalize_remote_request(&remote_response);
+    let approved = remote_request["status"] == "approved";
+    let direct_token = remote_request["remote_send_token"]
+        .as_str()
+        .filter(|value| !value.is_empty());
     let (claim, claim_error) = if error.is_empty() && approved {
-        post_remote(
-            &endpoint,
-            "/api/group-bridge/pairing/requests/remote/claim",
-            &json!({
-                "request_id":request_id,
-                "invite_id":invite_id,
-                "pairing_code":current["pairing_code"]
-            }),
-        )
-        .await
+        if let Some(token) = direct_token {
+            (
+                json!({"claim":{
+                    "registration_id":remote_request["registration_id"],
+                    "credential":token,
+                    "access_level":remote_request["access_level"].as_str().unwrap_or("messages")
+                }}),
+                String::new(),
+            )
+        } else {
+            post_remote(
+                &endpoint,
+                "/api/group-bridge/pairing/requests/remote/claim",
+                &json!({
+                    "request_id":request_id,
+                    "invite_id":invite_id,
+                    "pairing_code":current["pairing_code"]
+                }),
+            )
+            .await
+        }
     } else {
         (json!({}), String::new())
     };
@@ -452,23 +472,32 @@ async fn sync_outbound(
             let mut item = items_mut(value, "outbounds")[index].clone();
             if !error.is_empty() {
                 item["last_error"] = json!(error);
-            } else if let Some(request) = remote.get("request") {
-                item["remote_request"] = request.clone();
-                item["status"] = request["status"].clone();
+            } else if remote_request.is_object() {
+                item["remote_request"] = remote_request.clone();
+                item["status"] = remote_request["status"].clone();
                 item["last_error"] = json!("");
             }
             if let Some(claim) = claim.get("claim") {
                 item["credential"] = claim["credential"].clone();
                 item["status"] = json!("active");
-                let trust_id = format!("ptrust_{}", short_id());
                 let local_group_id = item["local_group_id"].clone();
                 let remote_group_id = item["issuer_group_id"].clone();
                 let existing = items_mut(value, "trusts").iter_mut().find(|trust| {
                     trust["group_id"] == local_group_id
                         && trust["remote_group_id"] == remote_group_id
                 });
+                let trust_id = existing
+                    .as_ref()
+                    .and_then(|trust| trust["trust_id"].as_str())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("ptrust_{}", short_id()));
+                let created_at = existing
+                    .as_ref()
+                    .and_then(|trust| trust["created_at"].as_str())
+                    .map(str::to_owned)
+                    .unwrap_or_else(utc_now);
                 let trust = json!({
-                    "trust_id":trust_id,"group_id":local_group_id,
+                    "trust_id":trust_id,"request_id":request_id,"group_id":local_group_id,
                     "remote_group_id":remote_group_id,
                     "remote_group_title":item["issuer_group_title"],
                     "remote_endpoint":item["issuer_endpoint"],
@@ -477,7 +506,7 @@ async fn sync_outbound(
                     "credential":claim["credential"],
                     "transport":"group_bridge_session","status":"active",
                     "access_level":"messages","remote_access_level":claim["access_level"],
-                    "created_at":utc_now(),"updated_at":utc_now()
+                    "created_at":created_at,"updated_at":utc_now()
                 });
                 if let Some(existing) = existing {
                     *existing = trust;
@@ -602,7 +631,27 @@ fn public_outbound(item: &Value) -> Value {
     let mut result = item.as_object().cloned().unwrap_or_default();
     result.remove("credential");
     result.remove("pairing_code");
+    if let Some(remote_request) = result
+        .get_mut("remote_request")
+        .and_then(Value::as_object_mut)
+    {
+        remote_request.remove("remote_send_token");
+        if let Some(request) = remote_request
+            .get_mut("request")
+            .and_then(Value::as_object_mut)
+        {
+            request.remove("remote_send_token");
+        }
+    }
     Value::Object(result)
+}
+
+fn normalize_remote_request(value: &Value) -> Value {
+    value
+        .get("request")
+        .filter(|request| request.is_object())
+        .cloned()
+        .unwrap_or_else(|| value.clone())
 }
 fn pairing_code() -> String {
     let raw = Uuid::new_v4().simple().to_string().to_ascii_uppercase();
@@ -678,4 +727,36 @@ fn state_error(error: io::Error) -> ApiError {
 }
 fn io_error(error: io::Error) -> ApiError {
     ApiError::bad(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_request_normalization_accepts_python_and_rust_shapes() {
+        let request = json!({"request_id":"preq_1","status":"pending"});
+        assert_eq!(normalize_remote_request(&request), request);
+        assert_eq!(
+            normalize_remote_request(&json!({"request":request}))["request_id"],
+            "preq_1"
+        );
+    }
+
+    #[test]
+    fn public_outbound_redacts_direct_and_nested_tokens() {
+        for remote_request in [
+            json!({"request_id":"preq_1","remote_send_token":"secret"}),
+            json!({"request":{"request_id":"preq_1","remote_send_token":"secret"}}),
+        ] {
+            let public = public_outbound(&json!({
+                "outbound_id":"pout_1","credential":"secret","pairing_code":"ABCD-1234",
+                "remote_request":remote_request
+            }));
+            assert!(public["credential"].is_null());
+            assert!(public["pairing_code"].is_null());
+            assert!(public["remote_request"]["remote_send_token"].is_null());
+            assert!(public["remote_request"]["request"]["remote_send_token"].is_null());
+        }
+    }
 }

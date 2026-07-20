@@ -1,6 +1,5 @@
-use axum::body::Body;
 use axum::extract::{Multipart, Path, Query, State};
-use axum::http::{HeaderValue, Response, header};
+use axum::http::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use cccc_core::GroupStore;
@@ -155,12 +154,11 @@ async fn asset(
     State(state): State<AppState>,
     Path((group_id, slot_id)): Path<(String, String)>,
     Query(query): Query<HashMap<String, String>>,
-) -> Result<Response<Body>, ApiError> {
+) -> Result<Response<axum::body::Body>, ApiError> {
     let store =
         GroupStore::new(state.home.clone()).map_err(|error| ApiError::bad(error.to_string()))?;
     let (path, mime, file_name) = presentation::asset_path(&store, &group_id, &slot_id)
         .map_err(|error| ApiError::not_found(error.to_string()))?;
-    let bytes = std::fs::read(path).map_err(|error| ApiError::not_found(error.to_string()))?;
     let disposition = if query
         .get("download")
         .is_some_and(|value| value == "1" || value == "true")
@@ -170,21 +168,14 @@ async fn asset(
         "inline"
     };
     let safe_name = file_name.replace(['\r', '\n', '"'], "_");
-    let mut response = Response::new(Body::from(bytes));
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_str(&mime)
-            .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
-    );
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response.headers_mut().insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("{disposition}; filename=\"{safe_name}\""))
-            .unwrap_or_else(|_| HeaderValue::from_static("inline")),
-    );
-    Ok(response)
+    super::file_response::stream(
+        &path,
+        &mime,
+        Some("no-store"),
+        Some(&format!("{disposition}; filename=\"{safe_name}\"")),
+    )
+    .await
+    .map_err(|error| ApiError::not_found(error.to_string()))
 }
 
 async fn reference_snapshot(
