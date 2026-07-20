@@ -57,11 +57,11 @@ Vite+ 0.2.4 / tsgolint 0.24 does not yet replace this project's `tsc` gate. Enab
 | --- | --- |
 | `quality` | Ruff and quality-tool/workflow contract tests |
 | `web` | Vite+ Oxfmt/Oxlint check, independent TypeScript check, all Web tests, and the production bundle |
-| `python-tests` | All Python test files distributed across four deterministic matrix shards |
-| `package` | Compile, build, Twine check, install, and wheel resource smoke test after quality/Web/Python pass |
+| `python-tests` | Source-level Python tests distributed across four deterministic matrix shards |
+| `package` | Compile, build, Twine check, install, wheel resource smoke, and packaged Web bundle contract after quality/Web/Python pass |
 | `windows-smoke` | Windows PTY compatibility tests |
 
-The Web job uploads its bundle and the package job consumes that artifact, so packaging tests the same bundle without rebuilding it.
+The Web job uploads its bundle and the package job consumes that artifact, so packaging tests the same bundle without rebuilding it. The `packaged_web_dist` pytest marker is reserved for assertions that require this artifact; source-only Python runs exclude it, while the package job executes it after downloading the bundle.
 
 ## Stable Python Shards
 
@@ -77,4 +77,4 @@ uv run python scripts/quality/pytest_shards.py --total 4 --index 0
 
 ## Nightly Serial Coverage
 
-The scheduled `nightly-serial` job runs the complete `tests/` suite in one pytest process. Pull requests use the four file shards for lower wall-clock time; nightly preserves a simple reference run that can expose shared-state or order sensitivity across files.
+The scheduled `nightly-serial` job runs the complete source-level `tests/` suite in one pytest process, excluding only the artifact-dependent `packaged_web_dist` contract owned by the package job. Pull requests use the four file shards for lower wall-clock time; nightly preserves a simple reference run that can expose shared-state or order sensitivity across files.

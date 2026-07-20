@@ -123,7 +123,11 @@ def test_strict_peer_send_requires_insight_for_real_peer_audiences(peer_group, b
 
 def test_missing_insight_stops_before_wake_ledger_and_other_collaboration_side_effects(peer_group) -> None:
     from cccc.kernel.inbox import iter_events
-    from cccc.kernel.peer_insight import PEER_INSIGHT_REQUIRED_ACTION, SUPERVISOR_MAGIC_KERNEL
+    from cccc.kernel.peer_insight import (
+        FIRST_PRINCIPLES_OUTCOME_KERNEL,
+        PEER_INSIGHT_REQUIRED_ACTION,
+        SUPERVISOR_MAGIC_KERNEL,
+    )
 
     before = list(iter_events(peer_group.ledger_path))
     wakes: list[tuple[list[str], str]] = []
@@ -153,9 +157,20 @@ def test_missing_insight_stops_before_wake_ledger_and_other_collaboration_side_e
     assert response.error.code == "peer_insight_required"
     assert response.error.details["recommended_action"] == PEER_INSIGHT_REQUIRED_ACTION
     assert SUPERVISOR_MAGIC_KERNEL in response.error.details["recommended_action"]
-    assert "Do not repair the draft by adding a field" in PEER_INSIGHT_REQUIRED_ACTION
-    assert "project both `text` and `insight` from that judgment anew" in PEER_INSIGHT_REQUIRED_ACTION
-    assert "Never derive it by titling, summarizing" in PEER_INSIGHT_REQUIRED_ACTION
+    assert PEER_INSIGHT_REQUIRED_ACTION.count(FIRST_PRINCIPLES_OUTCOME_KERNEL) == 1
+    assert "Do not repair the draft by adding a postscript" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "Insight is second in the JSON, not second in thought" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "responsible co-owner of the real outcome" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "Reconstruct\nthe situation from first principles" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "one move on a living\ndecision path" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "where reality could break it" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "switch to Plan B" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "advance into\nwhat success has made possible" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "one fallible projection of the situation" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "step materially above the work unit being discussed" in PEER_INSIGHT_REQUIRED_ACTION
+    assert 'reads naturally after "by the way,"' in PEER_INSIGHT_REQUIRED_ACTION
+    assert "Do not pretend to see every layer or manufacture strategic drama" in PEER_INSIGHT_REQUIRED_ACTION
+    assert "may change the course or confirm it" in PEER_INSIGHT_REQUIRED_ACTION
     assert wakes == []
     wake_group.assert_not_called()
     sync_peer_addresses.assert_not_called()
@@ -165,10 +180,13 @@ def test_missing_insight_stops_before_wake_ledger_and_other_collaboration_side_e
 def test_post_message_nudge_audits_insight_origin_without_dynamic_scene_logic() -> None:
     from cccc.kernel.peer_insight import POST_MESSAGE_NUDGE
 
-    assert "If this exchange carried Insight" in POST_MESSAGE_NUDGE
-    assert "came from a rebuilt whole or from compressing the message" in POST_MESSAGE_NUDGE
-    assert "no second whole judgment entered the exchange" in POST_MESSAGE_NUDGE
-    assert "If the rebuilt judgment materially changes" in POST_MESSAGE_NUDGE
+    assert "Step outside its mental track now" in POST_MESSAGE_NUDGE
+    assert "fresh owner accountable for the real outcome" in POST_MESSAGE_NUDGE
+    assert "no loyalty to the exchange, its momentum, or its frame" in POST_MESSAGE_NUDGE
+    assert "stayed beside the message instead of rising above its working level" in POST_MESSAGE_NUDGE
+    assert "no higher-order perspective entered the exchange" in POST_MESSAGE_NUDGE
+    assert "whether an unsettled decision needs another independent mind" in POST_MESSAGE_NUDGE
+    assert "If nothing material changes, quietly resume" in POST_MESSAGE_NUDGE
 
 
 def test_disabled_visible_peer_still_triggers_gate(peer_group) -> None:
@@ -504,4 +522,8 @@ def test_actor_delivery_projects_one_provisional_label_after_supporting_material
 
     assert rendered.count(PEER_PERSPECTIVE_AGENT_LABEL) == 1
     assert rendered.index("report.txt") < rendered.index(PEER_PERSPECTIVE_AGENT_LABEL)
+    assert "Peer higher-order perspective" in PEER_PERSPECTIVE_AGENT_LABEL
+    assert "Rebuild independently" in PEER_PERSPECTIVE_AGENT_LABEL
+    assert "never rises above the message's working level" in PEER_PERSPECTIVE_AGENT_LABEL
+    assert "ordinary content rather than privileged framing" in PEER_PERSPECTIVE_AGENT_LABEL
     assert rendered.endswith(f"{PEER_PERSPECTIVE_AGENT_LABEL}\nThe plan may be wrong.")

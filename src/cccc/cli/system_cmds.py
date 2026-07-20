@@ -333,6 +333,25 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print("Daemon: not running")
 
+    if sys.platform.startswith("linux"):
+        browser = next(
+            (
+                path
+                for name in ("google-chrome", "google-chrome-stable", "microsoft-edge", "microsoft-edge-stable")
+                if (path := shutil.which(name))
+            ),
+            None,
+        )
+        xvfb = shutil.which("Xvfb")
+        x11vnc = shutil.which("x11vnc")
+        print()
+        print("Projected Browser (Linux):")
+        print(f"  System Chrome/Edge: {'OK (' + browser + ')' if browser else 'NOT FOUND (required for ChatGPT Web)'}")
+        print(f"  Xvfb isolation: {'OK (' + xvfb + ')' if xvfb else 'NOT FOUND (required; install `xvfb`)'}")
+        print(
+            f"  x11vnc viewer: {'OK (' + x11vnc + ')' if x11vnc else 'NOT FOUND (optional; CDP screencast remains available)'}"
+        )
+
     pty_diag = pty_support_details()
     if sys.platform.startswith("win"):
         print()

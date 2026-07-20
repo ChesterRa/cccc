@@ -49,6 +49,12 @@ cccc status
 
 Claude, Codex, Copilot, Cursor, Devin, Kiro, Kilo, Antigravity, Droid, Grok, Hermes, Kimi, OpenCode, Amp, Auggie, Web Model, and custom commands. Run `cccc runtime list` to inspect commands detected on this machine.
 
+## Why does an embedded browser open a physical Chrome window on Linux?
+
+Projected browsers require `Xvfb` to stay off the host desktop. Install `xvfb` (and optionally
+`x11vnc` for the VNC viewer), run `cccc doctor`, then use **Restart ChatGPT browser**. Current CCCC
+fails browser startup when Xvfb is missing instead of silently falling back to the host `DISPLAY`.
+
 ## What is the difference between foreman and peer?
 
 The first enabled actor is the default foreman. A foreman can coordinate group-level work. Peers manage their own work and communicate through the same ledger and MCP tools.

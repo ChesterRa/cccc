@@ -61,6 +61,8 @@ Each inbound attachment is limited to 10 MiB. Advertised oversize files are reje
 
 Weixin outbound messages send the agent's text first, followed by every attached file or image. Attachment titles are preserved so the SDK can select the correct Weixin media type; each outbound attachment uses the same 10 MiB limit and must resolve inside the group's blob storage.
 
+Feishu/Lark outbound messages use the same text-first ordering. Images are uploaded through the image API and sent as image messages; all other attachments are uploaded through the file API and sent as file messages. Each attachment is limited to 10 MiB and must resolve inside the group's blob storage.
+
 ## Security
 
 - One configuration belongs to one group.

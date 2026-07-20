@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { apiJson, isAuthRequiredErrorCode, onAuthRequired } from "./base";
+import {
+  apiJson,
+  isAuthRequiredErrorCode,
+  normalizePresentationBrowserSurfaceState,
+  onAuthRequired,
+} from "./base";
 
 describe("apiJson", () => {
   afterEach(() => {
@@ -71,5 +76,39 @@ describe("apiJson", () => {
     expect(resp.ok).toBe(false);
     expect(resp.ok ? "" : resp.error.code).toBe("HTTP_ERROR");
     expect(resp.ok ? "" : resp.error.message).toContain("504 Gateway Time-out");
+  });
+});
+
+describe("normalizePresentationBrowserSurfaceState", () => {
+  it("preserves projected display ownership for the browser status UI", () => {
+    const state = normalizePresentationBrowserSurfaceState({
+      active: true,
+      state: "ready",
+      metadata: { display: ":123", display_owned: true, display_owner: "cccc_xvfb", adopted: true },
+    });
+
+    expect(state.metadata).toEqual({
+      display: ":123",
+      display_owned: true,
+      display_owner: "cccc_xvfb",
+      adopted: true,
+    });
+  });
+});
+
+describe("normalizePresentationBrowserSurfaceState", () => {
+  it("preserves projected display ownership for the browser status UI", () => {
+    const state = normalizePresentationBrowserSurfaceState({
+      active: true,
+      state: "ready",
+      metadata: { display: ":123", display_owned: true, display_owner: "cccc_xvfb", adopted: true },
+    });
+
+    expect(state.metadata).toEqual({
+      display: ":123",
+      display_owned: true,
+      display_owner: "cccc_xvfb",
+      adopted: true,
+    });
   });
 });

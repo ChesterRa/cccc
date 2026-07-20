@@ -2185,7 +2185,7 @@ Result:
 ```
 
 Notes:
-- Supported for `claude` and `codex` actors.
+- Supported for `claude`, `codex`, and Grok PTY actors.
 - Stops the current actor runtime if present, clears CCCC's saved runtime session metadata for that actor, then starts the actor with the same runtime settings.
 - Does not delete provider-side conversation/session history.
 

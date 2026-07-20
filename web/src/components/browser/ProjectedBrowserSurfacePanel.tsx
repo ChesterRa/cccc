@@ -77,6 +77,8 @@ type ProjectedBrowserSurfacePanelProps = {
     viewerReasonDisabled: string;
     viewerReasonUnsupportedPlatform: string;
     viewerReasonStartupTimeout: string;
+    viewerIsolationXvfb: string;
+    viewerTooltipIsolationXvfb: string;
   }>;
 };
 
@@ -132,6 +134,7 @@ function normalizeState(
     last_frame_seq: Number.isFinite(Number(raw?.last_frame_seq)) ? Number(raw?.last_frame_seq) : 0,
     last_frame_at: String(raw?.last_frame_at || "").trim(),
     controller_attached: !!raw?.controller_attached,
+    metadata: raw?.metadata || null,
     viewer: raw?.viewer || null,
   };
 }
@@ -280,6 +283,15 @@ export function ProjectedBrowserSurfacePanel({
     viewerReasonStartupTimeout:
       labels?.viewerReasonStartupTimeout ||
       t("presentationBrowserViewerReasonStartupTimeout", { defaultValue: "VNC startup timeout" }),
+    viewerIsolationXvfb:
+      labels?.viewerIsolationXvfb ||
+      t("presentationBrowserViewerIsolationXvfb", { defaultValue: "Xvfb isolated" }),
+    viewerTooltipIsolationXvfb:
+      labels?.viewerTooltipIsolationXvfb ||
+      t("presentationBrowserViewerTooltipIsolationXvfb", {
+        defaultValue:
+          "The browser is running on a CCCC-owned virtual display, not the host desktop.",
+      }),
   };
 
   const [runNonce, setRunNonce] = useState(0);
@@ -576,16 +588,25 @@ export function ProjectedBrowserSurfacePanel({
     String(sessionState.viewer?.kind || "")
       .trim()
       .toLowerCase() === "vnc" && !vncFailed;
-  const viewerKindLabel = vncAvailable ? texts.viewerVnc : texts.viewerFallback;
+  const displayIsolated =
+    !!sessionState.metadata?.display_owned &&
+    String(sessionState.metadata?.display_owner || "").trim() === "cccc_xvfb";
+  const viewerKind = vncAvailable ? texts.viewerVnc : texts.viewerFallback;
+  const viewerKindLabel = displayIsolated
+    ? `${viewerKind} · ${texts.viewerIsolationXvfb}`
+    : viewerKind;
   const vncFallbackReason = String(sessionState.viewer?.vnc?.error || "").trim();
   const vncFallbackReasonLabel = vncAvailable
     ? ""
     : formatVncFallbackReason(vncFallbackReason, texts);
-  const viewerTooltip = vncAvailable
+  const viewerTransportTooltip = vncAvailable
     ? texts.viewerTooltipVnc
     : vncFallbackReason
       ? `${texts.viewerTooltipScreencast} ${texts.viewerFallbackReason}: ${vncFallbackReason}`
       : texts.viewerTooltipScreencast;
+  const viewerTooltip = displayIsolated
+    ? `${viewerTransportTooltip} ${texts.viewerTooltipIsolationXvfb}`
+    : viewerTransportTooltip;
 
   useEffect(() => {
     if (!vncAvailable || sessionState.state !== "ready") {

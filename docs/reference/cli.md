@@ -26,6 +26,10 @@ cccc daemon run
 
 `run` stays in the foreground. Unix uses a socket under Rust Home; Windows and `CCCC_DAEMON_TRANSPORT=tcp` use loopback TCP.
 
+On Linux, the report includes projected-browser readiness: system Chrome/Edge, required `Xvfb`
+isolation, and the optional `x11vnc` VNC viewer. A missing `x11vnc` does not prevent browser
+isolation; CCCC falls back to its CDP screencast viewer.
+
 ## Groups
 
 ```bash

@@ -26,6 +26,10 @@ cccc doctor
 
 The release binaries do not require Python, Node.js, or Rust. `cccc home` should print `~/.cccc` unless `CCCC_HOME` is set. The installer never modifies that directory.
 
+The ChatGPT Web Model also needs a system Google Chrome or Microsoft Edge browser. On native Linux,
+install `Xvfb` to keep projected browser windows off the host desktop. `x11vnc` is optional because
+the embedded viewer can fall back to CDP screencasting. Run `cccc doctor` to verify these dependencies.
+
 ### Inspect Or Pin The Installer
 
 To inspect the Unix installer before running it:

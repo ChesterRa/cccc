@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from uuid import UUID
 
 
 class TestActorLifecycleOps(unittest.TestCase):
@@ -651,6 +652,100 @@ class TestActorLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_new_session_starts_new_managed_grok_session(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "actor-new-session-grok", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call(
+                "attach", {"group_id": group_id, "path": ".", "by": "user"}
+            )
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "grok",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            from cccc.daemon.runtime_session_ops import (
+                read_runtime_session,
+                record_pty_runtime_session,
+            )
+            from cccc.kernel.group import load_group
+
+            old_session_id = "019d6d3e-b066-7dc0-bd42-ed621a7ddccc"
+            new_session_id = "a3df810a-6a19-48e8-b75b-772d3ee65721"
+            record_pty_runtime_session(
+                group_id=group_id,
+                actor_id="peer1",
+                runtime="grok",
+                cwd=Path("."),
+                command=["grok", "--always-approve"],
+                provider_session_id=old_session_id,
+                captured_from="test",
+            )
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = False
+            group.save()
+
+            class FakePtySession:
+                pid = 4323
+
+            calls: list[list[str]] = []
+
+            def _start_grok(**kwargs: object) -> FakePtySession:
+                calls.append(list(kwargs.get("command") or []))
+                return FakePtySession()
+
+            os.environ.pop("CCCC_RUNTIME_RESUME", None)
+            with (
+                patch(
+                    "cccc.daemon.server.runtime_ensure_mcp_installed", return_value=True
+                ),
+                patch(
+                    "cccc.daemon.actors.actor_runtime_ops.runtime_start_preflight_error",
+                    return_value="",
+                ),
+                patch(
+                    "cccc.daemon.runtime_session_ops.uuid.uuid4",
+                    return_value=UUID(new_session_id),
+                ),
+                patch(
+                    "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
+                    side_effect=_start_grok,
+                ),
+            ):
+                new_session, _ = self._call(
+                    "actor_new_session",
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+                )
+
+            self.assertTrue(new_session.ok, getattr(new_session, "error", None))
+            self.assertEqual(
+                calls, [["grok", "--session-id", new_session_id, "--always-approve"]]
+            )
+            stored = read_runtime_session(group_id, "peer1")
+            self.assertEqual(stored.get("provider_session_id"), new_session_id)
+            self.assertEqual(stored.get("captured_from"), "grok_generated_session_id")
+        finally:
+            cleanup()
+
     def test_actor_new_session_rejects_unsupported_runtime_without_clearing_session(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -668,7 +763,7 @@ class TestActorLifecycleOps(unittest.TestCase):
                     "group_id": group_id,
                     "actor_id": "peer1",
                     "title": "Peer 1",
-                    "runtime": "grok",
+                    "runtime": "opencode",
                     "runner": "pty",
                     "by": "user",
                 },
@@ -680,10 +775,10 @@ class TestActorLifecycleOps(unittest.TestCase):
             record_pty_runtime_session(
                 group_id=group_id,
                 actor_id="peer1",
-                runtime="grok",
+                runtime="opencode",
                 cwd=Path("."),
-                command=["grok"],
-                provider_session_id="grok-session-1234",
+                command=["opencode"],
+                provider_session_id="opencode-session-1234",
                 captured_from="test",
             )
 
@@ -694,7 +789,7 @@ class TestActorLifecycleOps(unittest.TestCase):
 
             self.assertFalse(new_session.ok)
             self.assertEqual(getattr(new_session.error, "code", ""), "unsupported_runtime")
-            self.assertEqual(read_runtime_session(group_id, "peer1").get("provider_session_id"), "grok-session-1234")
+            self.assertEqual(read_runtime_session(group_id, "peer1").get("provider_session_id"), "opencode-session-1234")
         finally:
             cleanup()
 

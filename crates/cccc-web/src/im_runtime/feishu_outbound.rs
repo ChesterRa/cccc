@@ -277,7 +277,13 @@ impl FeishuSender for MessageSender<ReqwestOpenApiTransport> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{Router, body::Bytes, extract::State, http::HeaderMap, routing::post};
+    use axum::{
+        Router,
+        body::Bytes,
+        extract::State,
+        http::{HeaderMap, Uri},
+        routing::post,
+    };
     use cccc_core::GroupStore;
     use std::sync::{Arc, Mutex};
 
@@ -369,18 +375,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn uploads_mime_typed_image_and_sends_it_to_each_target() {
-        type UploadCapture = Vec<(String, String, Vec<u8>)>;
+    async fn uploads_image_and_file_and_sends_them_to_each_target() {
+        type UploadCapture = Vec<(String, String, String, Vec<u8>)>;
 
         #[derive(Clone, Default)]
         struct Capture(Arc<Mutex<UploadCapture>>);
 
         async fn upload(
             State(capture): State<Capture>,
+            uri: Uri,
             headers: HeaderMap,
             body: Bytes,
         ) -> axum::Json<Value> {
             capture.0.lock().expect("capture").push((
+                uri.path().into(),
                 headers
                     .get("authorization")
                     .and_then(|value| value.to_str().ok())
@@ -393,7 +401,12 @@ mod tests {
                     .into(),
                 body.to_vec(),
             ));
-            axum::Json(json!({"code":0,"msg":"ok","data":{"image_key":"img_1"}}))
+            let data = if uri.path().ends_with("/images") {
+                json!({"image_key":"img_1"})
+            } else {
+                json!({"file_key":"file_1"})
+            };
+            axum::Json(json!({"code":0,"msg":"ok","data":data}))
         }
 
         let capture = Capture::default();
@@ -403,6 +416,7 @@ mod tests {
         let base = format!("http://{}", listener.local_addr().expect("address"));
         let app = Router::new()
             .route("/open-apis/im/v1/images", post(upload))
+            .route("/open-apis/im/v1/files", post(upload))
             .with_state(capture.clone());
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.expect("server");
@@ -412,9 +426,10 @@ mod tests {
         let event: Event = serde_json::from_value(json!({
             "v":1,"id":"event","ts":"now","kind":"chat.message",
             "group_id":"group","scope_key":"","by":"assistant",
-            "data":{"text":"result","attachments":[{
-                "path":path,"title":"photo.png","kind":"file","mime_type":"image/png"
-            }]}
+            "data":{"text":"result","attachments":[
+                {"path":path,"title":"photo.png","kind":"file","mime_type":"image/png"},
+                {"path":path,"title":"report.pdf","kind":"file","mime_type":"application/pdf"}
+            ]}
         }))
         .expect("event");
 
@@ -423,11 +438,21 @@ mod tests {
             .await;
 
         let uploads = capture.0.lock().expect("capture");
-        assert_eq!(uploads.len(), 1);
-        assert_eq!(uploads[0].0, "Bearer tenant-token");
-        assert!(uploads[0].1.starts_with("multipart/form-data; boundary="));
-        assert!(String::from_utf8_lossy(&uploads[0].2).contains("name=\"image_type\""));
-        assert!(String::from_utf8_lossy(&uploads[0].2).contains("png-bytes"));
+        assert_eq!(uploads.len(), 2);
+        assert_eq!(uploads[0].0, "/open-apis/im/v1/images");
+        assert_eq!(uploads[0].1, "Bearer tenant-token");
+        assert!(uploads[0].2.starts_with("multipart/form-data; boundary="));
+        assert!(String::from_utf8_lossy(&uploads[0].3).contains("name=\"image_type\""));
+        assert!(String::from_utf8_lossy(&uploads[0].3).contains("png-bytes"));
+        assert_eq!(uploads[1].0, "/open-apis/im/v1/files");
+        assert_eq!(uploads[1].1, "Bearer tenant-token");
+        assert!(uploads[1].2.starts_with("multipart/form-data; boundary="));
+        let file_body = String::from_utf8_lossy(&uploads[1].3);
+        assert!(file_body.contains("name=\"file_type\""));
+        assert!(file_body.contains("stream"));
+        assert!(file_body.contains("name=\"file_name\""));
+        assert!(file_body.contains("report.pdf"));
+        assert!(file_body.contains("png-bytes"));
         assert_eq!(
             *sender.calls.lock().expect("calls"),
             vec![
@@ -435,22 +460,10 @@ mod tests {
                 "text:chat-2:assistant\n\nresult",
                 "attachment:chat-1:photo.png:img_1:true",
                 "attachment:chat-2:photo.png:img_1:true",
+                "attachment:chat-1:report.pdf:file_1:false",
+                "attachment:chat-2:report.pdf:file_1:false",
             ]
         );
         server.abort();
-    }
-
-    #[tokio::test]
-    async fn prepares_regular_file_for_file_upload() {
-        let (_temp, outbound, path) = setup(reqwest::Client::new(), "http://localhost".into());
-        let prepared = outbound
-            .prepare(&json!({
-                "path":path,"title":"report.pdf","kind":"file","mime_type":"application/pdf"
-            }))
-            .await
-            .expect("prepared");
-        assert_eq!(prepared.title, "report.pdf");
-        assert_eq!(prepared.mime, "application/pdf");
-        assert!(!prepared.is_image);
     }
 }

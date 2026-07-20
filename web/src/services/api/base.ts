@@ -693,6 +693,7 @@ export function normalizePresentationBrowserSurfaceState(
 ): PresentationBrowserSurfaceState {
   const record = asRecord(value) ?? {};
   const errorRecord = asRecord(record.error);
+  const metadataRecord = asRecord(record.metadata);
   const viewerRecord = asRecord(record.viewer);
   const vncRecord = asRecord(viewerRecord?.vnc);
   return {
@@ -713,6 +714,14 @@ export function normalizePresentationBrowserSurfaceState(
       : 0,
     last_frame_at: asOptionalString(record.last_frame_at),
     controller_attached: !!record.controller_attached,
+    metadata: metadataRecord
+      ? {
+          display: asOptionalString(metadataRecord.display),
+          display_owned: !!metadataRecord.display_owned,
+          display_owner: asOptionalString(metadataRecord.display_owner),
+          adopted: !!metadataRecord.adopted,
+        }
+      : null,
     viewer: viewerRecord
       ? {
           kind: asOptionalString(viewerRecord.kind),
