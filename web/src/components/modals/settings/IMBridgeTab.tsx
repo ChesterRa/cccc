@@ -19,6 +19,7 @@ import {
 } from "./types";
 import { copyTextToClipboard } from "../../../utils/copy";
 import { canStartIMBridge } from "./imBridgeConfig";
+import { revokeIMChatAuthorization } from "./imBridgeRevoke";
 
 const IM_PENDING_AUTO_REFRESH_MS = 12000;
 
@@ -365,16 +366,12 @@ export function IMBridgeTab({
     setAuthError("");
     setAuthInfo("");
     try {
-      const resp = await api.revokeIMChat(groupId, chatId, threadId);
-      if (!resp.ok || resp.result?.revoked !== true) {
-        setAuthError(
-          resp.error?.message || t("imBridge.revokeError", "Failed to revoke chat authorization."),
-        );
-        return;
-      }
-      await loadIMAuthState();
-    } catch {
-      setAuthError(t("imBridge.revokeError", "Failed to revoke chat authorization."));
+      const error = await revokeIMChatAuthorization({
+        request: () => api.revokeIMChat(groupId, chatId, threadId),
+        refresh: loadIMAuthState,
+        fallbackError: t("imBridge.revokeError", "Failed to revoke chat authorization."),
+      });
+      if (error) setAuthError(error);
     } finally {
       setRevoking(null);
     }
