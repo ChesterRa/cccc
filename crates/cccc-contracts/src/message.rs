@@ -39,6 +39,8 @@ pub struct ChatMessageData {
     pub text: String,
     #[serde(default = "plain_format")]
     pub format: String,
+    #[serde(default)]
+    pub insight: Option<String>,
     #[serde(default = "normal_priority")]
     pub priority: String,
     #[serde(default)]
@@ -94,4 +96,22 @@ fn normal_priority() -> String {
 }
 fn snapshot_mode() -> String {
     "snapshot".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ChatMessageData;
+
+    #[test]
+    fn chat_message_contract_carries_peer_insight() {
+        let message: ChatMessageData = serde_json::from_value(serde_json::json!({
+            "text":"work",
+            "insight":"reconsider the dependency boundary"
+        }))
+        .expect("message contract");
+        assert_eq!(
+            message.insight.as_deref(),
+            Some("reconsider the dependency boundary")
+        );
+    }
 }

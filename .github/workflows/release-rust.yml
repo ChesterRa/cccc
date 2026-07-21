@@ -40,6 +40,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+      - name: Check Python and Rust version parity
+        shell: bash
+        run: scripts/check_version_parity.sh
       - name: Verify tag version
         if: github.event_name == 'push'
         shell: bash

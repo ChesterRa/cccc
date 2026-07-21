@@ -5,6 +5,9 @@ import {
   isAuthRequiredErrorCode,
   normalizePresentationBrowserSurfaceState,
   onAuthRequired,
+  refreshAuthTokenInUrl,
+  setAuthToken,
+  withAuthToken,
 } from "./base";
 
 describe("apiJson", () => {
@@ -93,6 +96,37 @@ describe("normalizePresentationBrowserSurfaceState", () => {
       display_owner: "cccc_xvfb",
       adopted: true,
     });
+  });
+});
+
+describe("authenticated URLs", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("replaces an expired token instead of appending a duplicate", () => {
+    vi.stubGlobal("window", {
+      location: { origin: "http://localhost:5555", href: "http://localhost:5555/ui/", search: "" },
+    });
+    vi.stubGlobal("sessionStorage", { setItem: vi.fn() });
+    setAuthToken("current-token");
+
+    expect(withAuthToken("http://172.19.79.11:8848/ui/?token=expired&view=1")).toBe(
+      "http://172.19.79.11:8848/ui/?token=current-token&view=1",
+    );
+  });
+
+  it("only refreshes arbitrary page URLs that already carry a CCCC token", () => {
+    vi.stubGlobal("window", {
+      location: { origin: "http://localhost:5555", href: "http://localhost:5555/ui/", search: "" },
+    });
+    vi.stubGlobal("sessionStorage", { setItem: vi.fn() });
+    setAuthToken("current-token");
+
+    expect(refreshAuthTokenInUrl("https://example.com/page")).toBe("https://example.com/page");
+    expect(refreshAuthTokenInUrl("http://127.0.0.1:8848/ui/?token=expired")).toBe(
+      "http://127.0.0.1:8848/ui/?token=current-token",
+    );
   });
 });
 

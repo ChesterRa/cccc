@@ -25,6 +25,7 @@ pub mod ledger_archive;
 mod ledger_index;
 pub mod memory;
 pub mod nomcp;
+pub mod peer_insight;
 pub mod permissions;
 pub mod presentation;
 pub mod profiles;

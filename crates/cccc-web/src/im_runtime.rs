@@ -19,6 +19,7 @@ mod feishu;
 mod feishu_inbound;
 mod feishu_outbound;
 mod inbound_attachments;
+mod processing_reactions;
 mod slack;
 mod slack_inbound;
 mod slack_outbound;

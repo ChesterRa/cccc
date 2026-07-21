@@ -1,5 +1,6 @@
 use super::feishu_inbound::materialize_resources;
 use super::feishu_outbound::FeishuOutbound;
+use super::processing_reactions::FeishuReactions;
 use super::{
     InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, resolve_credential,
     spawn_outbound, string,
@@ -39,6 +40,7 @@ pub(super) async fn start(
         .await
         .map_err(|error| format!("Feishu credential verification failed: {error}"))?;
     let sender = MessageSender::new(openapi.clone());
+    let reactions = FeishuReactions::new(reqwest::Client::new(), openapi.clone(), base_url.clone());
     let outbound_sender = FeishuOutbound::new(
         home.clone(),
         group_id,
@@ -60,6 +62,7 @@ pub(super) async fn start(
     let inbound_group = group_id.to_owned();
     let inbound_sender = sender.clone();
     let inbound_http = reqwest::Client::new();
+    let inbound_reactions = reactions.clone();
     let connection = tokio::spawn(async move {
         let result = event_loop
             .run(move |event| {
@@ -70,6 +73,7 @@ pub(super) async fn start(
                 let openapi = inbound_openapi.clone();
                 let http = inbound_http.clone();
                 let base_url = base_url.clone();
+                let reactions = inbound_reactions.clone();
                 async move {
                     let ChannelEvent::Message(message) = event.event else {
                         return Ok(WebSocketEventAck::ok());
@@ -108,6 +112,7 @@ pub(super) async fn start(
                     if text.is_empty() && attachments.is_empty() {
                         return Ok(WebSocketEventAck::ok());
                     }
+                    let message_id = message.message_id.clone();
                     if let Err(error) = dispatch_inbound_with(
                         &daemon,
                         &group_id,
@@ -116,13 +121,15 @@ pub(super) async fn start(
                         &message.sender.open_id,
                         text,
                         InboundMetadata {
-                            message_id: message.message_id,
+                            message_id: message_id.clone(),
                             attachments,
                         },
                     )
                     .await
                     {
                         tracing::warn!(%error, "failed to dispatch Feishu IM message");
+                    } else {
+                        reactions.start(&message.chat_id, &message_id).await;
                     }
                     Ok(WebSocketEventAck::ok())
                 }
@@ -132,13 +139,20 @@ pub(super) async fn start(
             tracing::error!(%error, "Feishu IM event loop stopped");
         }
     });
+    let outbound_reactions = reactions;
     let outbound = spawn_outbound(
         home,
         group_id.to_owned(),
         ledger_events,
         outbound_sender,
-        |sender, targets, event| async move {
-            sender.send(&targets, &event).await;
+        move |sender, targets, event| {
+            let reactions = outbound_reactions.clone();
+            async move {
+                sender.send(&targets, &event).await;
+                for chat_id in targets {
+                    reactions.complete(&chat_id).await;
+                }
+            }
         },
     );
     Ok(vec![connection, outbound])

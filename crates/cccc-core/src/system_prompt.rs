@@ -70,6 +70,14 @@ pub fn render(group: &GroupDoc, actor: &Actor) -> String {
         "- Terminal output is not delivered.".into(),
         "- Once scope is approved, finish it end-to-end.".into(),
     ]);
+    let has_visible_peer = actor.internal_kind.is_none()
+        && crate::actors::visible(group).any(|item| item.enabled && item.id != actor.id);
+    if has_visible_peer {
+        lines.push(String::new());
+        lines.push(crate::peer_insight::TEAM_MODE_SEED.into());
+        lines.push(String::new());
+        lines.push(crate::peer_insight::PEER_INSIGHT_RUNTIME_HELP.clone());
+    }
     lines.join("\n") + "\n"
 }
 
@@ -99,5 +107,18 @@ mod tests {
         assert!(prompt.contains("You are peer1"));
         assert!(prompt.contains("No fabrication"));
         assert!(prompt.contains(&group.group_id));
+    }
+
+    #[test]
+    fn peer_insight_help_requires_another_visible_actor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let mut group = store.create("test", "migration").expect("group");
+        let actor = Actor::new("foreman");
+        group.actors.push(actor.clone());
+        assert!(!render(&group, &actor).contains("Peer Insight Contract"));
+        group.actors.push(Actor::new("peer1"));
+        assert!(render(&group, &actor).contains("Peer Insight Contract"));
     }
 }

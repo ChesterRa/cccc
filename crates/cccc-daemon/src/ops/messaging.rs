@@ -57,22 +57,16 @@ fn send_cross_group_remote_record(home: &HomeLayout, request: &DaemonRequest) ->
             "text or attachments is required",
         ));
     }
-    let event = append(
-        home,
-        &source.group_id,
-        "chat.message",
-        &by,
-        request
-            .args
-            .iter()
-            .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by"))
-            .map(|(key, value)| (key.clone(), value.clone()))
-            .chain([
-                ("dst_group_id".into(), json!(destination_id)),
-                ("transport".into(), json!("group_bridge_session")),
-            ])
-            .collect(),
-    )?;
+    let mut data: Map<String, Value> = request
+        .args
+        .iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by" | "dst_group_id"))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    super::messaging_recipients::normalize_remote_chat_data(&mut data)?;
+    data.insert("dst_group_id".into(), json!(destination_id));
+    data.insert("transport".into(), json!("group_bridge_session"));
+    let event = append(home, &source.group_id, "chat.message", &by, data)?;
     object(json!({"source_event":event,"transport":"group_bridge_session"}))
 }
 
@@ -99,30 +93,16 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "text or attachments is required",
         ));
     }
-    let source_event = if let Some(existing) =
-        super::message_idempotency::find(home, &source.group_id, "chat.message", &by, &request.args)
-    {
-        existing
-    } else {
-        append(
-            home,
-            &source.group_id,
-            "chat.message",
-            &by,
-            request
-                .args
-                .iter()
-                .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by"))
-                .map(|(key, value)| (key.clone(), value.clone()))
-                .chain([
-                    ("to_group_id".into(), json!(destination.group_id)),
-                    ("transport".into(), json!("local")),
-                ])
-                .collect(),
-        )?
-    };
-    if let Some(event) =
-        super::message_idempotency::find_relay(home, &destination.group_id, &source_event.id)
+    let existing_source = super::message_idempotency::find(
+        home,
+        &source.group_id,
+        "chat.message",
+        &by,
+        &request.args,
+    );
+    if let Some(source_event) = existing_source.as_ref()
+        && let Some(event) =
+            super::message_idempotency::find_relay(home, &destination.group_id, &source_event.id)
     {
         return object(json!({
             "source_event":source_event,
@@ -131,14 +111,46 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "duplicate":true
         }));
     }
+
+    let destination_by = format!("{}::{}", source.group_id, by);
+    let mut delivery_data: Map<String, Value> = existing_source.as_ref().map_or_else(
+        || {
+            request
+                .args
+                .iter()
+                .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by" | "dst_group_id"))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect()
+        },
+        |event| event.data.clone(),
+    );
+    if existing_source.is_some() {
+        // The accepted source event is authoritative on a relay retry.
+        delivery_data.remove("require_peer_insight");
+    }
+    delivery_data.remove("transport");
+    delivery_data.remove("to_group_id");
+    super::messaging_recipients::normalize_chat_data(
+        &destination,
+        &destination_by,
+        &mut delivery_data,
+    )?;
+
+    let source_event = if let Some(existing) = existing_source {
+        existing
+    } else {
+        let mut source_data = delivery_data.clone();
+        source_data.insert("to_group_id".into(), json!(destination.group_id));
+        source_data.insert("transport".into(), json!("local"));
+        append(home, &source.group_id, "chat.message", &by, source_data)?
+    };
+
     let mut forwarded = request.clone();
+    forwarded.args = delivery_data;
     forwarded
         .args
         .insert("group_id".into(), json!(destination.group_id));
-    forwarded.args.remove("dst_group_id");
-    forwarded
-        .args
-        .insert("by".into(), json!(format!("{}::{}", source.group_id, by)));
+    forwarded.args.insert("by".into(), json!(destination_by));
     forwarded
         .args
         .insert("src_group_id".into(), json!(source.group_id));

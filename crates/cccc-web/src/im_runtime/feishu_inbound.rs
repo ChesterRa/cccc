@@ -62,7 +62,10 @@ fn resource_request(
         ResourceType::Image => {
             let key = required(resource.image_key.as_deref(), "image_key")?;
             (
-                format!("/open-apis/im/v1/images/{key}"),
+                format!(
+                    "/open-apis/im/v1/messages/{}/resources/{key}",
+                    resource.message_id
+                ),
                 AttachmentSpec::new("image", "image.png", "image/png").with_source_id(key),
             )
         }
@@ -109,9 +112,12 @@ fn resource_request(
     };
     let mut url = reqwest::Url::parse(base_url).map_err(|error| error.to_string())?;
     url.set_path(&path);
-    if !matches!(resource.resource_type, ResourceType::Image) {
-        url.query_pairs_mut().append_pair("type", "file");
-    }
+    let resource_type = if matches!(resource.resource_type, ResourceType::Image) {
+        "image"
+    } else {
+        "file"
+    };
+    url.query_pairs_mut().append_pair("type", resource_type);
     Ok((url, spec))
 }
 
@@ -158,7 +164,7 @@ mod tests {
             resource_request("https://open.larksuite.com", &resource).expect("request");
         assert_eq!(
             url.as_str(),
-            "https://open.larksuite.com/open-apis/im/v1/images/img_1"
+            "https://open.larksuite.com/open-apis/im/v1/messages/om_1/resources/img_1?type=image"
         );
         assert_eq!(spec.kind, "image");
     }

@@ -26,9 +26,10 @@ cccc daemon run
 
 `run` stays in the foreground. Unix uses a socket under Rust Home; Windows and `CCCC_DAEMON_TRANSPORT=tcp` use loopback TCP.
 
-On Linux, the report includes projected-browser readiness: system Chrome/Edge, required `Xvfb`
-isolation, and the optional `x11vnc` VNC viewer. A missing `x11vnc` does not prevent browser
-isolation; CCCC falls back to its CDP screencast viewer.
+On Linux, the Python runtime report includes projected-browser readiness for its headed browser:
+system Chrome/Edge, required `Xvfb` isolation, and optional `x11vnc`. The Rust runtime uses a
+headless Chromium surface instead; its report identifies the discovered browser and explicitly
+reports `xvfb_required=false` because it never attaches that surface to the host desktop.
 
 ## Groups
 

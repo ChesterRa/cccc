@@ -1,3 +1,4 @@
+use super::processing_reactions::TelegramReactions;
 use super::telegram_inbound::{has_attachments, materialize_attachments};
 use super::{
     InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, outbound_text,
@@ -23,16 +24,19 @@ pub(super) async fn start(
     bot.get_me()
         .await
         .map_err(|error| format!("Telegram credential verification failed: {error}"))?;
+    let reactions = TelegramReactions::new(bot.clone());
 
     let inbound_bot = bot.clone();
     let inbound_home = home.clone();
     let inbound_client = client.clone();
     let inbound_group = group_id.to_owned();
+    let inbound_reactions = reactions.clone();
     let inbound = tokio::spawn(async move {
         let handler = Update::filter_message().endpoint(move |bot: Bot, message: Message| {
             let home = inbound_home.clone();
             let client = inbound_client.clone();
             let group_id = inbound_group.clone();
+            let reactions = inbound_reactions.clone();
             async move {
                 let chat_id = message.chat.id.0.to_string();
                 let text = message
@@ -77,6 +81,8 @@ pub(super) async fn start(
                 .await
                 {
                     tracing::warn!(%error, "failed to dispatch Telegram IM message");
+                } else {
+                    reactions.start(message.chat.id, message.id).await;
                 }
                 respond(())
             }
@@ -87,21 +93,27 @@ pub(super) async fn start(
             .await;
     });
 
+    let outbound_reactions = reactions;
     let outbound = spawn_outbound(
         home,
         group_id.to_owned(),
         ledger_events,
         bot,
-        |bot, targets, event| async move {
-            let Some(body) = outbound_text(&event, false) else {
-                return;
-            };
-            for chat_id in targets {
-                let Ok(chat_id) = chat_id.parse::<i64>() else {
-                    continue;
+        move |bot, targets, event| {
+            let reactions = outbound_reactions.clone();
+            async move {
+                let Some(body) = outbound_text(&event, false) else {
+                    return;
                 };
-                if let Err(error) = bot.send_message(ChatId(chat_id), &body).await {
-                    tracing::warn!(%error, "failed to send Telegram IM message");
+                for chat_id in targets {
+                    let Ok(chat_id) = chat_id.parse::<i64>() else {
+                        continue;
+                    };
+                    if let Err(error) = bot.send_message(ChatId(chat_id), &body).await {
+                        tracing::warn!(%error, "failed to send Telegram IM message");
+                    } else {
+                        reactions.complete(&chat_id.to_string()).await;
+                    }
                 }
             }
         },

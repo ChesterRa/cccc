@@ -2,7 +2,7 @@
 
 ## Install A Release
 
-Starting with v0.5.0, the release installer installs or upgrades the single Rust `cccc` executable. Daemon, Web, and MCP modes are included in that executable.
+The release installer installs or upgrades the single Rust `cccc` executable. Daemon, Web, and MCP modes are included in that executable.
 
 macOS / Linux:
 
@@ -29,6 +29,8 @@ The release binaries do not require Python, Node.js, or Rust. `cccc home` should
 The ChatGPT Web Model also needs a system Google Chrome or Microsoft Edge browser. On native Linux,
 install `Xvfb` to keep projected browser windows off the host desktop. `x11vnc` is optional because
 the embedded viewer can fall back to CDP screencasting. Run `cccc doctor` to verify these dependencies.
+Rust release binaries use a headless Chromium surface instead, so their doctor report marks Xvfb as
+not required while still checking that a supported browser is discoverable.
 
 ### Inspect Or Pin The Installer
 
@@ -46,8 +48,8 @@ To install a fixed version, download the installer from that exact release. A re
 
 ```bash
 installer="$(mktemp)" &&
-  curl -fsSL https://github.com/ChesterRa/cccc/releases/download/v0.5.0/install.sh -o "$installer" &&
-  CCCC_VERSION=0.5.0 bash "$installer" &&
+  curl -fsSL https://github.com/ChesterRa/cccc/releases/download/v0.4.32/install.sh -o "$installer" &&
+  CCCC_VERSION=0.4.32 bash "$installer" &&
   rm -f "$installer"
 ```
 
@@ -56,8 +58,8 @@ PowerShell can use the same exact release asset:
 ```powershell
 & {
   $ErrorActionPreference = "Stop"
-  $env:CCCC_VERSION = "0.5.0"
-  irm https://github.com/ChesterRa/cccc/releases/download/v0.5.0/install.ps1 | iex
+  $env:CCCC_VERSION = "0.4.32"
+  irm https://github.com/ChesterRa/cccc/releases/download/v0.4.32/install.ps1 | iex
 }
 ```
 

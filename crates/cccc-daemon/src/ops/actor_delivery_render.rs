@@ -21,6 +21,7 @@ pub fn render(event: &Event) -> Option<String> {
         }
         body.push_str(&protocol.join("\n"));
     }
+    body = cccc_core::peer_insight::append_to_delivery(&body, event.data.get("insight"));
     if body.is_empty() {
         return None;
     }
@@ -222,6 +223,7 @@ mod tests {
         event.by = "user".into();
         event.data = json!({
             "to":["peer1"], "text":"inspect",
+            "insight":"The dependency boundary matters more than the local patch.",
             "priority":"attention", "reply_required":true,
             "refs":[{"kind":"task_ref","task_id":"task-1","title":"Fix send"}],
             "attachments":[{"path":"state/blobs/abc","title":"screen.png","bytes":42}]
@@ -235,5 +237,7 @@ mod tests {
         assert!(rendered.contains("task_ref: Fix send"));
         assert!(rendered.contains("cccc_file(action=\"read\", group_id=\"g_test\""));
         assert!(rendered.contains("screen.png (42 bytes) [state/blobs/abc]"));
+        assert!(rendered.contains(cccc_core::peer_insight::PEER_PERSPECTIVE_AGENT_LABEL));
+        assert!(rendered.contains("dependency boundary matters"));
     }
 }

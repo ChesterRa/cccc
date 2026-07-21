@@ -59,7 +59,7 @@ async fn main() -> Result<()> {
         Some(CommandKind::Daemon { action }) => daemon(action, home, &client).await,
         Some(CommandKind::Runtime { action }) => runtime(action),
         Some(CommandKind::Status) => status(&client).await,
-        Some(CommandKind::Doctor) => doctor(&home),
+        Some(CommandKind::Doctor) => commands::doctor::run(&home),
         Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
     }
 }
@@ -212,16 +212,6 @@ fn runtime(action: RuntimeAction) -> Result<()> {
             serde_json::to_string_pretty(&cccc_runtime::detect_runtimes())?
         ),
     }
-    Ok(())
-}
-
-fn doctor(home: &HomeLayout) -> Result<()> {
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "implementation":"rust","home":home.root(),"runtimes":cccc_runtime::detect_runtimes()
-        }))?
-    );
     Ok(())
 }
 

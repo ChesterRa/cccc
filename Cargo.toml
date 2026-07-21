@@ -16,7 +16,7 @@ members = [
 sherpa-onnx-sys = { path = "crates/third-party/sherpa-onnx-sys" }
 
 [workspace.package]
-version = "0.5.0"
+version = "0.4.32"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/ChesterRa/cccc"

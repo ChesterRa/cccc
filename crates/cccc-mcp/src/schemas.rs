@@ -220,6 +220,8 @@ fn messaging() -> Value {
         common(),
         json!({
             "text":{"type":"string"},"to":{"oneOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}]},
+            "dst_group_id":{"type":"string","description":"Optional destination group ID for cross-group delivery."},
+            "insight":{"type":"string","maxLength":cccc_core::peer_insight::INSIGHT_MAX_CHARS,"description":cccc_core::peer_insight::PEER_INSIGHT_FIELD_DESCRIPTION},
             "priority":{"type":"string","enum":["normal","attention"]},"reply_required":{"type":"boolean"},
             "suggested_user_message":{"type":"string","description":"Optional CCCC Web composer hint; not sent automatically and must not be used for approvals."}
         }),
@@ -251,4 +253,29 @@ fn merge(left: Value, right: Value) -> Value {
     let mut output = left.as_object().cloned().unwrap_or_default();
     output.extend(right.as_object().cloned().unwrap_or_default());
     Value::Object(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::input;
+
+    #[test]
+    fn messaging_schema_exposes_peer_insight_contract() {
+        for tool in [
+            "cccc_message_send",
+            "cccc_tracked_send",
+            "cccc_message_reply",
+            "cccc_file",
+        ] {
+            let schema = input(tool);
+            assert_eq!(
+                schema["properties"]["insight"]["maxLength"],
+                cccc_core::peer_insight::INSIGHT_MAX_CHARS
+            );
+            assert_eq!(
+                schema["properties"]["insight"]["description"],
+                cccc_core::peer_insight::PEER_INSIGHT_FIELD_DESCRIPTION
+            );
+        }
+    }
 }

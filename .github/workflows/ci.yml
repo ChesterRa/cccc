@@ -188,6 +188,8 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Check Python and Rust version parity
+        run: scripts/check_version_parity.sh
       - name: Test installer and release assets
         run: |
           scripts/tests/install_unix.sh

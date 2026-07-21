@@ -2,7 +2,7 @@
 
 ## How do I install CCCC?
 
-Starting with v0.5.0, use the release installer:
+Use the release installer:
 
 ```bash
 bash -o pipefail -c 'curl -fsSL https://github.com/ChesterRa/cccc/releases/latest/download/install.sh | bash'
@@ -54,6 +54,8 @@ Claude, Codex, Copilot, Cursor, Devin, Kiro, Kilo, Antigravity, Droid, Grok, Her
 Projected browsers require `Xvfb` to stay off the host desktop. Install `xvfb` (and optionally
 `x11vnc` for the VNC viewer), run `cccc doctor`, then use **Restart ChatGPT browser**. Current CCCC
 fails browser startup when Xvfb is missing instead of silently falling back to the host `DISPLAY`.
+Rust builds use a headless Chromium surface and do not attach to `DISPLAY`, so they do not require
+Xvfb; check the `projected_browser` section of Rust `cccc doctor` for browser discovery instead.
 
 ## What is the difference between foreman and peer?
 

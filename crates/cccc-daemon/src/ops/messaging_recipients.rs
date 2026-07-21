@@ -41,6 +41,7 @@ pub(super) fn normalize_chat_data(
         recipients.push(default_recipient(group).into());
     }
     data.insert("to".into(), json!(recipients));
+    normalize_peer_insight(group, by, data)?;
     data.entry("format")
         .or_insert_with(|| Value::String("plain".into()));
     data.entry("priority")
@@ -48,6 +49,97 @@ pub(super) fn normalize_chat_data(
     data.entry("reply_required").or_insert(Value::Bool(false));
     super::message_metadata::add_sender_snapshot(group, by, data);
     Ok(())
+}
+
+pub(super) fn normalize_remote_chat_data(data: &mut Map<String, Value>) -> Result<(), OpError> {
+    let required = data
+        .remove("require_peer_insight")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    normalize_insight(data)?;
+    let peer_facing = data
+        .get("to")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .any(|recipient| !matches!(recipient.trim(), "" | "user" | "@user"));
+    require_peer_insight(required, peer_facing, data)
+}
+
+fn normalize_peer_insight(
+    group: &GroupDoc,
+    by: &str,
+    data: &mut Map<String, Value>,
+) -> Result<(), OpError> {
+    let required = data
+        .remove("require_peer_insight")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    normalize_insight(data)?;
+    require_peer_insight(required, peer_facing(group, by, data), data)
+}
+
+fn normalize_insight(data: &mut Map<String, Value>) -> Result<(), OpError> {
+    let insight = cccc_core::peer_insight::normalize(data.get("insight"))
+        .map_err(|message| OpError::new("invalid_insight", message))?;
+    match insight {
+        Some(insight) => {
+            data.insert("insight".into(), Value::String(insight));
+        }
+        None => {
+            data.remove("insight");
+        }
+    }
+    Ok(())
+}
+
+fn require_peer_insight(
+    required: bool,
+    peer_facing: bool,
+    data: &Map<String, Value>,
+) -> Result<(), OpError> {
+    if required && peer_facing && !data.contains_key("insight") {
+        let mut error = OpError::new(
+            "peer_insight_required",
+            "Not sent: this peer-facing message is missing `insight`.",
+        );
+        error
+            .details
+            .insert("delivery_state".into(), Value::String("not_sent".into()));
+        error
+            .details
+            .insert("new_side_effects".into(), Value::Bool(false));
+        error.details.insert(
+            "recommended_action".into(),
+            Value::String(cccc_core::peer_insight::PEER_INSIGHT_REQUIRED_ACTION.clone()),
+        );
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn peer_facing(group: &GroupDoc, by: &str, data: &Map<String, Value>) -> bool {
+    let recipients = data
+        .get("to")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    recipients.into_iter().any(|recipient| match recipient {
+        "user" | "@user" => false,
+        "@all" | "@peers" => group
+            .actors
+            .iter()
+            .any(|actor| actor.internal_kind.is_none() && actor.id != by),
+        "@foreman" => cccc_core::actors::visible(group)
+            .next()
+            .is_some_and(|actor| actor.id != by),
+        actor_id => group
+            .actors
+            .iter()
+            .any(|actor| actor.internal_kind.is_none() && actor.id == actor_id && actor.id != by),
+    })
 }
 
 fn default_recipient(group: &GroupDoc) -> &'static str {

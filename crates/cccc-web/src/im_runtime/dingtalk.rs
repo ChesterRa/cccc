@@ -1,5 +1,6 @@
 use super::dingtalk_inbound::{DingTalkAttachmentDownloader, has_attachments, inbound_text};
 use super::dingtalk_outbound::{DingTalkAttachmentSender, DingTalkTarget};
+use super::processing_reactions::DingTalkReactions;
 use super::{
     InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, outbound_text,
     resolve_credential, spawn_outbound, string,
@@ -34,6 +35,7 @@ pub(super) async fn start(
     let sessions = Arc::new(Mutex::new(load_sessions(&home, group_id)));
     let credential = Credential::new(app_key, app_secret);
     let inbound_media = Arc::new(DingTalkStreamClient::builder(credential.clone()).build());
+    let reactions = DingTalkReactions::new(Arc::clone(&inbound_media), robot_code.clone());
     let handler = Handler {
         daemon,
         home: home.clone(),
@@ -43,6 +45,7 @@ pub(super) async fn start(
             Arc::clone(&inbound_media),
             robot_code.clone(),
         ),
+        reactions: reactions.clone(),
     };
     let media = DingTalkStreamClient::builder(credential.clone()).build();
     let mut stream = DingTalkStreamClient::builder(credential)
@@ -65,6 +68,7 @@ pub(super) async fn start(
         OutboundSender {
             attachments: DingTalkAttachmentSender::new(home, group_id, media, robot_code),
             sessions,
+            reactions,
         },
         |sender, authorized, event| async move {
             send_outbound(&sender, authorized, event).await;
@@ -80,6 +84,7 @@ struct Handler {
     group_id: String,
     sessions: Arc<Mutex<HashMap<String, SessionWebhook>>>,
     attachments: DingTalkAttachmentDownloader,
+    reactions: DingTalkReactions,
 }
 
 #[async_trait]
@@ -166,13 +171,16 @@ impl CallbackHandler for Handler {
             &sender,
             &text,
             InboundMetadata {
-                message_id,
+                message_id: message_id.clone(),
                 attachments,
             },
         )
         .await
         {
-            Ok(()) => (AckMessage::STATUS_OK, "OK".into()),
+            Ok(()) => {
+                self.reactions.start(&chat_id, &message_id).await;
+                (AckMessage::STATUS_OK, "OK".into())
+            }
             Err(error) => (AckMessage::STATUS_SYSTEM_EXCEPTION, error),
         }
     }
@@ -209,6 +217,7 @@ struct SessionWebhook {
 struct OutboundSender {
     attachments: DingTalkAttachmentSender,
     sessions: Arc<Mutex<HashMap<String, SessionWebhook>>>,
+    reactions: DingTalkReactions,
 }
 
 async fn send_outbound(sender: &OutboundSender, authorized: Vec<String>, event: Event) {
@@ -241,6 +250,9 @@ async fn send_outbound(sender: &OutboundSender, authorized: Vec<String>, event: 
                 tracing::warn!(%error, "failed to send DingTalk IM message");
             }
         }
+    }
+    for chat_id in authorized {
+        sender.reactions.complete(&chat_id).await;
     }
 }
 

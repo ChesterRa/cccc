@@ -224,10 +224,24 @@ pub async fn serve_socket(mut socket: WebSocket, surfaces: &BrowserSurfaces, key
                 if matches!(message, Message::Close(_)) { break }
                 let Message::Text(text) = message else { continue };
                 let Ok(command) = serde_json::from_str::<Value>(&text) else { continue };
-                if let Err(error) = surfaces.command(key, &command).await {
-                    let _ = socket.send(Message::Text(
-                        json!({"t":"error","message":error.to_string()}).to_string().into(),
-                    )).await;
+                let command_id = command.get("id").and_then(Value::as_str).unwrap_or("");
+                match surfaces.command(key, &command).await {
+                    Ok(()) if !command_id.is_empty() => {
+                        let _ = socket.send(Message::Text(
+                            json!({"t":"command_result","id":command_id,"ok":true}).to_string().into(),
+                        )).await;
+                    }
+                    Ok(()) => {}
+                    Err(error) if !command_id.is_empty() => {
+                        let _ = socket.send(Message::Text(
+                            json!({"t":"command_result","id":command_id,"ok":false,"message":error.to_string()}).to_string().into(),
+                        )).await;
+                    }
+                    Err(error) => {
+                        let _ = socket.send(Message::Text(
+                            json!({"t":"error","message":error.to_string()}).to_string().into(),
+                        )).await;
+                    }
                 }
             }
         }

@@ -6,6 +6,9 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+mod grok;
+pub use grok::{prepare as prepare_grok_command, prepare_fresh as prepare_fresh_grok_command};
+
 const DEFAULT_CAPTURE_SECONDS: f64 = 8.0;
 const NO_RESUME_VALUES: [&str; 4] = ["0", "false", "no", "off"];
 const CODEX_SUBCOMMANDS: [&str; 11] = [
@@ -39,7 +42,7 @@ pub fn prepare_codex_command(
         command: base_command.to_vec(),
         resumed_session_id: None,
     };
-    if !resume_enabled() || !supports_resume_command(base_command) {
+    if !resume_enabled() || !supports_codex_resume(base_command) {
         return fresh();
     }
     let Ok(mut document) = read(home, group_id, actor_id) else {
@@ -93,7 +96,7 @@ pub fn schedule_codex_session_capture(
     expected_started_at: String,
 ) {
     let timeout = capture_seconds();
-    if timeout <= 0.0 || !resume_enabled() || !supports_resume_command(&base_command) {
+    if timeout <= 0.0 || !resume_enabled() || !supports_codex_resume(&base_command) {
         return;
     }
     let _ = std::thread::Builder::new()
@@ -317,7 +320,7 @@ fn model_from_command(command: &[String]) -> String {
     String::new()
 }
 
-fn supports_resume_command(command: &[String]) -> bool {
+fn supports_codex_resume(command: &[String]) -> bool {
     command
         .first()
         .and_then(|program| Path::new(program).file_name())
@@ -504,5 +507,102 @@ mod tests {
             parse_codex_session_id(text).as_deref(),
             Some("019eece8-8c6d-7811-a700-26593825ae2d")
         );
+    }
+
+    #[test]
+    fn grok_first_start_creates_managed_session_and_restart_resumes_it() {
+        let (_temp, home, group_id, cwd) = fixture();
+        let base = vec!["grok".into(), "--always-approve".into()];
+
+        let first = prepare_grok_command(&home, &group_id, "peer1", &cwd, &base);
+        assert_eq!(first.command[0], "grok");
+        assert_eq!(first.command[1], "--session-id");
+        let session_id = first.command[2].clone();
+        assert!(valid_session_id(&session_id));
+        assert_eq!(first.command[3], "--always-approve");
+        let stored = read(&home, &group_id, "peer1").expect("managed session");
+        assert_eq!(stored["runtime"], "grok");
+        assert_eq!(stored["provider_session_id"], session_id);
+        assert_eq!(stored["captured_from"], "grok_generated_session_id");
+
+        let resumed = prepare_grok_command(&home, &group_id, "peer1", &cwd, &base);
+        assert_eq!(
+            resumed.command,
+            vec![
+                "grok".to_owned(),
+                "--resume".to_owned(),
+                session_id.clone(),
+                "--always-approve".to_owned()
+            ]
+        );
+        assert_eq!(
+            resumed.resumed_session_id.as_deref(),
+            Some(session_id.as_str())
+        );
+    }
+
+    #[test]
+    fn grok_does_not_resume_session_recorded_for_another_model() {
+        let (_temp, home, group_id, cwd) = fixture();
+        let base = vec!["grok".into(), "--model".into(), "grok-fast".into()];
+        let first = prepare_grok_command(&home, &group_id, "peer1", &cwd, &base);
+        let old_session = first.command[2].clone();
+        let mut stored = read(&home, &group_id, "peer1").expect("managed session");
+        stored.insert("model".into(), json!("grok-careful"));
+        write(&home, &group_id, "peer1", &stored).expect("write mismatched model");
+
+        let next = prepare_grok_command(&home, &group_id, "peer1", &cwd, &base);
+        assert_eq!(next.command[1], "--session-id");
+        assert_ne!(next.command[2], old_session);
+        assert_eq!(
+            read(&home, &group_id, "peer1").expect("replacement")["model"],
+            "grok-fast"
+        );
+    }
+
+    #[test]
+    fn grok_explicit_session_controls_and_subcommands_are_not_rewritten() {
+        let (_temp, home, group_id, cwd) = fixture();
+        for base in [
+            vec![
+                "grok".into(),
+                "--session-id".into(),
+                uuid::Uuid::new_v4().to_string(),
+            ],
+            vec!["grok".into(), "sessions".into(), "list".into()],
+            vec!["grok".into(), "-rprevious".into()],
+        ] {
+            let prepared = prepare_grok_command(&home, &group_id, "peer1", &cwd, &base);
+            assert_eq!(prepared.command, base);
+            assert!(prepared.resumed_session_id.is_none());
+        }
+        assert!(read(&home, &group_id, "peer1").is_err());
+    }
+
+    #[test]
+    fn grok_fresh_fallback_replaces_failed_session() {
+        let (_temp, home, group_id, cwd) = fixture();
+        let base = vec!["grok".into(), "--always-approve".into()];
+        let first = prepare_grok_command(&home, &group_id, "peer1", &cwd, &base);
+        let old_session = first.command[2].clone();
+        mark_resume_failed(&home, &group_id, "peer1", "session not found");
+
+        let fresh = prepare_fresh_grok_command(&home, &group_id, "peer1", &cwd, &base);
+        assert_eq!(fresh.command[1], "--session-id");
+        assert_ne!(fresh.command[2], old_session);
+        let stored = read(&home, &group_id, "peer1").expect("replacement session");
+        assert_eq!(stored["status"], "usable");
+        assert_eq!(stored["provider_session_id"], fresh.command[2]);
+    }
+
+    #[test]
+    fn grok_new_session_after_metadata_removal_gets_a_new_uuid() {
+        let (_temp, home, group_id, cwd) = fixture();
+        let base = vec!["grok".into(), "--always-approve".into()];
+        let first = prepare_grok_command(&home, &group_id, "peer1", &cwd, &base);
+        remove(&home, &group_id, "peer1");
+        let next = prepare_grok_command(&home, &group_id, "peer1", &cwd, &base);
+        assert_eq!(next.command[1], "--session-id");
+        assert_ne!(first.command[2], next.command[2]);
     }
 }

@@ -11,7 +11,15 @@ pub fn daemon_call(
         "cccc_inbox_list" => "inbox_list",
         "cccc_message_send" => {
             normalize_message_author(&mut args);
-            "send"
+            if args
+                .get("dst_group_id")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                "send_cross_group"
+            } else {
+                "send"
+            }
         }
         "cccc_tracked_send" => {
             normalize_message_author(&mut args);
@@ -208,5 +216,19 @@ mod tests {
             .expect("args");
         normalize_message_author(&mut args);
         assert_eq!(args["by"], "trusted-proxy");
+    }
+
+    #[test]
+    fn message_with_destination_group_maps_to_cross_group_send() {
+        let args = json!({
+            "group_id":"g_source","dst_group_id":"g_destination",
+            "actor_id":"backend","text":"review","to":["peer1"]
+        })
+        .as_object()
+        .cloned()
+        .expect("args");
+        let (op, args) = daemon_call("cccc_message_send", args).expect("mapping");
+        assert_eq!(op, "send_cross_group");
+        assert_eq!(args["by"], "backend");
     }
 }

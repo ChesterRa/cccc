@@ -12,9 +12,13 @@ pub async fn call(
     mut arguments: Map<String, Value>,
 ) -> Result<Value, String> {
     add_runtime_context(home, &mut arguments);
+    let message_operation = is_message_operation(name, &arguments);
+    if message_operation {
+        arguments.insert("require_peer_insight".into(), Value::Bool(true));
+    }
     let payload = match name {
         "cccc_help" => {
-            json!({"markdown": include_str!("../resources/cccc-help.md")})
+            json!({"markdown": help_markdown()})
         }
         "cccc_bootstrap" => return bootstrap(client, arguments).await,
         "cccc_project_info" => return project_info(client, arguments).await,
@@ -23,7 +27,12 @@ pub async fn call(
             "droid","amp","auggie","grok","hermes","kimi","opencode","web_model","custom"
         ]}),
         name if is_repo_tool(name) => {
-            return crate::local_tools::call(home, client, name, arguments).await;
+            let result = crate::local_tools::call(home, client, name, arguments).await?;
+            return Ok(if message_operation {
+                with_post_message_nudge(result)
+            } else {
+                result
+            });
         }
         name if crate::remote_tools::is_remote_tool(name) => {
             return crate::remote_tools::call(home, name, arguments).await;
@@ -33,7 +42,20 @@ pub async fn call(
             Value::Object(daemon(client, &op, args).await?)
         }
     };
-    Ok(tool_result(payload))
+    let result = tool_result(payload);
+    Ok(if message_operation {
+        with_post_message_nudge(result)
+    } else {
+        result
+    })
+}
+
+fn help_markdown() -> String {
+    format!(
+        "{}\n\n{}\n",
+        include_str!("../resources/cccc-help.md").trim_end(),
+        cccc_core::peer_insight::PEER_INSIGHT_RUNTIME_HELP.as_str()
+    )
 }
 
 async fn bootstrap(client: &DaemonClient, args: Map<String, Value>) -> Result<Value, String> {
@@ -61,11 +83,100 @@ async fn bootstrap(client: &DaemonClient, args: Map<String, Value>) -> Result<Va
     let mut context_args = Map::new();
     context_args.insert("group_id".into(), group_id);
     let context = daemon(client, "context_get", context_args).await?;
+    let recovery = bootstrap_recovery(&context, actor_id.as_str().unwrap_or("user"));
     Ok(tool_result(json!({
         "session": {"actor_id": actor_id, "implementation": "rust"},
-        "group": group.get("group"), "inbox_preview": inbox, "context": context,
+        "group": group.get("group"), "inbox_preview": inbox, "recovery":recovery, "context": context,
         "next_calls": ["cccc_help", "cccc_inbox_list", "cccc_context_get"]
     })))
+}
+
+fn bootstrap_recovery(context: &Map<String, Value>, actor_id: &str) -> Value {
+    let root = context.get("context").unwrap_or(&Value::Null);
+    if has_native_recoverable_task(root, actor_id) || has_recoverable_work(root) {
+        json!({"takeover_nudge":cccc_core::peer_insight::BOOTSTRAP_TAKEOVER_NUDGE})
+    } else {
+        json!({})
+    }
+}
+
+fn has_native_recoverable_task(context: &Value, actor_id: &str) -> bool {
+    context
+        .get("tasks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+        .any(|task| {
+            let status = task
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("planned")
+                .trim()
+                .to_ascii_lowercase();
+            if matches!(
+                status.as_str(),
+                "done" | "completed" | "cancelled" | "canceled" | "archived"
+            ) {
+                return false;
+            }
+            let assigned = ["assignee", "handoff_to"].into_iter().any(|key| {
+                task.get(key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value.trim() == actor_id)
+            });
+            let waiting_on = task
+                .get("waiting_on")
+                .and_then(Value::as_str)
+                .unwrap_or("none")
+                .trim();
+            let waiting_for_actor = waiting_on == "actor" && actor_id != "user";
+            let waiting_for_user = waiting_on == "user" && actor_id == "user";
+            let attention = task.get("priority").and_then(Value::as_str) == Some("attention");
+            assigned || waiting_for_actor || waiting_for_user || attention
+        })
+}
+
+fn has_recoverable_work(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => {
+            let scalar_work = ["active_task_id", "focus", "next_action", "current_focus"]
+                .into_iter()
+                .any(|key| {
+                    object
+                        .get(key)
+                        .and_then(Value::as_str)
+                        .is_some_and(|value| !value.trim().is_empty())
+                });
+            let list_work = ["blockers", "open_loops", "commitments"]
+                .into_iter()
+                .any(|key| {
+                    object
+                        .get(key)
+                        .and_then(Value::as_array)
+                        .is_some_and(|items| {
+                            items.iter().any(|item| match item {
+                                Value::String(value) => !value.trim().is_empty(),
+                                Value::Object(value) => !value.is_empty(),
+                                _ => false,
+                            })
+                        })
+                });
+            let task_work = ["assigned_active", "attention"].into_iter().any(|key| {
+                object
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .is_some_and(|items| {
+                        items
+                            .iter()
+                            .any(|item| item.as_object().is_some_and(|item| !item.is_empty()))
+                    })
+            });
+            scalar_work || list_work || task_work || object.values().any(has_recoverable_work)
+        }
+        Value::Array(items) => items.iter().any(has_recoverable_work),
+        _ => false,
+    }
 }
 
 async fn project_info(client: &DaemonClient, args: Map<String, Value>) -> Result<Value, String> {
@@ -154,6 +265,29 @@ pub(crate) fn tool_result(payload: Value) -> Value {
     json!({"content":[{"type":"text","text":text}],"structuredContent":payload})
 }
 
+fn is_message_operation(name: &str, arguments: &Map<String, Value>) -> bool {
+    matches!(
+        name,
+        "cccc_message_send" | "cccc_tracked_send" | "cccc_message_reply"
+    ) || (name == "cccc_file" && arguments.get("action").and_then(Value::as_str) == Some("send"))
+}
+
+fn with_post_message_nudge(mut result: Value) -> Value {
+    let nudge = json!({
+        "kind":"whole_situation_reconstruction",
+        "message":cccc_core::peer_insight::POST_MESSAGE_NUDGE
+    });
+    if let Some(payload) = result
+        .get_mut("structuredContent")
+        .and_then(Value::as_object_mut)
+    {
+        payload.insert("post_message_nudge".into(), nudge);
+        let text = serde_json::to_string_pretty(payload).unwrap_or_else(|_| "{}".into());
+        result["content"] = json!([{"type":"text","text":text}]);
+    }
+    result
+}
+
 fn is_repo_tool(name: &str) -> bool {
     matches!(
         name,
@@ -172,7 +306,10 @@ fn is_repo_tool(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::apply_actor_context;
+    use super::{
+        apply_actor_context, bootstrap_recovery, help_markdown, is_message_operation,
+        with_post_message_nudge,
+    };
     use serde_json::json;
 
     #[test]
@@ -196,5 +333,85 @@ mod tests {
 
         assert_eq!(args["actor_id"], "backend");
         assert_eq!(args["by"], "backend");
+    }
+
+    #[test]
+    fn identifies_message_operations_and_adds_reconstruction_nudge() {
+        assert!(is_message_operation(
+            "cccc_message_send",
+            &serde_json::Map::new()
+        ));
+        assert!(is_message_operation(
+            "cccc_file",
+            &json!({"action":"send"})
+                .as_object()
+                .cloned()
+                .expect("send args")
+        ));
+        assert!(!is_message_operation(
+            "cccc_file",
+            &json!({"action":"read"})
+                .as_object()
+                .cloned()
+                .expect("read args")
+        ));
+        let result = with_post_message_nudge(super::tool_result(json!({"event":{}})));
+        assert_eq!(
+            result["structuredContent"]["post_message_nudge"]["kind"],
+            "whole_situation_reconstruction"
+        );
+    }
+
+    #[test]
+    fn bootstrap_takeover_requires_unfinished_recovery_material() {
+        let active = json!({"context":{"agent_state":{"hot":{"focus":"finish migration"}}}})
+            .as_object()
+            .cloned()
+            .expect("active context");
+        assert_eq!(
+            bootstrap_recovery(&active, "peer1")["takeover_nudge"],
+            cccc_core::peer_insight::BOOTSTRAP_TAKEOVER_NUDGE
+        );
+        let objective_only = json!({"context":{"coordination":{"objective":"ship"}}})
+            .as_object()
+            .cloned()
+            .expect("objective context");
+        assert_eq!(bootstrap_recovery(&objective_only, "peer1"), json!({}));
+
+        let native_task = json!({"context":{"tasks":[{
+            "id":"t_1","status":"planned","assignee":"peer1","waiting_on":"none"
+        }]}})
+        .as_object()
+        .cloned()
+        .expect("native task context");
+        assert_eq!(
+            bootstrap_recovery(&native_task, "peer1")["takeover_nudge"],
+            cccc_core::peer_insight::BOOTSTRAP_TAKEOVER_NUDGE
+        );
+        assert_eq!(bootstrap_recovery(&native_task, "peer2"), json!({}));
+
+        let completed = json!({"context":{"tasks":[{
+            "id":"t_2","status":"done","assignee":"peer1","priority":"attention"
+        }]}})
+        .as_object()
+        .cloned()
+        .expect("completed task context");
+        assert_eq!(bootstrap_recovery(&completed, "peer1"), json!({}));
+    }
+
+    #[test]
+    fn help_uses_the_complete_shared_peer_insight_contract() {
+        let help = help_markdown();
+        for required in [
+            "one move on a living\ndecision path",
+            "where reality could break it",
+            "switch to Plan B",
+            "one fallible projection of the situation",
+            "do not inherit the level or frame it claims",
+            "clear-sighted, exacting supervisor",
+        ] {
+            assert!(help.contains(required), "missing help contract: {required}");
+        }
+        assert_eq!(help.matches("## Peer Insight Contract").count(), 1);
     }
 }

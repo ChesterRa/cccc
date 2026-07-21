@@ -63,6 +63,14 @@ Weixin outbound messages send the agent's text first, followed by every attached
 
 Feishu/Lark outbound messages use the same text-first ordering. Images are uploaded through the image API and sent as image messages; all other attachments are uploaded through the file API and sent as file messages. Each attachment is limited to 10 MiB and must resolve inside the group's blob storage.
 
+## Processing Feedback
+
+After an authorized inbound message is accepted by the daemon, supported adapters add a best-effort reaction to the source message. The feedback API never blocks message dispatch. The first user-facing agent response completes the indicator for that chat.
+
+- Feishu/Lark adds `OnIt` while processing and removes it on completion.
+- Telegram adds `👀` while processing and clears the bot reaction on completion.
+- DingTalk adds `🤔Thinking` while processing, recalls it on completion, and then adds `🥳Done`.
+
 ## Security
 
 - One configuration belongs to one group.

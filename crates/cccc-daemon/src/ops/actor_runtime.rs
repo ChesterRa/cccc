@@ -47,22 +47,30 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     let cwd = working_directory(group, actor);
     let mut env = actor.env.clone();
     env.extend(actor_secrets::values(home, &group.group_id, &actor.id)?);
-    let prepared = if actor.runtime == ActorRuntime::Codex
-        && actor.runner == cccc_contracts::RunnerKind::Pty
-    {
-        runtime_session::prepare_codex_command(
-            home,
-            &group.group_id,
-            &actor.id,
-            &cwd,
-            &base_command,
-            actor.runtime_state_source == RuntimeStateSource::AppServer,
-        )
-    } else {
-        runtime_session::PreparedCommand {
+    let prepared = match (actor.runtime, actor.runner) {
+        (ActorRuntime::Codex, cccc_contracts::RunnerKind::Pty) => {
+            runtime_session::prepare_codex_command(
+                home,
+                &group.group_id,
+                &actor.id,
+                &cwd,
+                &base_command,
+                actor.runtime_state_source == RuntimeStateSource::AppServer,
+            )
+        }
+        (ActorRuntime::Grok, cccc_contracts::RunnerKind::Pty) => {
+            runtime_session::prepare_grok_command(
+                home,
+                &group.group_id,
+                &actor.id,
+                &cwd,
+                &base_command,
+            )
+        }
+        _ => runtime_session::PreparedCommand {
             command: base_command.clone(),
             resumed_session_id: None,
-        }
+        },
     };
     let status = launch(home, group, actor, &cwd, &env, prepared.command)?;
 
@@ -186,7 +194,19 @@ fn schedule_resume_verification(
                     return;
                 }
                 runtime_session::mark_resume_failed(&home, &group.group_id, &actor.id, &error);
-                match launch(&home, &group, &actor, &cwd, &env, base_command.clone()) {
+                let fresh_command = if actor.runtime == ActorRuntime::Grok {
+                    runtime_session::prepare_fresh_grok_command(
+                        &home,
+                        &group.group_id,
+                        &actor.id,
+                        &cwd,
+                        &base_command,
+                    )
+                    .command
+                } else {
+                    base_command.clone()
+                };
+                match launch(&home, &group, &actor, &cwd, &env, fresh_command) {
                     Ok(fresh) => {
                         schedule_capture(&home, &group, &actor, cwd, base_command, &fresh);
                     }

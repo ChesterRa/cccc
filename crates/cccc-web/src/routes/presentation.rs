@@ -61,7 +61,7 @@ async fn publish(
     Json(body): Json<Value>,
 ) -> ApiResult {
     let mut args = body_object(body)?;
-    args.insert("group_id".into(), Value::String(group_id));
+    args.insert("group_id".into(), Value::String(group_id.clone()));
     if args
         .get("url")
         .and_then(Value::as_str)
@@ -70,7 +70,7 @@ async fn publish(
     {
         args.insert("card_type".into(), Value::String("web_preview".into()));
     }
-    call(&state, "presentation_publish", args).await
+    publish_and_cleanup(&state, &group_id, args).await
 }
 
 async fn publish_workspace(
@@ -79,8 +79,8 @@ async fn publish_workspace(
     Json(body): Json<Value>,
 ) -> ApiResult {
     let mut args = body_object(body)?;
-    args.insert("group_id".into(), Value::String(group_id));
-    call(&state, "presentation_publish", args).await
+    args.insert("group_id".into(), Value::String(group_id.clone()));
+    publish_and_cleanup(&state, &group_id, args).await
 }
 
 async fn clear(
@@ -89,8 +89,21 @@ async fn clear(
     Json(body): Json<Value>,
 ) -> ApiResult {
     let mut args = body_object(body)?;
-    args.insert("group_id".into(), Value::String(group_id));
-    call(&state, "presentation_clear", args).await
+    args.insert("group_id".into(), Value::String(group_id.clone()));
+    let mut response = call(&state, "presentation_clear", args).await?;
+    let cleared_slots: Vec<String> = response
+        .0
+        .pointer("/result/cleared_slots")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    for slot in cleared_slots {
+        close_browser_surface(&state, &group_id, &slot, &mut response).await;
+    }
+    Ok(response)
 }
 
 async fn publish_upload(
@@ -126,7 +139,47 @@ async fn publish_upload(
             .map_err(|error| ApiError::bad(error.to_string()))?;
         args.insert("blob_rel_path".into(), Value::String(blob.path));
     }
-    call(&state, "presentation_publish", args).await
+    publish_and_cleanup(&state, &group_id, args).await
+}
+
+async fn publish_and_cleanup(
+    state: &AppState,
+    group_id: &str,
+    args: Map<String, Value>,
+) -> ApiResult {
+    let mut response = call(state, "presentation_publish", args).await?;
+    if let Some(slot) = replaced_slot(&response) {
+        close_browser_surface(state, group_id, &slot, &mut response).await;
+    }
+    Ok(response)
+}
+
+fn replaced_slot(response: &Json<Value>) -> Option<String> {
+    response
+        .0
+        .pointer("/result/replaced")
+        .and_then(Value::as_bool)
+        .filter(|replaced| *replaced)
+        .and_then(|_| response.0.pointer("/result/slot_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|slot| !slot.is_empty())
+        .map(str::to_owned)
+}
+
+async fn close_browser_surface(
+    state: &AppState,
+    group_id: &str,
+    slot: &str,
+    response: &mut Json<Value>,
+) {
+    if let Err(error) = state
+        .browser_surfaces
+        .close(&format!("{group_id}::{slot}"))
+        .await
+    {
+        response.0["result"]["browser_cleanup_warning"] = Value::String(error.to_string());
+    }
 }
 
 async fn workspace_list(
@@ -274,5 +327,19 @@ fn card_type_for(file_name: &str, mime: &str) -> &'static str {
         "web_preview"
     } else {
         "file"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_replaced_publications_invalidate_browser_sessions() {
+        let replaced = Json(json!({"ok":true,"result":{"replaced":true,"slot_id":"slot-2"}}));
+        let first_publish = Json(json!({"ok":true,"result":{"replaced":false,"slot_id":"slot-2"}}));
+
+        assert_eq!(replaced_slot(&replaced).as_deref(), Some("slot-2"));
+        assert_eq!(replaced_slot(&first_publish), None);
     }
 }
