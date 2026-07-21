@@ -50,6 +50,16 @@ def test_windows_smoke_keeps_the_product_pty_checks_without_web_migration_setup(
     assert "npm " not in runs
 
 
+def test_full_rust_platform_is_macos_only() -> None:
+    platform = _workflow()["jobs"]["rust-platform"]
+    runs = _runs(platform)
+
+    assert platform["runs-on"] == "macos-latest"
+    assert "strategy" not in platform
+    assert "scripts/tests/install_real_unix.sh" in runs
+    assert "scripts/tests/install_windows.ps1" not in runs
+
+
 def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance() -> None:
     runs = "\n".join(_runs(job) for job in _workflow()["jobs"].values())
 
