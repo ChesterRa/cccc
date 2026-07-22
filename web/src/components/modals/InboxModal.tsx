@@ -121,6 +121,8 @@ export function InboxModal({
               <div className="mt-2 text-sm break-words">
                 <LazyMarkdownRenderer
                   content={formatEventLine(ev, getDisplayName)}
+                  isDark={isDark}
+                  enableMermaid={ev.kind === "chat.message"}
                   className="text-[var(--color-text-primary)]"
                   fallback={
                     <div className="whitespace-pre-wrap break-words">

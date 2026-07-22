@@ -58,6 +58,17 @@
   "suggestedUserMessageHint": "Suggested next message. Press Tab to use it.",
   "suggestedUserMessageUse": "Use suggestion",
   "sendFailed": "Failed to send message.",
+  "mermaid": {
+    "diagram": "Mermaid diagram",
+    "expand": "Expand",
+    "expandDiagram": "Expand Mermaid diagram",
+    "previewHint": "Scroll to inspect large diagrams. Press Esc to close.",
+    "viewSource": "View source",
+    "viewDiagram": "View diagram",
+    "rendering": "Rendering diagram…",
+    "renderFailed": "Could not render this diagram. Showing its source instead.",
+    "tooLarge": "This diagram is too large to render safely. Showing its source instead."
+  },
   "webModelDelivery": {
     "submitting": "Delivering to ChatGPT",
     "submitted": "Delivered to ChatGPT",

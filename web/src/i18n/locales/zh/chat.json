@@ -58,6 +58,17 @@
   "suggestedUserMessageHint": "建议的下一条消息。按 Tab 填入输入框。",
   "suggestedUserMessageUse": "使用建议",
   "sendFailed": "发送消息失败。",
+  "mermaid": {
+    "diagram": "Mermaid 图表",
+    "expand": "展开",
+    "expandDiagram": "展开 Mermaid 图表",
+    "previewHint": "可滚动查看大型图表，按 Esc 关闭。",
+    "viewSource": "查看源码",
+    "viewDiagram": "查看图表",
+    "rendering": "正在渲染图表…",
+    "renderFailed": "无法渲染此图表，已改为显示源码。",
+    "tooLarge": "此图表过大，无法安全渲染，已改为显示源码。"
+  },
   "webModelDelivery": {
     "submitting": "正在投递到 ChatGPT",
     "submitted": "已投递到 ChatGPT",

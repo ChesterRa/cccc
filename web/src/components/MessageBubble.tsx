@@ -502,6 +502,7 @@ function MessageContent({
         content={fallbackText}
         isDark={isDark}
         invertText={false}
+        enableMermaid
         className="max-w-full break-words text-[var(--color-text-primary)] [overflow-wrap:anywhere]"
         fallback={<PlainMessageText text={fallbackText} className="max-w-full" />}
       />

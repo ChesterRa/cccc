@@ -9,6 +9,7 @@ type LazyMarkdownRendererProps = {
   isDark?: boolean;
   className?: string;
   invertText?: boolean;
+  enableMermaid?: boolean;
   fallback?: ReactNode;
 };
 
@@ -17,6 +18,7 @@ export function LazyMarkdownRenderer({
   isDark,
   className,
   invertText,
+  enableMermaid = false,
   fallback = null,
 }: LazyMarkdownRendererProps) {
   return (
@@ -26,6 +28,7 @@ export function LazyMarkdownRenderer({
         isDark={isDark}
         className={className}
         invertText={invertText}
+        enableMermaid={enableMermaid}
       />
     </Suspense>
   );

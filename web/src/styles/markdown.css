@@ -172,3 +172,207 @@
   background-color: rgba(74, 222, 128, 0.1);
   border-color: rgba(74, 222, 128, 0.2);
 }
+
+/* Mermaid message blocks */
+.mermaid-block-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.mermaid-view-toggle,
+.mermaid-expand-button {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border: 1px solid transparent;
+  border-radius: 0.375rem;
+  background: transparent;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 500;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.mermaid-expand-button[hidden] {
+  display: none;
+}
+
+.dark .mermaid-view-toggle,
+.dark .mermaid-expand-button {
+  color: #94a3b8;
+}
+
+.mermaid-view-toggle:hover,
+.mermaid-view-toggle:focus-visible,
+.mermaid-expand-button:hover,
+.mermaid-expand-button:focus-visible {
+  border-color: #cbd5e1;
+  background-color: #e2e8f0;
+  color: #0f172a;
+  outline: none;
+}
+
+.dark .mermaid-view-toggle:hover,
+.dark .mermaid-view-toggle:focus-visible,
+.dark .mermaid-expand-button:hover,
+.dark .mermaid-expand-button:focus-visible {
+  border-color: rgba(255, 255, 255, 0.12);
+  background-color: rgba(255, 255, 255, 0.08);
+  color: #f1f5f9;
+}
+
+.mermaid-status,
+.mermaid-error {
+  padding: 1rem 1.125rem;
+  color: #64748b;
+  font-size: 0.8125rem;
+}
+
+.dark .mermaid-status,
+.dark .mermaid-error {
+  color: #94a3b8;
+}
+
+.mermaid-error {
+  padding-bottom: 0;
+  color: #b45309;
+}
+
+.dark .mermaid-error {
+  color: #fbbf24;
+}
+
+.mermaid-render-target {
+  max-width: 100%;
+  padding: 1rem;
+  overflow-x: auto;
+  background-color: #ffffff;
+  cursor: zoom-in;
+}
+
+.dark .mermaid-render-target {
+  background-color: #0b0c10;
+}
+
+.mermaid-render-target:empty {
+  display: none;
+}
+
+.mermaid-render-target:focus-visible {
+  outline: 2px solid #0f766e;
+  outline-offset: -3px;
+}
+
+.dark .mermaid-render-target:focus-visible {
+  outline-color: #5eead4;
+}
+
+.mermaid-render-target svg {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.mermaid-block-wrapper .mermaid-source {
+  max-height: 28rem;
+}
+
+/* Near-fullscreen diagram viewer. Reuse the rendered SVG; do not re-enter Mermaid's render queue. */
+.mermaid-preview-action {
+  display: inline-flex;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: 0.625rem;
+  padding: 0.375rem 0.625rem;
+  color: var(--color-text-secondary);
+  background: var(--glass-tab-bg);
+  font-size: 0.75rem;
+  font-weight: 500;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.mermaid-preview-action:hover,
+.mermaid-preview-action:focus-visible {
+  border-color: color-mix(in srgb, var(--color-text-primary) 20%, transparent);
+  color: var(--color-text-primary);
+  background: var(--glass-tab-bg-hover);
+  outline: none;
+}
+
+.mermaid-preview-close {
+  width: 2.25rem;
+  padding-inline: 0;
+}
+
+.mermaid-preview-canvas {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 1rem;
+  background: #ffffff;
+}
+
+.dark .mermaid-preview-canvas {
+  background: #0b0c10;
+}
+
+.mermaid-preview-diagram {
+  display: flex;
+  width: max(100%, var(--mermaid-preview-natural-width, 0px));
+  min-height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.mermaid-preview-diagram svg {
+  display: block;
+  width: 100% !important;
+  max-width: none !important;
+  height: auto !important;
+  margin: auto;
+}
+
+.mermaid-preview-source {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  padding: 1rem 1.25rem;
+  background: #f6f8fa;
+  color: #24292e;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  white-space: pre;
+}
+
+.dark .mermaid-preview-source {
+  background: #0d1117;
+  color: #c9d1d9;
+}
+
+@media (max-width: 640px) {
+  .mermaid-preview-canvas {
+    padding: 0.75rem;
+  }
+}
