@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::task::{AbortHandle, JoinHandle};
 
-const STOP_TIMEOUT: Duration = Duration::from_millis(500);
+const STOP_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(super) type Stopper = Arc<dyn Fn() + Send + Sync>;
 
@@ -108,6 +108,6 @@ mod tests {
 
         futures_util::future::join_all(workers.into_iter().map(WorkerHandles::shutdown)).await;
 
-        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(started.elapsed() < STOP_TIMEOUT + Duration::from_secs(1));
     }
 }

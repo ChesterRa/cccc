@@ -10,6 +10,7 @@ use cccc_contracts::utc_now;
 use cccc_core::HomeLayout;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::browser_surface::BrowserSurfaces;
@@ -51,6 +52,7 @@ struct ActiveFlow {
     session_id: String,
     profile: PathBuf,
     cancel: watch::Sender<bool>,
+    task: Option<JoinHandle<()>>,
 }
 
 pub(super) struct RunContext {
@@ -110,9 +112,11 @@ impl AuthFlowManager {
                 session_id: session_id.clone(),
                 profile: profile.clone(),
                 cancel,
+                task: None,
             });
         }
         let manager = Arc::clone(self);
+        let task_session_id = session_id.clone();
         let context = RunContext {
             home,
             client,
@@ -123,7 +127,21 @@ impl AuthFlowManager {
             timeout: run::auth_timeout(timeout_seconds),
             force_reauth,
         };
-        tokio::spawn(async move { manager.run(context).await });
+        let mut pending_task = Some(tokio::spawn(async move { manager.run(context).await }));
+        {
+            let mut inner = self.inner.lock().await;
+            if let Some(active) = inner
+                .active
+                .as_mut()
+                .filter(|active| active.session_id == task_session_id)
+            {
+                active.task = pending_task.take();
+            }
+        }
+        if let Some(task) = pending_task {
+            task.abort();
+            let _ = task.await;
+        }
     }
 
     pub(crate) async fn cancel(&self, browsers: &BrowserSurfaces, message: &str) {
@@ -144,7 +162,15 @@ impl AuthFlowManager {
             active
         };
         let _ = browsers.close(BROWSER_KEY).await;
-        if let Some(active) = active {
+        if let Some(mut active) = active {
+            if let Some(mut task) = active.task.take()
+                && tokio::time::timeout(Duration::from_secs(2), &mut task)
+                    .await
+                    .is_err()
+            {
+                task.abort();
+                let _ = task.await;
+            }
             run::remove_profile(&active.profile).await;
         }
     }

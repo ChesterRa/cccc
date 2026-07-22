@@ -14,7 +14,9 @@ mod dingtalk_outbound;
 mod dingtalk_outbound_media;
 mod dingtalk_outbound_report;
 mod discord;
+mod discord_dedup;
 mod discord_inbound;
+mod discord_outbound;
 mod discord_reactions;
 mod feishu;
 mod feishu_inbound;
@@ -45,10 +47,12 @@ use worker::{Stopper, WorkerHandles, no_op_stopper};
 
 pub(crate) struct ImWorkerRegistry {
     workers: Mutex<HashMap<String, WorkerHandles>>,
+    lifecycle_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
     restoring: Mutex<HashSet<String>>,
     restore_tasks: Mutex<Vec<JoinHandle<()>>>,
     generations: Arc<Mutex<HashMap<String, u64>>>,
     next_generation: std::sync::atomic::AtomicU64,
+    discord_deduper: Arc<discord_dedup::DiscordMessageDeduper>,
     weixin_logins: weixin_login::LoginRegistry,
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
 }
@@ -57,10 +61,12 @@ impl ImWorkerRegistry {
     pub(crate) fn new(ledger_events: crate::ledger_event_hub::LedgerEventHub) -> Self {
         Self {
             workers: Mutex::new(HashMap::new()),
+            lifecycle_locks: Mutex::new(HashMap::new()),
             restoring: Mutex::new(HashSet::new()),
             restore_tasks: Mutex::new(Vec::new()),
             generations: Arc::new(Mutex::new(HashMap::new())),
             next_generation: std::sync::atomic::AtomicU64::new(0),
+            discord_deduper: Arc::new(discord_dedup::DiscordMessageDeduper::default()),
             weixin_logins: weixin_login::LoginRegistry::default(),
             ledger_events,
         }
@@ -167,28 +173,33 @@ impl ImWorkerRegistry {
         group_id: &str,
         config: &Map<String, Value>,
     ) -> Result<(), String> {
-        self.stop(group_id).await;
-        let generation = self
-            .next_generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            + 1;
-        self.generations
-            .lock()
-            .expect("IM generation registry poisoned")
-            .insert(group_id.to_owned(), generation);
+        let (generation, previous) = self.begin_start(group_id).await;
+        if let Some(previous) = previous {
+            previous.shutdown().await;
+        }
+        if !self.is_generation_current(group_id, generation) {
+            return Err("IM worker start was superseded by a newer request".into());
+        }
         let platform = string(config, "platform");
         if platform == "telegram" {
-            let tasks =
+            let (tasks, stopper) =
                 telegram::start(home, client, group_id, config, self.ledger_events.clone()).await?;
             return self
-                .install(group_id, generation, worker(tasks, no_op_stopper()))
+                .install(group_id, generation, worker(tasks, stopper))
                 .await;
         }
         if platform == "discord" {
-            let tasks =
-                discord::start(home, client, group_id, config, self.ledger_events.clone()).await?;
+            let (tasks, stopper) = discord::start(
+                home,
+                client,
+                group_id,
+                config,
+                self.ledger_events.clone(),
+                Arc::clone(&self.discord_deduper),
+            )
+            .await?;
             return self
-                .install(group_id, generation, worker(tasks, no_op_stopper()))
+                .install(group_id, generation, worker(tasks, stopper))
                 .await;
         }
         if platform == "slack" {
@@ -258,13 +269,10 @@ impl ImWorkerRegistry {
         generation: u64,
         worker: WorkerHandles,
     ) -> Result<(), String> {
-        let current = self
-            .generations
-            .lock()
-            .expect("IM generation registry poisoned")
-            .get(group_id)
-            .copied();
-        if current != Some(generation) {
+        let lifecycle_lock = self.lifecycle_lock(group_id);
+        let lifecycle_guard = lifecycle_lock.lock().await;
+        if !self.is_generation_current(group_id, generation) {
+            drop(lifecycle_guard);
             worker.shutdown().await;
             return Err("IM worker start was superseded by a newer request".into());
         }
@@ -273,6 +281,7 @@ impl ImWorkerRegistry {
             .lock()
             .expect("IM worker registry poisoned")
             .insert(group_id.to_owned(), worker);
+        drop(lifecycle_guard);
         if let Some(replaced) = replaced {
             replaced.shutdown().await;
         }
@@ -280,20 +289,64 @@ impl ImWorkerRegistry {
     }
 
     pub(crate) async fn stop(&self, group_id: &str) -> bool {
+        let lifecycle_lock = self.lifecycle_lock(group_id);
+        let (was_starting, worker) = {
+            let _lifecycle_guard = lifecycle_lock.lock().await;
+            let was_starting = self
+                .generations
+                .lock()
+                .expect("IM generation registry poisoned")
+                .remove(group_id)
+                .is_some();
+            let worker = self
+                .workers
+                .lock()
+                .expect("IM worker registry poisoned")
+                .remove(group_id);
+            (was_starting, worker)
+        };
+        let was_running = worker.is_some();
+        if let Some(worker) = worker {
+            worker.shutdown().await;
+        }
+        was_starting || was_running
+    }
+
+    async fn begin_start(&self, group_id: &str) -> (u64, Option<WorkerHandles>) {
+        let lifecycle_lock = self.lifecycle_lock(group_id);
+        let _lifecycle_guard = lifecycle_lock.lock().await;
+        let generation = self
+            .next_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1;
         self.generations
             .lock()
             .expect("IM generation registry poisoned")
-            .remove(group_id);
-        let worker = self
+            .insert(group_id.to_owned(), generation);
+        let previous = self
             .workers
             .lock()
             .expect("IM worker registry poisoned")
             .remove(group_id);
-        let Some(worker) = worker else {
-            return false;
-        };
-        worker.shutdown().await;
-        true
+        (generation, previous)
+    }
+
+    fn is_generation_current(&self, group_id: &str, generation: u64) -> bool {
+        self.generations
+            .lock()
+            .expect("IM generation registry poisoned")
+            .get(group_id)
+            .copied()
+            == Some(generation)
+    }
+
+    fn lifecycle_lock(&self, group_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.lifecycle_locks
+            .lock()
+            .expect("IM lifecycle lock registry poisoned")
+            .entry(group_id.to_owned())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
     }
 
     pub(crate) async fn shutdown(&self) {
@@ -585,6 +638,32 @@ mod tests {
         );
         assert_eq!(registry.stop_missing(&HashSet::new()).await, 1);
         assert!(!registry.is_running("g_deleted"));
+    }
+
+    #[tokio::test]
+    async fn stop_invalidates_a_pending_start_before_late_install() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let registry = ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(home));
+        let (generation, previous) = registry.begin_start("g_pending").await;
+        assert!(previous.is_none());
+
+        assert!(registry.stop("g_pending").await);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let stopped_by_worker = Arc::clone(&stopped);
+        let stopper: Stopper = Arc::new(move || {
+            stopped_by_worker.store(true, Ordering::SeqCst);
+        });
+        let result = registry
+            .install("g_pending", generation, worker(Vec::new(), stopper))
+            .await;
+
+        assert_eq!(
+            result.expect_err("late worker must be rejected"),
+            "IM worker start was superseded by a newer request"
+        );
+        assert!(stopped.load(Ordering::SeqCst));
+        assert!(!registry.is_running("g_pending"));
     }
 
     #[test]

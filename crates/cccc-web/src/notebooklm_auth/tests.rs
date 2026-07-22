@@ -11,6 +11,7 @@ fn active(session_id: &str) -> ActiveFlow {
         session_id: session_id.into(),
         profile: PathBuf::from("unused"),
         cancel,
+        task: None,
     }
 }
 

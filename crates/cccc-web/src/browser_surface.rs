@@ -221,6 +221,7 @@ impl BrowserSurfaces {
         };
         let result = session.browser.close().await;
         session.handler.abort();
+        let _ = session.handler.await;
         result?;
         Ok(true)
     }

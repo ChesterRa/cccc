@@ -1,5 +1,6 @@
 use super::processing_reactions::TelegramReactions;
 use super::telegram_inbound::{has_attachments, materialize_attachments};
+use super::worker::Stopper;
 use super::{
     InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, outbound_text,
     resolve_credential, spawn_outbound, string,
@@ -18,7 +19,7 @@ pub(super) async fn start(
     group_id: &str,
     config: &Map<String, Value>,
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
-) -> Result<Vec<JoinHandle<()>>, String> {
+) -> Result<(Vec<JoinHandle<()>>, Stopper), String> {
     let token = resolve_credential(&string(config, "bot_token_env"))?;
     let bot = Bot::new(token);
     bot.get_me()
@@ -31,66 +32,69 @@ pub(super) async fn start(
     let inbound_client = client.clone();
     let inbound_group = group_id.to_owned();
     let inbound_reactions = reactions.clone();
-    let inbound = tokio::spawn(async move {
-        let handler = Update::filter_message().endpoint(move |bot: Bot, message: Message| {
-            let home = inbound_home.clone();
-            let client = inbound_client.clone();
-            let group_id = inbound_group.clone();
-            let reactions = inbound_reactions.clone();
-            async move {
-                let chat_id = message.chat.id.0.to_string();
-                let text = message
-                    .text()
-                    .or_else(|| message.caption())
-                    .map(str::trim)
-                    .unwrap_or_default();
-                if text.is_empty() && !has_attachments(&message) {
-                    return respond(());
-                }
-                match inbound_decision(&home, &group_id, PLATFORM, &chat_id, text).await {
-                    InboundDecision::Forward => {}
-                    InboundDecision::Reply(body) => {
-                        if let Err(error) = bot.send_message(message.chat.id, body).await {
-                            tracing::warn!(%error, "failed to send Telegram command reply");
-                        }
-                        return respond(());
-                    }
-                    InboundDecision::Ignore => return respond(()),
-                }
-                let sender = message
-                    .from
-                    .as_ref()
-                    .map(|user| user.id.0.to_string())
-                    .unwrap_or_else(|| "user".into());
-                let attachments = materialize_attachments(&home, &group_id, &bot, &message).await;
-                if text.is_empty() && attachments.is_empty() {
-                    return respond(());
-                }
-                if let Err(error) = dispatch_inbound_with(
-                    &client,
-                    &group_id,
-                    PLATFORM,
-                    &chat_id,
-                    &sender,
-                    text,
-                    InboundMetadata {
-                        message_id: format!("{}:{}", message.chat.id.0, message.id.0),
-                        attachments,
-                    },
-                )
-                .await
-                {
-                    tracing::warn!(%error, "failed to dispatch Telegram IM message");
-                } else {
-                    reactions.start(message.chat.id, message.id).await;
-                }
-                respond(())
+    let handler = Update::filter_message().endpoint(move |bot: Bot, message: Message| {
+        let home = inbound_home.clone();
+        let client = inbound_client.clone();
+        let group_id = inbound_group.clone();
+        let reactions = inbound_reactions.clone();
+        async move {
+            let chat_id = message.chat.id.0.to_string();
+            let text = message
+                .text()
+                .or_else(|| message.caption())
+                .map(str::trim)
+                .unwrap_or_default();
+            if text.is_empty() && !has_attachments(&message) {
+                return respond(());
             }
-        });
-        Dispatcher::builder(inbound_bot, handler)
-            .build()
-            .dispatch()
-            .await;
+            match inbound_decision(&home, &group_id, PLATFORM, &chat_id, text).await {
+                InboundDecision::Forward => {}
+                InboundDecision::Reply(body) => {
+                    if let Err(error) = bot.send_message(message.chat.id, body).await {
+                        tracing::warn!(%error, "failed to send Telegram command reply");
+                    }
+                    return respond(());
+                }
+                InboundDecision::Ignore => return respond(()),
+            }
+            let sender = message
+                .from
+                .as_ref()
+                .map(|user| user.id.0.to_string())
+                .unwrap_or_else(|| "user".into());
+            let attachments = materialize_attachments(&home, &group_id, &bot, &message).await;
+            if text.is_empty() && attachments.is_empty() {
+                return respond(());
+            }
+            if let Err(error) = dispatch_inbound_with(
+                &client,
+                &group_id,
+                PLATFORM,
+                &chat_id,
+                &sender,
+                text,
+                InboundMetadata {
+                    message_id: format!("{}:{}", message.chat.id.0, message.id.0),
+                    attachments,
+                },
+            )
+            .await
+            {
+                tracing::warn!(%error, "failed to dispatch Telegram IM message");
+            } else {
+                reactions.start(message.chat.id, message.id).await;
+            }
+            respond(())
+        }
+    });
+    let mut dispatcher = Dispatcher::builder(inbound_bot, handler).build();
+    let shutdown_token = dispatcher.shutdown_token();
+    let inbound = tokio::spawn(async move {
+        dispatcher.dispatch().await;
+    });
+    let stopper: Stopper = std::sync::Arc::new(move || {
+        // Calling shutdown signals the dispatcher; its returned future only waits for completion.
+        let _ = shutdown_token.shutdown();
     });
 
     let outbound_reactions = reactions;
@@ -118,5 +122,5 @@ pub(super) async fn start(
             }
         },
     );
-    Ok(vec![inbound, outbound])
+    Ok((vec![inbound, outbound], stopper))
 }
