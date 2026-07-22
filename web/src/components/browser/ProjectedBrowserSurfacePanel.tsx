@@ -12,6 +12,7 @@ import type { ApiResponse } from "../../services/api";
 import type { PresentationBrowserSurfaceState } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { CollapseIcon, ExpandIcon } from "../Icons";
+import { mapContainedImagePoint } from "./projectedBrowserCoordinates";
 
 type RfbInstance = {
   viewOnly: boolean;
@@ -41,6 +42,8 @@ export type ProjectedBrowserFrame = {
 type ProjectedBrowserSurfacePanelProps = {
   isDark: boolean;
   refreshNonce: number;
+  reuseActiveSession?: boolean;
+  sessionIdentity?: string;
   chromeMode?: "standalone" | "embedded";
   viewportClassName?: string;
   onFrameUpdate?: (frame: ProjectedBrowserFrame | null) => void;
@@ -185,6 +188,8 @@ function ProjectedBrowserExpandIcon({ expanded }: { expanded: boolean }) {
 export function ProjectedBrowserSurfacePanel({
   isDark,
   refreshNonce,
+  reuseActiveSession = true,
+  sessionIdentity = "",
   chromeMode = "standalone",
   viewportClassName,
   onFrameUpdate,
@@ -583,6 +588,7 @@ export function ProjectedBrowserSurfacePanel({
       if (disposed) return;
 
       if (
+        reuseActiveSession &&
         existing.ok &&
         existing.result.browser_surface.active &&
         ["starting", "ready"].includes(String(existing.result.browser_surface.state || "").trim())
@@ -644,6 +650,8 @@ export function ProjectedBrowserSurfacePanel({
     texts.closed,
     texts.reconnecting,
     texts.refreshFailed,
+    reuseActiveSession,
+    sessionIdentity,
     vncFailed,
     webSocketUrl,
   ]);
@@ -834,16 +842,9 @@ export function ProjectedBrowserSurfacePanel({
     const frame = frameRef.current || renderedFrame;
     if (!frame || !imageRef.current) return;
     const rect = imageRef.current.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0 || frame.width <= 0 || frame.height <= 0) return;
-    const relativeX = (event.clientX - rect.left) / rect.width;
-    const relativeY = (event.clientY - rect.top) / rect.height;
-    if (relativeX < 0 || relativeX > 1 || relativeY < 0 || relativeY > 1) return;
-    sendCommand({
-      t: "click",
-      x: Math.round(relativeX * frame.width),
-      y: Math.round(relativeY * frame.height),
-      button: buttonFromMouseEvent(event.button),
-    });
+    const point = mapContainedImagePoint({ x: event.clientX, y: event.clientY }, rect, frame);
+    if (!point) return;
+    sendCommand({ t: "click", x: point.x, y: point.y, button: buttonFromMouseEvent(event.button) });
     containerRef.current?.focus();
     event.preventDefault();
   };

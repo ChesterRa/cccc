@@ -327,6 +327,22 @@ impl ImWorkerRegistry {
             .clear();
     }
 
+    pub(crate) async fn stop_missing(&self, active_groups: &HashSet<String>) -> usize {
+        let stale = self
+            .workers
+            .lock()
+            .expect("IM worker registry poisoned")
+            .keys()
+            .filter(|group_id| !active_groups.contains(*group_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut stopped = 0;
+        for group_id in stale {
+            stopped += usize::from(self.stop(&group_id).await);
+        }
+        stopped
+    }
+
     pub(crate) fn is_running(&self, group_id: &str) -> bool {
         if self
             .restoring
@@ -555,6 +571,19 @@ mod tests {
         tokio::task::yield_now().await;
         assert!(sibling_abort.is_finished());
         assert!(stopped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn stops_workers_for_deleted_groups() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let registry = ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(home));
+        registry.workers.lock().expect("registry").insert(
+            "g_deleted".into(),
+            worker(vec![tokio::spawn(std::future::pending())], no_op_stopper()),
+        );
+        assert_eq!(registry.stop_missing(&HashSet::new()).await, 1);
+        assert!(!registry.is_running("g_deleted"));
     }
 
     #[test]

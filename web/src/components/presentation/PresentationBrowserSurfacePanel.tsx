@@ -33,6 +33,8 @@ export function PresentationBrowserSurfacePanel({
     <ProjectedBrowserSurfacePanel
       isDark={isDark}
       refreshNonce={refreshNonce}
+      reuseActiveSession={false}
+      sessionIdentity={`${groupId}:${slotId}:${url}`}
       chromeMode="embedded"
       viewportClassName={viewportClassName}
       onFrameUpdate={onFrameUpdate}

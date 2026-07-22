@@ -3,6 +3,7 @@ mod auth;
 mod browser_surface;
 mod im_runtime;
 mod ledger_event_hub;
+mod notebooklm_auth;
 mod routes;
 
 use anyhow::Result;
@@ -14,6 +15,7 @@ use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
 use cccc_core::access_tokens::AccessTokenStore;
 use rust_embed::RustEmbed;
+use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -25,7 +27,7 @@ const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from
 const COMPONENT_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
 #[derive(RustEmbed)]
-#[folder = "../../web/dist/"]
+#[folder = "$CCCC_WEB_DIST_DIR/"]
 struct WebAssets;
 
 #[derive(Clone)]
@@ -33,6 +35,7 @@ pub(crate) struct AppState {
     client: DaemonClient,
     home: HomeLayout,
     browser_surfaces: Arc<browser_surface::BrowserSurfaces>,
+    notebooklm_auth: Arc<notebooklm_auth::AuthFlowManager>,
     ledger_events: ledger_event_hub::LedgerEventHub,
     im_workers: Arc<im_runtime::ImWorkerRegistry>,
     shutdown: broadcast::Sender<()>,
@@ -51,10 +54,24 @@ fn app_with_shutdown(
     let ledger_events = ledger_event_hub::LedgerEventHub::new(home.clone());
     let im_workers = Arc::new(im_runtime::ImWorkerRegistry::new(ledger_events.clone()));
     im_workers.restore_enabled(home.clone(), DaemonClient::new(home.clone()));
+    let browser_surfaces = Arc::new(browser_surface::BrowserSurfaces::default());
+    let notebooklm_auth = Arc::new(notebooklm_auth::AuthFlowManager::default());
+    spawn_notebooklm_auth_shutdown(
+        Arc::clone(&notebooklm_auth),
+        Arc::clone(&browser_surfaces),
+        shutdown.subscribe(),
+    );
+    spawn_group_resource_reaper(
+        home.clone(),
+        Arc::clone(&im_workers),
+        Arc::clone(&browser_surfaces),
+        shutdown.subscribe(),
+    );
     let state = AppState {
         client: DaemonClient::new(home.clone()),
         home,
-        browser_surfaces: Arc::new(browser_surface::BrowserSurfaces::default()),
+        browser_surfaces,
+        notebooklm_auth,
         ledger_events,
         im_workers: Arc::clone(&im_workers),
         shutdown,
@@ -69,6 +86,82 @@ fn app_with_shutdown(
         ))
         .with_state(state);
     (app, im_workers)
+}
+
+fn spawn_notebooklm_auth_shutdown(
+    auth: Arc<notebooklm_auth::AuthFlowManager>,
+    browsers: Arc<browser_surface::BrowserSurfaces>,
+    mut shutdown: broadcast::Receiver<()>,
+) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async move {
+        let _ = shutdown.recv().await;
+        auth.shutdown(&browsers).await;
+    });
+}
+
+fn spawn_group_resource_reaper(
+    home: HomeLayout,
+    im_workers: Arc<im_runtime::ImWorkerRegistry>,
+    browser_surfaces: Arc<browser_surface::BrowserSurfaces>,
+    mut shutdown: broadcast::Receiver<()>,
+) {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        return;
+    };
+    runtime.spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown.recv() => return,
+                () = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
+            }
+            let Ok(store) = cccc_core::GroupStore::new(home.clone()) else {
+                continue;
+            };
+            let Ok(groups) = store.list() else {
+                continue;
+            };
+            let active_groups = groups
+                .iter()
+                .map(|group| group.group_id.clone())
+                .collect::<HashSet<_>>();
+            let active_actors = groups
+                .into_iter()
+                .filter_map(|group| {
+                    store.load(&group.group_id).ok().map(|doc| {
+                        (
+                            group.group_id,
+                            doc.actors
+                                .into_iter()
+                                .map(|actor| actor.id)
+                                .collect::<HashSet<_>>(),
+                        )
+                    })
+                })
+                .collect::<HashMap<_, _>>();
+            let stopped = im_workers.stop_missing(&active_groups).await;
+            let closed_groups = browser_surfaces
+                .close_missing_groups(&active_groups)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error, "failed to close stale browser surfaces");
+                    0
+                });
+            let closed_actors = browser_surfaces
+                .close_missing_actors(&active_actors)
+                .await
+                .unwrap_or_else(|error| {
+                    tracing::warn!(%error,"failed to close stale actor browser surfaces");
+                    0
+                });
+            let closed = closed_groups + closed_actors;
+            if stopped > 0 || closed > 0 {
+                tracing::info!(stopped, closed, "cleaned resources for deleted groups");
+            }
+        }
+    });
 }
 
 async fn static_asset(uri: Uri) -> Response {

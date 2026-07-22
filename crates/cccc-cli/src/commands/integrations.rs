@@ -5,7 +5,9 @@ use cccc_core::access_tokens::AccessTokenStore;
 use reqwest::Method;
 use serde_json::{Value, json};
 
-use crate::args::{ImAction, ImArgs, ImSetArgs, PromptArgs, SpaceAction, SpaceArgs};
+use crate::args::{
+    ImAction, ImArgs, ImSetArgs, PromptArgs, SpaceAction, SpaceArgs, SpaceCredentialAction,
+};
 use crate::commands::common::{call, group, print};
 
 pub async fn prompt(client: &DaemonClient, home: &HomeLayout, args: PromptArgs) -> Result<()> {
@@ -19,7 +21,20 @@ pub async fn prompt(client: &DaemonClient, home: &HomeLayout, args: PromptArgs) 
     )
 }
 
-pub async fn im(home: &HomeLayout, endpoint: &str, args: ImArgs) -> Result<()> {
+pub async fn im(
+    client: &DaemonClient,
+    home: &HomeLayout,
+    endpoint: &str,
+    args: ImArgs,
+) -> Result<()> {
+    if let ImAction::Logs {
+        group_id,
+        lines,
+        follow,
+    } = args.action
+    {
+        return im_logs(client, home, group_id, lines, follow).await;
+    }
     let (method, path, value) = match args.action {
         ImAction::Set(args) => {
             let ImSetArgs {
@@ -88,12 +103,59 @@ pub async fn im(home: &HomeLayout, endpoint: &str, args: ImArgs) -> Result<()> {
             "/api/im/revoke",
             json!({"group_id":group(home,group_id)?,"chat_id":chat_id,"thread_id":thread_id}),
         ),
+        ImAction::Logs { .. } => unreachable!("logs handled above"),
     };
     println!(
         "{}",
         serde_json::to_string_pretty(&web_call(home, endpoint, method, path, value).await?)?
     );
     Ok(())
+}
+
+async fn im_logs(
+    client: &DaemonClient,
+    home: &HomeLayout,
+    group_id: Option<String>,
+    lines: usize,
+    follow: bool,
+) -> Result<()> {
+    let group_id = group(home, group_id)?;
+    let read = || {
+        call(
+            client,
+            "debug_tail_logs",
+            json!({"component":"im","group_id":group_id,"lines":lines,"by":"user"}),
+        )
+    };
+    if !follow {
+        return print(read().await?);
+    }
+    let mut previous = Vec::<String>::new();
+    loop {
+        let response = read().await?;
+        if !response.ok {
+            return print(response);
+        }
+        let current = response.result["lines"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let overlap = (0..=previous.len().min(current.len()))
+            .rev()
+            .find(|size| previous[previous.len() - size..] == current[..*size])
+            .unwrap_or(0);
+        for line in &current[overlap..] {
+            println!("{line}");
+        }
+        previous = current;
+        tokio::select! {
+            result=tokio::signal::ctrl_c()=>{ result?; return Ok(()); }
+            ()=tokio::time::sleep(std::time::Duration::from_secs(1))=>{}
+        }
+    }
 }
 
 async fn web_call(
@@ -178,18 +240,20 @@ pub async fn space(client: &DaemonClient, home: &HomeLayout, args: SpaceArgs) ->
             kind,
             payload,
             idempotency_key,
+            provider,
         } => (
             "group_space_ingest",
-            json!({"group_id":group(home,group_id)?,"lane":lane,"kind":kind,"payload":json_object(&payload,"payload")?,"idempotency_key":idempotency_key}),
+            json!({"group_id":group(home,group_id)?,"lane":lane,"kind":kind,"payload":json_object(&payload,"payload")?,"idempotency_key":idempotency_key,"provider":provider}),
         ),
         SpaceAction::Query {
             query,
             group_id,
             lane,
             options,
+            provider,
         } => (
             "group_space_query",
-            json!({"group_id":group(home,group_id)?,"lane":lane,"query":query,"options":json_object(&options,"options")?}),
+            json!({"group_id":group(home,group_id)?,"lane":lane,"query":query,"options":json_object(&options,"options")?,"provider":provider}),
         ),
         SpaceAction::Sources {
             group_id,
@@ -197,22 +261,56 @@ pub async fn space(client: &DaemonClient, home: &HomeLayout, args: SpaceArgs) ->
             action,
             source_id,
             new_title,
+            provider,
         } => (
             "group_space_sources",
-            json!({"group_id":group(home,group_id)?,"lane":lane,"action":action,"source_id":source_id,"new_title":new_title}),
+            json!({"group_id":group(home,group_id)?,"lane":lane,"action":action,"source_id":source_id,"new_title":new_title,"provider":provider}),
         ),
         SpaceAction::Jobs {
             group_id,
             lane,
             action,
             job_id,
+            provider,
         } => (
             "group_space_jobs",
-            json!({"group_id":group(home,group_id)?,"lane":lane,"action":action,"job_id":job_id}),
+            json!({"group_id":group(home,group_id)?,"lane":lane,"action":action,"job_id":job_id,"provider":provider}),
         ),
         SpaceAction::Auth { action, provider } => (
             "group_space_provider_auth",
             json!({"provider":provider,"action":action}),
+        ),
+        SpaceAction::Credential { action } => match action {
+            SpaceCredentialAction::Status { provider } => (
+                "group_space_provider_credential_status",
+                json!({"provider":provider,"by":"user"}),
+            ),
+            SpaceCredentialAction::Set {
+                provider,
+                auth_json,
+                auth_json_file,
+            } => {
+                let raw = match (auth_json, auth_json_file) {
+                    (Some(value), None) => value,
+                    (None, Some(path)) => std::fs::read_to_string(&path)
+                        .with_context(|| format!("failed to read {path}"))?,
+                    (None, None) => anyhow::bail!("--auth-json or --auth-json-file is required"),
+                    (Some(_), Some(_)) => unreachable!("clap conflicts_with"),
+                };
+                let normalized = serde_json::to_string(&json_object(&raw, "auth_json")?)?;
+                (
+                    "group_space_provider_credential_update",
+                    json!({"provider":provider,"by":"user","auth_json":normalized}),
+                )
+            }
+            SpaceCredentialAction::Clear { provider } => (
+                "group_space_provider_credential_update",
+                json!({"provider":provider,"by":"user","clear":true}),
+            ),
+        },
+        SpaceAction::Health { provider } => (
+            "group_space_provider_health_check",
+            json!({"provider":provider,"by":"user"}),
         ),
     };
     print(call(client, op, value).await?)

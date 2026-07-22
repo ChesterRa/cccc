@@ -153,12 +153,16 @@ If an issue repeats:
 
 ## 10) Group Space (NotebookLM) Runbook
 
-### Enable real adapter path (opt-in)
+The Rust build connects directly to NotebookLM without a Python sidecar. It
+supports notebook selection/creation, text ingest, source management, and
+grounded query. Local fallback must still be selected explicitly with
+`--provider local`.
 
-```bash
-export CCCC_NOTEBOOKLM_REAL=1
-cccc daemon restart
-```
+The Rust authentication worker owns saved-session validation, projected browser
+startup, timeout/cancellation, credential verification, and temporary profile
+cleanup. It also captures provider `Set-Cookie` rotation after API calls. Stored
+credentials are updated atomically; `CCCC_NOTEBOOKLM_AUTH_JSON` is always treated
+as a read-only operational override.
 
 ### Validate control plane
 
@@ -167,12 +171,20 @@ cccc space credential status
 cccc space health
 ```
 
+Maintainers can run the opt-in live protocol smoke test without placing account
+data in fixtures:
+
+```bash
+CCCC_NOTEBOOKLM_AUTH_JSON="$(cat /path/to/storage-state.json)" \
+  cargo test -p cccc-notebooklm --test live -- --ignored
+```
+
 ### Validate curated context export path
 
 After a `context_sync` update (`vision.update` / `overview.manual.update` / `task.*` / `agent.*`), check queue:
 
 ```bash
-cccc space jobs list --state pending
+cccc space jobs --lane work --action list
 ```
 
 Expected: a `kind=context_sync` job appears for bound groups.
@@ -180,29 +192,20 @@ Expected: a `kind=context_sync` job appears for bound groups.
 ### Validate repo `space/` reconciliation
 
 ```bash
-cccc space sync --force
+cccc space sync --lane work --force
 ```
 
-Expected: result reports `converged=true` and `unsynced_count=0` when provider is healthy.
+Expected in the current Rust build: `provider_unavailable` because full repo
+reconciliation is intentionally not enabled yet.
 
 ### Safe rollback (core workflows keep running)
 
-```bash
-unset CCCC_NOTEBOOKLM_REAL
-cccc daemon restart
-```
+Expected behavior:
 
-Expected after rollback:
-
-- Group Space operations may return degraded/disabled provider results.
+- NotebookLM artifact and full-sync operations return `provider_unavailable`.
+- Notebook/source/query operations fail loudly on auth expiry or protocol drift.
+- Explicit `--provider local` operations return `degraded=true` and never claim remote delivery.
 - Core CCCC chat/task/actor workflows continue normally.
-
-Optional throughput tuning:
-
-```bash
-export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=1   # safer
-export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=4   # faster
-```
 
 ## 11) Release Verification
 

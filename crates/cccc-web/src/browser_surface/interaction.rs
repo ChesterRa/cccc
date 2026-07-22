@@ -1,0 +1,189 @@
+use anyhow::{Context, Result, bail};
+use axum::extract::ws::{Message, WebSocket};
+use cccc_contracts::utc_now;
+use chromiumoxide::Page;
+use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
+use chromiumoxide::cdp::browser_protocol::input::{
+    DispatchKeyEventParams, DispatchKeyEventType, InsertTextParams,
+};
+use chromiumoxide::layout::Point;
+use serde_json::{Value, json};
+use std::collections::HashSet;
+
+use super::BrowserSurfaces;
+
+impl BrowserSurfaces {
+    pub async fn command(&self, key: &str, command: &Value) -> Result<()> {
+        let mut sessions = self.sessions.lock().await;
+        let session = sessions
+            .get_mut(key)
+            .context("browser surface is not active")?;
+        match command.get("t").and_then(Value::as_str).unwrap_or("") {
+            "click" => {
+                let existing_pages = session
+                    .browser
+                    .pages()
+                    .await?
+                    .into_iter()
+                    .map(|page| page.target_id().clone())
+                    .collect::<HashSet<_>>();
+                let x = number(command, "x");
+                let y = number(command, "y");
+                let retarget_script = format!(
+                    "(() => {{ const node = document.elementFromPoint({x}, {y}); const link = node?.closest?.('a[href]'); if (link?.target === '_blank') link.target = '_self'; }})()"
+                );
+                session.page.evaluate(retarget_script).await?;
+                session.page.click(Point::new(x, y)).await?;
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+                if let Some(page) = session
+                    .browser
+                    .pages()
+                    .await?
+                    .into_iter()
+                    .find(|page| !existing_pages.contains(page.target_id()))
+                {
+                    session.page = page;
+                }
+            }
+            "text" => {
+                let text = command.get("text").and_then(Value::as_str).unwrap_or("");
+                session.page.execute(InsertTextParams::new(text)).await?;
+            }
+            "key" => {
+                let key = command.get("key").and_then(Value::as_str).unwrap_or("");
+                if key.is_empty() {
+                    bail!("browser key command requires key");
+                }
+                press_key(&session.page, key).await?;
+            }
+            "scroll" => {
+                let script = format!(
+                    "window.scrollBy({}, {})",
+                    number(command, "dx"),
+                    number(command, "dy")
+                );
+                session.page.evaluate(script).await?;
+            }
+            "back" => {
+                session.page.evaluate("history.back()").await?;
+            }
+            "refresh" => {
+                session.page.reload().await?;
+            }
+            "resize" => {
+                let width = number(command, "width").round().clamp(320.0, 3840.0) as u32;
+                let height = number(command, "height").round().clamp(240.0, 2160.0) as u32;
+                session
+                    .page
+                    .execute(SetDeviceMetricsOverrideParams::new(
+                        i64::from(width),
+                        i64::from(height),
+                        1.0,
+                        false,
+                    ))
+                    .await?;
+                session.width = width;
+                session.height = height;
+                session.updated_at = utc_now();
+            }
+            _ => bail!("unsupported browser command"),
+        }
+        Ok(())
+    }
+}
+
+pub async fn serve_socket(mut socket: WebSocket, surfaces: &BrowserSurfaces, key: &str) {
+    if socket
+        .send(Message::Text(
+            json!({"t":"state","active":true,"state":"ready"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .is_err()
+    {
+        return;
+    }
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(300));
+    loop {
+        tokio::select! {
+            _ = interval.tick() => match surfaces.frame(key).await {
+                Ok(frame) => {
+                    if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    let _ = socket.send(Message::Text(
+                        json!({"t":"error","message":error.to_string()}).to_string().into(),
+                    )).await;
+                    break;
+                }
+            },
+            message = socket.recv() => {
+                let Some(Ok(message)) = message else { break };
+                if matches!(message, Message::Close(_)) { break }
+                let Message::Text(text) = message else { continue };
+                let Ok(command) = serde_json::from_str::<Value>(&text) else { continue };
+                let command_id = command.get("id").and_then(Value::as_str).unwrap_or("");
+                match surfaces.command(key, &command).await {
+                    Ok(()) if !command_id.is_empty() => {
+                        let _ = socket.send(Message::Text(
+                            json!({"t":"command_result","id":command_id,"ok":true}).to_string().into(),
+                        )).await;
+                    }
+                    Ok(()) => {}
+                    Err(error) if !command_id.is_empty() => {
+                        let _ = socket.send(Message::Text(
+                            json!({"t":"command_result","id":command_id,"ok":false,"message":error.to_string()}).to_string().into(),
+                        )).await;
+                    }
+                    Err(error) => {
+                        let _ = socket.send(Message::Text(
+                            json!({"t":"error","message":error.to_string()}).to_string().into(),
+                        )).await;
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn number(value: &Value, key: &str) -> f64 {
+    value.get(key).and_then(Value::as_f64).unwrap_or(0.0)
+}
+
+async fn press_key(page: &Page, key: &str) -> Result<()> {
+    let definition = chromiumoxide::keys::get_key_definition(key)
+        .with_context(|| format!("unsupported browser key: {key}"))?;
+    let mut command = DispatchKeyEventParams::builder()
+        .key(definition.key)
+        .code(definition.code)
+        .windows_virtual_key_code(definition.key_code)
+        .native_virtual_key_code(definition.key_code);
+    let down_type = if let Some(text) = definition.text {
+        command = command.text(text);
+        DispatchKeyEventType::KeyDown
+    } else if definition.key.len() == 1 {
+        command = command.text(definition.key);
+        DispatchKeyEventType::KeyDown
+    } else {
+        DispatchKeyEventType::RawKeyDown
+    };
+    page.execute(
+        command
+            .clone()
+            .r#type(down_type)
+            .build()
+            .map_err(anyhow::Error::msg)?,
+    )
+    .await?;
+    page.execute(
+        command
+            .r#type(DispatchKeyEventType::KeyUp)
+            .build()
+            .map_err(anyhow::Error::msg)?,
+    )
+    .await?;
+    Ok(())
+}

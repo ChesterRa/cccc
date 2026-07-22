@@ -32,7 +32,7 @@ lark-channel.workspace = true
 notify.workspace = true
 percent-encoding.workspace = true
 reqwest.workspace = true
-rust-embed.workspace = true
+rust-embed = { workspace = true, features = ["interpolate-folder-path"] }
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true

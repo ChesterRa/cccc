@@ -32,6 +32,7 @@ pub mod profiles;
 pub mod registry;
 pub mod scope;
 pub mod settings;
+pub mod space_credentials;
 pub mod system_prompt;
 
 pub use group::{GroupDoc, GroupStore, Scope};

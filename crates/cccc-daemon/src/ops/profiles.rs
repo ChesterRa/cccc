@@ -12,10 +12,18 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "actor_profile_get" => get(home, request),
         "actor_profile_upsert" => upsert(home, request),
         "actor_profile_delete" => delete(home, request),
-        "actor_profile_env_private_keys" => secret_keys(home, request),
-        "actor_profile_env_private_update" => secret_update(home, request),
-        "actor_profile_copy_actor_secrets" => copy_actor(home, request),
-        "actor_profile_copy_profile_secrets" => copy_profile(home, request),
+        "actor_profile_env_private_keys" | "actor_profile_secret_keys" => {
+            secret_keys(home, request)
+        }
+        "actor_profile_env_private_update" | "actor_profile_secret_update" => {
+            secret_update(home, request)
+        }
+        "actor_profile_copy_actor_secrets" | "actor_profile_secret_copy_from_actor" => {
+            copy_actor(home, request)
+        }
+        "actor_profile_copy_profile_secrets" | "actor_profile_secret_copy_from_profile" => {
+            copy_profile(home, request)
+        }
         _ => return None,
     })
 }

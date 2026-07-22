@@ -4,9 +4,12 @@ use cccc_core::ledger;
 use cccc_core::permissions::{self, ActorAction};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
-use crate::ops::{actor_delivery, actor_runtime, actor_secrets, runtime_session};
+use crate::ops::{
+    actor_delivery, actor_profile_runtime, actor_runtime, actor_secrets, runtime_session,
+};
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -50,10 +53,23 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let group = store(home)?.load(&group_id).map_err(OpError::not_found)?;
     authorize(&group, request, ActorAction::Add, "")?;
-    let actor = actor_from_args(request)?;
+    let mut actor = actor_from_args(request)?;
+    let private_env = private_env_arg(request)?;
+    if !actor.profile_id.is_empty() {
+        if private_env.is_some() {
+            return Err(OpError::new(
+                "actor_profile_linked_readonly",
+                "env_private is profile-controlled for linked actors",
+            ));
+        }
+        actor = actor_profile_runtime::link(home, &actor, &actor.profile_id)?;
+    }
     let added = store(home)?
         .mutate(&group_id, |doc| actors::add(doc, actor))
         .map_err(OpError::invalid)?;
+    if let Some(values) = private_env {
+        actor_secrets::replace(home, &group_id, &added.id, values)?;
+    }
     append_event(
         home,
         &group_id,
@@ -69,6 +85,17 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let actor_id = required_arg(request, "actor_id")?;
     let group = store(home)?.load(&group_id).map_err(OpError::not_found)?;
     authorize(&group, request, ActorAction::Update, &actor_id)?;
+    let profile_id = string_arg(request, "profile_id").unwrap_or_default();
+    let profile_action = string_arg(request, "profile_action").unwrap_or_default();
+    if !profile_id.is_empty() && !profile_action.is_empty() {
+        return Err(OpError::new(
+            "invalid_args",
+            "profile_id and profile_action are mutually exclusive",
+        ));
+    }
+    if !profile_action.is_empty() && profile_action != "convert_to_custom" {
+        return Err(OpError::new("invalid_args", "invalid profile_action"));
+    }
     let patch = request
         .args
         .get("patch")
@@ -78,13 +105,61 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             request
                 .args
                 .iter()
-                .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "actor_id" | "by"))
+                .filter(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        "group_id" | "actor_id" | "by" | "profile_id" | "profile_action"
+                    )
+                })
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect()
         });
+    let current = group
+        .actors
+        .iter()
+        .find(|actor| actor.id == actor_id)
+        .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
+    if actor_profile_runtime::rejects_linked_patch(current, &patch) {
+        return Err(OpError::new(
+            "actor_profile_linked_readonly",
+            "linked actor runtime fields are read-only; convert to custom first",
+        ));
+    }
+    let converted_secrets = if profile_action == "convert_to_custom" {
+        let mut secrets = actor_profile_runtime::profile_secrets(home, current)?;
+        secrets.extend(actor_secrets::values(home, &group_id, &actor_id)?);
+        Some(secrets)
+    } else {
+        None
+    };
     let actor = store(home)?
-        .mutate(&group_id, |doc| actors::update(doc, &actor_id, &patch))
+        .mutate(&group_id, |doc| {
+            let patched = actors::update(doc, &actor_id, &patch)?;
+            let mut final_actor = if !profile_id.is_empty() {
+                actor_profile_runtime::link(home, &patched, &profile_id)
+                    .map_err(|error| std::io::Error::other(error.message))?
+            } else if profile_action == "convert_to_custom" {
+                let mut resolved = actor_profile_runtime::resolve(home, &patched)
+                    .map_err(|error| std::io::Error::other(error.message))?;
+                resolved.profile_id.clear();
+                resolved.profile_revision_applied = 0;
+                resolved
+            } else {
+                patched
+            };
+            final_actor.role = None;
+            let index = doc
+                .actors
+                .iter()
+                .position(|actor| actor.id == actor_id)
+                .ok_or_else(|| std::io::Error::other("actor not found"))?;
+            doc.actors[index] = final_actor.clone();
+            Ok(final_actor)
+        })
         .map_err(OpError::invalid)?;
+    if let Some(secrets) = converted_secrets {
+        actor_secrets::replace(home, &group_id, &actor_id, secrets)?;
+    }
     append_event(
         home,
         &group_id,
@@ -106,6 +181,7 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .mutate(&group_id, |doc| actors::remove(doc, &actor_id))
         .map_err(OpError::invalid)?;
     runtime_session::remove(home, &group_id, &actor_id);
+    actor_secrets::remove(home, &group_id, &actor_id)?;
     append_event(
         home,
         &group_id,
@@ -156,11 +232,30 @@ fn actor_from_args(request: &DaemonRequest) -> Result<Actor, OpError> {
         .as_object_mut()
         .ok_or_else(|| OpError::new("internal_error", "invalid actor"))?;
     for (key, item) in &request.args {
-        if !matches!(key.as_str(), "group_id" | "actor_id" | "by") {
+        if !matches!(key.as_str(), "group_id" | "actor_id" | "by" | "env_private") {
             object.insert(key.clone(), item.clone());
         }
     }
     serde_json::from_value(value).map_err(OpError::invalid)
+}
+
+fn private_env_arg(request: &DaemonRequest) -> Result<Option<BTreeMap<String, String>>, OpError> {
+    let Some(value) = request.args.get("env_private") else {
+        return Ok(None);
+    };
+    let object = value
+        .as_object()
+        .ok_or_else(|| OpError::new("invalid_args", "env_private must be an object"))?;
+    object
+        .iter()
+        .map(|(key, value)| {
+            value
+                .as_str()
+                .map(|value| (key.clone(), value.to_owned()))
+                .ok_or_else(|| OpError::new("invalid_args", "env_private values must be strings"))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()
+        .map(Some)
 }
 
 fn load(home: &HomeLayout, request: &DaemonRequest) -> Result<GroupDoc, OpError> {

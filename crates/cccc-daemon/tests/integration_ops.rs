@@ -51,24 +51,33 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
     call(
         &home,
         "group_space_bind",
-        json!({"group_id":group_id,"lane":"work","remote_space_id":"notebook-1"}),
+        json!({"group_id":group_id,"provider":"local","lane":"work","remote_space_id":"local-1"}),
+    );
+    let unavailable = raw_call(
+        &home,
+        "group_space_ingest",
+        json!({"group_id":group_id,"lane":"work","payload":{}}),
+    );
+    assert_eq!(
+        unavailable.error.expect("provider error").code,
+        "credential_missing"
     );
     let first = call(
         &home,
         "group_space_ingest",
-        json!({"group_id":group_id,"lane":"work","idempotency_key":"same","payload":{"title":"Migration evidence","content":"Rust only"}}),
+        json!({"group_id":group_id,"provider":"local","lane":"work","idempotency_key":"same","payload":{"title":"Migration evidence","content":"Rust only"}}),
     );
     let second = call(
         &home,
         "group_space_ingest",
-        json!({"group_id":group_id,"lane":"work","idempotency_key":"same","payload":{"title":"ignored duplicate"}}),
+        json!({"group_id":group_id,"provider":"local","lane":"work","idempotency_key":"same","payload":{"title":"ignored duplicate"}}),
     );
     assert_eq!(first.result["job_id"], second.result["job_id"]);
     assert_eq!(second.result["deduped"], true);
     let query = call(
         &home,
         "group_space_query",
-        json!({"group_id":group_id,"lane":"work","query":"Migration"}),
+        json!({"group_id":group_id,"provider":"local","lane":"work","query":"Migration"}),
     );
     assert_eq!(query.result["degraded"], true);
     assert!(
@@ -97,6 +106,46 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
         json!({"profile_id":"profile1","name":"Default","runtime":"codex"}),
     );
     assert_eq!(profile.result["profile"]["revision"], 1);
+    let legacy = call(
+        &home,
+        "actor_profile_upsert",
+        json!({"profile_id":"legacy","name":"Legacy","env":{"LEGACY_TOKEN":"secret"}}),
+    );
+    assert_eq!(legacy.result["profile"]["env"], json!({}));
+    let legacy_keys = call(
+        &home,
+        "actor_profile_secret_keys",
+        json!({"profile_id":"legacy"}),
+    );
+    assert_eq!(legacy_keys.result["keys"], json!(["LEGACY_TOKEN"]));
+    let linked = call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"linked","profile_id":"legacy","by":"user"}),
+    );
+    assert_eq!(linked.result["actor"]["profile_id"], "legacy");
+    assert_eq!(linked.result["actor"]["profile_revision_applied"], 1);
+    let linked_private = raw_call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"linked-private","profile_id":"legacy","env_private":{"TOKEN":"denied"},"by":"user"}),
+    );
+    assert_eq!(
+        linked_private.error.expect("linked private error").code,
+        "actor_profile_linked_readonly"
+    );
+    let custom = call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"custom-private","env_private":{"TOKEN":"value"},"by":"user"}),
+    );
+    assert_eq!(custom.result["actor"]["id"], "custom-private");
+    let custom_keys = call(
+        &home,
+        "actor_env_private_keys",
+        json!({"group_id":group_id,"actor_id":"custom-private"}),
+    );
+    assert_eq!(custom_keys.result["keys"], json!(["TOKEN"]));
     let conflict = raw_call(
         &home,
         "actor_profile_upsert",
@@ -120,6 +169,82 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
             .expect("serialize keys")
             .contains("secret-value")
     );
+
+    let denied = raw_call(
+        &home,
+        "group_space_provider_credential_update",
+        json!({"provider":"notebooklm","by":"peer1","auth_json":"{}"}),
+    );
+    assert_eq!(
+        denied.error.expect("permission error").code,
+        "permission_denied"
+    );
+    let credential = call(
+        &home,
+        "group_space_provider_credential_update",
+        json!({"provider":"notebooklm","by":"user","auth_json":"{\"cookie\":\"secret\"}"}),
+    );
+    assert_eq!(credential.result["credential"]["masked_value"], "********");
+    assert!(
+        !serde_json::to_string(&credential.result)
+            .expect("credential response")
+            .contains("secret")
+    );
+    let health = call(
+        &home,
+        "group_space_provider_health_check",
+        json!({"provider":"notebooklm","by":"user"}),
+    );
+    assert_eq!(health.result["healthy"], false);
+    assert_eq!(health.result["error"]["code"], "credential_invalid");
+    let remote_status = call(
+        &home,
+        "group_space_status",
+        json!({"group_id":group_id,"provider":"notebooklm"}),
+    );
+    assert_eq!(remote_status.result["provider"]["auth_configured"], true);
+    assert_eq!(remote_status.result["provider"]["write_ready"], false);
+    let invalid_query_option = raw_call(
+        &home,
+        "group_space_query",
+        json!({"group_id":group_id,"provider":"notebooklm","lane":"work","query":"x","options":{"language":"zh"}}),
+    );
+    assert_eq!(
+        invalid_query_option.error.expect("invalid option").code,
+        "invalid_args"
+    );
+
+    let missing_date = raw_call(
+        &home,
+        "memory_reme_write",
+        json!({"group_id":group_id,"target":"daily","content":"entry"}),
+    );
+    assert!(!missing_date.ok);
+    let memory_write = call(
+        &home,
+        "memory_reme_write",
+        json!({"group_id":group_id,"target":"memory","content":"durable fact","mode":"append","idempotency_key":"memory-1"}),
+    );
+    assert_eq!(memory_write.result["status"], "written");
+    let memory_dedup = call(
+        &home,
+        "memory_reme_write",
+        json!({"group_id":group_id,"target":"memory","content":"changed payload","idempotency_key":"memory-1"}),
+    );
+    assert_eq!(memory_dedup.result["reason"], "persistence_idempotency_key");
+    let memory_replace = call(
+        &home,
+        "memory_reme_write",
+        json!({"group_id":group_id,"target":"memory","content":"replacement","mode":"replace"}),
+    );
+    assert_eq!(memory_replace.result["status"], "written");
+    let index = call(
+        &home,
+        "memory_reme_index_sync",
+        json!({"group_id":group_id,"mode":"scan"}),
+    );
+    assert!(index.result["indexed_files"].as_u64().unwrap_or(0) >= 2);
+    assert!(index.result["indexed_chunks"].as_u64().unwrap_or(0) >= 1);
 }
 
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {

@@ -1,38 +1,98 @@
+mod interaction;
+
+pub use interaction::serve_socket;
+
 use anyhow::{Context, Result, bail};
-use axum::extract::ws::{Message, WebSocket};
 use cccc_contracts::utc_now;
 use chromiumoxide::Page;
 use chromiumoxide::browser::{Browser, BrowserConfig};
-use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
-use chromiumoxide::cdp::browser_protocol::input::InsertTextParams;
+use chromiumoxide::cdp::browser_protocol::network::CookieParam;
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
-use chromiumoxide::layout::Point;
 use chromiumoxide::page::ScreenshotParams;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 #[derive(Default)]
 pub struct BrowserSurfaces {
-    sessions: Mutex<HashMap<String, Session>>,
+    pub(super) sessions: Mutex<HashMap<String, Session>>,
 }
 
-struct Session {
-    browser: Browser,
-    page: Page,
+pub(super) struct Session {
+    pub(super) browser: Browser,
+    pub(super) page: Page,
     handler: JoinHandle<()>,
     url: String,
-    width: u32,
-    height: u32,
+    pub(super) width: u32,
+    pub(super) height: u32,
     started_at: String,
-    updated_at: String,
+    pub(super) updated_at: String,
     seq: u64,
 }
 
 impl BrowserSurfaces {
+    pub async fn close_missing_groups(&self, active_groups: &HashSet<String>) -> Result<usize> {
+        let keys = self
+            .sessions
+            .lock()
+            .await
+            .keys()
+            .filter_map(|key| {
+                let group_id = session_group_id(key)?;
+                (!active_groups.contains(group_id)).then(|| key.clone())
+            })
+            .collect::<Vec<_>>();
+        let mut closed = 0;
+        for key in keys {
+            closed += usize::from(self.close(&key).await?);
+        }
+        Ok(closed)
+    }
+
+    pub async fn close_missing_actors(
+        &self,
+        active_actors: &HashMap<String, HashSet<String>>,
+    ) -> Result<usize> {
+        let keys = self
+            .sessions
+            .lock()
+            .await
+            .keys()
+            .filter(|key| {
+                session_actor(key).is_some_and(|(group_id, actor_id)| {
+                    !active_actors
+                        .get(group_id)
+                        .is_some_and(|actors| actors.contains(actor_id))
+                })
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut closed = 0;
+        for key in keys {
+            closed += usize::from(self.close(&key).await?);
+        }
+        Ok(closed)
+    }
+
+    pub async fn close_prefixes(&self, prefixes: &[String]) -> Result<usize> {
+        let keys = self
+            .sessions
+            .lock()
+            .await
+            .keys()
+            .filter(|key| prefixes.iter().any(|prefix| key.starts_with(prefix)))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut closed = 0;
+        for key in keys {
+            closed += usize::from(self.close(&key).await?);
+        }
+        Ok(closed)
+    }
+
     pub async fn open(
         &self,
         key: &str,
@@ -40,6 +100,19 @@ impl BrowserSurfaces {
         url: &str,
         width: u32,
         height: u32,
+    ) -> Result<Value> {
+        self.open_seeded(key, profile, url, width, height, None)
+            .await
+    }
+
+    pub async fn open_seeded(
+        &self,
+        key: &str,
+        profile: &Path,
+        url: &str,
+        width: u32,
+        height: u32,
+        storage_state: Option<&Value>,
     ) -> Result<Value> {
         if !url.starts_with("http://") && !url.starts_with("https://") {
             bail!("browser surface URL must use http or https");
@@ -60,6 +133,16 @@ impl BrowserSurfaces {
                 }
             }
         });
+        if let Some(cookies) = storage_state
+            .and_then(|state| state.get("cookies"))
+            .cloned()
+        {
+            let cookies: Vec<CookieParam> =
+                serde_json::from_value(cookies).context("decode saved browser cookies")?;
+            if !cookies.is_empty() {
+                browser.set_cookies(cookies).await?;
+            }
+        }
         let page = browser.new_page(url).await.context("open browser page")?;
         let now = utc_now();
         let session = Session {
@@ -85,6 +168,46 @@ impl BrowserSurfaces {
             .get(key)
             .map(state)
             .unwrap_or_else(idle)
+    }
+
+    pub async fn storage_state(&self, key: &str) -> Result<Value> {
+        let page = self
+            .sessions
+            .lock()
+            .await
+            .get(key)
+            .context("browser surface is not active")?
+            .page
+            .clone();
+        let url = page.url().await?.unwrap_or_default();
+        let authuser = authuser_from_url(&url);
+        let cookies = page
+            .get_cookies()
+            .await?
+            .into_iter()
+            .filter(|cookie| {
+                let domain = cookie.domain.trim_start_matches('.');
+                domain == "google.com" || domain.ends_with(".google.com")
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({"cookies": cookies, "origins": [], "authuser": authuser}))
+    }
+
+    pub async fn notebooklm_auth_ready(&self, key: &str) -> Result<bool> {
+        let page = self
+            .sessions
+            .lock()
+            .await
+            .get(key)
+            .context("browser surface is not active")?
+            .page
+            .clone();
+        page.evaluate(
+            "(() => { const wiz = globalThis.WIZ_global_data; if (wiz && typeof wiz.SNlM0e === 'string' && wiz.SNlM0e && typeof wiz.FdrFJe === 'string' && wiz.FdrFJe) return true; const html = document.documentElement?.innerHTML || ''; return /[\\\"']SNlM0e[\\\"']\\s*:\\s*[\\\"'][^\\\"']+[\\\"']/.test(html) && /[\\\"']FdrFJe[\\\"']\\s*:\\s*[\\\"'][^\\\"']+[\\\"']/.test(html); })()",
+        )
+        .await?
+        .into_value()
+        .map_err(anyhow::Error::from)
     }
 
     pub async fn close(&self, key: &str) -> Result<bool> {
@@ -130,126 +253,43 @@ impl BrowserSurfaces {
             "url":session.url
         }))
     }
-
-    pub async fn command(&self, key: &str, command: &Value) -> Result<()> {
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(key)
-            .context("browser surface is not active")?;
-        match command.get("t").and_then(Value::as_str).unwrap_or("") {
-            "click" => {
-                session
-                    .page
-                    .click(Point::new(number(command, "x"), number(command, "y")))
-                    .await?;
-            }
-            "text" => {
-                let text = command.get("text").and_then(Value::as_str).unwrap_or("");
-                session.page.execute(InsertTextParams::new(text)).await?;
-            }
-            "key" => {
-                let key = command.get("key").and_then(Value::as_str).unwrap_or("");
-                let script = format!(
-                    "document.activeElement?.dispatchEvent(new KeyboardEvent('keydown',{{key:{}}}))",
-                    serde_json::to_string(key)?
-                );
-                session.page.evaluate(script).await?;
-            }
-            "scroll" => {
-                let script = format!(
-                    "window.scrollBy({}, {})",
-                    number(command, "dx"),
-                    number(command, "dy")
-                );
-                session.page.evaluate(script).await?;
-            }
-            "back" => {
-                session.page.evaluate("history.back()").await?;
-            }
-            "refresh" => {
-                session.page.reload().await?;
-            }
-            "resize" => {
-                let width = number(command, "width").round().clamp(320.0, 3840.0) as u32;
-                let height = number(command, "height").round().clamp(240.0, 2160.0) as u32;
-                session
-                    .page
-                    .execute(SetDeviceMetricsOverrideParams::new(
-                        i64::from(width),
-                        i64::from(height),
-                        1.0,
-                        false,
-                    ))
-                    .await?;
-                session.width = width;
-                session.height = height;
-                session.updated_at = utc_now();
-            }
-            _ => bail!("unsupported browser command"),
-        }
-        Ok(())
-    }
 }
 
-pub async fn serve_socket(mut socket: WebSocket, surfaces: &BrowserSurfaces, key: &str) {
-    if socket
-        .send(Message::Text(
-            json!({"t":"state","active":true,"state":"ready"})
-                .to_string()
-                .into(),
-        ))
-        .await
-        .is_err()
+fn session_group_id(key: &str) -> Option<&str> {
+    key.strip_prefix("web-model::")
+        .and_then(|value| value.split("::").next())
+        .or_else(|| {
+            key.split_once("::")
+                .map(|(prefix, _)| prefix)
+                .filter(|prefix| prefix.starts_with("g_"))
+        })
+}
+
+fn session_actor(key: &str) -> Option<(&str, &str)> {
+    let value = key.strip_prefix("web-model::")?;
+    let (group_id, actor_id) = value.split_once("::")?;
+    (!group_id.is_empty() && !actor_id.is_empty()).then_some((group_id, actor_id))
+}
+
+fn authuser_from_url(raw: &str) -> usize {
+    let Ok(url) = reqwest::Url::parse(raw) else {
+        return 0;
+    };
+    if let Some(value) = url
+        .query_pairs()
+        .find_map(|(key, value)| (key == "authuser").then_some(value))
+        .and_then(|value| value.parse().ok())
     {
-        return;
+        return value;
     }
-    let mut interval = tokio::time::interval(std::time::Duration::from_millis(300));
-    loop {
-        tokio::select! {
-            _ = interval.tick() => match surfaces.frame(key).await {
-                Ok(frame) => {
-                    if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
-                        break;
-                    }
-                }
-                Err(error) => {
-                    let _ = socket.send(Message::Text(
-                        json!({"t":"error","message":error.to_string()}).to_string().into(),
-                    )).await;
-                    break;
-                }
-            },
-            message = socket.recv() => {
-                let Some(Ok(message)) = message else { break };
-                if matches!(message, Message::Close(_)) { break }
-                let Message::Text(text) = message else { continue };
-                let Ok(command) = serde_json::from_str::<Value>(&text) else { continue };
-                let command_id = command.get("id").and_then(Value::as_str).unwrap_or("");
-                match surfaces.command(key, &command).await {
-                    Ok(()) if !command_id.is_empty() => {
-                        let _ = socket.send(Message::Text(
-                            json!({"t":"command_result","id":command_id,"ok":true}).to_string().into(),
-                        )).await;
-                    }
-                    Ok(()) => {}
-                    Err(error) if !command_id.is_empty() => {
-                        let _ = socket.send(Message::Text(
-                            json!({"t":"command_result","id":command_id,"ok":false,"message":error.to_string()}).to_string().into(),
-                        )).await;
-                    }
-                    Err(error) => {
-                        let _ = socket.send(Message::Text(
-                            json!({"t":"error","message":error.to_string()}).to_string().into(),
-                        )).await;
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn number(value: &Value, key: &str) -> f64 {
-    value.get(key).and_then(Value::as_f64).unwrap_or(0.0)
+    let segments = url
+        .path_segments()
+        .map(Iterator::collect::<Vec<_>>)
+        .unwrap_or_default();
+    segments
+        .windows(2)
+        .find_map(|pair| (pair[0] == "u").then(|| pair[1].parse().ok()).flatten())
+        .unwrap_or(0)
 }
 
 fn state(session: &Session) -> Value {
@@ -271,69 +311,4 @@ fn idle() -> Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use base64::Engine;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-    #[tokio::test]
-    async fn launches_chromium_and_captures_nonempty_frame() {
-        if !chrome_available() {
-            return;
-        }
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("listener");
-        let address = listener.local_addr().expect("address");
-        let server = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.expect("accept");
-            let mut request = [0_u8; 2048];
-            let _ = stream.read(&mut request).await;
-            let body = "<!doctype html><html><body style='background:#fff'><h1>CCCC browser frame</h1><input autofocus></body></html>";
-            stream
-                .write_all(
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    )
-                    .as_bytes(),
-                )
-                .await
-                .expect("response");
-        });
-        let temp = tempfile::tempdir().expect("tempdir");
-        let manager = BrowserSurfaces::default();
-        let url = format!("http://{address}");
-        let state = manager
-            .open(
-                "g_test::slot-1",
-                &temp.path().join("profile"),
-                &url,
-                800,
-                600,
-            )
-            .await
-            .expect("open");
-        assert_eq!(state["state"], "ready");
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        let frame = manager.frame("g_test::slot-1").await.expect("frame");
-        let image = base64::engine::general_purpose::STANDARD
-            .decode(frame["data_base64"].as_str().expect("base64"))
-            .expect("jpeg");
-        assert!(image.len() > 1_000);
-        assert_eq!(&image[..2], &[0xff, 0xd8]);
-        assert!(manager.close("g_test::slot-1").await.expect("close"));
-        server.await.expect("server");
-    }
-
-    fn chrome_available() -> bool {
-        [
-            "/opt/homebrew/bin/chromium",
-            "/usr/bin/chromium",
-            "/usr/bin/google-chrome",
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        ]
-        .iter()
-        .any(|path| std::path::Path::new(path).is_file())
-    }
-}
+mod browser_surface_tests;

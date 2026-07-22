@@ -297,7 +297,7 @@ The built-in Web UI at `http://127.0.0.1:8848` provides:
 - **Group & actor management** — create, configure, start, stop, restart
 - **Automation rule editor** — configure triggers, schedules, and actions visually
 - **Context panel** — shared vision, sketch, milestones, and tasks
-- **Group Space** — NotebookLM integration for shared knowledge management
+- **Group Space** — Rust-native NotebookLM notebooks, text sources, queries, and explicit local fallback
 - **ChatGPT Web Model setup** — connect one ChatGPT Web conversation as a CCCC actor
 - **Group Bridge setup** — pair trusted remote groups and choose message/read/full access per connection
 - **IM bridge configuration** — connect to Telegram/Slack/Discord/Feishu/DingTalk/WeCom/Weixin
@@ -445,7 +445,7 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 | [Web UI Guide](https://chesterra.github.io/cccc/guide/web-ui) | Navigating the dashboard |
 | [Voice Secretary](https://chesterra.github.io/cccc/guide/voice-secretary) | Native Rust ASR, models, transcripts, and documents |
 | [IM Bridge Setup](https://chesterra.github.io/cccc/guide/im-bridge/) | Connect Telegram, Slack, Discord, Feishu, DingTalk, WeCom, Weixin |
-| [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | NotebookLM knowledge integration |
+| [Group Space](https://chesterra.github.io/cccc/guide/group-space-notebooklm) | Local knowledge mode and NotebookLM adapter status |
 | [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime) | Connect MCP-capable ChatGPT GPT-5.x as a CCCC actor |
 | [Capability Allowlist](https://chesterra.github.io/cccc/guide/capability-allowlist) | MCP capability governance |
 | [Best Practices](https://chesterra.github.io/cccc/guide/best-practices) | Recommended patterns and workflows |

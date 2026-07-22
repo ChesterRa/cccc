@@ -5,7 +5,9 @@ mod messaging;
 
 pub use actor::{ActorAction, ActorArgs, ActorTarget};
 pub use group::{GroupAction, GroupArgs};
-pub use integrations::{ImAction, ImArgs, ImSetArgs, PromptArgs, SpaceAction, SpaceArgs};
+pub use integrations::{
+    ImAction, ImArgs, ImSetArgs, PromptArgs, SpaceAction, SpaceArgs, SpaceCredentialAction,
+};
 pub use messaging::{
     InboxArgs, LedgerAction, LedgerArgs, ReadArgs, ReplyArgs, SendArgs, TailArgs, TrackedSendArgs,
 };
@@ -88,4 +90,30 @@ pub enum DaemonAction {
 #[derive(Debug, Subcommand)]
 pub enum RuntimeAction {
     List,
+    Hermes {
+        #[command(subcommand)]
+        action: HermesAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HermesAction {
+    Status,
+    Prepare {
+        #[arg(long = "path", default_value = ".")]
+        cwd: String,
+        #[arg(long)]
+        yes: bool,
+        #[arg(long)]
+        force: bool,
+    },
+    #[command(name = "mcp-test")]
+    McpTest {
+        #[arg(long = "path", default_value = ".")]
+        cwd: String,
+        #[arg(long, default_value = "g_probe")]
+        group_id: String,
+        #[arg(long, default_value = "hermes-probe")]
+        actor_id: String,
+    },
 }

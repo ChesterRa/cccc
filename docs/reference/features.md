@@ -301,7 +301,7 @@ cccc_automation_manage(op=create|update|enable|disable|delete|replace_all, ...)
 - Chat sends carry a stable `client_id`; the daemon deduplicates retries within the group and sender scope.
 - The Web outbox reconciles immediately from the HTTP response and again from SSE/reconnect catch-up, so a missing SSE frame does not leave a permanent optimistic duplicate.
 - Local runtime delivery submits message text and Enter atomically under a per-session input lock, preventing status probes from interleaving with user messages.
-- Messages for stopped or temporarily unavailable actors remain unread and are replayed after the actor starts.
+- Messages for stopped or temporarily unavailable actors remain available in the inbox; starting an actor does not inject historical unread messages into its runtime.
 - Runtime delivery uses bounded retry for transient failures and suppresses concurrent duplicate delivery of the same event.
 - Actor delivery includes the complete event id, reply/priority requirements, refs, relay origin, and attachment access instructions.
 

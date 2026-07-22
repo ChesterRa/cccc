@@ -150,33 +150,6 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
     report(targets.len(), online, queued)
 }
 
-pub fn replay_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> usize {
-    let Some(actor) = group
-        .actors
-        .iter()
-        .find(|actor| actor.id == actor_id && actor.runtime != ActorRuntime::WebModel)
-        .cloned()
-    else {
-        return 0;
-    };
-    if !cccc_runtime::status(&group.group_id, actor_id).is_ok_and(|status| status.running) {
-        return 0;
-    }
-    inbox::list_unread(home, group, actor_id, 1000)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|event| actor.created_at.is_empty() || event.ts >= actor.created_at)
-        .filter(|event| {
-            enqueue(DeliveryJob {
-                home: home.clone(),
-                group: group.clone(),
-                actor: actor.clone(),
-                event: event.clone(),
-            })
-        })
-        .count()
-}
-
 fn report(targeted: usize, online: usize, queued: usize) -> DispatchReport {
     let state = if queued > 0 {
         "queued"
@@ -280,7 +253,6 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
             if !delivered {
                 release_in_flight(&job);
             }
-            replay_unread(&job.home, &job.group, &job.actor.id);
         }
     });
     let thread = match thread {

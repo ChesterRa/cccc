@@ -4,7 +4,7 @@ use cccc_runtime::{LaunchSpec, SessionStatus};
 use std::path::PathBuf;
 
 use crate::dispatch::OpError;
-use crate::ops::{actor_delivery, actor_secrets, runtime_session};
+use crate::ops::{actor_profile_runtime, actor_secrets, runtime_session};
 
 mod persistence;
 mod reconcile;
@@ -39,13 +39,15 @@ pub fn apply(
 }
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {
+    let actor = actor_profile_runtime::resolve(home, actor)?;
     let base_command = if actor.command.is_empty() {
         cccc_runtime::default_command(actor.runtime)
     } else {
         actor.command.clone()
     };
-    let cwd = working_directory(group, actor);
+    let cwd = working_directory(group, &actor);
     let mut env = actor.env.clone();
+    env.extend(actor_profile_runtime::profile_secrets(home, &actor)?);
     env.extend(actor_secrets::values(home, &group.group_id, &actor.id)?);
     let prepared = match (actor.runtime, actor.runner) {
         (ActorRuntime::Codex, cccc_contracts::RunnerKind::Pty) => {
@@ -72,7 +74,7 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
             resumed_session_id: None,
         },
     };
-    let status = launch(home, group, actor, &cwd, &env, prepared.command)?;
+    let status = launch(home, group, &actor, &cwd, &env, prepared.command)?;
 
     if prepared.resumed_session_id.is_some() {
         schedule_resume_verification(
@@ -85,10 +87,7 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
             status.clone(),
         );
     } else {
-        schedule_capture(home, group, actor, cwd, base_command, &status);
-    }
-    if status.running {
-        actor_delivery::replay_unread(home, group, &actor.id);
+        schedule_capture(home, group, &actor, cwd, base_command, &status);
     }
     Ok(status)
 }

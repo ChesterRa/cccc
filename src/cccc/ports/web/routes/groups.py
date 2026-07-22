@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -883,7 +884,7 @@ def _read_group_local(group_id: str) -> Dict[str, Any]:
     group = load_group(gid)
     if group is None:
         return {"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {gid}"}}
-    doc = json.loads(json.dumps(group.doc))
+    doc = jsonable_encoder(group.doc)
     runtime_status = _group_runtime_status_local(group)
     doc["state"] = str(runtime_status.get("lifecycle_state") or doc.get("state") or "active")
     doc["running"] = bool(runtime_status.get("runtime_running"))

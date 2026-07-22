@@ -24,6 +24,11 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     atomic_write(path, &bytes)
 }
 
+pub fn write_secret_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+    write_json(path, value)?;
+    protect(path)
+}
+
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
     serde_json::from_slice(&fs::read(path)?).map_err(io::Error::other)
 }
@@ -59,6 +64,17 @@ pub fn with_exclusive_lock<T>(
 #[cfg(unix)]
 fn sync_dir(path: &Path) -> io::Result<()> {
     File::open(path)?.sync_all()
+}
+
+#[cfg(unix)]
+fn protect(path: &Path) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(not(unix))]
+fn protect(_path: &Path) -> io::Result<()> {
+    Ok(())
 }
 
 #[cfg(not(unix))]

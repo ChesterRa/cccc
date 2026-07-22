@@ -78,16 +78,28 @@ async fn remove(
     if let Some(confirm) = query.get("confirm") {
         args.insert("confirm".into(), Value::String(confirm.clone()));
     }
-    call(&state, "group_delete", args).await
+    let mut response = call(&state, "group_delete", args).await?;
+    cleanup_group_resources(&state, &group_id, &mut response).await;
+    Ok(response)
 }
 
 async fn reset(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
-    call(
+    let mut response = call(
         &state,
         "group_reset",
         object(json!({"group_id":group_id,"by":"user"})),
     )
-    .await
+    .await?;
+    cleanup_group_resources(&state, &group_id, &mut response).await;
+    Ok(response)
+}
+
+async fn cleanup_group_resources(state: &AppState, group_id: &str, response: &mut Json<Value>) {
+    state.im_workers.stop(group_id).await;
+    let prefixes = [format!("{group_id}::"), format!("web-model::{group_id}::")];
+    if let Err(error) = state.browser_surfaces.close_prefixes(&prefixes).await {
+        response.0["result"]["browser_cleanup_warning"] = Value::String(error.to_string());
+    }
 }
 async fn start(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
     call(

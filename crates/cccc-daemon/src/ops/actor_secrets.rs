@@ -1,5 +1,5 @@
 use cccc_contracts::DaemonRequest;
-use cccc_core::fs::{read_json, write_json};
+use cccc_core::fs::{read_json, write_secret_json};
 use cccc_core::{GroupStore, HomeLayout};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -55,7 +55,7 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
     }
     let keys: Vec<_> = values.keys().cloned().collect();
-    write_json(&path(home, &group_id)?, &state).map_err(OpError::io)?;
+    write_secret_json(&path(home, &group_id)?, &state).map_err(OpError::io)?;
     object(json!({"actor_id": actor_id, "keys": keys, "updated": true}))
 }
 
@@ -77,6 +77,25 @@ pub fn values(
         .actors
         .remove(actor_id)
         .unwrap_or_default())
+}
+
+pub fn replace(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    values: BTreeMap<String, String>,
+) -> Result<(), OpError> {
+    let mut state = load(home, group_id)?;
+    if values.is_empty() {
+        state.actors.remove(actor_id);
+    } else {
+        state.actors.insert(actor_id.to_owned(), values);
+    }
+    write_secret_json(&path(home, group_id)?, &state).map_err(OpError::io)
+}
+
+pub fn remove(home: &HomeLayout, group_id: &str, actor_id: &str) -> Result<(), OpError> {
+    replace(home, group_id, actor_id, BTreeMap::new())
 }
 
 fn path(home: &HomeLayout, group_id: &str) -> Result<PathBuf, OpError> {

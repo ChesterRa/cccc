@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::io;
 use uuid::Uuid;
 
-use crate::fs::{read_json, write_json};
+use crate::fs::{read_json, with_exclusive_lock, write_json, write_secret_json};
 use crate::{GroupStore, HomeLayout};
 
 #[derive(Debug, Clone)]
@@ -28,7 +28,9 @@ struct SecretDoc {
 impl ProfileStore {
     pub fn new(home: HomeLayout) -> io::Result<Self> {
         home.initialize().map_err(io::Error::other)?;
-        Ok(Self { home })
+        let store = Self { home };
+        store.migrate_legacy_env()?;
+        Ok(store)
     }
 
     pub fn list(&self) -> io::Result<Vec<Value>> {
@@ -68,6 +70,18 @@ impl ProfileStore {
                 expected.unwrap_or_default()
             )));
         }
+        let legacy_env = profile
+            .remove("env")
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(key, value)| {
+                value
+                    .as_str()
+                    .map(|value| (key, value.to_owned()))
+                    .ok_or_else(|| io::Error::other("profile env values must be strings"))
+            })
+            .collect::<io::Result<BTreeMap<_, _>>>()?;
         let now = utc_now();
         profile.insert("id".into(), json!(id));
         profile.entry("name").or_insert_with(|| json!(id));
@@ -77,7 +91,7 @@ impl ProfileStore {
         profile.entry("runner").or_insert_with(|| json!("pty"));
         profile.entry("command").or_insert_with(|| json!([]));
         profile.entry("submit").or_insert_with(|| json!("enter"));
-        profile.entry("env").or_insert_with(|| json!({}));
+        profile.insert("env".into(), json!({}));
         profile.insert(
             "created_at".into(),
             current
@@ -88,6 +102,15 @@ impl ProfileStore {
         profile.insert("revision".into(), json!(revision + 1));
         let result = Value::Object(profile);
         doc.profiles.insert(id, result.clone());
+        if !legacy_env.is_empty() {
+            let mut secrets = self.load_secrets()?;
+            secrets
+                .profiles
+                .entry(result["id"].as_str().unwrap_or_default().to_owned())
+                .or_default()
+                .extend(legacy_env);
+            self.save_secrets(&secrets)?;
+        }
         self.save(&doc)?;
         Ok(result)
     }
@@ -225,7 +248,37 @@ impl ProfileStore {
         }
     }
     fn save_secrets(&self, value: &SecretDoc) -> io::Result<()> {
-        write_json(&self.home.root().join("profile-secrets.json"), value)
+        write_secret_json(&self.home.root().join("profile-secrets.json"), value)
+    }
+
+    fn migrate_legacy_env(&self) -> io::Result<()> {
+        with_exclusive_lock(&self.home.root().join("profiles.migration.lock"), || {
+            let mut profiles = self.load()?;
+            let mut secrets = self.load_secrets()?;
+            let mut changed = false;
+            for (profile_id, profile) in &mut profiles.profiles {
+                let Some(env) = profile.get("env").and_then(Value::as_object).cloned() else {
+                    continue;
+                };
+                if env.is_empty() {
+                    continue;
+                }
+                let target = secrets.profiles.entry(profile_id.clone()).or_default();
+                for (key, value) in env {
+                    let value = value.as_str().ok_or_else(|| {
+                        io::Error::other(format!("profile {profile_id} env values must be strings"))
+                    })?;
+                    target.insert(key, value.to_owned());
+                }
+                profile["env"] = json!({});
+                changed = true;
+            }
+            if changed {
+                self.save_secrets(&secrets)?;
+                self.save(&profiles)?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -236,4 +289,35 @@ fn validate_id(value: &str) -> io::Result<()> {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')))
     .then_some(())
     .ok_or_else(|| io::Error::other("invalid profile_id"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opening_store_migrates_legacy_env_before_profiles_are_returned() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        write_json(&home.root().join("profiles.json"),&json!({"profiles":{"legacy":{"id":"legacy","name":"Legacy","env":{"TOKEN":"secret"}}}})).expect("fixture");
+        let store = ProfileStore::new(home.clone()).expect("store");
+        assert_eq!(
+            store.get("legacy").expect("get").expect("profile")["env"],
+            json!({})
+        );
+        assert_eq!(
+            store
+                .secret_values("legacy")
+                .expect("secrets")
+                .get("TOKEN")
+                .map(String::as_str),
+            Some("secret")
+        );
+        assert!(
+            !std::fs::read_to_string(home.root().join("profiles.json"))
+                .expect("profiles")
+                .contains("secret")
+        );
+    }
 }

@@ -30,7 +30,6 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
             .push(completion);
     }
     let mut deferred = VecDeque::new();
-    let mut refill = HashSet::new();
     for ((group_id, actor_id), batch) in grouped {
         let Ok(group) = store.load(&group_id) else {
             clear_in_flight(|item| item.0 == group_id && item.1 == actor_id);
@@ -79,9 +78,6 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
         clear_in_flight(|item| {
             item.0 == group_id && item.1 == actor_id && resolved_ids.contains(&item.2)
         });
-        if !resolved_ids.is_empty() {
-            refill.insert((group_id.clone(), actor_id.clone()));
-        }
         let advanced = delivered.last().is_some_and(|event_id| {
             inbox::advance(home, &group_id, &actor_id, event_id).unwrap_or(false)
         });
@@ -91,11 +87,6 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
     }
     if let Ok(mut completions) = completions().lock() {
         completions.extend(deferred);
-    }
-    for (group_id, actor_id) in refill {
-        if let Ok(group) = store.load(&group_id) {
-            replay_unread(home, &group, &actor_id);
-        }
     }
 }
 

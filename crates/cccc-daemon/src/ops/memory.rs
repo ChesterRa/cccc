@@ -2,20 +2,27 @@ use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
 use cccc_core::memory::MemoryStore;
 use serde_json::{Value, json};
+use std::fs;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
 
+mod reme;
+
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
-        "memory_search" | "memory_reme_search" => search(home, request),
-        "memory_get" | "memory_reme_get" => get(home, request),
-        "memory_write" | "memory_reme_write" => write(home, request),
+        "memory_search" => search(home, request),
+        "memory_reme_search" => reme::reme_search(home, request),
+        "memory_get" => get(home, request),
+        "memory_reme_get" => reme::reme_get(home, request),
+        "memory_write" => write(home, request),
+        "memory_reme_write" => reme::reme_write(home, request),
         "memory_health" => health(home, request),
         "memory_profile_get" => profile(home, request),
         "memory_reme_layout_get" => layout(home, request),
         "memory_reme_index_sync" => index(home, request),
-        "memory_reme_context_check" => search(home, request),
-        "memory_reme_compact" | "memory_reme_daily_flush" => compact(home, request),
+        "memory_reme_context_check" => reme::context_check(request),
+        "memory_reme_compact" => reme::compact(request),
+        "memory_reme_daily_flush" => reme::daily_flush(home, request),
         _ => return None,
     })
 }
@@ -94,20 +101,32 @@ fn layout(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    let hits = MemoryStore::new(home.clone())
-        .search(&group_id, "#", 100)
+    let mode = string_arg(request, "mode").unwrap_or_else(|| "scan".into());
+    if !matches!(mode.as_str(), "scan" | "rebuild") {
+        return Err(OpError::new("invalid_args", "mode must be scan or rebuild"));
+    }
+    let layout = MemoryStore::new(home.clone())
+        .layout(&group_id, None)
         .map_err(OpError::io)?;
-    object(json!({"indexed": hits.len(), "backend": "rust-local-index"}))
-}
-
-fn compact(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let store = MemoryStore::new(home.clone());
-    let (_, daily) = store
-        .get(&group_id, "daily", string_arg(request, "date").as_deref())
-        .map_err(OpError::io)?;
-    let (_, _, deduped) = store
-        .write(&group_id, "memory", &daily, None)
-        .map_err(OpError::io)?;
-    object(json!({"compacted": true, "deduped": deduped}))
+    let mut files = vec![layout.memory_file.clone()];
+    files.extend(
+        fs::read_dir(&layout.daily_dir)
+            .map_err(OpError::io)?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "md")),
+    );
+    let chunks = files
+        .iter()
+        .map(|path| {
+            fs::read_to_string(path)
+                .unwrap_or_default()
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .count()
+        })
+        .sum::<usize>();
+    object(
+        json!({"indexed_files":files.len(),"indexed_chunks":chunks,"watched_paths":[layout.memory_file,layout.daily_dir],"last_sync_at":cccc_contracts::utc_now()}),
+    )
 }

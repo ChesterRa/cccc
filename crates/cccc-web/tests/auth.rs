@@ -78,6 +78,31 @@ async fn scoped_token_cannot_open_another_group() {
 }
 
 #[tokio::test]
+async fn scoped_token_cannot_access_global_profiles_or_provider_credentials() {
+    let (_temp, home) = home();
+    let token = AccessTokenStore::new(home.clone())
+        .expect("store")
+        .create("member", vec!["g_allowed".into()], false, None)
+        .expect("token");
+    for path in [
+        "/api/v1/profiles",
+        "/api/v1/actor_profiles",
+        "/api/v1/space/providers/notebooklm/credential",
+    ] {
+        let response = cccc_web::app(home.clone())
+            .oneshot(
+                Request::get(path)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+    }
+}
+
+#[tokio::test]
 async fn legacy_flat_token_document_keeps_authentication_enabled() {
     let (_temp, home) = home();
     std::fs::write(

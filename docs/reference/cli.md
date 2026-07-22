@@ -91,6 +91,7 @@ cccc im bind --key KEY [--group ID]
 cccc im pending|authorized [--group ID]
 cccc im reject --key KEY [--group ID]
 cccc im revoke --chat-id ID [--thread-id N] [--group ID]
+cccc im logs [-n LINES] [-f] [--group ID]
 ```
 
 Platforms: `telegram`, `slack`, `discord`, `feishu`, `dingtalk`, `wecom`, `weixin`. Credential options store environment-variable names or direct secrets in Rust Home. The Web control plane starts the corresponding Rust network adapter and verifies credentials where the provider supports an explicit validation call. Missing or rejected credentials fail without fabricating a running adapter.
@@ -104,20 +105,32 @@ cccc space status [--group ID] [--provider notebooklm]
 cccc space bind [remote_space_id] --lane work|memory [--group ID]
 cccc space unbind --lane work|memory [--group ID]
 cccc space sync --lane work|memory [--group ID] [--force]
-cccc space ingest --lane work|memory [--payload JSON] [--idempotency-key KEY]
-cccc space query QUERY --lane work|memory [--options JSON]
+cccc space ingest --lane work|memory [--payload JSON] [--idempotency-key KEY] [--provider notebooklm|local]
+cccc space query QUERY --lane work|memory [--options JSON] [--provider notebooklm|local]
 cccc space sources --lane work|memory [--action list|rename|delete]
   [--source-id ID] [--new-title TITLE]
 cccc space jobs --lane work|memory [--action list|retry|cancel] [--job-id ID]
 cccc space auth [status|start|cancel|disconnect]
+cccc space credential status
+cccc space credential set (--auth-json JSON | --auth-json-file PATH)
+cccc space credential clear
+cccc space health
 ```
 
-Without a live provider adapter, query and ingest use the explicit local degraded path.
+NotebookLM is the default provider. Configure a Playwright storage-state JSON
+with `cccc space credential set --auth-json-file PATH`, run `cccc space health`,
+then bind a notebook. Omitting `remote_space_id` on `space bind` creates a new
+notebook. Local operations require explicit `--provider local` and return a
+degraded marker; there is no silent fallback. NotebookLM artifact and full sync
+operations remain explicitly unavailable.
 
 ## Runtime, MCP, And Web
 
 ```bash
 cccc runtime list
+cccc runtime hermes status
+cccc runtime hermes prepare --yes
+cccc runtime hermes mcp-test
 cccc setup
 cccc mcp
 cccc web

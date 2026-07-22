@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 import os
 import tempfile
 import unittest
@@ -117,6 +118,30 @@ class TestWebGroupRoutesLocal(unittest.TestCase):
                     self.assertEqual(str(group.get("group_id") or ""), group_id)
                     self.assertEqual(str(group.get("title") or ""), "group-local-read")
                     self.assertEqual(str(group.get("topic") or ""), "local topic")
+        finally:
+            cleanup()
+
+    def test_group_show_serializes_yaml_datetime_values(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            created_at = datetime(2026, 7, 21, 12, 34, 56, tzinfo=timezone.utc)
+            group.doc["created_at"] = created_at
+            group.save()
+
+            with self._client() as client:
+                resp = client.get(f"/api/v1/groups/{group_id}")
+
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(bool(body.get("ok")), body)
+            result = (body.get("result") or {}).get("group") or {}
+            self.assertEqual(result.get("created_at"), created_at.isoformat())
         finally:
             cleanup()
 

@@ -155,6 +155,8 @@ fn is_public(method: &Method, path: &str) -> bool {
 
 fn requires_admin(method: &Method, path: &str) -> bool {
     path.starts_with("/api/v1/access-tokens")
+        || path.starts_with("/api/v1/profiles")
+        || path.starts_with("/api/v1/actor_profiles")
         || path.starts_with("/api/v1/nomcp/")
         || path.starts_with("/api/v1/web-model/")
         || path.starts_with("/api/v1/space/providers/")
@@ -184,4 +186,20 @@ fn failure_text(status: StatusCode, code: &str, message: &str) -> Response {
         axum::Json(json!({"ok":false,"error":{"code":code,"message":message,"details":{}}})),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_profile_and_provider_routes_require_admin() {
+        assert!(requires_admin(&Method::GET, "/api/v1/profiles"));
+        assert!(requires_admin(&Method::POST, "/api/v1/actor_profiles"));
+        assert!(requires_admin(
+            &Method::POST,
+            "/api/v1/space/providers/notebooklm/credential"
+        ));
+        assert!(!requires_admin(&Method::GET, "/api/v1/groups/g_one/actors"));
+    }
 }

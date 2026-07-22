@@ -8,6 +8,7 @@ members = [
   "crates/cccc-client",
   "crates/cccc-daemon",
   "crates/cccc-mcp",
+  "crates/cccc-notebooklm",
   "crates/cccc-web",
   "crates/cccc-cli",
 ]
@@ -32,6 +33,7 @@ base64 = "0.22"
 bzip2 = "0.6"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 chrono-tz = "0.10"
+cookie = "0.18"
 cbc = "0.1"
 chromiumoxide = "0.8"
 clap = { version = "4.5", features = ["derive"] }

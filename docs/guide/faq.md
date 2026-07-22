@@ -84,7 +84,10 @@ No. Pairing creates an explicit trust for one group. `messages` allows message d
 
 ## Why does Group Space say degraded?
 
-The provider adapter is unavailable or not authenticated, so CCCC used its local source/ledger query path. The response intentionally does not pretend a remote NotebookLM call succeeded.
+The Rust remote provider adapter is unavailable. NotebookLM requests return
+`provider_unavailable`; CCCC only uses the local source/ledger path when the
+caller explicitly selects `provider=local`. It never silently treats local work
+as a remote NotebookLM success.
 
 ## Why does local voice transcription return `asr_unavailable`?
 

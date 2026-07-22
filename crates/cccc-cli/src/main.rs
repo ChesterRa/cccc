@@ -2,7 +2,7 @@ mod args;
 mod commands;
 
 use anyhow::{Result, bail};
-use args::{Cli, CommandKind, DaemonAction, RuntimeAction};
+use args::{Cli, CommandKind, DaemonAction, HermesAction, RuntimeAction};
 use cccc_client::DaemonClient;
 use cccc_core::{HomeLayout, active};
 use cccc_daemon::{DetachedDaemon, StartOutcome};
@@ -45,7 +45,9 @@ async fn main() -> Result<()> {
         Some(CommandKind::Prompt(args)) => {
             commands::integrations::prompt(&client, &home, args).await
         }
-        Some(CommandKind::Im(args)) => commands::integrations::im(&home, &web_endpoint, args).await,
+        Some(CommandKind::Im(args)) => {
+            commands::integrations::im(&client, &home, &web_endpoint, args).await
+        }
         Some(CommandKind::Space(args)) => commands::integrations::space(&client, &home, args).await,
         Some(CommandKind::Send(args)) => commands::messaging::send(&client, &home, args).await,
         Some(CommandKind::TrackedSend(args)) => {
@@ -57,7 +59,7 @@ async fn main() -> Result<()> {
         Some(CommandKind::Read(args)) => commands::messaging::read(&client, &home, args).await,
         Some(CommandKind::Ledger(args)) => commands::messaging::ledger(&client, &home, args).await,
         Some(CommandKind::Daemon { action }) => daemon(action, home, &client).await,
-        Some(CommandKind::Runtime { action }) => runtime(action),
+        Some(CommandKind::Runtime { action }) => runtime(&client, action).await,
         Some(CommandKind::Status) => status(&client).await,
         Some(CommandKind::Doctor) => commands::doctor::run(&home),
         Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
@@ -205,12 +207,30 @@ async fn status(client: &DaemonClient) -> Result<()> {
     print(call(client, "group_list", json!({})).await?)
 }
 
-fn runtime(action: RuntimeAction) -> Result<()> {
+async fn runtime(client: &DaemonClient, action: RuntimeAction) -> Result<()> {
     match action {
         RuntimeAction::List => println!(
             "{}",
             serde_json::to_string_pretty(&cccc_runtime::detect_runtimes())?
         ),
+        RuntimeAction::Hermes { action } => {
+            let (op, args) = match action {
+                HermesAction::Status => ("runtime_hermes_status", json!({})),
+                HermesAction::Prepare { cwd, yes, force } => (
+                    "runtime_hermes_prepare",
+                    json!({"cwd":cwd,"yes":yes,"force":force}),
+                ),
+                HermesAction::McpTest {
+                    cwd,
+                    group_id,
+                    actor_id,
+                } => (
+                    "runtime_hermes_mcp_test",
+                    json!({"cwd":cwd,"group_id":group_id,"actor_id":actor_id}),
+                ),
+            };
+            print(call(client, op, args).await?)?;
+        }
     }
     Ok(())
 }

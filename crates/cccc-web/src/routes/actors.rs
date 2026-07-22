@@ -66,7 +66,12 @@ async fn remove(
     State(state): State<AppState>,
     Path((group_id, actor_id)): Path<(String, String)>,
 ) -> ApiResult {
-    lifecycle(&state, &group_id, &actor_id, "actor_remove").await
+    let mut response = lifecycle(&state, &group_id, &actor_id, "actor_remove").await?;
+    let key = format!("web-model::{group_id}::{actor_id}");
+    if let Err(error) = state.browser_surfaces.close(&key).await {
+        response.0["result"]["browser_cleanup_warning"] = Value::String(error.to_string());
+    }
+    Ok(response)
 }
 async fn start(
     State(state): State<AppState>,

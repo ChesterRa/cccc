@@ -64,6 +64,14 @@ pub enum ImAction {
         #[arg(long = "group")]
         group_id: Option<String>,
     },
+    Logs {
+        #[arg(long = "group")]
+        group_id: Option<String>,
+        #[arg(short = 'n', long, default_value_t = 50)]
+        lines: usize,
+        #[arg(short = 'f', long)]
+        follow: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -146,6 +154,8 @@ pub enum SpaceAction {
         payload: String,
         #[arg(long)]
         idempotency_key: Option<String>,
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
     },
     Query {
         query: String,
@@ -155,6 +165,8 @@ pub enum SpaceAction {
         lane: String,
         #[arg(long, default_value = "{}")]
         options: String,
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
     },
     Sources {
         #[arg(long = "group")]
@@ -167,6 +179,8 @@ pub enum SpaceAction {
         source_id: Option<String>,
         #[arg(long)]
         new_title: Option<String>,
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
     },
     Jobs {
         #[arg(long = "group")]
@@ -177,10 +191,40 @@ pub enum SpaceAction {
         action: String,
         #[arg(long)]
         job_id: Option<String>,
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
     },
     Auth {
         #[arg(default_value = "status")]
         action: String,
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
+    },
+    Credential {
+        #[command(subcommand)]
+        action: SpaceCredentialAction,
+    },
+    Health {
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SpaceCredentialAction {
+    Status {
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
+    },
+    Set {
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
+        #[arg(long, conflicts_with = "auth_json_file")]
+        auth_json: Option<String>,
+        #[arg(long, conflicts_with = "auth_json")]
+        auth_json_file: Option<String>,
+    },
+    Clear {
         #[arg(long, default_value = "notebooklm")]
         provider: String,
     },

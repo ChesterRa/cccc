@@ -90,11 +90,12 @@ Requirements:
 
 ```bash
 git switch rust
-npm ci --prefix web
-npm -C web run build
 cargo build --workspace --release --locked
 export PATH="$PWD/target/release:$PATH"
 ```
+
+The Cargo build automatically runs `npm ci` when Web dependencies are missing
+and rebuilds the embedded Web UI when its sources change.
 
 ## Create A Group
 

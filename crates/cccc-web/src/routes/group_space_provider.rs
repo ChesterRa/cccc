@@ -3,15 +3,12 @@ use axum::extract::{Path, State};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use cccc_contracts::utc_now;
-use cccc_core::integration_state;
-use serde_json::{Map, Value, json};
+use cccc_core::space_credentials;
+use serde_json::{Value, json};
 use std::io;
 
 use crate::AppState;
-use crate::api::{ApiError, ApiResult, success};
-
-const STORE_KEY: &str = "space_providers";
+use crate::api::{ApiError, ApiResult, call, object, success};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -32,10 +29,12 @@ pub fn routes() -> Router<AppState> {
 
 async fn credential(State(state): State<AppState>, Path(provider): Path<String>) -> ApiResult {
     validate_provider(&provider)?;
-    let item = provider_value(&state, &provider)?;
-    Ok(success(
-        json!({"provider":provider,"credential":credential_payload(&provider,&item)}),
-    ))
+    call(
+        &state,
+        "group_space_provider_credential_status",
+        object(json!({"provider":provider,"by":"user"})),
+    )
+    .await
 }
 
 async fn update_credential(
@@ -50,36 +49,25 @@ async fn update_credential(
         serde_json::from_str::<Value>(raw)
             .map_err(|error| ApiError::bad(format!("auth_json is invalid: {error}")))?;
     }
-    update_provider(&state, &provider, |item| {
-        if clear {
-            item.remove("auth_json");
-        } else if !raw.is_empty() {
-            item.insert("auth_json".into(), Value::String(raw.into()));
-        }
-        item.insert("credential_updated_at".into(), Value::String(utc_now()));
-        Ok(())
-    })?;
-    let item = provider_value(&state, &provider)?;
-    Ok(success(
-        json!({"provider":provider,"credential":credential_payload(&provider,&item)}),
-    ))
+    if !clear && raw.is_empty() {
+        return Err(ApiError::bad("auth_json is required"));
+    }
+    call(
+        &state,
+        "group_space_provider_credential_update",
+        object(json!({"provider":provider,"by":"user","clear":clear,"auth_json":raw})),
+    )
+    .await
 }
 
 async fn health(State(state): State<AppState>, Path(provider): Path<String>) -> ApiResult {
     validate_provider(&provider)?;
-    let item = provider_value(&state, &provider)?;
-    let surface = state.browser_surfaces.info(&browser_key(&provider)).await;
-    let healthy = item["auth_json"]
-        .as_str()
-        .is_some_and(|value| !value.is_empty())
-        || surface["active"].as_bool().unwrap_or(false);
-    Ok(success(json!({
-        "provider":provider,"healthy":healthy,
-        "health":{"checked_at":utc_now(),"browser_active":surface["active"]},
-        "provider_state":provider_state(&provider,healthy),
-        "credential":credential_payload(&provider,&item),
-        "error":if healthy{Value::Null}else{json!({"code":"auth_required","message":"NotebookLM authentication is not configured"})}
-    })))
+    call(
+        &state,
+        "group_space_provider_health_check",
+        object(json!({"provider":provider,"by":"user"})),
+    )
+    .await
 }
 
 async fn auth_status(State(state): State<AppState>, Path(provider): Path<String>) -> ApiResult {
@@ -94,44 +82,33 @@ async fn auth_control(
     validate_provider(&provider)?;
     match body["action"].as_str().unwrap_or("status") {
         "start" => {
-            let profile = state
-                .home
-                .root()
-                .join("browser-profiles/space-auth")
-                .join(&provider);
+            crate::notebooklm_auth::remove_legacy_profile(&state.home).await;
             state
-                .browser_surfaces
-                .open(
-                    &browser_key(&provider),
-                    &profile,
-                    provider_url(&provider),
-                    1366,
-                    900,
+                .notebooklm_auth
+                .start(
+                    state.home.clone(),
+                    state.client.clone(),
+                    state.browser_surfaces.clone(),
+                    body["timeout_seconds"].as_u64().unwrap_or(900),
+                    body["force_reauth"].as_bool().unwrap_or(false),
                 )
-                .await
-                .map_err(|error| ApiError::bad(error.to_string()))?;
-            update_provider(&state, &provider, |item| {
-                item.insert("auth_state".into(), Value::String("running".into()));
-                item.insert("auth_started_at".into(), Value::String(utc_now()));
-                Ok(())
-            })?;
+                .await;
         }
-        "cancel" | "disconnect" => {
+        "refresh" | "complete" | "status" => {}
+        "cancel" => {
             state
-                .browser_surfaces
-                .close(&browser_key(&provider))
-                .await
-                .map_err(|error| ApiError::bad(error.to_string()))?;
-            update_provider(&state, &provider, |item| {
-                item.insert("auth_state".into(), Value::String("canceled".into()));
-                item.insert("auth_finished_at".into(), Value::String(utc_now()));
-                if body["action"] == "disconnect" {
-                    item.remove("auth_json");
-                }
-                Ok(())
-            })?;
+                .notebooklm_auth
+                .cancel(&state.browser_surfaces, "Connect canceled.")
+                .await;
         }
-        "status" => {}
+        "disconnect" => {
+            state
+                .notebooklm_auth
+                .cancel(&state.browser_surfaces, "Google account disconnected.")
+                .await;
+            space_credentials::clear(&state.home, &provider).map_err(io_error)?;
+            crate::notebooklm_auth::remove_legacy_profile(&state.home).await;
+        }
         _ => return Err(ApiError::bad("unsupported provider auth action")),
     }
     auth_payload(&state, &provider).await
@@ -151,68 +128,30 @@ async fn auth_ws(
 
 async fn auth_payload(state: &AppState, provider: &str) -> ApiResult {
     validate_provider(provider)?;
-    let item = provider_value(state, provider)?;
-    let surface = state.browser_surfaces.info(&browser_key(provider)).await;
-    let active = surface["active"].as_bool().unwrap_or(false);
-    let configured = item["auth_json"]
-        .as_str()
-        .is_some_and(|value| !value.is_empty());
-    let auth_state = if active {
-        "running"
-    } else if configured {
-        "succeeded"
-    } else {
-        item["auth_state"].as_str().unwrap_or("idle")
-    };
+    let mut auth = state
+        .notebooklm_auth
+        .snapshot(&state.browser_surfaces)
+        .await;
+    let credential = credential_payload(state, provider)?;
+    let configured = credential["configured"].as_bool().unwrap_or(false);
+    if auth["state"] == "idle" && configured {
+        auth["state"] = json!("succeeded");
+        auth["phase"] = json!("done");
+        auth["message"] = json!("A saved Google session is configured.");
+    }
+    let active = auth["state"] == "running";
     Ok(success(json!({
         "provider":provider,"provider_state":provider_state(provider,configured||active),
-        "credential":credential_payload(provider,&item),
-        "auth":{"provider":provider,"state":auth_state,"phase":if active{"browser_login"}else{"idle"},
-            "delivery":"projected_browser","started_at":item["auth_started_at"],"updated_at":utc_now(),
-            "message":if active{"Complete sign-in in the projected browser."}else{"Authentication browser is idle."},
-            "error":null,"projected_browser":surface}
+        "credential":credential,
+        "auth":auth
     })))
 }
 
-fn provider_value(state: &AppState, provider: &str) -> Result<Value, ApiError> {
-    Ok(integration_state::global_get(&state.home, STORE_KEY)
-        .map_err(io_error)?
-        .get(provider)
-        .cloned()
-        .unwrap_or_else(|| json!({})))
-}
-
-fn update_provider<T>(
-    state: &AppState,
-    provider: &str,
-    change: impl FnOnce(&mut Map<String, Value>) -> io::Result<T>,
-) -> Result<T, ApiError> {
-    integration_state::global_update(&state.home, STORE_KEY, |value| {
-        if !value.is_object() {
-            *value = json!({});
-        }
-        let providers = value.as_object_mut().expect("providers initialized");
-        let item = providers.entry(provider).or_insert_with(|| json!({}));
-        if !item.is_object() {
-            *item = json!({});
-        }
-        change(item.as_object_mut().expect("provider initialized"))
-    })
-    .map_err(io_error)
-}
-
-fn credential_payload(provider: &str, item: &Value) -> Value {
-    let raw = item["auth_json"].as_str().unwrap_or("");
-    json!({"provider":provider,"key":format!("{}_auth_json",provider),"configured":!raw.is_empty(),"source":if raw.is_empty(){"none"}else{"store"},"env_configured":false,"store_configured":!raw.is_empty(),"updated_at":item["credential_updated_at"],"masked_value":if raw.is_empty(){""}else{"********"}})
+fn credential_payload(state: &AppState, provider: &str) -> Result<Value, ApiError> {
+    space_credentials::status(&state.home, provider).map_err(io_error)
 }
 fn provider_state(provider: &str, ready: bool) -> Value {
-    json!({"provider":provider,"enabled":true,"real_enabled":false,"mode":"local_fallback","real_adapter_enabled":false,"stub_adapter_enabled":true,"auth_configured":ready,"write_ready":false,"readiness_reason":if ready{"authenticated, but the remote Rust adapter is unavailable"}else{"authentication required; the remote Rust adapter is unavailable"}})
-}
-fn provider_url(provider: &str) -> &'static str {
-    match provider {
-        "notebooklm" => "https://notebooklm.google.com/",
-        _ => "https://notebooklm.google.com/",
-    }
+    json!({"provider":provider,"enabled":ready,"real_enabled":true,"mode":if ready{"active"}else{"disabled"},"real_adapter_enabled":true,"stub_adapter_enabled":false,"auth_configured":ready,"write_ready":ready,"readiness_reason":if ready{"authenticated Rust adapter"}else{"credential missing"}})
 }
 fn browser_key(provider: &str) -> String {
     format!("space-provider::{provider}")

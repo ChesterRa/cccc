@@ -12,10 +12,16 @@ Actual NotebookLM operations such as query, ingest, source management, artifacts
 
 ## 1. Provider Availability
 
-The current Rust build provides local Group Space ingest and query fallback. The
-remote NotebookLM sync and artifact adapter is not bundled yet. Authentication
-state and notebook binding targets can be saved, but they do not make remote
-writes available; sync and artifact requests return `provider_unavailable`.
+The Rust build connects directly to NotebookLM for account health, notebook
+listing/creation, text-source ingest, source listing/rename/delete, and grounded
+queries. It does not launch a Python sidecar. Pass `--provider local` only when
+you explicitly want the degraded local fallback.
+
+NotebookLM still has no public consumer API. CCCC therefore isolates Google's
+private RPC catalog and positional response adapters in `cccc-notebooklm` and
+fails with `provider_schema_drift` when the wire contract changes. Artifact
+generation/download and repo-wide sync are not enabled yet and fail explicitly;
+they never report a fabricated remote success.
 
 If you expose Web outside localhost, first create an **Admin Access Token** in **Settings > Web Access** and keep the service behind a network boundary until that token exists.
 
@@ -31,15 +37,33 @@ In **Google Account**:
 
 1. Click **Connect Google**.
 2. Complete sign-in in the interactive browser view shown inside CCCC Web.
-3. Wait until the account status becomes connected.
+3. After the page returns to `notebooklm.google.com`, CCCC captures the browser
+   storage state, closes the sign-in browser, validates the account, and refreshes
+   the notebook selector.
 
 Notes:
 
 - If a valid credential is already stored, reconnect may complete without a full browser login.
+- Authentication completion is owned by the Rust server task. Closing or refreshing
+  the settings page does not submit credentials and does not interrupt the flow.
+- Each sign-in uses a one-time browser profile. Success, failure, cancellation,
+  timeout, and server shutdown all close the browser and remove that profile.
+- **Reconnect** validates the saved session first. A forced reconnect skips saved
+  cookies, while **Disconnect** removes both the credential and legacy browser profile.
+- Google may rotate session cookies during normal API calls. CCCC persists those
+  rotations only when the credential came from the CCCC store; credentials supplied
+  through `CCCC_NOTEBOOKLM_AUTH_JSON` remain read-only.
 - The default Web page does not expose manual credential editing anymore.
 - The Web flow uses a projected sign-in browser so Docker / remote deployments do not need a local desktop browser on the daemon host.
-- The projected sign-in browser now runs in headed mode for better Google compatibility. In server/container environments without a native display, CCCC uses `Xvfb` automatically.
-- The Docker image includes the minimal Chromium shared libraries needed for the projected sign-in browser. Playwright / Chromium binaries themselves are still installed lazily on first use.
+- The current Rust projected surface uses Chromium's isolated headless mode and does
+  not attach to the host desktop display.
+- The Rust surface launches a discovered system Chromium/Chrome binary; it does
+  not depend on a Python Playwright sidecar or a persistent desktop profile.
+
+This is browser-session authorization, not Google OAuth. The consumer Gemini
+Notebook service does not currently publish an OAuth scope or supported public
+API for these operations. CCCC deliberately does not request or retain a
+Google-account-wide master token.
 
 ## 4. Bind the Work Notebook
 
@@ -96,13 +120,14 @@ That is by design.
 
 ## 8. Agent-Side Usage Still Exists
 
-NotebookLM usage still exists through agent-facing surfaces:
+Group Space controls still exist through agent-facing surfaces:
 
 1. MCP tools
 2. CLI
 3. prompt/help-guided agent workflows
 
-The Web page is now only for account connection and notebook binding.
+The Web page is only for account connection and notebook binding. Agent-facing
+NotebookLM operations use the same Rust daemon adapter as the Web routes.
 
 ## 9. Repo Space Sync Notes
 

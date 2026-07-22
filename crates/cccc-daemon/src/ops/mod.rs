@@ -1,6 +1,7 @@
 pub(crate) mod actor_delivery;
 mod actor_delivery_render;
 mod actor_delivery_worker;
+mod actor_profile_runtime;
 pub(crate) mod actor_runtime;
 #[cfg(test)]
 mod actor_runtime_tests;
@@ -18,6 +19,7 @@ mod group_runtime;
 mod group_scopes;
 mod group_space;
 mod groups;
+mod hermes_runtime;
 mod im;
 mod maintenance;
 mod memory;
@@ -45,6 +47,7 @@ use crate::dispatch::{OpError, OpResult};
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Result<Option<OpResult>, OpError> {
     for handler in [
         groups::handle,
+        hermes_runtime::handle,
         group_copy::handle,
         group_scopes::handle,
         group_space::handle,

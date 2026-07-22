@@ -12,6 +12,7 @@ base64.workspace = true
 cccc-client = { path = "../cccc-client" }
 cccc-contracts = { path = "../cccc-contracts" }
 cccc-core = { path = "../cccc-core" }
+cccc-notebooklm = { path = "../cccc-notebooklm" }
 cccc-runtime = { path = "../cccc-runtime" }
 chrono.workspace = true
 clap.workspace = true
@@ -19,6 +20,7 @@ fs2.workspace = true
 regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 tracing.workspace = true
