@@ -1,7 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::SystemTime;
 
 const WEB_INPUTS: &[&str] = &[
@@ -81,7 +81,7 @@ fn latest_change(path: &Path) -> io::Result<SystemTime> {
 
 fn build_web(workspace: &Path, web: &Path, index: &Path) {
     let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
-    if !web.join("node_modules").is_dir() {
+    if !web_dependencies_are_current(npm, workspace, web) {
         run(
             Command::new(npm)
                 .current_dir(workspace)
@@ -98,6 +98,19 @@ fn build_web(workspace: &Path, web: &Path, index: &Path) {
     if !index.is_file() {
         panic!("Web build completed without producing {}", index.display());
     }
+}
+
+fn web_dependencies_are_current(npm: &str, workspace: &Path, web: &Path) -> bool {
+    if !web.join("node_modules").is_dir() {
+        return false;
+    }
+    Command::new(npm)
+        .current_dir(workspace)
+        .args(["-C", "web", "ls", "--depth=0", "--silent"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 fn run(command: &mut Command, action: &str) {
