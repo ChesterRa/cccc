@@ -9,6 +9,10 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $defaultVersion = "@CCCC_VERSION@"
+$releaseTagPrefix = "@CCCC_RELEASE_TAG_PREFIX@"
+if ($releaseTagPrefix.StartsWith("@")) {
+  $releaseTagPrefix = "v"
+}
 $repository = if ($env:CCCC_GITHUB_REPOSITORY) { $env:CCCC_GITHUB_REPOSITORY } else { "ChesterRa/cccc" }
 $releaseBaseUrl = if ($env:CCCC_RELEASE_BASE_URL) {
   $env:CCCC_RELEASE_BASE_URL.TrimEnd("/")
@@ -88,7 +92,7 @@ if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*
 $target = "x86_64-pc-windows-msvc"
 $package = "cccc-v$Version-$target"
 $archive = "$package.zip"
-$downloadUrl = "$releaseBaseUrl/download/v$Version"
+$downloadUrl = "$releaseBaseUrl/download/$releaseTagPrefix$Version"
 $tempDir = Join-Path ([IO.Path]::GetTempPath()) ("cccc-install-" + [Guid]::NewGuid().ToString("N"))
 $binaries = @("cccc.exe")
 $staged = @()

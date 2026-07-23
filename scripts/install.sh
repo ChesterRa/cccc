@@ -2,12 +2,17 @@
 set -eu
 
 DEFAULT_VERSION="@CCCC_VERSION@"
+RELEASE_TAG_PREFIX="@CCCC_RELEASE_TAG_PREFIX@"
 REPOSITORY="${CCCC_GITHUB_REPOSITORY:-ChesterRa/cccc}"
 RELEASE_BASE_URL="${CCCC_RELEASE_BASE_URL:-https://github.com/$REPOSITORY/releases}"
 VERSION="${CCCC_VERSION:-}"
 INSTALL_DIR="${CCCC_INSTALL_DIR:-$HOME/.local/bin}"
 NO_MODIFY_PATH="${CCCC_NO_MODIFY_PATH:-0}"
 BINARIES="cccc"
+
+case "$RELEASE_TAG_PREFIX" in
+  @*) RELEASE_TAG_PREFIX=v ;;
+esac
 
 fail() {
   printf 'CCCC installer: %s\n' "$*" >&2
@@ -86,7 +91,7 @@ fi
 
 package="cccc-v${VERSION}-${target}"
 archive="${package}.tar.gz"
-download_url="$RELEASE_BASE_URL/download/v${VERSION}"
+download_url="$RELEASE_BASE_URL/download/${RELEASE_TAG_PREFIX}${VERSION}"
 tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/cccc-install.XXXXXX")
 stage_suffix=".cccc-install.$$"
 backup_dir="$INSTALL_DIR/.cccc-backup.$$"

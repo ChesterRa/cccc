@@ -40,7 +40,7 @@ done
 executable_count=$(find "$package_dir" -maxdepth 1 -type f -perm -111 | wc -l | tr -d ' ')
 test "$executable_count" = 1
 
-release_dir="$TMP_ROOT/releases/download/v$VERSION"
+release_dir="$TMP_ROOT/releases/download/rust-v$VERSION"
 mkdir -p "$release_dir"
 cp "$ARTIFACT_DIR"/* "$release_dir/"
 

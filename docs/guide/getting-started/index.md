@@ -48,7 +48,7 @@ To install a fixed version, download the installer from that exact release. A re
 
 ```bash
 installer="$(mktemp)" &&
-  curl -fsSL https://github.com/ChesterRa/cccc/releases/download/v0.4.32/install.sh -o "$installer" &&
+  curl -fsSL https://github.com/ChesterRa/cccc/releases/download/rust-v0.4.32/install.sh -o "$installer" &&
   CCCC_VERSION=0.4.32 bash "$installer" &&
   rm -f "$installer"
 ```
@@ -59,7 +59,7 @@ PowerShell can use the same exact release asset:
 & {
   $ErrorActionPreference = "Stop"
   $env:CCCC_VERSION = "0.4.32"
-  irm https://github.com/ChesterRa/cccc/releases/download/v0.4.32/install.ps1 | iex
+  irm https://github.com/ChesterRa/cccc/releases/download/rust-v0.4.32/install.ps1 | iex
 }
 ```
 

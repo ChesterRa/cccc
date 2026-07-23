@@ -37,12 +37,16 @@ done < "$expected"
 for installer in install.sh install.ps1; do
   source_path="$ROOT_DIR/scripts/$installer"
   grep -Fq '@CCCC_VERSION@' "$source_path"
-  sed "s/@CCCC_VERSION@/$VERSION/g" "$source_path" > "$ASSET_DIR/$installer"
-  if grep -Fq '@CCCC_VERSION@' "$ASSET_DIR/$installer"; then
-    echo "failed to render $installer version" >&2
+  grep -Fq '@CCCC_RELEASE_TAG_PREFIX@' "$source_path"
+  sed \
+    -e "s/@CCCC_VERSION@/$VERSION/g" \
+    -e 's/@CCCC_RELEASE_TAG_PREFIX@/rust-v/g' \
+    "$source_path" > "$ASSET_DIR/$installer"
+  if grep -Eq '@CCCC_(VERSION|RELEASE_TAG_PREFIX)@' "$ASSET_DIR/$installer"; then
+    echo "failed to render $installer release metadata" >&2
     exit 1
   fi
 done
 chmod 755 "$ASSET_DIR/install.sh"
 
-echo "OK: prepared four archives, SHA256SUMS, and versioned installers for v$VERSION"
+echo "OK: prepared four archives, SHA256SUMS, and versioned installers for rust-v$VERSION"
