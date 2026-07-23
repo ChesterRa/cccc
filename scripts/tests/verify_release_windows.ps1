@@ -22,7 +22,7 @@ foreach ($required in @($archive, (Join-Path $artifactDir "SHA256SUMS"), $instal
 
 $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("cccc-release-verify-" + [Guid]::NewGuid().ToString("N"))
 $installed = Join-Path $tempRoot "installed\cccc.exe"
-$home = Join-Path $tempRoot "home"
+$ccccHome = Join-Path $tempRoot "home"
 try {
   $extractRoot = Join-Path $tempRoot "extracted"
   New-Item -ItemType Directory -Path $extractRoot | Out-Null
@@ -59,7 +59,7 @@ try {
     throw "installed version mismatch: $reportedVersion"
   }
 
-  $env:CCCC_HOME = $home
+  $env:CCCC_HOME = $ccccHome
   & $installed daemon start
   if ($LASTEXITCODE -ne 0) { throw "daemon start failed" }
   & $installed daemon status
@@ -67,7 +67,7 @@ try {
   & $installed daemon stop
   if ($LASTEXITCODE -ne 0) { throw "daemon stop failed" }
 
-  $address = Join-Path $home "daemon\ccccd.addr.json"
+  $address = Join-Path $ccccHome "daemon\ccccd.addr.json"
   $deadline = [DateTime]::UtcNow.AddSeconds(10)
   while ((Test-Path -LiteralPath $address) -and [DateTime]::UtcNow -lt $deadline) {
     Start-Sleep -Milliseconds 100
@@ -94,7 +94,7 @@ try {
   Write-Host "OK: verified $package release archive and installed self-launch"
 } finally {
   if (Test-Path -LiteralPath $installed -PathType Leaf) {
-    $env:CCCC_HOME = $home
+    $env:CCCC_HOME = $ccccHome
     & $installed daemon stop *> $null
   }
   Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
