@@ -10,7 +10,7 @@ def test_final_image_reuses_web_builder_node_runtime() -> None:
     final_stage = text.split("# Stage 2: Final image", 1)[1]
 
     assert "FROM node:20-bookworm-slim AS web-builder" in text
-    assert "FROM python:3.11-slim-bookworm" in text
+    assert "FROM python:3.14-slim-bookworm" in text
     assert "CCCC_BROWSER_DEPS_DEBIAN13" not in text
     assert "deb.nodesource.com" not in final_stage
     assert "setup_20.x" not in final_stage

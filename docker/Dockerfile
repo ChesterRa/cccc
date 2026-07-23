@@ -10,7 +10,7 @@ COPY web/ ./
 RUN npm run build
 
 # Stage 2: Final image
-FROM python:3.11-slim-bookworm
+FROM python:3.14-slim-bookworm
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY}

@@ -11,6 +11,22 @@ from unittest.mock import patch
 
 
 class TestGroupSpaceRuntime(unittest.TestCase):
+    def test_write_lock_cleanup_does_not_suppress_body_errors(self) -> None:
+        from cccc.daemon.space import group_space_runtime as runtime
+
+        provider = "notebooklm"
+        remote_space_id = "nb_missing_cleanup_entry"
+        key = runtime._write_lock_key(provider, remote_space_id)
+
+        with self.assertRaisesRegex(RuntimeError, "body failed"):
+            with runtime._acquire_write_lock(provider, remote_space_id):
+                with runtime._WRITE_LOCKS_GUARD:
+                    runtime._WRITE_LOCKS.pop(key, None)
+                raise RuntimeError("body failed")
+
+        with runtime._WRITE_LOCKS_GUARD:
+            self.assertNotIn(key, runtime._WRITE_LOCKS)
+
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
         td_ctx = tempfile.TemporaryDirectory()

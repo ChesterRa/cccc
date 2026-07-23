@@ -41,7 +41,7 @@ CCCC offers two ways to get started:
 
 Both approaches require:
 
-- **Python 3.9+** installed
+- **Python 3.11+** installed
 - At least one AI agent CLI:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended)
   - [Codex CLI](https://github.com/openai/codex)

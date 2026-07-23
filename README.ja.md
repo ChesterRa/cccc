@@ -77,7 +77,7 @@ pip install -U --pre \
   cccc-pair
 ```
 
-> **要件**: Python 3.9+、macOS / Linux / Windows
+> **要件**: Python 3.11+、macOS / Linux / Windows
 
 ### アップグレード
 
@@ -484,7 +484,7 @@ pip install -e .
 ### uv（高速、Windows 推奨）
 
 ```bash
-uv venv -p 3.11 .venv
+uv venv -p 3.14 .venv
 uv pip install -e .
 uv run cccc --help
 ```

@@ -153,6 +153,25 @@ def test_ruff_is_limited_to_error_level_rules() -> None:
     assert config["tool"]["ruff"]["lint"]["select"] == ["E9", "F63", "F7", "F82"]
 
 
+def test_python_support_contract_matches_the_tested_range() -> None:
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    project = config["project"]
+
+    assert project["requires-python"] == ">=3.11"
+    assert config["tool"]["ruff"]["target-version"] == "py311"
+    version_classifiers = {
+        value
+        for value in project["classifiers"]
+        if value.startswith("Programming Language :: Python :: 3.")
+    }
+    assert version_classifiers == {
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
+        "Programming Language :: Python :: 3.14",
+    }
+
+
 def test_local_fast_gate_runs_current_checks_without_historical_migration_governance() -> None:
     source = (ROOT / "scripts/quality_gate.sh").read_text(encoding="utf-8")
     fast_block = source.split("fast)", 1)[1].split(";;", 1)[0]
@@ -172,3 +191,4 @@ def test_full_precommit_path_does_not_use_xdist_auto_workers() -> None:
     assert "PYTEST_WORKERS" not in source
     assert 'python -m pytest tests/ "${pytest_common[@]}"' in source
     assert source.count("env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID") >= 2
+    assert "python -W error::SyntaxWarning -m compileall -q src/cccc scripts tests" in source

@@ -12,6 +12,10 @@ def _workflow() -> dict:
     return yaml.load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
+def _release_workflow() -> dict:
+    return yaml.load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+
 def _runs(job: dict) -> str:
     return "\n".join(step.get("run", "") for step in job.get("steps", []))
 
@@ -19,8 +23,10 @@ def _runs(job: dict) -> str:
 def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
     jobs = _workflow()["jobs"]
 
-    assert {"quality", "web", "python-tests", "package", "windows-smoke", "nightly-serial"} <= set(jobs)
-    assert set(jobs["package"]["needs"]) == {"quality", "web", "python-tests"}
+    assert {"quality", "web", "python-tests", "python-compat", "package", "windows-smoke", "nightly-serial"} <= set(
+        jobs
+    )
+    assert set(jobs["package"]["needs"]) == {"quality", "web", "python-tests", "python-compat"}
     assert "ruff check" in _runs(jobs["quality"])
     assert "npm -C web test" in _runs(jobs["web"])
     assert "npm -C web run build" in _runs(jobs["web"])
@@ -71,6 +77,24 @@ def test_pr_python_matrix_uses_four_stable_file_shards_without_xdist() -> None:
     assert " -n " not in runs
 
 
+def test_ci_exercises_the_supported_python_range_without_four_full_pr_suites() -> None:
+    jobs = _workflow()["jobs"]
+
+    for name in ("quality", "python-tests", "package", "windows-smoke"):
+        setup = next(step for step in jobs[name]["steps"] if step.get("uses", "").startswith("actions/setup-python"))
+        assert setup["with"]["python-version"] == "3.14"
+
+    compat = jobs["python-compat"]
+    assert compat["strategy"]["matrix"]["python-version"] == ["3.11", "3.12", "3.13"]
+    compat_runs = _runs(compat)
+    assert "python -W error::SyntaxWarning -m compileall -q src/cccc" in compat_runs
+    assert "cccc version" in compat_runs
+    assert '"method": "initialize"' in compat_runs
+
+    nightly = jobs["nightly-serial"]
+    assert nightly["strategy"]["matrix"]["python-version"] == ["3.11", "3.14"]
+
+
 def test_package_job_owns_the_built_web_bundle_contract() -> None:
     package = _workflow()["jobs"]["package"]
     runs = _runs(package)
@@ -79,7 +103,7 @@ def test_package_job_owns_the_built_web_bundle_contract() -> None:
     assert "-m packaged_web_dist tests/test_web_manifest_static.py" in runs
 
 
-def test_schedule_runs_one_serial_full_python_suite() -> None:
+def test_schedule_runs_serial_full_python_suites_at_both_support_endpoints() -> None:
     workflow = _workflow()
     nightly = workflow["jobs"]["nightly-serial"]
     runs = _runs(nightly)
@@ -92,3 +116,20 @@ def test_schedule_runs_one_serial_full_python_suite() -> None:
     assert "pytest_shards.py" not in runs
     assert "pytest-xdist" not in runs
     assert " -n " not in runs
+
+
+def test_release_builds_on_314_and_smokes_the_wheel_on_the_311_floor() -> None:
+    jobs = _release_workflow()["jobs"]
+
+    verify_setup = next(
+        step for step in jobs["verify-linux"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
+    )
+    publish_setup = next(
+        step for step in jobs["publish"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
+    )
+    assert verify_setup["with"]["python-version"] == "3.14"
+    assert publish_setup["with"]["python-version"] == "3.14"
+
+    platform_rows = jobs["verify-platform-smoke"]["strategy"]["matrix"]["include"]
+    assert any(row["os"] == "ubuntu-latest" and row["python_version"] == "3.11" for row in platform_rows)
+    assert all(row["python_version"] == "3.14" for row in platform_rows if row["os"] != "ubuntu-latest")

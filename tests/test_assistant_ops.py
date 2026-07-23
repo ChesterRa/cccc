@@ -1741,7 +1741,7 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_voice_runtime_python_selects_current_python_39_or_newer(self) -> None:
+    def test_voice_runtime_python_selects_current_python_311_or_newer(self) -> None:
         from cccc.daemon.assistants import voice_runtime_deps
 
         with patch.object(voice_runtime_deps.sys, "version_info", (3, 14, 0)):
@@ -1750,18 +1750,18 @@ class TestAssistantOps(unittest.TestCase):
     def test_voice_runtime_python_falls_back_to_python_314(self) -> None:
         from cccc.daemon.assistants import voice_runtime_deps
 
-        with patch.object(voice_runtime_deps.sys, "version_info", (3, 8, 20)), patch.object(
+        with patch.object(voice_runtime_deps.sys, "version_info", (3, 10, 20)), patch.object(
             voice_runtime_deps.shutil,
             "which",
             side_effect=lambda name: "/opt/homebrew/bin/python3.14" if name == "python3.14" else None,
         ), patch.object(voice_runtime_deps, "_python_version", return_value=(3, 14)):
             self.assertEqual(voice_runtime_deps._select_base_python(), "/opt/homebrew/bin/python3.14")
 
-    def test_voice_runtime_python_rejects_below_39(self) -> None:
+    def test_voice_runtime_python_rejects_below_311(self) -> None:
         from cccc.daemon.assistants import voice_runtime_deps
         from cccc.daemon.assistants.voice_runtime_deps import VoiceRuntimeDepsError
 
-        with patch.object(voice_runtime_deps.sys, "version_info", (3, 8, 20)), patch.object(
+        with patch.object(voice_runtime_deps.sys, "version_info", (3, 10, 20)), patch.object(
             voice_runtime_deps.shutil,
             "which",
             return_value=None,
@@ -1769,7 +1769,7 @@ class TestAssistantOps(unittest.TestCase):
             with self.assertRaises(VoiceRuntimeDepsError) as cm:
                 voice_runtime_deps._select_base_python()
         self.assertEqual(cm.exception.code, "voice_runtime_python_missing")
-        self.assertIn("Python 3.9+", cm.exception.message)
+        self.assertIn("Python 3.11+", cm.exception.message)
 
     def test_voice_document_create_requires_attached_repo_scope(self) -> None:
         _, cleanup = self._with_home()
