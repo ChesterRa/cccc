@@ -27,6 +27,7 @@ export function MessageContent(props: {
       content={props.fallbackText}
       isDark={props.isDark}
       invertText={false}
+      enableMermaid
       className="max-w-full break-words text-[var(--color-text-primary)] [overflow-wrap:anywhere]"
       fallback={<PlainMessageText text={props.fallbackText} className="max-w-full" />}
     />

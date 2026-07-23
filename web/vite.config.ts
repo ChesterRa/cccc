@@ -12,6 +12,9 @@ const backendHost = localProxyHost(process.env.CCCC_WEB_HOST);
 const backendPort = Number(process.env.CCCC_WEB_PORT || 8848) || 8848;
 const backendTarget = `http://${backendHost}:${backendPort}`;
 
+const MERMAID_DEPENDENCY_PATTERN =
+  /[\\/]node_modules[\\/](@braintree[\\/]sanitize-url|@iconify[\\/](utils|types)|@mermaid-js|@upsetjs[\\/]venn\.js|cytoscape(?:-cose-bilkent|-fcose)?|cose-base|layout-base|d3(?:-[^\\/]+)?|internmap|delaunator|robust-predicates|dagre-d3-es|lodash-es|dayjs|dompurify|es-toolkit|katex|khroma|marked|roughjs|hachure-fill|path-data-parser|points-on-curve|points-on-path|stylis|ts-dedent|uuid)[\\/]/;
+
 export default defineConfig({
   plugins: [react()],
   fmt: { ignorePatterns: ["dist/**"], objectWrap: "collapse" },
@@ -79,6 +82,11 @@ export default defineConfig({
           }
 
           if (!id.includes("node_modules")) return;
+          // Mermaid is loaded only when a message actually contains a Mermaid fence.
+          // Leave its graph to the dynamic import splitter instead of pulling it into
+          // the initial shared vendor chunk or one oversized manual chunk.
+          if (MERMAID_DEPENDENCY_PATTERN.test(id) || /[\\/]node_modules[\\/]mermaid[\\/]/.test(id))
+            return;
           // React core + libs that import react (must stay in the same chunk
           // to avoid circular cross-chunk dependencies during initialisation)
           if (/[\\/]node_modules[\\/](react|react-dom|zustand|@tanstack|scheduler)[\\/]/.test(id))

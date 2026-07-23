@@ -58,6 +58,17 @@
   "suggestedUserMessageHint": "次のメッセージ候補です。Tab で入力欄に入れます。",
   "suggestedUserMessageUse": "候補を使う",
   "sendFailed": "メッセージの送信に失敗しました。",
+  "mermaid": {
+    "diagram": "Mermaid ダイアグラム",
+    "expand": "拡大",
+    "expandDiagram": "Mermaid ダイアグラムを拡大",
+    "previewHint": "大きな図はスクロールして確認できます。Esc キーで閉じます。",
+    "viewSource": "ソースを表示",
+    "viewDiagram": "図を表示",
+    "rendering": "図をレンダリング中…",
+    "renderFailed": "この図をレンダリングできませんでした。代わりにソースを表示します。",
+    "tooLarge": "この図は安全にレンダリングするには大きすぎます。代わりにソースを表示します。"
+  },
   "webModelDelivery": {
     "submitting": "ChatGPT に配信中",
     "submitted": "ChatGPT に配信済み",
