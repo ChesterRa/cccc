@@ -12,10 +12,15 @@ fn duplicate_client_id_returns_the_original_event() {
     let group_id = group.result["group"]["group_id"]
         .as_str()
         .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"lead","by":"user"}),
+    );
     let args = json!({
         "group_id":group_id,
         "by":"user",
-        "to":[],
+        "to":["lead"],
         "text":"only once",
         "client_id":"client-1"
     });

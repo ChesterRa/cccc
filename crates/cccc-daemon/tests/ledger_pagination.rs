@@ -83,6 +83,11 @@ fn reply_persists_quote_snapshot_for_refresh_rendering() {
     let group_id = created.result["group"]["group_id"]
         .as_str()
         .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"lead","by":"user"}),
+    );
     append(&home, group_id, "chat.message", "target");
 
     let reply = call(
@@ -92,7 +97,7 @@ fn reply_persists_quote_snapshot_for_refresh_rendering() {
             "group_id":group_id,
             "reply_to":"target",
             "text":"response",
-            "by":"user"
+            "by":"lead"
         }),
     );
 

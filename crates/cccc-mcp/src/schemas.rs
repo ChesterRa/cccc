@@ -2,9 +2,31 @@ use serde_json::{Value, json};
 
 pub fn input(name: &str) -> Value {
     match name {
-        "cccc_message_send" | "cccc_tracked_send" => object(messaging(), &["text", "to"]),
+        "cccc_message_send" => object(
+            merge(
+                messaging(),
+                json!({
+                    "reply_to":{"type":"string","description":"Optional event ID. Omit for a new message; set it to reply to that message."},
+                    "to":{
+                        "oneOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}],
+                        "description":"Optional recipients. New local messages default to user; replies default to the original sender."
+                    }
+                }),
+            ),
+            &["text"],
+        ),
+        "cccc_tracked_send" => object(messaging(), &["text", "to"]),
         "cccc_message_reply" => object(
-            merge(messaging(), json!({"reply_to":{"type":"string"}})),
+            merge(
+                messaging(),
+                json!({
+                    "reply_to":{"type":"string"},
+                    "to":{
+                        "oneOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}],
+                        "description":"Optional reply recipients. Omit to reply to the original sender; never target the current actor."
+                    }
+                }),
+            ),
             &["reply_to", "text"],
         ),
         "cccc_file" => object(
@@ -277,5 +299,20 @@ mod tests {
                 cccc_core::peer_insight::PEER_INSIGHT_FIELD_DESCRIPTION
             );
         }
+    }
+
+    #[test]
+    fn message_schema_explains_new_and_reply_defaults() {
+        let schema = input("cccc_message_send");
+        let description = schema["properties"]["to"]["description"]
+            .as_str()
+            .expect("recipient description");
+        assert!(description.contains("original sender"));
+        assert!(description.contains("default to user"));
+        assert!(
+            schema["properties"]["reply_to"]["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("Omit for a new message"))
+        );
     }
 }

@@ -154,7 +154,7 @@
 :root {
   /* Light theme (default for prefers-color-scheme: light) */
   --color-body-bg: #ffffff; /* Clean white canvas background like Codex */
-  --color-sidebar-bg: #f8f9fa; /* Extremely light cool gray for clean sidebar */
+  --color-sidebar-bg: #fbfbfb; /* Soft neutral gray for the light sidebar */
   --color-chat-bg: rgba(255, 255, 255, 0.96); /* Soft glass paper tone for the main chat panel */
 
   --color-bg-primary: #ffffff;

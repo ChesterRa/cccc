@@ -83,7 +83,7 @@ fn protocol_lines(event: &Event) -> Vec<String> {
         .unwrap_or(false)
     {
         lines.push(format!(
-            "[cccc] REPLY REQUIRED (event_id={}): reply via cccc_message_reply.",
+            "[cccc] REPLY REQUIRED (event_id={}): reply via cccc_message_send with reply_to.",
             event.id
         ));
     }
@@ -97,7 +97,7 @@ fn protocol_lines(event: &Event) -> Vec<String> {
     let remote_reply_to = strings(event, "remote_reply_to");
     if !remote_reply_to.is_empty() {
         lines.push(format!(
-            "[cccc] REMOTE REPLY DEFAULT: omit to in cccc_message_reply to reply to remote {}.",
+            "[cccc] REMOTE REPLY DEFAULT: omit to in cccc_message_send with reply_to to reply to remote {}.",
             remote_reply_to.join(", ")
         ));
     }

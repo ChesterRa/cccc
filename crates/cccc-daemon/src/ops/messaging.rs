@@ -240,16 +240,48 @@ fn slash_skill_dispatch(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
 fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let reply_to = required_arg(request, "reply_to")?;
     let group = load(home, request)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     let target = find_event(home, &group.group_id, &reply_to)?;
     let mut forwarded = request.clone();
     forwarded
         .args
         .insert("reply_to".into(), Value::String(reply_to));
     super::message_metadata::add_reply_snapshot(&target, &mut forwarded.args);
-    if !forwarded.args.contains_key("to") {
-        forwarded.args.insert("to".into(), json!([target.by]));
+    if recipient_tokens(&forwarded.args).is_empty() {
+        forwarded.args.insert(
+            "to".into(),
+            json!(default_reply_recipients(&group, &by, &target)),
+        );
     }
     send(home, &forwarded, "chat.message")
+}
+
+fn recipient_tokens(args: &Map<String, Value>) -> Vec<String> {
+    args.get("to")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn default_reply_recipients(group: &GroupDoc, by: &str, target: &Event) -> Vec<String> {
+    let original_by = target.by.trim();
+    if !original_by.is_empty() && original_by != by {
+        return vec![if original_by == "@user" {
+            "user".into()
+        } else {
+            original_by.into()
+        }];
+    }
+    let original_to = recipient_tokens(&target.data);
+    if !original_to.is_empty() {
+        return original_to;
+    }
+    vec![super::messaging_recipients::default_recipient(group).into()]
 }
 
 fn append_raw(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

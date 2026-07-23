@@ -66,7 +66,7 @@ const PROMPT_BODY: &[&str] = &[
     "- document target: edit repository markdown directly at document_path. MCP tool cccc_voice_secretary_document has no save action.",
     "- secretary/Ask target: reply through MCP tool cccc_voice_secretary_request(action=\"report\", request_id=\"...\", status=\"working\"|\"done\"|\"needs_user\"|\"failed\", reply_text=\"...\"). Console text alone is not delivered.",
     "- composer/prompt_refine target: optimize prompt text only, execute nothing, and submit with MCP tool cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"...\", draft_text=\"...\"). If there is no useful composer change, submit no_op=true instead of placeholder text. Latency matters.",
-    "- handoff only explicit non-secretary work through MCP tool cccc_voice_secretary_request(action=\"handoff\", ...). Do not use cccc_message_send/reply for transcript-document collaboration.",
+    "- handoff only explicit non-secretary work through MCP tool cccc_voice_secretary_request(action=\"handoff\", ...). Do not use cccc_message_send for transcript-document collaboration.",
     "",
     "Work policy:",
     "- Do secretary-scope work yourself: synthesis, prioritization, drafting, comparison, lightweight context inspection, document refinement, and concise Ask answers.",

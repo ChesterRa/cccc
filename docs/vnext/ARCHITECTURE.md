@@ -186,7 +186,7 @@ MCP 工具按能力命名空间组织（工具数量会随版本迭代）：
 ### 7.1 cccc.* (协作控制面)
 
 - `cccc_inbox_list` / `cccc_inbox_mark_read`
-- `cccc_message_send` / `cccc_message_reply`
+- `cccc_message_send`（发送与回复；回复时设置 `reply_to`）
 - `cccc_group_info` / `cccc_actor_list`
 - `cccc_actor_add/remove/start/stop/restart`
 - `cccc_runtime_list` / `cccc_project_info`

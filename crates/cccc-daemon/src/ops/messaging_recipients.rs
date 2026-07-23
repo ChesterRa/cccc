@@ -1,5 +1,5 @@
-use cccc_core::GroupDoc;
-use cccc_core::actors;
+use cccc_contracts::Event;
+use cccc_core::{GroupDoc, actors, inbox};
 use serde_json::{Map, Value, json};
 
 use crate::dispatch::OpError;
@@ -38,8 +38,9 @@ pub(super) fn normalize_chat_data(
         .unwrap_or_default();
     let mut recipients = actors::resolve_recipients(group, &raw).map_err(OpError::invalid)?;
     if recipients.is_empty() && raw.is_empty() {
-        recipients.push(default_recipient(group).into());
+        recipients.push(default_local_recipient(group, by).into());
     }
+    reject_sender_only_audience(group, by, &recipients)?;
     data.insert("to".into(), json!(recipients));
     normalize_peer_insight(group, by, data)?;
     data.entry("format")
@@ -49,6 +50,47 @@ pub(super) fn normalize_chat_data(
     data.entry("reply_required").or_insert(Value::Bool(false));
     super::message_metadata::add_sender_snapshot(group, by, data);
     Ok(())
+}
+
+fn default_local_recipient(group: &GroupDoc, by: &str) -> &'static str {
+    if actors::visible(group).any(|actor| actor.id == by) {
+        "user"
+    } else {
+        default_recipient(group)
+    }
+}
+
+fn reject_sender_only_audience(
+    group: &GroupDoc,
+    by: &str,
+    recipients: &[String],
+) -> Result<(), OpError> {
+    let local_sender = by == "user" || actors::visible(group).any(|actor| actor.id == by);
+    if !local_sender {
+        return Ok(());
+    }
+    if !recipients
+        .iter()
+        .any(|recipient| !matches!(recipient.as_str(), "user" | "@user"))
+    {
+        return Ok(());
+    }
+
+    let mut event = Event::new("chat.message", &group.group_id);
+    event.data.insert("to".into(), json!(recipients));
+    if actors::visible(group)
+        .filter(|actor| actor.id != by)
+        .any(|actor| inbox::is_for_actor(group, &event, &actor.id))
+    {
+        return Ok(());
+    }
+
+    let mut error = OpError::new(
+        "no_enabled_recipients",
+        "No recipients remain after excluding the sender; reply to the original sender or another recipient.",
+    );
+    error.details.insert("to".into(), json!(recipients));
+    Err(error)
 }
 
 pub(super) fn normalize_remote_chat_data(data: &mut Map<String, Value>) -> Result<(), OpError> {
@@ -142,7 +184,7 @@ fn peer_facing(group: &GroupDoc, by: &str, data: &Map<String, Value>) -> bool {
     })
 }
 
-fn default_recipient(group: &GroupDoc) -> &'static str {
+pub(super) fn default_recipient(group: &GroupDoc) -> &'static str {
     let configured = group
         .extra
         .get("settings")

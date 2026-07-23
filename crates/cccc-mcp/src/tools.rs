@@ -20,14 +20,13 @@ const TOOLS: &[(&str, &str)] = &[
         "cccc_inbox_mark_read",
         "Mark one or all inbox messages read.",
     ),
-    ("cccc_message_send", "Send a visible collaboration message."),
+    (
+        "cccc_message_send",
+        "Send a visible collaboration message or reply to an existing message.",
+    ),
     (
         "cccc_tracked_send",
         "Create a durable delegation and linked message.",
-    ),
-    (
-        "cccc_message_reply",
-        "Reply to an existing collaboration message.",
     ),
     ("cccc_file", "Read or send a CCCC blob attachment."),
     ("cccc_repo", "Inspect files under the active project scope."),
@@ -185,4 +184,17 @@ pub fn catalog() -> Vec<Value> {
             tool
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn catalog_exposes_one_message_tool() {
+        let names: Vec<_> = super::catalog()
+            .into_iter()
+            .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+            .collect();
+        assert!(names.iter().any(|name| name == "cccc_message_send"));
+        assert!(!names.iter().any(|name| name == "cccc_message_reply"));
+    }
 }

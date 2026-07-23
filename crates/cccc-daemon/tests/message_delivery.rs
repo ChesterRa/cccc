@@ -164,6 +164,97 @@ fn empty_recipients_follow_the_group_default_policy() {
         json!({"group_id":group_id,"by":"user","to":[],"text":"everyone"}),
     );
     assert_eq!(broadcast.result["event"]["data"]["to"], json!(["@all"]));
+
+    let actor_message = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"lead","to":[],"text":"status update"}),
+    );
+    assert_eq!(actor_message.result["event"]["data"]["to"], json!(["user"]));
+}
+
+#[test]
+fn replies_default_to_the_original_audience_and_reject_self_delivery() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"reply-recipient-test","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    for actor_id in ["lead", "peer1"] {
+        call(
+            &home,
+            "actor_add",
+            json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
+        );
+    }
+
+    let user_message = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["lead"],"text":"question"}),
+    );
+    let user_message_id = user_message.result["event"]["id"]
+        .as_str()
+        .expect("event id");
+    let default_reply = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":group_id,"by":"lead","to":[],
+            "reply_to":user_message_id,"text":"answer"
+        }),
+    );
+    assert_eq!(default_reply.result["event"]["data"]["to"], json!(["user"]));
+
+    let self_reply = call_raw(
+        &home,
+        "reply",
+        json!({
+            "group_id":group_id,"by":"lead","to":["lead"],
+            "reply_to":user_message_id,"text":"wrong target"
+        }),
+    );
+    assert!(!self_reply.ok);
+    assert_eq!(
+        self_reply.error.as_ref().map(|error| error.code.as_str()),
+        Some("no_enabled_recipients")
+    );
+
+    let lead_message = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"lead","to":["peer1"],"text":"update"}),
+    );
+    let own_message_reply = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":group_id,"by":"lead",
+            "reply_to":lead_message.result["event"]["id"],"text":"follow-up"
+        }),
+    );
+    assert_eq!(
+        own_message_reply.result["event"]["data"]["to"],
+        json!(["peer1"])
+    );
+
+    let explicit_reply = call(
+        &home,
+        "reply",
+        json!({
+            "group_id":group_id,"by":"lead","to":["peer1"],
+            "reply_to":user_message_id,"text":"ask peer"
+        }),
+    );
+    assert_eq!(
+        explicit_reply.result["event"]["data"]["to"],
+        json!(["peer1"])
+    );
 }
 
 #[test]

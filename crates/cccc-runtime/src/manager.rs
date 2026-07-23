@@ -162,6 +162,27 @@ pub fn submit_interruptible(
     delay: Duration,
     cancelled: &AtomicBool,
 ) -> Result<bool, RuntimeError> {
+    let submits = [submit];
+    submit_sequence_interruptible(
+        group_id,
+        actor_id,
+        payload,
+        &submits,
+        delay,
+        Duration::ZERO,
+        cancelled,
+    )
+}
+
+pub fn submit_sequence_interruptible(
+    group_id: &str,
+    actor_id: &str,
+    payload: &[u8],
+    submits: &[&[u8]],
+    initial_delay: Duration,
+    repeat_delay: Duration,
+    cancelled: &AtomicBool,
+) -> Result<bool, RuntimeError> {
     if cancelled.load(Ordering::Acquire) {
         return Ok(false);
     }
@@ -171,7 +192,16 @@ pub fn submit_interruptible(
         return Ok(false);
     }
     write_locked(group_id, actor_id, payload)?;
-    if !submit.is_empty() {
+    for (index, submit) in submits
+        .iter()
+        .filter(|submit| !submit.is_empty())
+        .enumerate()
+    {
+        let delay = if index == 0 {
+            initial_delay
+        } else {
+            repeat_delay
+        };
         if !wait_interruptibly(delay, cancelled) {
             return Ok(false);
         }
@@ -257,7 +287,10 @@ pub fn reap() -> Result<Vec<SessionStatus>, RuntimeError> {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{history, start, status, stop, stop_all, stop_if_started_at, submit_interruptible};
+    use super::{
+        history, start, status, stop, stop_all, stop_if_started_at, submit_interruptible,
+        submit_sequence_interruptible,
+    };
     use crate::LaunchSpec;
     use cccc_contracts::RunnerKind;
     use std::collections::BTreeMap;
@@ -421,5 +454,56 @@ mod tests {
         assert!(!worker.join().expect("join submit"));
         assert!(started.elapsed() < Duration::from_millis(500));
         stop("g_cancel_submit", "peer1").expect("cleanup");
+    }
+
+    #[test]
+    fn submit_sequence_writes_each_key_in_order() {
+        let _guard = test_guard();
+        let temp = tempfile::tempdir().expect("tempdir");
+        start(LaunchSpec {
+            group_id: "g_submit_sequence".into(),
+            actor_id: "peer1".into(),
+            runner: RunnerKind::Headless,
+            command: vec![
+                "sh".into(),
+                "-c".into(),
+                "stty raw -echo; dd bs=1 count=3 2>/dev/null | od -An -t x1".into(),
+            ],
+            cwd: temp.path().into(),
+            env: BTreeMap::new(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect("start");
+
+        assert!(
+            submit_sequence_interruptible(
+                "g_submit_sequence",
+                "peer1",
+                b"x",
+                &[b"\r", b"\r"],
+                Duration::ZERO,
+                Duration::ZERO,
+                &AtomicBool::new(false),
+            )
+            .expect("submit sequence")
+        );
+        for _ in 0..100 {
+            if !status("g_submit_sequence", "peer1")
+                .expect("status")
+                .running
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let output = history("g_submit_sequence", "peer1", None, 1024)
+            .expect("history")
+            .data;
+        assert!(
+            output.contains("78  0a  0a"),
+            "unexpected output: {output:?}"
+        );
+        stop("g_submit_sequence", "peer1").expect("cleanup");
     }
 }

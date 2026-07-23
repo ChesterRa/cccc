@@ -8,7 +8,7 @@ mod voice_secretary;
 
 const DEFAULT_PREAMBLE_BODY: &str = "Startup:\n- On cold start or resume, use MCP tool `cccc_bootstrap`.\n- Call `cccc_help` only when you need a CCCC-specific route or a missing capability.";
 const MAX_PREAMBLE_BYTES: usize = 512 * 1024;
-pub const MESSAGE_DELIVERY_GUIDANCE: &str = "Use cccc_message_reply; for new messages, use cccc_message_send. Terminal output is not visible to the user. Check reply_to/to; avoid unnecessary @all.";
+pub const MESSAGE_DELIVERY_GUIDANCE: &str = "Use cccc_message_send for messages and replies; set reply_to when replying. Terminal output is not visible to the user. Avoid unnecessary broadcasts.";
 
 #[must_use]
 pub fn render(group: &GroupDoc, actor: &Actor) -> String {
@@ -198,8 +198,10 @@ mod tests {
         assert!(prompt.contains("You are peer1"));
         assert!(prompt.contains(&group.group_id));
         assert!(prompt.contains("use MCP tool `cccc_bootstrap`"));
-        assert!(prompt.contains("Use cccc_message_reply"));
+        assert!(prompt.contains("Use cccc_message_send"));
+        assert!(prompt.contains("set reply_to when replying"));
         assert!(prompt.contains("Terminal output is not visible to the user"));
+        assert!(!prompt.contains("@all"));
         assert!(!prompt.contains("Current Context Snapshot"));
     }
 

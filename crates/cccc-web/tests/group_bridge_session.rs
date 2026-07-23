@@ -36,7 +36,7 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
     let app = cccc_web::app(home.clone());
     let payload = json!({
         "source_group_id":"g_sender","source_group_title":"Sender",
-        "idempotency_key":"delivery-1","text":"hello remote","to":[]
+        "idempotency_key":"delivery-1","text":"hello remote","to":["@foreman"]
     });
 
     let unauthorized = app
@@ -45,6 +45,32 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
         .await
         .expect("response");
     assert_eq!(unauthorized.status(), StatusCode::FORBIDDEN);
+
+    let missing_recipient = app
+        .clone()
+        .oneshot(request(
+            &json!({
+                "source_group_id":"g_sender","source_group_title":"Sender",
+                "idempotency_key":"delivery-without-recipient","text":"hello remote","to":[]
+            }),
+            Some("secret-test"),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(missing_recipient.status(), StatusCode::BAD_REQUEST);
+    let missing_recipient_body: Value = serde_json::from_slice(
+        &missing_recipient
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes(),
+    )
+    .expect("json");
+    assert_eq!(
+        missing_recipient_body["error"]["code"],
+        "missing_remote_recipient"
+    );
 
     for expected_deduped in [false, true] {
         let response = app
@@ -92,6 +118,7 @@ async fn cross_group_send_falls_back_to_remote_mcp_for_python_peers() {
             post(|Json(request): Json<Value>| async move {
                 assert_eq!(request["params"]["name"], "cccc_message_send");
                 assert_eq!(request["params"]["arguments"]["text"], "hello legacy");
+                assert_eq!(request["params"]["arguments"]["to"], json!(["@foreman"]));
                 Json(json!({
                     "jsonrpc":"2.0","id":request["id"],
                     "result":{"content":[{"type":"text","text":"{\"event\":{\"id\":\"remote-event\"}}"}]}
@@ -134,7 +161,7 @@ async fn cross_group_send_falls_back_to_remote_mcp_for_python_peers() {
             .body(Body::from(
                 json!({
                     "dst_group_id":"g_remote","text":"hello legacy",
-                    "to":["@foreman"],"client_id":"legacy-send-1"
+                    "client_id":"legacy-send-1"
                 })
                 .to_string(),
             ))

@@ -24,7 +24,7 @@ cccc reply <event_id> "Reply text"
 # MCP
 cccc_message_send(text="Hello", to=["@foreman"], insight="This direction may still be framed too narrowly.")
 cccc_tracked_send(title="Task title", text="Delegated work", to=["assistant"], outcome="Done criterion", insight="The assignee should be free to reject the proposed approach.")
-cccc_message_reply(reply_to="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
+cccc_message_send(reply_to="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
 ```
 
 Agents may add `suggested_user_message` when sending to `user`; CCCC Web shows it as an editable next-message suggestion in the composer and never sends it automatically.
@@ -156,7 +156,7 @@ MCP Tools (protocol + execution interface)
 ├── cccc_help: On-demand CCCC protocol reference
 ├── cccc_capability_use: Invoke hidden tools without mounting every pack
 ├── cccc_inbox_list / cccc_inbox_mark_read: Inbox
-└── cccc_message_send / cccc_message_reply: Send/reply
+└── cccc_message_send: Send or reply (`reply_to` selects reply mode)
 
 Ledger (complete memory)
 └── All historical messages and events
@@ -176,7 +176,7 @@ Ledger (complete memory)
 1. Cold start or resume → Call cccc_bootstrap
 2. Need the full unread queue → Call cccc_inbox_list
 3. Do the work with the agent runtime's normal tools and judgment
-4. Reply visibly with cccc_message_reply
+4. Reply visibly with cccc_message_send and `reply_to`
 5. Mark handled inbox items read
 ```
 

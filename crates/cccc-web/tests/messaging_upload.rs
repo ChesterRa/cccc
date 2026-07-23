@@ -25,7 +25,7 @@ async fn plural_files_field_creates_a_structured_image_attachment() {
         concat!(
             "--{boundary}\r\nContent-Disposition: form-data; name=\"by\"\r\n\r\nuser\r\n",
             "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nimage message\r\n",
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"to_json\"\r\n\r\n[\"@all\"]\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"to_json\"\r\n\r\n[\"user\"]\r\n",
             "--{boundary}\r\nContent-Disposition: form-data; name=\"reply_required\"\r\n\r\ntrue\r\n",
             "--{boundary}\r\nContent-Disposition: form-data; name=\"refs_json\"\r\n\r\n[]\r\n",
             "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"overview.png\"\r\n",
@@ -124,7 +124,7 @@ async fn upload_larger_than_axum_default_limit_is_streamed_successfully() {
     let mut multipart = format!(
         concat!(
             "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nlarge\r\n",
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"to_json\"\r\n\r\n[\"@all\"]\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"to_json\"\r\n\r\n[\"user\"]\r\n",
             "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"large.bin\"\r\n",
             "Content-Type: application/octet-stream\r\n\r\n"
         ),

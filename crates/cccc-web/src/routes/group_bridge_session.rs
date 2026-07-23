@@ -236,6 +236,13 @@ async fn receive_delivery(
             "source group does not match registration",
         ));
     }
+    if !has_remote_recipient(body.get("to")) {
+        return Err(ApiError::bad_code(
+            "missing_remote_recipient",
+            "remote group bridge messages require explicit to",
+            json!({}),
+        ));
+    }
     let idempotency_key = body["idempotency_key"]
         .as_str()
         .filter(|value| !value.is_empty())
@@ -350,6 +357,7 @@ pub(super) async fn send_remote(
         .unwrap_or_default();
     let mut payload = body.as_object().cloned().unwrap_or_default();
     payload.remove("dst_group_id");
+    default_remote_recipient(&mut payload);
     payload.insert("source_group_id".into(), json!(source_group_id));
     payload.insert("source_group_title".into(), json!(source_title));
     payload.insert("idempotency_key".into(), json!(idempotency_key));
@@ -421,6 +429,7 @@ pub(super) async fn send_remote(
         .cloned()
         .unwrap_or_else(|| json!({"status":"delivered","idempotency_key":idempotency_key}));
     let mut record = body.as_object().cloned().unwrap_or_default();
+    default_remote_recipient(&mut record);
     record.insert("group_id".into(), json!(source_group_id));
     record.insert("dst_group_id".into(), json!(destination_group_id));
     record.insert("delivery_receipt".into(), receipt.clone());
@@ -433,6 +442,21 @@ pub(super) async fn send_remote(
         "receipt":receipt,
         "transport":"group_bridge_session"
     }))))
+}
+
+fn has_remote_recipient(value: Option<&Value>) -> bool {
+    value.and_then(Value::as_array).is_some_and(|recipients| {
+        recipients
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|recipient| !recipient.trim().is_empty())
+    })
+}
+
+fn default_remote_recipient(args: &mut Map<String, Value>) {
+    if !has_remote_recipient(args.get("to")) {
+        args.insert("to".into(), json!(["@foreman"]));
+    }
 }
 
 async fn send_via_remote_mcp(

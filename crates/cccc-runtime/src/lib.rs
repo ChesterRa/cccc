@@ -7,7 +7,8 @@ mod session;
 pub use command::{default_command, detect_runtimes};
 pub use manager::{
     bracketed_paste_enabled, clear, history, history_since, reap, resize, start, status, stop,
-    stop_all, stop_if_started_at, submit, submit_interruptible, write,
+    stop_all, stop_if_started_at, submit, submit_interruptible, submit_sequence_interruptible,
+    write,
 };
 pub use session::{LaunchSpec, SessionStatus};
 

@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::ops::actor_delivery::{DeliveryCompletion, DeliveryJob, record_completion};
 
 const SUBMIT_DELAY: Duration = Duration::from_millis(1_500);
+const REPEAT_SUBMIT_DELAY: Duration = Duration::from_millis(200);
 const PREAMBLE_DELAY: Duration = Duration::from_millis(500);
 const INPUT_MODE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -119,25 +120,35 @@ fn submit_text(group_id: &str, actor: &Actor, text: &str, cancelled: &AtomicBool
     } else {
         raw.to_owned()
     };
-    let submit = match actor.submit {
-        ActorSubmit::Enter => b"\r".as_slice(),
-        ActorSubmit::Newline => b"\n".as_slice(),
-        ActorSubmit::None => b"".as_slice(),
-    };
-    let delay = if submit.is_empty() {
+    let submits = submit_sequence(actor);
+    let delay = if submits.is_empty() {
         Duration::ZERO
     } else {
         SUBMIT_DELAY
     };
-    cccc_runtime::submit_interruptible(
+    cccc_runtime::submit_sequence_interruptible(
         group_id,
         &actor.id,
         payload.as_bytes(),
-        submit,
+        submits,
         delay,
+        REPEAT_SUBMIT_DELAY,
         cancelled,
     )
     .unwrap_or(false)
+}
+
+fn submit_sequence(actor: &Actor) -> &'static [&'static [u8]] {
+    match actor.submit {
+        ActorSubmit::Enter
+            if matches!(actor.runtime, ActorRuntime::Codex | ActorRuntime::Copilot) =>
+        {
+            &[b"\r", b"\r"]
+        }
+        ActorSubmit::Enter => &[b"\r"],
+        ActorSubmit::Newline => &[b"\n"],
+        ActorSubmit::None => &[],
+    }
 }
 
 fn wait_for_input_mode(group_id: &str, actor_id: &str, cancelled: &AtomicBool) -> bool {
@@ -168,4 +179,37 @@ pub(super) fn interruptible_sleep(duration: Duration, cancelled: &AtomicBool) ->
         std::thread::sleep(remaining.min(Duration::from_millis(50)));
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::submit_sequence;
+    use cccc_contracts::{Actor, ActorRuntime, ActorSubmit};
+
+    #[test]
+    fn repeats_enter_only_for_tuis_that_can_drop_the_first_submit() {
+        let mut actor = Actor::new("peer1");
+        actor.submit = ActorSubmit::Enter;
+
+        actor.runtime = ActorRuntime::Codex;
+        assert_eq!(
+            submit_sequence(&actor),
+            &[b"\r".as_slice(), b"\r".as_slice()]
+        );
+
+        actor.runtime = ActorRuntime::Copilot;
+        assert_eq!(
+            submit_sequence(&actor),
+            &[b"\r".as_slice(), b"\r".as_slice()]
+        );
+
+        actor.runtime = ActorRuntime::Claude;
+        assert_eq!(submit_sequence(&actor), &[b"\r".as_slice()]);
+
+        actor.submit = ActorSubmit::Newline;
+        assert_eq!(submit_sequence(&actor), &[b"\n".as_slice()]);
+
+        actor.submit = ActorSubmit::None;
+        assert!(submit_sequence(&actor).is_empty());
+    }
 }

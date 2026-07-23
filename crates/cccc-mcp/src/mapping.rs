@@ -10,6 +10,7 @@ pub fn daemon_call(
     let op = match name {
         "cccc_inbox_list" => "inbox_list",
         "cccc_message_send" => {
+            alias(&mut args, "event_id", "reply_to");
             normalize_message_author(&mut args);
             if args
                 .get("dst_group_id")
@@ -17,6 +18,12 @@ pub fn daemon_call(
                 .is_some_and(|value| !value.trim().is_empty())
             {
                 "send_cross_group"
+            } else if args
+                .get("reply_to")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                "reply"
             } else {
                 "send"
             }
@@ -229,6 +236,20 @@ mod tests {
         .expect("args");
         let (op, args) = daemon_call("cccc_message_send", args).expect("mapping");
         assert_eq!(op, "send_cross_group");
+        assert_eq!(args["by"], "backend");
+    }
+
+    #[test]
+    fn message_with_reply_target_maps_to_reply() {
+        let args = json!({
+            "group_id":"g_test","actor_id":"backend","text":"done",
+            "reply_to":"event-1"
+        })
+        .as_object()
+        .cloned()
+        .expect("args");
+        let (op, args) = daemon_call("cccc_message_send", args).expect("mapping");
+        assert_eq!(op, "reply");
         assert_eq!(args["by"], "backend");
     }
 }

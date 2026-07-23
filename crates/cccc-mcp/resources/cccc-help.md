@@ -12,7 +12,7 @@ This is the working playbook for a CCCC group. Run `cccc_bootstrap` first on a n
 
 ## Collaboration
 
-- Use `cccc_message_reply` to answer an existing event and `cccc_message_send` for a new thread.
+- Use `cccc_message_send` for new messages and replies; set `reply_to` when answering an existing event.
 - Use `cccc_tracked_send` when ownership, completion evidence, and history must survive chat.
 - Shared truth lives in the coordination brief and task cards; refresh actor state at meaningful transitions.
 - Inbox is an unread queue, not a task board. Mark an item read only after its obligation is handled.
