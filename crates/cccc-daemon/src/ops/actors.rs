@@ -39,7 +39,7 @@ fn prompt(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({
         "group_id":group.group_id,
         "actor_id":actor_id,
-        "prompt":cccc_core::system_prompt::render(&group, actor)
+        "prompt":cccc_core::system_prompt::render_session(home, &group, actor)
     }))
 }
 
@@ -313,7 +313,13 @@ fn actors_with_roles(home: &HomeLayout, group: &GroupDoc) -> Vec<Value> {
                 ));
                 object.insert(
                     "running".into(),
-                    Value::Bool(status.as_ref().is_some_and(|item| item.running)),
+                    Value::Bool(if actor_runtime::is_structured(&actor) {
+                        actor.enabled
+                            && group.running
+                            && group.state != cccc_contracts::GroupState::Stopped
+                    } else {
+                        status.as_ref().is_some_and(|item| item.running)
+                    }),
                 );
                 object.insert(
                     "pid".into(),

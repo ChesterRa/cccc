@@ -45,7 +45,7 @@ fn append_overrides(
     ]);
 }
 
-fn resolve_cccc_executable() -> Option<PathBuf> {
+pub(crate) fn resolve_cccc_executable() -> Option<PathBuf> {
     let current = std::env::current_exe().ok()?;
     if executable_stem(&current) == "cccc" {
         return Some(current);

@@ -1,4 +1,4 @@
-use cccc_contracts::{ActorRuntime, GroupState};
+use cccc_contracts::GroupState;
 use cccc_core::actors;
 use cccc_core::{GroupDoc, registry::GroupMeta};
 use serde_json::{Value, json};
@@ -11,7 +11,7 @@ pub fn status(group: &GroupDoc) -> Value {
         .iter()
         .filter(|actor| {
             actor.enabled
-                && (actor.runtime == ActorRuntime::WebModel
+                && (actor_runtime::is_structured(actor)
                     && group.running
                     && group.state != GroupState::Stopped
                     || actor_runtime::status(&group.group_id, &actor.id)
@@ -48,6 +48,12 @@ pub fn group(group: GroupDoc) -> Value {
             for (item, actor) in items.iter_mut().zip(&group.actors) {
                 item["role"] = serde_json::to_value(actors::effective_role(&group, &actor.id))
                     .unwrap_or(Value::Null);
+                if actor_runtime::is_structured(actor) {
+                    item["running"] = Value::Bool(
+                        actor.enabled && group.running && group.state != GroupState::Stopped,
+                    );
+                    item["pid"] = Value::Null;
+                }
             }
         }
     }

@@ -54,6 +54,34 @@ per actor. A worker seeds the runtime with its CCCC system prompt once per
 session, preserves message order, uses bracketed paste when the terminal enables
 it, and applies the actor's configured submit mode. Successful delivery returns
 to the daemon's serialized state path before advancing the inbox cursor.
+The Rust preamble follows the Python contract: cold-start and resumed sessions
+are told to call `cccc_bootstrap`, which returns group, inbox, recovery, and
+context state. Ordinary chat deliveries do not duplicate the full context JSON.
+`CCCC_HOME/groups/<group_id>/prompts/CCCC_PREAMBLE.md` replaces the default
+Startup body when present, matching the Python override behavior.
+Each delivered chat batch also ends with Python's MCP reply reminder; batched
+messages receive one reminder for the whole batch rather than one per message.
+
+`runner=headless` is a structured MCP lifecycle and never creates a PTY. The
+runtime pulls an ordered batch with `cccc_runtime_wait_next_turn`, receives the
+raw events, coalesced text, and session system prompt, then commits the exact
+contiguous event prefix with `cccc_runtime_complete_turn`. The legacy
+`web_model_runtime_*` daemon operation names remain accepted for compatibility.
+PTY delivery workers explicitly exclude structured actors, preventing duplicate
+terminal and cursor-based delivery.
+
+Cursor, Kilo, and Antigravity PTY sessions receive an idempotent MCP setup
+contract before the normal preamble. It first checks for `cccc_bootstrap` and
+only installs the `cccc mcp` stdio server when unavailable. Custom PTY runtimes
+receive the same identity, group, bootstrap, and reply protocol preamble as
+built-in runtimes. Voice Secretary system notifications include the complete
+`input_envelope` or action-request envelope in the delivered payload instead of
+only the generic notification title.
+
+Delivery completion advances the inbox only across a fully delivered contiguous
+prefix. Resolution scans the ledger index from the actor cursor, so batches over
+the former 1000-event read window neither leave stale unread entries nor skip an
+undelivered event.
 
 Daemon connections are read concurrently with a size limit and timeout. State
 operations remain serialized behind the dispatch lock, so a slow or malformed

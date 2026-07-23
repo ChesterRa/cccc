@@ -33,7 +33,7 @@ async fn serializes_delivery_notifies_and_advances_cursor() {
             "runner":"pty",
             "runtime":"custom",
             "submit":"newline",
-            "command":["sh","-c","stty -echo; IFS= read -r first; IFS= read -r second; IFS= read -r third; IFS= read -r fourth; printf 'FIRST:%s\\nSECOND:%s\\nTHIRD:%s\\nFOURTH:%s' \"$first\" \"$second\" \"$third\" \"$fourth\"; sleep 2"],
+            "command":["sh","-c","stty -echo; IFS= read -r preamble; IFS= read -r first; IFS= read -r second; IFS= read -r third; IFS= read -r fourth; printf 'PREAMBLE:%s\\nFIRST:%s\\nSECOND:%s\\nTHIRD:%s\\nFOURTH:%s' \"$preamble\" \"$first\" \"$second\" \"$third\" \"$fourth\"; sleep 2"],
             "by":"user"
         }),
     )
@@ -88,6 +88,8 @@ async fn serializes_delivery_notifies_and_advances_cursor() {
     )
     .await;
     let text = tail.result["text"].as_str().unwrap_or_default();
+    assert!(text.contains("PREAMBLE:[CCCC] You are peer1"));
+    assert!(text.contains("FIRST:[cccc] user → peer1: one"));
     assert!(text.contains("SECOND:[cccc] user → peer1: two"));
     assert!(text.contains("THIRD:[cccc] SYSTEM (info): notice"));
     assert!(text.contains("FOURTH:[cccc] user → peer1 (reply:"));
@@ -399,7 +401,7 @@ fn remote_cross_group_record_validates_insight_before_source_write() {
 }
 
 async fn wait_for(client: &DaemonClient, group_id: &str, expected: &str) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(7);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
     loop {
         let tail = daemon_call(
             client,
@@ -416,7 +418,8 @@ async fn wait_for(client: &DaemonClient, group_id: &str, expected: &str) {
         }
         assert!(
             tokio::time::Instant::now() < deadline,
-            "PTY did not receive {expected:?}"
+            "PTY did not receive {expected:?}; tail={:?}",
+            tail.result["text"].as_str().unwrap_or_default()
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

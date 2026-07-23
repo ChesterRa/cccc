@@ -9,12 +9,10 @@ pub fn persist_lifecycle(
 ) -> Result<Actor, OpError> {
     let running = group.actors.iter().any(|actor| {
         if actor.id == actor_id {
-            enabled
-                && (actor.runtime == ActorRuntime::WebModel
-                    || target_status.is_some_and(|status| status.running))
+            enabled && (is_structured(actor) || target_status.is_some_and(|status| status.running))
         } else {
             actor.enabled
-                && (actor.runtime == ActorRuntime::WebModel
+                && (is_structured(actor)
                     || status(&group.group_id, &actor.id).is_some_and(|status| status.running))
         }
     });

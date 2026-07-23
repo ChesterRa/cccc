@@ -1,13 +1,44 @@
 use cccc_contracts::{Actor, ActorRole};
+use std::path::Path;
 
-use crate::GroupDoc;
-use crate::actors::effective_role;
+use crate::actors::{effective_role, visible};
+use crate::{GroupDoc, GroupStore, HomeLayout};
+
+mod voice_secretary;
+
+const DEFAULT_PREAMBLE_BODY: &str = "Startup:\n- On cold start or resume, use MCP tool `cccc_bootstrap`.\n- Call `cccc_help` only when you need a CCCC-specific route or a missing capability.";
+const MAX_PREAMBLE_BYTES: usize = 512 * 1024;
+pub const MESSAGE_DELIVERY_GUIDANCE: &str = "Use cccc_message_reply; for new messages, use cccc_message_send. Terminal output is not visible to the user. Check reply_to/to; avoid unnecessary @all.";
 
 #[must_use]
 pub fn render(group: &GroupDoc, actor: &Actor) -> String {
-    let enabled: Vec<_> = group
-        .actors
-        .iter()
+    if voice_secretary::is_actor(actor) {
+        return voice_secretary::render(group, actor);
+    }
+    render_with_body(group, actor, DEFAULT_PREAMBLE_BODY)
+}
+
+#[must_use]
+pub fn render_session(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> String {
+    if voice_secretary::is_actor(actor) {
+        return voice_secretary::render(group, actor);
+    }
+    let custom = GroupStore::new(home.clone())
+        .and_then(|store| store.group_dir(&group.group_id))
+        .ok()
+        .and_then(|root| read_preamble(&root.join("prompts/CCCC_PREAMBLE.md")));
+    render_with_body(
+        group,
+        actor,
+        custom
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(DEFAULT_PREAMBLE_BODY),
+    )
+}
+
+fn render_with_body(group: &GroupDoc, actor: &Actor, body: &str) -> String {
+    let enabled: Vec<_> = visible(group)
         .filter(|item| item.enabled)
         .map(|item| item.id.as_str())
         .collect();
@@ -20,7 +51,12 @@ pub fn render(group: &GroupDoc, actor: &Actor) -> String {
     let mut lines = vec![
         format!(
             "[CCCC] You are {} ({role}) in group '{}'",
-            actor.id, group.title
+            actor.id,
+            if group.title.is_empty() {
+                &group.group_id
+            } else {
+                &group.title
+            }
         ),
         format!("group_id: {}", group.group_id),
         format!("runtime: {runtime} ({runner})"),
@@ -31,19 +67,31 @@ pub fn render(group: &GroupDoc, actor: &Actor) -> String {
     if enabled.len() <= 1 {
         lines.push("team: solo (you're the only actor)".into());
     } else {
+        let shown = enabled.iter().take(8).copied().collect::<Vec<_>>();
+        let suffix = if enabled.len() > 8 { "..." } else { "" };
         lines.push(format!(
-            "team: {} actors ({})",
+            "team: {} actors ({}{suffix})",
             enabled.len(),
-            enabled.join(", ")
+            shown.join(", ")
         ));
+        let foremen = enabled
+            .iter()
+            .copied()
+            .filter(|actor_id| effective_role(group, actor_id) == Some(ActorRole::Foreman))
+            .collect::<Vec<_>>();
+        if !foremen.is_empty() {
+            lines.push(format!("foreman: {}", foremen.join(", ")));
+        }
     }
     if runner == "headless" {
-        lines.push("runner: headless (process transport with structured CCCC state)".into());
+        lines.push("runner: headless (MCP-only, no PTY)".into());
     }
-    if !group.scopes.is_empty() {
-        lines.push(String::new());
-        lines.push("scopes (* = active):".into());
-        for scope in &group.scopes {
+    lines.push(project_line(group));
+    let scope_lines = group
+        .scopes
+        .iter()
+        .filter(|scope| !scope.url.trim().is_empty())
+        .map(|scope| {
             let label = if scope.label.is_empty() {
                 &scope.scope_key
             } else {
@@ -54,31 +102,74 @@ pub fn render(group: &GroupDoc, actor: &Actor) -> String {
             } else {
                 ""
             };
-            lines.push(format!("  {label}: {}{active}", scope.url));
-        }
+            format!("  {label}: {}{active}", scope.url)
+        })
+        .collect::<Vec<_>>();
+    if !scope_lines.is_empty() {
+        lines.push(String::new());
+        lines.push("scopes (* = active):".into());
+        lines.extend(scope_lines);
     }
     lines.extend([
         String::new(),
         "---".into(),
-        "Working Style:".into(),
-        "- Work like a sharp teammate, not a customer-service script.".into(),
-        "- Prefer silence over low-signal chatter; report concrete changes and blockers.".into(),
-        String::new(),
-        "Platform Invariants:".into(),
-        "- No fabrication. Verify before claiming done.".into(),
-        "- Use cccc_message_reply for replies; use cccc_message_send for new messages.".into(),
-        "- Terminal output is not delivered.".into(),
-        "- Once scope is approved, finish it end-to-end.".into(),
+        "CCCC Protocol:".into(),
+        format!("- {MESSAGE_DELIVERY_GUIDANCE}"),
     ]);
-    let has_visible_peer = actor.internal_kind.is_none()
-        && crate::actors::visible(group).any(|item| item.enabled && item.id != actor.id);
-    if has_visible_peer {
-        lines.push(String::new());
+    if enabled.len() > 1 {
         lines.push(crate::peer_insight::TEAM_MODE_SEED.into());
-        lines.push(String::new());
-        lines.push(crate::peer_insight::PEER_INSIGHT_RUNTIME_HELP.clone());
     }
-    lines.join("\n") + "\n"
+    let header = lines.join("\n").trim_end().to_owned();
+    let body = body.trim();
+    if body.is_empty() {
+        header + "\n"
+    } else {
+        format!("{header}\n\n{body}\n")
+    }
+}
+
+fn project_line(group: &GroupDoc) -> String {
+    let root = group
+        .scopes
+        .iter()
+        .find(|scope| scope.scope_key == group.active_scope_key && !scope.url.trim().is_empty())
+        .or_else(|| {
+            group
+                .scopes
+                .iter()
+                .find(|scope| !scope.url.trim().is_empty())
+        })
+        .map(|scope| expanded_path(&scope.url));
+    let Some(root) = root else {
+        return "project: PROJECT.md missing (no scope attached)".into();
+    };
+    let upper = root.join("PROJECT.md");
+    let lower = root.join("project.md");
+    if upper.exists() {
+        format!("project: PROJECT.md found ({})", upper.display())
+    } else if lower.exists() {
+        format!("project: PROJECT.md found ({})", lower.display())
+    } else {
+        format!(
+            "project: PROJECT.md missing (expected at {})",
+            upper.display()
+        )
+    }
+}
+
+fn expanded_path(value: &str) -> std::path::PathBuf {
+    let Some(suffix) = value.strip_prefix("~/") else {
+        return Path::new(value).to_path_buf();
+    };
+    std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .map_or_else(|| Path::new(value).to_path_buf(), |home| home.join(suffix))
+}
+
+fn read_preamble(path: &Path) -> Option<String> {
+    let mut bytes = std::fs::read(path).ok()?;
+    bytes.truncate(MAX_PREAMBLE_BYTES);
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn enum_name(value: impl serde::Serialize) -> String {
@@ -90,7 +181,7 @@ fn enum_name(value: impl serde::Serialize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::render;
+    use super::{render, render_session};
     use crate::GroupStore;
     use crate::home::HomeLayout;
     use cccc_contracts::Actor;
@@ -105,8 +196,33 @@ mod tests {
         group.actors.push(actor.clone());
         let prompt = render(&group, &actor);
         assert!(prompt.contains("You are peer1"));
-        assert!(prompt.contains("No fabrication"));
         assert!(prompt.contains(&group.group_id));
+        assert!(prompt.contains("use MCP tool `cccc_bootstrap`"));
+        assert!(prompt.contains("Use cccc_message_reply"));
+        assert!(prompt.contains("Terminal output is not visible to the user"));
+        assert!(!prompt.contains("Current Context Snapshot"));
+    }
+
+    #[test]
+    fn session_prompt_uses_python_compatible_group_override_without_context_snapshot() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("test", "migration").expect("group");
+        let actor = Actor::new("peer1");
+        group.actors.push(actor.clone());
+        let prompt_dir = store
+            .group_dir(&group.group_id)
+            .expect("group dir")
+            .join("prompts");
+        std::fs::create_dir_all(&prompt_dir).expect("prompt dir");
+        std::fs::write(prompt_dir.join("CCCC_PREAMBLE.md"), "custom startup")
+            .expect("custom preamble");
+
+        let prompt = render_session(&home, &group, &actor);
+        assert!(prompt.ends_with("custom startup\n"));
+        assert!(!prompt.contains("cccc_bootstrap"));
+        assert!(!prompt.contains("Current Context Snapshot"));
     }
 
     #[test]
@@ -117,8 +233,24 @@ mod tests {
         let mut group = store.create("test", "migration").expect("group");
         let actor = Actor::new("foreman");
         group.actors.push(actor.clone());
-        assert!(!render(&group, &actor).contains("Peer Insight Contract"));
+        assert!(!render(&group, &actor).contains(crate::peer_insight::TEAM_MODE_SEED));
         group.actors.push(Actor::new("peer1"));
-        assert!(render(&group, &actor).contains("Peer Insight Contract"));
+        assert!(render(&group, &actor).contains(crate::peer_insight::TEAM_MODE_SEED));
+    }
+
+    #[test]
+    fn voice_secretary_uses_its_python_compatible_runtime_prompt() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let mut group = store.create("test", "migration").expect("group");
+        let mut actor = Actor::new("voice-secretary");
+        actor.internal_kind = Some("voice_secretary".into());
+        group.actors.push(actor.clone());
+
+        let prompt = render(&group, &actor);
+        assert!(prompt.starts_with("[CCCC Voice Secretary Runtime Actor]\n"));
+        assert!(prompt.contains("The input_envelope is the canonical work item."));
+        assert!(!prompt.contains("CCCC Protocol:"));
     }
 }

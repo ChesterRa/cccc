@@ -1,7 +1,16 @@
 use cccc_contracts::Event;
 use serde_json::Value;
 
-pub fn render(event: &Event) -> Option<String> {
+mod system_notify;
+
+fn mcp_reply_reminder() -> String {
+    format!(
+        "[cccc] {}",
+        cccc_core::system_prompt::MESSAGE_DELIVERY_GUIDANCE
+    )
+}
+
+fn render_message(event: &Event) -> Option<String> {
     if event.kind == "system.notify" {
         return render_system(event);
     }
@@ -26,6 +35,40 @@ pub fn render(event: &Event) -> Option<String> {
         return None;
     }
     Some(format_envelope(event, &body))
+}
+
+pub fn render_batch(events: &[Event]) -> Option<String> {
+    let messages = events
+        .iter()
+        .map(render_message)
+        .collect::<Option<Vec<_>>>()?;
+    let rendered = match messages.as_slice() {
+        [] => None,
+        [message] => Some(message.clone()),
+        _ => Some(format!(
+            "[cccc] {} new messages:\n\n{}",
+            messages.len(),
+            messages.join("\n\n")
+        )),
+    }?;
+    Some(if events.iter().any(|event| event.kind == "chat.message") {
+        append_mcp_reply_reminder(&rendered)
+    } else {
+        rendered
+    })
+}
+
+fn append_mcp_reply_reminder(text: &str) -> String {
+    let out = text.trim_end_matches(['\r', '\n']);
+    let reminder = mcp_reply_reminder();
+    if out.contains(&reminder) {
+        return out.to_owned();
+    }
+    if out.is_empty() {
+        reminder
+    } else {
+        format!("{out}\n\n{reminder}")
+    }
 }
 
 fn protocol_lines(event: &Event) -> Vec<String> {
@@ -156,15 +199,7 @@ fn format_envelope(event: &Event, body: &str) -> String {
 
 fn render_system(event: &Event) -> Option<String> {
     let kind = text(event, "kind");
-    let body = [
-        text(event, "title"),
-        text(event, "message"),
-        text(event, "text"),
-    ]
-    .into_iter()
-    .filter(|value| !value.is_empty())
-    .collect::<Vec<_>>()
-    .join("\n");
+    let body = system_notify::body(event);
     (!body.is_empty()).then(|| {
         format!(
             "[cccc] SYSTEM ({}): {body}",
@@ -231,7 +266,7 @@ mod tests {
         .as_object()
         .cloned()
         .expect("object");
-        let rendered = render(&event).expect("render");
+        let rendered = render_batch(&[event]).expect("render");
         assert!(rendered.contains("IMPORTANT (event_id=event-123)"));
         assert!(rendered.contains("REPLY REQUIRED (event_id=event-123)"));
         assert!(rendered.contains("task_ref: Fix send"));
@@ -239,5 +274,93 @@ mod tests {
         assert!(rendered.contains("screen.png (42 bytes) [state/blobs/abc]"));
         assert!(rendered.contains(cccc_core::peer_insight::PEER_PERSPECTIVE_AGENT_LABEL));
         assert!(rendered.contains("dependency boundary matters"));
+    }
+
+    #[test]
+    fn renders_multiple_events_as_one_delivery_batch() {
+        let mut first = Event::new("chat.message", "g_test");
+        first.by = "reviewer".into();
+        first.data = json!({"to":["lead"],"text":"first"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        let mut second = Event::new("chat.message", "g_test");
+        second.by = "backend".into();
+        second.data = json!({"to":["lead"],"text":"second"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+
+        let rendered = render_batch(&[first, second]).expect("batch");
+        assert!(rendered.starts_with("[cccc] 2 new messages:"));
+        assert!(rendered.contains("[cccc] reviewer → lead: first"));
+        assert!(rendered.contains("[cccc] backend → lead: second"));
+        assert_eq!(rendered.matches(&mcp_reply_reminder()).count(), 1);
+    }
+
+    #[test]
+    fn appends_python_compatible_mcp_reminder_to_each_chat_delivery() {
+        let mut event = Event::new("chat.message", "g_test");
+        event.by = "user".into();
+        event.data = json!({"to":["codex-1"], "text":"你好"})
+            .as_object()
+            .cloned()
+            .expect("object");
+
+        assert_eq!(
+            render_batch(&[event]).expect("rendered"),
+            format!("[cccc] user → codex-1: 你好\n\n{}", mcp_reply_reminder())
+        );
+    }
+
+    #[test]
+    fn renders_voice_secretary_input_envelope_in_full() {
+        let mut event = Event::new("system.notify", "g_test");
+        event.data = json!({
+            "context": {
+                "kind": "voice_secretary_input",
+                "input_envelope": {
+                    "text": "整理本次会议结论",
+                    "session_id": "voice-session-1",
+                    "segment_id": "segment-7",
+                    "speaker": "user"
+                }
+            }
+        })
+        .as_object()
+        .cloned()
+        .expect("object");
+
+        let rendered = render_batch(&[event]).expect("rendered");
+        assert!(rendered.contains("daemon-delivered input_envelope"));
+        assert!(rendered.contains("整理本次会议结论"));
+        assert!(rendered.contains("\"session_id\": \"voice-session-1\""));
+        assert!(rendered.contains("\"segment_id\": \"segment-7\""));
+    }
+
+    #[test]
+    fn renders_voice_secretary_action_request_envelope() {
+        let mut event = Event::new("system.notify", "g_test");
+        event.data = json!({
+            "context": {
+                "kind": "voice_secretary_action_request",
+                "request": {
+                    "request_id": "request-9",
+                    "document_path": "voice/meeting.md",
+                    "request_text": "生成行动项并发给项目组",
+                    "priority": "attention"
+                }
+            }
+        })
+        .as_object()
+        .cloned()
+        .expect("object");
+
+        let rendered = render_batch(&[event]).expect("rendered");
+        assert!(rendered.contains("kind=voice_secretary_action_request"));
+        assert!(rendered.contains("request_id=request-9"));
+        assert!(rendered.contains("document_path=voice/meeting.md"));
+        assert!(rendered.contains("生成行动项并发给项目组"));
+        assert!(rendered.contains("\"priority\": \"attention\""));
     }
 }

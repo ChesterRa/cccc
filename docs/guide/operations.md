@@ -137,6 +137,13 @@ Backup `CCCC_HOME`:
 - Use `reply_required` for critical asks.
 - Prefer explicit recipients over broad broadcast when scope is narrow.
 - Keep automation focused on objective reminders, not chat noise.
+- PTY actor delivery coalesces short bursts into one submitted batch while
+  retaining one ledger event and read-cursor completion per message. The
+  canonical `settings.min_interval_seconds` value controls longer throttling;
+  Rust also honors the legacy Python `delivery.min_interval_seconds` field.
+- `runner=headless` actors do not own terminal processes. Their runtime consumes
+  work through `cccc_runtime_wait_next_turn` and commits a contiguous event
+  prefix through `cccc_runtime_complete_turn`.
 
 ## 9) Escalation Checklist
 

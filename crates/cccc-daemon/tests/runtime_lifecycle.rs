@@ -25,7 +25,7 @@ fn actor_lifecycle_controls_terminal_process() {
             json!({
                 "group_id":group_id,
                 "actor_id":"peer1",
-                "runner":"headless",
+                "runner":"pty",
                 "runtime":"custom",
                 "command":["sh","-c","printf daemon-runtime-ready; sleep 5"],
                 "by":"user"
@@ -90,7 +90,7 @@ fn actor_lifecycle_controls_terminal_process() {
             json!({
                 "group_id":group_id,
                 "actor_id":"peer-remove",
-                "runner":"headless",
+                "runner":"pty",
                 "runtime":"custom",
                 "command":["sh","-c","sleep 30"],
                 "by":"user"

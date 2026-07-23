@@ -1,5 +1,5 @@
 use cccc_contracts::{Actor, ActorRuntime, ActorSubmit, GroupState};
-use cccc_core::{GroupStore, system_prompt};
+use cccc_core::GroupStore;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
@@ -9,12 +9,28 @@ const SUBMIT_DELAY: Duration = Duration::from_millis(1_500);
 const PREAMBLE_DELAY: Duration = Duration::from_millis(500);
 const INPUT_MODE_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub fn process(
+pub fn wait_for_delivery_slot(
     job: &DeliveryJob,
+    last_delivery: &Option<std::time::Instant>,
+    cancelled: &AtomicBool,
+) -> bool {
+    let Ok(group) =
+        GroupStore::new(job.home.clone()).and_then(|store| store.load(&job.group.group_id))
+    else {
+        return false;
+    };
+    apply_throttle(&group, last_delivery, cancelled)
+}
+
+pub fn process_batch(
+    jobs: &[DeliveryJob],
     preamble_session: &mut String,
     last_delivery: &mut Option<std::time::Instant>,
     cancelled: &AtomicBool,
 ) -> bool {
+    let Some(job) = jobs.first() else {
+        return false;
+    };
     if cancelled.load(Ordering::Acquire) {
         return false;
     }
@@ -35,18 +51,16 @@ pub fn process(
     if !status.running {
         return false;
     }
-    if !apply_throttle(&current_group, last_delivery, cancelled) {
-        return false;
-    }
-
-    if job.actor.runtime != ActorRuntime::Custom && *preamble_session != status.started_at {
-        if !wait_for_input_mode(&job.group.group_id, &job.actor.id, cancelled) {
+    if *preamble_session != status.started_at {
+        if job.actor.runtime != ActorRuntime::Custom
+            && !wait_for_input_mode(&job.group.group_id, &job.actor.id, cancelled)
+        {
             return false;
         }
         if !submit_text(
             &job.group.group_id,
             &job.actor,
-            &system_prompt::render(&current_group, &job.actor),
+            &super::actor_delivery_preamble::render(&job.home, &current_group, &job.actor),
             cancelled,
         ) {
             return false;
@@ -57,16 +71,19 @@ pub fn process(
         }
     }
 
-    let Some(payload) = super::actor_delivery_render::render(&job.event) else {
+    let events = jobs.iter().map(|job| job.event.clone()).collect::<Vec<_>>();
+    let Some(payload) = super::actor_delivery_render::render_batch(&events) else {
         return false;
     };
     if submit_text(&job.group.group_id, &job.actor, &payload, cancelled) {
         *last_delivery = Some(std::time::Instant::now());
-        record_completion(DeliveryCompletion {
-            group_id: job.group.group_id.clone(),
-            actor_id: job.actor.id.clone(),
-            event_id: job.event.id.clone(),
-        });
+        for job in jobs {
+            record_completion(DeliveryCompletion {
+                group_id: job.group.group_id.clone(),
+                actor_id: job.actor.id.clone(),
+                event_id: job.event.id.clone(),
+            });
+        }
         return true;
     }
     false
@@ -77,10 +94,7 @@ fn apply_throttle(
     last_delivery: &Option<std::time::Instant>,
     cancelled: &AtomicBool,
 ) -> bool {
-    let seconds = group
-        .extra
-        .get("settings")
-        .and_then(|value| value.get("min_interval_seconds"))
+    let seconds = super::actor_delivery::delivery_setting(group, "min_interval_seconds")
         .and_then(|value| value.as_u64())
         .unwrap_or(0);
     let Some(remaining) =

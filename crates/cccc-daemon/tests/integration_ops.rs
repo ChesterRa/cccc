@@ -20,11 +20,11 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
         "actor_prompt",
         json!({"group_id":group_id,"actor_id":"peer1"}),
     );
-    assert!(
-        prompt.result["prompt"].as_str().is_some_and(|text| {
-            text.contains("You are peer1") && text.contains("No fabrication")
-        })
-    );
+    assert!(prompt.result["prompt"].as_str().is_some_and(|text| {
+        text.contains("You are peer1")
+            && text.contains("CCCC Protocol:")
+            && text.contains("use MCP tool `cccc_bootstrap`")
+    }));
 
     let invalid_im = raw_call(
         &home,

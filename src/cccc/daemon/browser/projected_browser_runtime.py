@@ -1661,6 +1661,7 @@ class ProjectedBrowserSession:
         buffer = b""
         last_seq = 0
         sent_state_marker = ""
+        pending_replies: list[tuple[str, "queue.Queue[dict[str, Any]]"]] = []
 
         def _queue_controller_command(incoming: dict[str, Any]) -> bool:
             kind = str(incoming.get("t") or "").strip().lower()
@@ -1671,7 +1672,13 @@ class ProjectedBrowserSession:
                 # briefly block Playwright commands while navigation or frame
                 # projection is in progress; waiting synchronously here turns that
                 # transient congestion into a user-visible error.
-                self._commands.put((kind, incoming, None))
+                command_id = str(incoming.get("id") or "").strip()
+                reply: Optional["queue.Queue[dict[str, Any]]"] = None
+                if command_id:
+                    reply = queue.Queue(maxsize=1)
+                self._commands.put((kind, incoming, reply))
+                if reply is not None:
+                    pending_replies.append((command_id, reply))
             except Exception as exc:
                 if not _send_json_line(
                     sock,
@@ -1682,6 +1689,27 @@ class ProjectedBrowserSession:
                     },
                 ):
                     return False
+            return True
+
+        def _drain_command_replies() -> bool:
+            waiting: list[tuple[str, "queue.Queue[dict[str, Any]]"]] = []
+            for command_id, reply in pending_replies:
+                try:
+                    result = reply.get_nowait()
+                except queue.Empty:
+                    waiting.append((command_id, reply))
+                    continue
+                response: dict[str, Any] = {
+                    "t": "command_result",
+                    "id": command_id,
+                    "ok": bool(result.get("ok")),
+                }
+                message = str(result.get("message") or "").strip()
+                if message:
+                    response["message"] = message
+                if not _send_json_line(sock, response):
+                    return False
+            pending_replies[:] = waiting
             return True
 
         def _drain_controller_commands(max_messages: int = 64) -> bool:
@@ -1703,6 +1731,8 @@ class ProjectedBrowserSession:
         try:
             while not self._stop_event.is_set():
                 if not _drain_controller_commands():
+                    break
+                if not _drain_command_replies():
                     break
 
                 snapshot = self.snapshot()
@@ -1734,6 +1764,8 @@ class ProjectedBrowserSession:
 
                 if not _drain_controller_commands():
                     break
+                if not _drain_command_replies():
+                    break
                 if not self._commands.empty():
                     time.sleep(0.01)
                     continue
@@ -1747,6 +1779,8 @@ class ProjectedBrowserSession:
 
                 frame = self.wait_for_frame(after_seq=last_seq, timeout=0.08)
                 if not _drain_controller_commands():
+                    break
+                if not _drain_command_replies():
                     break
                 if not self._commands.empty():
                     continue

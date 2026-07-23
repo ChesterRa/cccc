@@ -85,6 +85,7 @@ pub(super) fn is_read_only(op: &str) -> bool {
             | "terminal_status"
             | "terminal_tail"
             | "version"
+            | "runtime_wait_next_turn"
             | "web_model_runtime_wait_next_turn"
     )
 }

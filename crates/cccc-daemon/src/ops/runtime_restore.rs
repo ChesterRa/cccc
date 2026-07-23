@@ -1,4 +1,3 @@
-use cccc_contracts::ActorRuntime;
 use cccc_core::{GroupStore, HomeLayout};
 
 use crate::dispatch::OpError;
@@ -13,11 +12,7 @@ pub fn restore_running(home: &HomeLayout) -> Result<(), OpError> {
         if !group.running || group.state == cccc_contracts::GroupState::Stopped {
             continue;
         }
-        for actor in group
-            .actors
-            .iter()
-            .filter(|actor| actor.enabled && actor.runtime != ActorRuntime::WebModel)
-        {
+        for actor in group.actors.iter().filter(|actor| actor.enabled) {
             if let Err(error) = actor_runtime::apply(home, &group, &actor.id, "actor.start") {
                 tracing::warn!(
                     group_id = %group.group_id,

@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, ActorRuntime, RuntimeStateSource};
+use cccc_contracts::{Actor, ActorRuntime, RunnerKind, RuntimeStateSource};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout};
 use cccc_runtime::{LaunchSpec, SessionStatus};
 use std::path::PathBuf;
@@ -22,7 +22,8 @@ pub fn apply(
         .iter()
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("not_found", format!("actor not found: {actor_id}")))?;
-    if actor.runtime == ActorRuntime::WebModel {
+    if is_structured(actor) {
+        let _ = stop(group, actor_id)?;
         return Ok(None);
     }
     match kind {
@@ -235,13 +236,14 @@ pub fn status(group_id: &str, actor_id: &str) -> Option<SessionStatus> {
     cccc_runtime::status(group_id, actor_id).ok()
 }
 
+#[must_use]
+pub fn is_structured(actor: &Actor) -> bool {
+    actor.runner == RunnerKind::Headless || actor.runtime == ActorRuntime::WebModel
+}
+
 pub fn start_group(home: &HomeLayout, group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {
     let mut started = Vec::new();
-    for actor in group
-        .actors
-        .iter()
-        .filter(|actor| actor.enabled && actor.runtime != ActorRuntime::WebModel)
-    {
+    for actor in group.actors.iter().filter(|actor| actor.enabled) {
         match apply(home, group, &actor.id, "actor.start") {
             Ok(Some(status)) => started.push(status),
             Ok(None) => {}

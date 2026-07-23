@@ -143,7 +143,11 @@ impl BrowserSurfaces {
                 browser.set_cookies(cookies).await?;
             }
         }
-        let page = browser.new_page(url).await.context("open browser page")?;
+        let page = browser
+            .new_page("about:blank")
+            .await
+            .context("create browser page")?;
+        page.goto(url).await.context("open browser page")?;
         let now = utc_now();
         let session = Session {
             browser,

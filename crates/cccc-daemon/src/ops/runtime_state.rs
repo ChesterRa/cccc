@@ -15,8 +15,10 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "headless_status" => headless_status(home, request),
         "headless_set_status" => headless_set_status(home, request),
         "headless_ack_message" => headless_ack_message(home, request),
-        "web_model_runtime_wait_next_turn" => wait_next_turn(home, request),
-        "web_model_runtime_complete_turn" => complete_turn(home, request),
+        "runtime_wait_next_turn" | "web_model_runtime_wait_next_turn" => {
+            wait_next_turn(home, request)
+        }
+        "runtime_complete_turn" | "web_model_runtime_complete_turn" => complete_turn(home, request),
         _ => return None,
     })
 }
@@ -81,16 +83,16 @@ fn headless_ack_message(home: &HomeLayout, request: &DaemonRequest) -> OpResult 
 fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
     let actor = actor(&group, &actor_id)?;
-    if actor.runtime != ActorRuntime::WebModel {
+    if !super::actor_runtime::is_structured(actor) {
         return Err(OpError::new(
-            "invalid_actor_runtime",
-            "cccc_runtime_wait_next_turn requires runtime=web_model",
+            "invalid_actor_runner",
+            "cccc_runtime_wait_next_turn requires runner=headless or runtime=web_model",
         ));
     }
     let cursor = inbox::cursor(home, &group.group_id, &actor_id).map_err(OpError::io)?;
     if !actor.enabled {
         return object(
-            json!({"status":"stopped","turn":null,"cursor":{"event_id":cursor,"ts":""},"instructions":"This CCCC web_model actor is stopped."}),
+            json!({"status":"stopped","turn":null,"cursor":{"event_id":cursor,"ts":""},"instructions":"This CCCC structured actor is stopped."}),
         );
     }
     let limit = request
@@ -126,6 +128,7 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "latest_ts":latest.ts,
         "messages":messages,
         "coalesced_text":coalesced_text,
+        "system_prompt":cccc_core::system_prompt::render_session(home, &group, actor),
         "delivery":{"mode":"cursor_on_complete","cursor_committed":false,"max_events":limit,"kind_filter":kind_filter},
         "instructions":"Process this coalesced CCCC turn and call cccc_runtime_complete_turn when finished."
     });
@@ -143,10 +146,10 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group, actor_id) = group_actor(home, request)?;
     let actor = actor(&group, &actor_id)?;
-    if actor.runtime != ActorRuntime::WebModel {
+    if !super::actor_runtime::is_structured(actor) {
         return Err(OpError::new(
-            "invalid_actor_runtime",
-            "cccc_runtime_complete_turn requires runtime=web_model",
+            "invalid_actor_runner",
+            "cccc_runtime_complete_turn requires runner=headless or runtime=web_model",
         ));
     }
     let by = string_arg(request, "by").unwrap_or_else(|| actor_id.clone());
@@ -159,7 +162,7 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if !actor.enabled {
         return Err(OpError::new(
             "actor_stopped",
-            "web_model actor is stopped; completion was not committed",
+            "structured actor is stopped; completion was not committed",
         ));
     }
     let status = string_arg(request, "status").unwrap_or_else(|| "done".into());

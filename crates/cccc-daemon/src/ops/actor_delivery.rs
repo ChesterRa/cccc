@@ -16,6 +16,8 @@ pub use lifecycle::{shutdown_actor, shutdown_all, shutdown_group};
 
 const QUEUE_CAPACITY: usize = 256;
 const COMPLETION_CAPACITY: usize = 4096;
+const BATCH_CAPACITY: usize = 64;
+const BATCH_WINDOW: std::time::Duration = std::time::Duration::from_millis(250);
 
 type Key = (String, String);
 
@@ -128,7 +130,8 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
         .actors
         .iter()
         .filter(|actor| {
-            actor.runtime != ActorRuntime::WebModel && inbox::is_for_actor(group, event, &actor.id)
+            !crate::ops::actor_runtime::is_structured(actor)
+                && inbox::is_for_actor(group, event, &actor.id)
         })
         .cloned()
         .collect();
@@ -167,6 +170,17 @@ fn report(targeted: usize, online: usize, queued: usize) -> DispatchReport {
         online,
         queued,
     }
+}
+
+pub(super) fn delivery_setting<'a>(
+    group: &'a GroupDoc,
+    key: &str,
+) -> Option<&'a serde_json::Value> {
+    group
+        .extra
+        .get("settings")
+        .and_then(|value| value.get(key))
+        .or_else(|| group.extra.get("delivery").and_then(|value| value.get(key)))
 }
 
 fn enqueue(job: DeliveryJob) -> bool {
@@ -229,10 +243,34 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
             let Ok(job) = receiver.recv() else {
                 break;
             };
+            if !actor_delivery_worker::wait_for_delivery_slot(
+                &job,
+                &last_delivery,
+                &thread_cancelled,
+            ) {
+                release_in_flight(&job);
+                continue;
+            }
+            let mut batch = vec![job];
+            if batch[0].actor.runtime != ActorRuntime::Custom {
+                if !actor_delivery_worker::interruptible_sleep(BATCH_WINDOW, &thread_cancelled) {
+                    for job in &batch {
+                        release_in_flight(job);
+                    }
+                    break;
+                }
+                while batch.len() < BATCH_CAPACITY {
+                    match receiver.try_recv() {
+                        Ok(job) => batch.push(job),
+                        Err(mpsc::TryRecvError::Empty) => break,
+                        Err(mpsc::TryRecvError::Disconnected) => break,
+                    }
+                }
+            }
             let mut delivered = false;
             for attempt in 0..3 {
-                if actor_delivery_worker::process(
-                    &job,
+                if actor_delivery_worker::process_batch(
+                    &batch,
                     &mut preamble_session,
                     &mut last_delivery,
                     &thread_cancelled,
@@ -251,7 +289,9 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 }
             }
             if !delivered {
-                release_in_flight(&job);
+                for job in &batch {
+                    release_in_flight(job);
+                }
             }
         }
     });
@@ -266,5 +306,32 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
         sender: thread.as_ref().map(|_| sender),
         cancelled,
         thread,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delivery_settings_prefer_canonical_settings_and_read_legacy_delivery() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let mut group = store.create("delivery settings", "").expect("group");
+        group
+            .extra
+            .insert("delivery".into(), json!({"min_interval_seconds":7}));
+        assert_eq!(
+            delivery_setting(&group, "min_interval_seconds").and_then(|value| value.as_u64()),
+            Some(7)
+        );
+        group
+            .extra
+            .insert("settings".into(), json!({"min_interval_seconds":2}));
+        assert_eq!(
+            delivery_setting(&group, "min_interval_seconds").and_then(|value| value.as_u64()),
+            Some(2)
+        );
     }
 }

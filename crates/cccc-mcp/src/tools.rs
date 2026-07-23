@@ -129,11 +129,11 @@ const TOOLS: &[(&str, &str)] = &[
     ("cccc_capability_uninstall", "Remove a custom capability."),
     (
         "cccc_runtime_wait_next_turn",
-        "Wait for a Web Model actor turn.",
+        "Wait for a structured headless actor turn.",
     ),
     (
         "cccc_runtime_complete_turn",
-        "Complete a Web Model actor turn.",
+        "Complete a structured headless actor turn.",
     ),
     (
         "cccc_code_exec",
