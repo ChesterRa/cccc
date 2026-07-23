@@ -74,6 +74,9 @@ Never share your bot token. If exposed, regenerate it immediately.
 | Read Message History | Access conversation history |
 | Add Reactions | React to messages |
 
+CCCC uses `👀` while a message is being processed, then changes it to `✅` after
+the response is delivered or `❌` when processing/delivery fails.
+
 4. Copy the generated URL at the bottom
 
 ## Step 5: Add Bot to Server
@@ -146,7 +149,8 @@ In direct messages with the bot, you can use `/send` directly:
 ```
 
 ::: warning Important
-- In channels, you must @mention the bot before the message is routed
+- In channels, slash commands such as `/subscribe` work without an @mention
+- Plain messages in channels must @mention the bot before they are routed
 - After mentioning the bot, plain text is treated as implicit send to foreman
 - Use `/send` when you need explicit recipients like `@all` or `@peers`
 :::

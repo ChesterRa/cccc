@@ -15,6 +15,7 @@ mod dingtalk_outbound_media;
 mod dingtalk_outbound_report;
 mod discord;
 mod discord_inbound;
+mod discord_reactions;
 mod feishu;
 mod feishu_inbound;
 mod feishu_outbound;
