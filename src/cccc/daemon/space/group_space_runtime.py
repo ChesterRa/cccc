@@ -80,14 +80,13 @@ def _acquire_write_lock(provider: str, remote_space_id: str):
         finally:
             with _WRITE_LOCKS_GUARD:
                 current = _WRITE_LOCKS.get(key)
-                if current is None:
-                    return
-                current_lock, current_refs = current
-                next_refs = int(current_refs) - 1
-                if next_refs <= 0 and not current_lock.locked():
-                    _WRITE_LOCKS.pop(key, None)
-                else:
-                    _WRITE_LOCKS[key] = (current_lock, max(0, next_refs))
+                if current is not None:
+                    current_lock, current_refs = current
+                    next_refs = int(current_refs) - 1
+                    if next_refs <= 0 and not current_lock.locked():
+                        _WRITE_LOCKS.pop(key, None)
+                    else:
+                        _WRITE_LOCKS[key] = (current_lock, max(0, next_refs))
 
 
 @contextmanager

@@ -1,132 +1,135 @@
 # Getting Started
 
-## Install A Release
+Get CCCC running in 10 minutes.
 
-The release installer installs or upgrades the single Rust `cccc` executable. Daemon, Web, and MCP modes are included in that executable.
+## Choose Your Approach
 
-macOS / Linux:
+CCCC offers two ways to get started:
+
+<div class="vp-card-container">
+
+### [Web UI Quick Start](./web)
+
+**Recommended for most users**
+
+- Visual interface for managing agents
+- Point-and-click configuration
+- Real-time terminal view
+- Mobile-friendly
+
+### [CLI Quick Start](./cli)
+
+**For terminal enthusiasts**
+
+- Full control via command line
+- Scriptable and automatable
+- Great for CI/CD integration
+- Power user features
+
+### [Docker Deployment](./docker)
+
+**For servers and teams**
+
+- One-command deployment
+- Pre-installed AI agent CLIs
+- Persistent data with volumes
+- Docker Compose and K8s ready
+
+</div>
+
+## Prerequisites
+
+Both approaches require:
+
+- **Python 3.11+** installed
+- At least one AI agent CLI:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended)
+  - [Codex CLI](https://github.com/openai/codex)
+  - [GitHub Copilot CLI](https://docs.github.com/en/copilot/reference/copilot-cli-reference)
+  - [Cursor CLI](https://cursor.com/docs/cli/overview)
+  - [Devin CLI](https://docs.devin.ai/ja/cli)
+  - [Kiro CLI](https://kiro.dev/docs/cli/)
+  - [Kilo Code CLI](https://kilo.ai/docs/code-with-ai/platforms/cli)
+  - [Antigravity CLI](https://antigravity.google/docs/cli-overview)
+  - [Kimi CLI](https://github.com/MoonshotAI/kimi-cli)
+- Or a ChatGPT account with remote MCP connector support for the ChatGPT Web Model runtime
+- Or a custom runtime command if you wire MCP manually
+
+The ChatGPT Web Model also needs a system Google Chrome or Microsoft Edge browser. On native Linux,
+install `Xvfb` so CCCC can keep projected browser windows off the host desktop; `x11vnc` is optional
+and enables the VNC viewer instead of the built-in CDP screencast fallback:
 
 ```bash
-bash -o pipefail -c 'curl -fsSL https://github.com/ChesterRa/cccc/releases/latest/download/install.sh | bash'
+# Debian / Ubuntu
+sudo apt install xvfb x11vnc
+
+# Fedora
+sudo dnf install xorg-x11-server-Xvfb x11vnc
+
+# Arch Linux
+sudo pacman -S xorg-server-xvfb x11vnc
 ```
 
-Windows PowerShell:
+Run `cccc doctor` to verify these dependencies. CCCC does not install OS packages automatically.
 
-```powershell
-& { $ErrorActionPreference = "Stop"; irm https://github.com/ChesterRa/cccc/releases/latest/download/install.ps1 | iex }
-```
+## Installation
 
-Open a new terminal after the installer updates your user `PATH`, then run:
+### Upgrading from older versions
+
+If you have an older version of cccc-pair installed (e.g., 0.3.x), you must uninstall it first:
 
 ```bash
-cccc version
-cccc home
+# For pipx users
+pipx uninstall cccc-pair
+
+# For pip users
+pip uninstall cccc-pair
+
+# Remove any leftover binaries if needed
+rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
+```
+
+::: warning Version 0.4.x Breaking Changes
+Version 0.4.x has a completely different command structure from 0.3.x. The old `init`, `run`, `bridge` commands are replaced with `attach`, `daemon`, `mcp`, etc.
+:::
+
+### From PyPI
+
+```bash
+pip install -U cccc-pair
+```
+
+### From TestPyPI (for explicit RC testing)
+
+```bash
+pip install -U --pre \
+  --index-url https://test.pypi.org/simple \
+  --extra-index-url https://pypi.org/simple \
+  cccc-pair
+```
+
+### From Source
+
+```bash
+git clone https://github.com/ChesterRa/cccc
+cd cccc
+pip install -e .
+```
+
+## Verify Installation
+
+```bash
 cccc doctor
 ```
 
-The release binaries do not require Python, Node.js, or Rust. `cccc home` should print `~/.cccc` unless `CCCC_HOME` is set. The installer never modifies that directory.
+This checks Python version, available runtimes, and system configuration.
 
-The ChatGPT Web Model also needs a system Google Chrome or Microsoft Edge browser. On native Linux,
-install `Xvfb` to keep projected browser windows off the host desktop. `x11vnc` is optional because
-the embedded viewer can fall back to CDP screencasting. Run `cccc doctor` to verify these dependencies.
-Rust release binaries use a headless Chromium surface instead, so their doctor report marks Xvfb as
-not required while still checking that a supported browser is discoverable.
+## Next Steps
 
-### Inspect Or Pin The Installer
-
-To inspect the Unix installer before running it:
-
-```bash
-installer="$(mktemp)" &&
-  curl -fsSL https://github.com/ChesterRa/cccc/releases/latest/download/install.sh -o "$installer" &&
-  less "$installer" &&
-  bash "$installer" &&
-  rm -f "$installer"
-```
-
-To install a fixed version, download the installer from that exact release. A requested version never falls back to another release:
-
-```bash
-installer="$(mktemp)" &&
-  curl -fsSL https://github.com/ChesterRa/cccc/releases/download/rust-v0.4.32/install.sh -o "$installer" &&
-  CCCC_VERSION=0.4.32 bash "$installer" &&
-  rm -f "$installer"
-```
-
-PowerShell can use the same exact release asset:
-
-```powershell
-& {
-  $ErrorActionPreference = "Stop"
-  $env:CCCC_VERSION = "0.4.32"
-  irm https://github.com/ChesterRa/cccc/releases/download/rust-v0.4.32/install.ps1 | iex
-}
-```
-
-The default install directory is `~/.local/bin` on macOS/Linux and `%LOCALAPPDATA%\CCCC\bin` on Windows. Override it with `CCCC_INSTALL_DIR`. The installer does not use `sudo`, does not modify the machine-level Windows `PATH`, and restores the previous executable if verification or replacement fails. If the CCCC daemon is running, it is stopped for the version switch and restarted afterward.
-
-Supported release targets are Linux x86_64 with glibc, macOS x86_64, macOS arm64, and Windows x86_64. Linux musl/Alpine, Linux arm64, Windows arm64, and 32-bit systems are rejected before download because no matching release archive exists.
-
-For manual installation, download the matching archive and `SHA256SUMS` from GitHub Releases, verify the archive hash, and place its `cccc` executable in a directory on `PATH`. Checksums detect corruption but do not replace release signing or platform code signing.
-
-### Upgrade Or Remove
-
-Run the same one-line installer to upgrade. It stages and verifies the new executable before switching versions. To remove a default Unix installation, stop the daemon and delete the installed file:
-
-```bash
-cccc daemon stop
-rm ~/.local/bin/cccc
-```
-
-You may also remove the managed `# CCCC` PATH entry from `~/.zprofile` or `~/.bashrc`. On Windows, stop the daemon, remove `%LOCALAPPDATA%\CCCC\bin`, and remove that exact directory from your user-level `PATH`. CCCC data remains in `CCCC_HOME` unless you deliberately remove it separately.
-
-## Build From Source
-
-Requirements:
-
-- Rust 1.88+
-- Node.js 20+
-- npm
-
-```bash
-git switch rust
-cargo build --workspace --release --locked
-export PATH="$PWD/target/release:$PATH"
-```
-
-The Cargo build automatically runs `npm ci` when Web dependencies are missing
-and rebuilds the embedded Web UI when its sources change.
-
-## Create A Group
-
-```bash
-cd /path/to/project
-cccc group create --title "Project team"
-cccc groups
-cccc group use <group_id> .
-cccc actor add foreman --runtime claude
-cccc actor add peer1 --runtime codex
-cccc group start
-cccc send "Inspect the project and report the first task." --to foreman
-```
-
-Run `cccc` and open <http://127.0.0.1:8848>.
-
-## Configure MCP
-
-```bash
-cccc setup
-```
-
-The output is a JSON MCP server entry using the current `cccc` executable and `CCCC_HOME`. Apply it to the selected agent runtime according to that runtime's MCP configuration format.
-
-## Data Safety
-
-Rust and Python default to the same `~/.cccc` home and share the registry, group, ledger, and state contracts. Rust adds a compatibility marker on first startup without moving or deleting existing files. Stop the active daemon before switching branches.
-
-## Next Guides
-
-- [CLI quick start](./cli.md)
-- [Docker](./docker.md)
-- [Architecture](../../reference/architecture.md)
-- [Operations](../operations.md)
+- [Web UI Quick Start](./web) - Get started with the visual interface
+- [CLI Quick Start](./cli) - Get started with the command line
+- [Docker Deployment](./docker) - Deploy CCCC in a Docker container
+- [SDK Overview](/sdk/) - Integrate CCCC into external apps/services
+- [Use Cases](/guide/use-cases) - Learn high-ROI real-world patterns
+- [Operations Runbook](/guide/operations) - Run CCCC with operator-grade reliability
+- [Positioning](/reference/positioning) - Decide where CCCC should sit in your stack

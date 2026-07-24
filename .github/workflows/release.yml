@@ -16,7 +16,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.14'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -102,7 +102,7 @@ jobs:
 
       - name: Build
         run: |
-          python -m compileall -q src/cccc
+          python -W error::SyntaxWarning -m compileall -q src/cccc
           python -m build
           python -m twine check dist/*
 
@@ -162,11 +162,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - os: ubuntu-latest
+            label: Linux / Python 3.11
+            python_version: '3.11'
+            run_windows_pty: false
           - os: windows-latest
             label: Windows
+            python_version: '3.14'
             run_windows_pty: true
           - os: macos-latest
             label: macOS
+            python_version: '3.14'
             run_windows_pty: false
     defaults:
       run:
@@ -178,7 +184,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python_version }}
 
       - name: Install smoke deps
         run: |
@@ -244,7 +250,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.14'
 
       - name: Install publish deps
         run: |

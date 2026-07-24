@@ -78,7 +78,7 @@ pip install -U --pre \
   cccc-pair
 ```
 
-> **Requirements**: Python 3.9+, macOS / Linux / Windows
+> **Requirements**: Python 3.11+, macOS / Linux / Windows
 
 ### Upgrade
 
@@ -486,7 +486,7 @@ pip install -e .
 ### uv (fast, recommended on Windows)
 
 ```bash
-uv venv -p 3.11 .venv
+uv venv -p 3.14 .venv
 uv pip install -e .
 uv run cccc --help
 ```

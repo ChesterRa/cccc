@@ -17,7 +17,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: pyproject.toml
 
@@ -89,7 +89,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: pyproject.toml
 
@@ -105,9 +105,59 @@ jobs:
           test "${#TEST_FILES[@]}" -gt 0
           env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID python -m pytest -q -m "not packaged_web_dist" --timeout=120 --timeout-method=thread --durations=20 "${TEST_FILES[@]}"
 
+  python-compat:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install CCCC
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e .
+
+      - name: Verify supported Python runtime
+        run: |
+          python -W error::SyntaxWarning -m compileall -q src/cccc
+          cccc version
+          python - <<'PY'
+          import json
+          import subprocess
+
+          proc = subprocess.Popen(
+              ["cccc", "mcp"],
+              stdin=subprocess.PIPE,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+          )
+          assert proc.stdin is not None
+          assert proc.stdout is not None
+
+          proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}) + "\n")
+          proc.stdin.flush()
+          response = json.loads(proc.stdout.readline().strip())
+          assert response.get("result", {}).get("serverInfo", {}).get("name") == "cccc-mcp"
+          proc.terminate()
+          proc.wait(timeout=5)
+          print("OK: CCCC import, CLI, and MCP handshake")
+          PY
+
   package:
     if: github.event_name != 'schedule'
-    needs: [quality, web, python-tests]
+    needs: [quality, web, python-tests, python-compat]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -122,14 +172,14 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
           cache: pip
           cache-dependency-path: pyproject.toml
 
       - name: Build and check package
         run: |
           python -m pip install -U pip build twine pytest
-          python -m compileall -q src/cccc
+          python -W error::SyntaxWarning -m compileall -q src/cccc
           python -m build
           python -m twine check dist/*
 
@@ -161,7 +211,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: |
@@ -232,14 +282,18 @@ jobs:
   nightly-serial:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: ${{ matrix.python-version }}
           cache: pip
           cache-dependency-path: pyproject.toml
 

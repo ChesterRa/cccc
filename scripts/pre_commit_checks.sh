@@ -69,6 +69,11 @@ run_rust_checks() {
 run_full_python_tests() {
   local pytest_common=("-x" "-q" "--durations=20" "--timeout=120" "--timeout-method=thread")
 
+  echo "Checking Python syntax and SyntaxWarnings..."
+  uv run python -W error::SyntaxWarning -m compileall -q src/cccc scripts tests
+  echo "✓ Python syntax check passed"
+  echo ""
+
   echo "Running the full Python suite serially..."
   env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID uv run --with pytest-timeout python -m pytest tests/ "${pytest_common[@]}"
   echo "✓ Full Python tests passed"
@@ -107,7 +112,7 @@ run_python_syntax_check() {
   fi
 
   echo "Checking changed Python syntax..."
-  uv run python -m compileall -q "${python_sources[@]}"
+  uv run python -W error::SyntaxWarning -m compileall -q "${python_sources[@]}"
   echo "✓ Python syntax check passed"
   echo ""
 }
