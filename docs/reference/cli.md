@@ -143,8 +143,8 @@ cccc web
 | Variable | Default | Purpose |
 |---|---|---|
 | `CCCC_HOME` | `~/.cccc` | Rust runtime home |
-| `CCCC_WEB_HOST` | `127.0.0.1` | Web bind host |
-| `CCCC_WEB_PORT` | `8848` | Web port |
+| `CCCC_WEB_HOST` | saved setting, then `127.0.0.1` | Web bind host; `--host` overrides both |
+| `CCCC_WEB_PORT` | saved setting, then `8848` | Web port; `--port` overrides both |
 | `CCCC_DAEMON_TRANSPORT` | platform default | `unix` or `tcp` |
 | `CCCC_DAEMON_HOST` | `127.0.0.1` | TCP daemon host |
 | `CCCC_DAEMON_PORT` | random | TCP daemon port |

@@ -5,6 +5,7 @@ mod im_runtime;
 mod ledger_event_hub;
 mod notebooklm_auth;
 mod routes;
+mod web_banner;
 
 use anyhow::Result;
 use axum::Router;
@@ -218,7 +219,7 @@ where
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     let address = listener.local_addr()?;
     ensure_listener_auth(&home, address)?;
-    println!("CCCC Web listening on http://{address}");
+    web_banner::print(host, address.port());
     tracing::info!(%address, "CCCC Rust Web listening");
     let (web_shutdown, _) = broadcast::channel(1);
     let (shutdown_started, mut shutdown_started_rx) = tokio::sync::oneshot::channel();

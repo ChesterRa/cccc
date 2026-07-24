@@ -1,5 +1,6 @@
 mod args;
 mod commands;
+mod web_launch;
 
 use anyhow::{Result, bail};
 use args::{Cli, CommandKind, DaemonAction, HermesAction, RuntimeAction};
@@ -15,9 +16,11 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let home = HomeLayout::resolve()?;
     let client = DaemonClient::new(home.clone());
-    let web_endpoint = web_endpoint(cli.host.as_deref(), cli.port);
     match cli.command {
-        None | Some(CommandKind::Web) => launch(home, cli.host, cli.port).await,
+        None | Some(CommandKind::Web) => {
+            let binding = web_launch::resolve(&home, cli.host.as_deref(), cli.port)?;
+            launch(home, binding).await
+        }
         Some(CommandKind::Mcp) => cccc_mcp::run_stdio(home).await,
         Some(CommandKind::Version) => {
             println!("cccc {} (rust)", env!("CARGO_PKG_VERSION"));
@@ -46,6 +49,8 @@ async fn main() -> Result<()> {
             commands::integrations::prompt(&client, &home, args).await
         }
         Some(CommandKind::Im(args)) => {
+            let binding = web_launch::resolve(&home, cli.host.as_deref(), cli.port)?;
+            let web_endpoint = web_endpoint(&binding.host, binding.port);
             commands::integrations::im(&client, &home, &web_endpoint, args).await
         }
         Some(CommandKind::Space(args)) => commands::integrations::space(&client, &home, args).await,
@@ -66,22 +71,11 @@ async fn main() -> Result<()> {
     }
 }
 
-fn web_endpoint(host: Option<&str>, port: Option<u16>) -> String {
-    let host = host
-        .map(str::to_owned)
-        .or_else(|| std::env::var("CCCC_WEB_HOST").ok())
-        .unwrap_or_else(|| "127.0.0.1".into());
-    let host = match host.as_str() {
+fn web_endpoint(host: &str, port: u16) -> String {
+    let host = match host {
         "0.0.0.0" | "::" => "127.0.0.1",
         value => value,
     };
-    let port = port
-        .or_else(|| {
-            std::env::var("CCCC_WEB_PORT")
-                .ok()
-                .and_then(|value| value.parse().ok())
-        })
-        .unwrap_or(8848);
     let url_host = if host.starts_with('[') && host.ends_with(']') {
         host.to_owned()
     } else if host.contains(':') {
@@ -92,7 +86,7 @@ fn web_endpoint(host: Option<&str>, port: Option<u16>) -> String {
     format!("http://{url_host}:{port}")
 }
 
-async fn launch(home: HomeLayout, host: Option<String>, port: Option<u16>) -> Result<()> {
+async fn launch(home: HomeLayout, binding: web_launch::WebBinding) -> Result<()> {
     home.initialize()?;
     let client =
         DaemonClient::new(home.clone()).with_timeout(std::time::Duration::from_millis(250));
@@ -111,22 +105,12 @@ async fn launch(home: HomeLayout, host: Option<String>, port: Option<u16>) -> Re
     }
     let monitor = DaemonClient::new(home.clone()).with_timeout(std::time::Duration::from_secs(2));
     let daemon_address = home.daemon_dir().join("ccccd.addr.json");
-    let host = host
-        .or_else(|| std::env::var("CCCC_WEB_HOST").ok())
-        .unwrap_or_else(|| "127.0.0.1".into());
-    let port = port
-        .or_else(|| {
-            std::env::var("CCCC_WEB_PORT")
-                .ok()
-                .and_then(|value| value.parse().ok())
-        })
-        .unwrap_or(8848);
     let shutdown = async move {
         wait_for_daemon_loss(&monitor, &daemon_address).await;
         eprintln!("CCCC daemon stopped; Web server closed");
     };
     let shutdown_feedback = tokio::spawn(report_interrupt());
-    let result = cccc_web::serve_until(home, &host, port, shutdown)
+    let result = cccc_web::serve_until(home, &binding.host, binding.port, shutdown)
         .await
         .map(|_| ());
     shutdown_feedback.abort();
@@ -352,14 +336,11 @@ mod tests {
 
     #[test]
     fn web_endpoint_brackets_ipv6_literals() {
-        assert_eq!(web_endpoint(Some("::1"), Some(8848)), "http://[::1]:8848");
+        assert_eq!(web_endpoint("::1", 8848), "http://[::1]:8848");
         assert_eq!(
-            web_endpoint(Some("[2001:db8::1]"), Some(9000)),
+            web_endpoint("[2001:db8::1]", 9000),
             "http://[2001:db8::1]:9000"
         );
-        assert_eq!(
-            web_endpoint(Some("127.0.0.1"), Some(8848)),
-            "http://127.0.0.1:8848"
-        );
+        assert_eq!(web_endpoint("127.0.0.1", 8848), "http://127.0.0.1:8848");
     }
 }
