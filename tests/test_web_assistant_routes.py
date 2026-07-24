@@ -115,7 +115,13 @@ class TestWebAssistantRoutes(unittest.TestCase):
             group_id = self._create_group()
             self._add_foreman(group_id)
 
-            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+            daemon_requests: list[dict] = []
+
+            def call_daemon(req: dict):
+                daemon_requests.append(req)
+                return self._local_call_daemon(req)
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=call_daemon):
                 with TestClient(create_app()) as client:
                     settings_resp = client.put(
                         f"/api/v1/groups/{group_id}/assistants/voice_secretary/settings",
@@ -132,14 +138,11 @@ class TestWebAssistantRoutes(unittest.TestCase):
                     self.assertEqual(settings_resp.status_code, 200)
                     self.assertTrue(bool(settings_resp.json().get("ok")), settings_resp.json())
 
+                    audio = b"\x00" * (3 * 1024 * 1024)
                     transcribe_resp = client.post(
-                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions",
-                        json={
-                            "audio_base64": base64.b64encode(b"fake audio bytes").decode("ascii"),
-                            "mime_type": "audio/webm",
-                            "language": "en-US",
-                            "by": "user",
-                        },
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions?language=en-US&by=user",
+                        content=audio,
+                        headers={"content-type": "audio/webm"},
                     )
                     self.assertEqual(transcribe_resp.status_code, 200)
                     transcribe_body = transcribe_resp.json()
@@ -147,6 +150,14 @@ class TestWebAssistantRoutes(unittest.TestCase):
                     result = transcribe_body.get("result") or {}
                     self.assertEqual(str(result.get("transcript") or ""), "web service transcript")
                     self.assertEqual(str(result.get("backend") or ""), "assistant_service_local_asr")
+                    self.assertEqual(int(result.get("bytes") or 0), len(audio))
+                    transcription_request = next(
+                        req for req in daemon_requests if req.get("op") == "assistant_voice_transcribe"
+                    )
+                    transcription_args = transcription_request.get("args") or {}
+                    self.assertNotIn("audio_base64", transcription_args)
+                    upload_path = Path(str(transcription_args.get("audio_path") or ""))
+                    self.assertFalse(upload_path.exists())
             group = load_group(group_id)
             if group is not None:
                 stop_voice_service(group)
@@ -163,6 +174,26 @@ class TestWebAssistantRoutes(unittest.TestCase):
                 os.environ["CCCC_VOICE_SECRETARY_ASR_COMMAND"] = old_command
             else:
                 os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
+            cleanup()
+
+    def test_web_voice_secretary_transcription_rejects_declared_oversize_binary(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        try:
+            with patch("cccc.ports.web.app.call_daemon", side_effect=AssertionError("daemon must not be called")):
+                with TestClient(create_app()) as client:
+                    response = client.post(
+                        "/api/v1/groups/g_missing/assistants/voice_secretary/transcriptions",
+                        content=b"x",
+                        headers={
+                            "content-type": "application/octet-stream",
+                            "content-length": str(100 * 1024 * 1024 + 1),
+                        },
+                    )
+            self.assertEqual(response.status_code, 413)
+            self.assertEqual((response.json().get("error") or {}).get("code"), "audio_too_large")
+        finally:
             cleanup()
 
     def test_web_voice_secretary_stream_disconnect_finalizes_document_audio(self) -> None:

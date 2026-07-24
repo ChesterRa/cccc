@@ -15,6 +15,7 @@ const WATCH_QUEUE_CAPACITY: usize = 1024;
 const WATCH_COALESCE_DELAY: Duration = Duration::from_millis(20);
 const ACTIVE_FEED_RESCAN_INTERVAL: Duration = Duration::from_secs(1);
 const DELETED_GROUP_PRUNE_INTERVAL: Duration = Duration::from_secs(60);
+const GLOBAL_DISCOVERY_REPLAY_LIMIT: usize = 256;
 
 #[derive(Clone)]
 pub(crate) struct LedgerEventHub {
@@ -294,7 +295,7 @@ fn publish_active_feed_changes(inner: &HubInner) {
 }
 
 fn prune_deleted_groups(inner: &HubInner) {
-    let existing = GroupStore::new(inner.home.clone())
+    let Ok(existing) = GroupStore::new(inner.home.clone())
         .and_then(|store| store.list())
         .map(|groups| {
             groups
@@ -302,14 +303,27 @@ fn prune_deleted_groups(inner: &HubInner) {
                 .map(|group| group.group_id)
                 .collect::<HashSet<_>>()
         })
-        .unwrap_or_default();
+    else {
+        return;
+    };
     if let Ok(mut feeds) = inner.feeds.lock() {
         feeds.retain(|group_id, feed| {
             existing.contains(group_id) && feed.sender.receiver_count() > 0
         });
     }
     if let Ok(mut followers) = inner.global_followers.lock() {
+        let deleted = followers
+            .keys()
+            .filter(|group_id| !existing.contains(*group_id))
+            .cloned()
+            .collect::<Vec<_>>();
         followers.retain(|group_id, _| existing.contains(group_id));
+        drop(followers);
+        for group_id in deleted {
+            let mut event = Event::new("group.deleted", &group_id);
+            event.by = "system".into();
+            inner.global_sender.send(event).ok();
+        }
     }
 }
 
@@ -353,11 +367,13 @@ fn poll_global_events(inner: &HubInner, group_id: &str) -> Vec<Event> {
     if let Some(follower) = followers.get_mut(group_id) {
         return follower.poll(&path).unwrap_or_default();
     }
-    let events = cccc_core::ledger::read_all(&path).unwrap_or_default();
-    let mut follower = LedgerFollower::default();
-    if follower.poll(&path).is_ok() {
-        followers.insert(group_id.to_owned(), follower);
-    }
+    // Preserve the first lifecycle events of a newly-created group, but keep
+    // imported groups from flooding every browser with their full history.
+    let Ok((follower, _)) = LedgerFollower::at_end(&path) else {
+        return Vec::new();
+    };
+    let events = cccc_core::ledger::tail(&path, GLOBAL_DISCOVERY_REPLAY_LIMIT).unwrap_or_default();
+    followers.insert(group_id.to_owned(), follower);
     events
 }
 
@@ -517,5 +533,63 @@ mod tests {
             .expect("second event");
         assert_eq!(received_first.id, first.id);
         assert_eq!(received_second.id, second.id);
+    }
+
+    #[tokio::test]
+    async fn global_stream_keeps_first_events_from_a_newly_discovered_group() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let hub = LedgerEventHub::new(home);
+        let _global = hub.subscribe_global();
+        let group = store.create("late", "").expect("group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        let created = Event::new("group.create", &group.group_id);
+        let live = Event::new("actor.start", &group.group_id);
+        ledger::append(&path, &created).expect("created");
+        ledger::append(&path, &live).expect("live");
+
+        assert_eq!(
+            poll_global_events(&hub.inner, &group.group_id),
+            vec![created, live]
+        );
+    }
+
+    #[tokio::test]
+    async fn newly_discovered_import_replay_is_bounded() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let hub = LedgerEventHub::new(home);
+        let _global = hub.subscribe_global();
+        let group = store.create("import", "").expect("group");
+        let path = store.ledger_path(&group.group_id).expect("ledger");
+        for _ in 0..(GLOBAL_DISCOVERY_REPLAY_LIMIT + 10) {
+            ledger::append(&path, &Event::new("chat.message", &group.group_id)).expect("event");
+        }
+
+        assert_eq!(
+            poll_global_events(&hub.inner, &group.group_id).len(),
+            GLOBAL_DISCOVERY_REPLAY_LIMIT
+        );
+    }
+
+    #[tokio::test]
+    async fn global_stream_reports_deleted_groups_once() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("delete", "").expect("group");
+        let hub = LedgerEventHub::new(home);
+        let mut global = hub.subscribe_global();
+
+        store.delete(&group.group_id).expect("delete");
+        prune_deleted_groups(&hub.inner);
+
+        let deleted = global.try_recv().expect("deleted event");
+        assert_eq!(deleted.kind, "group.deleted");
+        assert_eq!(deleted.group_id, group.group_id);
+        prune_deleted_groups(&hub.inner);
+        assert!(global.try_recv().is_err());
     }
 }

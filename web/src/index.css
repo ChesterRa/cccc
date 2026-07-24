@@ -1232,7 +1232,7 @@ select {
 
 /* Glass sidebar - enhanced */
 .glass-sidebar {
-  background: linear-gradient(180deg, var(--glass-bg) 0%, var(--color-sidebar-bg) 100%);
+  background: var(--color-sidebar-bg);
   backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
   -webkit-backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
   box-shadow: var(--glass-shadow), var(--glass-inner-glow);

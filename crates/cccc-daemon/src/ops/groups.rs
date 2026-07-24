@@ -105,6 +105,13 @@ fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .map_err(OpError::io)?;
     }
     let group = store(home)?.load(&created.group_id).map_err(OpError::io)?;
+    append_group_event(
+        home,
+        &group,
+        "group.create",
+        request,
+        json!({"title": group.title, "topic": group.topic, "reset_from": old.group_id}),
+    )?;
     active::set(home, &group.group_id).map_err(OpError::io)?;
     object(json!({"old_group_id": old.group_id, "group": group_runtime::group(group)}))
 }
@@ -116,6 +123,7 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let state: GroupState = serde_json::from_value(Value::String(raw)).map_err(OpError::invalid)?;
     if matches!(state, GroupState::Paused | GroupState::Stopped) {
         actor_delivery::shutdown_group(&group.group_id);
+        super::local_headless::stop_group(&group.group_id);
     }
     let updated = store(home)?
         .mutate(&group.group_id, |doc| {

@@ -21,6 +21,7 @@ struct LedgerIndex {
     relays: HashMap<String, usize>,
     acked_by: HashMap<String, BTreeSet<String>>,
     replied_by: HashMap<String, BTreeSet<String>>,
+    estimated_bytes: u64,
 }
 
 impl LedgerIndex {
@@ -32,6 +33,7 @@ impl LedgerIndex {
             ..Self::default()
         };
         index.reindex();
+        index.estimated_bytes = estimate_events_bytes(&index.events);
         Ok(index)
     }
 
@@ -87,6 +89,9 @@ impl LedgerIndex {
             self.relays.insert(source_id.to_owned(), position);
         }
         index_relation(&event, &mut self.acked_by, &mut self.replied_by);
+        self.estimated_bytes = self
+            .estimated_bytes
+            .saturating_add(estimate_event_bytes(&event));
         self.events.push(event);
         self.revisions = next_revisions;
     }
@@ -132,6 +137,50 @@ fn index_relation(
     }
 }
 
+fn estimate_events_bytes(events: &[Event]) -> u64 {
+    events.iter().map(estimate_event_bytes).sum()
+}
+
+fn estimate_event_bytes(event: &Event) -> u64 {
+    let strings = [
+        &event.id,
+        &event.ts,
+        &event.kind,
+        &event.group_id,
+        &event.scope_key,
+        &event.by,
+    ]
+    .into_iter()
+    .map(|value| value.capacity() as u64)
+    .sum::<u64>();
+    // IDs and relation keys are duplicated by the lookup maps. A factor of
+    // two keeps the cache budget conservative without a second allocation.
+    (std::mem::size_of::<Event>() as u64)
+        .saturating_add(strings)
+        .saturating_add(estimate_map_bytes(&event.data))
+        .saturating_mul(2)
+}
+
+fn estimate_map_bytes(map: &serde_json::Map<String, serde_json::Value>) -> u64 {
+    map.iter()
+        .map(|(key, value)| key.capacity() as u64 + estimate_value_bytes(value))
+        .sum::<u64>()
+        .saturating_add((map.len() * std::mem::size_of::<(String, serde_json::Value)>()) as u64)
+}
+
+fn estimate_value_bytes(value: &serde_json::Value) -> u64 {
+    match value {
+        serde_json::Value::String(value) => value.capacity() as u64,
+        serde_json::Value::Array(values) => values
+            .iter()
+            .map(estimate_value_bytes)
+            .sum::<u64>()
+            .saturating_add((values.capacity() * std::mem::size_of::<serde_json::Value>()) as u64),
+        serde_json::Value::Object(map) => estimate_map_bytes(map),
+        _ => std::mem::size_of::<serde_json::Value>() as u64,
+    }
+}
+
 fn current(path: &Path) -> io::Result<Arc<RwLock<LedgerIndex>>> {
     let next_revisions = revisions(path)?;
     let weight = next_revisions.iter().map(|revision| revision.len).sum();
@@ -150,7 +199,9 @@ fn current(path: &Path) -> io::Result<Arc<RwLock<LedgerIndex>>> {
     if index.revisions != next_revisions {
         *index = LedgerIndex::rebuild(path, next_revisions)?;
     }
+    let weight = weight.max(index.estimated_bytes);
     drop(index);
+    cache::update_weight(path, weight, &entry);
     Ok(entry)
 }
 
@@ -160,8 +211,7 @@ pub(crate) fn note_append(path: &Path, event: &Event, encoded_len: usize) {
     let Ok(next_revisions) = revisions(path) else {
         return;
     };
-    let weight = next_revisions.iter().map(|revision| revision.len).sum();
-    cache::update_weight(path, weight, &cached);
+    let source_bytes: u64 = next_revisions.iter().map(|revision| revision.len).sum();
     let mut index = cached
         .write()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -186,6 +236,9 @@ pub(crate) fn note_append(path: &Path, event: &Event, encoded_len: usize) {
         .is_some_and(|(before, after)| after == before.saturating_add(encoded_len as u64));
     if exact_append && other_sources_unchanged {
         index.push(event.clone(), next_revisions);
+        let weight = source_bytes.max(index.estimated_bytes);
+        drop(index);
+        cache::update_weight(path, weight, &cached);
     } else {
         index.revisions.clear();
     }

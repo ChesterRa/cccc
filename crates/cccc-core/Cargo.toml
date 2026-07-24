@@ -21,6 +21,7 @@ mime_guess.workspace = true
 sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 uuid.workspace = true
 zip.workspace = true
 

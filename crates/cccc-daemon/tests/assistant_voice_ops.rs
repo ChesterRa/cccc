@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, ActorRole, DaemonRequest, DaemonResponse};
+use cccc_contracts::{Actor, ActorRole, ActorRuntime, DaemonRequest, DaemonResponse, RunnerKind};
 use cccc_core::{GroupStore, HomeLayout, Scope, ledger};
 use serde_json::{Map, Value, json};
 
@@ -39,6 +39,15 @@ fn voice_input_is_durable_idempotent_and_delivered_to_internal_actor() {
         json!({"group_id":group.group_id,"assistant_id":"voice_secretary","by":"user","patch":{"enabled":true,"config":{"recognition_backend":"assistant_service_local_asr"}}}),
     );
     assert_eq!(enabled.result["assistant"]["enabled"], true);
+    assert_eq!(
+        enabled.result["assistant"]["health"]["actor"]["configured"],
+        true
+    );
+    assert_eq!(
+        enabled.result["assistant"]["health"]["actor"]["running"],
+        false
+    );
+    assert_eq!(enabled.result["assistant"]["lifecycle"], "idle");
     let loaded = store.load(&group.group_id).expect("load");
     let secretary = loaded
         .actors
@@ -276,7 +285,7 @@ fn voice_document_and_input_permissions_are_enforced() {
 }
 
 #[test]
-fn enabling_voice_secretary_reports_runtime_start_failure() {
+fn enabling_voice_secretary_rolls_back_runtime_start_failure() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
@@ -292,18 +301,104 @@ fn enabling_voice_secretary_reports_runtime_start_failure() {
             Ok(())
         })
         .expect("running group");
-    let response = ok(
+    let response = call(
         &home,
         "assistant_settings_update",
         json!({"group_id":group.group_id,"patch":{"enabled":true}}),
     );
-    assert_eq!(response.result["actor_started"], false);
-    assert!(response.result["actor_start_error"].is_object());
-    assert!(
-        response.result["actor_start_error"]["message"]
-            .as_str()
-            .is_some_and(|message| !message.is_empty())
+    assert!(!response.ok);
+    assert_eq!(
+        response.error.as_ref().map(|error| error.code.as_str()),
+        Some("voice_secretary_start_failed")
     );
+    let restored = store.load(&group.group_id).expect("restored group");
+    assert!(
+        !restored
+            .actors
+            .iter()
+            .any(|actor| actor.id == "voice-secretary")
+    );
+    assert!(
+        !restored
+            .extra
+            .get("assistants")
+            .and_then(|state| state.get("assistant"))
+            .and_then(|assistant| assistant.get("enabled"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn headless_voice_secretary_health_tracks_its_local_process() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("voice", "").expect("group");
+    let fake_app_server = r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+      ;;
+    *'"method":"thread/start"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$id"
+      ;;
+  esac
+done
+"#;
+    store
+        .mutate(&group.group_id, |doc| {
+            let mut foreman = Actor::new("foreman");
+            foreman.role = Some(ActorRole::Foreman);
+            foreman.runtime = ActorRuntime::Codex;
+            foreman.runner = RunnerKind::Headless;
+            foreman.command = vec!["sh".into(), "-c".into(), fake_app_server.into()];
+            doc.actors.push(foreman);
+            doc.running = true;
+            Ok(())
+        })
+        .expect("running headless group");
+
+    let enabled = ok(
+        &home,
+        "assistant_settings_update",
+        json!({"group_id":group.group_id,"patch":{"enabled":true}}),
+    );
+    assert_eq!(
+        enabled.result["assistant"]["health"]["actor"]["running"],
+        true
+    );
+    assert!(
+        enabled.result["assistant"]["health"]["actor"]["pid"]
+            .as_u64()
+            .is_some()
+    );
+
+    ok(
+        &home,
+        "actor_stop",
+        json!({"group_id":group.group_id,"actor_id":"voice-secretary","by":"user"}),
+    );
+    store
+        .mutate(&group.group_id, |doc| {
+            doc.running = true;
+            Ok(())
+        })
+        .expect("keep group running after provider exit");
+    let stopped = ok(&home, "assistant_index", json!({"group_id":group.group_id}));
+    assert_eq!(
+        stopped.result["assistant"]["health"]["actor"]["running"],
+        false
+    );
+    assert_eq!(
+        stopped.result["assistant"]["health"]["actor"]["pid"],
+        Value::Null
+    );
+    assert_eq!(stopped.result["assistant"]["lifecycle"], "failed");
 }
 
 #[test]

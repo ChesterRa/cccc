@@ -11,6 +11,7 @@ mod capability_builtin;
 pub mod capability_legacy;
 #[cfg(test)]
 mod capability_legacy_tests;
+pub mod codex_hook_state;
 pub mod context;
 pub mod fs;
 pub mod group;

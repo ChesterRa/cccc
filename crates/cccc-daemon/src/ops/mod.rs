@@ -22,6 +22,7 @@ mod group_space;
 mod groups;
 mod hermes_runtime;
 mod im;
+pub(crate) mod local_headless;
 mod maintenance;
 mod memory;
 mod message_idempotency;
@@ -39,6 +40,7 @@ mod runtime_session;
 mod runtime_state;
 mod settings;
 mod terminal;
+mod working_state;
 
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;

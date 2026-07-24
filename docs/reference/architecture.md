@@ -205,7 +205,7 @@ The surface is best understood as capability groups instead of a fixed namespace
 ### Core Collaboration Capability Groups
 
 - Session and guidance: `cccc_bootstrap`, `cccc_help`, `cccc_project_info`
-- Messaging and files: `cccc_inbox_list`, `cccc_inbox_mark_read`, `cccc_message_send` (new messages and replies), `cccc_file`
+- Messaging and files: `cccc_inbox_list`, `cccc_inbox_mark_read`, `cccc_message_send`, `cccc_message_reply`, `cccc_file`
 - Group and actor control: `cccc_group`, `cccc_actor`
 - Coordination and state: `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state`, `cccc_context_sync`
 - Automation and memory: `cccc_automation`, `cccc_automation_manage`, `cccc_memory`, `cccc_memory_admin`

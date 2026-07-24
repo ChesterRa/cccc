@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::ops::actor_delivery::{DeliveryCompletion, DeliveryJob, record_completion};
+use crate::ops::actor_runtime;
 
 const SUBMIT_DELAY: Duration = Duration::from_millis(1_500);
 const REPEAT_SUBMIT_DELAY: Duration = Duration::from_millis(200);
@@ -46,22 +47,36 @@ pub fn process_batch(
     ) {
         return false;
     }
-    let Ok(status) = cccc_runtime::status(&job.group.group_id, &job.actor.id) else {
+    let Some(current_actor) = current_group
+        .actors
+        .iter()
+        .find(|actor| actor.id == job.actor.id)
+        .cloned()
+    else {
         return false;
     };
-    if !status.running {
-        return false;
+    if crate::ops::local_headless::supports(&current_actor) {
+        return process_headless_batch(
+            jobs,
+            &job.home,
+            &current_group,
+            &current_actor,
+            last_delivery,
+        );
     }
+    let Some(status) = ensure_running(&job.home, &current_group, &current_actor) else {
+        return false;
+    };
     if *preamble_session != status.started_at {
-        if job.actor.runtime != ActorRuntime::Custom
-            && !wait_for_input_mode(&job.group.group_id, &job.actor.id, cancelled)
+        if current_actor.runtime != ActorRuntime::Custom
+            && !wait_for_input_mode(&current_group.group_id, &current_actor.id, cancelled)
         {
             return false;
         }
         if !submit_text(
-            &job.group.group_id,
-            &job.actor,
-            &super::actor_delivery_preamble::render(&job.home, &current_group, &job.actor),
+            &current_group.group_id,
+            &current_actor,
+            &super::actor_delivery_preamble::render(&job.home, &current_group, &current_actor),
             cancelled,
         ) {
             return false;
@@ -76,7 +91,7 @@ pub fn process_batch(
     let Some(payload) = super::actor_delivery_render::render_batch(&events) else {
         return false;
     };
-    if submit_text(&job.group.group_id, &job.actor, &payload, cancelled) {
+    if submit_text(&current_group.group_id, &current_actor, &payload, cancelled) {
         *last_delivery = Some(std::time::Instant::now());
         for job in jobs {
             record_completion(DeliveryCompletion {
@@ -88,6 +103,102 @@ pub fn process_batch(
         return true;
     }
     false
+}
+
+fn process_headless_batch(
+    jobs: &[DeliveryJob],
+    home: &cccc_core::HomeLayout,
+    group: &cccc_core::GroupDoc,
+    actor: &Actor,
+    last_delivery: &mut Option<std::time::Instant>,
+) -> bool {
+    if !crate::ops::local_headless::running(&group.group_id, &actor.id) {
+        match actor_runtime::apply(home, group, &actor.id, "actor.start") {
+            Ok(None) if crate::ops::local_headless::running(&group.group_id, &actor.id) => {}
+            Ok(_) => return false,
+            Err(error) => {
+                tracing::warn!(
+                    group_id = %group.group_id,
+                    actor_id = %actor.id,
+                    message = %error.message,
+                    "failed to auto-wake headless actor for message delivery"
+                );
+                return false;
+            }
+        }
+    }
+    if !actor.enabled
+        && let Err(error) = actor_runtime::persist_lifecycle(home, group, &actor.id, true, None)
+    {
+        crate::ops::local_headless::stop(&group.group_id, &actor.id);
+        tracing::warn!(
+            group_id = %group.group_id,
+            actor_id = %actor.id,
+            message = %error.message,
+            "failed to persist auto-woken headless actor"
+        );
+        return false;
+    }
+    if jobs
+        .iter()
+        .all(|job| crate::ops::local_headless::submit(home, group, actor, &job.event))
+    {
+        *last_delivery = Some(std::time::Instant::now());
+        for job in jobs {
+            record_completion(DeliveryCompletion {
+                group_id: job.group.group_id.clone(),
+                actor_id: job.actor.id.clone(),
+                event_id: job.event.id.clone(),
+            });
+        }
+        return true;
+    }
+    false
+}
+
+fn ensure_running(
+    home: &cccc_core::HomeLayout,
+    group: &cccc_core::GroupDoc,
+    actor: &Actor,
+) -> Option<cccc_runtime::SessionStatus> {
+    if let Ok(status) = cccc_runtime::status(&group.group_id, &actor.id)
+        && status.running
+    {
+        return Some(status);
+    }
+    let status = match actor_runtime::apply(home, group, &actor.id, "actor.start") {
+        Ok(Some(status)) if status.running => status,
+        Ok(_) => return None,
+        Err(error) => {
+            if let Ok(status) = cccc_runtime::status(&group.group_id, &actor.id)
+                && status.running
+            {
+                status
+            } else {
+                tracing::warn!(
+                    group_id = %group.group_id,
+                    actor_id = %actor.id,
+                    message = %error.message,
+                    "failed to auto-wake actor for message delivery"
+                );
+                return None;
+            }
+        }
+    };
+    if !actor.enabled
+        && let Err(error) =
+            actor_runtime::persist_lifecycle(home, group, &actor.id, true, Some(&status))
+    {
+        let _ = cccc_runtime::stop_if_started_at(&group.group_id, &actor.id, &status.started_at);
+        tracing::warn!(
+            group_id = %group.group_id,
+            actor_id = %actor.id,
+            message = %error.message,
+            "failed to persist auto-woken actor"
+        );
+        return None;
+    }
+    Some(status)
 }
 
 fn apply_throttle(

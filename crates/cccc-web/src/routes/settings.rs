@@ -39,7 +39,7 @@ async fn settings_get(State(state): State<AppState>, Path(group_id): Path<String
         "nudge_after_seconds":300,
         "reply_required_nudge_after_seconds":300,
         "attention_ack_nudge_after_seconds":600,
-        "unread_nudge_after_seconds":900,
+        "unread_nudge_after_seconds":0,
         "nudge_digest_min_interval_seconds":120,
         "nudge_max_repeats_per_obligation":3,
         "nudge_escalate_after_repeats":2,

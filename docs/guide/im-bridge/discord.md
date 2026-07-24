@@ -74,9 +74,6 @@ Never share your bot token. If exposed, regenerate it immediately.
 | Read Message History | Access conversation history |
 | Add Reactions | React to messages |
 
-CCCC uses `👀` while a message is being processed, then changes it to `✅` after
-the response is delivered or `❌` when processing/delivery fails.
-
 4. Copy the generated URL at the bottom
 
 ## Step 5: Add Bot to Server
@@ -130,7 +127,7 @@ cccc im start
 
 1. Go to a channel where the bot has access
 2. Send `/subscribe`
-3. Copy the pairing key returned immediately by the bot and approve it in Web Pending Requests or with `cccc im bind --key KEY --group GROUP_ID`
+3. You should receive a confirmation
 
 ## Usage
 
@@ -149,8 +146,7 @@ In direct messages with the bot, you can use `/send` directly:
 ```
 
 ::: warning Important
-- In channels, slash commands such as `/subscribe` work without an @mention
-- Plain messages in channels must @mention the bot before they are routed
+- In channels, you must @mention the bot before the message is routed
 - After mentioning the bot, plain text is treated as implicit send to foreman
 - Use `/send` when you need explicit recipients like `@all` or `@peers`
 :::
@@ -172,7 +168,7 @@ After subscribing, you will automatically receive:
 - Status updates
 - Error notifications
 
-Use `/verbose` or `/verbose on` to see agent-to-agent messages, and `/verbose off` to disable them.
+Use `/verbose` to toggle whether you see agent-to-agent messages.
 
 ### Thread Support
 
@@ -199,7 +195,7 @@ CCCC formats responses with Discord embeds for better readability when appropria
 | `/status` | Show group and agent status |
 | `/pause` | Pause message delivery |
 | `/resume` | Resume message delivery |
-| `/verbose [on\|off]` | Enable or disable verbose mode (see all agent messages) |
+| `/verbose` | Toggle verbose mode (see all agent messages) |
 | `/help` | Show available commands |
 
 ## Slash Commands (Optional)

@@ -2,11 +2,12 @@ use cccc_contracts::DaemonRequest;
 use cccc_core::{GroupStore, HomeLayout, settings};
 use serde_json::{Value, json};
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 use crate::ops::actor_runtime;
+
+mod tail;
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -70,15 +71,7 @@ fn tail_logs(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .clamp(1, 2_000) as usize;
     let path = log_path(home, &component, &group_id)?;
     let output = if path.exists() {
-        let reader = BufReader::new(fs::File::open(&path).map_err(OpError::io)?);
-        let mut values = reader
-            .lines()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(OpError::io)?;
-        if values.len() > lines {
-            values.drain(..values.len() - lines);
-        }
-        values
+        tail::read_last_lines(&path, lines).map_err(OpError::io)?
     } else {
         Vec::new()
     };

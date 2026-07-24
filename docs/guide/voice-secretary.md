@@ -1,9 +1,13 @@
-# Voice Secretary
+# Voice Secretary (Rust Distribution)
 
-Voice Secretary is a hidden internal actor backed by repository Markdown and a
-native Rust speech pipeline. Enabling it copies the foreman's runtime settings
-into the dedicated `voice-secretary` actor; disabling it removes only that actor
-and leaves documents, transcript sidecars, and model caches intact.
+Python remains the default CCCC distribution. This page documents the optional
+Rust implementation of Voice Secretary and its native speech pipeline. See the
+standard Voice Secretary controls in the Web UI when running Python.
+
+Voice Secretary is a hidden internal actor backed by repository Markdown.
+Enabling it copies the foreman's runtime settings into the dedicated
+`voice-secretary` actor; disabling it removes only that actor and leaves
+documents, transcript sidecars, and model caches intact.
 
 ## Local ASR
 

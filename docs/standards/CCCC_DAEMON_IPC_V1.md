@@ -1538,7 +1538,8 @@ Result:
 #### HTTP Voice Secretary transcription
 
 Transcribe a push-to-talk audio payload through the daemon-managed first-party
-Voice Secretary native Rust runtime. This endpoint only returns transcript text and service
+Voice Secretary runtime. Python is the default distribution and Rust implements
+the same HTTP contract. This endpoint only returns transcript text and service
 health; it does not create a chat message, proposal, or working document by
 itself. Call `assistant_voice_transcript_append` after transcription so the
 daemon can append stable transcript source material and update the current
@@ -1558,8 +1559,10 @@ Preconditions:
 - `recognition_backend` is `assistant_service_local_asr`.
 - The selected offline `service_model_id` is installed and its manifest exposes
   a supported sherpa-onnx model configuration. HTTP transcription accepts mono
-  PCM16 or WAV up to 100 MiB. The HTTP body and WebSocket PCM16 frames are streamed to auto-deleted
-  temporary file; browser service capture sends binary PCM16 WebSocket frames.
+  PCM16 or WAV up to 100 MiB. The HTTP body and WebSocket PCM16 frames are
+  streamed to auto-deleted temporary files; browser service capture sends binary
+  PCM16 WebSocket frames. Python also accepts the former JSON/Base64 HTTP body
+  for compatibility, but clients should send the binary form above.
 
 Result:
 ```ts

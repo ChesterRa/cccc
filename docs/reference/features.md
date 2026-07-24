@@ -24,7 +24,7 @@ cccc reply <event_id> "Reply text"
 # MCP
 cccc_message_send(text="Hello", to=["@foreman"], insight="This direction may still be framed too narrowly.")
 cccc_tracked_send(title="Task title", text="Delegated work", to=["assistant"], outcome="Done criterion", insight="The assignee should be free to reject the proposed approach.")
-cccc_message_send(reply_to="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
+cccc_message_reply(reply_to="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
 ```
 
 Agents may add `suggested_user_message` when sending to `user`; CCCC Web shows it as an editable next-message suggestion in the composer and never sends it automatically.
@@ -75,41 +75,28 @@ The `chat.stream` event type represents real-time streaming content from agents.
 
 | Platform | Status | Token Config |
 |----------|--------|--------------|
-| Telegram | Rust text adapter (`teloxide`) | `bot_token_env` |
-| Slack | Rust text adapter (official Socket Mode/Web API) | `bot_token_env` + `app_token_env` |
-| Discord | Rust text adapter (`serenity`) | `bot_token_env` |
-| Feishu/Lark | Rust text adapter (`lark-channel`) | `feishu_app_id` + `feishu_app_secret` |
-| DingTalk | Rust text adapter with outbound image/file delivery (`dingtalk-stream`) | `dingtalk_app_key` + `dingtalk_app_secret` |
-| WeCom | Built-in Rust adapter with streaming, media upload/download, and official AI Bot long-connection compatibility | Web-configured Bot ID / Secret flow |
-| Weixin / WeChat | Rust text adapter (`weixin-agent`) | SDK QR login and persisted bot token |
-
-No vendor currently publishes an official Rust SDK for these seven platforms. CCCC uses established Rust SDKs that implement the official platform protocols where available; Slack uses the official Socket Mode and Web API directly. The built-in WeCom client follows the wire behavior of WeCom's official Node and Python AI Bot SDKs; it is not presented as an official WeCom Rust SDK.
-
-DingTalk outbound attachments are resolved only from validated `state/blobs/*` paths, limited to 10 MiB, uploaded with the SDK, and delivered through the robot OpenAPI to authorized DingTalk conversations. Text replies continue to use the active session webhook. DingTalk inbound attachments and attachment delivery on the other IM adapters remain outside the current Rust feature set.
-
-Local Web chat uploads accept up to 100 MiB total per message. Rust streams
-multipart chunks into content-addressed blob storage instead of buffering the
-whole request in memory. Cross-group remote attachments remain limited to
-10 MiB because that transport currently carries Base64 content.
+| Telegram | ✅ Complete | `token_env` |
+| Slack | ✅ Complete | `bot_token_env` + `app_token_env` |
+| Discord | ✅ Complete | `token_env` |
+| Feishu/Lark | ✅ Complete | `feishu_app_id_env` + `feishu_app_secret_env` |
+| DingTalk | ✅ Complete | `dingtalk_app_key_env` + `dingtalk_app_secret_env` (+ optional `dingtalk_robot_code_env`) |
+| WeCom | ✅ Complete | Web-configured Bot ID / Secret flow |
+| Weixin / WeChat | ✅ Complete | Web-configured account/login flow |
 
 ### Configuration
 
 ```yaml
-# group.yaml (normally written by `cccc im set` or Web settings)
-im_bridge:
-  config:
-    platform: telegram
-    bot_token_env: TELEGRAM_BOT_TOKEN
+# group.yaml
+im:
+  platform: telegram
+  token_env: TELEGRAM_BOT_TOKEN
 
 # Slack requires dual tokens
-im_bridge:
-  config:
-    platform: slack
-    bot_token_env: SLACK_BOT_TOKEN    # xoxb-... Web API
-    app_token_env: SLACK_APP_TOKEN    # xapp-... Socket Mode
+im:
+  platform: slack
+  bot_token_env: SLACK_BOT_TOKEN    # xoxb-... Web API
+  app_token_env: SLACK_APP_TOKEN    # xapp-... Socket Mode
 ```
-
-WeCom must have the AI Bot WebSocket subscription enabled in the WeCom administration console. CCCC sends the subscription as the first application frame, starts heartbeat only after the subscription acknowledgement, and reports authentication errors instead of treating a bare WebSocket handshake as a running bot.
 
 ### IM Commands
 
@@ -156,7 +143,7 @@ MCP Tools (protocol + execution interface)
 ├── cccc_help: On-demand CCCC protocol reference
 ├── cccc_capability_use: Invoke hidden tools without mounting every pack
 ├── cccc_inbox_list / cccc_inbox_mark_read: Inbox
-└── cccc_message_send: Send or reply (`reply_to` selects reply mode)
+└── cccc_message_send / cccc_message_reply: Send/reply
 
 Ledger (complete memory)
 └── All historical messages and events
@@ -176,7 +163,7 @@ Ledger (complete memory)
 1. Cold start or resume → Call cccc_bootstrap
 2. Need the full unread queue → Call cccc_inbox_list
 3. Do the work with the agent runtime's normal tools and judgment
-4. Reply visibly with cccc_message_send and `reply_to`
+4. Reply visibly with cccc_message_reply
 5. Mark handled inbox items read
 ```
 
@@ -233,7 +220,7 @@ These are defaults written for newly created groups. Heuristic steering stays of
 
 | Config | Default | Description |
 |--------|---------|-------------|
-| `auto_mark_on_delivery` | `true` | Automatically advance the read cursor after a local runtime delivery succeeds |
+| `auto_mark_on_delivery` | `true` | Automatically advance the read cursor after a PTY delivery succeeds |
 
 Low-level delivery throttling via `min_interval_seconds` remains supported in daemon/API settings for compatibility, but it is no longer exposed in the default Web settings UI.
 
@@ -241,7 +228,7 @@ Low-level delivery throttling via `min_interval_seconds` remains supported in da
 
 CCCC supports per-actor private environment variables for runtime customization (different model/API stacks per actor).
 
-- Stored in group runtime state under `CCCC_HOME/groups/<group_id>/state/`
+- Stored in runtime state under `CCCC_HOME/state/secrets/actors/`
 - Not written into the group ledger
 - Not included in Copy Groups packages
 - Visible as key metadata only (values are never returned by read APIs)
@@ -295,15 +282,6 @@ cccc_automation_manage(op=create|update|enable|disable|delete|replace_all, ...)
 - Context panel (vision/sketch/tasks)
 - Settings panel (automation config)
 - IM Bridge configuration
-
-### Message Reliability
-
-- Chat sends carry a stable `client_id`; the daemon deduplicates retries within the group and sender scope.
-- The Web outbox reconciles immediately from the HTTP response and again from SSE/reconnect catch-up, so a missing SSE frame does not leave a permanent optimistic duplicate.
-- Local runtime delivery submits message text and Enter atomically under a per-session input lock, preventing status probes from interleaving with user messages.
-- Messages for stopped or temporarily unavailable actors remain available in the inbox; starting an actor does not inject historical unread messages into its runtime.
-- Runtime delivery uses bounded retry for transient failures and suppresses concurrent duplicate delivery of the same event.
-- Actor delivery includes the complete event id, reply/priority requirements, refs, relay origin, and attachment access instructions.
 
 ### Theme System
 
@@ -362,15 +340,14 @@ cccc setup --runtime droid
 cccc setup --runtime amp
 cccc setup --runtime auggie
 cccc setup --runtime grok
+cccc setup --runtime hermes
 cccc setup --runtime kimi
+cccc setup --runtime opencode
 cccc setup --runtime cursor       # Prompt-assisted setup inside Cursor CLI
 cccc setup --runtime kilo         # Prompt-assisted setup inside Kilo Code CLI
 cccc setup --runtime antigravity  # Prompt-assisted setup inside Antigravity
 cccc setup --runtime custom
 ```
-
-OpenCode is configured in the actor environment. Hermes and custom runtimes
-return the manual stdio configuration in the current Rust build.
 
 `web_model` does not use `cccc setup`; create the single `ChatGPT Web Model` actor from the CCCC Web group, then use Web Settings to sign in to ChatGPT, copy its remote MCP URL, and bind one specific ChatGPT conversation.
 

@@ -6,6 +6,8 @@ use std::process::Command;
 
 use crate::dispatch::{OpError, OpResult, object, string_arg};
 
+const REMOTE_ACCESS_MODE: &str = "tailnet_only";
+
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "remote_access_state" => state(home),
@@ -17,8 +19,13 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
 }
 
 fn state(home: &HomeLayout) -> OpResult {
-    let settings = settings::load(home).map_err(OpError::io)?;
-    object(payload(home, &settings.remote_access))
+    let mut global = settings::load(home).map_err(OpError::io)?;
+    let before = global.remote_access.clone();
+    normalize(&mut global.remote_access)?;
+    if global.remote_access != before {
+        settings::save(home, &global).map_err(OpError::io)?;
+    }
+    object(payload(home, &global.remote_access))
 }
 
 fn configure(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -115,13 +122,18 @@ fn normalize(config: &mut Map<String, Value>) -> Result<(), OpError> {
             "provider must be off, manual, or tailscale",
         ));
     }
-    let mode = text(config, "mode", "team").to_ascii_lowercase();
-    if !matches!(mode.as_str(), "team" | "serve" | "funnel") {
-        return Err(OpError::new(
-            "remote_access_invalid_config",
-            "unsupported remote access mode",
-        ));
-    }
+    let mode = match text(config, "mode", REMOTE_ACCESS_MODE)
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        REMOTE_ACCESS_MODE | "team" | "serve" | "funnel" => REMOTE_ACCESS_MODE.to_owned(),
+        _ => {
+            return Err(OpError::new(
+                "remote_access_invalid_config",
+                "unsupported remote access mode",
+            ));
+        }
+    };
     let port = number(config, "web_port", 8848);
     if !(1..=65_535).contains(&port) {
         return Err(OpError::new(
@@ -150,7 +162,7 @@ fn normalize(config: &mut Map<String, Value>) -> Result<(), OpError> {
 
 fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
     let provider = text(config, "provider", "off");
-    let mode = text(config, "mode", "team");
+    let mode = text(config, "mode", REMOTE_ACCESS_MODE);
     let enabled = boolean(config, "enabled", false) && provider != "off";
     let require_token = boolean(config, "require_access_token", true);
     let host = text(config, "web_host", "127.0.0.1");

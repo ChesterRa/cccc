@@ -32,6 +32,12 @@ fn headless_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "headless operations require runner=headless or runtime=web_model",
         ));
     }
+    if super::local_headless::supports(actor) {
+        let state = super::local_headless::status(&group.group_id, &actor_id)
+            .map(|state| serde_json::to_value(state).unwrap_or(Value::Null))
+            .unwrap_or_else(|| default_state(&group, &actor_id));
+        return object(json!({"state":state}));
+    }
     let mut state = actor_state(home, &group.group_id, &actor_id)?;
     if state.is_null() {
         state = default_state(&group, &actor_id);
@@ -46,6 +52,12 @@ fn headless_set_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         return Err(OpError::new(
             "invalid_actor_runner",
             "headless operations require runner=headless or runtime=web_model",
+        ));
+    }
+    if super::local_headless::supports(actor) {
+        return Err(OpError::new(
+            "provider_managed_headless",
+            "local Codex/Claude headless status is managed by the daemon supervisor",
         ));
     }
     let status = required_arg(request, "status")?;
@@ -89,8 +101,20 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "cccc_runtime_wait_next_turn requires runner=headless or runtime=web_model",
         ));
     }
+    if super::local_headless::supports(actor) {
+        return Err(OpError::new(
+            "provider_managed_headless",
+            "local Codex/Claude headless actors receive turns from the daemon supervisor",
+        ));
+    }
     let cursor = inbox::cursor(home, &group.group_id, &actor_id).map_err(OpError::io)?;
-    if !actor.enabled {
+    if !actor.enabled
+        || !group.running
+        || matches!(
+            group.state,
+            cccc_contracts::GroupState::Paused | cccc_contracts::GroupState::Stopped
+        )
+    {
         return object(
             json!({"status":"stopped","turn":null,"cursor":{"event_id":cursor,"ts":""},"instructions":"This CCCC structured actor is stopped."}),
         );
@@ -152,6 +176,12 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "cccc_runtime_complete_turn requires runner=headless or runtime=web_model",
         ));
     }
+    if super::local_headless::supports(actor) {
+        return Err(OpError::new(
+            "provider_managed_headless",
+            "local Codex/Claude headless turns are completed by the daemon supervisor",
+        ));
+    }
     let by = string_arg(request, "by").unwrap_or_else(|| actor_id.clone());
     if by != actor_id {
         return Err(OpError::new(
@@ -159,7 +189,13 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "complete_turn must be called by the runtime actor",
         ));
     }
-    if !actor.enabled {
+    if !actor.enabled
+        || !group.running
+        || matches!(
+            group.state,
+            cccc_contracts::GroupState::Paused | cccc_contracts::GroupState::Stopped
+        )
+    {
         return Err(OpError::new(
             "actor_stopped",
             "structured actor is stopped; completion was not committed",
@@ -168,6 +204,19 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let status = string_arg(request, "status").unwrap_or_else(|| "done".into());
     if !matches!(status.as_str(), "done" | "partial" | "failed" | "cancelled") {
         return Err(OpError::new("invalid_status", "invalid completion status"));
+    }
+    let active_state = actor_state(home, &group.group_id, &actor_id)?;
+    let active_turn_id = active_state["active_turn_id"].as_str().unwrap_or_default();
+    let completed_turn_id = string_arg(request, "turn_id").filter(|value| !value.is_empty());
+    if active_turn_id.is_empty()
+        || completed_turn_id
+            .as_deref()
+            .is_some_and(|turn_id| turn_id != active_turn_id)
+    {
+        return Err(OpError::new(
+            "stale_turn",
+            "turn_id does not match the actor's active structured turn",
+        ));
     }
     let mut event_ids: Vec<String> = request
         .args
@@ -214,7 +263,7 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let cursor = inbox::cursor(home, &group.group_id, &actor_id).map_err(OpError::io)?;
     object(json!({
         "status":status,
-        "turn_id":string_arg(request,"turn_id").unwrap_or_default(),
+        "turn_id":completed_turn_id.unwrap_or_else(|| active_turn_id.to_owned()),
         "cursor_committed":cursor_committed,
         "cursor":{"event_id":cursor,"ts":""},
         "read_event":read_event,

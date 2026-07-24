@@ -1,7 +1,9 @@
 use cccc_contracts::Event;
 use flate2::read::GzDecoder;
 use fs2::FileExt;
-use std::collections::BTreeMap;
+use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -47,8 +49,9 @@ impl LedgerFollower {
     }
 
     pub fn poll(&mut self, path: &Path) -> io::Result<Vec<Event>> {
+        let group_id = ledger_group_id(path);
         let revisions = revisions(path)?;
-        let next_sources: BTreeMap<_, _> = revisions
+        let mut next_sources: BTreeMap<_, _> = revisions
             .iter()
             .cloned()
             .map(|revision| (revision.path.clone(), revision))
@@ -95,7 +98,11 @@ impl LedgerFollower {
                 None => revision.len,
             };
             if offset < revision.len {
-                appended.extend(read_source_from(&revision.path, offset)?);
+                let (events, consumed_end) = read_source_from(&revision.path, offset, &group_id)?;
+                appended.extend(events);
+                if let Some(source) = next_sources.get_mut(&revision.path) {
+                    source.len = consumed_end;
+                }
             }
         }
         self.sources = next_sources;
@@ -129,9 +136,10 @@ pub fn read_all(path: &Path) -> io::Result<Vec<Event>> {
 }
 
 pub(crate) fn read_all_uncached(path: &Path) -> io::Result<Vec<Event>> {
+    let group_id = ledger_group_id(path);
     let mut events = Vec::new();
     for source in source_paths(path)? {
-        events.extend(read_source(&source)?);
+        events.extend(read_source(&source, &group_id)?);
     }
     Ok(events)
 }
@@ -176,35 +184,151 @@ pub(crate) fn revisions(path: &Path) -> io::Result<Vec<SourceRevision>> {
         .collect()
 }
 
-fn read_source(path: &Path) -> io::Result<Vec<Event>> {
+fn read_source(path: &Path, group_id: &str) -> io::Result<Vec<Event>> {
     if is_gzip(path) {
-        return read_events(BufReader::new(GzDecoder::new(File::open(path)?)));
+        return read_events(
+            BufReader::new(GzDecoder::new(File::open(path)?)),
+            path,
+            group_id,
+        );
     }
-    read_source_from(path, 0)
+    read_source_from(path, 0, group_id).map(|(events, _)| events)
 }
 
-fn read_source_from(path: &Path, offset: u64) -> io::Result<Vec<Event>> {
+fn read_source_from(path: &Path, offset: u64, group_id: &str) -> io::Result<(Vec<Event>, u64)> {
     if is_gzip(path) {
         return if offset == 0 {
-            read_source(path)
+            read_source(path, group_id)
+                .and_then(|events| std::fs::metadata(path).map(|metadata| (events, metadata.len())))
         } else {
-            Ok(Vec::new())
+            Ok((Vec::new(), std::fs::metadata(path)?.len()))
         };
     }
     let mut file = File::open(path)?;
+    FileExt::lock_shared(&file)?;
     file.seek(io::SeekFrom::Start(offset))?;
-    read_events(BufReader::new(file))
+    let result = read_events_from(BufReader::new(&file), path, group_id, offset);
+    let unlock = FileExt::unlock(&file);
+    result.and_then(|events| unlock.map(|()| events))
 }
 
-fn read_events(reader: impl BufRead) -> io::Result<Vec<Event>> {
-    reader
-        .lines()
-        .filter(|line| line.as_ref().map_or(true, |value| !value.trim().is_empty()))
-        .map(|line| {
-            let line = line?;
-            serde_json::from_str(&line).map_err(io::Error::other)
-        })
-        .collect()
+fn read_events_from(
+    mut reader: impl BufRead,
+    source: &Path,
+    group_id: &str,
+    offset: u64,
+) -> io::Result<(Vec<Event>, u64)> {
+    let mut events = Vec::new();
+    let mut line = Vec::new();
+    let mut consumed = 0_u64;
+    let mut line_no = 0;
+    loop {
+        let read = reader.read_until(b'\n', &mut line)?;
+        if read == 0 {
+            break;
+        }
+        line_no += 1;
+        let terminated = line.last() == Some(&b'\n');
+        let raw = trim_ascii(&line);
+        if !terminated && !raw.is_empty() && serde_json::from_slice::<Value>(raw).is_err() {
+            break;
+        }
+        if !raw.is_empty()
+            && let Some(event) = decode_event_line(raw, source, line_no, group_id)
+        {
+            events.push(event);
+        }
+        consumed += read as u64;
+        line.clear();
+    }
+    Ok((events, offset + consumed))
+}
+
+fn read_events(mut reader: impl BufRead, source: &Path, group_id: &str) -> io::Result<Vec<Event>> {
+    let mut events = Vec::new();
+    let mut line = Vec::new();
+    let mut line_no = 0;
+    while reader.read_until(b'\n', &mut line)? != 0 {
+        line_no += 1;
+        let raw = trim_ascii(&line);
+        if raw.is_empty() {
+            line.clear();
+            continue;
+        }
+        if let Some(event) = decode_event_line(raw, source, line_no, group_id) {
+            events.push(event);
+        }
+        line.clear();
+    }
+    Ok(events)
+}
+
+fn decode_event_line(raw: &[u8], source: &Path, line_no: usize, group_id: &str) -> Option<Event> {
+    match serde_json::from_slice(raw) {
+        Ok(event) => Some(event),
+        Err(error) => match serde_json::from_slice::<Value>(raw) {
+            Ok(value) => normalize_legacy_event(&value, raw, group_id).or_else(|| {
+                tracing::warn!(
+                    source = %source.display(),
+                    line = line_no,
+                    %error,
+                    "skipping unrecognized ledger event"
+                );
+                None
+            }),
+            Err(json_error) => {
+                tracing::warn!(
+                    source = %source.display(),
+                    line = line_no,
+                    error = %json_error,
+                    "skipping malformed ledger line"
+                );
+                None
+            }
+        },
+    }
+}
+
+fn normalize_legacy_event(value: &Value, raw: &[u8], group_id: &str) -> Option<Event> {
+    let object = value.as_object()?;
+    if object.get("type").and_then(Value::as_str) != Some("chat.ack") {
+        return None;
+    }
+    let target_event_id = nonempty_string(object, "event_id")?;
+    let actor_id = nonempty_string(object, "agent")?;
+    let mut event = Event::new("chat.ack", group_id);
+    event.id = legacy_event_id(raw);
+    if let Some(ts) = object
+        .get("ts")
+        .and_then(Value::as_str)
+        .filter(|ts| !ts.is_empty())
+    {
+        event.ts = ts.to_owned();
+    }
+    event.by = actor_id.to_owned();
+    event.data = Map::from_iter([
+        ("actor_id".into(), json!(actor_id)),
+        ("event_id".into(), json!(target_event_id)),
+    ]);
+    Some(event)
+}
+
+fn nonempty_string<'a>(object: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+    let value = object.get(key)?.as_str()?.trim();
+    (!value.is_empty()).then_some(value)
+}
+
+fn legacy_event_id(raw: &[u8]) -> String {
+    let digest = Sha256::digest(raw);
+    format!("{digest:x}")[..32].to_owned()
+}
+
+fn ledger_group_id(path: &Path) -> String {
+    path.parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_owned()
 }
 
 fn is_ledger_segment(path: &Path) -> bool {
@@ -241,12 +365,13 @@ pub fn tail_filtered(
 
     let target = limit.saturating_add(1);
     let mut newest_first = Vec::with_capacity(target);
+    let group_id = ledger_group_id(path);
     for source in source_paths(path)?.iter().rev() {
         let remaining = target.saturating_sub(newest_first.len());
         if remaining == 0 {
             break;
         }
-        newest_first.extend(read_source_reverse(source, remaining, kind)?);
+        newest_first.extend(read_source_reverse(source, remaining, kind, &group_id)?);
     }
 
     let has_more = newest_first.len() > limit;
@@ -308,17 +433,17 @@ pub fn find_relay(path: &Path, source_event_id: &str) -> io::Result<Option<Event
     crate::ledger_index::find_relay(path, source_event_id)
 }
 
-fn read_source_reverse(path: &Path, limit: usize, kind: Option<&str>) -> io::Result<Vec<Event>> {
+fn read_source_reverse(
+    path: &Path,
+    limit: usize,
+    kind: Option<&str>,
+    group_id: &str,
+) -> io::Result<Vec<Event>> {
     if limit == 0 {
         return Ok(Vec::new());
     }
     if is_gzip(path) {
-        return Ok(read_source(path)?
-            .into_iter()
-            .rev()
-            .filter(|event| event_matches_kind(event, kind))
-            .take(limit)
-            .collect());
+        return read_gzip_tail(path, limit, kind, group_id);
     }
 
     const CHUNK_SIZE: u64 = 64 * 1024;
@@ -343,7 +468,13 @@ fn read_source_reverse(path: &Path, limit: usize, kind: Option<&str>) -> io::Res
                 else {
                     break;
                 };
-                push_reverse_event(&buffer[newline + 1..line_end], kind, &mut events)?;
+                push_reverse_event(
+                    &buffer[newline + 1..line_end],
+                    path,
+                    kind,
+                    group_id,
+                    &mut events,
+                );
                 line_end = newline;
             }
             pending = buffer[..line_end].to_vec();
@@ -351,7 +482,7 @@ fn read_source_reverse(path: &Path, limit: usize, kind: Option<&str>) -> io::Res
         }
 
         if position == 0 && events.len() < limit {
-            push_reverse_event(&pending, kind, &mut events)?;
+            push_reverse_event(&pending, path, kind, group_id, &mut events);
         }
         Ok(events)
     })();
@@ -361,16 +492,49 @@ fn read_source_reverse(path: &Path, limit: usize, kind: Option<&str>) -> io::Res
     Ok(events)
 }
 
-fn push_reverse_event(line: &[u8], kind: Option<&str>, events: &mut Vec<Event>) -> io::Result<()> {
+fn read_gzip_tail(
+    path: &Path,
+    limit: usize,
+    kind: Option<&str>,
+    group_id: &str,
+) -> io::Result<Vec<Event>> {
+    let mut reader = BufReader::new(GzDecoder::new(File::open(path)?));
+    let mut retained = VecDeque::with_capacity(limit);
+    let mut line = Vec::new();
+    let mut line_no = 0usize;
+    while reader.read_until(b'\n', &mut line)? > 0 {
+        line_no += 1;
+        let raw = trim_ascii(&line);
+        if !raw.is_empty()
+            && let Some(event) = decode_event_line(raw, path, line_no, group_id)
+            && event_matches_kind(&event, kind)
+        {
+            if retained.len() == limit {
+                retained.pop_front();
+            }
+            retained.push_back(event);
+        }
+        line.clear();
+    }
+    Ok(retained.into_iter().rev().collect())
+}
+
+fn push_reverse_event(
+    line: &[u8],
+    source: &Path,
+    kind: Option<&str>,
+    group_id: &str,
+    events: &mut Vec<Event>,
+) {
     let line = trim_ascii(line);
     if line.is_empty() {
-        return Ok(());
+        return;
     }
-    let event: Event = serde_json::from_slice(line).map_err(io::Error::other)?;
-    if event_matches_kind(&event, kind) {
+    if let Some(event) = decode_event_line(line, source, 0, group_id)
+        && event_matches_kind(&event, kind)
+    {
         events.push(event);
     }
-    Ok(())
 }
 
 fn trim_ascii(mut value: &[u8]) -> &[u8] {
@@ -406,6 +570,103 @@ mod tests {
         let events = tail(&path, 1).expect("tail");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, "chat.message");
+    }
+
+    #[test]
+    fn reads_legacy_ack_from_gzip_segment_and_skips_unknown_events() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let group = temp.path().join("g_test");
+        let path = group.join("ledger.jsonl");
+        let segments = group.join("state/ledger/segments");
+        std::fs::create_dir_all(&segments).expect("segments");
+        let archived = segments.join("ledger.0001.jsonl.gz");
+        let file = File::create(&archived).expect("archive");
+        let mut encoder = GzEncoder::new(file, Compression::default());
+        writeln!(encoder, "{{\"type\":\"unknown.v0\",\"value\":1}}").expect("unknown");
+        encoder.write_all(&[0xff, b'\n']).expect("malformed utf-8");
+        writeln!(
+            encoder,
+            "{{\"ts\":\"2026-04-20T10:05:36Z\",\"type\":\"chat.ack\",\"event_id\":\"message-1\",\"agent\":\"reviewer\"}}"
+        )
+        .expect("legacy ack");
+        encoder.finish().expect("finish archive");
+        append(&path, &Event::new("chat.message", "g_test")).expect("active event");
+
+        let first = read_all_uncached(&path).expect("read legacy archive");
+        let second = read_all_uncached(&path).expect("read legacy archive again");
+
+        assert_eq!(first.len(), 2);
+        assert_eq!(
+            first, second,
+            "legacy IDs must be stable across index rebuilds"
+        );
+        let ack = &first[0];
+        assert_eq!(ack.v, 1);
+        assert_eq!(ack.kind, "chat.ack");
+        assert_eq!(ack.group_id, "g_test");
+        assert_eq!(ack.by, "reviewer");
+        assert_eq!(ack.data["actor_id"], "reviewer");
+        assert_eq!(ack.data["event_id"], "message-1");
+        assert_eq!(ack.id.len(), 32);
+    }
+
+    #[test]
+    fn reverse_tail_normalizes_legacy_ack_in_active_ledger() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let group = temp.path().join("g_test");
+        std::fs::create_dir_all(&group).expect("group");
+        let path = group.join("ledger.jsonl");
+        std::fs::write(
+            &path,
+            "{\"ts\":\"2026-04-20T10:05:36Z\",\"type\":\"chat.ack\",\"event_id\":\"message-1\",\"agent\":\"reviewer\"}\n",
+        )
+        .expect("legacy ledger");
+
+        let events = tail_filtered(&path, 1, Some("chat.ack")).expect("tail legacy ack");
+
+        assert_eq!(events.0.len(), 1);
+        assert_eq!(events.0[0].data["actor_id"], "reviewer");
+        assert!(!events.1);
+    }
+
+    #[test]
+    fn forward_reads_wait_for_an_in_progress_append() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let event = Event::new("chat.message", "g_test");
+        let encoded = serde_json::to_vec(&event).expect("encode event");
+        let split = encoded.len() / 2;
+        let mut writer = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .read(true)
+            .open(&path)
+            .expect("open ledger");
+        writer.lock_exclusive().expect("lock writer");
+        writer.write_all(&encoded[..split]).expect("partial append");
+        writer.flush().expect("flush partial append");
+
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let read_path = path.clone();
+        let reader = std::thread::spawn(move || {
+            sender.send(read_all(&read_path)).expect("send read result");
+        });
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        assert!(
+            receiver.try_recv().is_err(),
+            "reader observed a partial append"
+        );
+
+        writer.write_all(&encoded[split..]).expect("finish append");
+        writer.write_all(b"\n").expect("append newline");
+        writer.flush().expect("flush complete append");
+        FileExt::unlock(&writer).expect("unlock writer");
+        let events = receiver
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("reader completed")
+            .expect("read ledger");
+        reader.join().expect("join reader");
+        assert_eq!(events, vec![event]);
     }
 
     #[test]
@@ -519,6 +780,36 @@ mod tests {
         let events = follower.poll(&path).expect("changed poll");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, "chat.message");
+    }
+
+    #[test]
+    fn follower_retries_an_unterminated_partial_tail() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        append(&path, &Event::new("group.create", "g_test")).expect("append initial");
+        let mut follower = LedgerFollower::default();
+        follower.poll(&path).expect("initialize follower");
+        let event = Event::new("chat.message", "g_test");
+        let encoded = serde_json::to_vec(&event).expect("encode event");
+        let split = encoded.len() / 2;
+        let mut writer = OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open external writer");
+
+        writer
+            .write_all(&encoded[..split])
+            .expect("write partial event");
+        writer.flush().expect("flush partial event");
+        assert!(follower.poll(&path).expect("poll partial event").is_empty());
+
+        writer.write_all(&encoded[split..]).expect("complete event");
+        writer.write_all(b"\n").expect("terminate event");
+        writer.flush().expect("flush complete event");
+        assert_eq!(
+            follower.poll(&path).expect("poll complete event"),
+            vec![event]
+        );
     }
 
     #[test]

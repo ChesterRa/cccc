@@ -137,13 +137,6 @@ Backup `CCCC_HOME`:
 - Use `reply_required` for critical asks.
 - Prefer explicit recipients over broad broadcast when scope is narrow.
 - Keep automation focused on objective reminders, not chat noise.
-- PTY actor delivery coalesces short bursts into one submitted batch while
-  retaining one ledger event and read-cursor completion per message. The
-  canonical `settings.min_interval_seconds` value controls longer throttling;
-  Rust also honors the legacy Python `delivery.min_interval_seconds` field.
-- `runner=headless` actors do not own terminal processes. Their runtime consumes
-  work through `cccc_runtime_wait_next_turn` and commits a contiguous event
-  prefix through `cccc_runtime_complete_turn`.
 
 ## 9) Escalation Checklist
 
@@ -160,16 +153,12 @@ If an issue repeats:
 
 ## 10) Group Space (NotebookLM) Runbook
 
-The Rust build connects directly to NotebookLM without a Python sidecar. It
-supports notebook selection/creation, text ingest, source management, and
-grounded query. Local fallback must still be selected explicitly with
-`--provider local`.
+### Enable real adapter path (opt-in)
 
-The Rust authentication worker owns saved-session validation, projected browser
-startup, timeout/cancellation, credential verification, and temporary profile
-cleanup. It also captures provider `Set-Cookie` rotation after API calls. Stored
-credentials are updated atomically; `CCCC_NOTEBOOKLM_AUTH_JSON` is always treated
-as a read-only operational override.
+```bash
+export CCCC_NOTEBOOKLM_REAL=1
+cccc daemon restart
+```
 
 ### Validate control plane
 
@@ -178,20 +167,12 @@ cccc space credential status
 cccc space health
 ```
 
-Maintainers can run the opt-in live protocol smoke test without placing account
-data in fixtures:
-
-```bash
-CCCC_NOTEBOOKLM_AUTH_JSON="$(cat /path/to/storage-state.json)" \
-  cargo test -p cccc-notebooklm --test live -- --ignored
-```
-
 ### Validate curated context export path
 
 After a `context_sync` update (`vision.update` / `overview.manual.update` / `task.*` / `agent.*`), check queue:
 
 ```bash
-cccc space jobs --lane work --action list
+cccc space jobs list --state pending
 ```
 
 Expected: a `kind=context_sync` job appears for bound groups.
@@ -199,37 +180,26 @@ Expected: a `kind=context_sync` job appears for bound groups.
 ### Validate repo `space/` reconciliation
 
 ```bash
-cccc space sync --lane work --force
+cccc space sync --force
 ```
 
-Expected in the current Rust build: `provider_unavailable` because full repo
-reconciliation is intentionally not enabled yet.
+Expected: result reports `converged=true` and `unsynced_count=0` when provider is healthy.
 
 ### Safe rollback (core workflows keep running)
 
-Expected behavior:
+```bash
+unset CCCC_NOTEBOOKLM_REAL
+cccc daemon restart
+```
 
-- NotebookLM artifact and full-sync operations return `provider_unavailable`.
-- Notebook/source/query operations fail loudly on auth expiry or protocol drift.
-- Explicit `--provider local` operations return `degraded=true` and never claim remote delivery.
+Expected after rollback:
+
+- Group Space operations may return degraded/disabled provider results.
 - Core CCCC chat/task/actor workflows continue normally.
 
-## 11) Release Verification
-
-Python distribution:
+Optional throughput tuning:
 
 ```bash
-scripts/pre_commit_checks.sh --full
-scripts/build_package.sh
-docker build -f docker/Dockerfile .
+export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=1   # safer
+export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=4   # faster
 ```
-
-Rust distribution:
-
-```bash
-scripts/build_package_rust.sh
-docker build -f docker/Dockerfile.rust .
-```
-
-Python releases use `.github/workflows/release.yml`. Rust releases use
-`.github/workflows/release-rust.yml` and `rust-v<version>` tags.

@@ -178,6 +178,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     set((state) => {
       const statePrevGid = String(state.selectedGroupId || "").trim();
 
+      // Re-selecting the active group does not trigger the selectedGroupId effect,
+      // so marking actors as hydrating here would leave recipient chips disabled.
+      if (gid && statePrevGid === gid) return state;
+
       // Cache the current view before switching groups so returning to it is instant.
       if (statePrevGid && statePrevGid !== gid) {
         saveCurrentViewSnapshot(statePrevGid, state);

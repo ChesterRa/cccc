@@ -3,7 +3,7 @@ mod commands;
 mod web_launch;
 
 use anyhow::{Result, bail};
-use args::{Cli, CommandKind, DaemonAction, HermesAction, RuntimeAction};
+use args::{Cli, CommandKind, DaemonAction, HermesAction, HookAction, RuntimeAction};
 use cccc_client::DaemonClient;
 use cccc_core::{HomeLayout, active};
 use cccc_daemon::{DetachedDaemon, StartOutcome};
@@ -30,6 +30,7 @@ async fn main() -> Result<()> {
             println!("{}", home.root().display());
             Ok(())
         }
+        Some(CommandKind::Hook { action }) => hook(&home, action),
         Some(CommandKind::Attach { path, group_id }) => print(
             call(
                 &client,
@@ -68,6 +69,18 @@ async fn main() -> Result<()> {
         Some(CommandKind::Status) => status(&client).await,
         Some(CommandKind::Doctor) => commands::doctor::run(&home),
         Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
+    }
+}
+
+fn hook(home: &HomeLayout, action: HookAction) -> Result<()> {
+    match action {
+        HookAction::CodexState => {
+            let payload: serde_json::Value = serde_json::from_reader(std::io::stdin().lock())?;
+            let group_id = std::env::var("CCCC_GROUP_ID").unwrap_or_default();
+            let actor_id = std::env::var("CCCC_ACTOR_ID").unwrap_or_default();
+            cccc_core::codex_hook_state::record(home, &group_id, &actor_id, &payload)?;
+            Ok(())
+        }
     }
 }
 

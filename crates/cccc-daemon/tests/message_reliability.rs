@@ -15,7 +15,7 @@ fn duplicate_client_id_returns_the_original_event() {
     call(
         &home,
         "actor_add",
-        json!({"group_id":group_id,"actor_id":"lead","by":"user"}),
+        json!({"group_id":group_id,"actor_id":"lead","runner":"headless","by":"user"}),
     );
     let args = json!({
         "group_id":group_id,
@@ -39,7 +39,7 @@ fn duplicate_client_id_returns_the_original_event() {
 }
 
 #[test]
-fn starting_an_offline_actor_does_not_replay_its_unread_message() {
+fn directed_message_auto_wakes_an_offline_actor_exactly_once() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let group = call(&home, "group_create", json!({"title":"offline replay"}));
@@ -55,7 +55,7 @@ fn starting_an_offline_actor_does_not_replay_its_unread_message() {
             "runtime":"custom",
             "runner":"pty",
             "submit":"newline",
-            "command":["sh","-c","stty -echo; IFS= read -r line; printf 'RECEIVED:%s' \"$line\"; sleep 2"],
+            "command":["sh","-c","stty -echo; IFS= read -r preamble; IFS= read -r message; printf 'PREAMBLE:%s\\nRECEIVED:%s' \"$preamble\" \"$message\"; sleep 2"],
             "enabled":false,
             "by":"user"
         }),
@@ -65,38 +65,62 @@ fn starting_an_offline_actor_does_not_replay_its_unread_message() {
         "send",
         json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"wake delivery"}),
     );
-    assert_eq!(sent.result["delivery"]["state"], "inbox");
+    assert_eq!(sent.result["delivery"]["state"], "queued");
+    assert_eq!(sent.result["delivery"]["online"], 0);
 
-    call(
+    let output = wait_for_terminal(
         &home,
-        "actor_start",
-        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-    );
-
-    std::thread::sleep(std::time::Duration::from_millis(500));
-    let tail = call(
-        &home,
-        "terminal_tail",
-        json!({"group_id":group_id,"actor_id":"peer1","max_chars":4000,"by":"user"}),
-    );
-    let output = tail.result["text"].as_str().unwrap_or_default();
-    assert!(!output.contains("RECEIVED:[cccc] user → peer1: wake delivery"));
-
-    let inbox = call(
-        &home,
-        "inbox_list",
-        json!({"group_id":group_id,"actor_id":"peer1","limit":50,"by":"user"}),
+        group_id,
+        "RECEIVED:[cccc] user → peer1: wake delivery",
     );
     assert_eq!(
-        inbox.result["messages"].as_array().map(Vec::len),
-        Some(1),
-        "startup should leave historical unread messages in the inbox"
+        output
+            .matches("RECEIVED:[cccc] user → peer1: wake delivery")
+            .count(),
+        1
     );
+    let actors = call(
+        &home,
+        "actor_list",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    assert_eq!(actors.result["actors"][0]["enabled"], true);
+    assert_eq!(actors.result["actors"][0]["running"], true);
     let _ = call(
         &home,
         "actor_stop",
         json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
     );
+}
+
+fn wait_for_terminal(home: &HomeLayout, group_id: &str, expected: &str) -> String {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        let response = cccc_daemon::handle_request(
+            home,
+            &DaemonRequest {
+                v: 1,
+                op: "terminal_tail".into(),
+                args: json!({"group_id":group_id,"actor_id":"peer1","max_chars":4000,"by":"user"})
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_else(Map::new),
+            },
+        );
+        let output = response
+            .result
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if response.ok && output.contains(expected) {
+            return output.to_owned();
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "PTY did not receive {expected:?}; response={response:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {

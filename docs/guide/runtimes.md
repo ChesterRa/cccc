@@ -53,7 +53,7 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 
 ## Setup Commands
 
-The following CLI runtimes can be configured automatically with `cccc setup --runtime <id>`:
+Most CLI runtimes can be prepared with `cccc setup --runtime <id>`:
 
 ```bash
 cccc setup --runtime claude
@@ -65,12 +65,10 @@ cccc setup --runtime droid
 cccc setup --runtime amp
 cccc setup --runtime auggie
 cccc setup --runtime grok
+cccc setup --runtime hermes
 cccc setup --runtime kimi
+cccc setup --runtime opencode
 ```
-
-OpenCode receives its MCP configuration from the CCCC actor environment. Hermes
-and custom runtimes print a manual stdio configuration because the Rust build
-does not currently provide a Hermes preparation command.
 
 Prompt-assisted runtimes print an idempotent setup prompt or contract that you run inside that runtime:
 
@@ -94,6 +92,14 @@ Actors normally run in one of two modes:
 - **Headless**: CCCC manages structured runtime I/O without a terminal. This gives tighter delivery and streaming control where supported.
 
 Claude Code and Codex CLI support both PTY and headless operation. Most other CLI runtimes use PTY. ChatGPT Web Model is fixed to browser delivery plus a remote MCP connector.
+
+### Codex Hook State
+
+The Rust daemon derives Codex activity from lifecycle hooks injected only into Codex processes that CCCC starts. Prompt and tool events report `working`, permission requests report `waiting`, and stop/session events report `idle` or `stopped`. CCCC passes the hook definitions and their exact trust hashes as command-line session configuration; it does not write `~/.codex/hooks.json`, project `.codex` files, or persistent Codex trust settings. Codex sessions launched outside CCCC therefore do not run the CCCC status hook.
+
+In the Rust backend, `runtime=codex|claude` with `runner=headless` starts a daemon-managed provider process. Codex uses its app-server JSON-RPC transport and Claude uses bidirectional stream-json. Messages are delivered automatically, provider health determines the actor's `running` value, and stopping the actor or group terminates the provider process. Codex hooks remain session-only and provide lifecycle status for the CCCC-owned process.
+
+`web_model` and custom external headless actors keep the pull-consumer contract: an external executor calls `cccc_runtime_wait_next_turn` and `cccc_runtime_complete_turn`. These actors do not claim to have a local provider process.
 
 CCCC also preserves current Grok Build PTY sessions with its native `--session-id` and `--resume` flags. A fresh actor launch receives a CCCC-owned UUID; later starts resume that exact actor session rather than using Grok's directory-wide `--continue` selection. Commands that already contain Grok session-control flags remain user-owned and are not rewritten. Set `CCCC_RUNTIME_RESUME=0` to disable provider-session reuse globally.
 

@@ -1,10 +1,11 @@
-use cccc_contracts::{GroupState, utc_now};
+use cccc_contracts::{Event, GroupState, utc_now};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Cursor, Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use uuid::Uuid;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -14,8 +15,8 @@ use crate::{GroupDoc, GroupStore, Registry, Scope, scope};
 
 const KIND: &str = "cccc.group_copy";
 const VERSION: u8 = 1;
-pub const MAX_PACKAGE_BYTES: usize = 1024 * 1024 * 1024;
-const MAX_UNCOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+pub const MAX_PACKAGE_BYTES: usize = 100 * 1024 * 1024;
+const MAX_UNCOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_FILE_COUNT: usize = 20_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -95,6 +96,7 @@ pub struct ImportResult {
 }
 
 pub fn export(store: &GroupStore, group_id: &str) -> io::Result<(Vec<u8>, Manifest, String)> {
+    let _operation = operation_guard();
     let mut group = store.load(group_id)?;
     scrub_group(&mut group);
     let mut files = collect_files(&store.group_dir(group_id)?)?;
@@ -141,7 +143,7 @@ pub fn export(store: &GroupStore, group_id: &str) -> io::Result<(Vec<u8>, Manife
     }
     let bytes = writer.finish().map_err(io::Error::other)?.into_inner();
     if bytes.len() > MAX_PACKAGE_BYTES {
-        return Err(io::Error::other("group copy package exceeds 1 GiB"));
+        return Err(io::Error::other("group copy package exceeds 100 MiB"));
     }
     let filename = format!(
         "cccc-group--{}--{}--{}.zip",
@@ -158,6 +160,7 @@ pub fn export(store: &GroupStore, group_id: &str) -> io::Result<(Vec<u8>, Manife
 }
 
 pub fn preview(store: &GroupStore, bytes: &[u8]) -> io::Result<Preview> {
+    let _operation = operation_guard();
     let package = read_package(bytes)?;
     preview_package(store, package.manifest, &package.group)
 }
@@ -168,6 +171,7 @@ pub fn import(
     workspace_root: &str,
     title: &str,
 ) -> io::Result<ImportResult> {
+    let _operation = operation_guard();
     let package = read_package(bytes)?;
     let source_group_id = package.group.group_id.clone();
     let conflict = store.group_dir(&source_group_id)?.exists();
@@ -224,6 +228,16 @@ pub fn import(
             &imported.active_scope_key,
         )?;
         write_yaml(&target.join("group.yaml"), &imported)?;
+        let mut event = Event::new("group.create", &final_group_id);
+        event.by = "system".into();
+        event
+            .data
+            .insert("title".into(), imported.title.clone().into());
+        event
+            .data
+            .insert("source_group_id".into(), source_group_id.clone().into());
+        event.data.insert("imported".into(), true.into());
+        crate::ledger::append(&target.join("ledger.jsonl"), &event)?;
         Ok(ImportResult {
             group_id: final_group_id.clone(),
             source_group_id,
@@ -236,6 +250,13 @@ pub fn import(
         let _ = store.delete(&final_group_id);
     }
     result
+}
+
+fn operation_guard() -> MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 struct Package {
@@ -276,7 +297,7 @@ fn read_package(bytes: &[u8]) -> io::Result<Package> {
         }
         total = total.saturating_add(entry.size());
         if total > MAX_UNCOMPRESSED_BYTES {
-            return Err(io::Error::other("group copy expands beyond 2 GiB"));
+            return Err(io::Error::other("group copy expands beyond 256 MiB"));
         }
         let mut data = Vec::with_capacity(entry.size().min(8 * 1024 * 1024) as usize);
         entry.read_to_end(&mut data)?;
@@ -376,14 +397,22 @@ fn preview_package(
 
 fn collect_files(root: &Path) -> io::Result<HashMap<String, Vec<u8>>> {
     let mut output = HashMap::new();
-    collect_dir(root, root, &mut output)?;
+    let mut budget = CollectionBudget::default();
+    collect_dir(root, root, &mut output, &mut budget)?;
     Ok(output)
+}
+
+#[derive(Default)]
+struct CollectionBudget {
+    files: usize,
+    bytes: u64,
 }
 
 fn collect_dir(
     root: &Path,
     directory: &Path,
     output: &mut HashMap<String, Vec<u8>>,
+    budget: &mut CollectionBudget,
 ) -> io::Result<()> {
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
@@ -398,8 +427,16 @@ fn collect_dir(
             continue;
         }
         if kind.is_dir() {
-            collect_dir(root, &path, output)?;
+            collect_dir(root, &path, output, budget)?;
         } else if kind.is_file() {
+            budget.files = budget.files.saturating_add(1);
+            budget.bytes = budget.bytes.saturating_add(entry.metadata()?.len());
+            if budget.files > MAX_FILE_COUNT {
+                return Err(io::Error::other("group copy has too many files"));
+            }
+            if budget.bytes > MAX_UNCOMPRESSED_BYTES {
+                return Err(io::Error::other("group copy exceeds 256 MiB"));
+            }
             output.insert(relative, fs::read(path)?);
         }
     }
@@ -584,5 +621,23 @@ fn slug(value: &str) -> String {
         "group".into()
     } else {
         slug.chars().take(80).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+
+    #[test]
+    fn export_collection_rejects_oversized_files_before_reading_them() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("oversized.bin");
+        let file = File::create(&path).expect("create sparse file");
+        file.set_len(MAX_UNCOMPRESSED_BYTES + 1)
+            .expect("size sparse file");
+
+        let error = collect_files(directory.path()).expect_err("oversized export must fail");
+        assert!(error.to_string().contains("256 MiB"));
     }
 }

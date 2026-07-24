@@ -10,18 +10,14 @@ The Web UI is intentionally minimal:
 
 Actual NotebookLM operations such as query, ingest, source management, artifacts, and job handling are handled by agents through MCP / CLI surfaces, not by the normal user settings page.
 
-## 1. Provider Availability
+## 1. Enable Real Provider Path
 
-The Rust build connects directly to NotebookLM for account health, notebook
-listing/creation, text-source ingest, source listing/rename/delete, and grounded
-queries. It does not launch a Python sidecar. Pass `--provider local` only when
-you explicitly want the degraded local fallback.
+Start CCCC with the real NotebookLM adapter enabled:
 
-NotebookLM still has no public consumer API. CCCC therefore isolates Google's
-private RPC catalog and positional response adapters in `cccc-notebooklm` and
-fails with `provider_schema_drift` when the wire contract changes. Artifact
-generation/download and repo-wide sync are not enabled yet and fail explicitly;
-they never report a fabricated remote success.
+```bash
+export CCCC_NOTEBOOKLM_REAL=1
+cccc
+```
 
 If you expose Web outside localhost, first create an **Admin Access Token** in **Settings > Web Access** and keep the service behind a network boundary until that token exists.
 
@@ -37,33 +33,15 @@ In **Google Account**:
 
 1. Click **Connect Google**.
 2. Complete sign-in in the interactive browser view shown inside CCCC Web.
-3. After the page returns to `notebooklm.google.com`, CCCC captures the browser
-   storage state, closes the sign-in browser, validates the account, and refreshes
-   the notebook selector.
+3. Wait until the account status becomes connected.
 
 Notes:
 
 - If a valid credential is already stored, reconnect may complete without a full browser login.
-- Authentication completion is owned by the Rust server task. Closing or refreshing
-  the settings page does not submit credentials and does not interrupt the flow.
-- Each sign-in uses a one-time browser profile. Success, failure, cancellation,
-  timeout, and server shutdown all close the browser and remove that profile.
-- **Reconnect** validates the saved session first. A forced reconnect skips saved
-  cookies, while **Disconnect** removes both the credential and legacy browser profile.
-- Google may rotate session cookies during normal API calls. CCCC persists those
-  rotations only when the credential came from the CCCC store; credentials supplied
-  through `CCCC_NOTEBOOKLM_AUTH_JSON` remain read-only.
 - The default Web page does not expose manual credential editing anymore.
 - The Web flow uses a projected sign-in browser so Docker / remote deployments do not need a local desktop browser on the daemon host.
-- The current Rust projected surface uses Chromium's isolated headless mode and does
-  not attach to the host desktop display.
-- The Rust surface launches a discovered system Chromium/Chrome binary; it does
-  not depend on a Python Playwright sidecar or a persistent desktop profile.
-
-This is browser-session authorization, not Google OAuth. The consumer Gemini
-Notebook service does not currently publish an OAuth scope or supported public
-API for these operations. CCCC deliberately does not request or retain a
-Google-account-wide master token.
+- The projected sign-in browser now runs in headed mode for better Google compatibility. In server/container environments without a native display, CCCC uses `Xvfb` automatically.
+- The Docker image includes the minimal Chromium shared libraries needed for the projected sign-in browser. Playwright / Chromium binaries themselves are still installed lazily on first use.
 
 ## 4. Bind the Work Notebook
 
@@ -120,16 +98,24 @@ That is by design.
 
 ## 8. Agent-Side Usage Still Exists
 
-Group Space controls still exist through agent-facing surfaces:
+NotebookLM usage still exists through agent-facing surfaces:
 
 1. MCP tools
 2. CLI
 3. prompt/help-guided agent workflows
 
-The Web page is only for account connection and notebook binding. Agent-facing
-NotebookLM operations use the same Rust daemon adapter as the Web routes.
+The Web page is now only for account connection and notebook binding.
 
-## 9. Repo Space Sync Notes
+## 9. Quick Rollback
+
+If NotebookLM is unstable in your environment:
+
+```bash
+unset CCCC_NOTEBOOKLM_REAL
+cccc daemon restart
+```
+
+## 10. Repo Space Sync Notes
 
 When a group has a local scope attached, CCCC still uses repo-local `space/` as the work-lane resource source of truth:
 

@@ -130,7 +130,8 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
         .actors
         .iter()
         .filter(|actor| {
-            !crate::ops::actor_runtime::is_structured(actor)
+            (!crate::ops::actor_runtime::is_structured(actor)
+                || crate::ops::local_headless::supports(actor))
                 && inbox::is_for_actor(group, event, &actor.id)
         })
         .cloned()
@@ -138,16 +139,21 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
     let mut queued = 0;
     let mut online = 0;
     for actor in &targets {
-        if cccc_runtime::status(&group.group_id, &actor.id).is_ok_and(|status| status.running) {
+        let actor_online = if crate::ops::local_headless::supports(actor) {
+            crate::ops::local_headless::running(&group.group_id, &actor.id)
+        } else {
+            cccc_runtime::status(&group.group_id, &actor.id).is_ok_and(|status| status.running)
+        };
+        if actor_online {
             online += 1;
-            if enqueue(DeliveryJob {
-                home: home.clone(),
-                group: group.clone(),
-                actor: actor.clone(),
-                event: event.clone(),
-            }) {
-                queued += 1;
-            }
+        }
+        if enqueue(DeliveryJob {
+            home: home.clone(),
+            group: group.clone(),
+            actor: actor.clone(),
+            event: event.clone(),
+        }) {
+            queued += 1;
         }
     }
     report(targets.len(), online, queued)
@@ -252,7 +258,9 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 continue;
             }
             let mut batch = vec![job];
-            if batch[0].actor.runtime != ActorRuntime::Custom {
+            if batch[0].actor.runtime != ActorRuntime::Custom
+                && !crate::ops::local_headless::supports(&batch[0].actor)
+            {
                 if !actor_delivery_worker::interruptible_sleep(BATCH_WINDOW, &thread_cancelled) {
                     for job in &batch {
                         release_in_flight(job);

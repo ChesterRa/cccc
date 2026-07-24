@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import base64
+import io
 import json
 import os
 import subprocess
@@ -231,12 +231,25 @@ def _parse_http_error_body(exc: urllib.error.HTTPError) -> dict[str, Any]:
 def transcribe_voice_audio(
     group: Group,
     *,
-    audio_bytes: bytes,
+    audio_bytes: bytes | None = None,
+    audio_path: Path | None = None,
     mime_type: str,
     language: str = "",
     timeout_seconds: float = DEFAULT_HTTP_TIMEOUT_SECONDS,
 ) -> dict[str, Any]:
-    if not audio_bytes:
+    if (audio_bytes is None) == (audio_path is None):
+        raise VoiceServiceRuntimeError(
+            "invalid_audio_source",
+            "provide exactly one audio source",
+        )
+    if audio_path is not None:
+        try:
+            audio_size = audio_path.stat().st_size
+        except OSError as exc:
+            raise VoiceServiceRuntimeError("audio_read_failed", str(exc)) from exc
+    else:
+        audio_size = len(audio_bytes or b"")
+    if audio_size <= 0:
         raise VoiceServiceRuntimeError("empty_audio", "audio payload cannot be empty")
     state = ensure_voice_service(group)
     host = str(state.get("host") or "127.0.0.1").strip() or "127.0.0.1"
@@ -247,21 +260,30 @@ def transcribe_voice_audio(
     if port <= 0:
         raise VoiceServiceRuntimeError("voice_service_unavailable", "Voice Secretary service port is unavailable", details=state)
 
-    payload = {
-        "audio_b64": base64.b64encode(audio_bytes).decode("ascii"),
-        "mime_type": str(mime_type or "application/octet-stream").strip() or "application/octet-stream",
-        "language": str(language or "").strip(),
-    }
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        f"http://{host}:{port}/v1/transcribe",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
+    safe_mime_type = str(mime_type or "application/octet-stream").split(";", 1)[0].strip()
+    if not safe_mime_type or "\r" in safe_mime_type or "\n" in safe_mime_type:
+        safe_mime_type = "application/octet-stream"
+    safe_language = str(language or "").strip()
+    if "\r" in safe_language or "\n" in safe_language:
+        safe_language = ""
     try:
-        with urllib.request.urlopen(req, timeout=float(timeout_seconds)) as resp:
-            raw = resp.read().decode("utf-8")
+        source = audio_path.open("rb") if audio_path is not None else io.BytesIO(audio_bytes or b"")
+    except OSError as exc:
+        raise VoiceServiceRuntimeError("audio_read_failed", str(exc)) from exc
+    try:
+        with source:
+            req = urllib.request.Request(
+                f"http://{host}:{port}/v1/transcribe",
+                data=source,
+                headers={
+                    "Content-Type": safe_mime_type,
+                    "Content-Length": str(audio_size),
+                    "X-CCCC-Language": safe_language,
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=float(timeout_seconds)) as resp:
+                raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         error = _parse_http_error_body(exc)
         raise VoiceServiceRuntimeError(
@@ -291,7 +313,7 @@ def transcribe_voice_audio(
         "transcript": transcript,
         "mime_type": str(result.get("mime_type") or mime_type),
         "language": str(result.get("language") or language),
-        "bytes": int(result.get("bytes") or len(audio_bytes)),
+        "bytes": int(result.get("bytes") or audio_size),
         "service": result.get("service") if isinstance(result.get("service"), dict) else read_voice_service_state(group),
         "asr": result.get("asr") if isinstance(result.get("asr"), dict) else {},
     }

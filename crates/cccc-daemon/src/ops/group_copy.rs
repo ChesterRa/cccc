@@ -86,5 +86,38 @@ fn package_bytes(home: &HomeLayout, request: &DaemonRequest) -> Result<Vec<u8>, 
             "package_path must be a staged file under CCCC_HOME/tmp",
         ));
     }
+    if fs::metadata(&path).map_err(OpError::io)?.len() > group_copy::MAX_PACKAGE_BYTES as u64 {
+        return Err(OpError::new(
+            "invalid_args",
+            "group copy package exceeds 100 MiB",
+        ));
+    }
     fs::read(path).map_err(OpError::io)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+
+    #[test]
+    fn staged_package_is_size_checked_before_reading() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let path = home.root().join("tmp/oversized.zip");
+        fs::create_dir_all(path.parent().expect("tmp directory")).expect("create tmp");
+        let file = File::create(&path).expect("file");
+        file.set_len(group_copy::MAX_PACKAGE_BYTES as u64 + 1)
+            .expect("sparse file");
+        let request = DaemonRequest {
+            v: 1,
+            op: "group_copy_import".into(),
+            args: serde_json::from_value(json!({"package_path": path})).expect("args"),
+        };
+
+        let error = package_bytes(&home, &request).expect_err("oversized package");
+        assert_eq!(error.code, "invalid_args");
+        assert!(error.message.contains("100 MiB"));
+    }
 }

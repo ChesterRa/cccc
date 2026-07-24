@@ -157,12 +157,13 @@ fn tick_unread(
     state: &mut RuntimeState,
     result: &mut TickResult,
 ) -> io::Result<()> {
-    let settings = group.extra.get("settings").and_then(Value::as_object);
-    let threshold = settings
+    let threshold = group
+        .extra
+        .get("settings")
+        .and_then(Value::as_object)
         .and_then(|settings| settings.get("unread_nudge_after_seconds"))
-        .or_else(|| settings.and_then(|settings| settings.get("nudge_after_seconds")))
         .and_then(Value::as_i64)
-        .unwrap_or(900);
+        .unwrap_or(0);
     if threshold <= 0 {
         return Ok(());
     }

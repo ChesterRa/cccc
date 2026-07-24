@@ -2,17 +2,16 @@ use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
-use cccc_contracts::utc_now;
 use futures_util::Stream;
 use serde::{Deserialize, Deserializer};
-use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use serde_json::json;
 use std::convert::Infallible;
+use std::path::PathBuf;
 use std::time::Duration;
-use uuid::Uuid;
 
 use crate::AppState;
 use crate::api::{ApiResult, call, object, success};
+use crate::routes::headless_store::{HeadlessEventTail, read_replay_events};
 
 #[derive(Debug, Deserialize)]
 struct StreamQuery {
@@ -46,7 +45,16 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn snapshot(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
-    let events = collect(&state, &group_id, &mut BTreeMap::new(), true).await?;
+    validate_group(&state, &group_id).await?;
+    let path = events_path(&state, &group_id);
+    let events = tokio::task::spawn_blocking(move || read_replay_events(&path))
+        .await
+        .map_err(|error| {
+            crate::api::ApiError::unavailable("headless_snapshot_failed", error.to_string())
+        })?
+        .map_err(|error| {
+            crate::api::ApiError::unavailable("headless_snapshot_failed", error.to_string())
+        })?;
     Ok(success(
         json!({"group_id":group_id,"count":events.len(),"events":events}),
     ))
@@ -58,68 +66,50 @@ async fn stream(
     Query(query): Query<StreamQuery>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let mut shutdown = state.shutdown.subscribe();
+    let path = events_path(&state, &group_id);
     let output = async_stream::stream! {
-        let mut cursors = BTreeMap::<String,u64>::new();
-        let mut first = true;
+        let (mut tail, replay_events) = match tokio::task::spawn_blocking(move || HeadlessEventTail::open(path, query.replay)).await {
+            Ok(Ok(value)) => value,
+            _ => return,
+        };
+        for item in replay_events {
+            yield Ok(Event::default().event("headless").json_data(item).unwrap_or_default());
+        }
         loop {
-            if let Ok(events) = collect(&state,&group_id,&mut cursors, first && query.replay).await {
-                for item in events {
-                    yield Ok(Event::default().event("headless").json_data(item).unwrap_or_default());
-                }
-            }
-            first=false;
             tokio::select! {
                 _ = shutdown.recv() => break,
-                _ = tokio::time::sleep(Duration::from_millis(300)) => {},
+                _ = tokio::time::sleep(Duration::from_millis(300)) => {
+                    if let Ok(events) = tail.read_new() {
+                        for item in events {
+                            yield Ok(Event::default().event("headless").json_data(item).unwrap_or_default());
+                        }
+                    }
+                },
             }
         }
     };
     Sse::new(output).keep_alive(KeepAlive::default())
 }
 
-async fn collect(
-    state: &AppState,
-    group_id: &str,
-    cursors: &mut BTreeMap<String, u64>,
-    replay: bool,
-) -> Result<Vec<Value>, crate::api::ApiError> {
-    let actors = call(
+async fn validate_group(state: &AppState, group_id: &str) -> Result<(), crate::api::ApiError> {
+    let _ = call(
         state,
         "actor_list",
         object(json!({"group_id":group_id,"by":"user"})),
     )
     .await?;
-    let actors = actors.0["result"]["actors"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    let mut events = Vec::new();
-    for actor in actors.iter().filter(|actor| actor["runner"] == "headless") {
-        let actor_id = actor["id"].as_str().unwrap_or("");
-        let after = cursors
-            .get(actor_id)
-            .copied()
-            .unwrap_or(if replay { 0 } else { u64::MAX });
-        let Ok(response) = call(
-            state,
-            "terminal_since",
-            object(json!({"group_id":group_id,"actor_id":actor_id,"after":after,"limit_bytes":2_000_000})),
-        )
-        .await
-        else {
-            continue;
-        };
-        let history = &response.0["result"]["history"];
-        let start = history["start_cursor"].as_u64().unwrap_or(after);
-        let end = history["end_cursor"].as_u64().unwrap_or(start);
-        cursors.insert(actor_id.to_owned(), end);
-        let text = history["data"].as_str().unwrap_or("");
-        if text.is_empty() {
-            continue;
-        }
-        events.push(json!({"id":format!("he_{}",&Uuid::new_v4().simple().to_string()[..16]),"ts":utc_now(),"group_id":group_id,"actor_id":actor_id,"type":"output","data":{"text":text,"start_cursor":start,"end_cursor":end}}));
-    }
-    Ok(events)
+    Ok(())
+}
+
+fn events_path(state: &AppState, group_id: &str) -> PathBuf {
+    let home = &state.home;
+    let Ok(store) = cccc_core::GroupStore::new(home.clone()) else {
+        return PathBuf::new();
+    };
+    let Ok(directory) = store.state_dir(group_id) else {
+        return PathBuf::new();
+    };
+    directory.join("headless/events.jsonl")
 }
 
 fn default_true() -> bool {

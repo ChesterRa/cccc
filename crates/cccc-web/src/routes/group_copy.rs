@@ -8,6 +8,8 @@ use cccc_core::group_copy;
 use serde_json::{Map, Value, json};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use uuid::Uuid;
 
 use crate::AppState;
@@ -20,16 +22,22 @@ pub fn routes() -> Router<AppState> {
         .route("/api/v1/groups/copy/preview_import", post(preview))
         .route("/api/v1/groups/copy/import", post(import))
         .route("/api/v1/groups/copy/uploads/{upload_id}", delete(cleanup))
-        .layer(DefaultBodyLimit::max(group_copy::MAX_PACKAGE_BYTES))
+        .layer(DefaultBodyLimit::max(
+            group_copy::MAX_PACKAGE_BYTES + 1024 * 1024,
+        ))
 }
 
 async fn export(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
 ) -> Result<Response<Body>, ApiError> {
-    let store = GroupStore::new(state.home).map_err(|error| ApiError::bad(error.to_string()))?;
-    let (bytes, _, filename) =
-        group_copy::export(&store, &group_id).map_err(|error| ApiError::bad(error.to_string()))?;
+    let permit = acquire_copy_permit().await?;
+    let home = state.home;
+    let (bytes, _, filename) = run_copy_task(permit, move || {
+        let store = GroupStore::new(home)?;
+        group_copy::export(&store, &group_id)
+    })
+    .await?;
     let safe = filename.replace(['\r', '\n', '"'], "_");
     let mut response = Response::new(Body::from(bytes));
     response.headers_mut().insert(
@@ -56,10 +64,14 @@ async fn preview(
     let bytes = upload
         .data
         .ok_or_else(|| ApiError::bad("file is required"))?;
-    let store =
-        GroupStore::new(state.home.clone()).map_err(|error| ApiError::bad(error.to_string()))?;
-    let preview =
-        group_copy::preview(&store, &bytes).map_err(|error| ApiError::bad(error.to_string()))?;
+    let permit = acquire_copy_permit().await?;
+    let home = state.home.clone();
+    let (preview, bytes) = run_copy_task(permit, move || {
+        let store = GroupStore::new(home)?;
+        let preview = group_copy::preview(&store, &bytes)?;
+        Ok((preview, bytes))
+    })
+    .await?;
     let upload_id = Uuid::new_v4().simple().to_string();
     let path = upload_path(&state, &upload_id)?;
     if let Some(parent) = path.parent() {
@@ -87,18 +99,21 @@ async fn import(
     let bytes = if let Some(data) = upload.data {
         data
     } else if let Some(path) = &staged {
-        fs::read(path).map_err(|_| ApiError::not_found("group copy upload not found"))?
+        tokio::fs::read(path)
+            .await
+            .map_err(|_| ApiError::not_found("group copy upload not found"))?
     } else {
         return Err(ApiError::bad("file or upload_id is required"));
     };
-    let store = GroupStore::new(state.home).map_err(|error| ApiError::bad(error.to_string()))?;
-    let result = group_copy::import(
-        &store,
-        &bytes,
-        &field(&upload.fields, "workspace_root"),
-        &field(&upload.fields, "title"),
-    )
-    .map_err(|error| ApiError::bad(error.to_string()))?;
+    let permit = acquire_copy_permit().await?;
+    let workspace_root = field(&upload.fields, "workspace_root");
+    let title = field(&upload.fields, "title");
+    let home = state.home;
+    let result = run_copy_task(permit, move || {
+        let store = GroupStore::new(home)?;
+        group_copy::import(&store, &bytes, &workspace_root, &title)
+    })
+    .await?;
     if let Some(path) = staged {
         let _ = fs::remove_file(path);
     }
@@ -165,10 +180,36 @@ async fn read_upload(mut multipart: Multipart) -> Result<Upload, ApiError> {
 
 fn checked_extend(data: &mut Vec<u8>, chunk: &Bytes) -> Result<(), ApiError> {
     if data.len().saturating_add(chunk.len()) > group_copy::MAX_PACKAGE_BYTES {
-        return Err(ApiError::bad("group copy package exceeds 1 GiB"));
+        return Err(ApiError::bad("group copy package exceeds 100 MiB"));
     }
     data.extend_from_slice(chunk);
     Ok(())
+}
+
+fn copy_semaphore() -> &'static Arc<Semaphore> {
+    static SEMAPHORE: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    SEMAPHORE.get_or_init(|| Arc::new(Semaphore::new(1)))
+}
+
+async fn acquire_copy_permit() -> Result<OwnedSemaphorePermit, ApiError> {
+    copy_semaphore()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|error| ApiError::unavailable("group_copy_unavailable", error.to_string()))
+}
+
+async fn run_copy_task<T: Send + 'static>(
+    permit: OwnedSemaphorePermit,
+    task: impl FnOnce() -> std::io::Result<T> + Send + 'static,
+) -> Result<T, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        task()
+    })
+    .await
+    .map_err(|error| ApiError::unavailable("group_copy_task_failed", error.to_string()))?
+    .map_err(|error| ApiError::bad(error.to_string()))
 }
 
 fn upload_path(state: &AppState, upload_id: &str) -> Result<PathBuf, ApiError> {
@@ -196,5 +237,27 @@ fn require_admin(principal: &Principal) -> Result<(), ApiError> {
         Ok(())
     } else {
         Err(ApiError::forbidden("administrator access required"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn blocking_task_panic_releases_the_copy_permit() {
+        let permit = acquire_copy_permit().await.expect("first permit");
+        let result: Result<(), ApiError> = run_copy_task(permit, || {
+            panic!("simulated group-copy worker failure");
+        })
+        .await;
+        assert!(result.is_err());
+
+        let permit = tokio::time::timeout(Duration::from_secs(1), acquire_copy_permit())
+            .await
+            .expect("permit was leaked")
+            .expect("second permit");
+        drop(permit);
     }
 }

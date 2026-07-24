@@ -84,6 +84,7 @@ from ....util.fs import atomic_write_text
 from ....util.time import utc_now_iso
 from ....util.process import pid_is_alive
 from ..stream_close import close_stream_writer
+from .voice_transcription_upload import receive_voice_transcription
 from ..schemas import (
     AttachRequest,
     AssistantSettingsUpdateRequest,
@@ -100,7 +101,6 @@ from ..schemas import (
     AssistantVoicePromptDraftAckRequest,
     AssistantVoiceTranscriptClearRequest,
     AssistantVoiceTranscriptSegmentRequest,
-    AssistantVoiceTranscriptionRequest,
     CreateGroupRequest,
     GroupAutomationManageRequest,
     GroupAutomationRequest,
@@ -2414,20 +2414,26 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     @group_router.post("/assistants/voice_secretary/transcriptions")
     async def group_voice_secretary_transcription_create(
         group_id: str,
-        req: AssistantVoiceTranscriptionRequest,
+        request: Request,
+        language: str = "",
+        by: str = "user",
     ) -> Dict[str, Any]:
-        return await ctx.daemon(
-            {
-                "op": "assistant_voice_transcribe",
-                "args": {
-                    "group_id": group_id,
-                    "audio_base64": req.audio_base64,
-                    "mime_type": req.mime_type,
-                    "language": req.language,
-                    "by": req.by,
-                },
-            }
-        )
+        upload = await receive_voice_transcription(request, language=language, by=by)
+        try:
+            return await ctx.daemon(
+                {
+                    "op": "assistant_voice_transcribe",
+                    "args": {
+                        "group_id": group_id,
+                        "audio_path": str(upload.path),
+                        "mime_type": upload.mime_type,
+                        "language": upload.language,
+                        "by": upload.by,
+                    },
+                }
+            )
+        finally:
+            upload.cleanup()
 
     @group_router.post("/assistants/voice_secretary/recording_lease")
     async def group_voice_secretary_recording_lease_update(

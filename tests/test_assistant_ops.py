@@ -1402,6 +1402,29 @@ class TestAssistantOps(unittest.TestCase):
                 os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
             cleanup()
 
+    def test_voice_service_transcribe_rejects_unmanaged_audio_path(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            outside = Path(home) / "outside.audio"
+            outside.write_bytes(b"audio")
+
+            transcribe, _ = self._call(
+                "assistant_voice_transcribe",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "audio_path": str(outside),
+                    "mime_type": "application/octet-stream",
+                },
+            )
+
+            self.assertFalse(transcribe.ok)
+            self.assertEqual(transcribe.error.code, "assistant_voice_transcribe_failed")
+            self.assertIn("managed upload directory", transcribe.error.message)
+        finally:
+            cleanup()
+
     def test_voice_service_transcribe_uses_first_party_service_process(self) -> None:
         _, cleanup = self._with_home()
         old_mock = os.environ.get("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT")

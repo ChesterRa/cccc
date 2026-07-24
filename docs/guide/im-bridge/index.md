@@ -1,82 +1,89 @@
-# IM Bridge
+# IM Bridge Overview
 
-The Rust control plane stores configuration and chat authorization state for Telegram, Slack, Discord, Feishu/Lark, DingTalk, WeCom, and Weixin.
+Bridge your CCCC working group to popular IM platforms for mobile access.
 
-## Status Semantics
+## What is IM Bridge?
 
-| State | Meaning |
-|---|---|
-| configured | Required platform fields were accepted and stored in Rust Home |
-| enabled | The group requested the bridge to run |
-| running | A real network adapter is active |
-| authorized | A chat passed the explicit pairing/subscription flow |
+The IM Bridge allows you to:
 
-The Rust package does not report `running=true` merely because configuration exists. Platform network adapters must be available and validated independently.
+- Send messages to agents from your phone
+- Receive updates and notifications
+- Control the group with slash commands
+- Share files and attachments
 
-## CLI
+## Supported Platforms
+
+| Platform | Status | Best For |
+|----------|--------|----------|
+| [Telegram](./telegram) | ✅ | Personal use, quick setup |
+| [Slack](./slack) | ✅ | Team collaboration |
+| [Discord](./discord) | ✅ | Community/gaming |
+| [Feishu/Lark](./feishu) | ✅ | Enterprise (China/Global) |
+| [DingTalk](./dingtalk) | ✅ | Enterprise (China) — AI Card Streaming supported |
+| [WeCom](./wecom) | ✅ | Enterprise (China) — Long connection Bot ID / Secret flow |
+| Weixin / WeChat | ✅ | Personal and group chat access via the Python Weixin adapter |
+
+## Design Principles
+
+- **1 Group = 1 Bot**: Each working group connects to one bot instance for simplicity and isolation
+- **Explicit subscription**: Users must `/subscribe` before receiving messages
+- **Thin ports**: IM bridges forward messages and commands; the daemon remains the single source of truth
+
+## Common Commands
+
+Once subscribed to any platform, these commands work universally:
+
+| Command | Description |
+|---------|-------------|
+| `/send <message>` | Send to foreman (default) |
+| `/send @<actor> <message>` | Send to specific actor |
+| `/send @all <message>` | Send to all agents |
+| `/send @peers <message>` | Send to non-foreman agents |
+| `/subscribe` | Start receiving messages |
+| `/unsubscribe` | Stop receiving messages |
+| `/status` | Show group status |
+| `/pause` | Pause message delivery |
+| `/resume` | Resume message delivery |
+| `/verbose` | Toggle verbose mode |
+| `/help` | Show help |
+
+::: tip Implicit Send
+On all platforms, @mentioning the bot (in groups) or sending a direct message with plain text is automatically treated as `/send` to the **foreman**. You only need the explicit `/send` command when targeting specific agents.
+:::
+
+Reserve `/send @all <message>` for true broadcasts, announcements, or urgent shared constraints. Use plain text, `/send @foreman <message>`, or a specific actor target for routine coordination.
+
+## CLI Commands
 
 ```bash
-cccc im set <platform> [credential options] [--group ID]
-cccc im config [--group ID]
-cccc im start [--group ID]
-cccc im stop [--group ID]
-cccc im status [--group ID]
-cccc im pending [--group ID]
-cccc im bind --key KEY [--group ID]
-cccc im authorized [--group ID]
-cccc im reject --key KEY [--group ID]
-cccc im revoke --chat-id ID [--thread-id N] [--group ID]
+# Configure (platform-specific, see each guide)
+cccc im set <platform> --token-env <ENV_VAR>
+
+# Control
+cccc im start        # Start IM bridge
+cccc im stop         # Stop IM bridge
+cccc im status       # Check bridge status
+cccc im logs         # View logs
+cccc im logs -f      # Follow logs
 ```
 
-Secrets should be supplied through environment variable names rather than literal values. Configuration is isolated per group under `CCCC_HOME`.
+::: tip WeCom Note
+WeCom currently uses the same start/stop/status CLI controls, but credentials are configured through the Web UI rather than `cccc im set`.
+:::
 
-## Chat Subscription
+## Quick Start
 
-Send `/subscribe` to the bot. The bot immediately replies with the real 12-character pairing key, which expires after 10 minutes. Repeating `/subscribe` from the same chat and platform during that window returns the same pending key instead of creating duplicates.
+1. Choose a platform from the list above
+2. Follow the setup guide to create a bot
+3. Configure CCCC with the bot credentials
+4. Start the bridge and subscribe in your chat
 
-Weixin is the exception: confirming the QR login automatically authorizes the scanning account for that group. It does not require `/subscribe` or a separate pending-request approval. Logging out removes only this QR-created authorization and preserves manually bound chats.
+## Next Steps
 
-Approve the request from Web **Pending Requests**, or use:
-
-```bash
-cccc im pending --group GROUP_ID
-cccc im bind --key KEY --group GROUP_ID
-```
-
-The bot also replies immediately to `/unsubscribe`, `/pause`, `/resume`, `/verbose [on|off]`, `/status`, `/help`, invalid `/send` usage, and unknown commands. `/verbose` is idempotent: no argument or `on` enables it, while `off` disables it.
-
-## Inbound Attachments
-
-Authorized chats can send attachment-only messages as well as text with attachments. The Rust adapters download provider-hosted files into the group's content-addressed `state/blobs/` storage and attach normalized metadata to the message before dispatching it to agents.
-
-- Discord accepts message attachments.
-- Telegram accepts documents, photos, videos, audio, voice messages, and video notes.
-- Feishu/Lark accepts images, files, audio, video/media, stickers, and resources embedded in rich posts. The app needs the `im:resource` scope.
-- DingTalk accepts pictures, files, audio, video, and images embedded in rich text. A valid RobotCode is required to exchange download codes for signed URLs.
-- WeCom accepts image, file, voice, video, and mixed-message attachments, including encrypted downloads.
-- Weixin accepts image, file, voice, and video media from the SDK's decrypted media path.
-- Slack accepts private image and file downloads with bot authentication.
-
-Each inbound attachment is limited to 10 MiB. Advertised oversize files are rejected before download where the provider supplies a size; streamed downloads are checked again while writing to blob storage. One failed attachment does not discard other successfully downloaded attachments or accompanying text.
-
-Weixin outbound messages send the agent's text first, followed by every attached file or image. Attachment titles are preserved so the SDK can select the correct Weixin media type; each outbound attachment uses the same 10 MiB limit and must resolve inside the group's blob storage.
-
-Feishu/Lark outbound messages use the same text-first ordering. Images are uploaded through the image API and sent as image messages; all other attachments are uploaded through the file API and sent as file messages. Each attachment is limited to 10 MiB and must resolve inside the group's blob storage.
-
-## Processing Feedback
-
-After an authorized inbound message is accepted by the daemon, supported adapters add a best-effort reaction to the source message. The feedback API never blocks message dispatch. The first user-facing agent response completes the indicator for that chat.
-
-- Feishu/Lark adds `OnIt` while processing and removes it on completion.
-- Telegram adds `👀` while processing and clears the bot reaction on completion.
-- DingTalk adds `🤔Thinking` while processing, recalls it on completion, and then adds `🥳Done`.
-
-## Security
-
-- One configuration belongs to one group.
-- Pending chats require explicit approval.
-- Revocation removes the chat from the authorized list.
-- The daemon remains the collaboration source of truth; adapters are transport ports.
-- Test both inbound and outbound delivery before using an IM platform for operational control.
-
-The platform-specific pages in this directory describe provider-side bot creation. Treat any adapter-specific command in an older page as legacy until the Rust status endpoint reports a real worker.
+- [Telegram Setup](./telegram) - Quick personal setup
+- [Slack Setup](./slack) - Team collaboration
+- [Discord Setup](./discord) - Community access
+- [Feishu/Lark Setup](./feishu) - Enterprise (China/Global)
+- [DingTalk Setup](./dingtalk) - Enterprise (China)
+- [WeCom Setup](./wecom) - Enterprise (China)
+- Weixin / WeChat setup is configured from the Web IM Bridge settings surface.

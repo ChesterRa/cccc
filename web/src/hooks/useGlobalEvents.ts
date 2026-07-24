@@ -7,15 +7,27 @@ import { publishCapabilityChanged } from "../utils/capabilityEvents";
 import { publishGroupBridgePairingChanged } from "../utils/groupBridgePairingEvents";
 
 const GLOBAL_REFRESH_EVENT_KINDS = new Set([
+  // Python publishes global lifecycle events; Rust forwards canonical ledger events.
   "group.created",
   "group.updated",
   "group.deleted",
   "group.state_changed",
+  "group.create",
+  "group.update",
+  "group.start",
+  "group.stop",
+  "group.set_state",
   "actor.remove",
   "actor.start",
   "actor.stop",
   "actor.restart",
 ]);
+
+export function shouldRefreshGroupsAfterGlobalEvent(ev: unknown): boolean {
+  if (!ev || typeof ev !== "object") return false;
+  const kind = String((ev as { kind?: unknown }).kind || "").trim();
+  return GLOBAL_REFRESH_EVENT_KINDS.has(kind);
+}
 
 const ACTOR_REFRESH_EVENT_KINDS = new Set([
   "actor.remove",
@@ -23,6 +35,9 @@ const ACTOR_REFRESH_EVENT_KINDS = new Set([
   "actor.stop",
   "actor.restart",
   "group.state_changed",
+  "group.start",
+  "group.stop",
+  "group.set_state",
 ]);
 
 const CAPABILITY_REFRESH_EVENT_KINDS = new Set(["capability.changed"]);
@@ -210,8 +225,7 @@ export function useGlobalEvents({
       es.addEventListener("event", (e) => {
         try {
           const ev = JSON.parse((e as MessageEvent).data || "{}");
-          const kind = typeof ev?.kind === "string" ? ev.kind : "";
-          if (GLOBAL_REFRESH_EVENT_KINDS.has(kind)) {
+          if (shouldRefreshGroupsAfterGlobalEvent(ev)) {
             invalidateAndRefreshGroups();
           }
           if (shouldRefreshActorsAfterGlobalEvent(ev, selectedGroupIdRef.current || "")) {

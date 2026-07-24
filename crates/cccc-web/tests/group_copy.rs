@@ -1,6 +1,6 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use cccc_core::{GroupStore, HomeLayout};
+use cccc_core::{GroupStore, HomeLayout, ledger};
 use http_body_util::BodyExt;
 use serde_json::Value;
 use tower::ServiceExt;
@@ -91,4 +91,16 @@ async fn group_copy_export_preview_and_staged_import_work_without_python() {
     .expect("json");
     assert_ne!(imported["result"]["group_id"], group.group_id);
     assert_eq!(imported["result"]["group_id_conflict"], true);
+    let imported_group_id = imported["result"]["group_id"]
+        .as_str()
+        .expect("imported group id");
+    let events = ledger::tail(
+        &store
+            .ledger_path(imported_group_id)
+            .expect("imported ledger"),
+        1,
+    )
+    .expect("import lifecycle event");
+    assert_eq!(events[0].kind, "group.create");
+    assert_eq!(events[0].data["imported"], true);
 }

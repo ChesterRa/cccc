@@ -19,6 +19,7 @@ mod group_space;
 mod group_space_provider;
 mod groups;
 mod headless;
+mod headless_store;
 mod im;
 mod messaging;
 mod nomcp;

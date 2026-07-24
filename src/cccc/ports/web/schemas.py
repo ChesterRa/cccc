@@ -264,13 +264,6 @@ class AssistantStatusUpdateRequest(BaseModel):
     by: str = Field(default="user")
 
 
-class AssistantVoiceTranscriptionRequest(BaseModel):
-    audio_base64: str = Field(default="")
-    mime_type: str = Field(default="application/octet-stream")
-    language: str = Field(default="")
-    by: str = Field(default="user")
-
-
 class AssistantVoiceModelInstallRequest(BaseModel):
     model_id: str = Field(default="")
     by: str = Field(default="user")

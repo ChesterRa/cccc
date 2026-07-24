@@ -11,11 +11,15 @@ pub fn status(group: &GroupDoc) -> Value {
         .iter()
         .filter(|actor| {
             actor.enabled
-                && (actor_runtime::is_structured(actor)
-                    && group.running
-                    && group.state != GroupState::Stopped
-                    || actor_runtime::status(&group.group_id, &actor.id)
-                        .is_some_and(|status| status.running))
+                && (if super::local_headless::supports(actor) {
+                    super::local_headless::running(&group.group_id, &actor.id)
+                } else {
+                    actor_runtime::is_structured(actor)
+                        && group.running
+                        && group.state != GroupState::Stopped
+                        || actor_runtime::status(&group.group_id, &actor.id)
+                            .is_some_and(|status| status.running)
+                })
         })
         .collect();
     let lifecycle = if running.is_empty() && group.state == GroupState::Stopped {
@@ -49,9 +53,11 @@ pub fn group(group: GroupDoc) -> Value {
                 item["role"] = serde_json::to_value(actors::effective_role(&group, &actor.id))
                     .unwrap_or(Value::Null);
                 if actor_runtime::is_structured(actor) {
-                    item["running"] = Value::Bool(
-                        actor.enabled && group.running && group.state != GroupState::Stopped,
-                    );
+                    item["running"] = Value::Bool(if super::local_headless::supports(actor) {
+                        super::local_headless::running(&group.group_id, &actor.id)
+                    } else {
+                        actor.enabled && group.running && group.state != GroupState::Stopped
+                    });
                     item["pid"] = Value::Null;
                 }
             }

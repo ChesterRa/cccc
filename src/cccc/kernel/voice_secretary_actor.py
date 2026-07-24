@@ -16,7 +16,9 @@ VOICE_SECRETARY_ASSISTANT_ID = "voice_secretary"
 
 def is_voice_secretary_enabled(group: Group) -> bool:
     assistants = group.doc.get("assistants") if isinstance(group.doc.get("assistants"), dict) else {}
-    entry = assistants.get(VOICE_SECRETARY_ASSISTANT_ID) if isinstance(assistants.get(VOICE_SECRETARY_ASSISTANT_ID), dict) else {}
+    canonical = assistants.get("assistant")
+    legacy = assistants.get(VOICE_SECRETARY_ASSISTANT_ID)
+    entry = canonical if isinstance(canonical, dict) else legacy if isinstance(legacy, dict) else {}
     return coerce_bool(entry.get("enabled"), default=False)
 
 

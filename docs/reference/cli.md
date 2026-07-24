@@ -1,155 +1,307 @@
 # CLI Reference
 
-The executable is `cccc`. Commands emit formatted JSON unless the result is naturally a path, version, or short status.
+Complete command reference for the CCCC CLI.
 
-## Global
+## Global Commands
+
+### `cccc`
+
+Start the daemon and Web UI together.
 
 ```bash
-cccc [--host HOST] [--port PORT] [COMMAND]
-cccc --help
-cccc version
-cccc home
-cccc status
-cccc doctor
+cccc                    # Start daemon + Web UI
+cccc --help             # Show help
 ```
 
-With no command, `cccc` starts the Rust daemon when needed and serves the Web UI. `--host` and `--port` override `CCCC_WEB_HOST` and `CCCC_WEB_PORT`.
+### `cccc doctor`
 
-## Daemon
+Check your environment and diagnose issues.
 
 ```bash
-cccc daemon start
-cccc daemon stop
-cccc daemon status
-cccc daemon run
+cccc doctor             # Full environment check
 ```
 
-`run` stays in the foreground. Unix uses a socket under Rust Home; Windows and `CCCC_DAEMON_TRANSPORT=tcp` use loopback TCP.
+On Linux, the report includes projected-browser readiness: system Chrome/Edge, required `Xvfb`
+isolation, and the optional `x11vnc` VNC viewer. A missing `x11vnc` does not prevent browser
+isolation; CCCC falls back to its CDP screencast viewer.
 
-On Linux, the Python runtime report includes projected-browser readiness for its headed browser:
-system Chrome/Edge, required `Xvfb` isolation, and optional `x11vnc`. The Rust runtime uses a
-headless Chromium surface instead; its report identifies the discovered browser and explicitly
-reports `xvfb_required=false` because it never attaches that surface to the host desktop.
+### `cccc runtime list`
 
-## Groups
+List available agent runtimes.
 
 ```bash
-cccc group create --title TITLE [--topic TOPIC]
-cccc groups
-cccc group show <group_id>
-cccc group use <group_id> [path]
-cccc use <group_id>
-cccc active
-cccc attach [path] [--group <group_id>]
-cccc group update [--group ID] [--title TITLE] [--topic TOPIC]
-cccc group start [--group ID]
-cccc group stop [--group ID]
-cccc group set-state active|idle|paused|stopped [--group ID]
-cccc group detach-scope <scope_key> [--group ID]
-cccc group reset [--group ID] --confirm <group_id>
-cccc group delete [--group ID] --confirm <group_id>
+cccc runtime list       # List detected runtimes
+cccc runtime list --all # List all supported runtimes
 ```
 
-Commands with optional `--group` use the active group.
+## Daemon Commands
 
-## Actors
+### `cccc daemon`
+
+Manage the CCCC daemon.
 
 ```bash
-cccc actor list [--group ID]
-cccc actor add <actor_id> [--runtime codex] [--runner pty|headless]
-  [--title TITLE] [--command "COMMAND"] [--env KEY=VALUE] [--scope KEY]
-cccc actor update <actor_id> [--runtime NAME] [--runner MODE]
-  [--title TITLE] [--command "COMMAND"] [--env KEY=VALUE]
-cccc actor start|stop|restart|remove <actor_id> [--group ID]
-cccc actor secrets <actor_id> [--set KEY=VALUE] [--unset KEY] [--clear]
-cccc prompt <actor_id> [--group ID]
+cccc daemon status      # Check daemon status
+cccc daemon start       # Start daemon
+cccc daemon stop        # Stop daemon
 ```
 
-`runtime=web_model` uses browser delivery and remote MCP, so it has no local child process.
+Notes:
+- `cccc daemon start` refuses to spawn a duplicate daemon if the pid-file process is still alive but IPC is not responding.
+- In that case, run `cccc daemon stop` (or clean stale runtime state) before retrying start.
 
-## Messaging
+## Group Commands
+
+### `cccc attach`
+
+Create or attach to a working group.
 
 ```bash
-cccc send TEXT [--group ID] [--to TARGET] [--priority normal|attention]
-cccc tracked-send TEXT [--group ID] [--to TARGET]
-cccc reply <event_id> TEXT [--group ID]
-cccc inbox --actor-id ID [--group ID] [--limit N]
-cccc read <event_id> --actor-id ID [--group ID]
-cccc tail [--group ID] [-n N]
-cccc ledger snapshot [--group ID]
-cccc ledger compact [--group ID] [--dry-run]
+cccc attach .           # Attach current directory as scope
+cccc attach /path/to/project
 ```
 
-Repeat `--to` for multiple recipients. Recipient tokens include actor IDs, `@all`, `@peers`, and `@foreman`.
+### `cccc groups`
 
-## IM Control
+List all working groups.
 
 ```bash
-cccc im set <platform> [credential options] [--group ID]
-cccc im config|start|stop|status [--group ID]
-cccc im bind --key KEY [--group ID]
-cccc im pending|authorized [--group ID]
-cccc im reject --key KEY [--group ID]
-cccc im revoke --chat-id ID [--thread-id N] [--group ID]
-cccc im logs [-n LINES] [-f] [--group ID]
+cccc groups             # List groups
 ```
 
-Platforms: `telegram`, `slack`, `discord`, `feishu`, `dingtalk`, `wecom`, `weixin`. Credential options store environment-variable names or direct secrets in Rust Home. The Web control plane starts the corresponding Rust network adapter and verifies credentials where the provider supports an explicit validation call. Missing or rejected credentials fail without fabricating a running adapter.
+### `cccc use`
 
-`cccc im ...` controls the long-running Web process at `CCCC_WEB_HOST` / `CCCC_WEB_PORT` (default `127.0.0.1:8848`). Start `cccc` first; the short-lived CLI process does not own persistent IM connections. Global `--host` and `--port` options can target a non-default local Web listener.
-
-## Group Space
+Switch to a different working group.
 
 ```bash
-cccc space status [--group ID] [--provider notebooklm]
-cccc space bind [remote_space_id] --lane work|memory [--group ID]
-cccc space unbind --lane work|memory [--group ID]
-cccc space sync --lane work|memory [--group ID] [--force]
-cccc space ingest --lane work|memory [--payload JSON] [--idempotency-key KEY] [--provider notebooklm|local]
-cccc space query QUERY --lane work|memory [--options JSON] [--provider notebooklm|local]
-cccc space sources --lane work|memory [--action list|rename|delete]
-  [--source-id ID] [--new-title TITLE]
-cccc space jobs --lane work|memory [--action list|retry|cancel] [--job-id ID]
-cccc space auth [status|start|cancel|disconnect]
+cccc use <group_id>     # Switch to group
+```
+
+### `cccc group`
+
+Manage the current working group.
+
+```bash
+cccc group create --title "my-group"         # Create group
+cccc group show <group_id>                   # Show group metadata
+cccc group update --group <id> --title "..." # Update title/topic
+cccc group use <group_id> .                  # Set active scope
+cccc group start --group <id>                # Start group actors
+cccc group stop --group <id>                 # Stop group actors
+cccc group set-state idle --group <id>       # Set state: active/idle/paused/stopped
+cccc group detach-scope <scope_key> --group <id>
+cccc group delete --group <id> --confirm <id>
+```
+
+## Actor Commands
+
+### `cccc actor add`
+
+Add a new actor to the group.
+
+```bash
+cccc actor add <actor_id> --runtime claude
+cccc actor add <actor_id> --runtime codex
+cccc actor add <actor_id> --runtime web_model
+cccc actor add <actor_id> --runtime custom --command "my-agent"
+```
+
+Options:
+- `--runtime`: Agent runtime (claude, codex, web_model, droid, etc.)
+- `--command`: Custom command (for custom runtime)
+- `--runner`: Runner type (pty or headless; web_model is headless-only)
+- `--title`: Display title
+
+For the ChatGPT Web Model actor, create and start the actor from the target CCCC Web group, then finish ChatGPT sign-in, MCP URL, and chat binding in `Settings > Global > ChatGPT Web Model`.
+
+### `cccc actor`
+
+Manage actors.
+
+```bash
+cccc actor list                    # List actors
+cccc actor start <actor_id>        # Start actor
+cccc actor stop <actor_id>         # Stop actor
+cccc actor restart <actor_id>      # Restart actor
+cccc actor remove <actor_id>       # Remove actor
+cccc actor update <actor_id> ...   # Update actor settings
+cccc actor secrets <actor_id> ...  # Manage runtime-only secrets
+```
+
+## Message Commands
+
+### `cccc send`
+
+Send a message.
+
+```bash
+cccc send "Hello"                  # No --to: default recipient policy applies (default: foreman)
+cccc send "Hello" --to @foreman    # Send to foreman
+cccc send "Hello" --to peer-1      # Send to specific actor
+cccc send "Announcement" --to @all # Explicit broadcast
+```
+
+### `cccc tracked-send`
+
+Create a task and send one linked delegation message.
+
+```bash
+cccc tracked-send "Please implement this and reply with validation evidence." \
+  --to peer-1 \
+  --title "Implement feature" \
+  --outcome "Feature is implemented and validation evidence is reported"
+```
+
+### `cccc reply`
+
+Reply to a message.
+
+```bash
+cccc reply <event_id> "Reply text"
+```
+
+### `cccc inbox`
+
+View inbox.
+
+```bash
+cccc inbox --actor-id <id>         # View actor unread messages
+cccc inbox --actor-id <id> --mark-read
+```
+
+### `cccc tail`
+
+Tail the ledger.
+
+```bash
+cccc tail                          # Show recent events
+cccc tail -n 50                    # Show last 50 events
+cccc tail -f                       # Follow new events
+```
+
+## IM Bridge Commands
+
+### `cccc im`
+
+Manage IM Bridge.
+
+```bash
+cccc im set telegram --token-env TELEGRAM_BOT_TOKEN
+cccc im set slack --bot-token-env SLACK_BOT_TOKEN --app-token-env SLACK_APP_TOKEN
+cccc im set discord --token-env DISCORD_BOT_TOKEN
+cccc im set feishu --app-key-env FEISHU_APP_ID --app-secret-env FEISHU_APP_SECRET
+cccc im set dingtalk --app-key-env DINGTALK_APP_KEY --app-secret-env DINGTALK_APP_SECRET --robot-code-env DINGTALK_ROBOT_CODE
+
+cccc im start                      # Start IM bridge
+cccc im stop                       # Stop IM bridge
+cccc im status                     # Check IM bridge status
+cccc im logs                       # View IM bridge logs
+cccc im logs -f                    # Follow IM bridge logs
+```
+
+## Group Space Commands
+
+### `cccc space`
+
+Manage Group Space provider-backed shared memory.
+
+```bash
+cccc space status
 cccc space credential status
-cccc space credential set (--auth-json JSON | --auth-json-file PATH)
+cccc space credential set --auth-json '{"cookies":[{"name":"SID","value":"...","domain":".google.com"}]}'
+cccc space credential set --auth-json-file ./notebooklm.storage_state.json
 cccc space credential clear
 cccc space health
+
+cccc space bind [remote_space_id]    # omit to auto-create NotebookLM notebook
+cccc space unbind
+cccc space sync --force
+
+cccc space ingest --kind context_sync --payload '{"vision":"v0.5 plan"}'
+cccc space ingest --kind resource_ingest --payload '{"path":"docs/spec.md"}' --idempotency-key ingest-docs-1
+
+cccc space query "What is the latest shared plan?"
+cccc space query "Summarize risks from these sources" --options '{"source_ids":["src_1","src_2"]}'
+
+cccc space jobs list
+cccc space jobs list --state failed --limit 20
+cccc space jobs retry <job_id>
+cccc space jobs cancel <job_id>
 ```
 
-NotebookLM is the default provider. Configure a Playwright storage-state JSON
-with `cccc space credential set --auth-json-file PATH`, run `cccc space health`,
-then bind a notebook. Omitting `remote_space_id` on `space bind` creates a new
-notebook. Local operations require explicit `--provider local` and return a
-degraded marker; there is no silent fallback. NotebookLM artifact and full sync
-operations remain explicitly unavailable.
+Notes:
+- `--group` is optional; defaults to the active group.
+- Current provider is `notebooklm`.
+- `--payload` and `--options` must be JSON objects.
+- `cccc space query --options` only supports `source_ids` (array of source IDs).
+- `language` / `lang` are not valid query options (put language requirement in query text).
+- Provider credentials are write-only; CLI/Web only return masked metadata.
+- `cccc space health` validates credential format and adapter compatibility.
+- When a group is bound, curated `context_sync` exports are also auto-enqueued from `context_sync` updates.
+- `cccc space sync` performs two-way reconcile for Group Space:
+  - local `repo/space/` files -> provider sources,
+  - provider source/artifact projection -> local `repo/space/` (`.sync/remote-sources` and `artifacts/`).
 
-## Runtime, MCP, And Web
+## Setup Commands
+
+### `cccc setup`
+
+Configure MCP for an agent runtime.
 
 ```bash
-cccc runtime list
-cccc runtime hermes status
-cccc runtime hermes prepare --yes
-cccc runtime hermes mcp-test
-cccc setup
-cccc mcp
-cccc web
+cccc setup --runtime claude        # Auto-configure for Claude Code
+cccc setup --runtime codex         # Auto-configure for Codex
+cccc setup --runtime copilot       # Auto-configure for GitHub Copilot CLI
+cccc setup --runtime cursor        # Show prompt-assisted setup contract for Cursor CLI
+cccc setup --runtime devin         # Auto-configure for Devin CLI
+cccc setup --runtime kiro          # Auto-configure for Kiro CLI
+cccc setup --runtime kimi          # Auto-configure for Kimi CLI
+cccc setup --runtime kilo          # Show prompt-assisted setup contract for Kilo Code CLI
+cccc setup --runtime antigravity   # Show prompt-assisted setup contract for Antigravity CLI
 ```
 
-`setup` prints an MCP configuration whose command is the current executable and whose environment points to `CCCC_HOME`. `mcp` runs stdio MCP. `web` is equivalent to the default launch.
+### `cccc update`
 
-## Environment
+Upgrade CCCC in the current Python environment.
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `CCCC_HOME` | `~/.cccc` | Rust runtime home |
-| `CCCC_WEB_HOST` | saved setting, then `127.0.0.1` | Web bind host; `--host` overrides both |
-| `CCCC_WEB_PORT` | saved setting, then `8848` | Web port; `--port` overrides both |
-| `CCCC_DAEMON_TRANSPORT` | platform default | `unix` or `tcp` |
-| `CCCC_DAEMON_HOST` | `127.0.0.1` | TCP daemon host |
-| `CCCC_DAEMON_PORT` | random | TCP daemon port |
-| `CCCC_GROUP_ID` | active group | MCP group context |
-| `CCCC_ACTOR_ID` | none | MCP actor context |
-| `RUST_LOG` | normal | Rust tracing filter |
+```bash
+cccc update                        # Upgrade using the detected channel
+cccc update --channel stable       # Force the stable PyPI channel
+cccc update --channel rc           # Force the TestPyPI RC channel
+cccc update --check                # Show install detection + planned command
+```
 
-Python and Rust use the same `CCCC_HOME`. Stop the active daemon before switching implementations.
+Notes:
+- The default channel follows the detected install metadata when possible, then falls back to `stable`.
+- Editable and local-path installs are reported but not updated automatically.
+
+## Web Commands
+
+### `cccc web`
+
+Start only the Web UI (daemon must be running).
+
+```bash
+cccc web                           # Start Web UI
+cccc web --port 9000               # Custom port
+```
+
+## MCP Commands
+
+### `cccc mcp`
+
+Start the MCP server (for agent integration).
+
+```bash
+cccc mcp                           # Start MCP server (stdio mode)
+```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CCCC_HOME` | `~/.cccc` | Runtime home directory |
+| `CCCC_WEB_HOST` | saved setting, then `127.0.0.1` | Web UI bind address; `--host` overrides both |
+| `CCCC_WEB_PORT` | saved setting, then `8848` | Web UI port; `--port` overrides both |
+| `CCCC_WEB_READY_TIMEOUT_SECONDS` | `10` | Supervised Web child readiness timeout before CCCC treats startup as failed |
+| `CCCC_LOG_LEVEL` | `INFO` | Log level |

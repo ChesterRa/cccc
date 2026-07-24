@@ -35,6 +35,16 @@ Only update shared state if the checkpoint changed shared truth.
 
 LOGGER = logging.getLogger(__name__)
 
+
+class _GroupLoader(yaml.SafeLoader):
+    """Load group documents without coercing ISO timestamps to datetime."""
+
+
+_GroupLoader.yaml_implicit_resolvers = {
+    key: [resolver for resolver in resolvers if resolver[0] != "tag:yaml.org,2002:timestamp"]
+    for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+
 _DEFAULT_AUTOMATION_BUILTIN_SNIPPETS = {
     "standup": _DEFAULT_AUTOMATION_STANDUP_SNIPPET,
 }
@@ -210,7 +220,7 @@ def load_group(group_id: str) -> Optional[Group]:
     if not p.exists():
         return None
     try:
-        doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        doc = yaml.load(p.read_text(encoding="utf-8"), Loader=_GroupLoader) or {}
         if not isinstance(doc, dict):
             return None
         ensure_ledger_layout(gp)

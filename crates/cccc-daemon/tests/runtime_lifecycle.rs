@@ -27,7 +27,7 @@ fn actor_lifecycle_controls_terminal_process() {
                 "actor_id":"peer1",
                 "runner":"pty",
                 "runtime":"custom",
-                "command":["sh","-c","printf daemon-runtime-ready; sleep 5"],
+                "command":["sh","-c","printf 'daemon-runtime-ready\\n• Working (1s • esc to interrupt)\\n'; sleep 5"],
                 "by":"user"
             }),
         )
@@ -71,6 +71,41 @@ fn actor_lifecycle_controls_terminal_process() {
     assert!(
         call(
             &home,
+            "actor_update",
+            json!({
+                "group_id":group_id,
+                "actor_id":"peer1",
+                "runtime":"codex",
+                "runtime_state_source":"app_server",
+                "by":"user"
+            }),
+        )
+        .ok
+    );
+    cccc_core::codex_hook_state::record(
+        &home,
+        &group_id,
+        "peer1",
+        &json!({"hook_event_name":"UserPromptSubmit","turn_id":"turn-1"}),
+    )
+    .expect("hook state");
+    let working = call(
+        &home,
+        "actor_list",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    assert_eq!(working.result["actors"][0]["running"], true);
+    assert_eq!(
+        working.result["actors"][0]["effective_working_state"],
+        "working"
+    );
+    assert_eq!(
+        working.result["actors"][0]["effective_working_reason"],
+        "codex_hook_UserPromptSubmit"
+    );
+    assert!(
+        call(
+            &home,
             "actor_stop",
             json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
         )
@@ -82,6 +117,15 @@ fn actor_lifecycle_controls_terminal_process() {
         json!({"group_id":group_id,"by":"user"}),
     );
     assert_eq!(actors.result["actors"][0]["running"], false);
+    assert_eq!(
+        actors.result["actors"][0]["effective_working_state"],
+        "stopped"
+    );
+    assert_eq!(
+        actors.result["actors"][0]["effective_working_reason"],
+        "runner_not_running"
+    );
+    assert_eq!(actors.result["actors"][0]["runner_effective"], "pty");
 
     assert!(
         call(

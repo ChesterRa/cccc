@@ -34,6 +34,7 @@ impl IndexCache {
     fn entry(&mut self, path: &Path, source_bytes: u64) -> Arc<RwLock<LedgerIndex>> {
         self.clock = self.clock.wrapping_add(1);
         let index = if let Some(cached) = self.entries.get_mut(path) {
+            let source_bytes = source_bytes.max(cached.source_bytes);
             self.source_bytes = self
                 .source_bytes
                 .saturating_sub(cached.source_bytes)
@@ -95,7 +96,7 @@ impl IndexCache {
 
     fn evict(&mut self, protected: &Path) {
         while self.entries.len() > self.max_entries
-            || (self.source_bytes > self.max_source_bytes && self.entries.len() > 1)
+            || (self.source_bytes > self.weight_limit() && self.entries.len() > 1)
         {
             let candidate = self
                 .entries
@@ -108,6 +109,17 @@ impl IndexCache {
             let Some(candidate) = candidate else { break };
             self.remove(&candidate);
         }
+    }
+
+    fn weight_limit(&self) -> u64 {
+        let oversized_allowance = self
+            .entries
+            .values()
+            .map(|cached| cached.source_bytes)
+            .max()
+            .filter(|largest| *largest > self.max_source_bytes)
+            .unwrap_or_default();
+        self.max_source_bytes.saturating_add(oversized_allowance)
     }
 }
 
@@ -165,15 +177,31 @@ mod tests {
     }
 
     #[test]
-    fn keeps_one_oversized_active_entry_and_supports_invalidation() {
+    fn retains_one_oversized_entry_alongside_budgeted_smaller_entries() {
         let mut cache = IndexCache::new(2, 10);
         let path = Path::new("oversized");
         let active = cache.entry(path, 20);
-        assert_eq!(cache.entries.len(), 1);
-        cache.remove(path);
-        assert!(cache.entries.is_empty());
-        assert_eq!(cache.source_bytes, 0);
-        assert_eq!(Arc::strong_count(&active), 1);
+        cache.update_weight(path, 20, &active);
+        cache.entry(Path::new("small"), 2);
+
+        assert_eq!(cache.entries.len(), 2);
+        assert!(cache.entries.contains_key(path));
+        assert!(cache.entries.contains_key(Path::new("small")));
+        assert_eq!(cache.source_bytes, 22);
+        assert_eq!(Arc::strong_count(&active), 2);
+    }
+
+    #[test]
+    fn replaces_the_older_oversized_entry() {
+        let mut cache = IndexCache::new(4, 10);
+        cache.entry(Path::new("old-large"), 20);
+        cache.entry(Path::new("small"), 2);
+        cache.entry(Path::new("new-large"), 30);
+
+        assert!(!cache.entries.contains_key(Path::new("old-large")));
+        assert!(cache.entries.contains_key(Path::new("small")));
+        assert!(cache.entries.contains_key(Path::new("new-large")));
+        assert_eq!(cache.source_bytes, 32);
     }
 
     #[test]

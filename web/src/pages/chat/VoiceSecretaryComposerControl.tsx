@@ -1143,6 +1143,14 @@ export function VoiceSecretaryComposerControl({
     activeDocumentWritePath,
   );
   const assistantEnabled = !!assistant?.enabled;
+  const assistantActorHealth = assistant?.health?.actor;
+  const assistantActorRuntimeKnown =
+    !!assistantActorHealth &&
+    typeof assistantActorHealth === "object" &&
+    typeof (assistantActorHealth as Record<string, unknown>).running === "boolean";
+  const assistantActorRunning = assistantActorRuntimeKnown
+    ? (assistantActorHealth as Record<string, unknown>).running === true
+    : ["running", "working", "waiting"].includes(String(assistant?.lifecycle || ""));
   const recognitionBackend = String(assistant?.config?.recognition_backend || "browser_asr").trim();
   const rawConfiguredRecognitionLanguage =
     String(assistant?.config?.recognition_language || "mixed").trim() || "mixed";
@@ -4602,9 +4610,13 @@ export function VoiceSecretaryComposerControl({
   );
   const statusLabel = recording
     ? t("voiceSecretaryRecording", { defaultValue: "Recording" })
-    : assistantEnabled
-      ? t("voiceSecretaryEnabled", { defaultValue: "Enabled" })
-      : t("voiceSecretaryNotEnabled", { defaultValue: "Not enabled" });
+    : assistantEnabled && assistantActorRunning
+      ? t("voiceSecretaryAiRunning", { defaultValue: "AI running" })
+      : assistantEnabled && assistantActorRuntimeKnown
+        ? t("voiceSecretaryAiNotRunning", { defaultValue: "AI not running" })
+        : assistantEnabled
+          ? t("voiceSecretaryEnabled", { defaultValue: "Enabled" })
+          : t("voiceSecretaryNotEnabled", { defaultValue: "Not enabled" });
   const currentSelectedGroupId = String(selectedGroupId || "").trim();
   const activeRecordingGroupId = String(
     recordingGroupId || voiceRecordingLeaseGroupIdRef.current || "",
@@ -4963,7 +4975,12 @@ export function VoiceSecretaryComposerControl({
         defaultValue:
           "Voice Secretary is off for this group. Enable the assistant here or in Settings > Assistants before recording.",
       })
-    : speechError.trim() || lastRecordingStopReasonText;
+    : assistantActorRuntimeKnown && !assistantActorRunning
+      ? t("voiceSecretaryActorNotRunningHint", {
+          defaultValue:
+            "Voice Secretary AI is not running. Turn it off and on again to retry startup.",
+        })
+      : speechError.trim() || lastRecordingStopReasonText;
   const startAfterEnableRef = useRef(false);
   const assistantRowCurrentMode =
     assistantRowModeOptions.find((option) => option.key === captureMode) ||

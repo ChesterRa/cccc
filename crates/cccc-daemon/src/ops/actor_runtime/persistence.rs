@@ -9,11 +9,20 @@ pub fn persist_lifecycle(
 ) -> Result<Actor, OpError> {
     let running = group.actors.iter().any(|actor| {
         if actor.id == actor_id {
-            enabled && (is_structured(actor) || target_status.is_some_and(|status| status.running))
+            enabled
+                && (if super::super::local_headless::supports(actor) {
+                    super::super::local_headless::running(&group.group_id, &actor.id)
+                } else {
+                    is_structured(actor) || target_status.is_some_and(|status| status.running)
+                })
         } else {
             actor.enabled
-                && (is_structured(actor)
-                    || status(&group.group_id, &actor.id).is_some_and(|status| status.running))
+                && (if super::super::local_headless::supports(actor) {
+                    super::super::local_headless::running(&group.group_id, &actor.id)
+                } else {
+                    is_structured(actor)
+                        || status(&group.group_id, &actor.id).is_some_and(|status| status.running)
+                })
         }
     });
     GroupStore::new(home.clone())
@@ -25,8 +34,6 @@ pub fn persist_lifecycle(
             doc.running = running;
             if enabled && doc.state == cccc_contracts::GroupState::Stopped {
                 doc.state = cccc_contracts::GroupState::Active;
-            } else if !running {
-                doc.state = cccc_contracts::GroupState::Stopped;
             }
             Ok(actor)
         })

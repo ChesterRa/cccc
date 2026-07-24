@@ -12,7 +12,7 @@ cccc
 
 Open http://127.0.0.1:8848/ in your browser.
 
-`cccc` owns the default local app session: it starts the Rust daemon and Web together. A daemon is resolved through the selected `CCCC_HOME`; a second daemon cannot take the same lock.
+`cccc` is the single owner of the default local app session: it starts the daemon and Web together, and pressing `Ctrl+C` stops both together. If another `cccc` session is already running for the same `CCCC_HOME`, a second `cccc` command will refuse to start instead of silently sharing the old daemon.
 
 ## Interface Overview
 
@@ -91,12 +91,10 @@ small diagrams expand to the available canvas while large diagrams remain scroll
 
 Type `@` to trigger autocomplete:
 
-- `@all` - Broadcast to all visible collaboration agents; use for announcements or urgent shared constraints, not default task dispatch
+- `@all` - Broadcast to all agents; use for announcements or urgent shared constraints, not default task dispatch
 - `@foreman` - Ask the coordinator to plan, route, or summarize work
-- `@peers` - Send to all visible peers
+- `@peers` - Send to all peers
 - `@<actor_id>` - Send to a specific agent for targeted work
-
-Built-in internal assistants such as Voice Secretary are excluded from role selectors and must be addressed explicitly.
 
 For concrete delegated work that needs an owner, done criterion, evidence, handoff, or acceptance trail, use task-backed delegation. In chat it appears as a linked task chip; ordinary messages remain the right path for quick questions and discussion.
 

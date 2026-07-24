@@ -210,6 +210,19 @@ pub fn input(name: &str) -> Value {
             }),
             &[],
         ),
+        "cccc_runtime_complete_turn" => object(
+            merge(
+                common(),
+                json!({
+                    "turn_id":{"type":"string","description":"Optional active turn ID. When provided, it must match the current turn."},
+                    "status":{"type":"string","enum":["done","partial","failed","cancelled"],"default":"done"},
+                    "event_ids":{"type":"array","items":{"type":"string"}},
+                    "latest_event_id":{"type":"string"},
+                    "summary":{"type":"string"}
+                }),
+            ),
+            &["status"],
+        ),
         _ => object(common(), &[]),
     }
 }
@@ -313,6 +326,27 @@ mod tests {
             schema["properties"]["reply_to"]["description"]
                 .as_str()
                 .is_some_and(|description| description.contains("Omit for a new message"))
+        );
+    }
+
+    #[test]
+    fn complete_turn_schema_exposes_optional_turn_id() {
+        let schema = input("cccc_runtime_complete_turn");
+        assert_eq!(schema["properties"]["turn_id"]["type"], "string");
+        assert!(
+            schema["required"]
+                .as_array()
+                .is_some_and(|required| !required.iter().any(|item| item == "turn_id"))
+        );
+        assert!(
+            schema["required"]
+                .as_array()
+                .is_some_and(|required| required.iter().any(|item| item == "status"))
+        );
+        assert!(
+            schema["required"]
+                .as_array()
+                .is_some_and(|required| !required.iter().any(|item| item == "event_ids"))
         );
     }
 }

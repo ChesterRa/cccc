@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::OpenOptions;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
@@ -233,10 +233,10 @@ pub fn read(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let state = integration_state::group_get(&store, &group_id, KEY).map_err(OpError::io)?;
     let cursor = state["input_read_cursor"].as_u64().unwrap_or(0);
-    let inputs = read_jsonl(&input_log_path(home, &group_id))?
-        .into_iter()
-        .filter(|item| item["seq"].as_u64().unwrap_or(0) > cursor)
-        .collect::<Vec<_>>();
+    let inputs = read_jsonl_matching(&input_log_path(home, &group_id), |item| {
+        item["seq"].as_u64().unwrap_or(0) > cursor
+    })
+    .map_err(OpError::io)?;
     let latest = inputs
         .iter()
         .filter_map(|item| item["seq"].as_u64())
@@ -372,7 +372,7 @@ fn append_jsonl_io(path: &Path, value: &Value) -> std::io::Result<()> {
         .open(path)?;
     file.lock_exclusive()?;
     let result = (|| {
-        parse_jsonl_locked(&mut file, true)?;
+        repair_incomplete_tail_locked(&mut file)?;
         let mut bytes = serde_json::to_vec(value).map_err(std::io::Error::other)?;
         bytes.push(b'\n');
         file.seek(SeekFrom::End(0))?;
@@ -382,11 +382,82 @@ fn append_jsonl_io(path: &Path, value: &Value) -> std::io::Result<()> {
     let unlock = FileExt::unlock(&file);
     result.and(unlock)
 }
-fn read_jsonl(path: &Path) -> Result<Vec<Value>, OpError> {
+
+fn repair_incomplete_tail_locked(file: &mut std::fs::File) -> std::io::Result<()> {
+    const CHUNK_BYTES: usize = 64 * 1024;
+    let len = file.metadata()?.len();
+    if len == 0 {
+        return Ok(());
+    }
+    file.seek(SeekFrom::End(-1))?;
+    let mut last = [0_u8; 1];
+    file.read_exact(&mut last)?;
+    if last[0] == b'\n' {
+        return Ok(());
+    }
+
+    let mut position = len;
+    let mut chunks = Vec::new();
+    let truncate_at;
+    loop {
+        let chunk_len = position.min(CHUNK_BYTES as u64) as usize;
+        position -= chunk_len as u64;
+        file.seek(SeekFrom::Start(position))?;
+        let mut chunk = vec![0; chunk_len];
+        file.read_exact(&mut chunk)?;
+        if let Some(newline) = chunk.iter().rposition(|byte| *byte == b'\n') {
+            truncate_at = position + newline as u64 + 1;
+            chunks.push(chunk[newline + 1..].to_vec());
+            break;
+        }
+        chunks.push(chunk);
+        if position == 0 {
+            truncate_at = 0;
+            break;
+        }
+    }
+    chunks.reverse();
+    let tail = chunks.concat();
+    if tail.iter().all(u8::is_ascii_whitespace) || serde_json::from_slice::<Value>(&tail).is_ok() {
+        file.seek(SeekFrom::End(0))?;
+        file.write_all(b"\n")?;
+    } else {
+        file.set_len(truncate_at)?;
+    }
+    file.sync_data()
+}
+fn read_jsonl_matching(
+    path: &Path,
+    include: impl Fn(&Value) -> bool,
+) -> std::io::Result<Vec<Value>> {
     if !path.is_file() {
         return Ok(Vec::new());
     }
-    read_jsonl_io(path).map_err(OpError::io)
+    let mut file = OpenOptions::new().read(true).write(true).open(path)?;
+    file.lock_exclusive()?;
+    let result = (|| {
+        repair_incomplete_tail_locked(&mut file)?;
+        file.seek(SeekFrom::Start(0))?;
+        let mut values = Vec::new();
+        let mut line = Vec::new();
+        let mut reader = BufReader::new(&mut file);
+        while reader.read_until(b'\n', &mut line)? > 0 {
+            while matches!(line.last(), Some(b'\n' | b'\r')) {
+                line.pop();
+            }
+            let trimmed = line.as_slice();
+            if !trimmed.iter().all(u8::is_ascii_whitespace) {
+                let value = serde_json::from_slice(trimmed).map_err(std::io::Error::other)?;
+                if include(&value) {
+                    values.push(value);
+                }
+            }
+            line.clear();
+        }
+        Ok(values)
+    })();
+    let unlock = FileExt::unlock(&file);
+    result.and_then(|values| unlock.map(|()| values))
 }
 fn segment_exists_io(path: &Path, session_id: &str, segment_id: &str) -> std::io::Result<bool> {
     Ok(find_segment_io(path, session_id, segment_id)?.is_some())
@@ -399,54 +470,10 @@ fn find_segment_io(
     if !path.is_file() {
         return Ok(None);
     }
-    Ok(read_jsonl_io(path)?
-        .into_iter()
-        .find(|item| item["session_id"] == session_id && item["segment_id"] == segment_id))
-}
-fn read_jsonl_io(path: &Path) -> std::io::Result<Vec<Value>> {
-    let mut file = OpenOptions::new().read(true).write(true).open(path)?;
-    file.lock_exclusive()?;
-    let result = parse_jsonl_locked(&mut file, true);
-    let unlock = FileExt::unlock(&file);
-    result.and_then(|values| unlock.map(|()| values))
-}
-fn parse_jsonl_locked(
-    file: &mut std::fs::File,
-    repair_incomplete_tail: bool,
-) -> std::io::Result<Vec<Value>> {
-    file.seek(SeekFrom::Start(0))?;
-    let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)?;
-    let complete_len = bytes
-        .iter()
-        .rposition(|byte| *byte == b'\n')
-        .map_or(0, |index| index + 1);
-    let mut values = Vec::new();
-    for line in bytes[..complete_len].split(|byte| *byte == b'\n') {
-        if line.iter().all(u8::is_ascii_whitespace) {
-            continue;
-        }
-        values.push(serde_json::from_slice(line).map_err(std::io::Error::other)?);
-    }
-    let tail = &bytes[complete_len..];
-    if !tail.iter().all(u8::is_ascii_whitespace) {
-        match serde_json::from_slice(tail) {
-            Ok(value) => {
-                values.push(value);
-                if repair_incomplete_tail {
-                    file.seek(SeekFrom::End(0))?;
-                    file.write_all(b"\n")?;
-                    file.sync_data()?;
-                }
-            }
-            Err(_) if repair_incomplete_tail => {
-                file.set_len(complete_len as u64)?;
-                file.sync_data()?;
-            }
-            Err(error) => return Err(std::io::Error::other(error)),
-        }
-    }
-    Ok(values)
+    read_jsonl_matching(path, |item| {
+        item["session_id"] == session_id && item["segment_id"] == segment_id
+    })
+    .map(|mut values| values.pop())
 }
 fn voice_events_for_segment(
     store: &GroupStore,
@@ -536,4 +563,31 @@ fn default_assistant() -> Value {
 #[allow(dead_code)]
 fn content_sha(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn append_repairs_only_the_incomplete_tail() {
+        let file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(file.path(), b"{\"seq\":1}\n{\"seq\":").expect("fixture");
+
+        append_jsonl_io(file.path(), &json!({"seq":2})).expect("append");
+
+        let values = read_jsonl_matching(file.path(), |_| true).expect("read repaired log");
+        assert_eq!(values, [json!({"seq":1}), json!({"seq":2})]);
+    }
+
+    #[test]
+    fn append_preserves_a_valid_final_record_without_newline() {
+        let file = tempfile::NamedTempFile::new().expect("tempfile");
+        std::fs::write(file.path(), b"{\"seq\":1}").expect("fixture");
+
+        append_jsonl_io(file.path(), &json!({"seq":2})).expect("append");
+
+        let values = read_jsonl_matching(file.path(), |_| true).expect("read log");
+        assert_eq!(values, [json!({"seq":1}), json!({"seq":2})]);
+    }
 }

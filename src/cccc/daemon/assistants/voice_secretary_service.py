@@ -31,7 +31,7 @@ ASSISTANT_ID = "voice_secretary"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 0
 DEFAULT_ASR_TIMEOUT_SECONDS = 90
-DEFAULT_MAX_AUDIO_BYTES = 25 * 1024 * 1024
+DEFAULT_MAX_AUDIO_BYTES = 100 * 1024 * 1024
 
 
 class AsrServiceError(Exception):
@@ -119,7 +119,7 @@ def _parse_asr_stderr(stderr: str) -> dict[str, Any]:
     return dict(error) if isinstance(error, dict) else {}
 
 
-def _run_asr(audio_bytes: bytes, *, mime_type: str, language: str) -> tuple[str, dict[str, Any]]:
+def _run_asr_file(audio_path: Path, *, mime_type: str, language: str) -> tuple[str, dict[str, Any]]:
     mock_text = str(os.environ.get("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT") or "").strip()
     if mock_text:
         return mock_text, {"backend": "env_mock"}
@@ -140,27 +140,21 @@ def _run_asr(audio_bytes: bytes, *, mime_type: str, language: str) -> tuple[str,
             },
         )
 
-    suffix = _audio_suffix(mime_type)
     timeout = _safe_int_env(
         "CCCC_VOICE_SECRETARY_ASR_TIMEOUT_SECONDS",
         DEFAULT_ASR_TIMEOUT_SECONDS,
         minimum=1,
         maximum=600,
     )
-    tmp_path: Path | None = None
     try:
-        fd, raw_tmp = tempfile.mkstemp(prefix="cccc-voice-secretary-", suffix=suffix)
-        tmp_path = Path(raw_tmp)
-        with os.fdopen(fd, "wb") as handle:
-            handle.write(audio_bytes)
-        argv = _command_argv(command, audio_path=tmp_path, mime_type=mime_type, language=language)
+        argv = _command_argv(command, audio_path=audio_path, mime_type=mime_type, language=language)
         if not argv:
             raise AsrServiceError("asr_backend_unavailable", "ASR command is empty")
         if argv and not Path(str(argv[0])).exists():
             argv = resolve_subprocess_argv(argv)
         env = os.environ.copy()
         env.pop("__PYVENV_LAUNCHER__", None)
-        env["CCCC_VOICE_AUDIO_PATH"] = str(tmp_path)
+        env["CCCC_VOICE_AUDIO_PATH"] = str(audio_path)
         env["CCCC_VOICE_MIME_TYPE"] = mime_type
         env["CCCC_VOICE_LANGUAGE"] = language
         completed = subprocess.run(
@@ -183,13 +177,6 @@ def _run_asr(audio_bytes: bytes, *, mime_type: str, language: str) -> tuple[str,
             str(exc),
             details={"command": command},
         ) from exc
-    finally:
-        if tmp_path is not None:
-            try:
-                tmp_path.unlink()
-            except Exception:
-                pass
-
     if completed.returncode != 0:
         structured_error = _parse_asr_stderr(completed.stderr)
         if structured_error:
@@ -315,77 +302,137 @@ class VoiceSecretaryHandler(BaseHTTPRequestHandler):
             minimum=1,
             maximum=200 * 1024 * 1024,
         )
-        max_body_bytes = max_audio_bytes * 2
-        if content_length <= 0 or content_length > max_body_bytes:
-            self._json(
-                413,
-                {
-                    "ok": False,
-                    "error": {
-                        "code": "audio_payload_too_large",
-                        "message": "audio payload is empty or too large",
-                        "details": {"max_audio_bytes": max_audio_bytes},
-                    },
-                },
-            )
-            return
-        try:
-            payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
-        except Exception as exc:
-            self._json(400, {"ok": False, "error": {"code": "invalid_json", "message": str(exc)}})
-            return
-        audio_b64 = str(payload.get("audio_b64") or payload.get("audio_base64") or "").strip()
-        if "," in audio_b64 and audio_b64.split(",", 1)[0].startswith("data:"):
-            audio_b64 = audio_b64.split(",", 1)[1]
-        try:
-            audio_bytes = base64.b64decode(audio_b64, validate=True)
-        except Exception as exc:
-            self._json(400, {"ok": False, "error": {"code": "invalid_audio_base64", "message": str(exc)}})
-            return
-        if not audio_bytes or len(audio_bytes) > max_audio_bytes:
-            self._json(
-                413,
-                {
-                    "ok": False,
-                    "error": {
-                        "code": "audio_payload_too_large",
-                        "message": "audio payload is empty or too large",
-                        "details": {"max_audio_bytes": max_audio_bytes},
-                    },
-                },
-            )
-            return
-
-        mime_type = str(payload.get("mime_type") or "application/octet-stream").strip() or "application/octet-stream"
-        language = str(payload.get("language") or "").strip()
-        self.server.service_context.write_state(status="working", last_error={})
-        try:
-            transcript, meta = _run_asr(audio_bytes, mime_type=mime_type, language=language)
-        except AsrServiceError as exc:
-            error = {"code": exc.code, "message": exc.message, "details": exc.details}
-            self.server.service_context.write_state(status="failed", last_error=error)
-            self._json(503, {"ok": False, "error": error})
-            return
-        except Exception as exc:
-            error = {"code": "asr_backend_failed", "message": str(exc), "details": {}}
-            self.server.service_context.write_state(status="failed", last_error=error)
-            self._json(503, {"ok": False, "error": error})
-            return
-        self.server.service_context.write_state(status="running", last_error={})
-        self._json(
-            200,
-            {
-                "ok": True,
-                "result": {
-                    "transcript": transcript,
-                    "mime_type": mime_type,
-                    "language": language,
-                    "bytes": len(audio_bytes),
-                    "service": self.server.service_context.snapshot(),
-                    "asr": meta,
-                },
-            },
+        media_type = (
+            str(self.headers.get("Content-Type") or "application/octet-stream")
+            .split(";", 1)[0]
+            .strip()
+            .lower()
+            or "application/octet-stream"
         )
+        body_limit = max_audio_bytes * 2 if media_type == "application/json" else max_audio_bytes
+        if content_length <= 0 or content_length > body_limit:
+            self._json(
+                413,
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "audio_payload_too_large",
+                        "message": "audio payload is empty or too large",
+                        "details": {"max_audio_bytes": max_audio_bytes},
+                    },
+                },
+            )
+            return
+        audio_path: Path | None = None
+        try:
+            fd, raw_path = tempfile.mkstemp(
+                prefix="cccc-voice-secretary-",
+                suffix=_audio_suffix(media_type),
+            )
+            audio_path = Path(raw_path)
+            if media_type == "application/json":
+                with os.fdopen(fd, "wb") as output:
+                    try:
+                        payload = json.loads(self.rfile.read(content_length).decode("utf-8"))
+                    except Exception as exc:
+                        self._json(
+                            400,
+                            {"ok": False, "error": {"code": "invalid_json", "message": str(exc)}},
+                        )
+                        return
+                    audio_b64 = str(payload.get("audio_b64") or payload.get("audio_base64") or "").strip()
+                    if "," in audio_b64 and audio_b64.split(",", 1)[0].startswith("data:"):
+                        audio_b64 = audio_b64.split(",", 1)[1]
+                    try:
+                        audio_bytes = base64.b64decode(audio_b64, validate=True)
+                    except Exception as exc:
+                        self._json(
+                            400,
+                            {
+                                "ok": False,
+                                "error": {"code": "invalid_audio_base64", "message": str(exc)},
+                            },
+                        )
+                        return
+                    audio_size = len(audio_bytes)
+                    output.write(audio_bytes)
+                mime_type = (
+                    str(payload.get("mime_type") or "application/octet-stream").strip()
+                    or "application/octet-stream"
+                )
+                language = str(payload.get("language") or "").strip()
+            else:
+                remaining = content_length
+                with os.fdopen(fd, "wb") as output:
+                    while remaining > 0:
+                        chunk = self.rfile.read(min(1024 * 1024, remaining))
+                        if not chunk:
+                            self._json(
+                                400,
+                                {
+                                    "ok": False,
+                                    "error": {
+                                        "code": "incomplete_audio_body",
+                                        "message": "audio body ended before Content-Length bytes were received",
+                                    },
+                                },
+                            )
+                            return
+                        output.write(chunk)
+                        remaining -= len(chunk)
+                audio_size = content_length
+                mime_type = media_type
+                language = str(self.headers.get("X-CCCC-Language") or "").strip()
+
+            if audio_size <= 0 or audio_size > max_audio_bytes:
+                self._json(
+                    413,
+                    {
+                        "ok": False,
+                        "error": {
+                            "code": "audio_payload_too_large",
+                            "message": "audio payload is empty or too large",
+                            "details": {"max_audio_bytes": max_audio_bytes},
+                        },
+                    },
+                )
+                return
+
+            self.server.service_context.write_state(status="working", last_error={})
+            try:
+                transcript, meta = _run_asr_file(audio_path, mime_type=mime_type, language=language)
+            except AsrServiceError as exc:
+                error = {"code": exc.code, "message": exc.message, "details": exc.details}
+                self.server.service_context.write_state(status="failed", last_error=error)
+                self._json(503, {"ok": False, "error": error})
+                return
+            except Exception as exc:
+                error = {"code": "asr_backend_failed", "message": str(exc), "details": {}}
+                self.server.service_context.write_state(status="failed", last_error=error)
+                self._json(503, {"ok": False, "error": error})
+                return
+            self.server.service_context.write_state(status="running", last_error={})
+            self._json(
+                200,
+                {
+                    "ok": True,
+                    "result": {
+                        "transcript": transcript,
+                        "mime_type": mime_type,
+                        "language": language,
+                        "bytes": audio_size,
+                        "service": self.server.service_context.snapshot(),
+                        "asr": meta,
+                    },
+                },
+            )
+        except Exception as exc:
+            error = {"code": "audio_read_failed", "message": str(exc), "details": {}}
+            self.server.service_context.write_state(status="failed", last_error=error)
+            self._json(400, {"ok": False, "error": error})
+        finally:
+            if audio_path is not None:
+                audio_path.unlink(missing_ok=True)
 
 
 def _heartbeat(ctx: VoiceSecretaryServiceContext, stop_event: threading.Event) -> None:

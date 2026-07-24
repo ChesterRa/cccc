@@ -14,7 +14,7 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let group = store.load(&group_id).map_err(OpError::not_found)?;
     let state = group.extra.get(KEY).cloned().unwrap_or_else(|| json!({}));
-    let assistant = effective_assistant(&state);
+    let assistant = project_actor_runtime(&group, effective_assistant(&state));
     let docs = state["documents"].as_array().cloned().unwrap_or_default();
     let documents_by_path = docs
         .iter()
@@ -50,6 +50,7 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .and_then(|assistant| assistant["enabled"].as_bool())
         .unwrap_or(false);
     let actor_existed = before.actors.iter().any(|actor| actor.id == ACTOR_ID);
+    let actor_secrets_before = actor_secrets::values(home, &group_id, ACTOR_ID)?;
     let foreman_id = before
         .actors
         .iter()
@@ -145,27 +146,86 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         forwarded.args.insert("clear".into(), json!(true));
         actor_secrets::update(home, &forwarded)?;
     }
-    let (actor_started, actor_start_error) = if enabled && after.running {
+    let actor_started = if enabled && after.running {
         match actor_runtime::apply(home, &after, ACTOR_ID, "actor.start") {
-            Ok(status) => (status.is_some_and(|item| item.running), Value::Null),
-            Err(error) => (
-                false,
-                json!({"code":error.code,"message":error.message,"details":error.details}),
-            ),
+            Ok(Some(status)) if status.running => true,
+            Ok(None)
+                if after
+                    .actors
+                    .iter()
+                    .find(|actor| actor.id == ACTOR_ID)
+                    .is_some_and(actor_runtime::is_structured) =>
+            {
+                true
+            }
+            Ok(_) => {
+                rollback_enable(home, &store, &before, actor_secrets_before)?;
+                return Err(OpError::new(
+                    "voice_secretary_start_failed",
+                    "Voice Secretary actor did not remain running",
+                ));
+            }
+            Err(error) => {
+                let mut failure = OpError::new("voice_secretary_start_failed", error.message);
+                failure.details = error.details;
+                failure
+                    .details
+                    .insert("runtime_code".into(), json!(error.code));
+                rollback_enable(home, &store, &before, actor_secrets_before)?;
+                return Err(failure);
+            }
         }
     } else {
-        (false, Value::Null)
+        false
     };
+    let assistant = project_actor_runtime(&after, assistant);
     let event = append_event(
         home,
         &group_id,
         "assistant.settings.update",
         request,
-        json!({"assistant_id":ASSISTANT_ID,"patch":patch,"actor_started":actor_started,"actor_start_error":actor_start_error}),
+        json!({"assistant_id":ASSISTANT_ID,"patch":patch,"actor_started":actor_started,"actor_start_error":null}),
     )?;
     object(
-        json!({"group_id":group_id,"assistant":assistant,"event":event,"actor_started":actor_started,"actor_start_error":actor_start_error}),
+        json!({"group_id":group_id,"assistant":assistant,"event":event,"actor_started":actor_started,"actor_start_error":null}),
     )
+}
+
+fn rollback_enable(
+    home: &HomeLayout,
+    store: &GroupStore,
+    before: &cccc_core::GroupDoc,
+    secrets: std::collections::BTreeMap<String, String>,
+) -> Result<(), OpError> {
+    actor_delivery::shutdown_actor(&before.group_id, ACTOR_ID);
+    if let Ok(current) = store.load(&before.group_id) {
+        let _ = actor_runtime::apply(home, &current, ACTOR_ID, "actor.stop");
+    }
+    store
+        .mutate(&before.group_id, |group| {
+            match before.extra.get(KEY) {
+                Some(state) => {
+                    group.extra.insert(KEY.into(), state.clone());
+                }
+                None => {
+                    group.extra.remove(KEY);
+                }
+            }
+            group.actors.retain(|actor| actor.id != ACTOR_ID);
+            if let Some((index, actor)) = before
+                .actors
+                .iter()
+                .enumerate()
+                .find(|(_, actor)| actor.id == ACTOR_ID)
+            {
+                group
+                    .actors
+                    .insert(index.min(group.actors.len()), actor.clone());
+            }
+            Ok(())
+        })
+        .map_err(OpError::io)?;
+    actor_secrets::replace(home, &before.group_id, ACTOR_ID, secrets)
 }
 
 pub fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -230,4 +290,44 @@ pub fn effective_assistant(state: &Value) -> Value {
 }
 pub fn default_assistant() -> Value {
     json!({"assistant_id":ASSISTANT_ID,"kind":ASSISTANT_ID,"enabled":false,"principal":"assistant:voice_secretary","lifecycle":"disabled","health":{},"policy":{"action_allowlist":[],"requires_user_confirmation":[]},"config":{"capture_mode":"document","recognition_backend":"browser_asr","recognition_language":"auto","retention_ttl_seconds":604800,"auto_document_enabled":true,"document_default_dir":"docs/voice-secretary","auto_document_quiet_ms":1200,"auto_document_min_chars":80,"auto_document_max_window_seconds":30,"service_model_id":"sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8","tts_enabled":false},"ui":{"title":"Voice Secretary"}})
+}
+
+fn project_actor_runtime(group: &cccc_core::GroupDoc, mut assistant: Value) -> Value {
+    let actor = group.actors.iter().find(|actor| actor.id == ACTOR_ID);
+    let status = actor_runtime::status(&group.group_id, ACTOR_ID);
+    let local_headless = actor.is_some_and(super::super::local_headless::supports);
+    let headless_status = local_headless
+        .then(|| super::super::local_headless::status(&group.group_id, ACTOR_ID))
+        .flatten();
+    let running = actor.is_some_and(|actor| {
+        if local_headless {
+            headless_status.is_some()
+        } else if actor_runtime::is_structured(actor) {
+            actor.enabled && group.running
+        } else {
+            status.as_ref().is_some_and(|status| status.running)
+        }
+    });
+    let enabled = assistant["enabled"].as_bool().unwrap_or(false);
+    let lifecycle = assistant["lifecycle"].as_str().unwrap_or("idle").to_owned();
+    assistant["health"]["actor"] = json!({
+        "configured": actor.is_some(),
+        "running": running,
+        "pid": if local_headless {
+            headless_status.as_ref().and_then(|status| status.pid)
+        } else {
+            status.as_ref().and_then(|status| status.pid)
+        },
+        "exit_code": if local_headless { None } else {
+            status.as_ref().and_then(|status| status.exit_code)
+        },
+    });
+    if !enabled {
+        assistant["lifecycle"] = json!("disabled");
+    } else if running && !matches!(lifecycle.as_str(), "working" | "waiting") {
+        assistant["lifecycle"] = json!("running");
+    } else if !running {
+        assistant["lifecycle"] = json!(if group.running { "failed" } else { "idle" });
+    }
+    assistant
 }

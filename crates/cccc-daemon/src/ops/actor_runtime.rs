@@ -23,7 +23,21 @@ pub fn apply(
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("not_found", format!("actor not found: {actor_id}")))?;
     if is_structured(actor) {
-        let _ = stop(group, actor_id)?;
+        if super::local_headless::supports(actor) {
+            match kind {
+                "actor.stop" => super::local_headless::stop(&group.group_id, actor_id),
+                "actor.restart" | "actor.new_session" => {
+                    super::local_headless::stop(&group.group_id, actor_id);
+                    start_local_headless(home, group, actor)?;
+                }
+                _ if !super::local_headless::running(&group.group_id, actor_id) => {
+                    start_local_headless(home, group, actor)?;
+                }
+                _ => {}
+            }
+        } else {
+            let _ = stop(group, actor_id)?;
+        }
         return Ok(None);
     }
     match kind {
@@ -37,6 +51,15 @@ pub fn apply(
             _ => start(home, group, actor).map(Some),
         },
     }
+}
+
+fn start_local_headless(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<(), OpError> {
+    let mut actor = actor_profile_runtime::resolve(home, actor)?;
+    let profile_secrets = actor_profile_runtime::profile_secrets(home, &actor)?;
+    let actor_secret_values = actor_secrets::values(home, &group.group_id, &actor.id)?;
+    actor.env.extend(profile_secrets);
+    actor.env.extend(actor_secret_values);
+    super::local_headless::start(home, group, &actor).map_err(OpError::io)
 }
 
 fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionStatus, OpError> {
@@ -259,6 +282,7 @@ pub fn start_group(home: &HomeLayout, group: &GroupDoc) -> Result<Vec<SessionSta
 }
 
 pub fn stop_group(group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {
+    super::local_headless::stop_group(&group.group_id);
     let mut stopped = Vec::new();
     for actor in &group.actors {
         if let Some(status) = stop(group, &actor.id)? {
