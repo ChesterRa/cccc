@@ -73,6 +73,7 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
     env.insert("CCCC_GROUP_ID".into(), group.group_id.clone());
     env.insert("CCCC_ACTOR_ID".into(), actor.id.clone());
     env.insert("CCCC_RUNNER".into(), "headless".into());
+    super::super::codex_mcp::configure_actor_cli(&mut env);
     let model = model_from_command(&actor.command);
     let command = provider_command(home, group, actor, &mut env);
     let (program, args) = command

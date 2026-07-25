@@ -302,11 +302,6 @@ fn is_compatible_daemon(response: &cccc_contracts::DaemonResponse) -> bool {
             == Some("rust")
         && response
             .result
-            .get("version")
-            .and_then(serde_json::Value::as_str)
-            == Some(env!("CARGO_PKG_VERSION"))
-        && response
-            .result
             .get("compatibility")
             .and_then(serde_json::Value::as_str)
             == Some(cccc_contracts::RUST_DAEMON_COMPATIBILITY)
@@ -342,7 +337,18 @@ mod tests {
                 .cloned()
                 .expect("object"),
         );
+        let compatible_other_version = DaemonResponse::success(
+            json!({
+                "implementation":"rust",
+                "version":"0.4.999",
+                "compatibility":cccc_contracts::RUST_DAEMON_COMPATIBILITY,
+            })
+            .as_object()
+            .cloned()
+            .expect("object"),
+        );
         assert!(is_compatible_daemon(&rust));
+        assert!(is_compatible_daemon(&compatible_other_version));
         assert!(!is_compatible_daemon(&legacy));
         assert!(!is_compatible_daemon(&stale_rust));
     }

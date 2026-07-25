@@ -127,6 +127,7 @@ fn launch(
     let _start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;
     let mut launch_env = env.clone();
+    crate::ops::codex_mcp::configure_actor_cli(&mut launch_env);
     if actor.runtime == ActorRuntime::Codex {
         crate::ops::codex_mcp::configure(
             home,

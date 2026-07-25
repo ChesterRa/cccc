@@ -25,15 +25,21 @@ pub fn configure(
     env: &mut BTreeMap<String, String>,
 ) {
     cccc_core::codex_hook_state::remove(home, group_id, actor_id);
-    let Some(executable) = resolve_cccc_executable() else {
+    let Some(executable) = configure_actor_cli(env) else {
         return;
     };
     append_overrides(command, home.root(), &executable, group_id, actor_id);
-    prepend_executable_dir(env, &executable);
     env.insert(
         "CCCC_HOME".into(),
         home.root().to_string_lossy().into_owned(),
     );
+}
+
+pub(crate) fn configure_actor_cli(env: &mut BTreeMap<String, String>) -> Option<PathBuf> {
+    let executable = resolve_cccc_executable()?;
+    prepend_executable_dir(env, &executable);
+    env.insert("CCCC_CLI".into(), executable.to_string_lossy().into_owned());
+    Some(executable)
 }
 
 fn append_overrides(

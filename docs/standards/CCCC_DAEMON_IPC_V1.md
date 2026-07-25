@@ -339,6 +339,8 @@ Result:
 Notes:
 - `ipc_v` is RECOMMENDED for SDK compatibility checks.
 - `capabilities` is RECOMMENDED as a best-effort feature map (e.g., `{ "events_stream": true }`).
+- Clients MUST use protocol, compatibility, and capability fields instead of exact product-version equality.
+- Ordinary business commands MUST NOT stop, signal, or replace a reachable daemon. Implementation replacement is restricted to explicit daemon lifecycle commands.
 
 #### `shutdown`
 
