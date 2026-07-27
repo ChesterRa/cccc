@@ -1,11 +1,12 @@
 use axum::extract::{DefaultBodyLimit, Multipart, Path, State};
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use base64::Engine;
 use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, body_object, call, object};
+use crate::auth::Principal;
 
 const MAX_LOCAL_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 const MULTIPART_OVERHEAD_BYTES: usize = 1024 * 1024;
@@ -18,6 +19,10 @@ pub fn routes() -> Router<AppState> {
             post(send_cross_group),
         )
         .route("/api/v1/groups/{group_id}/tracked_send", post(tracked_send))
+        .route(
+            "/api/v1/groups/{group_id}/delegate_contact",
+            post(delegate_contact),
+        )
         .route(
             "/api/v1/groups/{group_id}/slash_skill_dispatch",
             post(slash_skill_dispatch),
@@ -78,6 +83,16 @@ async fn tracked_send(
     Json(body): Json<Value>,
 ) -> ApiResult {
     daemon_body(&state, "tracked_send", group_id, body).await
+}
+async fn delegate_contact(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    Path(group_id): Path<String>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let destination = super::group_bridge::required(&body, "dst_group_id")?;
+    super::group_bridge::ensure_access(&principal, &destination)?;
+    daemon_body(&state, "relay_user_delegation", group_id, body).await
 }
 async fn slash_skill_dispatch(
     State(state): State<AppState>,
@@ -141,7 +156,7 @@ async fn send_cross_group_upload(
     mut multipart: Multipart,
 ) -> ApiResult {
     let mut args = serde_json::Map::new();
-    let mut attachments = Vec::new();
+    let mut files = Vec::new();
     while let Some(field) = multipart
         .next_field()
         .await
@@ -161,13 +176,7 @@ async fn send_cross_group_upload(
             if data.len() > 10 * 1024 * 1024 {
                 return Err(ApiError::bad("remote attachment exceeds 10 MiB"));
             }
-            let blob = cccc_core::blobs::store(&state.home, &group_id, &data)
-                .map_err(|error| ApiError::bad(error.to_string()))?;
-            attachments.push(json!({
-                "kind":"file","path":blob.path,"title":filename,"mime_type":content_type,
-                "bytes":blob.bytes,"sha256":blob.sha256,
-                "content_base64":base64::engine::general_purpose::STANDARD.encode(&data)
-            }));
+            files.push((data, filename, content_type));
         } else {
             let value = field
                 .text()
@@ -188,9 +197,26 @@ async fn send_cross_group_upload(
             }
         }
     }
+    let destination = args
+        .get("dst_group_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::bad("dst_group_id is required"))?
+        .to_owned();
+    args.insert("dst_group_id".into(), Value::String(destination.clone()));
+    let mut attachments = Vec::with_capacity(files.len());
+    for (data, filename, content_type) in files {
+        let blob = cccc_core::blobs::store(&state.home, &group_id, &data)
+            .map_err(|error| ApiError::bad(error.to_string()))?;
+        attachments.push(json!({
+            "kind":"file","path":blob.path,"title":filename,"mime_type":content_type,
+            "bytes":blob.bytes,"sha256":blob.sha256,
+            "content_base64":base64::engine::general_purpose::STANDARD.encode(&data)
+        }));
+    }
     args.insert("group_id".into(), Value::String(group_id));
     args.insert("attachments".into(), Value::Array(attachments));
-    let destination = args["dst_group_id"].as_str().unwrap_or("").to_owned();
     let remote_body = Value::Object(args.clone());
     if let Some(result) = super::group_bridge_session::send_remote(
         &state,

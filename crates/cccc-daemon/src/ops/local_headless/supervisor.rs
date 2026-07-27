@@ -1,7 +1,7 @@
 use super::{HeadlessStatus, Session, Turn, events, poisoned, session, turn_channel};
 use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind, utc_now};
 use cccc_core::{GroupDoc, HomeLayout};
-use serde_json::{Map, Value, json};
+use serde_json::{Map, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io;
 use std::process::{Command, Stdio};
@@ -214,22 +214,16 @@ pub fn submit(home: &HomeLayout, group: &GroupDoc, actor: &Actor, event: &Event)
     if !item.running() {
         return false;
     }
-    let text = event
-        .data
-        .get("text")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let delivery = format!(
-        "[{} -> {}] {}\n\n[CCCC] Reply through cccc_message_send when a response is needed. Event id: {}",
-        event.by, actor.id, text, event.id
-    );
+    let Some((delivery, control)) = render_turn(event) else {
+        return false;
+    };
     let queued = item
         .turns
         .try_send(Turn {
             text: delivery,
             event_id: event.id.clone(),
             event_ts: event.ts.clone(),
-            control: false,
+            control,
         })
         .is_ok();
     if queued {
@@ -242,6 +236,11 @@ pub fn submit(home: &HomeLayout, group: &GroupDoc, actor: &Actor, event: &Event)
         );
     }
     queued
+}
+
+fn render_turn(event: &Event) -> Option<(String, bool)> {
+    super::super::actor_delivery_render::render_batch(std::slice::from_ref(event))
+        .map(|text| (text, event.kind == "system.notify"))
 }
 
 fn lookup(key: &Key) -> Option<Arc<Session>> {
@@ -526,4 +525,46 @@ mod tests {
         );
         stop(&group.group_id, &actor.id);
     }
+}
+#[test]
+fn headless_turn_uses_complete_envelope_and_control_semantics() {
+    let mut message = Event::new("chat.message", "g_demo");
+    message.by = "user".into();
+    message.data = json!({
+        "text":"review",
+        "to":["architect"],
+        "priority":"attention",
+        "reply_required":true,
+        "reply_to":"source-event",
+        "quote_text":"quoted",
+        "insight":"challenge the boundary",
+        "attachments":[{"path":"state/blobs/abc","title":"spec.md","bytes":12}],
+        "refs":[{"kind":"task_ref","task_id":"t_1","title":"Review"}],
+    })
+    .as_object()
+    .cloned()
+    .expect("message");
+    let (rendered, control) = render_turn(&message).expect("turn");
+    assert!(!control);
+    for expected in [
+        "IMPORTANT",
+        "REPLY REQUIRED",
+        "(reply:source-e)",
+        "quoted",
+        "spec.md",
+        "task_ref: Review",
+        "challenge the boundary",
+    ] {
+        assert!(
+            rendered.contains(expected),
+            "missing {expected}: {rendered}"
+        );
+    }
+
+    let mut notify = Event::new("system.notify", "g_demo");
+    notify.data = json!({"kind":"nudge","message":"check status"})
+        .as_object()
+        .cloned()
+        .expect("notify");
+    assert!(render_turn(&notify).expect("notify turn").1);
 }

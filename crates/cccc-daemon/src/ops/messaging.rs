@@ -1,21 +1,27 @@
-use cccc_contracts::{DaemonRequest, Event};
+use cccc_contracts::{DaemonRequest, Event, GroupState};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 use crate::ops::{actor_delivery, messaging_inbox};
 
+mod delegation;
+pub(crate) mod install_command;
+mod message_validation;
 mod slash_skill;
+mod stream;
+mod tracked_send;
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "send" | "message_send" => send(home, request, "chat.message"),
         "send_cross_group" => send_cross_group(home, request),
         "send_cross_group_remote_record" => send_cross_group_remote_record(home, request),
-        "tracked_send" => tracked_send(home, request),
+        "tracked_send" => tracked_send::handle(home, request),
         "slash_skill_dispatch" => slash_skill_dispatch(home, request),
         "reply" => reply(home, request),
-        "stream_emit" => send(home, request, "chat.stream"),
+        "stream_emit" => stream::emit(home, request),
+        "relay_user_delegation" => delegation::relay(home, request),
         "system_notify" => send(home, request, "system.notify"),
         "event_append" => append_raw(home, request),
         "ledger_tail" => super::messaging_query::tail(home, request),
@@ -109,6 +115,8 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         return object(json!({
             "source_event":source_event,
             "event":event,
+            "src_event":source_event,
+            "dst_event":event,
             "transport":"local",
             "duplicate":true
         }));
@@ -163,12 +171,14 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({
         "source_event":source_event,
         "event":destination_response.get("event"),
+        "src_event":source_event,
+        "dst_event":destination_response.get("event"),
         "transport":"local"
     }))
 }
 
-fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
-    let group = load(home, request)?;
+pub(super) fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
+    let mut group = load(home, request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     if let Some(event) =
         super::message_idempotency::find(home, &group.group_id, kind, &by, &request.args)
@@ -186,34 +196,13 @@ fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     if kind == "chat.message" {
+        message_validation::normalize(home, &group, &mut data)?;
         super::messaging_recipients::normalize_chat_data(&group, &by, &mut data)?;
+        group = wake_idle_group(home, group, &by)?;
     }
     let event = append(home, &group.group_id, kind, &by, data)?;
     let delivery = actor_delivery::dispatch(home, &group, &event);
     object(json!({"event": event, "delivery": delivery}))
-}
-
-fn tracked_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let mut forwarded = request.clone();
-    let idempotency_key = string_arg(request, "idempotency_key").unwrap_or_default();
-    if !idempotency_key.is_empty()
-        && string_arg(request, "client_id")
-            .unwrap_or_default()
-            .is_empty()
-    {
-        let group_id = required_arg(request, "group_id")?;
-        let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
-        forwarded.args.insert(
-            "client_id".into(),
-            json!(super::message_idempotency::tracked_client_id(
-                &group_id,
-                &by,
-                &idempotency_key,
-            )),
-        );
-    }
-    let response = send(home, &forwarded, "chat.message")?;
-    object(json!({"event": response.get("event"), "delivery": response.get("delivery")}))
 }
 
 fn slash_skill_dispatch(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -238,7 +227,84 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             json!(default_reply_recipients(&group, &by, &target)),
         );
     }
-    send(home, &forwarded, "chat.message")
+    let response = send(home, &forwarded, "chat.message")?;
+    // A reply is already durable at this point; acknowledgement is a
+    // best-effort follow-up and must not turn a successful reply into failure.
+    let ack_event = reply_ack(home, &group, &target, &by).unwrap_or(None);
+    let mut response = response;
+    response.insert(
+        "ack_event".into(),
+        ack_event.map_or(Value::Null, |event| {
+            serde_json::to_value(event).unwrap_or(Value::Null)
+        }),
+    );
+    Ok(response)
+}
+
+fn wake_idle_group(home: &HomeLayout, group: GroupDoc, by: &str) -> Result<GroupDoc, OpError> {
+    if group.state != GroupState::Idle
+        || by.is_empty()
+        || by == "system"
+        || group.actors.iter().any(|actor| actor.id == by)
+    {
+        return Ok(group);
+    }
+    let store = store(home)?;
+    store
+        .mutate(&group.group_id, |current| {
+            if current.state == GroupState::Idle {
+                current.state = GroupState::Active;
+            }
+            Ok(current.clone())
+        })
+        .map_err(OpError::io)
+        .inspect(|current| {
+            if current.state == GroupState::Active
+                && let Ok(state_dir) = store.state_dir(&current.group_id)
+            {
+                let _ = std::fs::remove_file(state_dir.join("automation-runtime.json"));
+            }
+        })
+}
+
+fn reply_ack(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    target: &Event,
+    by: &str,
+) -> Result<Option<Event>, OpError> {
+    let requires_ack = target.kind == "chat.message"
+        && by != target.by
+        && target.data.get("priority").and_then(Value::as_str) == Some("attention")
+        && cccc_core::inbox::is_for_actor(group, target, by);
+    if !requires_ack {
+        return Ok(None);
+    }
+    let ledger_path = store(home)?
+        .ledger_path(&group.group_id)
+        .map_err(OpError::io)?;
+    let exists = cccc_core::ledger::read_all(&ledger_path)
+        .map_err(OpError::io)?
+        .iter()
+        .any(|event| {
+            event.kind == "chat.ack"
+                && event.data.get("event_id").and_then(Value::as_str) == Some(target.id.as_str())
+                && event.data.get("actor_id").and_then(Value::as_str) == Some(by)
+        });
+    if exists {
+        return Ok(None);
+    }
+    append(
+        home,
+        &group.group_id,
+        "chat.ack",
+        by,
+        json!({"actor_id":by,"event_id":target.id})
+            .as_object()
+            .cloned()
+            .unwrap_or_default(),
+    )
+    .map(Some)
 }
 
 fn recipient_tokens(args: &Map<String, Value>) -> Vec<String> {

@@ -273,17 +273,33 @@ async fn revoke_trust(
     Path(trust_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let trust = mutate_owned(
-        &state,
-        "trusts",
-        "trust_id",
-        &trust_id,
-        &principal,
-        |item| {
-            item["status"] = json!("revoked");
-            item["revoked_by"] = body.get("revoked_by").cloned().unwrap_or(json!(""));
-        },
-    )?;
+    let trust = BridgeStore::new(&state.home)
+        .update(|value| {
+            let (trust, registration_id) = {
+                let item = items_mut(value, "trusts")
+                    .iter_mut()
+                    .find(|item| item["trust_id"] == trust_id)
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::NotFound, "group bridge record not found")
+                    })?;
+                if !principal.allows(item["group_id"].as_str().unwrap_or("")) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::PermissionDenied,
+                        "group access denied",
+                    ));
+                }
+                let registration_id = item["registration_id"].as_str().unwrap_or("").to_owned();
+                item["status"] = json!("revoked");
+                item["revoked_by"] = body.get("revoked_by").cloned().unwrap_or(json!(""));
+                item["updated_at"] = json!(utc_now());
+                (item.clone(), registration_id)
+            };
+            items_mut(value, "registrations").retain(|item| {
+                registration_id.is_empty() || item["registration_id"] != registration_id
+            });
+            Ok(trust)
+        })
+        .map_err(state_error)?;
     Ok(success(json!({"trust":trust})))
 }
 

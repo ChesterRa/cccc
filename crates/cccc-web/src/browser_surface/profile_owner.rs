@@ -115,30 +115,68 @@ async fn recover_chromium_profile(
         format!("browser profile contains a malformed SingletonLock target: {target}")
     })?;
     let local_host = hostname().await?;
-    if owner_host != local_host {
-        bail!("browser profile is locked by host {owner_host}");
-    }
-
-    if let Some(snapshot) = process_snapshot(owner_pid).await? {
-        let owner_matches = previous_owner.is_some_and(|owner| {
-            owner.version == OWNER_VERSION
-                && owner.browser_pid == owner_pid
-                && owner.profile == profile.to_string_lossy()
-                && !owner.process_start.is_empty()
-                && owner.process_start == snapshot.start
-                && snapshot
-                    .command
-                    .contains(profile.to_string_lossy().as_ref())
-        });
-        if !owner_matches {
+    let snapshot = process_snapshot(owner_pid).await?;
+    if let Some(snapshot) = snapshot.as_ref() {
+        if !owner_matches(previous_owner, profile, owner_pid, snapshot) {
+            if owner_host != local_host {
+                bail!("browser profile is locked by host {owner_host}");
+            }
             bail!(
                 "browser profile is owned by a live or unverifiable Chromium process (pid {owner_pid})"
             );
         }
         terminate_process(owner_pid, &snapshot.start).await?;
+    } else if owner_host != local_host && !has_stale_local_singleton_socket(profile)? {
+        bail!("browser profile is locked by host {owner_host}");
     }
 
     remove_singleton_artifacts(profile)
+}
+
+#[cfg(unix)]
+fn owner_matches(
+    previous_owner: Option<&OwnerMetadata>,
+    profile: &Path,
+    owner_pid: u32,
+    snapshot: &ProcessSnapshot,
+) -> bool {
+    previous_owner.is_some_and(|owner| {
+        owner.version == OWNER_VERSION
+            && owner.browser_pid == owner_pid
+            && owner.profile == profile.to_string_lossy()
+            && !owner.process_start.is_empty()
+            && owner.process_start == snapshot.start
+            && snapshot
+                .command
+                .contains(profile.to_string_lossy().as_ref())
+    })
+}
+
+#[cfg(unix)]
+fn has_stale_local_singleton_socket(profile: &Path) -> Result<bool> {
+    let singleton_socket = profile.join("SingletonSocket");
+    let Ok(metadata) = std::fs::symlink_metadata(&singleton_socket) else {
+        return Ok(false);
+    };
+    if !metadata.file_type().is_symlink() {
+        return Ok(false);
+    }
+    let target = std::fs::read_link(singleton_socket)?;
+    if !target.is_absolute() || !target.starts_with(std::env::temp_dir()) {
+        return Ok(false);
+    }
+    match std::os::unix::net::UnixStream::connect(target) {
+        Ok(_) => Ok(false),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            ) =>
+        {
+            Ok(true)
+        }
+        Err(_) => Ok(false),
+    }
 }
 
 #[cfg(not(unix))]
@@ -352,6 +390,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn removes_dead_local_lock_after_hostname_changes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile = temp.path().join("profile");
+        std::fs::create_dir_all(&profile).expect("profile");
+        symlink(
+            "previous-local-host-4294967295",
+            profile.join("SingletonLock"),
+        )
+        .expect("singleton lock");
+        let socket_id = uuid::Uuid::new_v4().simple().to_string();
+        let stale_socket = std::env::temp_dir().join(format!(".cccc-s-{}", &socket_id[..12]));
+        let listener =
+            std::os::unix::net::UnixListener::bind(&stale_socket).expect("singleton listener");
+        drop(listener);
+        symlink(&stale_socket, profile.join("SingletonSocket")).expect("singleton socket");
+
+        let _lease = ProfileLease::acquire(&profile)
+            .await
+            .expect("profile lease");
+
+        assert!(std::fs::symlink_metadata(profile.join("SingletonLock")).is_err());
+        assert!(std::fs::symlink_metadata(profile.join("SingletonSocket")).is_err());
+    }
+
+    #[tokio::test]
+    async fn refuses_foreign_host_lock_with_live_local_socket() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile = temp.path().join("profile");
+        std::fs::create_dir_all(&profile).expect("profile");
+        symlink("another-host-4294967295", profile.join("SingletonLock")).expect("singleton lock");
+        let socket_id = uuid::Uuid::new_v4().simple().to_string();
+        let live_socket = std::env::temp_dir().join(format!(".cccc-l-{}", &socket_id[..12]));
+        let _listener =
+            std::os::unix::net::UnixListener::bind(&live_socket).expect("singleton listener");
+        symlink(&live_socket, profile.join("SingletonSocket")).expect("singleton socket");
+
+        let error = ProfileLease::acquire(&profile)
+            .await
+            .expect_err("live foreign lock must fail");
+
+        assert!(error.to_string().contains("locked by host"));
+        assert!(std::fs::symlink_metadata(profile.join("SingletonLock")).is_ok());
+    }
+
+    #[tokio::test]
     async fn refuses_malformed_lock_without_removing_it() {
         let temp = tempfile::tempdir().expect("tempdir");
         let profile = temp.path().join("profile");
@@ -370,7 +453,19 @@ mod tests {
     async fn verified_live_owner_is_terminated_before_recovery() {
         let temp = tempfile::tempdir().expect("tempdir");
         let profile = temp.path().join("profile");
-        std::fs::create_dir_all(&profile).expect("profile");
+        let host = hostname().await.expect("hostname");
+        assert_verified_owner_recovered(&profile, &host).await;
+    }
+
+    #[tokio::test]
+    async fn verified_live_owner_is_recovered_after_hostname_changes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile = temp.path().join("profile");
+        assert_verified_owner_recovered(&profile, "previous-local-host").await;
+    }
+
+    async fn assert_verified_owner_recovered(profile: &Path, owner_host: &str) {
+        std::fs::create_dir_all(profile).expect("profile");
         let script = profile.join("orphan-browser.sh");
         std::fs::write(
             &script,
@@ -379,7 +474,7 @@ mod tests {
         .expect("script");
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o700))
             .expect("script permissions");
-        let canonical_profile = std::fs::canonicalize(&profile).expect("canonical profile");
+        let canonical_profile = std::fs::canonicalize(profile).expect("canonical profile");
         let mut child = tokio::process::Command::new(canonical_profile.join("orphan-browser.sh"))
             .spawn()
             .expect("orphan process");
@@ -399,8 +494,8 @@ mod tests {
         })
         .await
         .expect("orphan command timeout");
-        let host = hostname().await.expect("hostname");
-        symlink(format!("{host}-{pid}"), profile.join("SingletonLock")).expect("singleton lock");
+        symlink(format!("{owner_host}-{pid}"), profile.join("SingletonLock"))
+            .expect("singleton lock");
         let owner = OwnerMetadata {
             version: OWNER_VERSION,
             browser_pid: pid,
@@ -416,7 +511,7 @@ mod tests {
             .expect("owner file");
         write_owner(&mut owner_file, &owner).expect("owner metadata");
 
-        let _lease = ProfileLease::acquire(&profile)
+        let _lease = ProfileLease::acquire(profile)
             .await
             .expect("recover verified owner");
 

@@ -721,11 +721,13 @@ export const MessageBubble = memo(
         group_bridgeSourceName: isGroupBridgeSource
           ? groupBridgeSourceName || t("remoteGroupFallback")
           : groupBridgeSourceName,
+        groupLabelById,
         displayNameMap,
       });
     }, [
       displayNameMap,
       ev.by,
+      groupLabelById,
       groupBridgeSourceName,
       isGroupBridgeSource,
       senderActor,

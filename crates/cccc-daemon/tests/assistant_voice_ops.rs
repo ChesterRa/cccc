@@ -1,5 +1,7 @@
-use cccc_contracts::{Actor, ActorRole, ActorRuntime, DaemonRequest, DaemonResponse, RunnerKind};
-use cccc_core::{GroupStore, HomeLayout, Scope, ledger};
+use cccc_contracts::{
+    Actor, ActorRole, ActorRuntime, DaemonRequest, DaemonResponse, Event, RunnerKind,
+};
+use cccc_core::{GroupStore, HomeLayout, Scope, ledger, ledger_archive};
 use serde_json::{Map, Value, json};
 
 #[test]
@@ -510,6 +512,57 @@ fn durable_log_remains_idempotent_after_session_window_is_trimmed() {
             .count(),
         1
     );
+}
+
+#[test]
+fn voice_input_ignores_legacy_events_missing_segment_identity() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let ledger_path = store.ledger_path(&group_id).expect("ledger");
+    let mut legacy_input = Event::new("assistant.voice.input", &group_id);
+    legacy_input.data = json!({
+        "assistant_id":"voice_secretary",
+        "input_kind":"asr_transcript",
+        "input_preview":"旧版事件没有录音段标识"
+    })
+    .as_object()
+    .cloned()
+    .expect("legacy input data");
+    ledger::append(&ledger_path, &legacy_input).expect("append legacy input");
+    let mut legacy_notice = Event::new("system.notify", &group_id);
+    legacy_notice.data = json!({
+        "kind":"voice_secretary_input",
+        "context":{"input_envelope":{"input_id":"legacy-input"}}
+    })
+    .as_object()
+    .cloned()
+    .expect("legacy notice data");
+    ledger::append(&ledger_path, &legacy_notice).expect("append legacy notice");
+    ledger_archive::compact(&home, &group_id, "legacy voice fixture")
+        .expect("compact ledger")
+        .expect("archived segment");
+
+    let response = ok(
+        &home,
+        "assistant_voice_transcript_append",
+        json!({
+            "group_id":group_id,
+            "by":"user",
+            "session_id":"current-session",
+            "segment_id":"current-segment",
+            "text":"新语音仍应正常投递",
+            "document_path":"docs/voice-secretary/legacy-compatible.md",
+            "is_final":true
+        }),
+    );
+
+    assert_eq!(response.result["input_event_created"], true);
+    assert_eq!(response.result["input_notify_emitted"], true);
+    let events = ledger::read_all(&ledger_path).expect("events");
+    assert!(events.iter().any(|event| {
+        event.kind == "assistant.voice.input"
+            && event.data.get("session_id").and_then(Value::as_str) == Some("current-session")
+            && event.data.get("segment_id").and_then(Value::as_str) == Some("current-segment")
+    }));
 }
 
 #[test]

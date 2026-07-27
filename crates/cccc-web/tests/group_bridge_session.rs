@@ -19,6 +19,7 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
             "registrations":[{
                 "registration_id":"greg_test","group_id":group.group_id,
                 "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                "transport":"group_bridge_session",
                 "credential":"secret-test","status":"active"
             }],
             "trusts":[{
@@ -50,6 +51,19 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
         .await
         .expect("response");
     assert_eq!(unauthorized.status(), StatusCode::FORBIDDEN);
+
+    let missing_source_group = app
+        .clone()
+        .oneshot(request(
+            &json!({
+                "idempotency_key":"delivery-without-source","text":"hello remote",
+                "to":["@foreman"]
+            }),
+            Some("secret-test"),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(missing_source_group.status(), StatusCode::FORBIDDEN);
 
     let missing_recipient = app
         .clone()
@@ -232,6 +246,7 @@ async fn remote_mcp_reports_access_and_does_not_expose_unscoped_full_tools() {
             "registrations":[{
                 "registration_id":"greg_full","group_id":group.group_id,
                 "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                "transport":"group_bridge_session",
                 "credential":"full-token","status":"active"
             }],
             "trusts":[{
@@ -292,8 +307,8 @@ async fn remote_exec_session_is_bound_to_the_authorized_registration() {
     integration_state::global_update(&home, "group_bridge", |value| {
         *value = json!({
             "registrations":[
-                {"registration_id":"greg_a","group_id":group.group_id,"remote_group_id":"g_sender_a","remote_peer_id":"peer_a","credential":"token-a","status":"active"},
-                {"registration_id":"greg_b","group_id":group.group_id,"remote_group_id":"g_sender_b","remote_peer_id":"peer_b","credential":"token-b","status":"active"}
+                {"registration_id":"greg_a","group_id":group.group_id,"remote_group_id":"g_sender_a","remote_peer_id":"peer_a","transport":"group_bridge_session","credential":"token-a","status":"active"},
+                {"registration_id":"greg_b","group_id":group.group_id,"remote_group_id":"g_sender_b","remote_peer_id":"peer_b","transport":"group_bridge_session","credential":"token-b","status":"active"}
             ],
             "trusts":[
                 {"trust_id":"trust_a","registration_id":"greg_a","group_id":group.group_id,"status":"active","access_level":"full"},
@@ -374,6 +389,109 @@ async fn remote_exec_session_is_bound_to_the_authorized_registration() {
         .expect("post-termination response");
     assert_eq!(after_termination.status(), StatusCode::BAD_REQUEST);
     daemon.abort();
+}
+
+#[tokio::test]
+async fn revoked_trust_invalidates_credential_and_removes_registration() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("store")
+        .create("remote target", "")
+        .expect("group");
+    integration_state::global_update(&home, "group_bridge", |value| {
+        *value = json!({
+            "registrations":[{
+                "registration_id":"greg_revoked","group_id":group.group_id,
+                "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                "transport":"group_bridge_session",
+                "credential":"revoked-token","status":"active"
+            }],
+            "trusts":[{
+                "trust_id":"trust_revoked","registration_id":"greg_revoked",
+                "group_id":group.group_id,"status":"active","access_level":"messages"
+            }]
+        });
+        Ok(())
+    })
+    .expect("bridge state");
+    let app = cccc_web::app(home.clone());
+
+    let revoked = app
+        .clone()
+        .oneshot(
+            Request::post("/api/group-bridge/pairing/trusts/trust_revoked/revoke")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(json!({"revoked_by":"test"}).to_string()))
+                .expect("request"),
+        )
+        .await
+        .expect("revoke response");
+    assert_eq!(revoked.status(), StatusCode::OK);
+
+    let denied = app
+        .oneshot(request(
+            &json!({
+                "source_group_id":"g_sender","text":"must fail","to":["@foreman"]
+            }),
+            Some("revoked-token"),
+        ))
+        .await
+        .expect("denied response");
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let state = integration_state::global_get(&home, "group_bridge").expect("bridge state");
+    assert_eq!(state["trusts"][0]["status"], "revoked");
+    assert_eq!(
+        state["registrations"]
+            .as_array()
+            .expect("registrations")
+            .len(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn session_authorization_requires_complete_registration_and_active_trust() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("store")
+        .create("remote target", "")
+        .expect("group");
+    integration_state::global_update(&home, "group_bridge", |value| {
+        *value = json!({
+            "registrations":[
+                {
+                    "registration_id":"greg_no_trust","group_id":group.group_id,
+                    "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                    "transport":"group_bridge_session",
+                    "credential":"no-trust-token","status":"active"
+                },
+                {
+                    "registration_id":"greg_incomplete","group_id":group.group_id,
+                    "remote_group_id":"","remote_peer_id":"peer_sender",
+                    "transport":"group_bridge_session",
+                    "credential":"incomplete-token","status":"active"
+                }
+            ],
+            "trusts":[{
+                "trust_id":"trust_incomplete","registration_id":"greg_incomplete",
+                "group_id":group.group_id,"status":"active","access_level":"messages"
+            }]
+        });
+        Ok(())
+    })
+    .expect("bridge state");
+    let app = cccc_web::app(home);
+
+    for credential in ["no-trust-token", "incomplete-token"] {
+        let response = app
+            .clone()
+            .oneshot(mcp_request("cccc_remote_access", credential))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
 }
 
 fn request(payload: &Value, credential: Option<&str>) -> Request<Body> {

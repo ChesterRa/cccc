@@ -34,5 +34,16 @@ pub fn find_relay(home: &HomeLayout, group_id: &str, source_event_id: &str) -> O
 
 pub fn tracked_client_id(group_id: &str, by: &str, key: &str) -> String {
     let digest = Sha256::digest(format!("{group_id}\0{by}\0{key}"));
-    format!("tracked:{digest:x}")
+    format!("tracked-send:{digest:.32x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tracked_client_id_matches_python_shape() {
+        let value = tracked_client_id("group", "user", "request");
+        assert_eq!(value, "tracked-send:abed96f07487e072ead638feb064bf1a");
+    }
 }

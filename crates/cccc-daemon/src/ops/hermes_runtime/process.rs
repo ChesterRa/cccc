@@ -110,17 +110,25 @@ mod tests {
 
     #[test]
     fn command_timeout_terminates_stalled_hermes_processes() {
-        let started = Instant::now();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let marker = temp.path().join("descendant-finished");
         let error = run(
             Path::new("/bin/sh"),
-            &["-c".into(), "sleep 5".into()],
+            &[
+                "-c".into(),
+                "(sleep 1; printf done > \"$CCCC_TIMEOUT_MARKER\") & wait".into(),
+            ],
             None,
             None,
-            &[],
+            &[("CCCC_TIMEOUT_MARKER", marker.to_string_lossy().into_owned())],
             Duration::from_millis(50),
         )
         .expect_err("timeout");
         assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-        assert!(started.elapsed() < Duration::from_secs(1));
+        std::thread::sleep(Duration::from_millis(1_200));
+        assert!(
+            !marker.exists(),
+            "timed-out Hermes descendant was left running"
+        );
     }
 }

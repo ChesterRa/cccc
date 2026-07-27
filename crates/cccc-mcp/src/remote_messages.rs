@@ -30,19 +30,27 @@ pub(crate) async fn try_send(
         Ok(target) => target,
         Err(error) => return Some(Err(error)),
     };
-    if target.data["source_platform"] != "group_bridge_session" {
+    if target.data.get("source_platform").and_then(Value::as_str) != Some("group_bridge_session") {
         return None;
     }
-    let destination_group_id = target.data["src_group_id"]
-        .as_str()
-        .or_else(|| target.data["source_group_id"].as_str())?
-        .trim();
-    let remote_peer_id = target.data["source_user_id"].as_str().map(str::trim);
+    let destination_group_id = target
+        .data
+        .get("src_group_id")
+        .and_then(Value::as_str)
+        .or_else(|| target.data.get("source_group_id").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let remote_peer_id = target
+        .data
+        .get("source_user_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
     let Some(trust) = find_trust(
         &state,
         &source_group_id,
         destination_group_id,
-        remote_peer_id,
+        Some(remote_peer_id),
     ) else {
         return Some(Err(format!(
             "group_bridge_reply_route_not_found: no active Group Bridge route found for reply source group={destination_group_id}"
@@ -123,7 +131,11 @@ async fn send_reply(
         .cloned()
         .ok_or("reply response has no event")?;
     let source_event_id = event["id"].as_str().unwrap_or(&idempotency_key);
-    let remote_reply_to = target.data["src_event_id"].as_str().unwrap_or("");
+    let remote_reply_to = target
+        .data
+        .get("src_event_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
     let remote_result = deliver(
         home,
         &args,
@@ -349,12 +361,8 @@ fn find_trust<'a>(
         trust["group_id"] == source_group_id
             && trust["remote_group_id"] == destination_group_id
             && trust["status"] == "active"
-            && remote_peer_id.is_none_or(|peer_id| {
-                peer_id.is_empty()
-                    || trust["remote_peer_id"]
-                        .as_str()
-                        .is_none_or(|value| value == peer_id)
-            })
+            && remote_peer_id
+                .is_none_or(|peer_id| trust["remote_peer_id"].as_str() == Some(peer_id))
     })
 }
 
@@ -372,8 +380,10 @@ fn default_remote_reply_recipients(target: &Event) -> Vec<String> {
     if !stored.is_empty() {
         return stored;
     }
-    if let Some(source_by) = target.data["src_by"]
-        .as_str()
+    if let Some(source_by) = target
+        .data
+        .get("src_by")
+        .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
@@ -546,6 +556,67 @@ mod tests {
     use axum::routing::post;
     use axum::{Router, extract::State};
     use std::sync::{Arc, Mutex};
+
+    #[tokio::test]
+    async fn local_reply_without_group_bridge_metadata_falls_through() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("local", "").expect("group");
+        let mut local = Event::new("chat.message", &group.group_id);
+        local.by = "user".into();
+        local.data = json!({"text":"question","to":["helper"]})
+            .as_object()
+            .cloned()
+            .expect("local data");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        ledger::append(&ledger_path, &local).expect("append local");
+        let args = json!({
+            "group_id":group.group_id,
+            "actor_id":"helper",
+            "reply_to":local.id,
+            "text":"answer"
+        })
+        .as_object()
+        .cloned()
+        .expect("reply args");
+        let client = DaemonClient::new(home.clone());
+
+        assert!(try_send(&home, &client, args).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn remote_reply_without_source_user_id_falls_through() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("receiver", "").expect("group");
+        let mut inbound = Event::new("chat.message", &group.group_id);
+        inbound.by = "group_bridge:unknown".into();
+        inbound.data = json!({
+            "text":"question",
+            "to":["helper"],
+            "source_platform":"group_bridge_session",
+            "src_group_id":"g_remote"
+        })
+        .as_object()
+        .cloned()
+        .expect("inbound data");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        ledger::append(&ledger_path, &inbound).expect("append inbound");
+        let args = json!({
+            "group_id":group.group_id,
+            "actor_id":"helper",
+            "reply_to":inbound.id,
+            "text":"answer"
+        })
+        .as_object()
+        .cloned()
+        .expect("reply args");
+        let client = DaemonClient::new(home.clone());
+
+        assert!(try_send(&home, &client, args).await.is_none());
+    }
 
     #[tokio::test]
     async fn remote_reply_is_relayed_with_python_compatible_provenance() {
@@ -784,6 +855,54 @@ mod tests {
             .await
             .expect("remote reply classification")
             .expect_err("missing route");
+        assert!(error.contains("group_bridge_reply_route_not_found"));
+    }
+
+    #[tokio::test]
+    async fn remote_reply_does_not_match_trust_without_remote_peer_id() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("receiver", "").expect("group");
+        integration_state::global_update(&home, STORE_KEY, |state| {
+            *state = json!({"trusts":[{
+                "group_id":group.group_id,
+                "remote_group_id":"g_remote",
+                "remote_endpoint":"http://127.0.0.1:9",
+                "credential":"secret",
+                "remote_access_level":"messages",
+                "status":"active"
+            }]});
+            Ok(())
+        })
+        .expect("bridge state");
+        let mut inbound = Event::new("chat.message", &group.group_id);
+        inbound.data = json!({
+            "source_platform":"group_bridge_session",
+            "source_user_id":"peer-remote",
+            "src_group_id":"g_remote"
+        })
+        .as_object()
+        .cloned()
+        .expect("inbound data");
+        ledger::append(
+            &store.ledger_path(&group.group_id).expect("ledger"),
+            &inbound,
+        )
+        .expect("append");
+        let args = json!({
+            "group_id":group.group_id,
+            "reply_to":inbound.id,
+            "text":"reply"
+        })
+        .as_object()
+        .cloned()
+        .expect("args");
+
+        let error = try_send(&home, &DaemonClient::new(home.clone()), args)
+            .await
+            .expect("remote reply classification")
+            .expect_err("trust without peer must not authorize reply");
         assert!(error.contains("group_bridge_reply_route_not_found"));
     }
 

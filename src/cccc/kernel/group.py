@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 import errno
 import hashlib
 import logging
@@ -38,6 +39,17 @@ LOGGER = logging.getLogger(__name__)
 
 class _GroupLoader(yaml.SafeLoader):
     """Load group documents without coercing ISO timestamps to datetime."""
+
+
+class _GroupDumper(yaml.SafeDumper):
+    """Persist datetime values as stable ISO 8601 strings."""
+
+
+def _represent_datetime(dumper: yaml.SafeDumper, value: datetime) -> yaml.nodes.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:timestamp", value.isoformat())
+
+
+_GroupDumper.add_representer(datetime, _represent_datetime)
 
 
 _GroupLoader.yaml_implicit_resolvers = {
@@ -210,7 +222,10 @@ class Group:
     def save(self) -> None:
         self.doc.setdefault("v", 1)
         self.doc["updated_at"] = utc_now_iso()
-        atomic_write_text(self.path / "group.yaml", yaml.safe_dump(self.doc, allow_unicode=True, sort_keys=False))
+        atomic_write_text(
+            self.path / "group.yaml",
+            yaml.dump(self.doc, Dumper=_GroupDumper, allow_unicode=True, sort_keys=False),
+        )
 
 
 def load_group(group_id: str) -> Optional[Group]:

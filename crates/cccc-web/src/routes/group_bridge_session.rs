@@ -196,8 +196,13 @@ async fn session_socket(state: AppState, registration: Value, mut socket: WebSoc
                     Some(Ok(Message::Text(text))) => {
                         let response = match serde_json::from_str::<Value>(&text) {
                             Ok(value) if value["type"] == "send" => {
-                                match receive_delivery(&state,&registration,value.get("payload").cloned().unwrap_or_else(||json!({}))).await {
-                                    Ok(result)=>json!({"type":"receipt","result":result}),
+                                match reauthorize(&state, &registration).map(|active| {
+                                    (active, value.get("payload").cloned().unwrap_or_else(||json!({})))
+                                }) {
+                                    Ok((active, payload)) => match receive_delivery(&state,&active,payload).await {
+                                        Ok(result)=>json!({"type":"receipt","result":result}),
+                                        Err(error)=>json!({"type":"error","message":error.to_string()}),
+                                    },
                                     Err(error)=>json!({"type":"error","message":error.to_string()}),
                                 }
                             }
@@ -211,6 +216,14 @@ async fn session_socket(state: AppState, registration: Value, mut socket: WebSoc
                 }
             }
             () = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
+                if reauthorize(&state, &registration).is_err() {
+                    let _ = socket.send(Message::Text(
+                        json!({"type":"error","message":"group bridge session is no longer authorized"})
+                            .to_string()
+                            .into(),
+                    )).await;
+                    return;
+                }
                 let Ok(store)=GroupStore::new(state.home.clone()) else {continue};
                 let Ok(path)=store.ledger_path(&group_id) else {continue};
                 let Ok(events)=ledger::tail(&path,50) else {continue};
@@ -229,12 +242,17 @@ async fn receive_delivery(
     registration: &Value,
     body: Value,
 ) -> Result<Value, ApiError> {
-    let group_id = registration["group_id"].as_str().unwrap_or("");
-    let source_group_id = body["source_group_id"]
-        .as_str()
-        .or_else(|| body["src_group_id"].as_str())
-        .unwrap_or("");
-    if source_group_id != registration["remote_group_id"].as_str().unwrap_or("") {
+    let group_id = required_session_field(registration, "group_id")?;
+    let remote_group_id = required_session_field(registration, "remote_group_id")?;
+    let remote_peer_id = required_session_field(registration, "remote_peer_id")?;
+    let source_group_id = body
+        .get("source_group_id")
+        .and_then(Value::as_str)
+        .or_else(|| body.get("src_group_id").and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::forbidden("source group is required"))?;
+    if source_group_id != remote_group_id {
         return Err(ApiError::forbidden(
             "source group does not match registration",
         ));
@@ -299,10 +317,7 @@ async fn receive_delivery(
     args.insert("group_id".into(), json!(group_id));
     args.insert(
         "by".into(),
-        json!(format!(
-            "group_bridge:{}",
-            registration["remote_peer_id"].as_str().unwrap_or("remote")
-        )),
+        json!(format!("group_bridge:{}", remote_peer_id)),
     );
     args.insert("source_group_id".into(), json!(source_group_id));
     args.insert("src_group_id".into(), json!(source_group_id));
@@ -603,14 +618,57 @@ fn authorize(state: &AppState, credential: &str) -> Result<Value, ApiError> {
     if credential.is_empty() {
         return Err(ApiError::forbidden("group bridge credential required"));
     }
-    items(
-        &BridgeStore::new(&state.home).load().map_err(io_error)?,
-        "registrations",
-    )
-    .iter()
-    .find(|item| item["status"] == "active" && item["credential"].as_str() == Some(credential))
-    .cloned()
-    .ok_or_else(|| ApiError::forbidden("invalid group bridge credential"))
+    let bridge = BridgeStore::new(&state.home).load().map_err(io_error)?;
+    items(&bridge, "registrations")
+        .iter()
+        .find(|item| item["status"] == "active" && item["credential"].as_str() == Some(credential))
+        .filter(|item| valid_registration(&bridge, item))
+        .cloned()
+        .ok_or_else(|| ApiError::forbidden("invalid group bridge credential"))
+}
+
+fn reauthorize(state: &AppState, registration: &Value) -> Result<Value, ApiError> {
+    let bridge = BridgeStore::new(&state.home).load().map_err(io_error)?;
+    items(&bridge, "registrations")
+        .iter()
+        .find(|item| {
+            item["registration_id"] == registration["registration_id"]
+                && item["credential"] == registration["credential"]
+                && item["status"] == "active"
+        })
+        .filter(|item| valid_registration(&bridge, item))
+        .cloned()
+        .ok_or_else(|| ApiError::forbidden("group bridge session is no longer authorized"))
+}
+
+fn valid_registration(bridge: &Value, registration: &Value) -> bool {
+    registration["transport"].as_str() == Some("group_bridge_session")
+        && [
+            "registration_id",
+            "group_id",
+            "remote_group_id",
+            "remote_peer_id",
+        ]
+        .into_iter()
+        .all(|field| {
+            registration[field]
+                .as_str()
+                .is_some_and(|value| !value.trim().is_empty())
+        })
+        && items(bridge, "trusts").iter().any(|trust| {
+            trust["registration_id"] == registration["registration_id"]
+                && trust["group_id"] == registration["group_id"]
+                && trust["status"] == "active"
+        })
+}
+
+fn required_session_field<'a>(registration: &'a Value, field: &str) -> Result<&'a str, ApiError> {
+    registration
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ApiError::forbidden(format!("group bridge registration lacks {field}")))
 }
 
 fn allowed_call(access: &str, name: &str, arguments: &Map<String, Value>) -> bool {

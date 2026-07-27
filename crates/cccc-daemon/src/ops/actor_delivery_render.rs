@@ -15,13 +15,15 @@ fn render_message(event: &Event) -> Option<String> {
     if event.kind == "system.notify" {
         return render_system(event);
     }
-    let mut body = event
-        .data
-        .get("text")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .trim_end_matches(['\r', '\n'])
-        .to_owned();
+    let mut body = super::messaging::install_command::delivery_text(event).unwrap_or_else(|| {
+        event
+            .data
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim_end_matches(['\r', '\n'])
+            .to_owned()
+    });
     let mut protocol = protocol_lines(event);
     protocol.extend(references::lines(event));
     protocol.extend(attachment_lines(event));
@@ -316,6 +318,35 @@ mod tests {
         assert!(rendered.contains("capability_id: skill:test:using-superpowers"));
         assert!(rendered.contains("User task:\n开始执行"));
         assert!(!rendered.contains("[cccc] References:"));
+    }
+
+    #[test]
+    fn delivers_install_as_capability_control_while_ledger_text_stays_user_facing() {
+        let mut event = Event::new("chat.message", "g_test");
+        event.by = "user".into();
+        event.data = json!({
+            "to":["architect"],
+            "text":"/install owner/repo",
+            "refs":[{
+                "kind":"text",
+                "title":"slash_command",
+                "command":"/install",
+                "capability_id":"skill:cccc:install",
+                "args_text":"owner/repo",
+                "target":"owner/repo",
+                "target_kind":"repo_slug"
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("event data");
+
+        let rendered = render_batch(&[event]).expect("rendered");
+        assert!(rendered.contains("[cccc] Slash command: /install"));
+        assert!(rendered.contains("skill:cccc:install"));
+        assert!(rendered.contains("cccc_capability_install"));
+        assert!(rendered.contains("owner/repo"));
+        assert!(!rendered.contains("[cccc] user → architect: /install owner/repo"));
     }
 
     #[test]

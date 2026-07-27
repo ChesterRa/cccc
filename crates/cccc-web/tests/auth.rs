@@ -78,6 +78,26 @@ async fn scoped_token_cannot_open_another_group() {
 }
 
 #[tokio::test]
+async fn scoped_token_cannot_delegate_into_another_group() {
+    let (_temp, home) = home();
+    let token = AccessTokenStore::new(home.clone())
+        .expect("store")
+        .create("member", vec!["g_allowed".into()], false, None)
+        .expect("token");
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::post("/api/v1/groups/g_allowed/delegate_contact")
+                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"dst_group_id":"g_denied","text":"hello"}"#))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn scoped_token_cannot_access_global_profiles_or_provider_credentials() {
     let (_temp, home) = home();
     let token = AccessTokenStore::new(home.clone())

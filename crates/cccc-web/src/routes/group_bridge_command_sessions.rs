@@ -32,20 +32,18 @@ pub(super) fn access_grant(
     )
     .iter()
     .find(|item| {
-        item["registration_id"] == registration["registration_id"] && item["status"] == "active"
+        item["registration_id"] == registration["registration_id"]
+            && item["group_id"] == registration["group_id"]
+            && item["status"] == "active"
     })
-    .cloned();
+    .cloned()
+    .ok_or_else(|| ApiError::forbidden("group bridge trust is not active"))?;
     Ok(AccessGrant {
-        level: trust
-            .as_ref()
-            .and_then(|item| item["access_level"].as_str())
+        level: trust["access_level"]
+            .as_str()
             .unwrap_or("messages")
             .to_owned(),
-        trust_id: trust
-            .as_ref()
-            .and_then(|item| item["trust_id"].as_str())
-            .unwrap_or("")
-            .to_owned(),
+        trust_id: trust["trust_id"].as_str().unwrap_or("").to_owned(),
     })
 }
 

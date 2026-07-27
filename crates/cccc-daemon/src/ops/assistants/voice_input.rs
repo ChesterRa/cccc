@@ -487,22 +487,30 @@ fn voice_events_for_segment(
         .iter()
         .find(|event| {
             event.kind == "assistant.voice.input"
-                && event.data["session_id"].as_str() == Some(session_id)
-                && event.data["segment_id"].as_str() == Some(segment_id)
+                && event_data_string(event, &["session_id"]) == Some(session_id)
+                && event_data_string(event, &["segment_id"]) == Some(segment_id)
         })
         .cloned();
     let notice = events
         .iter()
         .find(|event| {
             event.kind == "system.notify"
-                && event.data["kind"] == "voice_secretary_input"
-                && event.data["context"]["input_envelope"]["session_id"].as_str()
+                && event_data_string(event, &["kind"]) == Some("voice_secretary_input")
+                && event_data_string(event, &["context", "input_envelope", "session_id"])
                     == Some(session_id)
-                && event.data["context"]["input_envelope"]["segment_id"].as_str()
+                && event_data_string(event, &["context", "input_envelope", "segment_id"])
                     == Some(segment_id)
         })
         .cloned();
     Ok((input, notice))
+}
+fn event_data_string<'a>(event: &'a Event, path: &[&str]) -> Option<&'a str> {
+    let (first, rest) = path.split_first()?;
+    let mut value = event.data.get(*first)?;
+    for key in rest {
+        value = value.get(*key)?;
+    }
+    value.as_str()
 }
 fn checked_document_path(root: &Path, relative: &str) -> Result<PathBuf, OpError> {
     let mut current = root.to_path_buf();

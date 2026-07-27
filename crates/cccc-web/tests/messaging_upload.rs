@@ -165,6 +165,56 @@ async fn upload_larger_than_axum_default_limit_is_streamed_successfully() {
     daemon.await.expect("daemon task").expect("daemon");
 }
 
+#[tokio::test]
+async fn cross_group_upload_requires_destination_before_persisting_blob() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups.create("remote upload", "").expect("group");
+    let blobs_dir = groups
+        .group_dir(&group.group_id)
+        .expect("group directory")
+        .join("state/blobs");
+    let before = std::fs::read_dir(&blobs_dir)
+        .expect("blob directory")
+        .count();
+    let boundary = "cccc-cross-group-missing-destination";
+    let mut multipart = format!(
+        concat!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nremote\r\n",
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"evidence.bin\"\r\n",
+            "Content-Type: application/octet-stream\r\n\r\n"
+        ),
+        boundary = boundary,
+    )
+    .into_bytes();
+    multipart.extend_from_slice(b"evidence");
+    multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::post(format!(
+                "/api/v1/groups/{}/send_cross_group_upload",
+                group.group_id
+            ))
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(multipart))
+            .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        std::fs::read_dir(blobs_dir)
+            .expect("blob directory")
+            .count(),
+        before
+    );
+}
+
 async fn wait_for_address(home: &HomeLayout) {
     let path = home.daemon_dir().join("ccccd.addr.json");
     for _ in 0..100 {
