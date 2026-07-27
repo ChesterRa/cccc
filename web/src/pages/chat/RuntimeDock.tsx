@@ -300,7 +300,6 @@ function RuntimeDockActorButton({
   isDark,
   isSmallScreen,
   isInspectorOpen,
-  selectedGroupRunning,
   selectedGroupActorsHydrating,
   onOpenInspector,
 }: {
@@ -309,7 +308,6 @@ function RuntimeDockActorButton({
   isDark: boolean;
   isSmallScreen: boolean;
   isInspectorOpen: boolean;
-  selectedGroupRunning: boolean;
   selectedGroupActorsHydrating: boolean;
   onOpenInspector: (actorId: string) => void;
 }) {
@@ -317,7 +315,6 @@ function RuntimeDockActorButton({
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
     actor: item.actor,
-    selectedGroupRunning,
     selectedGroupActorsHydrating,
   });
   const ringTone = getRuntimeRingTone(item, isRunning, workingState);
@@ -436,7 +433,6 @@ export interface RuntimeDockProps {
   isDark: boolean;
   isSmallScreen: boolean;
   readOnly?: boolean;
-  selectedGroupRunning: boolean;
   selectedGroupActorsHydrating: boolean;
   onAddAgent?: () => void;
   onOpenRuntimeActor: (actorId: string) => void;
@@ -450,7 +446,6 @@ export function RuntimeDock({
   isDark,
   isSmallScreen,
   readOnly,
-  selectedGroupRunning,
   selectedGroupActorsHydrating,
   onAddAgent,
   onOpenRuntimeActor,
@@ -499,7 +494,6 @@ export function RuntimeDock({
                   isDark={isDark}
                   isSmallScreen={isSmallScreen}
                   isInspectorOpen={activeRuntimeActorId === item.actorId}
-                  selectedGroupRunning={selectedGroupRunning}
                   selectedGroupActorsHydrating={selectedGroupActorsHydrating}
                   onOpenInspector={onOpenRuntimeActor}
                 />

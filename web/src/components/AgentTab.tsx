@@ -88,6 +88,7 @@ interface AgentTabProps {
   agentState: AgentState | null;
   isVisible: boolean;
   readOnly?: boolean;
+  selectedGroupActorsHydrating: boolean;
   onQuit: () => void;
   onLaunch: () => void;
   onRelaunch: () => void;
@@ -109,6 +110,7 @@ export function AgentTab({
   agentState,
   isVisible,
   readOnly,
+  selectedGroupActorsHydrating,
   onQuit,
   onLaunch,
   onRelaunch,
@@ -123,7 +125,11 @@ export function AgentTab({
 }: AgentTabProps) {
   const { t } = useTranslation("actors");
   // Derived state (must be defined before refs that use them)
-  const { isRunning, workingState } = useActorDisplayState({ groupId, actor });
+  const { isRunning, workingState } = useActorDisplayState({
+    groupId,
+    actor,
+    selectedGroupActorsHydrating,
+  });
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
   const isWebModel =

@@ -13,6 +13,7 @@ import type { PresentationBrowserSurfaceState } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { CollapseIcon, ExpandIcon } from "../Icons";
 import { mapContainedImagePoint } from "./projectedBrowserCoordinates";
+import { resolveBrowserObserverDisconnect } from "./projectedBrowserConnection";
 
 type RfbInstance = {
   viewOnly: boolean;
@@ -455,6 +456,7 @@ export function ProjectedBrowserSurfacePanel({
           if (payload.t === "frame") {
             const rawBase64 = String(payload.data_base64 || "").trim();
             if (!rawBase64) return;
+            reconnectAttemptsRef.current = 0;
             const mime = String(payload.mime || "image/jpeg").trim() || "image/jpeg";
             const nextFrame = {
               seq: Number(payload.seq || 0) || 0,
@@ -515,50 +517,39 @@ export function ProjectedBrowserSurfacePanel({
         void (async () => {
           const info = await loadSessionRef.current();
           if (disposed || runIdRef.current !== runId) return;
-          if (
-            info.ok &&
-            info.result.browser_surface.active &&
-            (info.result.browser_surface.state === "ready" ||
-              info.result.browser_surface.state === "starting") &&
-            reconnectAttemptsRef.current < 3
-          ) {
+          if (info.ok) {
+            const resolution = resolveBrowserObserverDisconnect({
+              surface: info.result.browser_surface,
+              reconnectAttempts: reconnectAttemptsRef.current,
+              maxReconnectAttempts: 3,
+              reconnectingMessage: texts.reconnecting,
+              closedMessage: texts.closed,
+            });
+            setSessionState(normalizeState(resolution.state));
+            if (!resolution.shouldReconnect) {
+              const message = String(
+                info.result.browser_surface.error?.message ||
+                  info.result.browser_surface.message ||
+                  "",
+              ).trim();
+              if (message && info.result.browser_surface.state === "failed") {
+                setPanelError(message);
+              }
+              return;
+            }
             reconnectAttemptsRef.current += 1;
-            setSessionState(
-              normalizeState({ ...info.result.browser_surface, message: texts.reconnecting }),
-            );
             reconnectTimerRef.current = window.setTimeout(() => {
               reconnectTimerRef.current = null;
               attachSocket();
             }, 800);
             return;
           }
-          if (info.ok) {
-            setSessionState(
-              normalizeState({
-                ...info.result.browser_surface,
-                active: false,
-                state: info.result.browser_surface.state === "failed" ? "failed" : "closed",
-                message:
-                  info.result.browser_surface.state === "failed"
-                    ? info.result.browser_surface.message
-                    : texts.closed,
-              }),
-            );
-            const message = String(
-              info.result.browser_surface.error?.message ||
-                info.result.browser_surface.message ||
-                "",
-            ).trim();
-            if (message && info.result.browser_surface.state === "failed") {
-              setPanelError(message);
-            }
-            return;
-          }
-          setSessionState(
+          setSessionState((current) =>
             normalizeState({
-              active: false,
-              state: "closed",
-              message: texts.closed,
+              ...current,
+              active: current.active,
+              state: current.active ? "disconnected" : "closed",
+              message: current.active ? texts.reconnecting : texts.closed,
               error: { code: info.error.code, message: info.error.message },
             }),
           );
@@ -805,7 +796,11 @@ export function ProjectedBrowserSurfacePanel({
     const commandId = `refresh-${refreshNonce}`;
     pendingRefreshIdRef.current = commandId;
     setRefreshFeedback("pending");
-    if (sessionState.state === "failed" || sessionState.state === "closed") {
+    if (
+      sessionState.state === "failed" ||
+      sessionState.state === "closed" ||
+      sessionState.state === "disconnected"
+    ) {
       const timer = window.setTimeout(() => {
         frameRef.current = null;
         renderedFrameRef.current = null;
@@ -869,7 +864,10 @@ export function ProjectedBrowserSurfacePanel({
     event.preventDefault();
   };
 
-  const showReconnect = sessionState.state === "failed" || sessionState.state === "closed";
+  const showReconnect =
+    sessionState.state === "failed" ||
+    sessionState.state === "closed" ||
+    sessionState.state === "disconnected";
   const fullScreenLabel = isExpanded ? texts.exitFullScreen : texts.fullScreen;
   const refreshFeedbackLabel =
     refreshFeedback === "pending"

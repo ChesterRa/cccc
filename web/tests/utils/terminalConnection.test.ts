@@ -11,6 +11,7 @@ import {
   parseTerminalBinaryFrame,
   shouldSuppressTerminalAttachErrorOutput,
   shouldSuppressTerminalGeneratedInput,
+  shouldRetryTerminalClose,
   TERMINAL_FRAME_ATTACH,
   TERMINAL_FRAME_INPUT,
   TERMINAL_FRAME_INPUT_ACK,
@@ -53,6 +54,38 @@ describe("buildTerminalConnectionKey", () => {
     expect(shouldSuppressTerminalAttachErrorOutput("actor_not_running")).toBe(true);
     expect(shouldSuppressTerminalAttachErrorOutput("actor_not_found")).toBe(false);
     expect(shouldSuppressTerminalAttachErrorOutput("daemon_unavailable")).toBe(false);
+  });
+});
+
+describe("shouldRetryTerminalClose", () => {
+  it("retries a normal server close while the actor is still running", () => {
+    expect(
+      shouldRetryTerminalClose({
+        actorRunning: true,
+        isHeadless: false,
+        attachNonRetryable: false,
+        closeCode: 1000,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not retry authentication or classified attach failures", () => {
+    expect(
+      shouldRetryTerminalClose({
+        actorRunning: true,
+        isHeadless: false,
+        attachNonRetryable: false,
+        closeCode: 4401,
+      }),
+    ).toBe(false);
+    expect(
+      shouldRetryTerminalClose({
+        actorRunning: true,
+        isHeadless: false,
+        attachNonRetryable: true,
+        closeCode: 1000,
+      }),
+    ).toBe(false);
   });
 });
 

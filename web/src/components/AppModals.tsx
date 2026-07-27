@@ -10,6 +10,7 @@ import {
   type EditActorSavePayload,
   type SaveActorProfileResult,
 } from "./modals/ActorConfigModal";
+import { resolveNewActorId } from "./modals/actorCreateModel";
 import { GroupEditModal } from "./modals/GroupEditModal";
 import { InboxModal } from "./modals/InboxModal";
 import { PresentationPinModal } from "./presentation/PresentationPinModal";
@@ -1087,7 +1088,7 @@ export function AppModals({
 
   const handleAddActor = async (avatarFile?: File | null): Promise<boolean> => {
     if (!selectedGroupId) return false;
-    const actorId = newActorId.trim();
+    const actorId = resolveNewActorId(newActorId, suggestedActorId);
     const secretsText = String(newActorSecretsSetText || "");
     const actorNotes = String(newActorNotes || "").trim();
     const selectedProfile =

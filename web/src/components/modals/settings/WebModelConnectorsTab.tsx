@@ -12,6 +12,10 @@ import {
   targetDraftMatchesSaved,
 } from "../../../utils/webModelTargetDraft";
 import type { TargetDraftMode } from "../../../utils/webModelTargetDraft";
+import {
+  matchesWebModelActorSelection,
+  resolveWebModelActorSelection,
+} from "../../../utils/webModelSelection";
 import { ProjectedBrowserSurfacePanel } from "../../browser/ProjectedBrowserSurfacePanel";
 import {
   dangerButtonClass,
@@ -485,18 +489,27 @@ export default function WebModelConnectorsTab({
 
   const loadBrowserSession = useCallback(
     async (gid: string = groupId, aid: string = actorId) => {
-      if ((gid && !aid) || (!gid && aid)) {
+      const selection = resolveWebModelActorSelection(gid, aid);
+      if (!selection) {
         setBrowserSession(null);
         return;
       }
-      const resp = await api.fetchWebModelBrowserSession(gid, aid, { inspect: false });
+      const resp = await api.fetchWebModelBrowserSession(selection.groupId, selection.actorId, {
+        inspect: false,
+      });
+      if (
+        !matchesWebModelActorSelection(
+          currentSelectionRef.current,
+          selection.groupId,
+          selection.actorId,
+        )
+      )
+        return;
       if (resp.ok) {
         const nextSession = resp.result?.browser_session || null;
-        const key = browserSessionKey(gid, aid);
+        const key = browserSessionKey(selection.groupId, selection.actorId);
         setBrowserSessionsByActor((current) => ({ ...current, [key]: nextSession || {} }));
-        const currentSelection = currentSelectionRef.current;
-        if (gid === currentSelection.groupId && aid === currentSelection.actorId)
-          setBrowserSession(nextSession);
+        setBrowserSession(nextSession);
       } else {
         setError(resp.error?.message || wm("errors.loadBrowserSessionFailed"));
       }
@@ -531,12 +544,14 @@ export default function WebModelConnectorsTab({
 
   const loadActorsForGroup = useCallback(
     async (gid: string) => {
-      if (!gid) {
+      const normalizedGroupId = String(gid || "").trim();
+      if (!normalizedGroupId) {
         setActors([]);
         setActorId("");
         return;
       }
-      const resp = await api.fetchActors(gid, true, { noCache: true });
+      const resp = await api.fetchActors(normalizedGroupId, true, { noCache: true });
+      if (String(currentSelectionRef.current.groupId || "").trim() !== normalizedGroupId) return;
       if (resp.ok) {
         const nextActors = resp.result?.actors || [];
         setActors(nextActors);
@@ -563,6 +578,7 @@ export default function WebModelConnectorsTab({
     const gid = groupId;
     const aid = actorId;
     const resp = await api.fetchWebModelBrowserSurfaceSession(gid, aid, { inspect: true });
+    if (!matchesWebModelActorSelection(currentSelectionRef.current, gid, aid)) return resp;
     if (resp.ok) {
       const nextSession = resp.result.browser_session || null;
       const key = browserSessionKey(gid, aid);
@@ -587,6 +603,7 @@ export default function WebModelConnectorsTab({
         height: size.height,
         inspect: true,
       });
+      if (!matchesWebModelActorSelection(currentSelectionRef.current, gid, aid)) return resp;
       if (resp.ok) {
         const nextSession = resp.result.browser_session || null;
         const key = browserSessionKey(gid, aid);
@@ -696,10 +713,6 @@ export default function WebModelConnectorsTab({
     if (!isActive) {
       setBrowserSession(null);
       setShowBrowserSurface(false);
-      return;
-    }
-    if (!groupId && !actorId) {
-      void loadBrowserSession("", "");
       return;
     }
     if (!groupId || !actorId) {

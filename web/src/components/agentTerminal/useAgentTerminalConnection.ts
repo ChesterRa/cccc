@@ -15,6 +15,7 @@ import {
   parseTerminalBinaryFrame,
   shouldSuppressTerminalAttachErrorOutput,
   shouldSuppressTerminalGeneratedInput,
+  shouldRetryTerminalClose,
 } from "../../utils/terminalConnection";
 
 export type AgentTerminalConnectionStatus =
@@ -411,10 +412,14 @@ export function useAgentTerminalConnection(args: {
         ws.onclose = (event) => {
           if (disposed) return;
           wsRef.current = null;
-          const noRetry =
-            event.code === 1000 || event.code === 4401 || terminalAttachNoRetryRef.current;
+          const shouldRetry = shouldRetryTerminalClose({
+            actorRunning: isRunningRef.current,
+            isHeadless,
+            attachNonRetryable: terminalAttachNoRetryRef.current,
+            closeCode: event.code,
+          });
 
-          if (!noRetry && isRunningRef.current && !isHeadless) {
+          if (shouldRetry) {
             const startupRace = terminalAttachStartupRaceRef.current;
             const attempt = startupRace ? 0 : reconnectAttemptRef.current;
             if (!startupRace && attempt >= MAX_RECONNECT_ATTEMPTS) {

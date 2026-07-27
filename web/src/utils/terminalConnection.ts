@@ -149,3 +149,14 @@ export function shouldSuppressTerminalAttachErrorOutput(code: unknown): boolean 
   const normalized = String(code || "").trim();
   return normalized === "actor_not_running" || normalized === "not_pty_actor";
 }
+
+export function shouldRetryTerminalClose(args: {
+  actorRunning: boolean;
+  isHeadless: boolean;
+  attachNonRetryable: boolean;
+  closeCode: number;
+}): boolean {
+  return (
+    args.actorRunning && !args.isHeadless && !args.attachNonRetryable && args.closeCode !== 4401
+  );
+}

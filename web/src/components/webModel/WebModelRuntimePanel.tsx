@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Actor } from "../../types";
 import * as api from "../../services/api";
 import type { WebModelBrowserSession } from "../../services/api";
 import { classNames } from "../../utils/classNames";
 import { formatTime } from "../../utils/time";
+import { matchesWebModelActorSelection } from "../../utils/webModelSelection";
 import { useModalStore } from "../../stores";
 import { RefreshIcon, SettingsIcon } from "../Icons";
 import { ProjectedBrowserSurfacePanel } from "../browser/ProjectedBrowserSurfacePanel";
@@ -316,13 +317,21 @@ export function WebModelRuntimePanel({
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [surfaceRestartNonce, setSurfaceRestartNonce] = useState(0);
+  const currentSelectionRef = useRef({ groupId, actorId: String(actor.id || "").trim() });
   const actorId = String(actor.id || "").trim();
+  currentSelectionRef.current = { groupId, actorId };
   const queuedCount = Math.max(0, Number(actor.web_model_queued_count || 0));
   const canControlSurface = Boolean(isVisible && !readOnly && groupId && actorId);
 
   useEffect(() => {
-    if (!isVisible || !groupId || !actorId) return;
+    if (!isVisible || !groupId || !actorId) {
+      setSession(null);
+      setError("");
+      return;
+    }
     let cancelled = false;
+    setSession(null);
+    setError("");
     setBusyAction("load");
     void api
       .fetchWebModelBrowserSession(groupId, actorId, { inspect: false })
@@ -359,6 +368,7 @@ export function WebModelRuntimePanel({
     setError("");
     try {
       const resp = await api.closeWebModelBrowserSurfaceSession(groupId, actorId);
+      if (!matchesWebModelActorSelection(currentSelectionRef.current, groupId, actorId)) return;
       if (!resp.ok) {
         setError(resp.error?.message || "Failed to restart ChatGPT browser.");
         return;
@@ -366,7 +376,8 @@ export function WebModelRuntimePanel({
       setSession(resp.result.browser_session || {});
       setSurfaceRestartNonce((value) => value + 1);
     } finally {
-      setBusyAction("");
+      if (matchesWebModelActorSelection(currentSelectionRef.current, groupId, actorId))
+        setBusyAction("");
     }
   };
 
@@ -376,6 +387,7 @@ export function WebModelRuntimePanel({
 
   const loadBrowserSurfaceSession = useCallback(async () => {
     const resp = await api.fetchWebModelBrowserSurfaceSession(groupId, actorId, { inspect: true });
+    if (!matchesWebModelActorSelection(currentSelectionRef.current, groupId, actorId)) return resp;
     if (resp.ok) {
       setSession(resp.result.browser_session || {});
       setError("");
@@ -404,6 +416,8 @@ export function WebModelRuntimePanel({
         height,
         inspect: true,
       });
+      if (!matchesWebModelActorSelection(currentSelectionRef.current, groupId, actorId))
+        return resp;
       if (resp.ok) {
         setSession(resp.result.browser_session || {});
         setError("");

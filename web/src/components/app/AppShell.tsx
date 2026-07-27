@@ -90,7 +90,7 @@ type AppShellProps = {
   setMentionSelectedIndex: React.Dispatch<React.SetStateAction<number>>;
   setShowMentionMenu: React.Dispatch<React.SetStateAction<boolean>>;
   getTermEpoch: (actorId: string) => number;
-  onToggleActorEnabled: (actor: Actor) => void;
+  onToggleActorEnabled: (actor: Actor, isRunning?: boolean) => void;
   onRelaunchActor: (actor: Actor) => void;
   onNewActorSession: (actor: Actor) => void;
   onEditActor: (actor: Actor) => void;
@@ -383,7 +383,10 @@ export function AppShell({
                       isSmallScreen={isSmallScreen}
                       isVisible={isVisible}
                       readOnly={webReadOnly}
-                      onToggleEnabled={() => actor && onToggleActorEnabled(actor)}
+                      selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+                      onToggleEnabled={(isRunning) =>
+                        actor && onToggleActorEnabled(actor, isRunning)
+                      }
                       onRelaunch={() => actor && onRelaunchActor(actor)}
                       onNewSession={() => actor && onNewActorSession(actor)}
                       onEdit={() => actor && onEditActor(actor)}

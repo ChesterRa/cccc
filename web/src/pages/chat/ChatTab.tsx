@@ -1006,7 +1006,6 @@ export function ChatTab({
                     isDark={isDark}
                     isSmallScreen={isSmallScreen}
                     readOnly={readOnly}
-                    selectedGroupRunning={selectedGroupRunning}
                     selectedGroupActorsHydrating={selectedGroupActorsHydrating}
                     onAddAgent={!readOnly ? addAgent : undefined}
                     onOpenRuntimeActor={onOpenRuntimeActor}
