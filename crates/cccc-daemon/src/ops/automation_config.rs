@@ -4,7 +4,9 @@ use cccc_core::permissions;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 
-use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
+use crate::dispatch::{
+    OpError, OpResult, first_non_blank_arg, object, required_arg, store, string_arg,
+};
 
 const STANDUP_SNIPPET: &str = "{{interval_minutes}} minutes have passed. Stand-up checkpoint (foreman only).\n\nUse MCP chat for any visible update. Keep this short.";
 
@@ -74,7 +76,7 @@ fn manage(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     authorize(&group, request)?;
     let action = required_arg(request, "action")?;
-    let rule_id = string_arg(request, "rule_id").or_else(|| string_arg(request, "key"));
+    let rule_id = first_non_blank_arg(request, &["rule_id", "key"]);
     let updated = store(home)?
         .mutate(&group.group_id, |doc| {
             if let Some(rule_id) = &rule_id {

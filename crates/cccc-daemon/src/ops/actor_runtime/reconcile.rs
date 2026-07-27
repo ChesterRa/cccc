@@ -24,6 +24,7 @@ pub fn reconcile_exited(home: &HomeLayout, exited: Vec<SessionStatus>) -> Result
             continue;
         };
         if actor.runtime_state_source != RuntimeStateSource::Terminal {
+            append_exit_event(&store, status)?;
             continue;
         }
         store
@@ -60,4 +61,53 @@ fn append_exit_event(store: &GroupStore, status: SessionStatus) -> Result<(), Op
         &event,
     )
     .map_err(OpError::io)
+}
+
+#[cfg(test)]
+mod tests {
+    use cccc_contracts::{Actor, RunnerKind, RuntimeStateSource};
+    use cccc_core::{GroupStore, HomeLayout, ledger};
+    use cccc_runtime::SessionStatus;
+
+    use super::reconcile_exited;
+
+    #[test]
+    fn app_server_exit_is_recorded_without_disabling_actor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("test", "").expect("group");
+        store
+            .mutate(&group.group_id, |doc| {
+                let mut actor = Actor::new("peer1");
+                actor.runtime_state_source = RuntimeStateSource::AppServer;
+                doc.actors.push(actor);
+                doc.running = true;
+                Ok(())
+            })
+            .expect("add actor");
+
+        let result = reconcile_exited(
+            &home,
+            vec![SessionStatus {
+                group_id: group.group_id.clone(),
+                actor_id: "peer1".into(),
+                runner: RunnerKind::Pty,
+                running: false,
+                pid: Some(42),
+                started_at: "2026-07-27T00:00:00Z".into(),
+                exit_code: Some(7),
+            }],
+        );
+        assert!(result.is_ok());
+
+        let reloaded = store.load(&group.group_id).expect("reload group");
+        assert!(reloaded.actors[0].enabled);
+        let events = ledger::read_all(&store.ledger_path(&group.group_id).expect("ledger path"))
+            .expect("read ledger");
+        let event = events.last().expect("exit event");
+        assert_eq!(event.kind, "actor.stop");
+        assert_eq!(event.data["actor_id"], "peer1");
+        assert_eq!(event.data["exit_code"], 7);
+    }
 }

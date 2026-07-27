@@ -61,9 +61,7 @@ async fn ledger_tail(
     Path(group_id): Path<String>,
     Query(query): Query<HashMap<String, String>>,
 ) -> ApiResult {
-    let limit = query
-        .get("limit")
-        .or_else(|| query.get("n"))
+    let limit = first_non_blank_query(&query, &["limit", "n"])
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(200);
     call(
@@ -83,7 +81,7 @@ async fn ledger_search(
         "ledger_search",
         object(json!({
             "group_id":group_id,
-            "q":query.get("q").or_else(|| query.get("query")),
+            "q":first_non_blank_query(&query,&["q","query"]),
             "kind":query.get("kind"),
             "by":query.get("by"),
             "before":query.get("before"),
@@ -92,6 +90,19 @@ async fn ledger_search(
         })),
     )
     .await
+}
+
+fn first_non_blank_query<'a>(
+    query: &'a HashMap<String, String>,
+    names: &[&str],
+) -> Option<&'a str> {
+    names.iter().find_map(|name| {
+        query
+            .get(*name)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    })
 }
 async fn ledger_window(
     State(state): State<AppState>,

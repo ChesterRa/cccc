@@ -345,6 +345,7 @@ fn load_sessions(home: &HomeLayout, group_id: &str) -> HashMap<String, SessionWe
                     conversation_type: entry
                         .get("conversation_type")
                         .and_then(Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
                         .map(str::to_owned)
                         .or_else(|| match entry.get("chat_type").and_then(Value::as_str) {
                             Some("p2p") => Some("1".to_owned()),

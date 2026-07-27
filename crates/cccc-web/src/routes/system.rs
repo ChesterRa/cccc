@@ -32,8 +32,27 @@ pub fn routes() -> Router<AppState> {
         .layer(DefaultBodyLimit::max(3 * 1024 * 1024))
 }
 
-async fn ping(State(state): State<AppState>) -> ApiResult {
-    call(&state, "ping", Default::default()).await
+#[derive(serde::Deserialize)]
+struct PingQuery {
+    #[serde(default)]
+    include_home: bool,
+}
+
+async fn ping(State(state): State<AppState>, Query(query): Query<PingQuery>) -> ApiResult {
+    let response = call(&state, "ping", Default::default()).await?;
+    let daemon = response.0["result"].clone();
+    let mut result = json!({
+        "daemon": daemon,
+        "version": env!("CARGO_PKG_VERSION"),
+        "web": {
+            "mode": state.web_mode.as_str(),
+            "read_only": state.web_mode.is_read_only()
+        }
+    });
+    if query.include_home {
+        result["home"] = json!(state.home.root().to_string_lossy());
+    }
+    Ok(success(result))
 }
 async fn health(State(state): State<AppState>) -> ApiResult {
     let mut response = call(&state, "ping", Default::default()).await?;
@@ -60,9 +79,51 @@ async fn observability_update(State(state): State<AppState>, Json(body): Json<Va
     call(
         &state,
         "observability_update",
-        object(json!({"patch":body})),
+        object(json!({"by":body.get("by").cloned().unwrap_or_else(|| json!("user")),"patch":observability_patch(&body)})),
     )
     .await
+}
+
+fn observability_patch(body: &Value) -> serde_json::Map<String, Value> {
+    let mut patch = serde_json::Map::new();
+    for key in ["developer_mode", "log_level", "logger_levels"] {
+        if let Some(value) = body.get(key) {
+            patch.insert(key.into(), value.clone());
+        }
+    }
+    for (request_key, section, nested_key) in [
+        (
+            "terminal_transcript_per_actor_bytes",
+            "terminal_transcript",
+            "per_actor_bytes",
+        ),
+        (
+            "terminal_ui_scrollback_lines",
+            "terminal_ui",
+            "scrollback_lines",
+        ),
+        (
+            "peer_runtime_visibility",
+            "runtime_visibility",
+            "peer_runtime",
+        ),
+        (
+            "assistant_runtime_visibility",
+            "runtime_visibility",
+            "assistant_runtime",
+        ),
+    ] {
+        let Some(value) = body.get(request_key) else {
+            continue;
+        };
+        patch
+            .entry(section)
+            .or_insert_with(|| Value::Object(serde_json::Map::new()))
+            .as_object_mut()
+            .expect("observability section is an object")
+            .insert(nested_key.into(), value.clone());
+    }
+    patch
 }
 async fn branding_get(State(state): State<AppState>) -> ApiResult {
     let response = call(&state, "branding_get", Default::default()).await?;
@@ -235,4 +296,35 @@ async fn fs_recent() -> Json<Value> {
 }
 async fn fs_scope_root(Query(query): Query<HashMap<String, String>>) -> Json<Value> {
     success(json!({"path":query.get("path"),"scope_root":query.get("path")}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::observability_patch;
+    use serde_json::json;
+
+    #[test]
+    fn observability_update_maps_flat_request_fields_to_persisted_sections() {
+        let patch = observability_patch(&json!({
+            "by": "user",
+            "developer_mode": false,
+            "terminal_transcript_per_actor_bytes": 10485760,
+            "terminal_ui_scrollback_lines": 8000,
+            "peer_runtime_visibility": "visible",
+            "assistant_runtime_visibility": "visible"
+        }));
+
+        assert_eq!(
+            json!(patch),
+            json!({
+                "developer_mode": false,
+                "terminal_transcript": {"per_actor_bytes": 10485760},
+                "terminal_ui": {"scrollback_lines": 8000},
+                "runtime_visibility": {
+                    "peer_runtime": "visible",
+                    "assistant_runtime": "visible"
+                }
+            })
+        );
+    }
 }

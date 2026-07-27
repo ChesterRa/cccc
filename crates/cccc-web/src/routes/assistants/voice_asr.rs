@@ -233,7 +233,7 @@ pub fn begin_install(home: HomeLayout, model_id: String) -> Result<Value, VoiceE
             "progress_percent":0.0,
             "updated_at":utc_now(),
             "installed_at":previous["installed_at"],
-            "installed_manifest_sha256":previous.get("installed_manifest_sha256").or_else(||previous.get("manifest_sha256")).cloned().unwrap_or(Value::Null),
+            "installed_manifest_sha256":super::super::first_non_blank(&previous,&["installed_manifest_sha256","manifest_sha256"]),
             "error":{},"last_update_error":previous["last_update_error"]
         }),
     )?;
@@ -598,8 +598,8 @@ fn model_status(home: &HomeLayout, model: &Model) -> Value {
         "description":model.description,"runtime_id":RUNTIME_ID,"status":status,"available":true,"installed":status=="ready",
         "install_dir":root,"installed_at":state["installed_at"],"updated_at":state["updated_at"],"error":error,
         "last_update_error":state["last_update_error"],"manifest_sha256":manifest_sha,
-        "installed_manifest_sha256":state.get("installed_manifest_sha256").or_else(||state.get("manifest_sha256")).cloned().unwrap_or(Value::Null),
-        "update_available":status=="ready" && state.get("installed_manifest_sha256").or_else(||state.get("manifest_sha256")).and_then(Value::as_str).is_some_and(|value|value!=manifest_sha),
+        "installed_manifest_sha256":super::super::first_non_blank(&state,&["installed_manifest_sha256","manifest_sha256"]),
+        "update_available":status=="ready" && super::super::first_non_blank(&state,&["installed_manifest_sha256","manifest_sha256"]).is_some_and(|value|value!=manifest_sha),
         "offline_ready":status=="ready"&&model.offline.is_some(),"streaming_ready":status=="ready"&&model.streaming.is_some(),
         "diarization_ready":status=="ready"&&model.diarization.is_some(),"offline":model.offline.as_ref().map(|_|json!({"configured":true})).unwrap_or(json!({})),
         "streaming":model.streaming.as_ref().map(|_|json!({"configured":true})).unwrap_or(json!({})),

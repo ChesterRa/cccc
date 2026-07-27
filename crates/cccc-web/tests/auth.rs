@@ -103,6 +103,68 @@ async fn scoped_token_cannot_access_global_profiles_or_provider_credentials() {
 }
 
 #[tokio::test]
+async fn scoped_token_cannot_access_global_management_routes() {
+    let (_temp, home) = home();
+    let token = AccessTokenStore::new(home.clone())
+        .expect("store")
+        .create("member", vec!["g_allowed".into()], false, None)
+        .expect("token");
+    for (method, path) in [
+        ("GET", "/api/v1/remote_access"),
+        ("POST", "/api/v1/remote_access/start"),
+        ("GET", "/api/v1/debug/tail_logs"),
+        ("POST", "/api/v1/debug/clear_logs"),
+        ("GET", "/api/v1/capabilities/allowlist"),
+        ("POST", "/api/v1/capabilities/allowlist/validate"),
+    ] {
+        let response = cccc_web::app(home.clone())
+            .oneshot(
+                Request::builder()
+                    .method(method)
+                    .uri(path)
+                    .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{method} {path}");
+    }
+}
+
+#[tokio::test]
+async fn scoped_token_cannot_snapshot_a_query_selected_group() {
+    let (_temp, home) = home();
+    let token = AccessTokenStore::new(home.clone())
+        .expect("store")
+        .create("member", vec!["g_allowed".into()], false, None)
+        .expect("token");
+    let app = cccc_web::app(home);
+    let response = app
+        .clone()
+        .oneshot(
+            Request::get("/api/v1/debug/snapshot?group%5Fid=g%5Fdenied")
+                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+
+    let response = app
+        .oneshot(
+            Request::get("/api/v1/debug/snapshot?group_id=g_allowed&group_id=g_denied")
+                .header(header::AUTHORIZATION, format!("Bearer {}", token.token))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn legacy_flat_token_document_keeps_authentication_enabled() {
     let (_temp, home) = home();
     std::fs::write(

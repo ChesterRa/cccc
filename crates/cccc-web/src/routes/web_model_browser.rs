@@ -36,9 +36,11 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn info(State(state): State<AppState>, Query(query): Query<SessionQuery>) -> ApiResult {
-    validate_actor(&state, &query.group_id, &query.actor_id)?;
+    let group_id = required_identifier(&query.group_id, "group_id")?;
+    let actor_id = required_identifier(&query.actor_id, "actor_id")?;
+    validate_actor(&state, group_id, actor_id)?;
     let _ = query.inspect;
-    payload(&state, &query.group_id, &query.actor_id).await
+    payload(&state, group_id, actor_id).await
 }
 
 async fn open(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
@@ -58,7 +60,7 @@ async fn open(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResu
         .join(safe_segment(&actor_id)?);
     state
         .browser_surfaces
-        .open(
+        .ensure_open(
             &key(&group_id, &actor_id),
             &profile,
             provider_url(&provider),
@@ -133,8 +135,20 @@ async fn upgrade(
     Query(query): Query<SessionQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
-    validate_actor(&state, &query.group_id, &query.actor_id)?;
-    let session_key = key(&query.group_id, &query.actor_id);
+    let group_id = required_identifier(&query.group_id, "group_id")?;
+    let actor_id = required_identifier(&query.actor_id, "actor_id")?;
+    validate_actor(&state, group_id, actor_id)?;
+    let session_key = key(group_id, actor_id);
+    if state.web_mode.is_read_only() {
+        return Ok(ws.on_upgrade(|socket| async move {
+            crate::readonly::reject_socket(
+                socket,
+                "read_only_browser_surface",
+                "Web-model browser surface is disabled in read-only mode.",
+            )
+            .await;
+        }));
+    }
     Ok(ws.on_upgrade(move |socket| async move {
         crate::browser_surface::serve_socket(socket, &state.browser_surfaces, &session_key).await;
     }))
@@ -196,11 +210,14 @@ fn key(group_id: &str, actor_id: &str) -> String {
 }
 
 fn required(body: &Value, key: &str) -> Result<String, ApiError> {
-    body.get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+    let value = body.get(key).and_then(Value::as_str).unwrap_or_default();
+    required_identifier(value, key).map(str::to_owned)
+}
+
+fn required_identifier<'a>(value: &'a str, key: &str) -> Result<&'a str, ApiError> {
+    let value = value.trim();
+    (!value.is_empty())
+        .then_some(value)
         .ok_or_else(|| ApiError::bad(format!("{key} is required")))
 }
 
@@ -230,4 +247,33 @@ fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
 
 fn io_error(error: io::Error) -> ApiError {
     ApiError::bad(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::required_identifier;
+
+    #[test]
+    fn query_identifiers_are_required_and_trimmed() {
+        assert_eq!(
+            required_identifier(" g_one ", "group_id").expect("group id"),
+            "g_one"
+        );
+        assert_eq!(
+            required_identifier(" chatgpt-web-1 ", "actor_id").expect("actor id"),
+            "chatgpt-web-1"
+        );
+        assert_eq!(
+            required_identifier(" ", "group_id")
+                .expect_err("empty group id")
+                .to_string(),
+            "invalid_request: group_id is required"
+        );
+        assert_eq!(
+            required_identifier("", "actor_id")
+                .expect_err("empty actor id")
+                .to_string(),
+            "invalid_request: actor_id is required"
+        );
+    }
 }

@@ -1,3 +1,4 @@
+use base64::Engine;
 use cccc_client::DaemonClient;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
@@ -253,11 +254,7 @@ async fn file(
     args: &Map<String, Value>,
 ) -> Result<Value, String> {
     let action = action(args);
-    let raw = args
-        .get("path")
-        .or_else(|| args.get("rel_path"))
-        .and_then(Value::as_str)
-        .ok_or("path is required")?;
+    let raw = first_non_blank(args, &["path", "rel_path"]).ok_or("path is required")?;
     let path = if raw.starts_with("state/blobs/") {
         let group_id = args
             .get("group_id")
@@ -295,9 +292,29 @@ async fn file(
                 "title":title,
                 "mime_type":mime_guess::from_path(&path).first_or_octet_stream().to_string(),
                 "bytes":blob.bytes,
-                "sha256":blob.sha256
+                "sha256":blob.sha256,
+                "content_base64":base64::engine::general_purpose::STANDARD.encode(&bytes)
             }]),
         );
+        if request
+            .get("dst_group_id")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            let result = crate::remote_messages::try_send(home, client, request)
+                .await
+                .ok_or(
+                    "attachments are only supported for trusted remote Group Bridge messages",
+                )??;
+            return Ok(json!({"sent":true,"attachment":blob,"result":result}));
+        }
+        if let Some(attachments) = request.get_mut("attachments").and_then(Value::as_array_mut) {
+            for attachment in attachments {
+                if let Some(item) = attachment.as_object_mut() {
+                    item.remove("content_base64");
+                }
+            }
+        }
         let result = daemon(client, "send", request).await?;
         return Ok(json!({"sent":true,"attachment":blob,"result":result}));
     }
@@ -316,12 +333,17 @@ pub(super) fn command(args: &Map<String, Value>) -> Result<Vec<String>, String> 
             .map(str::to_owned)
             .collect());
     }
-    let raw = args
-        .get("cmd")
-        .or_else(|| args.get("command"))
-        .and_then(Value::as_str)
-        .ok_or("cmd is required")?;
+    let raw = first_non_blank(args, &["cmd", "command"]).ok_or("cmd is required")?;
     shell_words::split(raw).map_err(|error| error.to_string())
+}
+
+fn first_non_blank<'a>(args: &'a Map<String, Value>, names: &[&str]) -> Option<&'a str> {
+    names.iter().find_map(|name| {
+        args.get(*name)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    })
 }
 
 fn action(args: &Map<String, Value>) -> &str {
@@ -340,7 +362,7 @@ fn bounded(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_codex_patch, timeout};
+    use super::{apply_codex_patch, command, timeout};
     use serde_json::json;
 
     #[test]
@@ -355,6 +377,16 @@ mod tests {
             .cloned()
             .expect("legacy arguments");
         assert_eq!(timeout(&legacy), 45);
+    }
+
+    #[test]
+    fn shell_command_skips_an_empty_primary_alias() {
+        let args = json!({"cmd":" ","command":"printf fallback"})
+            .as_object()
+            .cloned()
+            .expect("arguments");
+
+        assert_eq!(command(&args).expect("command"), ["printf", "fallback"]);
     }
 
     #[test]

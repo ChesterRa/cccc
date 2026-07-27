@@ -360,16 +360,9 @@ async fn remote_submit(
             .and_then(Value::as_str)
             .unwrap_or(""),
     )?;
-    let code = payload
-        .get("code")
-        .or_else(|| payload.get("pairing_code"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let invite_id = payload
-        .get("nonce")
-        .or_else(|| payload.get("invite_id"))
-        .and_then(Value::as_str)
-        .unwrap_or("");
+    let payload = Value::Object(payload.clone());
+    let code = super::first_non_blank(&payload, &["code", "pairing_code"]).unwrap_or("");
+    let invite_id = super::first_non_blank(&payload, &["nonce", "invite_id"]).unwrap_or("");
     if code.is_empty() || invite_id.is_empty() {
         return Err(ApiError::bad("connection payload is incomplete"));
     }

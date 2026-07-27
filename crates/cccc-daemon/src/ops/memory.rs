@@ -4,7 +4,7 @@ use cccc_core::memory::MemoryStore;
 use serde_json::{Value, json};
 use std::fs;
 
-use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
+use crate::dispatch::{OpError, OpResult, first_non_blank_arg, object, required_arg, string_arg};
 
 mod reme;
 
@@ -54,8 +54,7 @@ fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn write(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let target = string_arg(request, "target").unwrap_or_else(|| "memory".into());
-    let content = string_arg(request, "content")
-        .or_else(|| string_arg(request, "text"))
+    let content = first_non_blank_arg(request, &["content", "text"])
         .ok_or_else(|| OpError::new("invalid_args", "content is required"))?;
     let (path, hash, deduped) = MemoryStore::new(home.clone())
         .write(

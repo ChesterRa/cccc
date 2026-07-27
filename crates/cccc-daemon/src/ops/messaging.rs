@@ -5,6 +5,8 @@ use serde_json::{Map, Value, json};
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 use crate::ops::{actor_delivery, messaging_inbox};
 
+mod slash_skill;
+
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "send" | "message_send" => send(home, request, "chat.message"),
@@ -215,26 +217,9 @@ fn tracked_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 fn slash_skill_dispatch(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let capability_id = required_arg(request, "capability_id")?;
-    cccc_core::capabilities::CapabilityStore::new(home.clone())
-        .require(&capability_id)
-        .map_err(OpError::not_found)?;
-    let mut forwarded = request.clone();
-    forwarded.args.insert(
-        "text".into(),
-        Value::String(required_arg(request, "task_text")?),
-    );
-    forwarded.args.insert(
-        "control_kind".into(),
-        Value::String("slash_skill_dispatch".into()),
-    );
-    forwarded
-        .args
-        .insert("title".into(), Value::String("slash_skill_dispatch".into()));
-    forwarded
-        .args
-        .insert("capability_id".into(), Value::String(capability_id));
-    send(home, &forwarded, "chat.message")
+    let dispatch = slash_skill::prepare(home, request)?;
+    let response = send(home, &dispatch.request, "chat.message")?;
+    slash_skill::response(&dispatch, &response)
 }
 
 fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

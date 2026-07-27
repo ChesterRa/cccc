@@ -2,6 +2,7 @@ mod actions;
 mod local_sessions;
 mod local_tools;
 mod mapping;
+mod remote_messages;
 mod remote_tools;
 mod repo;
 mod router;

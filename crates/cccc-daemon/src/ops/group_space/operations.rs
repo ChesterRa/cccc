@@ -30,15 +30,16 @@ pub(super) fn ingest(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let remote_space_id = binding_id(&load(home, &group_id)?, &lane)?;
     let remote_source = if provider == "notebooklm" {
-        let title = payload
-            .get("title")
-            .and_then(Value::as_str)
-            .or_else(|| payload.get("path").and_then(Value::as_str))
+        let title = ["title", "path"]
+            .into_iter()
+            .filter_map(|name| payload.get(name).and_then(Value::as_str))
+            .map(str::trim)
+            .find(|value| !value.is_empty())
             .unwrap_or(&kind);
-        let content = payload
-            .get("content")
-            .or_else(|| payload.get("text"))
-            .and_then(Value::as_str)
+        let content = ["content", "text"]
+            .into_iter()
+            .filter_map(|name| payload.get(name).and_then(Value::as_str))
+            .find(|value| !value.trim().is_empty())
             .map(str::to_owned)
             .unwrap_or_else(|| serde_json::to_string_pretty(&payload).unwrap_or_default());
         Some(notebooklm::add_text(

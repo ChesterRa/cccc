@@ -60,11 +60,20 @@ fn voice_action(event: &Event, context: Option<&serde_json::Map<String, Value>>)
                 .and_then(Value::as_str)
         })
         .unwrap_or_default();
-    let request_text = request
-        .and_then(|value| value.get("request_text").or_else(|| value.get("text")))
-        .and_then(Value::as_str)
-        .or_else(|| event.data.get("text").and_then(Value::as_str))
-        .unwrap_or_default();
+    let request_text = [
+        request
+            .and_then(|value| value.get("request_text"))
+            .and_then(Value::as_str),
+        request
+            .and_then(|value| value.get("text"))
+            .and_then(Value::as_str),
+        event.data.get("text").and_then(Value::as_str),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::trim)
+    .find(|value| !value.is_empty())
+    .unwrap_or_default();
     let mut metadata = vec!["kind=voice_secretary_action_request".to_owned()];
     if !request_id.trim().is_empty() {
         metadata.push(format!("request_id={}", request_id.trim()));

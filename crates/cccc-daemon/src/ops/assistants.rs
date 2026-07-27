@@ -9,7 +9,7 @@ use uuid::Uuid;
 mod voice_input;
 mod voice_settings;
 
-use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
+use crate::dispatch::{OpError, OpResult, first_non_blank_arg, object, required_arg, string_arg};
 use crate::ops::actor_delivery;
 
 const KEY: &str = "assistants";
@@ -200,10 +200,13 @@ fn archive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 fn prompt_submit(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    let text = string_arg(request, "text")
-        .or_else(|| string_arg(request, "voice_transcript"))
-        .or_else(|| string_arg(request, "composer_text"))
-        .ok_or_else(|| OpError::new("invalid_args", "text is required"))?;
+    let text = first_non_blank_arg(request, &["voice_transcript", "text", "composer_text"])
+        .ok_or_else(|| {
+            OpError::new(
+                "empty_prompt_refine_input",
+                "voice_transcript or composer_text is required",
+            )
+        })?;
     let draft = update(home, &group_id, |state| {
         let draft = json!({"request_id":format!("vpr_{}",short_id()),"status":"pending","operation":string_arg(request,"operation").unwrap_or_else(||"refine".into()),"draft_text":text,"draft_preview":text,"created_at":utc_now()});
         state.insert("prompt_draft".into(), draft.clone());
@@ -253,9 +256,7 @@ fn clear(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 fn voice_request(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    let text = string_arg(request, "text")
-        .or_else(|| string_arg(request, "instruction"))
-        .or_else(|| string_arg(request, "request_text"))
+    let text = first_non_blank_arg(request, &["text", "instruction", "request_text"])
         .ok_or_else(|| OpError::new("invalid_args", "text is required"))?;
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let group = store.load(&group_id).map_err(OpError::not_found)?;

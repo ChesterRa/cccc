@@ -188,6 +188,7 @@ fn ids(request: &DaemonRequest) -> Result<Vec<String>, OpError> {
     Ok(request
         .args
         .get("allowlist")
+        .filter(|value| value.as_array().is_some_and(|items| !items.is_empty()))
         .or_else(|| request.args.get("ids"))
         .and_then(Value::as_array)
         .ok_or_else(|| OpError::new("invalid_args", "allowlist must be an array"))?

@@ -57,8 +57,9 @@ impl OutputBuffer {
     pub fn page(&self, before: Option<u64>, limit: usize) -> HistoryPage {
         let page_end = before.unwrap_or(self.end).clamp(self.start, self.end);
         let page_start = page_end.saturating_sub(limit.max(1) as u64).max(self.start);
+        let bytes = self.bytes_between(page_start, page_end);
         HistoryPage {
-            data: String::from_utf8_lossy(&self.bytes_between(page_start, page_end)).into_owned(),
+            data: cursor_preserving_text(&bytes),
             start_cursor: page_start,
             end_cursor: page_end,
             has_more: page_start > self.start,
@@ -69,8 +70,9 @@ impl OutputBuffer {
     pub fn page_since(&self, after: u64, limit: usize) -> HistoryPage {
         let page_start = after.clamp(self.start, self.end);
         let page_end = page_start.saturating_add(limit.max(1) as u64).min(self.end);
+        let bytes = self.bytes_between(page_start, page_end);
         HistoryPage {
-            data: String::from_utf8_lossy(&self.bytes_between(page_start, page_end)).into_owned(),
+            data: cursor_preserving_text(&bytes),
             start_cursor: page_start,
             end_cursor: page_end,
             has_more: page_end < self.end,
@@ -123,6 +125,27 @@ impl OutputBuffer {
     }
 }
 
+fn cursor_preserving_text(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len());
+    let mut remaining = bytes;
+    while !remaining.is_empty() {
+        match std::str::from_utf8(remaining) {
+            Ok(text) => {
+                output.push_str(text);
+                break;
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                output.push_str(std::str::from_utf8(&remaining[..valid]).unwrap_or_default());
+                let invalid = error.error_len().unwrap_or(remaining.len() - valid);
+                output.extend(std::iter::repeat_n('?', invalid));
+                remaining = &remaining[valid + invalid..];
+            }
+        }
+    }
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::OutputBuffer;
@@ -162,5 +185,16 @@ mod tests {
         assert!(output.bracketed_paste_enabled());
         output.push(b"\x1b[?2004l");
         assert!(!output.bracketed_paste_enabled());
+    }
+
+    #[test]
+    fn partial_utf8_pages_preserve_cursor_byte_length() {
+        let mut output = OutputBuffer::default();
+        output.push("你".as_bytes());
+
+        let page = output.page(None, 2);
+
+        assert_eq!(page.data, "??");
+        assert_eq!(page.data.len() as u64, page.end_cursor - page.start_cursor);
     }
 }

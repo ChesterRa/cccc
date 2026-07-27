@@ -223,13 +223,36 @@ async fn reveal(State(state): State<AppState>, Path(id): Path<String>) -> Respon
     }
 }
 
-async fn web_session(principal: Option<Extension<Principal>>) -> Json<Value> {
+async fn web_session(
+    State(state): State<AppState>,
+    principal: Option<Extension<Principal>>,
+) -> Json<Value> {
     let principal = principal.map(|value| value.0);
+    let runtime_visibility = runtime_visibility(&state.home);
     Json(json!({"ok":true,"result":{"web_access_session":{
         "current_browser_signed_in":principal.is_some(),
         "can_access_global_settings":principal.as_ref().is_some_and(|item| item.is_admin),
-        "user_id":principal.map(|item| item.user_id).unwrap_or_default()
+        "user_id":principal.map(|item| item.user_id).unwrap_or_default(),
+        "runtime_visibility":runtime_visibility
     }}}))
+}
+
+fn runtime_visibility(home: &cccc_core::HomeLayout) -> Value {
+    let settings = cccc_core::settings::load(home).unwrap_or_default();
+    let visibility = settings
+        .observability
+        .get("runtime_visibility")
+        .and_then(Value::as_object);
+    json!({
+        "peer_runtime": visibility
+            .and_then(|value| value.get("peer_runtime"))
+            .and_then(Value::as_str)
+            .unwrap_or("visible"),
+        "assistant_runtime": visibility
+            .and_then(|value| value.get("assistant_runtime"))
+            .and_then(Value::as_str)
+            .unwrap_or("hidden")
+    })
 }
 
 async fn logout() -> Response {
@@ -239,4 +262,36 @@ async fn logout() -> Response {
         Json(json!({"ok":true,"result":{"signed_out":true}})),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runtime_visibility;
+    use cccc_core::HomeLayout;
+    use serde_json::json;
+
+    #[test]
+    fn web_session_uses_saved_runtime_visibility() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let settings = cccc_core::settings::GlobalSettings {
+            observability: json!({
+                "runtime_visibility": {
+                    "peer_runtime": "hidden",
+                    "assistant_runtime": "visible"
+                }
+            })
+            .as_object()
+            .cloned()
+            .expect("observability object"),
+            ..Default::default()
+        };
+        cccc_core::settings::save(&home, &settings).expect("save settings");
+
+        assert_eq!(
+            runtime_visibility(&home),
+            json!({"peer_runtime":"hidden","assistant_runtime":"visible"})
+        );
+    }
 }

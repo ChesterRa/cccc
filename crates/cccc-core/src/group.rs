@@ -81,8 +81,7 @@ impl GroupStore {
             .append(true)
             .open(dir.join("ledger.jsonl"))?;
         self.save(&group)?;
-        let mut registry = Registry::load(&self.home)?;
-        registry.insert(GroupMeta {
+        let meta = GroupMeta {
             group_id: group.group_id.clone(),
             title: group.title.clone(),
             topic: group.topic.clone(),
@@ -90,6 +89,10 @@ impl GroupStore {
             default_scope_key: String::new(),
             created_at: group.created_at.clone(),
             updated_at: group.updated_at.clone(),
+        };
+        Registry::mutate(&self.home, |registry| {
+            registry.groups.insert(meta.group_id.clone(), meta);
+            Ok(())
         })?;
         Ok(group)
     }
@@ -136,13 +139,14 @@ impl GroupStore {
             self.save_unlocked(&group)?;
             Ok(group)
         })?;
-        let mut registry = Registry::load(&self.home)?;
-        if let Some(meta) = registry.groups.get_mut(group_id) {
-            meta.title.clone_from(&group.title);
-            meta.topic.clone_from(&group.topic);
-            meta.updated_at.clone_from(&group.updated_at);
-        }
-        registry.save()?;
+        Registry::mutate(&self.home, |registry| {
+            if let Some(meta) = registry.groups.get_mut(group_id) {
+                meta.title.clone_from(&group.title);
+                meta.topic.clone_from(&group.topic);
+                meta.updated_at.clone_from(&group.updated_at);
+            }
+            Ok(())
+        })?;
         Ok(group)
     }
 
@@ -153,7 +157,11 @@ impl GroupStore {
         if existed {
             fs::remove_dir_all(dir)?;
         }
-        Registry::load(&self.home)?.remove(group_id)?;
+        Registry::mutate(&self.home, |registry| {
+            registry.groups.remove(group_id);
+            registry.defaults.retain(|_, value| value != group_id);
+            Ok(())
+        })?;
         Ok(existed)
     }
 
@@ -210,8 +218,7 @@ impl GroupStore {
             .create(true)
             .append(true)
             .open(dir.join("ledger.jsonl"))?;
-        let mut registry = Registry::load(&self.home)?;
-        registry.insert(GroupMeta {
+        let meta = GroupMeta {
             group_id: group.group_id.clone(),
             title: group.title.clone(),
             topic: group.topic.clone(),
@@ -219,6 +226,10 @@ impl GroupStore {
             default_scope_key: group.active_scope_key.clone(),
             created_at: group.created_at.clone(),
             updated_at: group.updated_at.clone(),
+        };
+        Registry::mutate(&self.home, |registry| {
+            registry.groups.insert(meta.group_id.clone(), meta);
+            Ok(())
         })?;
         Ok(group)
     }
@@ -288,5 +299,34 @@ mod tests {
             store.load(&group.group_id).expect("load").extra["concurrent_count"],
             16
         );
+    }
+
+    #[test]
+    fn concurrent_group_creates_keep_every_registry_entry() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let barrier = Arc::new(Barrier::new(16));
+        let handles = (0..16)
+            .map(|index| {
+                let store = store.clone();
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    store.create(&format!("group-{index}"), "").expect("create")
+                })
+            })
+            .collect::<Vec<_>>();
+        let group_ids = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("join").group_id)
+            .collect::<std::collections::BTreeSet<_>>();
+        let listed = store
+            .list()
+            .expect("list")
+            .into_iter()
+            .map(|group| group.group_id)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(listed, group_ids);
     }
 }

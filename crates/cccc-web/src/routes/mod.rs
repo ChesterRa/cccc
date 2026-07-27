@@ -41,6 +41,17 @@ mod web_model_connectors;
 
 use crate::AppState;
 use axum::Router;
+use serde_json::Value;
+
+fn first_non_blank<'a>(value: &'a Value, names: &[&str]) -> Option<&'a str> {
+    names.iter().find_map(|name| {
+        value
+            .get(name)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    })
+}
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -70,4 +81,19 @@ pub fn router() -> Router<AppState> {
         .merge(capabilities::routes())
         .merge(streams::routes())
         .merge(terminal::routes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_non_blank;
+    use serde_json::json;
+
+    #[test]
+    fn request_aliases_skip_empty_primary_values() {
+        let value = json!({"primary":" ","legacy":" value "});
+        assert_eq!(
+            first_non_blank(&value, &["primary", "legacy"]),
+            Some("value")
+        );
+    }
 }

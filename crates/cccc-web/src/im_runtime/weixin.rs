@@ -138,10 +138,10 @@ fn load_credentials(home: &HomeLayout, group_id: &str) -> Result<(String, String
     if token.is_empty() {
         return Err("Weixin credential token is empty".into());
     }
-    let base_url = value
-        .get("baseUrl")
-        .or_else(|| value.get("base_url"))
-        .and_then(Value::as_str)
+    let base_url = ["baseUrl", "base_url"]
+        .into_iter()
+        .filter_map(|name| value.get(name).and_then(Value::as_str))
+        .find(|value| !value.trim().is_empty())
         .unwrap_or("")
         .trim()
         .to_owned();

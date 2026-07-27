@@ -22,7 +22,7 @@ const TOOLS: &[(&str, &str)] = &[
     ),
     (
         "cccc_message_send",
-        "Send a visible collaboration message or reply to an existing message.",
+        "Send a visible collaboration message or reply. For a trusted remote Group Bridge route, set dst_group_id to its exact remote_group_id and choose an explicit remote recipient.",
     ),
     (
         "cccc_tracked_send",

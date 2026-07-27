@@ -98,11 +98,7 @@ async fn ack(
     Path((group_id, event_id)): Path<(String, String)>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let actor_id = body
-        .get("actor_id")
-        .or_else(|| body.get("by"))
-        .and_then(Value::as_str)
-        .unwrap_or("user");
+    let actor_id = super::first_non_blank(&body, &["actor_id", "by"]).unwrap_or("user");
     call(
         &state,
         "chat_ack",

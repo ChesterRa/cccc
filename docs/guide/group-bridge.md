@@ -39,6 +39,8 @@ Group Bridge preserves provenance. Relayed messages arrive with `source_platform
 | **Read** | Inspect remote context, repository files, search results, and read-only git state. Does not wake target actors. |
 | **Full** | Edit remote files and run remote commands through the same local-access surface used by native actors. This is not a sandbox. |
 
+Access levels are cumulative: **Read** and **Full** retain explicit message delivery.
+
 Keep bridges at **Messages** unless the current workflow needs more. Grant **Read** only to groups allowed to inspect the target workspace. Grant **Full** only to groups that may run commands and modify files in that workspace.
 
 ## Setup
@@ -91,9 +93,11 @@ For agent-driven messaging, use the normal CCCC message tools. Discover remote t
 cccc_remote_access(action="list")
 ```
 
-Then send a normal message with `dst_group_id` set to the remote group id and `to` set to `["@foreman"]`.
+Then send a normal message with `dst_group_id` set to the remote group id and `to` set to `["@foreman"]`. For retryable workflows, reuse one stable `idempotency_key` so a transport retry does not create a duplicate remote message.
 
 Attachments can be sent through Group Bridge when the target is a trusted remote group. Use attachments for evidence, logs, screenshots, or small artifacts that should be visible in the remote conversation.
+
+Incoming remote messages preserve the source group, source actor, source event, and default return recipient. Reply with the delivered event's `reply_to` as usual; CCCC relays the reply to the originating group and keeps a local reply record. If the remote endpoint only exposes the legacy Group Bridge MCP surface, text delivery automatically falls back to that compatible path.
 
 ## Remote Read and Full Tools
 

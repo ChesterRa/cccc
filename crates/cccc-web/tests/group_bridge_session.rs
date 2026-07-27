@@ -36,7 +36,12 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
     let app = cccc_web::app(home.clone());
     let payload = json!({
         "source_group_id":"g_sender","source_group_title":"Sender",
-        "idempotency_key":"delivery-1","text":"hello remote","to":["@foreman"]
+        "source_by":"sender-agent","src_event_id":"sender-event-1",
+        "idempotency_key":"delivery-1","text":"hello remote","to":["@foreman"],
+        "attachments":[{
+            "kind":"file","title":"evidence.txt","mime_type":"text/plain",
+            "bytes":8,"sha256":"remote-sha","content_base64":"ZXZpZGVuY2U="
+        }]
     });
 
     let unauthorized = app
@@ -71,6 +76,19 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
         missing_recipient_body["error"]["code"],
         "missing_remote_recipient"
     );
+    let unsupported_refs = app
+        .clone()
+        .oneshot(request(
+            &json!({
+                "source_group_id":"g_sender","idempotency_key":"delivery-with-refs",
+                "text":"hello remote","to":["@foreman"],
+                "refs":[{"kind":"task_ref","task_id":"task-1"}]
+            }),
+            Some("secret-test"),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(unsupported_refs.status(), StatusCode::BAD_REQUEST);
 
     for expected_deduped in [false, true] {
         let response = app
@@ -97,7 +115,23 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].by, "group_bridge:peer_sender");
     assert_eq!(messages[0].data["source_group_id"], "g_sender");
+    assert_eq!(messages[0].data["src_group_id"], "g_sender");
+    assert_eq!(messages[0].data["src_event_id"], "sender-event-1");
+    assert_eq!(messages[0].data["src_by"], "sender-agent");
+    assert_eq!(messages[0].data["source_user_id"], "peer_sender");
+    assert_eq!(messages[0].data["remote_reply_to"], json!(["sender-agent"]));
     assert_eq!(messages[0].data["source_platform"], "group_bridge_session");
+    let attachment_path = messages[0].data["attachments"][0]["path"]
+        .as_str()
+        .expect("attachment path");
+    assert_eq!(
+        std::fs::read(
+            cccc_core::blobs::resolve(&home, &group.group_id, attachment_path)
+                .expect("attachment blob")
+        )
+        .expect("attachment bytes"),
+        b"evidence"
+    );
     daemon.abort();
 }
 
@@ -141,7 +175,7 @@ async fn cross_group_send_falls_back_to_remote_mcp_for_python_peers() {
                 "trust_id":"trust_remote","group_id":group.group_id,
                 "remote_group_id":"g_remote","remote_endpoint":endpoint,
                 "remote_peer_id":"12D3KooRemote","credential":"frs_test",
-                "remote_access_level":"messages","status":"active"
+                "remote_access_level":"read","status":"active"
             }]
         });
         Ok(())

@@ -174,6 +174,110 @@ fn empty_recipients_follow_the_group_default_policy() {
 }
 
 #[test]
+fn slash_skill_dispatch_persists_hidden_control_contract_and_replays_by_client_id() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    home.initialize().expect("initialize");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"slash-skill-test","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"architect","by":"user"}),
+    );
+    call(
+        &home,
+        "capability_import",
+        json!({"capability":{
+            "id":"skill:test:using-superpowers",
+            "kind":"skill",
+            "name":"using-superpowers"
+        }}),
+    );
+
+    let args = json!({
+        "group_id":group_id,
+        "by":"user",
+        "to":["architect"],
+        "task_text":"开始执行",
+        "command":"/using-superpowers",
+        "capability_id":"skill:test:using-superpowers",
+        "priority":"attention",
+        "reply_required":true,
+        "client_id":"slash-client-1",
+        "reply_to":"event-original",
+        "quote_text":"原始请求"
+    });
+    let first = call(&home, "slash_skill_dispatch", args.clone());
+    assert_eq!(first.result["hidden"], true);
+    assert_eq!(first.result["delivered"], true);
+    assert_eq!(first.result["command"], "/using-superpowers");
+    assert_eq!(
+        first.result["capability_id"],
+        "skill:test:using-superpowers"
+    );
+    assert_eq!(first.result["to"], json!(["architect"]));
+    assert!(
+        first.result["event_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
+    assert!(first.result.get("replayed").is_none());
+
+    let ledger_path = GroupStore::new(home.clone())
+        .expect("group store")
+        .ledger_path(group_id)
+        .expect("ledger path");
+    let events = ledger::read_all(&ledger_path).expect("ledger");
+    let chat_events = events
+        .iter()
+        .filter(|event| event.kind == "chat.message")
+        .collect::<Vec<_>>();
+    assert_eq!(chat_events.len(), 1);
+    let event = chat_events[0];
+    let text = event.data["text"].as_str().expect("control text");
+    assert!(text.starts_with("[CCCC] INTERNAL CONTROL"));
+    assert!(text.contains("skill_command: /using-superpowers"));
+    assert!(text.contains("capability_id: skill:test:using-superpowers"));
+    assert!(text.contains("run `cccc_help` first"));
+    assert!(text.ends_with("User task:\n开始执行"));
+    assert_eq!(event.data["attachments"], json!([]));
+    assert!(event.data.get("task_text").is_none());
+    assert!(event.data.get("command").is_none());
+    assert!(event.data.get("capability_id").is_none());
+    assert_eq!(
+        event.data["refs"],
+        json!([{
+            "kind":"text",
+            "title":"slash_skill_dispatch",
+            "hidden":true,
+            "control_kind":"slash_skill_dispatch",
+            "command":"/using-superpowers",
+            "capability_id":"skill:test:using-superpowers",
+            "task_text":"开始执行"
+        }])
+    );
+
+    let replay = call(&home, "slash_skill_dispatch", args);
+    assert_eq!(replay.result["replayed"], true);
+    assert_eq!(replay.result["event_id"], first.result["event_id"]);
+    assert_eq!(
+        ledger::read_all(&ledger_path)
+            .expect("ledger after replay")
+            .iter()
+            .filter(|event| event.kind == "chat.message")
+            .count(),
+        1
+    );
+}
+
+#[test]
 fn replies_default_to_the_original_audience_and_reject_self_delivery() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

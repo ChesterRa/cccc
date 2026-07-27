@@ -4,6 +4,7 @@ mod browser_surface;
 mod im_runtime;
 mod ledger_event_hub;
 mod notebooklm_auth;
+mod readonly;
 mod routes;
 mod web_banner;
 
@@ -24,6 +25,8 @@ use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+pub use readonly::WebMode;
+
 const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 const COMPONENT_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -40,17 +43,28 @@ pub(crate) struct AppState {
     ledger_events: ledger_event_hub::LedgerEventHub,
     im_workers: Arc<im_runtime::ImWorkerRegistry>,
     shutdown: broadcast::Sender<()>,
+    web_mode: WebMode,
+    exhibit_allow_terminal: bool,
 }
 
 pub fn app(home: HomeLayout) -> Router {
+    app_with_mode(home, WebMode::from_env())
+}
+
+pub fn app_with_mode(home: HomeLayout, web_mode: WebMode) -> Router {
     let (shutdown, _) = broadcast::channel(1);
-    app_with_shutdown(home, shutdown).0
+    app_with_shutdown(home, shutdown, web_mode).0
 }
 
 fn app_with_shutdown(
     home: HomeLayout,
     shutdown: broadcast::Sender<()>,
-) -> (Router, Arc<im_runtime::ImWorkerRegistry>) {
+    web_mode: WebMode,
+) -> (
+    Router,
+    Arc<im_runtime::ImWorkerRegistry>,
+    Arc<browser_surface::BrowserSurfaces>,
+) {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let ledger_events = ledger_event_hub::LedgerEventHub::new(home.clone());
     let im_workers = Arc::new(im_runtime::ImWorkerRegistry::new(ledger_events.clone()));
@@ -71,11 +85,13 @@ fn app_with_shutdown(
     let state = AppState {
         client: DaemonClient::new(home.clone()),
         home,
-        browser_surfaces,
+        browser_surfaces: Arc::clone(&browser_surfaces),
         notebooklm_auth,
         ledger_events,
         im_workers: Arc::clone(&im_workers),
         shutdown,
+        web_mode,
+        exhibit_allow_terminal: readonly::exhibit_allow_terminal_from_env(),
     };
     let app = routes::router()
         .fallback(static_asset)
@@ -83,10 +99,14 @@ fn app_with_shutdown(
         .layer(TraceLayer::new_for_http())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
+            readonly::guard,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
             auth::authorize,
         ))
         .with_state(state);
-    (app, im_workers)
+    (app, im_workers, browser_surfaces)
 }
 
 fn spawn_notebooklm_auth_shutdown(
@@ -215,6 +235,19 @@ pub async fn serve_until<F>(
 where
     F: Future<Output = ()> + Send + 'static,
 {
+    serve_until_mode(home, host, port, WebMode::from_env(), shutdown).await
+}
+
+pub async fn serve_until_mode<F>(
+    home: HomeLayout,
+    host: &str,
+    port: u16,
+    web_mode: WebMode,
+    shutdown: F,
+) -> Result<SocketAddr>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
     home.initialize()?;
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     let address = listener.local_addr()?;
@@ -223,7 +256,8 @@ where
     tracing::info!(%address, "CCCC Rust Web listening");
     let (web_shutdown, _) = broadcast::channel(1);
     let (shutdown_started, mut shutdown_started_rx) = tokio::sync::oneshot::channel();
-    let (app, im_workers) = app_with_shutdown(home, web_shutdown.clone());
+    let (app, im_workers, browser_surfaces) =
+        app_with_shutdown(home, web_shutdown.clone(), web_mode);
     let server = async move {
         axum::serve(listener, app)
             .with_graceful_shutdown(async move {
@@ -255,6 +289,16 @@ where
         .is_err()
     {
         tracing::warn!("Web component shutdown timed out; cancelling remaining IM workers");
+    }
+    match browser_surfaces.shutdown_all().await {
+        Ok(closed) => {
+            if closed > 0 {
+                tracing::info!(closed, "closed browser surfaces during Web shutdown");
+            }
+        }
+        Err(error) => {
+            tracing::warn!(%error, "failed to close browser surfaces during Web shutdown")
+        }
     }
     server_result?;
     Ok(address)
@@ -328,7 +372,7 @@ mod lifecycle_tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
         let (shutdown, _) = broadcast::channel(1);
-        let response = app_with_shutdown(home, shutdown.clone())
+        let response = app_with_shutdown(home, shutdown.clone(), WebMode::Normal)
             .0
             .oneshot(
                 axum::http::Request::builder()

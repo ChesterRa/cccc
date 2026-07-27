@@ -40,6 +40,7 @@ mod runtime_session;
 mod runtime_state;
 mod settings;
 mod terminal;
+mod terminal_text;
 mod working_state;
 
 use cccc_contracts::DaemonRequest;

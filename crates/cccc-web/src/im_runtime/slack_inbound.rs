@@ -56,11 +56,10 @@ async fn materialize_file(
 ) -> Result<Value, String> {
     let advertised_size = file.get("size").and_then(Value::as_u64);
     ensure_size(advertised_size)?;
-    let url = file
-        .get("url_private_download")
-        .or_else(|| file.get("url_private"))
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
+    let url = ["url_private_download", "url_private"]
+        .into_iter()
+        .filter_map(|name| file.get(name).and_then(Value::as_str))
+        .find(|value| !value.trim().is_empty())
         .ok_or_else(|| "Slack attachment has no private download URL".to_owned())?;
     let response = http
         .get(url)

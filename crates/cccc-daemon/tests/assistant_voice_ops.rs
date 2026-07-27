@@ -114,6 +114,93 @@ fn voice_input_is_durable_idempotent_and_delivered_to_internal_actor() {
 }
 
 #[test]
+fn prompt_refine_skips_empty_text_and_uses_voice_transcript() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let response = ok(
+        &home,
+        "assistant_voice_prompt_draft_submit",
+        json!({
+            "group_id":group_id,
+            "text":"",
+            "voice_transcript":"  补充风险和验收标准  ",
+            "composer_text":"检查这个方案"
+        }),
+    );
+
+    assert_eq!(
+        response.result["prompt_draft"]["draft_text"],
+        "补充风险和验收标准"
+    );
+    assert_eq!(response.result["input_event"]["text"], "补充风险和验收标准");
+}
+
+#[test]
+fn prompt_refine_uses_composer_text_when_voice_input_is_empty() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let response = ok(
+        &home,
+        "assistant_voice_prompt_draft_submit",
+        json!({
+            "group_id":group_id,
+            "text":" ",
+            "voice_transcript":"\n",
+            "composer_text":"  优化当前提示词  "
+        }),
+    );
+
+    assert_eq!(
+        response.result["prompt_draft"]["draft_text"],
+        "优化当前提示词"
+    );
+    assert_eq!(response.result["input_event"]["text"], "优化当前提示词");
+}
+
+#[test]
+fn prompt_refine_rejects_all_empty_inputs_without_persisting_a_draft() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let response = call(
+        &home,
+        "assistant_voice_prompt_draft_submit",
+        json!({
+            "group_id":group_id,
+            "text":"",
+            "voice_transcript":" ",
+            "composer_text":"\n"
+        }),
+    );
+
+    assert!(!response.ok);
+    assert_eq!(
+        response.error.as_ref().map(|error| error.code.as_str()),
+        Some("empty_prompt_refine_input")
+    );
+    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    assert!(state.get("prompt_draft").is_none_or(Value::is_null));
+}
+
+#[test]
+fn voice_request_skips_empty_modern_alias_and_uses_request_text() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let response = ok(
+        &home,
+        "assistant_voice_request",
+        json!({
+            "group_id":group_id,
+            "text":"",
+            "instruction":" ",
+            "request_text":"  整理行动项  ",
+            "target":"@foreman"
+        }),
+    );
+
+    assert_eq!(response.result["request"]["request_text"], "整理行动项");
+    assert_eq!(
+        response.result["notify_event"]["data"]["text"],
+        "整理行动项"
+    );
+}
+
+#[test]
 fn disabling_voice_secretary_removes_internal_actor_without_touching_documents() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

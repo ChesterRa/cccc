@@ -4,7 +4,7 @@ use cccc_core::permissions;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Value, json};
 
-use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
+use crate::dispatch::{OpError, OpResult, first_non_blank_arg, object, required_arg, string_arg};
 use crate::ops::messaging::{append, find_event, load};
 
 pub fn list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -65,8 +65,7 @@ pub fn mark_all(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 pub fn ack(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
     let group = load(home, request)?;
     let actor_id = required_arg(request, "actor_id")?;
-    let target_id = string_arg(request, "event_id")
-        .or_else(|| string_arg(request, "notify_event_id"))
+    let target_id = first_non_blank_arg(request, &["event_id", "notify_event_id"])
         .ok_or_else(|| OpError::new("invalid_args", "event_id is required"))?;
     let by = string_arg(request, "by").unwrap_or_else(|| actor_id.clone());
     if by != actor_id && by != "user" {

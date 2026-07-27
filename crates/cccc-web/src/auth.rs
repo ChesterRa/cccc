@@ -92,6 +92,22 @@ pub async fn authorize(
             "group access denied",
         );
     }
+    if request.uri().path() == "/api/v1/debug/snapshot" && !principal.is_admin {
+        let Some(group_id) = group_from_query(&request) else {
+            return failure_text(
+                StatusCode::FORBIDDEN,
+                "permission_denied",
+                "group access denied",
+            );
+        };
+        if !principal.allows(&group_id) {
+            return failure_text(
+                StatusCode::FORBIDDEN,
+                "permission_denied",
+                "group access denied",
+            );
+        }
+    }
     request.extensions_mut().insert(principal);
     next.run(request).await
 }
@@ -165,9 +181,29 @@ fn requires_admin(method: &Method, path: &str) -> bool {
         || path.starts_with("/api/v1/branding")
         || path.starts_with("/api/v1/fs/")
         || path.starts_with("/api/v1/registry/")
+        || path.starts_with("/api/v1/remote_access")
+        || path == "/api/v1/debug/tail_logs"
+        || path == "/api/v1/debug/clear_logs"
+        || path.starts_with("/api/v1/capabilities/allowlist")
         || (path == "/api/v1/groups" && *method == Method::POST)
         || (*method == Method::DELETE && group_from_path(path).is_some())
         || path.ends_with("/reset")
+}
+
+fn group_from_query(request: &Request) -> Option<String> {
+    if request.uri().path() != "/api/v1/debug/snapshot" {
+        return None;
+    }
+    request
+        .uri()
+        .query()?
+        .split('&')
+        .filter_map(|pair| {
+            let (key, value) = pair.split_once('=')?;
+            (decode_token(key) == "group_id").then(|| decode_token(value))
+        })
+        .next_back()
+        .filter(|group_id| !group_id.is_empty())
 }
 
 fn group_from_path(path: &str) -> Option<&str> {
@@ -201,5 +237,19 @@ mod tests {
             "/api/v1/space/providers/notebooklm/credential"
         ));
         assert!(!requires_admin(&Method::GET, "/api/v1/groups/g_one/actors"));
+    }
+
+    #[test]
+    fn global_control_plane_routes_require_admin() {
+        for (method, path) in [
+            (Method::GET, "/api/v1/remote_access"),
+            (Method::POST, "/api/v1/remote_access/start"),
+            (Method::GET, "/api/v1/debug/tail_logs"),
+            (Method::POST, "/api/v1/debug/clear_logs"),
+            (Method::GET, "/api/v1/capabilities/allowlist"),
+            (Method::POST, "/api/v1/capabilities/allowlist/validate"),
+        ] {
+            assert!(requires_admin(&method, path), "{method} {path}");
+        }
     }
 }

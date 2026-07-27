@@ -9,6 +9,8 @@ use serde_json::{Map, Value, json};
 
 use crate::AppState;
 
+const MAX_CONSECUTIVE_POLL_FAILURES: usize = 20;
+
 #[derive(Debug, Deserialize)]
 struct AttachQuery {
     #[serde(default = "control")]
@@ -29,6 +31,16 @@ async fn upgrade(
     Query(query): Query<AttachQuery>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    if terminal_disabled(state.web_mode, state.exhibit_allow_terminal) {
+        return ws.on_upgrade(|socket| async move {
+            crate::readonly::reject_socket(
+                socket,
+                "read_only_terminal",
+                "Terminal is disabled in read-only (exhibit) mode.",
+            )
+            .await;
+        });
+    }
     ws.on_upgrade(move |socket| serve(socket, state, group_id, actor_id, query))
 }
 
@@ -39,8 +51,8 @@ async fn serve(
     actor_id: String,
     query: AttachQuery,
 ) {
-    let mut cursor = query.since.unwrap_or(0);
-    let writable = query.mode != "viewer";
+    let requested_cursor = query.since.unwrap_or(0);
+    let writable = terminal_writable(state.web_mode, &query.mode);
     let status = daemon_call(
         &state,
         "terminal_status",
@@ -60,25 +72,61 @@ async fn serve(
         let _ = socket.send(Message::Close(None)).await;
         return;
     }
+    let Some(initial) = poll_output(&state, &group_id, &actor_id, requested_cursor).await else {
+        send_terminal_error(
+            &mut socket,
+            "daemon_unavailable",
+            "Terminal output is temporarily unavailable.",
+        )
+        .await;
+        return;
+    };
     let attach = frame(
         b'3',
-        json!({"terminal_writable":writable,"replay_cursor":cursor})
+        json!({"terminal_writable":writable,"replay_cursor":initial.replay_cursor})
             .to_string()
             .as_bytes(),
     );
     if socket.send(Message::Binary(attach.into())).await.is_err() {
         return;
     }
+    if !initial.data.is_empty()
+        && socket
+            .send(Message::Binary(frame(b'1', &initial.data).into()))
+            .await
+            .is_err()
+    {
+        return;
+    }
+    let mut cursor = initial.next_cursor;
+    let mut consecutive_poll_failures = 0;
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                let Some((data, next)) = poll_output(&state, &group_id, &actor_id, cursor).await else {
+                let Some(output) = poll_output(&state, &group_id, &actor_id, cursor).await else {
+                    consecutive_poll_failures += 1;
+                    if consecutive_poll_failures < MAX_CONSECUTIVE_POLL_FAILURES {
+                        continue;
+                    }
+                    tracing::warn!(
+                        %group_id,
+                        %actor_id,
+                        cursor,
+                        "terminal websocket polling failed repeatedly"
+                    );
+                    send_terminal_error(
+                        &mut socket,
+                        "daemon_unavailable",
+                        "Terminal output connection was interrupted.",
+                    )
+                    .await;
                     break;
                 };
-                cursor = next;
-                if !data.is_empty() && socket.send(Message::Binary(frame(b'1', &data).into())).await.is_err() {
+                consecutive_poll_failures = 0;
+                cursor = output.next_cursor;
+                if !output.data.is_empty() && socket.send(Message::Binary(frame(b'1', &output.data).into())).await.is_err() {
                     break;
                 }
             }
@@ -92,12 +140,26 @@ async fn serve(
     }
 }
 
+fn terminal_disabled(web_mode: crate::WebMode, exhibit_allow_terminal: bool) -> bool {
+    web_mode.is_read_only() && !exhibit_allow_terminal
+}
+
+fn terminal_writable(web_mode: crate::WebMode, requested_mode: &str) -> bool {
+    !web_mode.is_read_only() && requested_mode != "viewer"
+}
+
+struct PolledOutput {
+    data: Vec<u8>,
+    replay_cursor: u64,
+    next_cursor: u64,
+}
+
 async fn poll_output(
     state: &AppState,
     group_id: &str,
     actor_id: &str,
     cursor: u64,
-) -> Option<(Vec<u8>, u64)> {
+) -> Option<PolledOutput> {
     let response = daemon_call(
         state,
         "terminal_history",
@@ -111,13 +173,30 @@ async fn poll_output(
     let data = history.get("data")?.as_str()?.as_bytes();
     let start = history.get("start_cursor")?.as_u64()?;
     let end = history.get("end_cursor")?.as_u64()?;
-    let offset = usize::try_from(cursor.saturating_sub(start)).ok()?;
-    let unread = if cursor < start {
-        data
-    } else {
-        data.get(offset..).unwrap_or(data)
-    };
-    Some((unread.to_vec(), end))
+    let (data, replay_cursor) = replay_window(data, start, end, cursor)?;
+    Some(PolledOutput {
+        data,
+        replay_cursor,
+        next_cursor: end,
+    })
+}
+
+fn replay_window(data: &[u8], start: u64, end: u64, cursor: u64) -> Option<(Vec<u8>, u64)> {
+    let replay_cursor = cursor.clamp(start, end);
+    let offset = usize::try_from(replay_cursor.saturating_sub(start)).ok()?;
+    let unread = data.get(offset..).unwrap_or_default();
+    Some((unread.to_vec(), replay_cursor))
+}
+
+async fn send_terminal_error(socket: &mut WebSocket, code: &str, message: &str) {
+    let _ = socket
+        .send(Message::Text(
+            json!({"ok":false,"error":{"code":code,"message":message}})
+                .to_string()
+                .into(),
+        ))
+        .await;
+    let _ = socket.send(Message::Close(None)).await;
 }
 
 async fn handle_input(
@@ -227,4 +306,36 @@ fn frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
 
 fn control() -> String {
     "control".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{replay_window, terminal_disabled, terminal_writable};
+    use crate::WebMode;
+
+    #[test]
+    fn exhibit_terminal_is_disabled_by_default_and_never_writable() {
+        assert!(terminal_disabled(WebMode::Exhibit, false));
+        assert!(!terminal_disabled(WebMode::Exhibit, true));
+        assert!(!terminal_writable(WebMode::Exhibit, "control"));
+        assert!(terminal_writable(WebMode::Normal, "control"));
+        assert!(!terminal_writable(WebMode::Normal, "viewer"));
+    }
+
+    #[test]
+    fn expired_replay_cursor_starts_at_the_ring_boundary() {
+        let (data, replay_cursor) = replay_window(b"working", 120, 127, 0).expect("replay window");
+
+        assert_eq!(data, b"working");
+        assert_eq!(replay_cursor, 120);
+    }
+
+    #[test]
+    fn in_range_replay_cursor_only_returns_unread_output() {
+        let (data, replay_cursor) =
+            replay_window(b"working", 120, 127, 124).expect("replay window");
+
+        assert_eq!(data, b"ing");
+        assert_eq!(replay_cursor, 124);
+    }
 }

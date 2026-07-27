@@ -121,6 +121,16 @@ async fn auth_ws(
 ) -> Result<Response, ApiError> {
     validate_provider(&provider)?;
     let key = browser_key(&provider);
+    if state.web_mode.is_read_only() {
+        return Ok(ws.on_upgrade(|socket| async move {
+            crate::readonly::reject_socket(
+                socket,
+                "read_only_browser_surface",
+                "Provider auth browser surface is disabled in read-only mode.",
+            )
+            .await;
+        }));
+    }
     Ok(ws.on_upgrade(move |socket| async move {
         crate::browser_surface::serve_socket(socket, &state.browser_surfaces, &key).await;
     }))

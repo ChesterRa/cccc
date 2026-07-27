@@ -1,9 +1,10 @@
 mod args;
 mod commands;
+mod web_instance;
 mod web_launch;
 
 use anyhow::{Result, bail};
-use args::{Cli, CommandKind, DaemonAction, HermesAction, HookAction, RuntimeAction};
+use args::{Cli, CommandKind, DaemonAction, HermesAction, HookAction, RuntimeAction, WebModeArg};
 use cccc_client::DaemonClient;
 use cccc_core::{HomeLayout, active};
 use cccc_daemon::{DetachedDaemon, StartOutcome};
@@ -17,9 +18,21 @@ async fn main() -> Result<()> {
     let home = HomeLayout::resolve()?;
     let client = DaemonClient::new(home.clone());
     match cli.command {
-        None | Some(CommandKind::Web) => {
+        None => {
             let binding = web_launch::resolve(&home, cli.host.as_deref(), cli.port)?;
-            launch(home, binding).await
+            launch(home, binding, None).await
+        }
+        Some(CommandKind::Web(args)) => {
+            let binding = web_launch::resolve(&home, cli.host.as_deref(), cli.port)?;
+            let mode = if args.exhibit {
+                Some(cccc_web::WebMode::Exhibit)
+            } else {
+                args.mode.map(|mode| match mode {
+                    WebModeArg::Normal => cccc_web::WebMode::Normal,
+                    WebModeArg::Exhibit => cccc_web::WebMode::Exhibit,
+                })
+            };
+            launch(home, binding, mode).await
         }
         Some(CommandKind::Mcp) => cccc_mcp::run_stdio(home).await,
         Some(CommandKind::Version) => {
@@ -99,10 +112,15 @@ fn web_endpoint(host: &str, port: u16) -> String {
     format!("http://{url_host}:{port}")
 }
 
-async fn launch(home: HomeLayout, binding: web_launch::WebBinding) -> Result<()> {
+async fn launch(
+    home: HomeLayout,
+    binding: web_launch::WebBinding,
+    web_mode: Option<cccc_web::WebMode>,
+) -> Result<()> {
     home.initialize()?;
     let client =
         DaemonClient::new(home.clone()).with_timeout(std::time::Duration::from_millis(250));
+    let _instance = claim_web_instance(&home, &client).await?;
     replace_incompatible_daemon(&client).await?;
     let mut embedded_daemon = None;
     if !ping(&client).await {
@@ -123,12 +141,77 @@ async fn launch(home: HomeLayout, binding: web_launch::WebBinding) -> Result<()>
         eprintln!("CCCC daemon stopped; Web server closed");
     };
     let shutdown_feedback = tokio::spawn(report_interrupt());
-    let result = cccc_web::serve_until(home, &binding.host, binding.port, shutdown)
-        .await
-        .map(|_| ());
+    let result = match web_mode {
+        Some(mode) => {
+            cccc_web::serve_until_mode(home, &binding.host, binding.port, mode, shutdown).await
+        }
+        None => cccc_web::serve_until(home, &binding.host, binding.port, shutdown).await,
+    }
+    .map(|_| ());
     shutdown_feedback.abort();
     finish_embedded_daemon(&client, embedded_daemon.take()).await;
     result
+}
+
+async fn claim_web_instance(
+    home: &HomeLayout,
+    client: &DaemonClient,
+) -> Result<web_instance::WebInstance> {
+    match web_instance::try_claim(home)? {
+        web_instance::Claim::Acquired(instance) => Ok(instance),
+        web_instance::Claim::Running(running) => {
+            confirm_and_stop_existing(home, client, running.pid).await?;
+            wait_for_web_instance_exit(home, std::time::Duration::from_secs(15)).await
+        }
+    }
+}
+
+async fn confirm_and_stop_existing(
+    home: &HomeLayout,
+    client: &DaemonClient,
+    pid: Option<u32>,
+) -> Result<()> {
+    if !web_instance::confirm_stop(home, pid)? {
+        bail!(
+            "another CCCC process is already running for CCCC_HOME={}{}",
+            home.root().display(),
+            pid.map_or_else(String::new, |pid| format!(" (pid={pid})"))
+        );
+    }
+    if running_daemon_pid(client).await.is_some() {
+        let response = call(client, "shutdown", json!({})).await?;
+        if !response.ok {
+            bail!("failed to stop the existing CCCC process");
+        }
+        wait_for_daemon_loss(client, &home.daemon_dir().join("ccccd.addr.json")).await;
+    }
+    Ok(())
+}
+
+async fn running_daemon_pid(client: &DaemonClient) -> Option<u32> {
+    call(client, "ping", json!({}))
+        .await
+        .ok()?
+        .result
+        .get("pid")?
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+}
+
+async fn wait_for_web_instance_exit(
+    home: &HomeLayout,
+    timeout: std::time::Duration,
+) -> Result<web_instance::WebInstance> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if let web_instance::Claim::Acquired(instance) = web_instance::try_claim(home)? {
+            return Ok(instance);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!("existing CCCC process did not stop within 15 seconds");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 }
 
 async fn report_interrupt() {

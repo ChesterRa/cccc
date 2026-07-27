@@ -96,6 +96,16 @@ async fn upgrade(
     Query(query): Query<SlotQuery>,
     ws: WebSocketUpgrade,
 ) -> Response {
+    if state.web_mode.is_read_only() {
+        return ws.on_upgrade(|socket| async move {
+            crate::readonly::reject_socket(
+                socket,
+                "read_only_browser_surface",
+                "Presentation browser surface is disabled in read-only mode.",
+            )
+            .await;
+        });
+    }
     ws.on_upgrade(move |socket| serve(socket, state, key(&group_id, &query.slot)))
 }
 

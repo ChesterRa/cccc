@@ -20,29 +20,12 @@ async fn launches_chromium_and_captures_nonempty_frame() {
     if !chrome_available() {
         return;
     }
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("listener");
-    let address = listener.local_addr().expect("address");
-    let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.expect("accept");
-        let mut request = [0_u8; 2048];
-        let _ = stream.read(&mut request).await;
-        let body = "<!doctype html><html><body style='background:#fff'><h1>CCCC browser frame</h1><input autofocus></body></html>";
-        stream
-                .write_all(
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    )
-                    .as_bytes(),
-                )
-                .await
-                .expect("response");
-    });
+    let (url, server) = local_page(
+        "<!doctype html><html><body style='background:#fff'><h1>CCCC browser frame</h1><input autofocus></body></html>",
+    )
+    .await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
-    let url = format!("http://{address}");
     let state = manager
         .open(
             "g_test::slot-1",
@@ -62,24 +45,191 @@ async fn launches_chromium_and_captures_nonempty_frame() {
     assert!(image.len() > 1_000);
     assert_eq!(&image[..2], &[0xff, 0xd8]);
     assert!(manager.close("g_test::slot-1").await.expect("close"));
-    server.await.expect("server");
+    server.abort();
 }
 
 #[tokio::test]
-async fn restores_seeded_cookie_and_detects_real_auth_tokens() {
+async fn concurrent_ensure_open_reuses_one_profile_owner() {
     if !chrome_available() {
         return;
     }
+    let (url, server) = local_page("CCCC concurrent browser").await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let profile = temp.path().join("profile");
+
+    let (first, second) = tokio::join!(
+        manager.ensure_open("web-model::g_test::actor", &profile, &url, 800, 600),
+        manager.ensure_open("web-model::g_test::actor", &profile, &url, 800, 600),
+    );
+    let first = first.expect("first open");
+    let second = second.expect("second open");
+
+    assert_eq!(first["started_at"], second["started_at"]);
+    assert_eq!(manager.sessions.lock().await.len(), 1);
+    assert!(
+        manager
+            .close("web-model::g_test::actor")
+            .await
+            .expect("close")
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn reopens_same_profile_after_process_exit() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = local_page("CCCC reopen browser").await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let profile = temp.path().join("profile");
+
+    manager
+        .open("restartable", &profile, &url, 800, 600)
+        .await
+        .expect("first open");
+    manager
+        .open("restartable", &profile, &url, 800, 600)
+        .await
+        .expect("second open");
+
+    assert!(manager.close("restartable").await.expect("close"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn info_reaps_a_finished_browser_handler_instead_of_reporting_active() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = local_page("CCCC browser exit status").await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let key = "browser-exit-status";
+
+    manager
+        .open(key, &temp.path().join("profile"), &url, 800, 600)
+        .await
+        .expect("open");
+    manager
+        .sessions
+        .lock()
+        .await
+        .get_mut(key)
+        .expect("session")
+        .handler
+        .abort();
+    tokio::task::yield_now().await;
+
+    let status = manager.info(key).await;
+
+    assert_eq!(status["active"], false);
+    assert_eq!(status["state"], "failed");
+    assert_eq!(status["error"]["code"], "browser_surface_process_exited");
+    assert!(manager.sessions.lock().await.get(key).is_none());
+    server.abort();
+}
+
+#[tokio::test]
+async fn close_releases_key_for_a_different_profile() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let first_profile = temp.path().join("profile-1");
+    let second_profile = temp.path().join("profile-2");
+
+    manager
+        .register_profile("space-provider::notebooklm", &first_profile)
+        .await
+        .expect("register first profile");
+    assert!(
+        !manager
+            .close("space-provider::notebooklm")
+            .await
+            .expect("close inactive registration")
+    );
+    manager
+        .register_profile("space-provider::notebooklm", &second_profile)
+        .await
+        .expect("register replacement profile");
+
+    assert_eq!(
+        manager
+            .key_profiles
+            .lock()
+            .await
+            .get("space-provider::notebooklm"),
+        Some(&second_profile)
+    );
+}
+
+#[tokio::test]
+async fn open_and_close_share_one_profile_lifecycle_boundary() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = local_page("CCCC open close race").await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let profile = temp.path().join("profile");
+
+    manager
+        .open("race", &profile, &url, 800, 600)
+        .await
+        .expect("initial open");
+    let (opened, closed) = tokio::join!(
+        manager.open("race", &profile, &url, 800, 600),
+        manager.close("race"),
+    );
+
+    opened.expect("racing open");
+    closed.expect("racing close");
+    let _ = manager.close("race").await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn shutdown_closes_all_browser_processes() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = local_page("CCCC shutdown browser").await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let profile = temp.path().join("profile");
+
+    manager
+        .open("shutdown-test", &profile, &url, 800, 600)
+        .await
+        .expect("open");
+
+    assert_eq!(manager.shutdown_all().await.expect("shutdown"), 1);
+    assert!(manager.sessions.lock().await.is_empty());
+    assert!(
+        manager
+            .open("shutdown-test", &profile, &url, 800, 600)
+            .await
+            .expect_err("open after shutdown must fail")
+            .to_string()
+            .contains("shutting down")
+    );
+    server.abort();
+}
+
+async fn local_page(body: &'static str) -> (String, JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("listener");
     let address = listener.local_addr().expect("address");
     let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.expect("accept");
-        let mut request = [0_u8; 2048];
-        let _ = stream.read(&mut request).await;
-        let body = "<!doctype html><script>globalThis.WIZ_global_data={SNlM0e:'csrf',FdrFJe:'session'}</script>";
-        stream
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            let mut request = [0_u8; 2048];
+            let _ = stream.read(&mut request).await;
+            stream
                 .write_all(
                     format!(
                         "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
@@ -89,10 +239,22 @@ async fn restores_seeded_cookie_and_detects_real_auth_tokens() {
                 )
                 .await
                 .expect("response");
+        }
     });
+    (format!("http://{address}"), server)
+}
+
+#[tokio::test]
+async fn restores_seeded_cookie_and_detects_real_auth_tokens() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = local_page(
+        "<!doctype html><script>globalThis.WIZ_global_data={SNlM0e:'csrf',FdrFJe:'session'}</script>",
+    )
+    .await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
-    let url = format!("http://{address}");
     let seed = json!({"cookies":[{
         "name":"seeded", "value":"present", "url":url, "path":"/",
         "secure":false, "httpOnly":false
@@ -130,7 +292,7 @@ async fn restores_seeded_cookie_and_detects_real_auth_tokens() {
             .expect("auth probe")
     );
     assert!(manager.close("notebooklm-test").await.expect("close"));
-    server.await.expect("server");
+    server.abort();
 }
 
 #[tokio::test]
@@ -138,38 +300,32 @@ async fn special_key_command_applies_native_input_behavior() {
     if !chrome_available() {
         return;
     }
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("listener");
-    let address = listener.local_addr().expect("address");
-    let server = tokio::spawn(async move {
-        let (mut stream, _) = listener.accept().await.expect("accept");
-        let mut request = [0_u8; 2048];
-        let _ = stream.read(&mut request).await;
-        let body = "<!doctype html><input id='email' autofocus value='waterbang@'><script>email.setSelectionRange(email.value.length,email.value.length)</script>";
-        stream
-                .write_all(
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                        body.len()
-                    )
-                    .as_bytes(),
-                )
-                .await
-                .expect("response");
-    });
+    let (url, server) = local_page(
+        "<!doctype html><input id='email' autofocus value='waterbang@'><script>email.setSelectionRange(email.value.length,email.value.length)</script>",
+    )
+    .await;
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
     manager
         .open(
             "keyboard-test",
             &temp.path().join("profile"),
-            &format!("http://{address}"),
+            &url,
             800,
             600,
         )
         .await
         .expect("open browser");
+    manager
+        .sessions
+        .lock()
+        .await
+        .get("keyboard-test")
+        .expect("browser session")
+        .page
+        .evaluate("document.querySelector('#email').focus()")
+        .await
+        .expect("focus input");
     manager
         .command("keyboard-test", &json!({"t":"key","key":"Backspace"}))
         .await
@@ -190,7 +346,7 @@ async fn special_key_command_applies_native_input_behavior() {
         .expect("input value");
     assert_eq!(value, "waterbang");
     assert!(manager.close("keyboard-test").await.expect("close"));
-    server.await.expect("server");
+    server.abort();
 }
 
 fn chrome_available() -> bool {

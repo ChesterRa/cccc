@@ -230,7 +230,10 @@ async fn receive_delivery(
     body: Value,
 ) -> Result<Value, ApiError> {
     let group_id = registration["group_id"].as_str().unwrap_or("");
-    let source_group_id = body["source_group_id"].as_str().unwrap_or("");
+    let source_group_id = body["source_group_id"]
+        .as_str()
+        .or_else(|| body["src_group_id"].as_str())
+        .unwrap_or("");
     if source_group_id != registration["remote_group_id"].as_str().unwrap_or("") {
         return Err(ApiError::forbidden(
             "source group does not match registration",
@@ -240,6 +243,27 @@ async fn receive_delivery(
         return Err(ApiError::bad_code(
             "missing_remote_recipient",
             "remote group bridge messages require explicit to",
+            json!({}),
+        ));
+    }
+    if body["refs"]
+        .as_array()
+        .is_some_and(|references| !references.is_empty())
+    {
+        return Err(ApiError::bad_code(
+            "unsupported_refs",
+            "refs are not supported by Group Bridge sessions",
+            json!({}),
+        ));
+    }
+    if body
+        .get("priority")
+        .and_then(Value::as_str)
+        .is_some_and(|priority| !matches!(priority, "normal" | "attention"))
+    {
+        return Err(ApiError::bad_code(
+            "invalid_payload",
+            "priority must be normal or attention",
             json!({}),
         ));
     }
@@ -260,6 +284,18 @@ async fn receive_delivery(
         return Ok(json!({"receipt":receipt,"deduped":true}));
     }
     let mut args = body.as_object().cloned().unwrap_or_default();
+    let source_by = args
+        .get("source_by")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_owned();
+    let src_event_id = args
+        .get("src_event_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("")
+        .to_owned();
     args.insert("group_id".into(), json!(group_id));
     args.insert(
         "by".into(),
@@ -269,11 +305,27 @@ async fn receive_delivery(
         )),
     );
     args.insert("source_group_id".into(), json!(source_group_id));
+    args.insert("src_group_id".into(), json!(source_group_id));
+    args.insert("src_event_id".into(), json!(src_event_id));
+    args.insert("src_by".into(), json!(source_by));
     args.insert(
         "source_group_title".into(),
         body["source_group_title"].clone(),
     );
     args.insert("source_platform".into(), json!("group_bridge_session"));
+    args.insert(
+        "source_user_name".into(),
+        registration["remote_group_title"].clone(),
+    );
+    args.insert(
+        "source_user_id".into(),
+        registration["remote_peer_id"].clone(),
+    );
+    let remote_reply_to = remote_reply_recipients(&source_by);
+    if !remote_reply_to.is_empty() {
+        args.insert("remote_reply_to".into(), json!(remote_reply_to));
+    }
+    args.remove("source_by");
     args.remove("idempotency_key");
     if let Some(attachments) = args.get_mut("attachments").and_then(Value::as_array_mut) {
         for attachment in attachments {
@@ -315,6 +367,17 @@ async fn receive_delivery(
     Ok(json!({"receipt":receipt,"event":event,"deduped":false}))
 }
 
+fn remote_reply_recipients(source_by: &str) -> Vec<String> {
+    let sender = source_by.trim();
+    if sender == "user" || sender == "@user" {
+        return vec!["user".into()];
+    }
+    if sender.is_empty() || sender.starts_with(['@', '#']) || sender.starts_with("group_bridge:") {
+        return Vec::new();
+    }
+    vec![sender.into()]
+}
+
 pub(super) async fn send_remote(
     state: &AppState,
     source_group_id: &str,
@@ -335,7 +398,7 @@ pub(super) async fn send_remote(
     })?;
     if !matches!(
         trust["remote_access_level"].as_str().unwrap_or("messages"),
-        "messages" | "full"
+        "messages" | "read" | "full"
     ) {
         return Some(Err(ApiError::forbidden(
             "remote trust does not allow messages",
@@ -359,8 +422,28 @@ pub(super) async fn send_remote(
     payload.remove("dst_group_id");
     default_remote_recipient(&mut payload);
     payload.insert("source_group_id".into(), json!(source_group_id));
+    payload.insert("src_group_id".into(), json!(source_group_id));
     payload.insert("source_group_title".into(), json!(source_title));
+    payload.insert(
+        "source_by".into(),
+        body.get("by").cloned().unwrap_or_else(|| json!("user")),
+    );
+    payload.insert(
+        "src_event_id".into(),
+        body.get("src_event_id")
+            .cloned()
+            .filter(|value| value.as_str().is_some_and(|value| !value.trim().is_empty()))
+            .unwrap_or_else(|| json!(idempotency_key)),
+    );
     payload.insert("idempotency_key".into(), json!(idempotency_key));
+    if let Some(reply_to) = body
+        .get("remote_reply_to_event_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        payload.insert("reply_to".into(), json!(reply_to));
+    }
     let client = match reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(10))
@@ -393,6 +476,7 @@ pub(super) async fn send_remote(
                     | StatusCode::FORBIDDEN
                     | StatusCode::NOT_FOUND
                     | StatusCode::METHOD_NOT_ALLOWED
+                    | StatusCode::UNPROCESSABLE_ENTITY
             ) =>
         {
             match send_via_remote_mcp(

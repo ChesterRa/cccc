@@ -60,7 +60,8 @@ async fn python_shaped_remote_pairing_response_becomes_active_without_claim_rout
             "payload":{
                 "issuer_endpoint":endpoint,"issuer_group_id":"g_issuer",
                 "issuer_group_title":"Issuer","issuer_peer_id":"12D3KooIssuer",
-                "code":"ABCD-1234","nonce":"pinv_remote"
+                "code":"","pairing_code":"ABCD-1234",
+                "nonce":" ","invite_id":"pinv_remote"
             }
         }),
     )

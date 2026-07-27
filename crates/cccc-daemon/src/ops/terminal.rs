@@ -2,7 +2,8 @@ use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
 use serde_json::{Value, json};
 
-use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
+use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
+use crate::ops::terminal_text;
 
 pub fn handle(_home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -35,7 +36,13 @@ fn tail(request: &DaemonRequest) -> OpResult {
     let max_chars = integer(request, "max_chars", 8_000).clamp(1, 2_000_000);
     let page =
         cccc_runtime::history(&group_id, &actor_id, None, max_chars).map_err(runtime_error)?;
-    object(json!({"text": page.data, "end_cursor": page.end_cursor}))
+    let (strip_ansi, compact) = tail_render_options(request);
+    let text = if strip_ansi {
+        terminal_text::render(&page.data, compact)
+    } else {
+        page.data
+    };
+    object(json!({"text": text, "hint": "", "end_cursor": page.end_cursor}))
 }
 
 fn history(request: &DaemonRequest) -> OpResult {
@@ -47,7 +54,21 @@ fn history(request: &DaemonRequest) -> OpResult {
     });
     let limit = integer(request, "limit_bytes", 64_000).clamp(1, 2_000_000);
     let page = cccc_runtime::history(&group_id, &actor_id, before, limit).map_err(runtime_error)?;
-    object(json!({"history": page}))
+    let strip_ansi = bool_arg(request, "strip_ansi", false);
+    let text = if strip_ansi {
+        terminal_text::render(&page.data, bool_arg(request, "compact", false))
+    } else {
+        page.data.clone()
+    };
+    object(json!({
+        "text": text,
+        "hint": "",
+        "start_cursor": page.start_cursor,
+        "end_cursor": page.end_cursor,
+        "has_more": page.has_more,
+        "cursor_expired": page.cursor_expired,
+        "history": page,
+    }))
 }
 
 fn since(request: &DaemonRequest) -> OpResult {
@@ -95,13 +116,20 @@ fn integer(request: &DaemonRequest, name: &str, default: usize) -> usize {
         .unwrap_or(default)
 }
 
+fn tail_render_options(request: &DaemonRequest) -> (bool, bool) {
+    (
+        bool_arg(request, "strip_ansi", true),
+        bool_arg(request, "compact", true),
+    )
+}
+
 fn runtime_error(error: cccc_runtime::RuntimeError) -> OpError {
     OpError::new("runtime_error", error.to_string())
 }
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::write;
+    use super::{tail_render_options, write};
     use cccc_contracts::{DaemonRequest, RunnerKind};
     use cccc_runtime::LaunchSpec;
     use serde_json::{Map, Value, json};
@@ -167,5 +195,24 @@ mod tests {
         })
         .expect_err("empty input must be rejected");
         assert_eq!(error.code, "invalid_args");
+    }
+
+    #[test]
+    fn terminal_tail_defaults_to_readable_rendering_for_non_web_callers() {
+        let request = DaemonRequest {
+            v: 1,
+            op: "terminal_tail".into(),
+            args: Map::new(),
+        };
+        assert_eq!(tail_render_options(&request), (true, true));
+
+        let request = DaemonRequest {
+            args: Map::from_iter([
+                ("strip_ansi".into(), Value::Bool(false)),
+                ("compact".into(), Value::Bool(false)),
+            ]),
+            ..request
+        };
+        assert_eq!(tail_render_options(&request), (false, false));
     }
 }

@@ -13,6 +13,10 @@ struct TerminalQuery {
     before: Option<String>,
     max_chars: Option<u64>,
     limit_bytes: Option<u64>,
+    #[serde(default)]
+    strip_ansi: bool,
+    #[serde(default)]
+    compact: bool,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -46,6 +50,8 @@ async fn tail(
             "group_id": group_id,
             "actor_id": query.actor_id,
             "max_chars": query.max_chars.unwrap_or(8_000),
+            "strip_ansi": query.strip_ansi,
+            "compact": query.compact,
             "by": "user",
         })),
     )
@@ -65,6 +71,8 @@ async fn history(
             "actor_id": query.actor_id,
             "before": query.before,
             "limit_bytes": query.limit_bytes.unwrap_or(64_000),
+            "strip_ansi": query.strip_ansi,
+            "compact": query.compact,
             "by": "user",
         })),
     )
@@ -100,4 +108,22 @@ async fn command(state: &AppState, op: &str, group_id: String, body: Value) -> A
     args.insert("group_id".into(), Value::String(group_id));
     args.insert("by".into(), Value::String("user".into()));
     call(state, op, args).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TerminalQuery;
+
+    #[test]
+    fn terminal_query_accepts_tail_rendering_options() {
+        let query: TerminalQuery = serde_json::from_value(serde_json::json!({
+            "actor_id": "peer1",
+            "strip_ansi": true,
+            "compact": true,
+        }))
+        .expect("terminal query");
+
+        assert!(query.strip_ansi);
+        assert!(query.compact);
+    }
 }

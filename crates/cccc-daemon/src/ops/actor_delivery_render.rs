@@ -1,6 +1,7 @@
 use cccc_contracts::Event;
 use serde_json::Value;
 
+mod references;
 mod system_notify;
 
 fn mcp_reply_reminder() -> String {
@@ -22,7 +23,7 @@ fn render_message(event: &Event) -> Option<String> {
         .trim_end_matches(['\r', '\n'])
         .to_owned();
     let mut protocol = protocol_lines(event);
-    protocol.extend(reference_lines(event));
+    protocol.extend(references::lines(event));
     protocol.extend(attachment_lines(event));
     if !protocol.is_empty() {
         if !body.is_empty() {
@@ -100,31 +101,6 @@ fn protocol_lines(event: &Event) -> Vec<String> {
             "[cccc] REMOTE REPLY DEFAULT: omit to in cccc_message_send with reply_to to reply to remote {}.",
             remote_reply_to.join(", ")
         ));
-    }
-    lines
-}
-
-fn reference_lines(event: &Event) -> Vec<String> {
-    let refs = event
-        .data
-        .get("refs")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|item| item.get("hidden").and_then(Value::as_bool) != Some(true))
-        .take(4)
-        .collect::<Vec<_>>();
-    if refs.is_empty() {
-        return Vec::new();
-    }
-    let mut lines = vec!["[cccc] References:".to_owned()];
-    for item in refs {
-        let kind = item.get("kind").and_then(Value::as_str).unwrap_or("ref");
-        let label = ["title", "path", "url", "task_id", "slot_id"]
-            .into_iter()
-            .find_map(|key| item.get(key).and_then(Value::as_str))
-            .unwrap_or(kind);
-        lines.push(format!("- {kind}: {}", compact(label, 120)));
     }
     lines
 }
@@ -314,6 +290,35 @@ mod tests {
     }
 
     #[test]
+    fn delivers_hidden_slash_skill_control_text_without_exposing_its_ref() {
+        let mut event = Event::new("chat.message", "g_test");
+        event.by = "user".into();
+        event.data = json!({
+            "to":["architect"],
+            "text":"[CCCC] INTERNAL CONTROL: CCCC capability skill dispatch\n\nskill_command: /using-superpowers\n\ncapability_id: skill:test:using-superpowers\n\nUser task:\n开始执行",
+            "refs":[{
+                "kind":"text",
+                "title":"slash_skill_dispatch",
+                "hidden":true,
+                "control_kind":"slash_skill_dispatch",
+                "command":"/using-superpowers",
+                "capability_id":"skill:test:using-superpowers",
+                "task_text":"开始执行"
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("event data");
+
+        let rendered = render_batch(&[event]).expect("rendered");
+        assert!(rendered.contains("[CCCC] INTERNAL CONTROL"));
+        assert!(rendered.contains("skill_command: /using-superpowers"));
+        assert!(rendered.contains("capability_id: skill:test:using-superpowers"));
+        assert!(rendered.contains("User task:\n开始执行"));
+        assert!(!rendered.contains("[cccc] References:"));
+    }
+
+    #[test]
     fn renders_voice_secretary_input_envelope_in_full() {
         let mut event = Event::new("system.notify", "g_test");
         event.data = json!({
@@ -362,5 +367,24 @@ mod tests {
         assert!(rendered.contains("document_path=voice/meeting.md"));
         assert!(rendered.contains("生成行动项并发给项目组"));
         assert!(rendered.contains("\"priority\": \"attention\""));
+    }
+
+    #[test]
+    fn voice_secretary_action_request_skips_empty_request_text_alias() {
+        let mut event = Event::new("system.notify", "g_test");
+        event.data = json!({
+            "text": "event fallback",
+            "context": {
+                "kind": "voice_secretary_action_request",
+                "request": {"request_text": "", "text": "legacy request text"}
+            }
+        })
+        .as_object()
+        .cloned()
+        .expect("object");
+
+        let rendered = render_batch(&[event]).expect("rendered");
+        assert!(rendered.contains("legacy request text"));
+        assert!(!rendered.contains("Request:\nevent fallback"));
     }
 }

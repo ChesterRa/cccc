@@ -104,7 +104,8 @@ pub fn input(name: &str) -> Value {
             &["status", "tail", "history", "write", "resize", "clear"],
             json!({
                 "actor_id":{"type":"string"},"data":{"type":"string"},"before":{"oneOf":[{"type":"string"},{"type":"integer"}]},
-                "limit_bytes":{"type":"integer"},"cols":{"type":"integer"},"rows":{"type":"integer"}
+                "limit_bytes":{"type":"integer"},"cols":{"type":"integer"},"rows":{"type":"integer"},
+                "strip_ansi":{"type":"boolean"},"compact":{"type":"boolean"}
             }),
         ),
         "cccc_agent_state" => action(
@@ -255,7 +256,9 @@ fn messaging() -> Value {
         common(),
         json!({
             "text":{"type":"string"},"to":{"oneOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}]},
-            "dst_group_id":{"type":"string","description":"Optional destination group ID for cross-group delivery."},
+            "dst_group_id":{"type":"string","description":"Optional local or trusted remote group ID. For a remote Group Bridge route, use its exact remote_group_id and provide an explicit remote recipient."},
+            "idempotency_key":{"type":"string","description":"Stable retry key for trusted remote Group Bridge delivery."},
+            "refs":{"type":"array","items":{"type":"object"}},
             "insight":{"type":"string","maxLength":cccc_core::peer_insight::INSIGHT_MAX_CHARS,"description":cccc_core::peer_insight::PEER_INSIGHT_FIELD_DESCRIPTION},
             "priority":{"type":"string","enum":["normal","attention"]},"reply_required":{"type":"boolean"},
             "suggested_user_message":{"type":"string","description":"Optional CCCC Web composer hint; not sent automatically and must not be used for approvals."}
@@ -327,6 +330,15 @@ mod tests {
                 .as_str()
                 .is_some_and(|description| description.contains("Omit for a new message"))
         );
+        assert!(
+            schema["properties"]["dst_group_id"]["description"]
+                .as_str()
+                .is_some_and(|description| {
+                    description.contains("trusted remote")
+                        && description.contains("explicit remote recipient")
+                })
+        );
+        assert_eq!(schema["properties"]["idempotency_key"]["type"], "string");
     }
 
     #[test]
@@ -348,5 +360,12 @@ mod tests {
                 .as_array()
                 .is_some_and(|required| !required.iter().any(|item| item == "event_ids"))
         );
+    }
+
+    #[test]
+    fn terminal_schema_exposes_transcript_rendering_options() {
+        let schema = input("cccc_terminal");
+        assert_eq!(schema["properties"]["strip_ansi"]["type"], "boolean");
+        assert_eq!(schema["properties"]["compact"]["type"], "boolean");
     }
 }

@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+base64.workspace = true
 cccc-client = { path = "../cccc-client" }
 cccc-contracts = { path = "../cccc-contracts" }
 cccc-core = { path = "../cccc-core" }
@@ -24,6 +25,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 axum.workspace = true
+cccc-daemon = { path = "../cccc-daemon" }
 tempfile.workspace = true
 
 [lints]

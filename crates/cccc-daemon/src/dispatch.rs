@@ -57,6 +57,14 @@ pub fn string_arg(request: &DaemonRequest, name: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+pub fn first_non_blank_arg(request: &DaemonRequest, names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| {
+        string_arg(request, name)
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    })
+}
+
 pub fn bool_arg(request: &DaemonRequest, name: &str, default: bool) -> bool {
     request
         .args
@@ -102,5 +110,29 @@ impl OpError {
     }
     pub fn invalid(error: impl std::fmt::Display) -> Self {
         Self::new("invalid_args", error.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_non_blank_arg;
+    use cccc_contracts::DaemonRequest;
+    use serde_json::json;
+
+    #[test]
+    fn string_aliases_skip_empty_primary_values() {
+        let request = DaemonRequest {
+            v: 1,
+            op: "test".into(),
+            args: json!({"primary":"  ","legacy":" value "})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+
+        assert_eq!(
+            first_non_blank_arg(&request, &["primary", "legacy"]).as_deref(),
+            Some("value")
+        );
     }
 }

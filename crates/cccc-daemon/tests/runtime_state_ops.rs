@@ -44,7 +44,7 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
     let turn = call(
         &home,
         "runtime_wait_next_turn",
-        json!({"group_id":group_id,"actor_id":"headless1","by":"headless1"}),
+        json!({"group_id":group_id,"actor_id":"","by":"headless1"}),
     );
     assert_eq!(turn.result["status"], "work_available");
     assert_eq!(

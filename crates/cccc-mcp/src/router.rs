@@ -16,6 +16,12 @@ pub async fn call(
     if message_operation {
         arguments.insert("require_peer_insight".into(), Value::Bool(true));
     }
+    if matches!(name, "cccc_message_send" | "cccc_message_reply")
+        && let Some(result) =
+            crate::remote_messages::try_send(home, client, arguments.clone()).await
+    {
+        return result.map(with_post_message_nudge);
+    }
     let payload = match name {
         "cccc_help" => {
             json!({"markdown": help_markdown()})

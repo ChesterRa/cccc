@@ -12,7 +12,21 @@ pub use messaging::{
     InboxArgs, LedgerAction, LedgerArgs, ReadArgs, ReplyArgs, SendArgs, TailArgs, TrackedSendArgs,
 };
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum WebModeArg {
+    Normal,
+    Exhibit,
+}
+
+#[derive(Debug, Args)]
+pub struct WebArgs {
+    #[arg(long, value_enum)]
+    pub mode: Option<WebModeArg>,
+    #[arg(long, conflicts_with = "mode")]
+    pub exhibit: bool,
+}
 
 #[derive(Debug, Args)]
 pub struct SetupArgs {
@@ -81,7 +95,7 @@ pub enum CommandKind {
         #[command(subcommand)]
         action: HookAction,
     },
-    Web,
+    Web(WebArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -126,4 +140,27 @@ pub enum HermesAction {
         #[arg(long, default_value = "hermes-probe")]
         actor_id: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_exhibit_web_modes() {
+        let cli = Cli::try_parse_from(["cccc", "web", "--exhibit"]).expect("exhibit");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Web(WebArgs { exhibit: true, .. }))
+        ));
+
+        let cli = Cli::try_parse_from(["cccc", "web", "--mode", "exhibit"]).expect("mode");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Web(WebArgs {
+                mode: Some(WebModeArg::Exhibit),
+                ..
+            }))
+        ));
+    }
 }

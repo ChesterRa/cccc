@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::io;
 
-use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
+use crate::dispatch::{OpError, OpResult, first_non_blank_arg, object, required_arg, string_arg};
 use crate::ops::messaging::append;
 
 const KEY: &str = "runtime_states";
@@ -276,9 +276,7 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 fn group_actor(home: &HomeLayout, request: &DaemonRequest) -> Result<(GroupDoc, String), OpError> {
     let group_id = required_arg(request, "group_id")?;
-    let actor_id = string_arg(request, "actor_id")
-        .or_else(|| string_arg(request, "by"))
-        .filter(|value| !value.trim().is_empty())
+    let actor_id = first_non_blank_arg(request, &["actor_id", "by"])
         .ok_or_else(|| OpError::new("invalid_args", "actor_id is required"))?;
     let group = GroupStore::new(home.clone())
         .map_err(OpError::io)?
