@@ -420,7 +420,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-cli"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "anyhow",
  "cccc-client",
@@ -441,7 +441,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-client"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "cccc-contracts",
  "cccc-core",
@@ -452,7 +452,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-contracts"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "chrono",
  "serde",
@@ -462,7 +462,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-core"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "cccc-contracts",
  "chrono",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-daemon"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "anyhow",
  "base64",
@@ -514,7 +514,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-mcp"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "anyhow",
  "axum",
@@ -538,7 +538,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-notebooklm"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "cookie",
  "regex",
@@ -550,7 +550,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-runtime"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "cccc-contracts",
  "portable-pty",
@@ -562,7 +562,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-web"
-version = "0.4.32"
+version = "0.4.33"
 dependencies = [
  "aes",
  "anyhow",

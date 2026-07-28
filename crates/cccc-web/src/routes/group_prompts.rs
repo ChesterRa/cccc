@@ -4,15 +4,14 @@ use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use cccc_core::GroupStore;
+use cccc_core::group_prompts::{DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::api::{ApiError, call, object, success};
 
-const PREAMBLE_FILENAME: &str = "CCCC_PREAMBLE.md";
 const HELP_FILENAME: &str = "CCCC_HELP.md";
-const DEFAULT_PREAMBLE_BODY: &str = "Startup:\n- On cold start or resume, use MCP tool `cccc_bootstrap`.\n- Call `cccc_help` only when you need a CCCC-specific route or a missing capability.";
 const BUILTIN_HELP_MARKDOWN: &str = include_str!("../../../../src/cccc/resources/cccc-help.md");
 
 #[derive(Deserialize)]

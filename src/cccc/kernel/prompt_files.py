@@ -115,8 +115,12 @@ def delete_group_prompt_file(group: Group, filename: str) -> PromptFile:
 
 def write_group_prompt_file(group: Group, filename: str, content: str) -> PromptFile:
     """Create or update a group prompt override file under CCCC_HOME."""
+    raw_content = str(content or "")
+    content_bytes = raw_content.encode("utf-8")
+    if len(content_bytes) > _MAX_FILE_BYTES:
+        raise ValueError(f"prompt content exceeds {_MAX_FILE_BYTES} UTF-8 bytes")
     root = _group_prompts_root(group)
     root.mkdir(parents=True, exist_ok=True)
     path = (root / filename).expanduser()
-    atomic_write_text(path, str(content or ""), encoding="utf-8")
+    atomic_write_text(path, raw_content, encoding="utf-8")
     return PromptFile(filename=filename, path=str(path), found=True, content=_read_text_file(path))

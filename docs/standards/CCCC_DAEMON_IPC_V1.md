@@ -1276,6 +1276,59 @@ Result:
 { group: Record<string, unknown> } // group.yaml content, redacted
 ```
 
+#### `group_preamble_get`
+
+Read the effective group startup preamble. A non-empty group override replaces
+the built-in preamble body on the next preamble delivery; the fixed CCCC
+identity and protocol frame remains in place.
+
+Args:
+```ts
+{ group_id: string }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  source: "builtin" | "home"
+  filename: "CCCC_PREAMBLE.md"
+  overridden: boolean
+  content: string
+}
+```
+
+#### `group_preamble_set`
+
+Create or replace the non-empty group preamble override. The UTF-8 encoded
+content must not exceed 512 KiB. Existing sessions that have already received
+their preamble are not reinjected; start a fresh session when the new guidance
+must apply immediately. `group_reset` creates a new group id and does not carry
+this override forward, so provisioners must set the desired preamble on the
+replacement group before starting its actors. This operation manages prompt
+content only; consumers requiring a distinct standby turn must observe the
+actor return to `waiting` or `idle` before sending the authoritative mission.
+
+Args:
+```ts
+{ group_id: string; content: string; by?: string }
+```
+
+Result: the `group_preamble_get` result plus `changed: boolean`. When `changed`
+is false, the stored override is not rewritten.
+
+#### `group_preamble_reset`
+
+Delete the group override and restore the built-in preamble body. The explicit
+confirmation avoids accidental removal.
+
+Args:
+```ts
+{ group_id: string; confirm: "preamble"; by?: string }
+```
+
+Result: the `group_preamble_get` result plus `changed: boolean`.
+
 #### `group_create`
 
 Args:

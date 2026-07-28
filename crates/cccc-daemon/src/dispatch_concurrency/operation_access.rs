@@ -51,6 +51,7 @@ pub(super) fn is_read_only(op: &str) -> bool {
             | "group_copy_export"
             | "group_copy_preview_import"
             | "group_list"
+            | "group_preamble_get"
             | "group_show"
             | "group_space_capabilities"
             | "group_space_query"

@@ -17,6 +17,7 @@ pub mod fs;
 pub mod group;
 pub mod group_bridge_legacy;
 pub mod group_copy;
+pub mod group_prompts;
 pub mod group_scope;
 pub mod home;
 pub mod inbox;

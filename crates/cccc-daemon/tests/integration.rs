@@ -8,6 +8,8 @@ mod automation_ops;
 mod capability_state;
 #[path = "suite/daemon_cancellation.rs"]
 mod daemon_cancellation;
+#[path = "suite/group_preamble_ops.rs"]
+mod group_preamble_ops;
 #[path = "suite/integration_ops.rs"]
 mod integration_ops;
 #[path = "suite/ledger_pagination.rs"]

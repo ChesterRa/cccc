@@ -2,12 +2,11 @@ use cccc_contracts::{Actor, ActorRole};
 use std::path::Path;
 
 use crate::actors::{effective_role, visible};
+use crate::group_prompts::{DEFAULT_PREAMBLE_BODY, read_preamble};
 use crate::{GroupDoc, GroupStore, HomeLayout};
 
 mod voice_secretary;
 
-const DEFAULT_PREAMBLE_BODY: &str = "Startup:\n- On cold start or resume, use MCP tool `cccc_bootstrap`.\n- Call `cccc_help` only when you need a CCCC-specific route or a missing capability.";
-const MAX_PREAMBLE_BYTES: usize = 512 * 1024;
 pub const MESSAGE_DELIVERY_GUIDANCE: &str = "Use cccc_message_send for messages and replies; set reply_to when replying. Terminal output is not visible to the user. Avoid unnecessary broadcasts.";
 
 #[must_use]
@@ -23,10 +22,11 @@ pub fn render_session(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Str
     if voice_secretary::is_actor(actor) {
         return voice_secretary::render(group, actor);
     }
-    let custom = GroupStore::new(home.clone())
-        .and_then(|store| store.group_dir(&group.group_id))
-        .ok()
-        .and_then(|root| read_preamble(&root.join("prompts/CCCC_PREAMBLE.md")));
+    let custom = GroupStore::new(home.clone()).ok().and_then(|store| {
+        read_preamble(&store, &group.group_id)
+            .ok()
+            .and_then(|prompt| prompt.content)
+    });
     render_with_body(
         group,
         actor,
@@ -164,12 +164,6 @@ fn expanded_path(value: &str) -> std::path::PathBuf {
     std::env::var_os("HOME")
         .map(std::path::PathBuf::from)
         .map_or_else(|| Path::new(value).to_path_buf(), |home| home.join(suffix))
-}
-
-fn read_preamble(path: &Path) -> Option<String> {
-    let mut bytes = std::fs::read(path).ok()?;
-    bytes.truncate(MAX_PREAMBLE_BYTES);
-    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 fn enum_name(value: impl serde::Serialize) -> String {

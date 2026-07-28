@@ -1,5 +1,8 @@
 use cccc_contracts::{DaemonRequest, Event, GroupState};
 use cccc_core::active;
+use cccc_core::group_prompts::{
+    DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, delete_preamble, read_preamble, write_preamble,
+};
 use cccc_core::ledger;
 use cccc_core::permissions;
 use cccc_core::{GroupDoc, HomeLayout, group_bridge_legacy, integration_state};
@@ -13,6 +16,9 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "group_create" => create(home, request),
         "group_list" | "groups" => list(home),
         "group_show" => show(home, request),
+        "group_preamble_get" => preamble_get(home, request),
+        "group_preamble_set" => preamble_set(home, request),
+        "group_preamble_reset" => preamble_reset(home, request),
         "group_resolve" => resolve(home, request),
         "group_update" => update(home, request),
         "group_delete" => delete(home, request),
@@ -132,6 +138,95 @@ fn list(home: &HomeLayout) -> OpResult {
 
 fn show(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"group": group_runtime::group(load(home, request)?)}))
+}
+
+fn preamble_get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group_id = preamble_group_id(request)?;
+    let group = load_preamble_group(home, &group_id)?;
+    preamble_result(home, &group.group_id, None)
+}
+
+fn preamble_set(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group_id = preamble_group_id(request)?;
+    let content = string_arg(request, "content").filter(|value| !value.trim().is_empty());
+    let Some(content) = content else {
+        return Err(OpError::new(
+            "invalid_content",
+            "group preamble content must be a non-empty string; use group_preamble_reset to restore the builtin",
+        ));
+    };
+    let group = load_preamble_group(home, &group_id)?;
+    authorize(&group, request)
+        .map_err(|error| OpError::new("group_preamble_set_failed", error.message))?;
+    let store =
+        store(home).map_err(|error| OpError::new("group_preamble_set_failed", error.message))?;
+    let current = read_preamble(&store, &group.group_id)
+        .map_err(|error| OpError::new("group_preamble_set_failed", error.to_string()))?;
+    let changed = !current.found || current.content.as_deref() != Some(content.as_str());
+    if changed {
+        write_preamble(&store, &group.group_id, &content)
+            .map_err(|error| OpError::new("group_preamble_set_failed", error.to_string()))?;
+    }
+    preamble_result(home, &group.group_id, Some(changed))
+}
+
+fn preamble_reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group_id = preamble_group_id(request)?;
+    if !string_arg(request, "confirm")
+        .unwrap_or_default()
+        .trim()
+        .eq_ignore_ascii_case("preamble")
+    {
+        return Err(OpError::new(
+            "confirm_required",
+            "confirm must equal preamble",
+        ));
+    }
+    let group = load_preamble_group(home, &group_id)?;
+    authorize(&group, request)
+        .map_err(|error| OpError::new("group_preamble_reset_failed", error.message))?;
+    let store =
+        store(home).map_err(|error| OpError::new("group_preamble_reset_failed", error.message))?;
+    let changed = read_preamble(&store, &group.group_id)
+        .map_err(|error| OpError::new("group_preamble_reset_failed", error.to_string()))?
+        .found;
+    delete_preamble(&store, &group.group_id)
+        .map_err(|error| OpError::new("group_preamble_reset_failed", error.to_string()))?;
+    preamble_result(home, &group.group_id, Some(changed))
+}
+
+fn preamble_group_id(request: &DaemonRequest) -> Result<String, OpError> {
+    string_arg(request, "group_id")
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_owned())
+        .ok_or_else(|| OpError::new("missing_group_id", "missing group_id"))
+}
+
+fn load_preamble_group(home: &HomeLayout, group_id: &str) -> Result<GroupDoc, OpError> {
+    store(home)?
+        .load(group_id)
+        .map_err(|_| OpError::new("group_not_found", format!("group not found: {group_id}")))
+}
+
+fn preamble_result(home: &HomeLayout, group_id: &str, changed: Option<bool>) -> OpResult {
+    let prompt = read_preamble(&store(home)?, group_id).map_err(OpError::io)?;
+    let override_content = prompt.content.unwrap_or_default();
+    let overridden = prompt.found && !override_content.trim().is_empty();
+    let mut result = json!({
+        "group_id": group_id,
+        "source": if overridden { "home" } else { "builtin" },
+        "filename": PREAMBLE_FILENAME,
+        "overridden": overridden,
+        "content": if overridden {
+            override_content
+        } else {
+            DEFAULT_PREAMBLE_BODY.trim().to_owned()
+        },
+    });
+    if let Some(changed) = changed {
+        result["changed"] = json!(changed);
+    }
+    object(result)
 }
 
 fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

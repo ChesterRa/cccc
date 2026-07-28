@@ -7,11 +7,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [Unreleased]
 
 ### Fixed
+- **Rust distributions now match the Python 0.4.33 group-preamble IPC contract.** `group_preamble_get`, `group_preamble_set`, and `group_preamble_reset` preserve permissions, idempotency, confirmation, and the 512 KiB UTF-8 limit when SDK clients migrate between daemon implementations.
 - **Rust-native messaging now preserves the full domain contract across every high-level operation.** Tracked sends create durable linked tasks, headless actors receive complete message envelopes, `/install` routes through the CCCC capability lifecycle, replies acknowledge handled obligations, human messages wake idle groups, and stream/delegation/attachment/scope/cross-group compatibility behavior matches the legacy daemon.
 - **Cross-group and runtime recovery metadata now survives compatibility edge cases.** The Web UI resolves canonical cross-group sender ids to group labels, revoked bridge trust immediately disables credentials and live sessions, Python group saves round-trip YAML datetime values, voice delivery ignores legacy events without segment identity, and verified Chromium profiles recover safely after a local hostname change.
 - **Stopping the combined Web and daemon process is now bounded and responsive with active actors**. Runtime starts close behind a shutdown gate, automation observes cooperative cancellation, actor delivery delays are interruptible, and IM/connection cleanup uses short shared deadlines.
 - **Actors no longer replay already-read Python-era inbox history after upgrading to the Rust runtime**. Legacy read cursors are merged monotonically, actor-targeted notifications stay scoped to their intended actor, and obsolete `New message` control notices are folded into their source chat message.
 - **Revoking the final migrated IM chat authorization now persists across refreshes** instead of immediately restoring the chat from legacy authorization files; unmatched revoke requests also surface as failures in Web settings.
+
+## [0.4.33] — 2026-07-28
+
+### Added
+- **Mermaid diagrams render directly in completed Chat and Inbox messages.** Users can switch back to the original source, copy it, or open the rendered SVG in a large preview without leaving the conversation.
+- **Group startup preambles now have a first-class daemon IPC contract.** Integrators can read, set, and reset a per-group startup preamble without writing directly into `CCCC_HOME`; the fixed CCCC identity and protocol frame remains intact.
+
+### Changed
+- **CCCC now supports Python 3.11 through 3.14.** Python 3.11 is the new minimum, Python 3.14 is the primary CI and Docker runtime, and compatibility smoke coverage protects Python 3.11, 3.12, and 3.13.
+- **Mermaid rendering is scoped to message surfaces and loaded on demand.** Other Markdown views continue to show Mermaid fences as source, while theme changes refresh active diagrams without adding Mermaid to the initial Web bundle.
+
+### Fixed
+- **Invalid, oversized, and unsupported Mermaid diagrams fall back to their source cleanly**, while canceled queued jobs are skipped before expensive rendering begins so obsolete views do not delay later diagrams.
+- **Repeated preamble provisioning is truly idempotent.** Setting the same content no longer rewrites the stored override, and content beyond the documented 512 KiB UTF-8 limit is rejected before it can be stored and silently truncated.
+
+### Tests
+- Expanded backend, frontend, packaging, Python compatibility, and CI-contract coverage for Mermaid messages, group preamble management, and Python 3.11–3.14 support.
 
 ## [0.4.32] — 2026-07-18
 
