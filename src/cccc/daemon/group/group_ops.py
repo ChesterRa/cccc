@@ -12,6 +12,7 @@ from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ...kernel.active import load_active, set_active_group_id
 from ...kernel.group import (
+    Group,
     attach_scope_to_group,
     create_group,
     default_automation_ruleset_doc,
@@ -23,6 +24,13 @@ from ...kernel.group import (
 )
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
+from ...kernel.prompt_files import (
+    DEFAULT_PREAMBLE_BODY,
+    PREAMBLE_FILENAME,
+    delete_group_prompt_file,
+    read_group_prompt_file,
+    write_group_prompt_file,
+)
 from ...kernel.registry import load_registry
 from ...kernel.scope import ScopeIdentity, detect_scope
 from ...runners import headless as headless_runner
@@ -65,6 +73,78 @@ def handle_group_show(args: Dict[str, Any]) -> DaemonResponse:
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
     return DaemonResponse(ok=True, result={"group": _redact_group_doc(group.doc)})
+
+
+def _group_preamble_result(group: Group, *, changed: Optional[bool] = None) -> Dict[str, Any]:
+    prompt_file = read_group_prompt_file(group, PREAMBLE_FILENAME)
+    override = str(prompt_file.content or "") if prompt_file.found else ""
+    overridden = bool(override.strip())
+    result: Dict[str, Any] = {
+        "group_id": group.group_id,
+        "source": "home" if overridden else "builtin",
+        "filename": PREAMBLE_FILENAME,
+        "overridden": overridden,
+        "content": override if overridden else str(DEFAULT_PREAMBLE_BODY or "").strip(),
+    }
+    if changed is not None:
+        result["changed"] = changed
+    return result
+
+
+def handle_group_preamble_get(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    return DaemonResponse(ok=True, result=_group_preamble_result(group))
+
+
+def handle_group_preamble_set(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    content = args.get("content")
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not isinstance(content, str) or not content.strip():
+        return _error(
+            "invalid_content",
+            "group preamble content must be a non-empty string; use group_preamble_reset to restore the builtin",
+        )
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        require_group_permission(group, by=by, action="group.update")
+        current = read_group_prompt_file(group, PREAMBLE_FILENAME)
+        changed = not current.found or str(current.content or "") != content
+        if changed:
+            write_group_prompt_file(group, PREAMBLE_FILENAME, content)
+    except Exception as e:
+        return _error("group_preamble_set_failed", str(e))
+    return DaemonResponse(ok=True, result=_group_preamble_result(group, changed=changed))
+
+
+def handle_group_preamble_reset(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    confirm = str(args.get("confirm") or "").strip().lower()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if confirm != "preamble":
+        return _error("confirm_required", "confirm must equal preamble")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        require_group_permission(group, by=by, action="group.update")
+        current = read_group_prompt_file(group, PREAMBLE_FILENAME)
+        changed = current.found
+        delete_group_prompt_file(group, PREAMBLE_FILENAME)
+    except Exception as e:
+        return _error("group_preamble_reset_failed", str(e))
+    return DaemonResponse(ok=True, result=_group_preamble_result(group, changed=changed))
 
 
 def handle_group_update(args: Dict[str, Any]) -> DaemonResponse:
@@ -429,6 +509,12 @@ def try_handle_group_core_op(
 ) -> Optional[DaemonResponse]:
     if op == "group_show":
         return handle_group_show(args)
+    if op == "group_preamble_get":
+        return handle_group_preamble_get(args)
+    if op == "group_preamble_set":
+        return handle_group_preamble_set(args)
+    if op == "group_preamble_reset":
+        return handle_group_preamble_reset(args)
     if op == "group_update":
         return handle_group_update(args)
     if op == "group_detach_scope":

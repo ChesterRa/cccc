@@ -6,6 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.33] — 2026-07-28
+
+### Added
+- **Mermaid diagrams render directly in completed Chat and Inbox messages.** Users can switch back to the original source, copy it, or open the rendered SVG in a large preview without leaving the conversation.
+- **Group startup preambles now have a first-class daemon IPC contract.** Integrators can read, set, and reset a per-group startup preamble without writing directly into `CCCC_HOME`; the fixed CCCC identity and protocol frame remains intact.
+
+### Changed
+- **CCCC now supports Python 3.11 through 3.14.** Python 3.11 is the new minimum, Python 3.14 is the primary CI and Docker runtime, and compatibility smoke coverage protects Python 3.11, 3.12, and 3.13.
+- **Mermaid rendering is scoped to message surfaces and loaded on demand.** Other Markdown views continue to show Mermaid fences as source, while theme changes refresh active diagrams without adding Mermaid to the initial Web bundle.
+
+### Fixed
+- **Invalid, oversized, and unsupported Mermaid diagrams fall back to their source cleanly**, while canceled queued jobs are skipped before expensive rendering begins so obsolete views do not delay later diagrams.
+- **Repeated preamble provisioning is truly idempotent.** Setting the same content no longer rewrites the stored override, and content beyond the documented 512 KiB UTF-8 limit is rejected before it can be stored and silently truncated.
+
+### Tests
+- Expanded backend, frontend, packaging, Python compatibility, and CI-contract coverage for Mermaid messages, group preamble management, and Python 3.11–3.14 support.
+
 ## [0.4.32] — 2026-07-18
 
 ### Added

@@ -89,6 +89,90 @@ class TestGroupCoreOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_preamble_get_set_and_reset(self) -> None:
+        from cccc.kernel.prompt_files import DEFAULT_PREAMBLE_BODY
+
+        _, cleanup = self._with_home()
+        try:
+            create_resp, _ = self._call(
+                "group_create", {"title": "preamble", "topic": "", "by": "user"}
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            initial, _ = self._call("group_preamble_get", {"group_id": group_id})
+            self.assertTrue(initial.ok, getattr(initial, "error", None))
+            self.assertEqual((initial.result or {}).get("source"), "builtin")
+            self.assertFalse(bool((initial.result or {}).get("overridden")))
+            self.assertEqual(
+                (initial.result or {}).get("content"),
+                str(DEFAULT_PREAMBLE_BODY or "").strip(),
+            )
+
+            custom = "Showrunner startup boundary.\nWait for the targeted mission.\n"
+            updated, _ = self._call(
+                "group_preamble_set",
+                {"group_id": group_id, "content": custom, "by": "user"},
+            )
+            self.assertTrue(updated.ok, getattr(updated, "error", None))
+            self.assertEqual((updated.result or {}).get("source"), "home")
+            self.assertTrue(bool((updated.result or {}).get("overridden")))
+            self.assertTrue(bool((updated.result or {}).get("changed")))
+            self.assertEqual((updated.result or {}).get("content"), custom)
+
+            with patch("cccc.daemon.group.group_ops.write_group_prompt_file") as write_prompt:
+                unchanged, _ = self._call(
+                    "group_preamble_set",
+                    {"group_id": group_id, "content": custom, "by": "user"},
+                )
+            self.assertTrue(unchanged.ok, getattr(unchanged, "error", None))
+            self.assertFalse(bool((unchanged.result or {}).get("changed")))
+            write_prompt.assert_not_called()
+
+            oversized, _ = self._call(
+                "group_preamble_set",
+                {"group_id": group_id, "content": "x" * (512 * 1024 + 1), "by": "user"},
+            )
+            self.assertFalse(oversized.ok)
+            self.assertEqual(
+                getattr(oversized.error, "code", ""), "group_preamble_set_failed"
+            )
+            self.assertIn("524288 UTF-8 bytes", getattr(oversized.error, "message", ""))
+
+            after_rejected, _ = self._call("group_preamble_get", {"group_id": group_id})
+            self.assertTrue(after_rejected.ok, getattr(after_rejected, "error", None))
+            self.assertEqual((after_rejected.result or {}).get("content"), custom)
+
+            invalid, _ = self._call(
+                "group_preamble_set",
+                {"group_id": group_id, "content": "  ", "by": "user"},
+            )
+            self.assertFalse(invalid.ok)
+            self.assertEqual(getattr(invalid.error, "code", ""), "invalid_content")
+
+            unconfirmed, _ = self._call(
+                "group_preamble_reset",
+                {"group_id": group_id, "confirm": "wrong", "by": "user"},
+            )
+            self.assertFalse(unconfirmed.ok)
+            self.assertEqual(getattr(unconfirmed.error, "code", ""), "confirm_required")
+
+            reset, _ = self._call(
+                "group_preamble_reset",
+                {"group_id": group_id, "confirm": "preamble", "by": "user"},
+            )
+            self.assertTrue(reset.ok, getattr(reset, "error", None))
+            self.assertEqual((reset.result or {}).get("source"), "builtin")
+            self.assertFalse(bool((reset.result or {}).get("overridden")))
+            self.assertTrue(bool((reset.result or {}).get("changed")))
+            self.assertEqual(
+                (reset.result or {}).get("content"),
+                str(DEFAULT_PREAMBLE_BODY or "").strip(),
+            )
+        finally:
+            cleanup()
+
     def test_group_use_rejects_exact_cccc_home_as_workspace_scope(self) -> None:
         home, cleanup = self._with_home()
         try:
