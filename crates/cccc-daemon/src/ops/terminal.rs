@@ -5,13 +5,13 @@ use serde_json::{Value, json};
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 use crate::ops::terminal_text;
 
-pub fn handle(_home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
+pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "terminal_status" => status(request),
         "terminal_tail" => tail(request),
         "terminal_history" => history(request),
         "terminal_since" => since(request),
-        "terminal_write" => write(request),
+        "terminal_write" => write(home, request),
         "terminal_resize" => resize(request),
         "terminal_clear" => clear(request),
         _ => return None,
@@ -84,13 +84,27 @@ fn since(request: &DaemonRequest) -> OpResult {
     object(json!({"history": page}))
 }
 
-fn write(request: &DaemonRequest) -> OpResult {
+fn write(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group_id, actor_id) = ids(request)?;
     let data = string_arg(request, "data")
         .filter(|value| !value.is_empty())
         .ok_or_else(|| OpError::new("invalid_args", "data is required"))?;
     cccc_runtime::write(&group_id, &actor_id, data.as_bytes()).map_err(runtime_error)?;
+    if is_interrupt_input(&data) {
+        for runtime in ["codex", "claude"] {
+            let _ =
+                cccc_core::codex_hook_state::record_interrupt(home, runtime, &group_id, &actor_id);
+        }
+    } else {
+        let _ = cccc_core::codex_hook_state::record_terminal_input(
+            home, "claude", &group_id, &actor_id,
+        );
+    }
     object(json!({"written": data.len()}))
+}
+
+fn is_interrupt_input(data: &str) -> bool {
+    data.as_bytes().contains(&0x03) || data == "\u{1b}"
 }
 
 fn resize(request: &DaemonRequest) -> OpResult {
@@ -129,8 +143,9 @@ fn runtime_error(error: cccc_runtime::RuntimeError) -> OpError {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{tail_render_options, write};
+    use super::{is_interrupt_input, tail_render_options, write};
     use cccc_contracts::{DaemonRequest, RunnerKind};
+    use cccc_core::HomeLayout;
     use cccc_runtime::LaunchSpec;
     use serde_json::{Map, Value, json};
     use std::collections::BTreeMap;
@@ -162,11 +177,14 @@ mod tests {
                 .as_object()
                 .cloned()
                 .expect("args");
-            let result = write(&DaemonRequest {
-                v: 1,
-                op: "terminal_write".into(),
-                args,
-            });
+            let result = write(
+                &HomeLayout::from_path(temp.path()).expect("home"),
+                &DaemonRequest {
+                    v: 1,
+                    op: "terminal_write".into(),
+                    args,
+                },
+            );
             assert!(result.is_ok(), "terminal input should be accepted");
         }
 
@@ -183,16 +201,21 @@ mod tests {
 
     #[test]
     fn write_rejects_empty_data() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
         let args = Map::from_iter([
             ("group_id".into(), Value::String("g1".into())),
             ("actor_id".into(), Value::String("peer1".into())),
             ("data".into(), Value::String(String::new())),
         ]);
-        let error = write(&DaemonRequest {
-            v: 1,
-            op: "terminal_write".into(),
-            args,
-        })
+        let error = write(
+            &home,
+            &DaemonRequest {
+                v: 1,
+                op: "terminal_write".into(),
+                args,
+            },
+        )
         .expect_err("empty input must be rejected");
         assert_eq!(error.code, "invalid_args");
     }
@@ -214,5 +237,118 @@ mod tests {
             ..request
         };
         assert_eq!(tail_render_options(&request), (false, false));
+    }
+
+    #[test]
+    fn interrupt_input_clears_hook_working_state_without_terminal_output_parsing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let group_id = format!("g_terminal_{}", uuid::Uuid::new_v4().simple());
+        let actor_id = "claude-peer";
+        cccc_core::codex_hook_state::begin_launch(
+            &home,
+            "claude",
+            &group_id,
+            actor_id,
+            "token",
+            "HookPending",
+        )
+        .expect("launch");
+        cccc_core::codex_hook_state::record_runtime(
+            &home,
+            "claude",
+            &group_id,
+            actor_id,
+            "token",
+            &json!({"hook_event_name":"SessionStart","session_id":"s1"}),
+        )
+        .expect("session state");
+        cccc_core::codex_hook_state::record_terminal_input(&home, "claude", &group_id, actor_id)
+            .expect("working state");
+        cccc_runtime::start(LaunchSpec {
+            group_id: group_id.clone(),
+            actor_id: actor_id.into(),
+            runner: RunnerKind::Pty,
+            command: vec!["sh".into(), "-c".into(), "sleep 2".into()],
+            cwd: temp.path().into(),
+            env: BTreeMap::new(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect("start runtime");
+
+        let request = DaemonRequest {
+            v: 1,
+            op: "terminal_write".into(),
+            args: json!({"group_id":group_id,"actor_id":actor_id,"data":"\u{1b}"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+        assert!(write(&home, &request).is_ok(), "write interrupt");
+
+        let state = cccc_core::codex_hook_state::read_runtime(&home, "claude", &group_id, actor_id)
+            .expect("hook state");
+        assert_eq!(state.status, "idle");
+        assert_eq!(state.event, "UserInterrupt");
+        assert_eq!(state.turn_id, None);
+        assert!(is_interrupt_input("\u{1b}"));
+        assert!(is_interrupt_input("\u{3}"));
+        assert!(!is_interrupt_input("escape"));
+        let _ = cccc_runtime::stop(&group_id, actor_id);
+    }
+
+    #[test]
+    fn terminal_input_opens_a_new_fail_closed_generation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let group_id = format!("g_terminal_{}", uuid::Uuid::new_v4().simple());
+        let actor_id = "claude-peer";
+        cccc_core::codex_hook_state::begin_launch(
+            &home,
+            "claude",
+            &group_id,
+            actor_id,
+            "token",
+            "HookPending",
+        )
+        .expect("launch");
+        cccc_core::codex_hook_state::record_runtime(
+            &home,
+            "claude",
+            &group_id,
+            actor_id,
+            "token",
+            &json!({"hook_event_name":"SessionStart","session_id":"s1"}),
+        )
+        .expect("session state");
+        cccc_runtime::start(LaunchSpec {
+            group_id: group_id.clone(),
+            actor_id: actor_id.into(),
+            runner: RunnerKind::Pty,
+            command: vec!["sh".into(), "-c".into(), "sleep 2".into()],
+            cwd: temp.path().into(),
+            env: BTreeMap::new(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect("start runtime");
+
+        let request = DaemonRequest {
+            v: 1,
+            op: "terminal_write".into(),
+            args: json!({"group_id":group_id,"actor_id":actor_id,"data":"y"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+        assert!(write(&home, &request).is_ok(), "write response");
+
+        let state = cccc_core::codex_hook_state::read_runtime(&home, "claude", &group_id, actor_id)
+            .expect("hook state");
+        assert_eq!(state.status, "working");
+        assert_eq!(state.event, "TerminalInputFailClosed");
+        assert_eq!(state.turn_id.as_deref(), Some("local:1"));
+        let _ = cccc_runtime::stop(&group_id, actor_id);
     }
 }

@@ -23,23 +23,94 @@ pub fn configure(
     actor_id: &str,
     command: &mut Vec<String>,
     env: &mut BTreeMap<String, String>,
-) {
-    cccc_core::codex_hook_state::remove(home, group_id, actor_id);
-    let Some(executable) = configure_actor_cli(env) else {
-        return;
+) -> std::io::Result<()> {
+    configure_with_executable(
+        home,
+        group_id,
+        actor_id,
+        command,
+        env,
+        resolve_cccc_executable(),
+    )
+}
+
+fn configure_with_executable(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    command: &mut Vec<String>,
+    env: &mut BTreeMap<String, String>,
+    executable: Option<PathBuf>,
+) -> std::io::Result<()> {
+    let launch_token = begin_hook_launch(home, "codex", group_id, actor_id, env)?;
+    let Some(executable) = executable else {
+        record_launch_issue(
+            home,
+            "codex",
+            group_id,
+            actor_id,
+            &launch_token,
+            "HookUnavailableExecutable",
+        )?;
+        return Ok(());
     };
+    configure_actor_cli_path(env, &executable);
     append_overrides(command, home.root(), &executable, group_id, actor_id);
     env.insert(
         "CCCC_HOME".into(),
         home.root().to_string_lossy().into_owned(),
     );
+    Ok(())
+}
+
+pub(crate) fn begin_hook_launch(
+    home: &HomeLayout,
+    runtime: &str,
+    group_id: &str,
+    actor_id: &str,
+    env: &mut BTreeMap<String, String>,
+) -> std::io::Result<String> {
+    let launch_token = uuid::Uuid::new_v4().simple().to_string();
+    cccc_core::codex_hook_state::begin_launch(
+        home,
+        runtime,
+        group_id,
+        actor_id,
+        &launch_token,
+        "HookPending",
+    )?;
+    env.insert("CCCC_HOOK_LAUNCH_TOKEN".into(), launch_token.clone());
+    Ok(launch_token)
+}
+
+pub(crate) fn record_launch_issue(
+    home: &HomeLayout,
+    runtime: &str,
+    group_id: &str,
+    actor_id: &str,
+    launch_token: &str,
+    event: &str,
+) -> std::io::Result<()> {
+    cccc_core::codex_hook_state::begin_launch(
+        home,
+        runtime,
+        group_id,
+        actor_id,
+        launch_token,
+        event,
+    )
+    .map(|_| ())
 }
 
 pub(crate) fn configure_actor_cli(env: &mut BTreeMap<String, String>) -> Option<PathBuf> {
     let executable = resolve_cccc_executable()?;
-    prepend_executable_dir(env, &executable);
-    env.insert("CCCC_CLI".into(), executable.to_string_lossy().into_owned());
+    configure_actor_cli_path(env, &executable);
     Some(executable)
+}
+
+fn configure_actor_cli_path(env: &mut BTreeMap<String, String>, executable: &Path) {
+    prepend_executable_dir(env, executable);
+    env.insert("CCCC_CLI".into(), executable.to_string_lossy().into_owned());
 }
 
 fn append_overrides(
@@ -93,11 +164,15 @@ fn append_hook_overrides(command: &mut Vec<String>, executable: &Path) {
 }
 
 fn hook_command(executable: &Path) -> String {
+    hook_command_for(executable, "codex-state")
+}
+
+pub(crate) fn hook_command_for(executable: &Path, action: &str) -> String {
     let path = executable.to_string_lossy();
     if cfg!(windows) {
-        format!("\"{path}\" hook codex-state")
+        format!("\"{path}\" hook {action}")
     } else {
-        format!("'{}' hook codex-state", path.replace('\'', "'\"'\"'"))
+        format!("'{}' hook {action}", path.replace('\'', "'\"'\"'"))
     }
 }
 
@@ -190,8 +265,13 @@ fn executable_stem(path: &Path) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{append_overrides, hook_hash, prepend_executable_dir};
+    use super::{
+        append_overrides, begin_hook_launch, configure_with_executable, hook_hash,
+        prepend_executable_dir, record_launch_issue,
+    };
+    use cccc_core::HomeLayout;
     use std::collections::BTreeMap;
+    use std::fs;
     use std::path::Path;
 
     #[test]
@@ -247,5 +327,82 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn each_hook_launch_rotates_the_environment_fence_atomically() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let mut env = BTreeMap::new();
+        let first =
+            begin_hook_launch(&home, "codex", "g_test", "peer1", &mut env).expect("first launch");
+        let first_state =
+            cccc_core::codex_hook_state::read(&home, "g_test", "peer1").expect("first state");
+        assert_eq!(env["CCCC_HOOK_LAUNCH_TOKEN"], first);
+        assert_eq!(first_state.launch_token, first);
+        assert!(first_state.awaiting_session_start);
+
+        let second =
+            begin_hook_launch(&home, "codex", "g_test", "peer1", &mut env).expect("second launch");
+        let second_state =
+            cccc_core::codex_hook_state::read(&home, "g_test", "peer1").expect("second state");
+        assert_ne!(first, second);
+        assert_eq!(env["CCCC_HOOK_LAUNCH_TOKEN"], second);
+        assert_eq!(second_state.launch_token, second);
+
+        let mut claude_env = BTreeMap::new();
+        let claude = begin_hook_launch(&home, "claude", "g_test", "claude-peer", &mut claude_env)
+            .expect("claude launch");
+        let claude_state =
+            cccc_core::codex_hook_state::read_runtime(&home, "claude", "g_test", "claude-peer")
+                .expect("claude state");
+        assert_eq!(claude_env["CCCC_HOOK_LAUNCH_TOKEN"], claude);
+        assert_eq!(claude_state.launch_token, claude);
+        assert_eq!(claude_state.observation, "pty_fail_closed");
+    }
+
+    #[test]
+    fn missing_codex_executable_records_a_specific_setup_issue() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let mut command = vec!["codex".into()];
+        let mut env = BTreeMap::new();
+        configure_with_executable(&home, "g_test", "peer1", &mut command, &mut env, None)
+            .expect("fail-closed setup");
+
+        assert_eq!(command, ["codex"]);
+        assert!(!env["CCCC_HOOK_LAUNCH_TOKEN"].is_empty());
+        let state =
+            cccc_core::codex_hook_state::read(&home, "g_test", "peer1").expect("hook issue");
+        assert_eq!(state.event, "HookUnavailableExecutable");
+        assert!(state.awaiting_session_start);
+    }
+
+    #[test]
+    fn setup_issue_write_failures_propagate_for_both_runtimes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        for runtime in ["codex", "claude"] {
+            let actor_id = format!("{runtime}-peer");
+            let mut env = BTreeMap::new();
+            let token = begin_hook_launch(&home, runtime, "g_test", &actor_id, &mut env)
+                .expect("initial pending");
+            let state_dir = home.daemon_dir().join(format!("{runtime}-hook-state"));
+            fs::remove_dir_all(&state_dir).expect("remove state directory");
+            fs::write(&state_dir, "blocks directory recreation").expect("blocking file");
+
+            assert!(
+                record_launch_issue(
+                    &home,
+                    runtime,
+                    "g_test",
+                    &actor_id,
+                    &token,
+                    "HookUnavailableExecutable"
+                )
+                .is_err(),
+                "{runtime} setup issue write must fail"
+            );
+        }
     }
 }

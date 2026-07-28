@@ -82,11 +82,33 @@ fn actor_lifecycle_controls_terminal_process() {
         )
         .ok
     );
+    cccc_core::codex_hook_state::begin_launch(
+        &home,
+        "codex",
+        &group_id,
+        "peer1",
+        "token",
+        "HookPending",
+    )
+    .expect("begin hook launch");
     cccc_core::codex_hook_state::record(
         &home,
         &group_id,
         "peer1",
-        &json!({"hook_event_name":"UserPromptSubmit","turn_id":"turn-1"}),
+        "token",
+        &json!({"hook_event_name":"SessionStart","session_id":"s1"}),
+    )
+    .expect("session state");
+    cccc_core::codex_hook_state::record(
+        &home,
+        &group_id,
+        "peer1",
+        "token",
+        &json!({
+            "hook_event_name":"UserPromptSubmit",
+            "session_id":"s1",
+            "turn_id":"turn-1"
+        }),
     )
     .expect("hook state");
     let working = call(

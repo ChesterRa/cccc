@@ -86,12 +86,33 @@ async fn main() -> Result<()> {
 }
 
 fn hook(home: &HomeLayout, action: HookAction) -> Result<()> {
+    let launch_token = std::env::var("CCCC_HOOK_LAUNCH_TOKEN").unwrap_or_default();
     match action {
         HookAction::CodexState => {
             let payload: serde_json::Value = serde_json::from_reader(std::io::stdin().lock())?;
             let group_id = std::env::var("CCCC_GROUP_ID").unwrap_or_default();
             let actor_id = std::env::var("CCCC_ACTOR_ID").unwrap_or_default();
-            cccc_core::codex_hook_state::record(home, &group_id, &actor_id, &payload)?;
+            cccc_core::codex_hook_state::record(
+                home,
+                &group_id,
+                &actor_id,
+                &launch_token,
+                &payload,
+            )?;
+            Ok(())
+        }
+        HookAction::ClaudeState => {
+            let payload: serde_json::Value = serde_json::from_reader(std::io::stdin().lock())?;
+            let group_id = std::env::var("CCCC_GROUP_ID").unwrap_or_default();
+            let actor_id = std::env::var("CCCC_ACTOR_ID").unwrap_or_default();
+            cccc_core::codex_hook_state::record_runtime(
+                home,
+                "claude",
+                &group_id,
+                &actor_id,
+                &launch_token,
+                &payload,
+            )?;
             Ok(())
         }
     }

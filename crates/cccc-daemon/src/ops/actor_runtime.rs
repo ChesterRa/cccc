@@ -135,7 +135,18 @@ fn launch(
             &actor.id,
             &mut command,
             &mut launch_env,
-        );
+        )
+        .map_err(OpError::io)?;
+    } else if actor.runtime == ActorRuntime::Claude {
+        crate::ops::claude_hooks::configure(
+            home,
+            &group.group_id,
+            &actor.id,
+            cwd,
+            &mut command,
+            &mut launch_env,
+        )
+        .map_err(OpError::io)?;
     }
     cccc_runtime::start(LaunchSpec {
         group_id: group.group_id.clone(),

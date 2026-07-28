@@ -26,11 +26,18 @@ fn fields(
     let local_state = (running && super::local_headless::supports(actor))
         .then(|| super::local_headless::status(group_id, &actor.id))
         .flatten();
-    let hook_state = (running
-        && actor.runtime == ActorRuntime::Codex
-        && !super::local_headless::supports(actor))
-    .then(|| cccc_core::codex_hook_state::read(home, group_id, &actor.id))
-    .flatten();
+    let hook_runtime = match actor.runtime {
+        ActorRuntime::Codex => Some("codex"),
+        ActorRuntime::Claude => Some("claude"),
+        _ => None,
+    };
+    let hook_state = (running && !super::local_headless::supports(actor))
+        .then(|| {
+            hook_runtime.and_then(|runtime| {
+                cccc_core::codex_hook_state::read_runtime(home, runtime, group_id, &actor.id)
+            })
+        })
+        .flatten();
     let (state, reason, updated_at, active_task_id) = if !running {
         (
             "stopped".to_owned(),
@@ -46,17 +53,26 @@ fn fields(
             local_state.task_id,
         )
     } else if let Some(hook_state) = hook_state {
-        let reason = format!("codex_hook_{}", hook_state.event);
+        let reason = if hook_state.v == 2 {
+            format!(
+                "{}_hook_legacy_unfenced_{}",
+                hook_state.runtime, hook_state.event
+            )
+        } else if hook_state.observation == "pty_fail_closed" {
+            format!("claude_pty_fail_closed_{}", hook_state.event)
+        } else {
+            format!("{}_hook_{}", hook_state.runtime, hook_state.event)
+        };
         (
             hook_state.status,
             reason,
             Some(hook_state.updated_at),
             hook_state.turn_id,
         )
-    } else if actor.runtime == ActorRuntime::Codex && runner_effective == "pty" {
+    } else if hook_runtime.is_some() && runner_effective == "pty" {
         (
             "waiting".to_owned(),
-            "codex_hook_pending".to_owned(),
+            format!("{}_hook_pending", hook_runtime.unwrap_or_default()),
             None,
             None,
         )
@@ -94,11 +110,33 @@ mod tests {
         let home = HomeLayout::from_path(temp.path()).expect("home");
         let mut actor = Actor::new("peer1");
         actor.runtime = ActorRuntime::Codex;
+        cccc_core::codex_hook_state::begin_launch(
+            &home,
+            "codex",
+            "g_test",
+            "peer1",
+            "token",
+            "HookPending",
+        )
+        .expect("launch");
         cccc_core::codex_hook_state::record(
             &home,
             "g_test",
             "peer1",
-            &json!({"hook_event_name":"UserPromptSubmit","turn_id":"turn-1"}),
+            "token",
+            &json!({"hook_event_name":"SessionStart","session_id":"s1"}),
+        )
+        .expect("session state");
+        cccc_core::codex_hook_state::record(
+            &home,
+            "g_test",
+            "peer1",
+            "token",
+            &json!({
+                "hook_event_name":"UserPromptSubmit",
+                "session_id":"s1",
+                "turn_id":"turn-1"
+            }),
         )
         .expect("hook state");
 
@@ -122,5 +160,74 @@ mod tests {
         let state = fields(&home, &actor, "g_test", true, "headless");
         assert_eq!(state["effective_working_state"], "idle");
         assert_eq!(state["effective_working_reason"], "headless_running");
+    }
+
+    #[test]
+    fn claude_pty_state_comes_from_hooks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::Claude;
+        cccc_core::codex_hook_state::begin_launch(
+            &home,
+            "claude",
+            "g_test",
+            "peer1",
+            "token",
+            "HookPending",
+        )
+        .expect("launch");
+        cccc_core::codex_hook_state::record_runtime(
+            &home,
+            "claude",
+            "g_test",
+            "peer1",
+            "token",
+            &json!({"hook_event_name":"SessionStart","session_id":"session-1"}),
+        )
+        .expect("hook state");
+
+        let state = fields(&home, &actor, "g_test", true, "pty");
+        assert_eq!(state["effective_working_state"], "idle");
+        assert_eq!(
+            state["effective_working_reason"],
+            "claude_pty_fail_closed_SessionStart"
+        );
+    }
+
+    #[test]
+    fn claude_pty_without_hook_is_pending_not_terminal_inferred() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::Claude;
+
+        let state = fields(&home, &actor, "g_test", true, "pty");
+        assert_eq!(state["effective_working_state"], "waiting");
+        assert_eq!(state["effective_working_reason"], "claude_hook_pending");
+    }
+
+    #[test]
+    fn claude_hook_setup_issue_is_visible() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::Claude;
+        cccc_core::codex_hook_state::begin_launch(
+            &home,
+            "claude",
+            "g_test",
+            "peer1",
+            "token",
+            "HookUnavailableVersion",
+        )
+        .expect("setup issue");
+
+        let state = fields(&home, &actor, "g_test", true, "pty");
+        assert_eq!(state["effective_working_state"], "waiting");
+        assert_eq!(
+            state["effective_working_reason"],
+            "claude_pty_fail_closed_HookUnavailableVersion"
+        );
     }
 }

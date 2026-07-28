@@ -75,7 +75,7 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
     env.insert("CCCC_RUNNER".into(), "headless".into());
     super::super::codex_mcp::configure_actor_cli(&mut env);
     let model = model_from_command(&actor.command);
-    let command = provider_command(home, group, actor, &mut env);
+    let command = provider_command(home, group, actor, &mut env)?;
     let (program, args) = command
         .split_first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty headless command"))?;
@@ -252,7 +252,7 @@ fn provider_command(
     group: &GroupDoc,
     actor: &Actor,
     env: &mut BTreeMap<String, String>,
-) -> Vec<String> {
+) -> io::Result<Vec<String>> {
     let base = if actor.command.is_empty() {
         cccc_runtime::default_command(actor.runtime)
     } else {
@@ -268,14 +268,14 @@ fn provider_command(
             })
     });
     if !provider_binary {
-        return base;
+        return Ok(base);
     }
     if actor.runtime == ActorRuntime::Codex {
         let mut command = vec![base[0].clone()];
         command.extend(preserved_codex_args(&base[1..]));
         command.extend(["app-server".into(), "--listen".into(), "stdio://".into()]);
-        super::super::codex_mcp::configure(home, &group.group_id, &actor.id, &mut command, env);
-        command
+        super::super::codex_mcp::configure(home, &group.group_id, &actor.id, &mut command, env)?;
+        Ok(command)
     } else {
         let mut command = vec![base[0].clone()];
         command.extend(preserved_claude_args(&base[1..]));
@@ -294,7 +294,7 @@ fn provider_command(
             let config = json!({"mcpServers":{"cccc":{"command":executable,"args":["mcp"],"env":{"CCCC_HOME":home.root(),"CCCC_GROUP_ID":group.group_id,"CCCC_ACTOR_ID":actor.id}}}});
             command.extend(["--mcp-config".into(), config.to_string()]);
         }
-        command
+        Ok(command)
     }
 }
 
@@ -405,7 +405,8 @@ mod tests {
             "--model".into(),
             "gpt-test".into(),
         ];
-        let codex_command = provider_command(&home, &group, &codex, &mut env);
+        let codex_command =
+            provider_command(&home, &group, &codex, &mut env).expect("codex command");
         assert!(
             codex_command
                 .windows(2)
@@ -437,7 +438,8 @@ mod tests {
             "--mcp-config".into(),
             "custom.json".into(),
         ];
-        let claude_command = provider_command(&home, &group, &claude, &mut env);
+        let claude_command =
+            provider_command(&home, &group, &claude, &mut env).expect("claude command");
         assert!(
             claude_command
                 .windows(2)

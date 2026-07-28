@@ -12,6 +12,7 @@ mod assistants;
 mod automation_config;
 pub(crate) mod automation_runtime;
 mod capabilities;
+mod claude_hooks;
 mod codex_mcp;
 mod context;
 mod diagnostics;

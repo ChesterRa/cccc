@@ -101,6 +101,7 @@ pub enum CommandKind {
 #[derive(Debug, Subcommand)]
 pub enum HookAction {
     CodexState,
+    ClaudeState,
 }
 
 #[derive(Debug, Subcommand)]
