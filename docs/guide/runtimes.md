@@ -105,6 +105,8 @@ Both integrations are session-only. CCCC generates a new launch fence for every 
 
 Claude PTY hook state requires Claude Code 2.1.141 or newer. Unsupported versions, unresolvable/invalid settings, non-direct commands, or an unavailable CCCC hook executable leave a specific `claude_hook_HookUnavailable…` reason instead of silently discarding actor configuration. Enterprise policy, `disableAllHooks`, and safe/bare modes can still prevent a valid injected hook from running; that remains visible as `claude_hook_pending` rather than falling back to terminal-text inference.
 
+Verified PTY hook events also feed the Web runtime activity ticker. This is a separate, short-lived observability channel rather than chat history: it carries only structured lifecycle fields, replays briefly after reconnects, and detects long-running turn or tool activity. See [PTY Runtime Activity](/guide/runtime-activity) for the event contract, retention, and privacy boundaries.
+
 In the Rust backend, `runtime=codex|claude` with `runner=headless` starts a daemon-managed provider process. Codex uses its app-server JSON-RPC transport and Claude uses bidirectional stream-json. Messages are delivered automatically, provider health determines the actor's `running` value, and stopping the actor or group terminates the provider process. Headless state comes from these structured provider protocols rather than the PTY hooks.
 
 `web_model` and custom external headless actors keep the pull-consumer contract: an external executor calls `cccc_runtime_wait_next_turn` and `cccc_runtime_complete_turn`. These actors do not claim to have a local provider process.

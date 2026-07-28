@@ -24,6 +24,19 @@ pub fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     atomic_write(path, &bytes)
 }
 
+pub fn write_json_committed<T>(path: &Path, value: &T) -> io::Result<()>
+where
+    T: Serialize + DeserializeOwned + PartialEq,
+{
+    match write_json(path, value) {
+        Ok(()) => Ok(()),
+        Err(error) => match read_json::<T>(path) {
+            Ok(actual) if actual == *value => Ok(()),
+            _ => Err(error),
+        },
+    }
+}
+
 pub fn write_secret_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     write_json(path, value)?;
     protect(path)
@@ -57,8 +70,11 @@ pub fn with_exclusive_lock<T>(
         .open(path)?;
     file.lock_exclusive()?;
     let result = operation();
-    let unlock = FileExt::unlock(&file);
-    result.and_then(|value| unlock.map(|()| value))
+    // The descriptor is dropped on return and releases the advisory lock even if an explicit
+    // unlock reports an OS-level error. Do not turn a committed operation into an ambiguous
+    // failure after its durable write has already completed.
+    let _ = FileExt::unlock(&file);
+    result
 }
 
 #[cfg(unix)]

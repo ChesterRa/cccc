@@ -220,6 +220,24 @@ export type HeadlessStreamEvent = {
   data?: Record<string, unknown>;
 };
 
+export type RuntimeActivityEvent = {
+  v: number;
+  id: string;
+  ts: string;
+  group_id: string;
+  actor_id: string;
+  runtime: string;
+  activity_id: string;
+  kind: "session" | "turn" | "tool" | "subagent" | string;
+  status: "started" | "waiting" | "completed" | "failed" | "stuck" | string;
+  event_type: string;
+  session_id: string;
+  turn_id?: string | null;
+  operation_id?: string | null;
+  tool_name?: string | null;
+  duration_ms?: number | null;
+};
+
 export type LedgerEventStatusPayload = {
   read_status?: Record<string, boolean>;
   ack_status?: Record<string, boolean>;

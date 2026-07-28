@@ -243,6 +243,7 @@ mod tests {
     fn interrupt_input_clears_hook_working_state_without_terminal_output_parsing() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize home");
         let group_id = format!("g_terminal_{}", uuid::Uuid::new_v4().simple());
         let actor_id = "claude-peer";
         cccc_core::codex_hook_state::begin_launch(
@@ -302,6 +303,7 @@ mod tests {
     fn terminal_input_opens_a_new_fail_closed_generation() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize home");
         let group_id = format!("g_terminal_{}", uuid::Uuid::new_v4().simple());
         let actor_id = "claude-peer";
         cccc_core::codex_hook_state::begin_launch(

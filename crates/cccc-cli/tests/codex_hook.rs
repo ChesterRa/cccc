@@ -1,4 +1,4 @@
-use cccc_core::{HomeLayout, codex_hook_state};
+use cccc_core::{HomeLayout, codex_hook_state, runtime_activity};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -25,6 +25,7 @@ fn run_hook(home: &std::path::Path, action: &str, token: &str, payload: &[u8]) {
 fn hidden_codex_hook_command_records_session_state() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
+    home.initialize().expect("initialize home");
     codex_hook_state::begin_launch(&home, "codex", "g_test", "peer1", "token", "HookPending")
         .expect("launch");
     run_hook(
@@ -44,12 +45,17 @@ fn hidden_codex_hook_command_records_session_state() {
     assert_eq!(state.status, "working");
     assert_eq!(state.session_id, "session-1");
     assert_eq!(state.turn_id.as_deref(), Some("turn-1"));
+    let activities = runtime_activity::read_events(&home, "g_test").expect("activities");
+    assert_eq!(activities.len(), 2);
+    assert_eq!(activities[1].kind, "turn");
+    assert_eq!(activities[1].status, "started");
 }
 
 #[test]
 fn hidden_claude_hook_command_is_fail_closed_after_session_start() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
+    home.initialize().expect("initialize home");
     codex_hook_state::begin_launch(&home, "claude", "g_test", "peer1", "token", "HookPending")
         .expect("launch");
     run_hook(
@@ -62,7 +68,7 @@ fn hidden_claude_hook_command_is_fail_closed_after_session_start() {
         temp.path(),
         "claude-state",
         "token",
-        br#"{"hook_event_name":"UserPromptSubmit","session_id":"session-1","prompt_id":"prompt-1"}"#,
+        br#"{"hook_event_name":"PreToolUse","session_id":"session-1","tool_use_id":"tool-1","tool_name":"Bash"}"#,
     );
 
     let state =
@@ -72,12 +78,29 @@ fn hidden_claude_hook_command_is_fail_closed_after_session_start() {
     assert_eq!(state.session_id, "session-1");
     assert_eq!(state.turn_id, None);
     assert_eq!(state.observation, "pty_fail_closed");
+    let activities = runtime_activity::read_events(&home, "g_test").expect("activities");
+    assert_eq!(activities.len(), 1);
+    assert_eq!(activities[0].runtime, "claude");
+    assert_eq!(activities[0].activity_id, "claude:session-1:tool:tool-1");
+    assert_eq!(activities[0].tool_name.as_deref(), Some("Bash"));
+
+    run_hook(
+        temp.path(),
+        "claude-state",
+        "token",
+        br#"{"hook_event_name":"SessionEnd","session_id":"session-1"}"#,
+    );
+    let activities = runtime_activity::read_events(&home, "g_test").expect("closed activities");
+    assert_eq!(activities.len(), 1);
+    assert_eq!(activities[0].status, "failed");
+    assert_eq!(activities[0].event_type, "SessionEnded");
 }
 
 #[test]
 fn hidden_hook_receiver_rejects_an_old_process_environment() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
+    home.initialize().expect("initialize home");
     let pending = codex_hook_state::begin_launch(
         &home,
         "codex",
@@ -96,5 +119,10 @@ fn hidden_hook_receiver_rejects_an_old_process_environment() {
     assert_eq!(
         codex_hook_state::read(&home, "g_test", "peer1"),
         Some(pending)
+    );
+    assert!(
+        runtime_activity::read_events(&home, "g_test")
+            .expect("activities")
+            .is_empty()
     );
 }

@@ -31,6 +31,7 @@ pub mod permissions;
 pub mod presentation;
 pub mod profiles;
 pub mod registry;
+pub mod runtime_activity;
 pub mod scope;
 pub mod settings;
 pub mod space_credentials;

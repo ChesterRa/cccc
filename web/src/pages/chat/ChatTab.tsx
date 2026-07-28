@@ -13,14 +13,7 @@ import {
   type RefObject,
 } from "react";
 import { BookmarkIcon, CompassIcon, InfoIcon } from "../../components/Icons";
-import {
-  Actor,
-  HeadlessPreviewSession,
-  LedgerEvent,
-  PresentationMessageRef,
-  StreamingActivity,
-  TaskMessageRef,
-} from "../../types";
+import { Actor, LedgerEvent, PresentationMessageRef, TaskMessageRef } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
 import { ChatComposer } from "./ChatComposer";
@@ -46,8 +39,7 @@ import {
   dismissChatGptAppPermissionHint,
   readChatGptAppPermissionHintDismissed,
 } from "../../utils/chatGptAppPermissionHint";
-import type { StreamingReplySession } from "../../stores/chatStreamingSessions";
-import { buildLiveWorkCards } from "./liveWorkCards";
+import { useRuntimeDockWorkCards } from "./useRuntimeDockWorkCards";
 import { getGroupRouteDisplayName, type ComposerMentionKind } from "./chatMentionSuggestions";
 
 const PresentationRail = lazy(() =>
@@ -65,12 +57,6 @@ const SetupChecklist = lazy(() =>
 );
 
 const EMPTY_PRESENTATION_ATTENTION: Record<string, boolean> = {};
-const EMPTY_LIVE_WORK_TEXT: Record<string, string> = {};
-const EMPTY_LIVE_WORK_ACTIVITIES: Record<string, StreamingActivity[]> = {};
-const EMPTY_LIVE_WORK_SESSIONS: Record<string, StreamingReplySession> = {};
-const EMPTY_LIVE_WORK_PREVIEW_SESSIONS: Record<string, HeadlessPreviewSession[]> = {};
-const EMPTY_LATEST_LIVE_WORK_PREVIEW: Record<string, HeadlessPreviewSession> = {};
-
 function ChatLazyFallback({ className }: { className?: string }) {
   return <div className={classNames("min-h-0", className)} />;
 }
@@ -345,15 +331,6 @@ export function ChatTab({
       ? state.presentationAttention[selectedGroupId] || EMPTY_PRESENTATION_ATTENTION
       : EMPTY_PRESENTATION_ATTENTION,
   );
-  const previewSessionsByActorId =
-    liveWorkBucket?.previewSessionsByActorId ?? EMPTY_LIVE_WORK_PREVIEW_SESSIONS;
-  const latestActorPreviewByActorId =
-    liveWorkBucket?.latestActorPreviewByActorId ?? EMPTY_LATEST_LIVE_WORK_PREVIEW;
-  const latestActorTextByActorId = liveWorkBucket?.latestActorTextByActorId || EMPTY_LIVE_WORK_TEXT;
-  const latestActorActivitiesByActorId =
-    liveWorkBucket?.latestActorActivitiesByActorId || EMPTY_LIVE_WORK_ACTIVITIES;
-  const replySessionsByPendingEventId =
-    liveWorkBucket?.replySessionsByPendingEventId || EMPTY_LIVE_WORK_SESSIONS;
   const webModelDeliveryStatusByEventId = useMemo(
     () =>
       buildWebModelDeliveryStatusByEventId([
@@ -391,27 +368,12 @@ export function ChatTab({
   const listIsLoadingHistory = isLoadingHistory || isHydratingEmptyState;
   const listHasMoreHistory = hasMoreHistory || isHydratingEmptyState;
   const hasPresentationAttention = Object.keys(presentationAttention).length > 0;
-  const liveWorkCards = useMemo(
-    () =>
-      buildLiveWorkCards({
-        actors: runtimeActors,
-        events: liveWorkEvents,
-        latestActorPreviewByActorId,
-        previewSessionsByActorId,
-        latestActorTextByActorId,
-        latestActorActivitiesByActorId,
-        replySessionsByPendingEventId,
-      }),
-    [
-      runtimeActors,
-      liveWorkEvents,
-      latestActorPreviewByActorId,
-      previewSessionsByActorId,
-      latestActorActivitiesByActorId,
-      latestActorTextByActorId,
-      replySessionsByPendingEventId,
-    ],
-  );
+  const liveWorkCards = useRuntimeDockWorkCards({
+    groupId: selectedGroupId,
+    actors: runtimeActors,
+    events: liveWorkEvents,
+    bucket: liveWorkBucket,
+  });
 
   const preferredPresentationSurface =
     !isSmallScreen && presentationDisplayMode === "split" ? "split" : "modal";

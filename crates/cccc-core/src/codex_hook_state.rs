@@ -7,7 +7,7 @@ use std::io;
 use std::path::PathBuf;
 
 use crate::HomeLayout;
-use crate::fs::{read_json, with_exclusive_lock, write_json};
+use crate::fs::{read_json, with_exclusive_lock, write_json_committed as write_json};
 
 const VERSION: u8 = 3;
 const LEGACY_VERSION: u8 = 2;
@@ -72,10 +72,64 @@ pub fn record_runtime(
     launch_token: &str,
     payload: &Value,
 ) -> io::Result<CodexHookState> {
+    record_runtime_with_observer(
+        home,
+        runtime,
+        group_id,
+        actor_id,
+        launch_token,
+        payload,
+        |_, _| Ok(()),
+    )
+}
+
+pub fn record_runtime_with_observer<F>(
+    home: &HomeLayout,
+    runtime: &str,
+    group_id: &str,
+    actor_id: &str,
+    launch_token: &str,
+    payload: &Value,
+    observer: F,
+) -> io::Result<CodexHookState>
+where
+    F: FnOnce(&CodexHookState, bool) -> io::Result<()>,
+{
     validate_runtime(runtime)?;
     with_exclusive_lock(&lock_path(home, runtime, group_id, actor_id), || {
-        record_runtime_locked(home, runtime, group_id, actor_id, launch_token, payload)
+        let previous = read_runtime(home, runtime, group_id, actor_id).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "hook event received before launch configuration",
+            )
+        })?;
+        let state =
+            record_runtime_locked(home, runtime, group_id, actor_id, launch_token, payload)?;
+        let activity_authorized = state != previous
+            || claude_observation_authorized(runtime, launch_token, payload, &previous);
+        if let Err(error) = observer(&state, activity_authorized) {
+            if state != previous {
+                write_json(&path(home, runtime, group_id, actor_id), &previous)?;
+            }
+            return Err(error);
+        }
+        Ok(state)
     })
+}
+
+fn claude_observation_authorized(
+    runtime: &str,
+    launch_token: &str,
+    payload: &Value,
+    state: &CodexHookState,
+) -> bool {
+    runtime == CLAUDE
+        && state.v == VERSION
+        && !state.awaiting_session_start
+        && !state.session_closed
+        && !launch_token.trim().is_empty()
+        && launch_token == state.launch_token
+        && nonempty_field(payload, "session_id").as_deref() == Some(state.session_id.as_str())
 }
 
 fn record_runtime_locked(
@@ -391,6 +445,7 @@ pub fn record_interrupt(
         {
             return Ok(Some(state));
         }
+        let previous = state.clone();
         state.status = "idle".into();
         state.event = "UserInterrupt".into();
         state.turn_id = None;
@@ -398,6 +453,12 @@ pub fn record_interrupt(
         state.interrupted = true;
         state.updated_at = utc_now();
         write_json(&path(home, runtime, group_id, actor_id), &state)?;
+        if let Err(error) =
+            crate::runtime_activity::close_actor_activities(home, &state, "UserInterrupt")
+        {
+            write_json(&path(home, runtime, group_id, actor_id), &previous)?;
+            return Err(error);
+        }
         Ok(Some(state))
     })
 }
@@ -420,6 +481,7 @@ pub fn record_terminal_input(
         {
             return Ok(Some(state));
         }
+        let previous = state.clone();
         let turn_generation = state.turn_generation.saturating_add(1);
         state.status = "working".into();
         state.event = "TerminalInputFailClosed".into();
@@ -429,6 +491,12 @@ pub fn record_terminal_input(
         state.turn_generation = turn_generation;
         state.updated_at = utc_now();
         write_json(&path(home, runtime, group_id, actor_id), &state)?;
+        if let Err(error) =
+            crate::runtime_activity::close_actor_activities(home, &state, "TurnSuperseded")
+        {
+            write_json(&path(home, runtime, group_id, actor_id), &previous)?;
+            return Err(error);
+        }
         Ok(Some(state))
     })
 }
@@ -559,6 +627,7 @@ mod tests {
     const TOKEN: &str = "launch-current";
 
     fn launch(home: &HomeLayout, runtime: &str) -> CodexHookState {
+        home.initialize().expect("initialize home");
         begin_launch(home, runtime, "g_test", "peer1", TOKEN, "HookPending").expect("launch")
     }
 
