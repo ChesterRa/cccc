@@ -4,8 +4,10 @@ use axum::routing::post;
 use axum::{Json, Router};
 use cccc_core::integration_state;
 use cccc_core::{GroupStore, HomeLayout, Scope, ledger};
+use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
 
 #[tokio::test]
@@ -24,7 +26,9 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
             }],
             "trusts":[{
                 "trust_id":"trust_test","registration_id":"greg_test",
-                "group_id":group.group_id,"status":"active","access_level":"messages"
+                "transport":"group_bridge_session","group_id":group.group_id,
+                "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                "status":"active","access_level":"messages"
             }],
             "deliveries":[]
         });
@@ -251,7 +255,9 @@ async fn remote_mcp_reports_access_and_does_not_expose_unscoped_full_tools() {
             }],
             "trusts":[{
                 "trust_id":"trust_full","registration_id":"greg_full",
-                "group_id":group.group_id,"status":"active","access_level":"full"
+                "transport":"group_bridge_session","group_id":group.group_id,
+                "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                "status":"active","access_level":"full"
             }]
         });
         Ok(())
@@ -311,8 +317,8 @@ async fn remote_exec_session_is_bound_to_the_authorized_registration() {
                 {"registration_id":"greg_b","group_id":group.group_id,"remote_group_id":"g_sender_b","remote_peer_id":"peer_b","transport":"group_bridge_session","credential":"token-b","status":"active"}
             ],
             "trusts":[
-                {"trust_id":"trust_a","registration_id":"greg_a","group_id":group.group_id,"status":"active","access_level":"full"},
-                {"trust_id":"trust_b","registration_id":"greg_b","group_id":group.group_id,"status":"active","access_level":"full"}
+                {"trust_id":"trust_a","registration_id":"greg_a","transport":"group_bridge_session","group_id":group.group_id,"remote_group_id":"g_sender_a","remote_peer_id":"peer_a","status":"active","access_level":"full"},
+                {"trust_id":"trust_b","registration_id":"greg_b","transport":"group_bridge_session","group_id":group.group_id,"remote_group_id":"g_sender_b","remote_peer_id":"peer_b","status":"active","access_level":"full"}
             ]
         });
         Ok(())
@@ -409,7 +415,9 @@ async fn revoked_trust_invalidates_credential_and_removes_registration() {
             }],
             "trusts":[{
                 "trust_id":"trust_revoked","registration_id":"greg_revoked",
-                "group_id":group.group_id,"status":"active","access_level":"messages"
+                "transport":"group_bridge_session","group_id":group.group_id,
+                "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                "status":"active","access_level":"messages"
             }]
         });
         Ok(())
@@ -472,19 +480,35 @@ async fn session_authorization_requires_complete_registration_and_active_trust()
                     "remote_group_id":"","remote_peer_id":"peer_sender",
                     "transport":"group_bridge_session",
                     "credential":"incomplete-token","status":"active"
+                },
+                {
+                    "registration_id":"greg_mismatch","group_id":group.group_id,
+                    "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                    "transport":"group_bridge_session",
+                    "credential":"mismatch-token","status":"active"
                 }
             ],
-            "trusts":[{
-                "trust_id":"trust_incomplete","registration_id":"greg_incomplete",
-                "group_id":group.group_id,"status":"active","access_level":"messages"
-            }]
+            "trusts":[
+                {
+                    "trust_id":"trust_incomplete","registration_id":"greg_incomplete",
+                    "transport":"group_bridge_session","group_id":group.group_id,
+                    "remote_group_id":"","remote_peer_id":"peer_sender",
+                    "status":"active","access_level":"messages"
+                },
+                {
+                    "trust_id":"trust_mismatch","registration_id":"greg_mismatch",
+                    "transport":"group_bridge_session","group_id":group.group_id,
+                    "remote_group_id":"g_sender","remote_peer_id":"different-peer",
+                    "status":"active","access_level":"messages"
+                }
+            ]
         });
         Ok(())
     })
     .expect("bridge state");
     let app = cccc_web::app(home);
 
-    for credential in ["no-trust-token", "incomplete-token"] {
+    for credential in ["no-trust-token", "incomplete-token", "mismatch-token"] {
         let response = app
             .clone()
             .oneshot(mcp_request("cccc_remote_access", credential))
@@ -492,6 +516,130 @@ async fn session_authorization_requires_complete_registration_and_active_trust()
             .expect("response");
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
+}
+
+#[tokio::test]
+async fn revoked_websocket_rejects_send_and_closes() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("store")
+        .create("remote target", "")
+        .expect("group");
+    seed_active_bridge(&home, &group.group_id);
+    let (server, address, mut socket) = connect_bridge_socket(home.clone()).await;
+    assert_eq!(next_socket_json(&mut socket).await["type"], "ready");
+
+    revoke_bridge(&address).await;
+    socket
+        .send(WsMessage::Text(
+            json!({"type":"send","payload":{}}).to_string().into(),
+        ))
+        .await
+        .expect("send");
+    let error = next_socket_json(&mut socket).await;
+    assert_eq!(error["type"], "error");
+    assert!(
+        error["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("no longer authorized"))
+    );
+    expect_socket_closed(&mut socket).await;
+    server.abort();
+}
+
+#[tokio::test]
+async fn revoked_websocket_polling_closes_before_forwarding_events() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("remote target", "").expect("group");
+    seed_active_bridge(&home, &group.group_id);
+    let (server, address, mut socket) = connect_bridge_socket(home.clone()).await;
+    assert_eq!(next_socket_json(&mut socket).await["type"], "ready");
+
+    revoke_bridge(&address).await;
+    let mut event = cccc_contracts::Event::new("chat.message", &group.group_id);
+    event.data.insert("text".into(), json!("must not escape"));
+    ledger::append(&store.ledger_path(&group.group_id).expect("ledger"), &event).expect("append");
+    let error = next_socket_json(&mut socket).await;
+    assert_eq!(error["type"], "error", "{error}");
+    expect_socket_closed(&mut socket).await;
+    server.abort();
+}
+
+type TestSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+fn seed_active_bridge(home: &HomeLayout, group_id: &str) {
+    integration_state::global_update(home, "group_bridge", |value| {
+        *value = json!({
+            "registrations":[{
+                "registration_id":"greg_ws","transport":"group_bridge_session",
+                "group_id":group_id,"remote_group_id":"g_sender",
+                "remote_peer_id":"peer_sender","credential":"ws-token","status":"active"
+            }],
+            "trusts":[{
+                "trust_id":"trust_ws","registration_id":"greg_ws",
+                "transport":"group_bridge_session","group_id":group_id,
+                "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                "status":"active","access_level":"messages"
+            }]
+        });
+        Ok(())
+    })
+    .expect("bridge state");
+}
+
+async fn revoke_bridge(address: &str) {
+    let response = reqwest::Client::new()
+        .post(format!(
+            "http://{address}/api/group-bridge/pairing/trusts/trust_ws/revoke"
+        ))
+        .json(&json!({"revoked_by":"websocket-test"}))
+        .send()
+        .await
+        .expect("revoke request");
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+async fn connect_bridge_socket(
+    home: HomeLayout,
+) -> (
+    tokio::task::JoinHandle<Result<(), std::io::Error>>,
+    String,
+    TestSocket,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(home)).await });
+    let (socket, _) = tokio_tungstenite::connect_async(format!(
+        "ws://{address}/api/group-bridge/session/ws?token=ws-token"
+    ))
+    .await
+    .expect("connect");
+    (server, address.to_string(), socket)
+}
+
+async fn next_socket_json(socket: &mut TestSocket) -> Value {
+    let message = tokio::time::timeout(std::time::Duration::from_secs(2), socket.next())
+        .await
+        .expect("websocket response timeout")
+        .expect("websocket response")
+        .expect("websocket message");
+    serde_json::from_str(message.to_text().expect("text")).expect("json")
+}
+
+async fn expect_socket_closed(socket: &mut TestSocket) {
+    let closed = tokio::time::timeout(std::time::Duration::from_secs(2), socket.next())
+        .await
+        .expect("websocket close timeout");
+    assert!(
+        matches!(closed, None | Some(Ok(WsMessage::Close(_)))),
+        "unexpected post-error websocket message: {closed:?}"
+    );
 }
 
 fn request(payload: &Value, credential: Option<&str>) -> Request<Body> {

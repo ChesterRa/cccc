@@ -180,10 +180,9 @@ async fn upgrade(
 }
 
 async fn session_socket(state: AppState, registration: Value, mut socket: WebSocket) {
-    let group_id = registration["group_id"].as_str().unwrap_or("").to_owned();
     let _ = socket
         .send(Message::Text(
-            json!({"type":"ready","group_id":group_id,"registration_id":registration["registration_id"]})
+            json!({"type":"ready","group_id":registration["group_id"],"registration_id":registration["registration_id"]})
                 .to_string()
                 .into(),
         ))
@@ -194,38 +193,45 @@ async fn session_socket(state: AppState, registration: Value, mut socket: WebSoc
             incoming = socket.next() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        let response = match serde_json::from_str::<Value>(&text) {
+                        let (response, close) = match serde_json::from_str::<Value>(&text) {
                             Ok(value) if value["type"] == "send" => {
                                 match reauthorize(&state, &registration).map(|active| {
                                     (active, value.get("payload").cloned().unwrap_or_else(||json!({})))
                                 }) {
-                                    Ok((active, payload)) => match receive_delivery(&state,&active,payload).await {
+                                    Ok((active, payload)) => (match receive_delivery(&state,&active,payload).await {
                                         Ok(result)=>json!({"type":"receipt","result":result}),
                                         Err(error)=>json!({"type":"error","message":error.to_string()}),
-                                    },
-                                    Err(error)=>json!({"type":"error","message":error.to_string()}),
+                                    }, false),
+                                    Err(error)=>(json!({"type":"error","message":error.to_string()}), true),
                                 }
                             }
-                            Ok(value) if value["type"] == "ping" => json!({"type":"pong","ts":utc_now()}),
-                            _ => json!({"type":"error","message":"unsupported session message"}),
+                            Ok(value) if value["type"] == "ping" => (json!({"type":"pong","ts":utc_now()}), false),
+                            _ => (json!({"type":"error","message":"unsupported session message"}), false),
                         };
                         if socket.send(Message::Text(response.to_string().into())).await.is_err(){break;}
+                        if close {
+                            let _ = socket.send(Message::Close(None)).await;
+                            return;
+                        }
                     }
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     _ => {}
                 }
             }
             () = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                if reauthorize(&state, &registration).is_err() {
-                    let _ = socket.send(Message::Text(
-                        json!({"type":"error","message":"group bridge session is no longer authorized"})
-                            .to_string()
-                            .into(),
-                    )).await;
-                    return;
-                }
+                let active = match reauthorize(&state, &registration) {
+                    Ok(active) => active,
+                    Err(error) => {
+                        let _ = socket.send(Message::Text(
+                            json!({"type":"error","message":error.to_string()}).to_string().into(),
+                        )).await;
+                        let _ = socket.send(Message::Close(None)).await;
+                        return;
+                    }
+                };
+                let Ok(group_id)=required_session_field(&active,"group_id") else {return};
                 let Ok(store)=GroupStore::new(state.home.clone()) else {continue};
-                let Ok(path)=store.ledger_path(&group_id) else {continue};
+                let Ok(path)=store.ledger_path(group_id) else {continue};
                 let Ok(events)=ledger::tail(&path,50) else {continue};
                 for event in events {
                     if !seen.insert(event.id.clone()) {continue;}
@@ -631,11 +637,7 @@ fn reauthorize(state: &AppState, registration: &Value) -> Result<Value, ApiError
     let bridge = BridgeStore::new(&state.home).load().map_err(io_error)?;
     items(&bridge, "registrations")
         .iter()
-        .find(|item| {
-            item["registration_id"] == registration["registration_id"]
-                && item["credential"] == registration["credential"]
-                && item["status"] == "active"
-        })
+        .find(|item| item["status"] == "active" && same_registration_snapshot(item, registration))
         .filter(|item| valid_registration(&bridge, item))
         .cloned()
         .ok_or_else(|| ApiError::forbidden("group bridge session is no longer authorized"))
@@ -656,10 +658,22 @@ fn valid_registration(bridge: &Value, registration: &Value) -> bool {
                 .is_some_and(|value| !value.trim().is_empty())
         })
         && items(bridge, "trusts").iter().any(|trust| {
-            trust["registration_id"] == registration["registration_id"]
-                && trust["group_id"] == registration["group_id"]
-                && trust["status"] == "active"
+            trust["status"] == "active"
+                && group_bridge_command_sessions::trust_matches_registration(trust, registration)
         })
+}
+
+fn same_registration_snapshot(current: &Value, snapshot: &Value) -> bool {
+    [
+        "registration_id",
+        "credential",
+        "transport",
+        "group_id",
+        "remote_group_id",
+        "remote_peer_id",
+    ]
+    .into_iter()
+    .all(|field| current[field] == snapshot[field])
 }
 
 fn required_session_field<'a>(registration: &'a Value, field: &str) -> Result<&'a str, ApiError> {
@@ -775,4 +789,32 @@ fn bearer(headers: &HeaderMap) -> Option<&str> {
 
 fn io_error(error: std::io::Error) -> ApiError {
     ApiError::bad(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::same_registration_snapshot;
+    use serde_json::json;
+
+    #[test]
+    fn websocket_snapshot_rejects_in_place_identity_change() {
+        let snapshot = json!({
+            "registration_id":"greg_test","credential":"secret",
+            "transport":"group_bridge_session","group_id":"g_local",
+            "remote_group_id":"g_remote","remote_peer_id":"peer_remote"
+        });
+        for field in [
+            "registration_id",
+            "credential",
+            "transport",
+            "group_id",
+            "remote_group_id",
+            "remote_peer_id",
+        ] {
+            let mut changed = snapshot.clone();
+            changed[field] = json!("changed");
+            assert!(!same_registration_snapshot(&changed, &snapshot), "{field}");
+        }
+        assert!(same_registration_snapshot(&snapshot, &snapshot));
+    }
 }

@@ -31,11 +31,7 @@ pub(super) fn access_grant(
         "trusts",
     )
     .iter()
-    .find(|item| {
-        item["registration_id"] == registration["registration_id"]
-            && item["group_id"] == registration["group_id"]
-            && item["status"] == "active"
-    })
+    .find(|item| item["status"] == "active" && trust_matches_registration(item, registration))
     .cloned()
     .ok_or_else(|| ApiError::forbidden("group bridge trust is not active"))?;
     Ok(AccessGrant {
@@ -44,6 +40,28 @@ pub(super) fn access_grant(
             .unwrap_or("messages")
             .to_owned(),
         trust_id: trust["trust_id"].as_str().unwrap_or("").to_owned(),
+    })
+}
+
+pub(super) fn trust_matches_registration(trust: &Value, registration: &Value) -> bool {
+    [
+        "registration_id",
+        "transport",
+        "group_id",
+        "remote_group_id",
+        "remote_peer_id",
+    ]
+    .into_iter()
+    .all(|field| {
+        let trust_value = trust
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let registration_value = registration
+            .get(field)
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        trust_value.is_some() && trust_value == registration_value
     })
 }
 
@@ -172,6 +190,44 @@ mod tests {
             require(&arguments, &registration, &grant).is_err(),
             "binding should be removed"
         );
+    }
+
+    #[test]
+    fn trust_identity_requires_exact_nonempty_strings() {
+        let registration = json!({
+            "registration_id":"greg_test",
+            "transport":"group_bridge_session",
+            "group_id":"g_local",
+            "remote_group_id":"g_remote",
+            "remote_peer_id":"peer_remote"
+        });
+        assert!(trust_matches_registration(&registration, &registration));
+
+        for field in [
+            "registration_id",
+            "transport",
+            "group_id",
+            "remote_group_id",
+            "remote_peer_id",
+        ] {
+            for invalid in [json!("different"), json!("   "), json!(7), json!(null)] {
+                let mut trust = registration.clone();
+                trust[field] = invalid;
+                assert!(
+                    !trust_matches_registration(&trust, &registration),
+                    "{field}"
+                );
+            }
+            let mut padded = registration.clone();
+            padded[field] = json!(format!(
+                " {} ",
+                registration[field].as_str().expect("identity field")
+            ));
+            assert!(
+                !trust_matches_registration(&padded, &registration),
+                "{field} must be byte-for-byte exact"
+            );
+        }
     }
 
     fn registration() -> Value {

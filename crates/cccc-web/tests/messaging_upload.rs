@@ -178,41 +178,74 @@ async fn cross_group_upload_requires_destination_before_persisting_blob() {
     let before = std::fs::read_dir(&blobs_dir)
         .expect("blob directory")
         .count();
-    let boundary = "cccc-cross-group-missing-destination";
-    let mut multipart = format!(
-        concat!(
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nremote\r\n",
-            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"evidence.bin\"\r\n",
-            "Content-Type: application/octet-stream\r\n\r\n"
-        ),
-        boundary = boundary,
-    )
-    .into_bytes();
-    multipart.extend_from_slice(b"evidence");
-    multipart.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-
-    let response = cccc_web::app(home)
-        .oneshot(
-            Request::post(format!(
-                "/api/v1/groups/{}/send_cross_group_upload",
-                group.group_id
-            ))
-            .header(
-                header::CONTENT_TYPE,
-                format!("multipart/form-data; boundary={boundary}"),
+    for (label, destination, destination_before_file) in [
+        ("missing", None, false),
+        ("empty-destination-first", Some(""), true),
+        ("blank-destination-first", Some("   "), true),
+        ("blank-file-first", Some("   "), false),
+    ] {
+        let boundary = format!("cccc-cross-group-{label}");
+        let multipart =
+            invalid_cross_group_multipart(&boundary, destination, destination_before_file);
+        let response = cccc_web::app(home.clone())
+            .oneshot(
+                Request::post(format!(
+                    "/api/v1/groups/{}/send_cross_group_upload",
+                    group.group_id
+                ))
+                .header(
+                    header::CONTENT_TYPE,
+                    format!("multipart/form-data; boundary={boundary}"),
+                )
+                .body(Body::from(multipart))
+                .expect("request"),
             )
-            .body(Body::from(multipart))
-            .expect("request"),
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{label}");
+        assert_eq!(
+            std::fs::read_dir(&blobs_dir)
+                .expect("blob directory")
+                .count(),
+            before,
+            "{label}"
+        );
+    }
+}
+
+fn invalid_cross_group_multipart(
+    boundary: &str,
+    destination: Option<&str>,
+    destination_before_file: bool,
+) -> Vec<u8> {
+    let mut multipart =
+        format!("--{boundary}\r\nContent-Disposition: form-data; name=\"text\"\r\n\r\nremote\r\n")
+            .into_bytes();
+    if destination_before_file && let Some(destination) = destination {
+        multipart.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"dst_group_id\"\r\n\r\n{destination}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    multipart.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"files\"; filename=\"evidence.bin\"\r\nContent-Type: application/octet-stream\r\n\r\n"
         )
-        .await
-        .expect("response");
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(
-        std::fs::read_dir(blobs_dir)
-            .expect("blob directory")
-            .count(),
-        before
+        .as_bytes(),
     );
+    multipart.extend_from_slice(b"evidence\r\n");
+    if !destination_before_file && let Some(destination) = destination {
+        multipart.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"dst_group_id\"\r\n\r\n{destination}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    multipart.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
+    multipart
 }
 
 async fn wait_for_address(home: &HomeLayout) {
