@@ -53,3 +53,4 @@ async fn wait_until(mut condition: impl FnMut() -> bool) {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
+// Included by the crate-level integration test harness.

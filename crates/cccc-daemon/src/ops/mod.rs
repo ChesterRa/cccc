@@ -16,6 +16,7 @@ mod claude_hooks;
 mod codex_mcp;
 mod context;
 mod diagnostics;
+mod group_bridge;
 mod group_copy;
 mod group_runtime;
 mod group_scopes;
@@ -54,6 +55,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Result<Option<OpRes
         groups::handle,
         hermes_runtime::handle,
         group_copy::handle,
+        group_bridge::handle,
         group_scopes::handle,
         group_space::handle,
         actors::handle,

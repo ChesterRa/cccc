@@ -1,3 +1,4 @@
+// Included by the crate-level integration test harness.
 use cccc_contracts::{Actor, ActorRole, Event};
 use cccc_core::actors;
 use cccc_core::context::ContextStore;

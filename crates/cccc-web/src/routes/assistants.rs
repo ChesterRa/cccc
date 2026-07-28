@@ -600,18 +600,17 @@ async fn documents(
     Path(group_id): Path<String>,
     Query(query): Query<DocumentQuery>,
 ) -> ApiResult {
-    let value = load(&state, &group_id)?;
-    let docs = array(&value, "documents")
-        .iter()
-        .filter(|item| {
-            (query.include_archived || item["status"] != "archived")
-                && (query.document_path.is_empty() || item["document_path"] == query.document_path)
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    Ok(success(
-        json!({"group_id":group_id,"documents":docs,"active_document_id":value["active_document_id"],"active_document_path":value["active_document_path"]}),
-    ))
+    call(
+        &state,
+        "assistant_voice_document_list",
+        object(json!({
+            "group_id":group_id,
+            "document_path":query.document_path,
+            "include_archived":query.include_archived,
+            "by":"web",
+        })),
+    )
+    .await
 }
 async fn document_save(
     State(state): State<AppState>,
@@ -674,7 +673,7 @@ async fn input(
             }
             call(&state, "assistant_voice_document_instruction", args).await
         }
-        "prompt_refine" => call(&state, "assistant_voice_prompt_draft_submit", args).await,
+        "prompt_refine" => call(&state, "assistant_voice_input_append", args).await,
         _ => Err(ApiError::bad_code(
             "invalid_input_kind",
             format!("unsupported Voice Secretary input kind: {kind}"),

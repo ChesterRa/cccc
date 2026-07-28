@@ -1,3 +1,4 @@
+mod artifacts;
 mod auth;
 mod chat;
 mod cookies;
@@ -6,6 +7,7 @@ mod models;
 mod rpc;
 mod transport;
 
+pub use artifacts::{Artifact, ArtifactGeneration};
 pub use error::{Error, Result};
 pub use models::{Notebook, QueryResult, Reference, Source};
 

@@ -62,34 +62,87 @@ async fn one_shot(root: &Path, cmd: Vec<String>, seconds: u64) -> Result<Value, 
 }
 
 async fn git(root: &Path, args: &Map<String, Value>) -> Result<Value, String> {
-    let raw = args
-        .get("args")
+    let action = action(args);
+    let mut command = vec!["git".into()];
+    match action {
+        "status" => command.extend(["status".into(), "--short".into()]),
+        "diff" => {
+            command.push("diff".into());
+            if args.get("staged").and_then(Value::as_bool).unwrap_or(false) {
+                command.push("--staged".into());
+            }
+            append_git_paths(root, args, &mut command)?;
+        }
+        "log" => {
+            let count = args
+                .get("count")
+                .and_then(Value::as_u64)
+                .unwrap_or(20)
+                .clamp(1, 100);
+            command.extend([
+                "log".into(),
+                format!("-{count}"),
+                "--oneline".into(),
+                "--decorate".into(),
+            ]);
+        }
+        "add" => {
+            command.push("add".into());
+            if args
+                .get("all_changes")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                command.push("-A".into());
+            } else {
+                append_git_paths(root, args, &mut command)?;
+                if command.len() == 2 {
+                    return Err("path, paths, or all_changes=true is required for git add".into());
+                }
+            }
+        }
+        "commit" => {
+            let message = args
+                .get("message")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or("message is required for git commit")?;
+            command.extend(["commit".into(), "-m".into(), message.into()]);
+        }
+        _ => return Err("git action must be status, diff, log, add, or commit".into()),
+    }
+    one_shot(root, command, timeout(args)).await
+}
+
+fn append_git_paths(
+    root: &Path,
+    args: &Map<String, Value>,
+    command: &mut Vec<String>,
+) -> Result<(), String> {
+    let mut paths = args
+        .get("paths")
         .and_then(Value::as_array)
-        .ok_or("args is required")?;
-    let parts: Vec<String> = raw
-        .iter()
+        .into_iter()
+        .flatten()
         .filter_map(Value::as_str)
         .map(str::to_owned)
-        .collect();
-    let allowed = [
-        "status",
-        "diff",
-        "log",
-        "show",
-        "branch",
-        "rev-parse",
-        "ls-files",
-        "grep",
-    ];
-    if !parts
-        .first()
-        .is_some_and(|value| allowed.contains(&value.as_str()))
+        .collect::<Vec<_>>();
+    if let Some(path) = args
+        .get("path")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
     {
-        return Err("git subcommand is not in the read-only allowlist".into());
+        paths.push(path.into());
     }
-    let mut command = vec!["git".into()];
-    command.extend(parts);
-    one_shot(root, command, timeout(args)).await
+    if !paths.is_empty() {
+        command.push("--".into());
+    }
+    for path in paths {
+        crate::repo::resolve(root, &path, true)?;
+        command.push(path);
+    }
+    Ok(())
 }
 
 async fn apply_patch(root: &Path, args: &Map<String, Value>) -> Result<Value, String> {

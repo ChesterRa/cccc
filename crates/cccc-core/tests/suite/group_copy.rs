@@ -1,3 +1,4 @@
+// Included by the crate-level integration test harness.
 use cccc_contracts::{Actor, GroupState};
 use cccc_core::group_copy;
 use cccc_core::{GroupStore, HomeLayout, Scope, group_scope};

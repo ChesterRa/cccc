@@ -114,7 +114,24 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         let auto_document=root.get("assistant").and_then(|item|item["config"]["auto_document_enabled"].as_bool()).unwrap_or(true);
         if input_kind=="asr_transcript" && !auto_document { return Ok((None, false)); }
         let next_seq=root.get("input_latest_seq").and_then(Value::as_u64).unwrap_or(0)+1;
-        let record=json!({"schema":1,"seq":next_seq,"input_id":format!("vin_{}",Uuid::new_v4().simple()),"kind":input_kind,"text":text,"language":language,"document_path":document_path,"session_id":session_id,"segment_id":segment_id,"by":segment["by"],"trigger":segment["trigger"],"created_at":now});
+        let record=json!({
+            "schema":1,
+            "seq":next_seq,
+            "input_id":format!("vin_{}",Uuid::new_v4().simple()),
+            "kind":input_kind,
+            "text":text,
+            "language":language,
+            "document_path":document_path,
+            "session_id":session_id,
+            "segment_id":segment_id,
+            "by":segment["by"],
+            "trigger":segment["trigger"],
+            "request_id":string_arg(request,"request_id").unwrap_or_default(),
+            "operation":string_arg(request,"operation").unwrap_or_default(),
+            "composer_snapshot_hash":string_arg(request,"composer_snapshot_hash").unwrap_or_default(),
+            "metadata":request.args.get("metadata").cloned().unwrap_or_else(||json!({})),
+            "created_at":now
+        });
         append_jsonl_io(&input_path, &record)?;
         root.insert("input_latest_seq".into(),json!(next_seq));
         root.insert("input_updated_at".into(),json!(now));

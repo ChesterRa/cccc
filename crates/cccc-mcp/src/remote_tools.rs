@@ -34,7 +34,7 @@ pub(crate) async fn call(
     }
     let remote_group_id = text(&args, "remote_group_id").ok_or("remote_group_id is required")?;
     let trust = find_trust(&state, group_id, remote_group_id)?;
-    enforce_access(name, trust)?;
+    enforce_access(name, &args, trust)?;
     call_remote(name, &args, trust).await
 }
 
@@ -140,9 +140,12 @@ fn find_trust<'a>(
         .ok_or_else(|| format!("Group Bridge target not found: {remote_group_id}"))
 }
 
-fn enforce_access(name: &str, trust: &Value) -> Result<(), String> {
+fn enforce_access(name: &str, args: &Map<String, Value>, trust: &Value) -> Result<(), String> {
     let access = trust["remote_access_level"].as_str().unwrap_or("messages");
+    let mutating_git =
+        name == "cccc_remote_git" && matches!(text(args, "action"), Some("add" | "commit"));
     let allowed = match name {
+        "cccc_remote_git" if mutating_git => access == "full",
         "cccc_remote_context" | "cccc_remote_repo" | "cccc_remote_git" => {
             matches!(access, "read" | "full")
         }

@@ -1,10 +1,25 @@
-use axum::extract::{Path, State};
+use std::path::PathBuf;
+
+use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
+use cccc_core::GroupStore;
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::api::{ApiError, call, object, success};
+
+const PREAMBLE_FILENAME: &str = "CCCC_PREAMBLE.md";
+const HELP_FILENAME: &str = "CCCC_HELP.md";
+const DEFAULT_PREAMBLE_BODY: &str = "Startup:\n- On cold start or resume, use MCP tool `cccc_bootstrap`.\n- Call `cccc_help` only when you need a CCCC-specific route or a missing capability.";
+const BUILTIN_HELP_MARKDOWN: &str = include_str!("../../../../src/cccc/resources/cccc-help.md");
+
+#[derive(Deserialize)]
+struct PromptDeleteQuery {
+    #[serde(default)]
+    confirm: String,
+}
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -47,15 +62,11 @@ async fn prompts_get(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let root = scope_root(&state, &group_id).await?;
-    let prompts: Vec<_> = ["AGENTS.md", "CLAUDE.md"]
-        .iter()
-        .map(|name| {
-            let path = root.join(name);
-            json!({"kind":name,"path":path,"exists":path.exists(),"content":std::fs::read_to_string(path).unwrap_or_default()})
-        })
-        .collect();
-    Ok(success(json!({"prompts":prompts})))
+    let root = prompts_root(&state, &group_id)?;
+    Ok(success(json!({
+        "preamble": prompt_info(&root, "preamble")?,
+        "help": prompt_info(&root, "help")?,
+    })))
 }
 
 async fn prompt_put(
@@ -63,23 +74,45 @@ async fn prompt_put(
     Path((group_id, kind)): Path<(String, String)>,
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    let path = scope_path(&state, &group_id, prompt_name(&kind)?).await?;
+    let normalized_kind = normalize_kind(&kind)?;
+    let root = prompts_root(&state, &group_id)?;
+    let path = root.join(prompt_filename(normalized_kind));
     let content = body.get("content").and_then(Value::as_str).unwrap_or("");
-    std::fs::write(&path, content).map_err(|error| ApiError::bad(error.to_string()))?;
-    Ok(success(
-        json!({"kind":kind,"path":path,"content":content,"exists":true}),
-    ))
+    if content.trim().is_empty() {
+        remove_override(&path)?;
+        return Ok(success(builtin_prompt_info(normalized_kind, &path)));
+    }
+    std::fs::create_dir_all(&root)
+        .and_then(|()| cccc_core::fs::atomic_write(&path, content.as_bytes()))
+        .map_err(|error| {
+            ApiError::bad_code(
+                "WRITE_FAILED",
+                format!(
+                    "Failed to write {}: {error}",
+                    prompt_filename(normalized_kind)
+                ),
+                json!({}),
+            )
+        })?;
+    Ok(success(home_prompt_info(normalized_kind, &path, content)))
 }
 
 async fn prompt_delete(
     State(state): State<AppState>,
     Path((group_id, kind)): Path<(String, String)>,
+    Query(query): Query<PromptDeleteQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    let path = scope_path(&state, &group_id, prompt_name(&kind)?).await?;
-    if path.exists() {
-        std::fs::remove_file(&path).map_err(|error| ApiError::bad(error.to_string()))?;
+    let normalized_kind = normalize_kind(&kind)?;
+    if query.confirm.trim().to_ascii_lowercase() != normalized_kind {
+        return Err(ApiError::bad_code(
+            "confirmation_required",
+            format!("confirm must equal kind: {normalized_kind}"),
+            json!({}),
+        ));
     }
-    Ok(success(json!({"kind":kind,"deleted":true})))
+    let path = prompts_root(&state, &group_id)?.join(prompt_filename(normalized_kind));
+    remove_override(&path)?;
+    Ok(success(builtin_prompt_info(normalized_kind, &path)))
 }
 
 async fn scope_root(state: &AppState, group_id: &str) -> Result<std::path::PathBuf, ApiError> {
@@ -117,10 +150,88 @@ async fn scope_path(
     Ok(scope_root(state, group_id).await?.join(name))
 }
 
-fn prompt_name(kind: &str) -> Result<&'static str, ApiError> {
+fn prompts_root(state: &AppState, group_id: &str) -> Result<PathBuf, ApiError> {
+    let store =
+        GroupStore::new(state.home.clone()).map_err(|error| ApiError::bad(error.to_string()))?;
+    store
+        .load(group_id)
+        .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))?;
+    store
+        .group_dir(group_id)
+        .map(|path| path.join("prompts"))
+        .map_err(|error| ApiError::bad(error.to_string()))
+}
+
+fn normalize_kind(kind: &str) -> Result<&'static str, ApiError> {
+    match kind.trim().to_ascii_lowercase().as_str() {
+        "preamble" => Ok("preamble"),
+        "help" => Ok("help"),
+        _ => Err(ApiError::bad_code(
+            "invalid_kind",
+            format!("unknown prompt kind: {kind}"),
+            json!({}),
+        )),
+    }
+}
+
+fn prompt_filename(kind: &str) -> &'static str {
     match kind {
-        "agents" | "AGENTS.md" => Ok("AGENTS.md"),
-        "claude" | "CLAUDE.md" => Ok("CLAUDE.md"),
-        _ => Err(ApiError::bad("unsupported prompt kind")),
+        "preamble" => PREAMBLE_FILENAME,
+        "help" => HELP_FILENAME,
+        _ => unreachable!("kind is normalized before filename lookup"),
+    }
+}
+
+fn builtin_prompt(kind: &str) -> &'static str {
+    match kind {
+        "preamble" => DEFAULT_PREAMBLE_BODY,
+        "help" => BUILTIN_HELP_MARKDOWN.trim(),
+        _ => unreachable!("kind is normalized before builtin lookup"),
+    }
+}
+
+fn prompt_info(root: &std::path::Path, kind: &str) -> Result<Value, ApiError> {
+    let path = root.join(prompt_filename(kind));
+    match std::fs::read_to_string(&path) {
+        Ok(content) if !content.trim().is_empty() => Ok(home_prompt_info(kind, &path, &content)),
+        Ok(_) => Ok(builtin_prompt_info(kind, &path)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(builtin_prompt_info(kind, &path))
+        }
+        Err(error) => Err(ApiError::bad(error.to_string())),
+    }
+}
+
+fn home_prompt_info(kind: &str, path: &std::path::Path, content: &str) -> Value {
+    json!({
+        "kind": kind,
+        "source": "home",
+        "filename": prompt_filename(kind),
+        "path": path,
+        "content": content,
+        "notified_actor_ids": [],
+    })
+}
+
+fn builtin_prompt_info(kind: &str, path: &std::path::Path) -> Value {
+    json!({
+        "kind": kind,
+        "source": "builtin",
+        "filename": prompt_filename(kind),
+        "path": path,
+        "content": builtin_prompt(kind),
+        "notified_actor_ids": [],
+    })
+}
+
+fn remove_override(path: &std::path::Path) -> Result<(), ApiError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(ApiError::bad_code(
+            "DELETE_FAILED",
+            format!("Failed to delete {}: {error}", path.display()),
+            json!({}),
+        )),
     }
 }

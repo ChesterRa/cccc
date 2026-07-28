@@ -498,6 +498,7 @@ dependencies = [
  "clap",
  "fs2",
  "regex",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "serde_yaml",

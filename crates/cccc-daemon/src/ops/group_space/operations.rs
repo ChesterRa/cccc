@@ -198,12 +198,7 @@ pub(super) fn sources(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"group_id":group_id,"action":action,"source_id":id,"changed":changed}))
 }
 pub(super) fn artifact(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let _ = home;
-    let _ = required_arg(request, "group_id")?;
-    Err(OpError::new(
-        "provider_unavailable",
-        "NotebookLM artifact generation is unavailable; no remote operation was performed",
-    ))
+    super::artifacts::handle(home, request)
 }
 pub(super) fn jobs(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
@@ -219,26 +214,123 @@ pub(super) fn jobs(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         );
     }
     let id = required_arg(request, "job_id")?;
+    if !matches!(action.as_str(), "retry" | "cancel") {
+        return Err(OpError::new(
+            "invalid_args",
+            "action must be list, retry, or cancel",
+        ));
+    }
+    if action == "retry" {
+        return retry_job(home, &group_id, &provider, &id);
+    }
     let job = update(home, &group_id, |value| {
         let item = array_mut(root(value), "jobs")
             .iter_mut()
             .find(|item| item["job_id"] == id)
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "job not found"))?;
-        item["state"] = json!(if action == "cancel" {
-            "canceled"
-        } else {
-            "succeeded"
-        });
+        let current = item["state"].as_str().unwrap_or("");
+        if action == "cancel" && !matches!(current, "pending" | "running" | "retrying") {
+            return Err(io::Error::other(format!(
+                "cannot cancel job in state={current}"
+            )));
+        }
+        item["state"] = json!("canceled");
         item["updated_at"] = json!(utc_now());
         Ok(item.clone())
     })?;
     object(json!({"group_id":group_id,"job":job,"queue_summary":summary(&load(home,&group_id)?)}))
 }
+
+fn retry_job(home: &HomeLayout, group_id: &str, provider_name: &str, id: &str) -> OpResult {
+    let value = load(home, group_id)?;
+    let job = array(&value, "jobs")
+        .iter()
+        .find(|item| item["job_id"] == id)
+        .cloned()
+        .ok_or_else(|| OpError::new("not_found", "job not found"))?;
+    let current = job["state"].as_str().unwrap_or("");
+    if !matches!(current, "failed" | "canceled") {
+        return Err(OpError::new(
+            "invalid_state",
+            format!("cannot retry job in state={current}"),
+        ));
+    }
+    let stored_provider = job["provider"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(provider_name);
+    if stored_provider != provider_name {
+        return Err(OpError::new(
+            "provider_mismatch",
+            format!("job provider is {stored_provider}, not requested provider {provider_name}"),
+        ));
+    }
+    let payload = job
+        .get("payload")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    let kind = job["kind"].as_str().unwrap_or("context_sync");
+    let lane_name = job["lane"].as_str().unwrap_or("work");
+    let remote_space_id = job["remote_space_id"]
+        .as_str()
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .unwrap_or(binding_id(&value, lane_name)?);
+    let remote_source = if stored_provider == "notebooklm" {
+        if lane_name != "work" {
+            return Err(OpError::new(
+                "invalid_args",
+                "memory sync jobs must be retried through group_space_sync",
+            ));
+        }
+        let title = ["title", "path"]
+            .into_iter()
+            .filter_map(|name| payload.get(name).and_then(Value::as_str))
+            .map(str::trim)
+            .find(|value| !value.is_empty())
+            .unwrap_or(kind);
+        let content = ["content", "text"]
+            .into_iter()
+            .filter_map(|name| payload.get(name).and_then(Value::as_str))
+            .find(|value| !value.trim().is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| serde_json::to_string_pretty(&payload).unwrap_or_default());
+        Some(notebooklm::add_text(
+            home,
+            &remote_space_id,
+            title,
+            &content,
+        )?)
+    } else {
+        require_local(stored_provider)?;
+        None
+    };
+    let job = update(home, group_id, |value| {
+        let root = root(value);
+        let item = array_mut(root, "jobs")
+            .iter_mut()
+            .find(|item| item["job_id"] == id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "job not found"))?;
+        item["state"] = json!("succeeded");
+        item["attempt"] = json!(item["attempt"].as_u64().unwrap_or(0) + 1);
+        item["updated_at"] = json!(utc_now());
+        let completed = item.clone();
+        if let Some(source) = &remote_source {
+            array_mut(root, "sources").push(json!({
+                "source_id":source.id,"provider":stored_provider,"lane":lane_name,
+                "title":source.title,"kind":source.kind,"status":source.status,
+                "payload":payload,"created_at":utc_now()
+            }));
+        }
+        Ok(completed)
+    })?;
+    object(json!({
+        "group_id":group_id,"provider":stored_provider,"job":job,
+        "source_id":remote_source.map(|source|source.id),
+        "queue_summary":summary(&load(home,group_id)?)
+    }))
+}
 pub(super) fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let _ = home;
-    let _ = required_arg(request, "group_id")?;
-    Err(OpError::new(
-        "provider_unavailable",
-        "NotebookLM sync is unavailable; no remote operation was performed",
-    ))
+    super::sync::handle(home, request)
 }

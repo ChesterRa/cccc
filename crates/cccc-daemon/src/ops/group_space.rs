@@ -7,10 +7,12 @@ use uuid::Uuid;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
 
+mod artifacts;
 mod notebooklm;
 mod operations;
 mod provider_ops;
 mod state;
+mod sync;
 
 use state::*;
 
@@ -64,8 +66,8 @@ fn capabilities(request: &DaemonRequest) -> OpResult {
     let local = provider == "local";
     object(json!({
         "provider":provider,
-        "capabilities":json!(["bind","ingest","query","sources","jobs"]),
-        "unavailable_capabilities":json!(["artifact","sync"]),
+        "capabilities":json!(["bind","ingest","query","sources","artifact","jobs","sync"]),
+        "unavailable_capabilities":json!([]),
         "mode":if local{"local"}else{"remote"}
     }))
 }

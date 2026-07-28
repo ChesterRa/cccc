@@ -333,12 +333,13 @@ Args: none
 
 Result:
 ```ts
-{ version: string; pid: number; ts: string; ipc_v?: 1; capabilities?: Record<string, unknown> }
+{ version: string; pid: number; ts: string; ipc_v: 1; capabilities: Record<string, unknown> }
 ```
 
 Notes:
-- `ipc_v` is RECOMMENDED for SDK compatibility checks.
-- `capabilities` is RECOMMENDED as a best-effort feature map (e.g., `{ "events_stream": true }`).
+- SDK-compatible daemons MUST return `ipc_v: 1`; omitting it is interpreted as IPC version `0`.
+- SDK-compatible daemons MUST return a `capabilities` feature map. Python and Rust daemons advertise supported `events_stream` and `remote_access` features here.
+- Clients SHOULD probe operation support independently; a recognized operation may reject empty probe arguments, but MUST NOT return `unknown_op`.
 - Clients MUST use protocol, compatibility, and capability fields instead of exact product-version equality.
 - Ordinary business commands MUST NOT stop, signal, or replace a reachable daemon. Implementation replacement is restricted to explicit daemon lifecycle commands.
 
@@ -1677,6 +1678,15 @@ repository-relative markdown path. `document_id` may exist in daemon sidecar
 state as an implementation detail, but runtime actors and Web clients should
 route by `document_path`.
 
+`assistant_index`, `assistant_voice_document_list`, and
+`assistant_voice_document_select` reconcile repository Markdown edits into the
+daemon document index before returning. Reconciliation updates content, hash,
+character count, and revision only when file content changed. Missing files do
+not clear indexed content, and path/symbolic-link validation is applied before
+reading. The emitted `assistant.voice.document` reconciliation event is an
+auxiliary signal; index persistence and ledger append are not one atomic
+transaction.
+
 Args:
 ```ts
 {
@@ -1843,6 +1853,72 @@ Result:
   actor_notify_delivered?: boolean
   actor_notify_delivery_error?: string
   event?: CCCSEventV1
+}
+```
+
+#### `assistant_voice_input_append` (`kind="prompt_refine"`)
+
+Create or update a composer refinement request. The daemon persists the request
+before emitting one targeted `voice_secretary_input` notification. Its canonical
+`input_envelope` carries `request_id`, `operation`, `composer_snapshot_hash`, and
+matching composer metadata. This operation creates work for Voice Secretary; it
+does not create a prompt draft.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  kind: "prompt_refine"
+  request_id?: string
+  voice_transcript?: string
+  composer_text?: string
+  operation?: "append_to_composer_end" | "replace_with_refined_prompt" | string
+  composer_context?: Record<string, unknown>
+  composer_snapshot_hash?: string
+}
+```
+
+At least one of `voice_transcript` or `composer_text` must be non-empty.
+
+#### `assistant_voice_prompt_draft_submit`
+
+Submit the Voice Secretary result for an existing prompt refinement request.
+Only `voice-secretary` / `assistant:voice_secretary` may call this operation.
+The daemon inherits a missing operation and composer snapshot hash from the
+request, stores the result as `pending`, and emits
+`assistant.voice.prompt_draft`. `no_op=true` stores `no_change` with empty draft
+text. Submission MUST NOT append another semantic input or emit another
+`voice_secretary_input` notification.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: "voice-secretary" | "assistant:voice_secretary"
+  request_id: string
+  draft_text?: string
+  no_op?: boolean
+  summary?: string
+  operation?: string
+  composer_snapshot_hash?: string
+}
+```
+
+`draft_text` is required unless `no_op=true`.
+
+#### `assistant_voice_prompt_draft_ack`
+
+Mark a submitted draft as `applied`, `dismissed`, or `stale`. Acknowledgement
+removes it from the active `prompt_draft` projection while retaining bounded
+request history.
+
+Args:
+```ts
+{
+  group_id: string
+  request_id: string
+  status: "applied" | "dismissed" | "stale"
 }
 ```
 
@@ -3542,6 +3618,22 @@ Result:
 ```ts
 { remote_access: Record<string, unknown> }
 ```
+
+### 8.17.1 Group Bridge delivery compatibility
+
+The daemon accepts the Python-compatible Group Bridge operations:
+
+- `remote_send`: send a payload through an active registration or trust. It
+  requires `group_id`, `registration_id`, `idempotency_key`, and an explicit
+  `payload.to` recipient list.
+- `remote_delivery_status`: return the stored receipt identified by
+  `registration_id` and `idempotency_key`.
+- `group_bridge_receive_remote_send`: authenticate an already-resolved inbound
+  session using `target_group_id`, `src_group_id`, `remote_peer_id`, and append
+  its payload idempotently to the target group.
+
+Implementations MUST persist delivery receipts and MUST NOT create duplicate
+events when the same registration and idempotency key are retried.
 
 ### 8.18 Group Space (Provider-Backed Shared Memory, dual-lane NotebookLM)
 

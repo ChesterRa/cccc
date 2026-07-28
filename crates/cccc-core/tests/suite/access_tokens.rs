@@ -1,3 +1,4 @@
+// Included by the crate-level integration test harness.
 use cccc_core::HomeLayout;
 use cccc_core::access_tokens::AccessTokenStore;
 

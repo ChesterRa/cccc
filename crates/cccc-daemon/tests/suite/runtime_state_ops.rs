@@ -291,3 +291,4 @@ fn raw_call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
         },
     )
 }
+// Included by the crate-level integration test harness.

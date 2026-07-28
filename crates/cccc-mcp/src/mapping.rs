@@ -69,18 +69,77 @@ pub fn daemon_call(
         "cccc_automation" => return action(args, actions::automation),
         "cccc_notify" => return action(args, actions::notify),
         "cccc_presentation" => return action(args, actions::presentation),
-        "cccc_space" => return action(args, actions::space),
+        "cccc_space" => return space(args),
         "cccc_headless" => return action(args, actions::headless),
         "cccc_terminal" => return action(args, actions::terminal),
         "cccc_debug" => return action(args, actions::debug),
         "cccc_im_bind" => return action(args, actions::im),
         "cccc_runtime_wait_next_turn" => "runtime_wait_next_turn",
         "cccc_runtime_complete_turn" => "runtime_complete_turn",
-        "cccc_voice_secretary_document" => return action(args, actions::voice_document),
-        "cccc_voice_secretary_composer" => return action(args, actions::voice_composer),
-        "cccc_voice_secretary_request" => "assistant_voice_request",
+        "cccc_voice_secretary_document" => return voice_document(args),
+        "cccc_voice_secretary_composer" => return voice_composer(args),
+        "cccc_voice_secretary_request" => return voice_request(args),
         _ => return Err(format!("tool is not a daemon operation: {name}")),
     };
+    Ok((op.into(), args))
+}
+
+fn voice_document(mut args: Map<String, Value>) -> Result<(String, Map<String, Value>), String> {
+    let action_name = args
+        .remove("action")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "list".into());
+    let op = actions::voice_document(&action_name)
+        .ok_or_else(|| format!("unsupported action: {action_name}"))?;
+    args.insert(
+        "by".into(),
+        Value::String("assistant:voice_secretary".into()),
+    );
+    if action_name == "create" {
+        args.insert("create_new".into(), Value::Bool(true));
+    }
+    Ok((op.into(), args))
+}
+
+fn voice_composer(mut args: Map<String, Value>) -> Result<(String, Map<String, Value>), String> {
+    let action_name = args
+        .remove("action")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "submit_prompt_draft".into());
+    let op = actions::voice_composer(&action_name)
+        .ok_or_else(|| format!("unsupported action: {action_name}"))?;
+    args.insert(
+        "by".into(),
+        Value::String("assistant:voice_secretary".into()),
+    );
+    Ok((op.into(), args))
+}
+
+fn voice_request(mut args: Map<String, Value>) -> Result<(String, Map<String, Value>), String> {
+    let action_name = args
+        .remove("action")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "handoff".into());
+    match action_name.as_str() {
+        "handoff" => Ok(("assistant_voice_request".into(), args)),
+        "report" => {
+            alias(&mut args, "source_request_id", "request_id");
+            Ok(("assistant_voice_instruction_feedback".into(), args))
+        }
+        _ => Err(format!("unsupported action: {action_name}")),
+    }
+}
+
+fn space(mut args: Map<String, Value>) -> Result<(String, Map<String, Value>), String> {
+    let action_name = args
+        .remove("action")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "status".into());
+    let op =
+        actions::space(&action_name).ok_or_else(|| format!("unsupported action: {action_name}"))?;
+    if let Some(sub_action) = args.remove("sub_action") {
+        args.insert("action".into(), sub_action);
+    }
     Ok((op.into(), args))
 }
 
@@ -118,14 +177,15 @@ fn context_action(
     let op_name = match (namespace, action_name.as_str()) {
         ("coordination", "update_brief" | "brief") => "coordination.brief.update",
         ("coordination", "add_note" | "note") => "coordination.note.add",
-        ("task", "create" | "update" | "move" | "restore" | "delete") => match action_name.as_str()
-        {
-            "create" => "task.create",
-            "update" => "task.update",
-            "move" => "task.move",
-            "restore" => "task.restore",
-            _ => "task.delete",
-        },
+        ("task", "create" | "update" | "move" | "restore" | "delete" | "archive") => {
+            match action_name.as_str() {
+                "create" => "task.create",
+                "update" => "task.update",
+                "move" => "task.move",
+                "restore" => "task.restore",
+                _ => "task.delete",
+            }
+        }
         ("agent_state", "update" | "clear") => {
             if action_name == "update" {
                 "agent_state.update"
@@ -237,6 +297,73 @@ mod tests {
         let (op, args) = daemon_call("cccc_message_send", args).expect("mapping");
         assert_eq!(op, "send_cross_group");
         assert_eq!(args["by"], "backend");
+    }
+
+    #[test]
+    fn python_memory_actions_map_to_reme_operations() {
+        for (tool, action, expected) in [
+            ("cccc_memory", "layout_get", "memory_reme_layout_get"),
+            ("cccc_memory", "search", "memory_reme_search"),
+            ("cccc_memory", "get", "memory_reme_get"),
+            ("cccc_memory", "write", "memory_reme_write"),
+            ("cccc_memory_admin", "index_sync", "memory_reme_index_sync"),
+            (
+                "cccc_memory_admin",
+                "context_check",
+                "memory_reme_context_check",
+            ),
+            (
+                "cccc_memory_admin",
+                "daily_flush",
+                "memory_reme_daily_flush",
+            ),
+        ] {
+            let args = json!({"action":action}).as_object().cloned().expect("args");
+            let (op, _) = daemon_call(tool, args).expect("mapping");
+            assert_eq!(op, expected);
+        }
+    }
+
+    #[test]
+    fn python_task_archive_maps_to_context_delete() {
+        let args = json!({"action":"archive","group_id":"g_test","task_id":"t1"})
+            .as_object()
+            .cloned()
+            .expect("args");
+        let (op, args) = daemon_call("cccc_task", args).expect("mapping");
+        assert_eq!(op, "context_sync");
+        assert_eq!(args["ops"][0]["op"], "task.delete");
+    }
+
+    #[test]
+    fn voice_secretary_actions_use_python_contract() {
+        let create = json!({"action":"create","title":"Notes"})
+            .as_object()
+            .cloned()
+            .expect("args");
+        let (op, args) = daemon_call("cccc_voice_secretary_document", create).expect("create");
+        assert_eq!(op, "assistant_voice_document_save");
+        assert_eq!(args["create_new"], true);
+        assert_eq!(args["by"], "assistant:voice_secretary");
+
+        let composer = json!({"action":"submit_prompt_draft","draft_text":"Refined"})
+            .as_object()
+            .cloned()
+            .expect("args");
+        let (op, args) = daemon_call("cccc_voice_secretary_composer", composer).expect("composer");
+        assert_eq!(op, "assistant_voice_prompt_draft_submit");
+        assert_eq!(args["draft_text"], "Refined");
+        assert!(args.get("text").is_none());
+        assert_eq!(args["by"], "assistant:voice_secretary");
+
+        let report = json!({"action":"report","source_request_id":"request-1","status":"done"})
+            .as_object()
+            .cloned()
+            .expect("args");
+        let (op, args) =
+            daemon_call("cccc_voice_secretary_request", report).expect("report mapping");
+        assert_eq!(op, "assistant_voice_instruction_feedback");
+        assert_eq!(args["request_id"], "request-1");
     }
 
     #[test]

@@ -1,3 +1,4 @@
+// Included by the crate-level integration test harness.
 use cccc_core::{HomeLayout, codex_hook_state, runtime_activity};
 use std::io::Write;
 use std::process::{Command, Stdio};

@@ -25,6 +25,10 @@ const TOOLS: &[(&str, &str)] = &[
         "Send a visible collaboration message or reply. For a trusted remote Group Bridge route, set dst_group_id to its exact remote_group_id and choose an explicit remote recipient.",
     ),
     (
+        "cccc_message_reply",
+        "Reply to a visible collaboration message by event ID.",
+    ),
+    (
         "cccc_tracked_send",
         "Create a durable delegation and linked message.",
     ),
@@ -189,12 +193,12 @@ pub fn catalog() -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn catalog_exposes_one_message_tool() {
+    fn catalog_exposes_python_message_tools() {
         let names: Vec<_> = super::catalog()
             .into_iter()
             .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
             .collect();
         assert!(names.iter().any(|name| name == "cccc_message_send"));
-        assert!(!names.iter().any(|name| name == "cccc_message_reply"));
+        assert!(names.iter().any(|name| name == "cccc_message_reply"));
     }
 }

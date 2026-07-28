@@ -53,11 +53,11 @@ async fn handle(home: &HomeLayout, client: &DaemonClient, request: &Value) -> Va
     let result = match method {
         "initialize" => Ok(json!({
             "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {"listChanged": false}},
+            "capabilities": {"tools": {"listChanged": true}},
             "serverInfo": {"name": "cccc-mcp", "version": env!("CARGO_PKG_VERSION")},
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({"tools": tools::catalog()})),
+        "tools/list" => Ok(json!({"tools": visible_tools(home, client).await})),
         "tools/call" => {
             let params = request.get("params").and_then(Value::as_object);
             let name = params
@@ -77,6 +77,100 @@ async fn handle(home: &HomeLayout, client: &DaemonClient, request: &Value) -> Va
         Ok(value) => json!({"jsonrpc":"2.0","id":id,"result":value}),
         Err(message) => json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":message}}),
     }
+}
+
+async fn visible_tools(home: &HomeLayout, client: &DaemonClient) -> Vec<Value> {
+    let catalog = tools::catalog();
+    if std::env::var("CCCC_MCP_TOOL_PROFILE")
+        .ok()
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("full"))
+    {
+        return catalog;
+    }
+    let group_id = std::env::var("CCCC_GROUP_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| cccc_core::active::get(home).ok().flatten());
+    let actor_id = std::env::var("CCCC_ACTOR_ID")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let (Some(group_id), Some(actor_id)) = (group_id, actor_id) else {
+        return core_tools(catalog);
+    };
+    let response = client
+        .call(&cccc_contracts::DaemonRequest {
+            v: 1,
+            op: "capability_state".into(),
+            args: serde_json::Map::from_iter([
+                ("group_id".into(), Value::String(group_id)),
+                ("actor_id".into(), Value::String(actor_id.clone())),
+                ("by".into(), Value::String(actor_id)),
+            ]),
+        })
+        .await;
+    let Ok(response) = response else {
+        return core_tools(catalog);
+    };
+    if !response.ok {
+        return core_tools(catalog);
+    }
+    let visible = response
+        .result
+        .get("visible_tools")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut output = catalog
+        .into_iter()
+        .filter(|tool| {
+            tool["name"]
+                .as_str()
+                .is_some_and(|name| visible.contains(name))
+        })
+        .collect::<Vec<_>>();
+    for tool in response
+        .result
+        .get("dynamic_tools")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if tool["name"]
+            .as_str()
+            .is_some_and(|name| visible.contains(name))
+        {
+            output.push(tool.clone());
+        }
+    }
+    output
+}
+
+fn core_tools(catalog: Vec<Value>) -> Vec<Value> {
+    const CORE: &[&str] = &[
+        "cccc_help",
+        "cccc_bootstrap",
+        "cccc_capability_search",
+        "cccc_capability_use",
+        "cccc_inbox_list",
+        "cccc_inbox_mark_read",
+        "cccc_message_send",
+        "cccc_message_reply",
+        "cccc_file",
+        "cccc_context_get",
+        "cccc_coordination",
+        "cccc_task",
+        "cccc_agent_state",
+    ];
+    catalog
+        .into_iter()
+        .filter(|tool| {
+            tool["name"]
+                .as_str()
+                .is_some_and(|name| CORE.contains(&name))
+        })
+        .collect()
 }
 
 async fn write_response(output: &mut tokio::io::Stdout, response: &Value) -> Result<()> {

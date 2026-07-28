@@ -116,55 +116,101 @@ fn voice_input_is_durable_idempotent_and_delivered_to_internal_actor() {
 }
 
 #[test]
-fn prompt_refine_skips_empty_text_and_uses_voice_transcript() {
-    let (_temp, home, _store, group_id) = enabled_voice_group();
-    let response = ok(
+fn prompt_refine_round_trip_uses_distinct_input_and_draft_operations() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let input = ok(
         &home,
-        "assistant_voice_prompt_draft_submit",
+        "assistant_voice_input_append",
         json!({
             "group_id":group_id,
+            "kind":"prompt_refine",
+            "request_id":"voice-prompt-test",
             "text":"",
             "voice_transcript":"  补充风险和验收标准  ",
-            "composer_text":"检查这个方案"
+            "composer_text":"检查这个方案",
+            "operation":"append_to_composer_end",
+            "composer_snapshot_hash":"snapshot-1",
+            "composer_context":{"recent_chat_excerpt":"需要补回滚方案"}
         }),
     );
-
+    assert_eq!(input.result["request_id"], "voice-prompt-test");
     assert_eq!(
-        response.result["prompt_draft"]["draft_text"],
-        "补充风险和验收标准"
+        input.result["input_event"]["request_id"],
+        "voice-prompt-test"
     );
-    assert_eq!(response.result["input_event"]["text"], "补充风险和验收标准");
-}
+    assert_eq!(
+        input.result["input_event"]["metadata"]["target_kind"],
+        "composer"
+    );
+    assert_eq!(
+        input.result["input_event"]["metadata"]["operation"],
+        "append_to_composer_end"
+    );
+    let input_text = input.result["input_event"]["text"]
+        .as_str()
+        .expect("input text");
+    assert!(input_text.contains("Target: composer"));
+    assert!(input_text.contains("Request id: voice-prompt-test"));
+    assert!(input_text.contains("检查这个方案"));
+    assert!(input_text.contains("补充风险和验收标准"));
+    assert!(input_text.contains("需要补回滚方案"));
 
-#[test]
-fn prompt_refine_uses_composer_text_when_voice_input_is_empty() {
-    let (_temp, home, _store, group_id) = enabled_voice_group();
-    let response = ok(
+    let notifications_before = ledger::read_all(&store.ledger_path(&group_id).expect("ledger"))
+        .expect("events")
+        .into_iter()
+        .filter(|event| {
+            event.kind == "system.notify" && event.data["kind"] == "voice_secretary_input"
+        })
+        .count();
+    let submit = ok(
         &home,
         "assistant_voice_prompt_draft_submit",
         json!({
             "group_id":group_id,
-            "text":" ",
-            "voice_transcript":"\n",
-            "composer_text":"  优化当前提示词  "
+            "by":"assistant:voice_secretary",
+            "request_id":"voice-prompt-test",
+            "draft_text":"请检查这个方案，补充风险、验收标准和回滚路径。"
         }),
     );
-
+    assert_eq!(submit.result["prompt_draft"]["status"], "pending");
     assert_eq!(
-        response.result["prompt_draft"]["draft_text"],
-        "优化当前提示词"
+        submit.result["prompt_draft"]["operation"],
+        "append_to_composer_end"
     );
-    assert_eq!(response.result["input_event"]["text"], "优化当前提示词");
+    assert_eq!(
+        submit.result["prompt_draft"]["composer_snapshot_hash"],
+        "snapshot-1"
+    );
+    assert!(submit.result.get("input_event").is_none());
+
+    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    assert_eq!(
+        state["voice_prompt_requests"]["voice-prompt-test"]["composer_text"],
+        "检查这个方案"
+    );
+    assert_eq!(
+        state["voice_prompt_drafts"]["voice-prompt-test"]["draft_text"],
+        "请检查这个方案，补充风险、验收标准和回滚路径。"
+    );
+    let notifications_after = ledger::read_all(&store.ledger_path(&group_id).expect("ledger"))
+        .expect("events")
+        .into_iter()
+        .filter(|event| {
+            event.kind == "system.notify" && event.data["kind"] == "voice_secretary_input"
+        })
+        .count();
+    assert_eq!(notifications_after, notifications_before);
 }
 
 #[test]
-fn prompt_refine_rejects_all_empty_inputs_without_persisting_a_draft() {
+fn prompt_refine_rejects_empty_input_without_persisting_a_request() {
     let (_temp, home, store, group_id) = enabled_voice_group();
     let response = call(
         &home,
-        "assistant_voice_prompt_draft_submit",
+        "assistant_voice_input_append",
         json!({
             "group_id":group_id,
+            "kind":"prompt_refine",
             "text":"",
             "voice_transcript":" ",
             "composer_text":"\n"
@@ -177,7 +223,94 @@ fn prompt_refine_rejects_all_empty_inputs_without_persisting_a_draft() {
         Some("empty_prompt_refine_input")
     );
     let state = &store.load(&group_id).expect("load").extra["assistants"];
-    assert!(state.get("prompt_draft").is_none_or(Value::is_null));
+    assert!(
+        state
+            .get("voice_prompt_requests")
+            .is_none_or(|value| value.as_object().is_none_or(Map::is_empty))
+    );
+}
+
+#[test]
+fn prompt_draft_submit_requires_existing_request_and_supports_no_op_and_ack() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let missing = call(
+        &home,
+        "assistant_voice_prompt_draft_submit",
+        json!({
+            "group_id":group_id,
+            "by":"voice-secretary",
+            "request_id":"missing",
+            "draft_text":"不会保存"
+        }),
+    );
+    assert!(!missing.ok);
+    assert_eq!(
+        missing.error.as_ref().map(|error| error.code.as_str()),
+        Some("prompt_request_not_found")
+    );
+
+    ok(
+        &home,
+        "assistant_voice_input_append",
+        json!({
+            "group_id":group_id,
+            "kind":"prompt_refine",
+            "request_id":"voice-prompt-noop",
+            "composer_text":"请优化这段提示词",
+            "operation":"replace_with_refined_prompt"
+        }),
+    );
+    let no_op = ok(
+        &home,
+        "assistant_voice_prompt_draft_submit",
+        json!({
+            "group_id":group_id,
+            "by":"voice-secretary",
+            "request_id":"voice-prompt-noop",
+            "no_op":true,
+            "draft_text":"该占位文本必须被忽略"
+        }),
+    );
+    assert_eq!(no_op.result["prompt_draft"]["status"], "no_change");
+    assert_eq!(no_op.result["prompt_draft"]["draft_text"], "");
+    assert!(store.load(&group_id).expect("load").extra["assistants"]["prompt_draft"].is_null());
+
+    ok(
+        &home,
+        "assistant_voice_input_append",
+        json!({
+            "group_id":group_id,
+            "kind":"prompt_refine",
+            "request_id":"voice-prompt-ack",
+            "composer_text":"待替换内容"
+        }),
+    );
+    ok(
+        &home,
+        "assistant_voice_prompt_draft_submit",
+        json!({
+            "group_id":group_id,
+            "by":"assistant:voice_secretary",
+            "request_id":"voice-prompt-ack",
+            "draft_text":"替换后的内容"
+        }),
+    );
+    let ack = ok(
+        &home,
+        "assistant_voice_prompt_draft_ack",
+        json!({
+            "group_id":group_id,
+            "request_id":"voice-prompt-ack",
+            "status":"applied"
+        }),
+    );
+    assert_eq!(ack.result["prompt_draft"]["status"], "applied");
+    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    assert!(state["prompt_draft"].is_null());
+    assert_eq!(
+        state["voice_prompt_drafts"]["voice-prompt-ack"]["status"],
+        "applied"
+    );
 }
 
 #[test]
@@ -678,6 +811,143 @@ fn saving_existing_document_replaces_file_contents() {
     );
 }
 
+#[test]
+fn listing_reconciles_repository_document_edits_once() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let saved = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,
+            "document_path":"docs/voice-secretary/reconciled.md",
+            "content":"first"
+        }),
+    );
+    let absolute_path = saved.result["document"]["absolute_path"]
+        .as_str()
+        .expect("absolute path");
+    std::fs::write(absolute_path, "# Updated\n\n- 新内容\n").expect("external document edit");
+
+    let first = ok(
+        &home,
+        "assistant_voice_document_list",
+        json!({"group_id":group_id,"by":"voice-secretary"}),
+    );
+    let document = &first.result["documents"][0];
+    assert_eq!(document["content"], "# Updated\n\n- 新内容\n");
+    assert_eq!(document["content_chars"], 17);
+    assert_eq!(document["revision_count"], 2);
+    assert_ne!(
+        document["content_sha256"],
+        saved.result["document"]["content_sha256"]
+    );
+
+    let second = ok(
+        &home,
+        "assistant_voice_document_list",
+        json!({"group_id":group_id,"by":"voice-secretary"}),
+    );
+    assert_eq!(second.result["documents"][0]["revision_count"], 2);
+    assert_eq!(
+        store.load(&group_id).expect("load").extra["assistants"]["documents"][0]["content"],
+        "# Updated\n\n- 新内容\n"
+    );
+
+    let events = ledger::read_all(&store.ledger_path(&group_id).expect("ledger")).expect("events");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.kind == "assistant.voice.document" && event.data["action"] == "reconciled"
+            })
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn concurrent_document_lists_reconcile_only_once() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let saved = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,
+            "document_path":"docs/voice-secretary/concurrent.md",
+            "content":"before"
+        }),
+    );
+    std::fs::write(
+        saved.result["document"]["absolute_path"]
+            .as_str()
+            .expect("absolute path"),
+        "after",
+    )
+    .expect("external edit");
+
+    let handles = (0..2)
+        .map(|_| {
+            let home = home.clone();
+            let group_id = group_id.clone();
+            std::thread::spawn(move || {
+                ok(
+                    &home,
+                    "assistant_voice_document_list",
+                    json!({"group_id":group_id,"by":"voice-secretary"}),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    for handle in handles {
+        let response = handle.join().expect("list thread");
+        assert_eq!(response.result["documents"][0]["content"], "after");
+        assert_eq!(response.result["documents"][0]["revision_count"], 2);
+    }
+
+    let events = ledger::read_all(&store.ledger_path(&group_id).expect("ledger")).expect("events");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.kind == "assistant.voice.document" && event.data["action"] == "reconciled"
+            })
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn missing_repository_document_does_not_clear_registry_content() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let saved = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,
+            "document_path":"docs/voice-secretary/missing.md",
+            "content":"preserve me"
+        }),
+    );
+    std::fs::remove_file(
+        saved.result["document"]["absolute_path"]
+            .as_str()
+            .expect("absolute path"),
+    )
+    .expect("remove document");
+
+    let listed = ok(
+        &home,
+        "assistant_voice_document_list",
+        json!({"group_id":group_id}),
+    );
+    assert_eq!(listed.result["documents"][0]["content"], "preserve me");
+    assert_eq!(listed.result["documents"][0]["revision_count"], 1);
+    assert_eq!(
+        store.load(&group_id).expect("load").extra["assistants"]["documents"][0]["content"],
+        "preserve me"
+    );
+}
+
 fn enabled_voice_group() -> (tempfile::TempDir, HomeLayout, GroupStore, String) {
     let temp = tempfile::tempdir().expect("tempdir");
     let workspace = temp.path().join("workspace");
@@ -726,3 +996,4 @@ fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
         },
     )
 }
+// Included by the crate-level integration test harness.

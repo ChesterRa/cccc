@@ -24,7 +24,15 @@ pub fn dispatch(home: &HomeLayout, request: &DaemonRequest) -> DaemonResponse {
 fn dispatch_result(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let core = match request.op.as_str() {
         "ping" => Some(object(json!({
-            "pid": std::process::id(), "version": env!("CARGO_PKG_VERSION"), "implementation": "rust",
+            "pid": std::process::id(),
+            "version": env!("CARGO_PKG_VERSION"),
+            "ts": cccc_contracts::utc_now(),
+            "ipc_v": 1,
+            "capabilities": {
+                "events_stream": true,
+                "remote_access": true,
+            },
+            "implementation": "rust",
             "compatibility": cccc_contracts::RUST_DAEMON_COMPATIBILITY,
         }))),
         "version" => Some(object(
@@ -88,6 +96,7 @@ pub fn store(home: &HomeLayout) -> Result<GroupStore, OpError> {
     GroupStore::new(home.clone()).map_err(OpError::io)
 }
 
+#[derive(Debug)]
 pub struct OpError {
     pub code: String,
     pub message: String,

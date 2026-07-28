@@ -1,3 +1,4 @@
+// Included by the crate-level integration test harness.
 use cccc_contracts::{DaemonRequest, DaemonResponse};
 use cccc_core::access_tokens::AccessTokenStore;
 use cccc_core::{GroupStore, HomeLayout, ledger, settings};

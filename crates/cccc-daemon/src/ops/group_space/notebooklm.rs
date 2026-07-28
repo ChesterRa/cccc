@@ -1,5 +1,5 @@
 use cccc_core::{HomeLayout, space_credentials};
-use cccc_notebooklm::{Client, Error, Notebook, QueryResult, Source};
+use cccc_notebooklm::{Artifact, ArtifactGeneration, Client, Error, Notebook, QueryResult, Source};
 
 use crate::dispatch::OpError;
 
@@ -70,6 +70,30 @@ pub(super) fn rename_source(
     run(home, |client| {
         client.rename_source(notebook_id, source_id, title)
     })
+}
+
+pub(super) fn artifacts(home: &HomeLayout, notebook_id: &str) -> Result<Vec<Artifact>, OpError> {
+    run(home, |client| client.list_artifacts(notebook_id))
+}
+
+pub(super) fn generate_artifact(
+    home: &HomeLayout,
+    notebook_id: &str,
+    kind: &str,
+    language: &str,
+    instructions: Option<&str>,
+    source_ids: Option<&[String]>,
+) -> Result<ArtifactGeneration, OpError> {
+    run(home, |client| {
+        client.generate_artifact(notebook_id, kind, language, instructions, source_ids)
+    })
+}
+
+pub(super) fn download_artifact(
+    home: &HomeLayout,
+    artifact: &Artifact,
+) -> Result<Vec<u8>, OpError> {
+    run(home, |client| client.download_artifact(artifact))
 }
 
 fn run<T>(

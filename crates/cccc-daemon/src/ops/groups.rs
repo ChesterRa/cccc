@@ -2,7 +2,7 @@ use cccc_contracts::{DaemonRequest, Event, GroupState};
 use cccc_core::active;
 use cccc_core::ledger;
 use cccc_core::permissions;
-use cccc_core::{GroupDoc, HomeLayout};
+use cccc_core::{GroupDoc, HomeLayout, group_bridge_legacy, integration_state};
 use serde_json::{Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
@@ -13,6 +13,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "group_create" => create(home, request),
         "group_list" | "groups" => list(home),
         "group_show" => show(home, request),
+        "group_resolve" => resolve(home, request),
         "group_update" => update(home, request),
         "group_delete" => delete(home, request),
         "group_reset" => reset(home, request),
@@ -21,6 +22,81 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "group_stop" => running(home, request, false),
         _ => return None,
     })
+}
+
+fn resolve(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let raw = required_arg(request, "token")?;
+    let token = raw.trim().trim_start_matches('#').to_ascii_lowercase();
+    let store = store(home)?;
+    let matches = store
+        .list()
+        .map_err(OpError::io)?
+        .into_iter()
+        .filter_map(|meta| store.load(&meta.group_id).ok())
+        .filter_map(|group| {
+            let matched_by = if group.group_id.to_ascii_lowercase() == token {
+                "group_id"
+            } else if group.title.trim().to_ascii_lowercase() == token {
+                "title"
+            } else if group.topic.trim().to_ascii_lowercase() == token {
+                "topic"
+            } else {
+                return None;
+            };
+            Some(json!({
+                "group_id":group.group_id,"title":group.title,"topic":group.topic,
+                "running":group.running,"state":group.state,"matched_by":matched_by,"token":raw
+            }))
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [item] => object(item.clone()),
+        [] => resolve_remote(home, request, &token, &raw),
+        _ => {
+            let mut error =
+                OpError::new("ambiguous", format!("multiple groups match token: {raw}"));
+            error.details.insert("candidates".into(), json!(matches));
+            Err(error)
+        }
+    }
+}
+
+fn resolve_remote(home: &HomeLayout, request: &DaemonRequest, token: &str, raw: &str) -> OpResult {
+    let group_id = required_arg(request, "group_id")?;
+    group_bridge_legacy::import_if_changed(home).map_err(OpError::io)?;
+    let state = integration_state::global_get(home, "group_bridge").map_err(OpError::io)?;
+    let route = state
+        .get("trusts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|item| {
+            item["status"] == "active"
+                && item["group_id"] == group_id
+                && [item["remote_group_id"].as_str(), item["remote_group_title"].as_str()]
+                    .into_iter()
+                    .flatten()
+                    .map(|value| value.trim().trim_start_matches('#').to_ascii_lowercase())
+                    .any(|value| value == token)
+        })
+        .ok_or_else(|| {
+            OpError::new(
+                "not_found",
+                format!(
+                    "no group matches token: {raw}; inspect group list or trusted Group Bridge routes"
+                ),
+            )
+        })?;
+    let remote_group_id = route["remote_group_id"].as_str().unwrap_or("");
+    object(json!({
+        "group_id":remote_group_id,
+        "title":route["remote_group_title"].as_str().filter(|value|!value.is_empty())
+            .unwrap_or(remote_group_id),
+        "topic":"","running":true,"state":"active",
+        "matched_by":"group_bridge_remote_group_title","token":raw,
+        "group_bridge":true,"registration_id":route["registration_id"],
+        "trust_id":route["trust_id"]
+    }))
 }
 
 fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

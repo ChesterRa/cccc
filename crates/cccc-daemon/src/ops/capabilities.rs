@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 
 mod effective_state;
+mod external_runtime;
 mod overview;
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
@@ -102,13 +103,25 @@ fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             })
         })
         .collect::<Vec<_>>();
+    let catalog = store.catalog().map_err(OpError::io)?;
+    let dynamic_tools =
+        external_runtime::dynamic_tools(home, &group_id, &actor_id, &enabled_capabilities)?;
+    let visible_tools = visible_tools(
+        home,
+        &group_id,
+        &actor_id,
+        &enabled_capabilities,
+        &catalog,
+        &dynamic_tools,
+    )?;
     object(json!({
         "group_id":group_id,
         "actor_id":actor_id,
         "view":string_arg(request, "view").unwrap_or_default(),
         "enabled":enabled_rows,
         "enabled_capabilities":enabled_capabilities,
-        "dynamic_tools":[],
+        "visible_tools":visible_tools,
+        "dynamic_tools":dynamic_tools,
         "active_capsule_skills":active_capsule_skills,
         "actor_hidden_capabilities":hidden.into_iter().collect::<Vec<_>>(),
         "state":native,
@@ -147,11 +160,136 @@ fn source_delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"source_id":source,"removed":removed,"deleted":true}))
 }
 fn use_capability(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    if let Some(tool_name) = string_arg(request, "tool_name").filter(|value| !value.is_empty()) {
+        return external_runtime::call(home, request, &tool_name);
+    }
     let id = required_arg(request, "capability_id")?;
     let capability = CapabilityStore::new(home.clone())
         .require(&id)
         .map_err(OpError::not_found)?;
     object(json!({"capability": capability, "input": request.args.get("input"), "ready": true}))
+}
+
+const CORE_BASIC_TOOLS: &[&str] = &[
+    "cccc_help",
+    "cccc_bootstrap",
+    "cccc_capability_search",
+    "cccc_capability_use",
+    "cccc_inbox_list",
+    "cccc_inbox_mark_read",
+    "cccc_message_send",
+    "cccc_message_reply",
+    "cccc_file",
+    "cccc_context_get",
+    "cccc_coordination",
+    "cccc_task",
+    "cccc_agent_state",
+];
+const CAPABILITY_ADMIN_TOOLS: &[&str] = &[
+    "cccc_capability_import",
+    "cccc_capability_block",
+    "cccc_capability_uninstall",
+];
+const VOICE_SECRETARY_TOOLS: &[&str] = &[
+    "cccc_help",
+    "cccc_bootstrap",
+    "cccc_project_info",
+    "cccc_inbox_list",
+    "cccc_inbox_mark_read",
+    "cccc_context_get",
+    "cccc_agent_state",
+    "cccc_voice_secretary_document",
+    "cccc_voice_secretary_composer",
+    "cccc_voice_secretary_request",
+];
+const WEB_MODEL_CORE_TOOLS: &[&str] = &[
+    "cccc_help",
+    "cccc_bootstrap",
+    "cccc_capability_search",
+    "cccc_capability_use",
+    "cccc_inbox_list",
+    "cccc_inbox_mark_read",
+    "cccc_message_send",
+    "cccc_message_reply",
+    "cccc_file",
+    "cccc_context_get",
+    "cccc_coordination",
+    "cccc_task",
+    "cccc_agent_state",
+    "cccc_project_info",
+    "cccc_capability_state",
+    "cccc_capability_enable",
+    "cccc_capability_install",
+    "cccc_tracked_send",
+    "cccc_repo",
+    "cccc_presentation",
+    "cccc_memory",
+    "cccc_runtime_wait_next_turn",
+    "cccc_runtime_complete_turn",
+    "cccc_code_exec",
+    "cccc_code_wait",
+    "cccc_repo_edit",
+    "cccc_apply_patch",
+    "cccc_shell",
+    "cccc_exec_command",
+    "cccc_write_stdin",
+    "cccc_git",
+];
+
+fn visible_tools(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    enabled: &[String],
+    catalog: &[Capability],
+    dynamic: &[Value],
+) -> Result<Vec<String>, OpError> {
+    use std::collections::BTreeSet;
+    let group = (!group_id.is_empty())
+        .then(|| cccc_core::GroupStore::new(home.clone()))
+        .transpose()
+        .map_err(OpError::io)?
+        .and_then(|store| store.load(group_id).ok());
+    let actor = group
+        .as_ref()
+        .and_then(|group| group.actors.iter().find(|actor| actor.id == actor_id));
+    let voice_secretary = actor_id == "voice-secretary"
+        || actor.and_then(|actor| actor.internal_kind.as_deref()) == Some("voice_secretary");
+    let web_model =
+        actor.map(|actor| actor.runtime) == Some(cccc_contracts::ActorRuntime::WebModel);
+    let peer = actor.and_then(|actor| actor.role) == Some(cccc_contracts::ActorRole::Peer);
+    let mut names = if voice_secretary {
+        VOICE_SECRETARY_TOOLS
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect()
+    } else if web_model {
+        WEB_MODEL_CORE_TOOLS
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect()
+    } else {
+        CORE_BASIC_TOOLS
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect::<BTreeSet<_>>()
+    };
+    if !web_model {
+        for capability in catalog.iter().filter(|item| enabled.contains(&item.id)) {
+            names.extend(capability.tool_names.iter().cloned());
+        }
+    }
+    names.extend(
+        dynamic
+            .iter()
+            .filter_map(|item| item["name"].as_str().map(str::to_owned)),
+    );
+    if peer {
+        for name in CAPABILITY_ADMIN_TOOLS {
+            names.remove(*name);
+        }
+    }
+    Ok(names.into_iter().collect())
 }
 fn allowlist_get(home: &HomeLayout) -> OpResult {
     object(json!({"allowlist": settings::load(home).map_err(OpError::io)?.capability_allowlist}))

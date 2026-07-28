@@ -1,3 +1,4 @@
+// Included by the crate-level integration test harness.
 use cccc_contracts::{DaemonRequest, DaemonResponse};
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};

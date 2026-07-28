@@ -686,12 +686,19 @@ fn required_session_field<'a>(registration: &'a Value, field: &str) -> Result<&'
 }
 
 fn allowed_call(access: &str, name: &str, arguments: &Map<String, Value>) -> bool {
-    let _ = arguments;
     if matches!(
         name,
         "cccc_message_send" | "cccc_tracked_send" | "cccc_message_reply" | "cccc_remote_access"
     ) {
         return true;
+    }
+    if name == "cccc_remote_git"
+        && matches!(
+            arguments.get("action").and_then(Value::as_str),
+            Some("add" | "commit")
+        )
+    {
+        return access == "full";
     }
     if matches!(access, "read" | "full")
         && matches!(
@@ -728,28 +735,14 @@ fn local_bridge_tool(name: &str) -> &str {
 
 fn normalize_remote_git(arguments: &mut Map<String, Value>) -> Result<(), ApiError> {
     let action = arguments
-        .remove("action")
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .unwrap_or_else(|| "status".into());
-    let mut args = match action.as_str() {
-        "status" => vec![json!("status"), json!("--short")],
-        "diff" => vec![json!("diff")],
-        "log" => vec![json!("log"), json!("--oneline"), json!("-n"), json!("50")],
-        _ => {
-            return Err(ApiError::bad(
-                "remote git action must be status, diff, or log",
-            ));
-        }
-    };
-    if let Some(path) = arguments
-        .remove("path")
-        .and_then(|value| value.as_str().map(str::to_owned))
-        .filter(|value| !value.is_empty())
-    {
-        args.push(json!("--"));
-        args.push(json!(path));
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("status");
+    if !matches!(action, "status" | "diff" | "log" | "add" | "commit") {
+        return Err(ApiError::bad(
+            "remote git action must be status, diff, log, add, or commit",
+        ));
     }
-    arguments.insert("args".into(), Value::Array(args));
     Ok(())
 }
 

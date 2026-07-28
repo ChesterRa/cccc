@@ -1,3 +1,4 @@
+// Included by the crate-level integration test harness.
 use std::path::Path;
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};

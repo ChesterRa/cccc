@@ -54,13 +54,25 @@ Semantic input is appended to `inputs.jsonl` before the daemon writes an
 `assistant.voice.input` event and a targeted `system.notify`. Segment IDs are
 idempotent, so browser retries do not duplicate document input. The internal
 actor reads unread batches through `cccc_voice_secretary_document`, edits the
-repository document, and saves it through the daemon/MCP contract.
+repository document, and the daemon reconciles the Markdown content into the
+document index when assistants or documents are next read or selected. A changed
+file advances the indexed revision once; repeated reads are idempotent.
 The durable input log remains the idempotency source after the bounded session
 preview is trimmed, and interrupted ledger notification is completed on retry.
 
 Only the `voice-secretary` actor may advance the unread input cursor. Document
 paths must be repository-relative Markdown paths; symbolic-link components are
 rejected so the document API cannot write outside the selected workspace.
+
+Prompt mode uses two distinct operations. Web input first calls
+`assistant_voice_input_append(kind="prompt_refine")`, which records the current
+composer text, speech, operation, request ID, and composer snapshot before
+delivering one canonical input envelope. The actor then returns the optimized
+text through
+`cccc_voice_secretary_composer(action="submit_prompt_draft")`, which maps to
+`assistant_voice_prompt_draft_submit`. Draft submission updates only the
+existing request; it never appends another Voice Secretary input. Empty or
+non-substantive refinements use `no_op=true`.
 
 Documents use the active workspace under `docs/voice-secretary/`. Groups without
 an active workspace store the Markdown fallback under CCCC_HOME. Removing a

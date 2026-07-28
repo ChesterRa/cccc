@@ -45,12 +45,29 @@ pub fn input(name: &str) -> Value {
             &["layout_get", "search", "get", "write"],
             json!({
                 "query":{"type":"string"},"target":{"type":"string","enum":["daily","memory"]},
-                "content":{"type":"string"},"path":{"type":"string"}
+                "content":{"type":"string"},"path":{"type":"string"},
+                "max_results":{"type":"integer","minimum":1,"maximum":50},
+                "min_score":{"type":"number","minimum":0,"maximum":1},
+                "sources":{"type":"array","items":{"type":"string"}},
+                "offset":{"type":"integer","minimum":1},"limit":{"type":"integer","minimum":1,"maximum":5000},
+                "date":{"type":"string"},"mode":{"type":"string","enum":["append","replace"]},
+                "idempotency_key":{"type":"string"},"source_refs":{"type":"array","items":{"type":"string"}},
+                "tags":{"type":"array","items":{"type":"string"}},"supersedes":{"type":"array","items":{"type":"string"}},
+                "dedup_intent":{"type":"string","enum":["new","update","supersede","silent"]},"dedup_query":{"type":"string"}
             }),
         ),
         "cccc_memory_admin" => action(
             &["index_sync", "context_check", "compact", "daily_flush"],
-            json!({}),
+            json!({
+                "mode":{"type":"string","enum":["scan","rebuild"]},
+                "messages":{"type":"array","items":{"type":"object"}},
+                "messages_to_summarize":{"type":"array","items":{"type":"object"}},
+                "turn_prefix_messages":{"type":"array","items":{"type":"object"}},
+                "previous_summary":{"type":"string"},"context_window_tokens":{"type":"integer"},
+                "reserve_tokens":{"type":"integer"},"keep_recent_tokens":{"type":"integer"},
+                "return_prompt":{"type":"boolean"},"date":{"type":"string"},"language":{"type":"string"},
+                "signal_pack":{"type":"object"},"signal_pack_token_budget":{"type":"integer"}
+            }),
         ),
         "cccc_task" => action(
             &[
@@ -65,14 +82,12 @@ pub fn input(name: &str) -> Value {
         "cccc_actor" => action(
             &[
                 "list",
-                "get",
+                "profile_list",
                 "add",
-                "update",
                 "remove",
                 "start",
                 "stop",
                 "restart",
-                "new_session",
             ],
             json!({
                 "actor_id":{"type":"string"},"runtime":{"type":"string"},
@@ -80,33 +95,53 @@ pub fn input(name: &str) -> Value {
             }),
         ),
         "cccc_group" => action(
-            &[
-                "create",
-                "list",
-                "get",
-                "show",
-                "update",
-                "delete",
-                "reset",
-                "start",
-                "stop",
-                "set_state",
-                "use",
-                "attach",
-                "detach_scope",
-            ],
+            &["info", "list", "resolve", "set_state"],
             json!({
-                "title":{"type":"string"},"topic":{"type":"string"},"state":{"type":"string","enum":["active","idle","paused","stopped"]},
-                "path":{"type":"string"},"scope_key":{"type":"string"}
+                "token":{"type":"string"},"state":{"type":"string","enum":["active","idle","paused","stopped"]}
             }),
         ),
         "cccc_terminal" => action(
-            &["status", "tail", "history", "write", "resize", "clear"],
+            &["tail"],
             json!({
-                "actor_id":{"type":"string"},"data":{"type":"string"},"before":{"oneOf":[{"type":"string"},{"type":"integer"}]},
-                "limit_bytes":{"type":"integer"},"cols":{"type":"integer"},"rows":{"type":"integer"},
-                "strip_ansi":{"type":"boolean"},"compact":{"type":"boolean"}
+                "actor_id":{"type":"string"},"target_actor_id":{"type":"string"},
+                "max_chars":{"type":"integer","minimum":1,"maximum":100000},
+                "strip_ansi":{"type":"boolean"}
             }),
+        ),
+        "cccc_headless" => action(
+            &["status", "set_status", "ack_message"],
+            json!({"status":{"type":"string","enum":["idle","working","waiting","stopped"]},
+                "task_id":{"type":"string"},"message_id":{"type":"string"}}),
+        ),
+        "cccc_notify" => action(
+            &["send", "ack"],
+            json!({"kind":{"type":"string"},"title":{"type":"string"},"message":{"type":"string"},
+                "target_actor_id":{"type":"string"},"priority":{"type":"string"},
+                "requires_ack":{"type":"boolean"},"notify_event_id":{"type":"string"}}),
+        ),
+        "cccc_debug" => action(
+            &["snapshot", "tail_logs"],
+            json!({"component":{"type":"string"},"lines":{"type":"integer"}}),
+        ),
+        "cccc_voice_secretary_document" => action(
+            &["list", "create", "read_new_input", "archive"],
+            json!({"document_path":{"type":"string"},"title":{"type":"string"},
+                "include_archived":{"type":"boolean"}}),
+        ),
+        "cccc_voice_secretary_composer" => object(
+            merge(
+                common(),
+                json!({
+                    "action":{"type":"string","enum":["submit_prompt_draft"]},
+                    "request_id":{"type":"string"},
+                    "draft_text":{"type":"string"},
+                    "no_op":{"type":"boolean"},
+                    "summary":{"type":"string"},
+                    "operation":{"type":"string"},
+                    "composer_snapshot_hash":{"type":"string"}
+                }),
+            ),
+            &["action", "request_id"],
         ),
         "cccc_agent_state" => action(
             &["get", "update"],
@@ -128,12 +163,45 @@ pub fn input(name: &str) -> Value {
                 "artifact",
                 "jobs",
                 "sync",
-                "auth",
+                "provider_auth",
+                "provider_credential_status",
+                "provider_credential_update",
             ],
             json!({
                 "lane":{"type":"string","enum":["work","memory"]},"query":{"type":"string"},
-                "options":{"type":"object","properties":{"source_ids":{"type":"array","items":{"type":"string"}}},"additionalProperties":false}
+                "provider":{"type":"string"},"sub_action":{"type":"string"},
+                "remote_space_id":{"type":"string"},"kind":{"type":"string"},"payload":{"type":"object"},
+                "idempotency_key":{"type":"string"},
+                "options":{"type":"object","properties":{"source_ids":{"type":"array","items":{"type":"string"}}},"additionalProperties":true},
+                "source":{"type":"string"},"source_id":{"type":"string"},"new_title":{"type":"string"},
+                "job_id":{"type":"string"},"force":{"type":"boolean"},"wait":{"type":"boolean"},
+                "save_to_space":{"type":"boolean"},"output_path":{"type":"string"},"output_format":{"type":"string"},
+                "artifact_id":{"type":"string"},"timeout_seconds":{"type":"integer"},
+                "auth_json":{"type":"string"},"clear":{"type":"boolean"},"force_reauth":{"type":"boolean"}
             }),
+        ),
+        "cccc_presentation" => action(
+            &["get", "publish", "clear"],
+            json!({"slot":{"type":"string"},"card_type":{"type":"string"},"title":{"type":"string"},
+                "summary":{"type":"string"},"source_label":{"type":"string"},"source_ref":{"type":"string"},
+                "content":{"type":"string"},"table":{"type":"object"},"path":{"type":"string"},
+                "url":{"type":"string"},"blob_rel_path":{"type":"string"},"all":{"type":"boolean"}}),
+        ),
+        "cccc_automation" => action(
+            &["state", "manage"],
+            json!({"op":{"type":"string"},"actions":{"type":"array","items":{"type":"object"}},
+                "expected_version":{"type":"integer"}}),
+        ),
+        "cccc_im_bind" => object(merge(common(), json!({"key":{"type":"string"}})), &["key"]),
+        "cccc_voice_secretary_request" => action(
+            &["handoff", "report"],
+            json!({"target":{"type":"string"},"request_text":{"type":"string"},"summary":{"type":"string"},
+                "request_id":{"type":"string"},"source_request_id":{"type":"string"},
+                "status":{"type":"string","enum":["working","done","needs_user","failed"]},
+                "reply_text":{"type":"string"},"document_path":{"type":"string"},
+                "artifact_paths":{"type":"array","items":{"type":"string"}},
+                "source_summary":{"type":"string"},"checked_at":{"type":"string"},
+                "source_urls":{"type":"array","items":{"type":"string"}}}),
         ),
         "cccc_remote_access" => action(
             &["list", "status", "explain_permissions"],
@@ -174,8 +242,18 @@ pub fn input(name: &str) -> Value {
             })),
         ),
         "cccc_remote_git" => action(
-            &["status", "diff", "log"],
-            remote(json!({"path":{"type":"string"}})),
+            &["status", "diff", "log", "add", "commit"],
+            remote(
+                json!({"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},
+                "staged":{"type":"boolean"},"all_changes":{"type":"boolean"},"message":{"type":"string"},
+                "count":{"type":"integer"},"max_output_bytes":{"type":"integer"}}),
+            ),
+        ),
+        "cccc_git" => action(
+            &["status", "diff", "log", "add", "commit"],
+            json!({"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}},
+                "staged":{"type":"boolean"},"all_changes":{"type":"boolean"},"message":{"type":"string"},
+                "count":{"type":"integer"},"max_output_bytes":{"type":"integer"}}),
         ),
         "cccc_remote_apply_patch" => object(remote(json!({"patch":{"type":"string"}})), &["patch"]),
         "cccc_remote_shell" | "cccc_remote_exec_command" => object(
@@ -296,6 +374,7 @@ fn merge(left: Value, right: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::input;
+    use serde_json::json;
 
     #[test]
     fn messaging_schema_exposes_peer_insight_contract() {
@@ -365,7 +444,32 @@ mod tests {
     #[test]
     fn terminal_schema_exposes_transcript_rendering_options() {
         let schema = input("cccc_terminal");
+        assert_eq!(schema["properties"]["action"]["enum"], json!(["tail"]));
         assert_eq!(schema["properties"]["strip_ansi"]["type"], "boolean");
-        assert_eq!(schema["properties"]["compact"]["type"], "boolean");
+        assert_eq!(schema["properties"]["max_chars"]["type"], "integer");
+    }
+
+    #[test]
+    fn voice_document_schema_matches_python_actions() {
+        let schema = input("cccc_voice_secretary_document");
+        assert_eq!(
+            schema["properties"]["action"]["enum"],
+            json!(["list", "create", "read_new_input", "archive"])
+        );
+    }
+
+    #[test]
+    fn voice_composer_schema_requires_python_request_identity() {
+        let schema = input("cccc_voice_secretary_composer");
+        assert_eq!(
+            schema["properties"]["action"]["enum"],
+            json!(["submit_prompt_draft"])
+        );
+        assert_eq!(schema["properties"]["draft_text"]["type"], "string");
+        assert!(
+            schema["required"]
+                .as_array()
+                .is_some_and(|required| required.iter().any(|item| item == "request_id"))
+        );
     }
 }

@@ -12,6 +12,7 @@ pub async fn call(
     mut arguments: Map<String, Value>,
 ) -> Result<Value, String> {
     add_runtime_context(home, &mut arguments);
+    authorize_tool(home, name, &arguments)?;
     let message_operation = is_message_operation(name, &arguments);
     if message_operation {
         arguments.insert("require_peer_insight".into(), Value::Bool(true));
@@ -44,7 +45,27 @@ pub async fn call(
             return crate::remote_tools::call(home, name, arguments).await;
         }
         _ => {
-            let (op, args) = mapping::daemon_call(name, arguments)?;
+            let (op, args) = match mapping::daemon_call(name, arguments.clone()) {
+                Ok(mapped) => mapped,
+                Err(error) if error.starts_with("tool is not a daemon operation:") => {
+                    let mut dynamic = Map::new();
+                    if let Some(value) = arguments.get("group_id").cloned() {
+                        dynamic.insert("group_id".into(), value);
+                    }
+                    if let Some(value) = arguments.get("actor_id").cloned() {
+                        dynamic.insert("actor_id".into(), value);
+                    }
+                    if let Some(value) = arguments.get("by").cloned() {
+                        dynamic.insert("by".into(), value);
+                    }
+                    dynamic.insert("tool_name".into(), Value::String(name.into()));
+                    dynamic.insert("arguments".into(), Value::Object(arguments));
+                    return Ok(tool_result(Value::Object(
+                        daemon(client, "capability_tool_call", dynamic).await?,
+                    )));
+                }
+                Err(error) => return Err(error),
+            };
             Value::Object(daemon(client, &op, args).await?)
         }
     };
@@ -54,6 +75,46 @@ pub async fn call(
     } else {
         result
     })
+}
+
+fn authorize_tool(
+    home: &HomeLayout,
+    name: &str,
+    arguments: &Map<String, Value>,
+) -> Result<(), String> {
+    let actor_id = arguments
+        .get("by")
+        .and_then(Value::as_str)
+        .unwrap_or("user");
+    if name.starts_with("cccc_voice_secretary_") && actor_id != "voice-secretary" {
+        return Err(format!(
+            "{name} is only available to the voice-secretary actor"
+        ));
+    }
+    if !matches!(
+        name,
+        "cccc_capability_import" | "cccc_capability_block" | "cccc_capability_uninstall"
+    ) || actor_id == "user"
+    {
+        return Ok(());
+    }
+    let Some(group_id) = arguments.get("group_id").and_then(Value::as_str) else {
+        return Err("group_id is required".into());
+    };
+    let group = cccc_core::GroupStore::new(home.clone())
+        .and_then(|store| store.load(group_id))
+        .map_err(|error| error.to_string())?;
+    let peer = group
+        .actors
+        .iter()
+        .find(|actor| actor.id == actor_id)
+        .and_then(|actor| actor.role)
+        == Some(cccc_contracts::ActorRole::Peer);
+    if peer {
+        Err(format!("{name} is not available to peer actors"))
+    } else {
+        Ok(())
+    }
 }
 
 fn help_markdown() -> String {

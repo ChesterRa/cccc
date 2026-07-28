@@ -46,6 +46,23 @@ writes remain daemon-owned. Group documents and global settings use shared
 cross-process transaction locks so daemon operations and Web-owned integration
 lifecycle updates cannot overwrite each other.
 
+The Rust MCP server uses the same progressive tool surface as Python.
+`tools/list` is derived from caller role and `capability_state`, includes
+enabled built-in packs and Python-compatible external MCP runtime artifacts,
+and forwards dynamic tool calls through `capability_tool_call`. A shared parity
+test guards the static Python and Rust tool-name catalogs.
+
+Group Bridge compatibility includes daemon-level `remote_send`,
+`remote_delivery_status`, and `group_bridge_receive_remote_send` operations in
+addition to the Web and MCP routes. Remote delivery requires an explicit
+recipient, validates the active registration or trust route, records idempotent
+receipts, and falls back to the remote Group Bridge MCP endpoint when needed.
+
+The Rust NotebookLM adapter owns notebook sources, Studio artifact
+create/list/download operations, and incremental work/memory synchronization.
+Sync hashes local text files, replaces changed remote sources, removes deleted
+sources, and persists convergence state in the group-space document.
+
 ## Runtime recovery and delivery
 
 `group.running` stores the operator's desired runtime state. API group summaries

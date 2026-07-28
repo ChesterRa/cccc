@@ -1,3 +1,4 @@
+// Included by the crate-level integration test harness.
 use cccc_core::presentation::{self, Publish};
 use cccc_core::{GroupStore, HomeLayout, Scope, group_scope};
 

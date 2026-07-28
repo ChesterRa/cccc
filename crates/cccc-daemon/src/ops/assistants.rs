@@ -6,17 +6,22 @@ use sha2::{Digest, Sha256};
 use std::io;
 use uuid::Uuid;
 
+mod document_reconcile;
+mod prompt_refine;
 mod voice_input;
 mod voice_settings;
 
-use crate::dispatch::{OpError, OpResult, first_non_blank_arg, object, required_arg, string_arg};
+use crate::dispatch::{
+    OpError, OpResult, bool_arg, first_non_blank_arg, object, required_arg, string_arg,
+};
 use crate::ops::actor_delivery;
 
 const KEY: &str = "assistants";
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
-        "assistant_index" => voice_settings::index(home, request),
+        "assistant_index" => document_reconcile::run(home, request)
+            .and_then(|_| voice_settings::index(home, request)),
         "assistant_settings_update" => voice_settings::update(home, request),
         "assistant_status_update" => voice_settings::status(home, request),
         "assistant_voice_transcript_append" => voice_input::append(home, request),
@@ -26,8 +31,9 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "assistant_voice_document_save" => save(home, request),
         "assistant_voice_document_instruction" => voice_input::instruction(home, request),
         "assistant_voice_document_archive" => archive(home, request),
-        "assistant_voice_prompt_draft_submit" => prompt_submit(home, request),
-        "assistant_voice_prompt_draft_ack" => prompt_ack(home, request),
+        "assistant_voice_input_append" => prompt_refine::input(home, request),
+        "assistant_voice_prompt_draft_submit" => prompt_refine::submit(home, request),
+        "assistant_voice_prompt_draft_ack" => prompt_refine::ack(home, request),
         "assistant_voice_instruction_feedback" => feedback(home, request),
         "assistant_voice_ask_requests_clear" => clear(home, request),
         "assistant_voice_request" => voice_request(home, request),
@@ -37,14 +43,25 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
 
 fn documents(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    let value = load(home, &group_id)?;
+    let value = document_reconcile::run(home, request)?;
+    let requested_path = string_arg(request, "document_path").unwrap_or_default();
+    let include_archived = bool_arg(request, "include_archived", false);
+    let documents = items(&value, "documents")
+        .iter()
+        .filter(|document| {
+            (include_archived || document["status"] != "archived")
+                && (requested_path.is_empty() || document["document_path"] == requested_path)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     object(
-        json!({"group_id":group_id,"documents":items(&value,"documents"),"active_document_id":value["active_document_id"],"active_document_path":value["active_document_path"]}),
+        json!({"group_id":group_id,"documents":documents,"active_document_id":value["active_document_id"],"active_document_path":value["active_document_path"]}),
     )
 }
 fn select(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let path = document_path(request)?;
+    document_reconcile::run(home, request)?;
     let document = update(home, &group_id, |state| {
         let document = array(state, "documents")
             .iter()
@@ -197,38 +214,6 @@ fn archive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         Ok(item.clone())
     })?;
     document_result(home, request, &group_id, document, "archived")
-}
-fn prompt_submit(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let text = first_non_blank_arg(request, &["voice_transcript", "text", "composer_text"])
-        .ok_or_else(|| {
-            OpError::new(
-                "empty_prompt_refine_input",
-                "voice_transcript or composer_text is required",
-            )
-        })?;
-    let draft = update(home, &group_id, |state| {
-        let draft = json!({"request_id":format!("vpr_{}",short_id()),"status":"pending","operation":string_arg(request,"operation").unwrap_or_else(||"refine".into()),"draft_text":text,"draft_preview":text,"created_at":utc_now()});
-        state.insert("prompt_draft".into(), draft.clone());
-        Ok(draft)
-    })?;
-    let mut input = voice_input::named(home, request, "prompt_refine", text)?;
-    input.insert("prompt_draft".into(), draft);
-    Ok(input)
-}
-fn prompt_ack(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let request_id = required_arg(request, "request_id")?;
-    let status = required_arg(request, "status")?;
-    let draft = update(home, &group_id, |state| {
-        let draft = state
-            .get_mut("prompt_draft")
-            .filter(|draft| draft["request_id"] == request_id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "prompt draft not found"))?;
-        draft["status"] = json!(status);
-        Ok(draft.clone())
-    })?;
-    object(json!({"group_id":group_id,"prompt_draft":draft}))
 }
 fn feedback(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;

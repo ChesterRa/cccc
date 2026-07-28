@@ -1,3 +1,4 @@
+// Included by the crate-level integration test harness.
 use cccc_contracts::{Actor, Event};
 use cccc_core::{GroupStore, HomeLayout, actors, inbox, ledger};
 use serde_json::json;

@@ -8,6 +8,8 @@ pub(crate) const GET_NOTEBOOK: &str = "rLM1Ne";
 pub(crate) const ADD_SOURCE: &str = "izAoDd";
 pub(crate) const DELETE_SOURCE: &str = "tGMBJ";
 pub(crate) const UPDATE_SOURCE: &str = "b7Wfje";
+pub(crate) const CREATE_ARTIFACT: &str = "R7cb6c";
+pub(crate) const LIST_ARTIFACTS: &str = "gArtLc";
 
 pub(crate) fn encode(rpc_id: &str, params: Value) -> Result<String> {
     let params = serde_json::to_string(&params).map_err(|error| Error::Rpc {
