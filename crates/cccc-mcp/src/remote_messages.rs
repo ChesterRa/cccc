@@ -264,8 +264,11 @@ async fn deliver(
         .json::<Value>()
         .await
         .map_err(|error| format!("remote Group Bridge returned invalid JSON: {error}"))?;
-    if status.is_success() {
+    if status.is_success() && delivery_succeeded(&remote) {
         return Ok(receipt(&remote, idempotency_key, "group_bridge_session"));
+    }
+    if status.is_success() {
+        return Err(remote_delivery_error(&remote));
     }
     if matches!(
         status,
@@ -402,6 +405,29 @@ fn session_route_args(trust: &Value) -> Option<Map<String, Value>> {
     json!({"group_id":group_id,"remote_group_id":remote_group_id,"remote_peer_id":remote_peer_id})
         .as_object()
         .cloned()
+}
+
+fn delivery_succeeded(remote: &Value) -> bool {
+    remote.get("error").is_none()
+        && remote.get("detail").is_none()
+        && remote["result"]["isError"] != true
+        && remote.get("ok").and_then(Value::as_bool) != Some(false)
+}
+
+fn remote_delivery_error(remote: &Value) -> String {
+    let error = remote
+        .get("error")
+        .or_else(|| remote.get("detail"))
+        .unwrap_or(remote);
+    let code = error
+        .get("code")
+        .and_then(Value::as_str)
+        .unwrap_or("remote_delivery_failed");
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("remote Group Bridge rejected delivery");
+    format!("{code}: {message}")
 }
 
 async fn deliver_via_remote_mcp(
@@ -1064,6 +1090,55 @@ mod tests {
         .expect("fallback receipt");
         assert_eq!(receipt["transport"], "group_bridge_mcp");
         assert_eq!(receipt["remote_event_id"], "legacy-event");
+        remote_task.abort();
+    }
+
+    #[tokio::test]
+    async fn successful_http_with_delivery_error_is_not_reported_as_delivered() {
+        let remote = Router::new().route(
+            "/api/group-bridge/session/send",
+            post(|| async {
+                Json(json!({
+                    "ok":false,
+                    "error":{
+                        "code":"peer_session_unavailable",
+                        "message":"no active Group Bridge delivery route"
+                    }
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let endpoint = format!("http://{}", listener.local_addr().expect("address"));
+        let remote_task = tokio::spawn(async move { axum::serve(listener, remote).await });
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+        let group = GroupStore::new(home.clone())
+            .and_then(|store| store.create("source", ""))
+            .expect("source group");
+        let args = json!({
+            "group_id":group.group_id,
+            "by":"helper",
+            "to":["@foreman"],
+            "text":"hello"
+        })
+        .as_object()
+        .cloned()
+        .expect("args");
+        let trust = json!({
+            "remote_endpoint":endpoint,
+            "credential":"secret",
+            "remote_access_level":"messages"
+        });
+
+        let error = deliver(&home, &args, &trust, "retry-key", "source-event", "")
+            .await
+            .expect_err("delivery error must propagate");
+        assert_eq!(
+            error,
+            "peer_session_unavailable: no active Group Bridge delivery route"
+        );
         remote_task.abort();
     }
 

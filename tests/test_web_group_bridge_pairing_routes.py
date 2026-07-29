@@ -119,6 +119,93 @@ class TestWebGroupBridgePairingRoutes(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_bridge_session_send_accepts_authenticated_rust_delivery(
+        self,
+    ) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.group_bridge.credentials import (
+            create_pairing_remote_send_credential,
+        )
+        from cccc.kernel.group_bridge.pairing import (
+            approve_pairing_request,
+            create_pairing_invite,
+            create_pairing_request,
+        )
+        from cccc.kernel.inbox import iter_events
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            from cccc.ports.web.app import create_app
+
+            group = create_group(
+                load_registry(), title="receiver", topic=""
+            )
+            invite = create_pairing_invite(
+                group_id=group.group_id, ttl_seconds=600
+            )
+            pairing_request = create_pairing_request(
+                invite["pairing_code"],
+                requester_group_id="g_rust_sender",
+                requester_peer_id="peer_rust_sender",
+                requester_endpoint="http://rust.example:8848",
+            )
+            credential = create_pairing_remote_send_credential(
+                group_id=group.group_id,
+                remote_group_id="g_rust_sender",
+                remote_peer_id="peer_rust_sender",
+                request_id=pairing_request["request_id"],
+            )
+            approve_pairing_request(
+                pairing_request["request_id"],
+                approver_user_id="owner",
+            )
+            client = TestClient(
+                create_app(),
+                client=("198.51.100.10", 50000),
+            )
+            payload = {
+                "source_group_id": "g_rust_sender",
+                "src_group_id": "g_rust_sender",
+                "source_by": "rust-agent",
+                "src_event_id": "rust-source-event",
+                "idempotency_key": "rust-delivery-1",
+                "text": "hello from rust",
+                "to": ["@foreman"],
+            }
+
+            first = client.post(
+                "/api/group-bridge/session/send",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {credential['token']}"
+                },
+            )
+            second = client.post(
+                "/api/group-bridge/session/send",
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {credential['token']}"
+                },
+            )
+
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertTrue(first.json()["ok"])
+            self.assertTrue(second.json()["duplicate"])
+            events = [
+                event
+                for event in iter_events(group.ledger_path)
+                if event.get("kind") == "chat.message"
+            ]
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0]["data"]["text"], "hello from rust")
+            self.assertEqual(
+                events[0]["data"]["source_user_id"],
+                "peer_rust_sender",
+            )
+        finally:
+            cleanup()
+
     def test_pairing_identity_invite_request_approve_flow(self) -> None:
         _, cleanup = self._with_home()
         try:

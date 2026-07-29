@@ -13,6 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket
 from pydantic import BaseModel, ConfigDict, Field
 
 from ....daemon.group_bridge.ops import try_handle_remote_send_op
+from ....daemon.group_bridge.receiver import (
+    receive_authenticated_remote_send,
+)
 from ....daemon.group_bridge.ws_endpoint import handle_group_bridge_session_websocket
 from ....daemon.group_bridge.ws_session import send_via_session
 from ....kernel.group_bridge.receipts import safe_error_projection
@@ -477,14 +480,40 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         await handle_group_bridge_session_websocket(websocket)
 
     @public_router.post("/session/send")
-    async def group_bridge_session_send(request: Request, req: GroupBridgeSessionSendRequest) -> Dict[str, Any]:
-        _require_loopback_client(request)
-        return await send_via_session(
-            target_group_id=req.target_group_id,
-            src_group_id=req.src_group_id,
-            remote_peer_id=req.remote_peer_id,
-            request=req.request,
-            timeout=req.timeout,
+    async def group_bridge_session_send(
+        request: Request, body: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        # Python's supervised web child uses this endpoint to reach the
+        # process-local WebSocket owner. Rust peers use the same public path
+        # for authenticated direct delivery, so keep both wire contracts.
+        if isinstance(body.get("request"), dict):
+            _require_loopback_client(request)
+            req = GroupBridgeSessionSendRequest.model_validate(body)
+            return await send_via_session(
+                target_group_id=req.target_group_id,
+                src_group_id=req.src_group_id,
+                remote_peer_id=req.remote_peer_id,
+                request=req.request,
+                timeout=req.timeout,
+            )
+        authorization = str(
+            request.headers.get("authorization") or ""
+        ).strip()
+        token = (
+            authorization[7:].strip()
+            if authorization.lower().startswith("bearer ")
+            else ""
         )
+        result = receive_authenticated_remote_send(token, body)
+        if result is None:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "bridge_access_revoked",
+                    "message": "Group Bridge access is revoked or unavailable",
+                    "details": {},
+                },
+            )
+        return result
 
     return [public_router, router]
