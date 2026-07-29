@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::dispatch::{OpError, OpResult, object, required_arg};
 
 mod payload;
+mod session_runtime;
 mod state;
 #[cfg(test)]
 mod tests;
@@ -20,11 +21,21 @@ use state::{
 
 const STORE_KEY: &str = "group_bridge";
 
+pub(super) fn route_ready(home: &HomeLayout, trust: &Value) -> bool {
+    session_runtime::route_ready(home, trust)
+}
+
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "remote_send" => remote_send(home, request),
         "remote_delivery_status" => delivery_status(home, request),
         "group_bridge_receive_remote_send" => receive(home, request),
+        "group_bridge_session_open" => session_runtime::open(home, request),
+        "group_bridge_session_close" => session_runtime::close(home, request),
+        "group_bridge_session_poll" => session_runtime::poll(home, request),
+        "group_bridge_session_complete" => session_runtime::complete(home, request),
+        "group_bridge_session_ready" => session_runtime::ready(home, request),
+        "group_bridge_session_deliver" => session_runtime::deliver(home, request),
         _ => return None,
     })
 }

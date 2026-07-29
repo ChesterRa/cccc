@@ -2,13 +2,169 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use axum::routing::post;
 use axum::{Json, Router};
+use base64::Engine;
+use cccc_client::DaemonClient;
+use cccc_contracts::DaemonRequest;
 use cccc_core::integration_state;
 use cccc_core::{GroupStore, HomeLayout, Scope, ledger};
+use ed25519_dalek::{Signer, SigningKey};
 use futures_util::{SinkExt, StreamExt};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
+
+#[tokio::test]
+async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .and_then(|store| store.create("target", ""))
+        .expect("group");
+    let signing = SigningKey::from_bytes(&[7; 32]);
+    let public = signing.verifying_key().to_bytes();
+    let peer_id = test_peer_id(&public);
+    integration_state::global_update(&home, "group_bridge", |value| {
+        *value = json!({
+            "registrations":[{"registration_id":"signed-registration","transport":"group_bridge_session","group_id":group.group_id,"remote_group_id":"g_sender","remote_peer_id":peer_id,"credential":"unused","status":"active"}],
+            "trusts":[{"trust_id":"signed-trust","registration_id":"signed-registration","transport":"group_bridge_session","group_id":group.group_id,"remote_group_id":"g_sender","remote_peer_id":peer_id,"status":"active","access_level":"messages"}]
+        });
+        Ok(())
+    }).expect("bridge state");
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_daemon(&home).await;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let web_home = home.clone();
+    let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(web_home)).await });
+
+    let mut socket =
+        connect_signed_socket(&address.to_string(), &signing, &peer_id, &group.group_id).await;
+    assert_eq!(
+        next_socket_json(&mut socket).await,
+        json!({"ok":true,"type":"ready"})
+    );
+    assert!(session_ready(&home, &group.group_id, &peer_id).await);
+    complete_daemon_delivery(&home, &mut socket, &group.group_id, &peer_id, "first").await;
+
+    socket.close(None).await.expect("close");
+    for _ in 0..50 {
+        if !session_ready(&home, &group.group_id, &peer_id).await {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(!session_ready(&home, &group.group_id, &peer_id).await);
+
+    let mut socket =
+        connect_signed_socket(&address.to_string(), &signing, &peer_id, &group.group_id).await;
+    assert_eq!(
+        next_socket_json(&mut socket).await,
+        json!({"ok":true,"type":"ready"})
+    );
+    assert!(session_ready(&home, &group.group_id, &peer_id).await);
+    complete_daemon_delivery(&home, &mut socket, &group.group_id, &peer_id, "second").await;
+    socket.close(None).await.expect("close second");
+    server.abort();
+    daemon.abort();
+}
+
+async fn connect_signed_socket(
+    address: &str,
+    signing: &SigningKey,
+    peer_id: &str,
+    group_id: &str,
+) -> TestSocket {
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async(format!("ws://{address}/api/group-bridge/session/ws"))
+            .await
+            .expect("connect signed");
+    let material = json!({"protocol":"/cccc/group_bridge/session-ws/1.0.0","remote_peer_id":peer_id,"src_group_id":"g_sender","target_group_id":group_id}).to_string();
+    let signature = signing.sign(material.as_bytes());
+    socket.send(WsMessage::Text(json!({
+        "target_group_id":group_id,"src_group_id":"g_sender","remote_peer_id":peer_id,
+        "public_key":base64::engine::general_purpose::STANDARD.encode(signing.verifying_key().to_bytes()),
+        "signature":base64::engine::general_purpose::STANDARD.encode(signature.to_bytes())
+    }).to_string().into())).await.expect("hello");
+    socket
+}
+
+async fn session_ready(home: &HomeLayout, group_id: &str, peer_id: &str) -> bool {
+    let response = DaemonClient::new(home.clone())
+        .call(&daemon_request(
+            "group_bridge_session_ready",
+            json!({"group_id":group_id,"remote_group_id":"g_sender","remote_peer_id":peer_id}),
+        ))
+        .await
+        .expect("ready call");
+    response.ok && response.result["ready"] == true
+}
+
+async fn complete_daemon_delivery(
+    home: &HomeLayout,
+    socket: &mut TestSocket,
+    group_id: &str,
+    peer_id: &str,
+    key: &str,
+) {
+    let client = DaemonClient::new(home.clone());
+    let request = daemon_request(
+        "group_bridge_session_deliver",
+        json!({"group_id":group_id,"remote_group_id":"g_sender","remote_peer_id":peer_id,"idempotency_key":key,"payload":{"text":key},"timeout_ms":2_000}),
+    );
+    let task = tokio::spawn(async move { client.call(&request).await });
+    let frame = next_socket_json(socket).await;
+    assert_eq!(frame["type"], "request");
+    assert_eq!(frame["op"], "remote_send");
+    socket.send(WsMessage::Text(json!({"type":"response","response_to":frame["request_id"],"result":{"ok":true,"receipt":{"status":"delivered","remote_event_id":format!("remote-{key}")}}}).to_string().into())).await.expect("response");
+    let response = task.await.expect("join").expect("delivery call");
+    assert!(response.ok, "{response:?}");
+    assert_eq!(
+        response.result["receipt"]["remote_event_id"],
+        format!("remote-{key}")
+    );
+}
+
+fn daemon_request(op: &str, args: Value) -> DaemonRequest {
+    DaemonRequest {
+        v: 1,
+        op: op.into(),
+        args: args.as_object().cloned().unwrap_or_default(),
+    }
+}
+
+fn test_peer_id(public: &[u8; 32]) -> String {
+    let mut protobuf = vec![0x08, 0x01, 0x12, 32];
+    protobuf.extend_from_slice(public);
+    let mut bytes = vec![0x00, protobuf.len() as u8];
+    bytes.extend(protobuf);
+    const ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let zeroes = bytes.iter().take_while(|byte| **byte == 0).count();
+    let mut digits = vec![0u8];
+    for byte in bytes {
+        let mut carry = byte as u32;
+        for digit in &mut digits {
+            let value = *digit as u32 * 256 + carry;
+            *digit = (value % 58) as u8;
+            carry = value / 58;
+        }
+        while carry > 0 {
+            digits.push((carry % 58) as u8);
+            carry /= 58;
+        }
+    }
+    std::iter::repeat_n('1', zeroes)
+        .chain(
+            digits
+                .iter()
+                .rev()
+                .map(|digit| ALPHABET[*digit as usize] as char),
+        )
+        .collect()
+}
 
 #[tokio::test]
 async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {

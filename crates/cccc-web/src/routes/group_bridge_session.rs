@@ -5,8 +5,9 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
-use cccc_contracts::utc_now;
+use cccc_contracts::{DaemonRequest, utc_now};
 use cccc_core::{GroupStore, ledger};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
@@ -175,20 +176,66 @@ async fn upgrade(
     } else {
         &query.token
     };
-    let registration = authorize(&state, token)?;
+    let registration = if token.is_empty() {
+        None
+    } else {
+        Some(authorize(&state, token)?)
+    };
     Ok(ws.on_upgrade(move |socket| session_socket(state, registration, socket)))
 }
 
-async fn session_socket(state: AppState, registration: Value, mut socket: WebSocket) {
-    let _ = socket
-        .send(Message::Text(
-            json!({"type":"ready","group_id":registration["group_id"],"registration_id":registration["registration_id"]})
-                .to_string()
-                .into(),
-        ))
-        .await;
+async fn session_socket(
+    state: AppState,
+    legacy_registration: Option<Value>,
+    mut socket: WebSocket,
+) {
+    let legacy = legacy_registration.is_some();
+    let registration = if let Some(registration) = legacy_registration {
+        if socket.send(Message::Text(json!({"type":"ready","group_id":registration["group_id"],"registration_id":registration["registration_id"]}).to_string().into())).await.is_err() {
+            return;
+        }
+        registration
+    } else {
+        let Some(Ok(Message::Text(text))) = socket.next().await else {
+            return;
+        };
+        let hello = serde_json::from_str::<Value>(&text).unwrap_or(Value::Null);
+        let Some(registration) = authorize_signed_hello(&state, &hello) else {
+            let _ = socket.send(Message::Text(json!({"ok":false,"error":{"code":"unauthorized_peer","message":"remote peer signature is invalid or not trusted for this group"}}).to_string().into())).await;
+            let _ = socket.send(Message::Close(None)).await;
+            return;
+        };
+        registration
+    };
+    let route_args = json!({
+        "group_id":registration["group_id"],"remote_group_id":registration["remote_group_id"],
+        "remote_peer_id":registration["remote_peer_id"]
+    });
+    let generation = daemon_value(&state, "group_bridge_session_open", &route_args)
+        .await
+        .and_then(|opened| opened["generation"].as_str().map(str::to_owned));
+    if generation.is_none() && !legacy {
+        return;
+    }
+    if !legacy
+        && socket
+            .send(Message::Text(
+                json!({"ok":true,"type":"ready"}).to_string().into(),
+            ))
+            .await
+            .is_err()
+    {
+        if let Some(generation) = generation.as_deref() {
+            let mut close = route_args.clone();
+            close["generation"] = json!(generation);
+            let _ = daemon_value(&state, "group_bridge_session_close", &close).await;
+        }
+        return;
+    }
     let mut seen = HashSet::new();
-    loop {
+    let mut session_poll = tokio::time::interval(std::time::Duration::from_millis(25));
+    session_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    'session: loop {
         tokio::select! {
             incoming = socket.next() => {
                 match incoming {
@@ -205,17 +252,35 @@ async fn session_socket(state: AppState, registration: Value, mut socket: WebSoc
                                     Err(error)=>(json!({"type":"error","message":error.to_string()}), true),
                                 }
                             }
+                            Ok(value) if value["type"] == "response" => {
+                                let Some(generation) = generation.as_deref() else { continue };
+                                let mut complete = route_args.clone();
+                                complete["generation"] = json!(generation);
+                                complete["response_to"] = value["response_to"].clone();
+                                complete["result"] = value.get("result").cloned().unwrap_or_else(||json!({"ok":false}));
+                                let _ = daemon_value(&state, "group_bridge_session_complete", &complete).await;
+                                continue;
+                            }
                             Ok(value) if value["type"] == "ping" => (json!({"type":"pong","ts":utc_now()}), false),
                             _ => (json!({"type":"error","message":"unsupported session message"}), false),
                         };
                         if socket.send(Message::Text(response.to_string().into())).await.is_err(){break;}
                         if close {
                             let _ = socket.send(Message::Close(None)).await;
-                            return;
+                            break 'session;
                         }
                     }
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                     _ => {}
+                }
+            }
+            _ = session_poll.tick(), if generation.is_some() => {
+                match poll_session_request(&state, &route_args, generation.as_deref()).await {
+                    Some(request) if !request.is_null() => {
+                        if socket.send(Message::Text(request.to_string().into())).await.is_err() { break; }
+                    }
+                    Some(_) => {}
+                    None => break,
                 }
             }
             () = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
@@ -226,21 +291,155 @@ async fn session_socket(state: AppState, registration: Value, mut socket: WebSoc
                             json!({"type":"error","message":error.to_string()}).to_string().into(),
                         )).await;
                         let _ = socket.send(Message::Close(None)).await;
-                        return;
+                        break 'session;
                     }
                 };
-                let Ok(group_id)=required_session_field(&active,"group_id") else {return};
+                let Ok(group_id)=required_session_field(&active,"group_id") else {break 'session};
                 let Ok(store)=GroupStore::new(state.home.clone()) else {continue};
                 let Ok(path)=store.ledger_path(group_id) else {continue};
                 let Ok(events)=ledger::tail(&path,50) else {continue};
                 for event in events {
                     if !seen.insert(event.id.clone()) {continue;}
                     let message=json!({"type":"event","event":event}).to_string();
-                    if socket.send(Message::Text(message.into())).await.is_err(){return;}
+                    if socket.send(Message::Text(message.into())).await.is_err(){break 'session;}
                 }
             }
         }
     }
+    if let Some(generation) = generation {
+        let mut close = route_args;
+        close["generation"] = json!(generation);
+        let _ = daemon_value(&state, "group_bridge_session_close", &close).await;
+    }
+}
+
+async fn poll_session_request(
+    state: &AppState,
+    route: &Value,
+    generation: Option<&str>,
+) -> Option<Value> {
+    let Some(generation) = generation else {
+        return std::future::pending().await;
+    };
+    let mut args = route.clone();
+    args["generation"] = json!(generation);
+    args["timeout_ms"] = json!(1);
+    daemon_value(state, "group_bridge_session_poll", &args)
+        .await
+        .map(|value| value["request"].clone())
+}
+
+async fn daemon_value(state: &AppState, op: &str, args: &Value) -> Option<Value> {
+    let response = state
+        .client
+        .call(&DaemonRequest {
+            v: 1,
+            op: op.into(),
+            args: args.as_object().cloned().unwrap_or_default(),
+        })
+        .await
+        .ok()?;
+    response.ok.then_some(Value::Object(response.result))
+}
+
+fn authorize_signed_hello(state: &AppState, hello: &Value) -> Option<Value> {
+    let target_group_id = hello["target_group_id"].as_str()?.trim();
+    let src_group_id = hello["src_group_id"].as_str()?.trim();
+    let remote_peer_id = hello["remote_peer_id"].as_str()?.trim();
+    if !verify_session_hello(hello, remote_peer_id) {
+        return None;
+    }
+    let bridge = BridgeStore::new(&state.home).load().ok()?;
+    let trust = items(&bridge, "trusts").iter().find(|item| {
+        item["status"] == "active"
+            && item["group_id"] == target_group_id
+            && item["remote_group_id"] == src_group_id
+            && item["remote_peer_id"] == remote_peer_id
+    })?;
+    items(&bridge, "registrations")
+        .iter()
+        .find(|registration| {
+            registration["status"] == "active"
+                && registration["registration_id"] == trust["registration_id"]
+                && registration["group_id"] == target_group_id
+                && registration["remote_group_id"] == src_group_id
+                && registration["remote_peer_id"] == remote_peer_id
+        })
+        .cloned()
+}
+
+fn verify_session_hello(hello: &Value, expected_peer_id: &str) -> bool {
+    let Some(public_b64) = hello["public_key"].as_str() else {
+        return false;
+    };
+    let Some(signature_b64) = hello["signature"].as_str() else {
+        return false;
+    };
+    let Ok(public_bytes) = base64::engine::general_purpose::STANDARD.decode(public_b64) else {
+        return false;
+    };
+    let Ok(public): Result<[u8; 32], _> = public_bytes.try_into() else {
+        return false;
+    };
+    let Ok(signature_bytes) = base64::engine::general_purpose::STANDARD.decode(signature_b64)
+    else {
+        return false;
+    };
+    let Ok(signature_bytes): Result<[u8; 64], _> = signature_bytes.try_into() else {
+        return false;
+    };
+    if peer_id(&public) != expected_peer_id {
+        return false;
+    }
+    let material = json!({
+        "protocol":"/cccc/group_bridge/session-ws/1.0.0",
+        "remote_peer_id":expected_peer_id,
+        "src_group_id":hello["src_group_id"],
+        "target_group_id":hello["target_group_id"]
+    })
+    .to_string();
+    VerifyingKey::from_bytes(&public).is_ok_and(|key| {
+        key.verify(
+            material.as_bytes(),
+            &Signature::from_bytes(&signature_bytes),
+        )
+        .is_ok()
+    })
+}
+
+fn peer_id(public: &[u8; 32]) -> String {
+    let mut protobuf = vec![0x08, 0x01, 0x12, 32];
+    protobuf.extend_from_slice(public);
+    let mut multihash = vec![0x00, protobuf.len() as u8];
+    multihash.extend(protobuf);
+    base58(&multihash)
+}
+
+fn base58(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+    let zeroes = bytes.iter().take_while(|byte| **byte == 0).count();
+    let mut digits = vec![0u8];
+    for byte in bytes {
+        let mut carry = *byte as u32;
+        for digit in &mut digits {
+            let value = (*digit as u32) * 256 + carry;
+            *digit = (value % 58) as u8;
+            carry = value / 58;
+        }
+        while carry > 0 {
+            digits.push((carry % 58) as u8);
+            carry /= 58;
+        }
+    }
+    let mut output = String::new();
+    output.extend(std::iter::repeat_n('1', zeroes));
+    output.extend(
+        digits
+            .iter()
+            .rev()
+            .map(|digit| ALPHABET[*digit as usize] as char),
+    );
+    output
 }
 
 async fn receive_delivery(

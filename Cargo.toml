@@ -39,6 +39,7 @@ chromiumoxide = "0.8"
 clap = { version = "4.5", features = ["derive"] }
 cron = "0.15"
 directories = "6.0"
+ed25519-dalek = "2.2"
 dingtalk-stream = "0.1.7"
 teloxide = { version = "0.17", default-features = false, features = ["rustls"] }
 serenity = { version = "0.12.5", default-features = false, features = ["client", "gateway", "model", "http", "rustls_backend"] }

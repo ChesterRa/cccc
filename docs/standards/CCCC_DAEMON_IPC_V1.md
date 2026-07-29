@@ -3254,10 +3254,19 @@ Args:
 { group_id: string; actor_id: string; by?: string; max_chars?: number; strip_ansi?: boolean; compact?: boolean }
 ```
 
+`max_chars` limits the final returned Unicode text. Implementations MUST render the complete
+retained PTY backlog before applying this limit; truncating the raw ANSI/VT byte stream first can
+start replay inside an escape sequence or incremental screen update and produce corrupt snapshots.
+
 Result:
 ```ts
-{ group_id: string; actor_id: string; warning: string; hint: string; text: string }
+{ group_id: string; actor_id: string; warning: string; hint: string; text: string; end_cursor: number }
 ```
+
+`end_cursor` is the exclusive raw PTY byte cursor captured with the backlog used to produce
+`text`. A terminal client MAY display the rendered snapshot and then attach its live stream with
+`since=end_cursor`; the stream must replay output produced after the snapshot so the transition is
+gap-free.
 
 #### `terminal_history`
 
@@ -3280,6 +3289,32 @@ Result:
   cursor_expired: boolean
 }
 ```
+
+#### `terminal_since`
+
+Args:
+```ts
+{ group_id: string; actor_id: string; by?: string; after: number; limit_bytes?: number }
+```
+
+Result:
+```ts
+{
+  history: {
+    data: string
+    start_cursor: number
+    end_cursor: number
+    has_more: boolean
+    cursor_expired: boolean
+  }
+}
+```
+
+The cursors count raw PTY bytes. Because `data` is transported as UTF-8 JSON text, an
+implementation MUST NOT advance `end_cursor` through an incomplete UTF-8 code point. It MAY return
+up to three bytes beyond `limit_bytes` to finish a code point. If the retained stream currently ends
+inside a code point, it returns the complete prefix and leaves the incomplete suffix for a later
+call.
 
 #### `terminal_clear`
 
@@ -3687,6 +3722,29 @@ The daemon accepts the Python-compatible Group Bridge operations:
 
 Implementations MUST persist delivery receipts and MUST NOT create duplicate
 events when the same registration and idempotency key are retried.
+
+The Rust WebSocket owner and MCP bridge share live reverse-session state through
+these daemon-internal operations:
+
+- `group_bridge_session_open`: register a live route identified by `group_id`,
+  `remote_group_id`, and `remote_peer_id`; returns a new opaque `generation`.
+- `group_bridge_session_close`: remove the route only when its `generation`
+  still matches. A stale socket MUST NOT close a replacement session.
+- `group_bridge_session_ready`: report whether that exact route currently has a
+  live session lease.
+- `group_bridge_session_poll`: let the owning WebSocket take the next queued
+  server-to-peer request for its generation.
+- `group_bridge_session_complete`: resolve a request using `response_to` and a
+  peer-provided `result`.
+- `group_bridge_session_deliver`: enqueue a `remote_send` request and await its
+  response for at most `timeout_ms`.
+
+These operations are runtime-only and MUST NOT treat persisted trust status as
+proof of reachability. Opening a replacement generation, closing the active
+generation, and completing a response MUST wake pending callers immediately.
+Delivery failures use `peer_session_unavailable` when no live lease exists or
+disconnects, `peer_session_timeout` when the peer does not answer in time, and
+`peer_session_failed` when a session is replaced or returns an invalid result.
 
 ### 8.18 Group Space (Provider-Backed Shared Memory, dual-lane NotebookLM)
 

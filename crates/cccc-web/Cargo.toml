@@ -23,6 +23,7 @@ chromiumoxide.workspace = true
 chrono.workspace = true
 cbc.workspace = true
 dingtalk-stream.workspace = true
+ed25519-dalek.workspace = true
 futures-util.workspace = true
 flate2.workspace = true
 fs2.workspace = true

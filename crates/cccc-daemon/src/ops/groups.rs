@@ -79,6 +79,7 @@ fn resolve_remote(home: &HomeLayout, request: &DaemonRequest, token: &str, raw: 
         .find(|item| {
             item["status"] == "active"
                 && item["group_id"] == group_id
+                && super::group_bridge::route_ready(home, item)
                 && [item["remote_group_id"].as_str(), item["remote_group_title"].as_str()]
                     .into_iter()
                     .flatten()
