@@ -93,6 +93,14 @@ export function GroupBridgeConnectionsSection({
     });
   }, [groupId, isActive, refreshPairing]);
 
+  useEffect(() => {
+    if (isActive === false || !groupId) return;
+    const timer = window.setInterval(() => {
+      void refreshPairing();
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [groupId, isActive, refreshPairing]);
+
   return (
     <GroupBridgePairingSection
       isDark={isDark}

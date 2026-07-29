@@ -1132,9 +1132,17 @@ mod tests {
             "remote_access_level":"messages"
         });
 
-        let error = deliver(&home, &args, &trust, "retry-key", "source-event", "")
-            .await
-            .expect_err("delivery error must propagate");
+        let error = deliver(
+            &home,
+            &DaemonClient::new(home.clone()),
+            &args,
+            &trust,
+            "retry-key",
+            "source-event",
+            "",
+        )
+        .await
+        .expect_err("delivery error must propagate");
         assert_eq!(
             error,
             "peer_session_unavailable: no active Group Bridge delivery route"

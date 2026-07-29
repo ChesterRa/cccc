@@ -383,9 +383,10 @@ async fn remote_submit(
         return Err(ApiError::bad("connection payload is incomplete"));
     }
     let identity = BridgeStore::new(&state.home).identity().map_err(io_error)?;
+    let requester_endpoint = requester_endpoint(&state.home);
     let request_body = json!({
         "pairing_code":code,"invite_id":invite_id,"requester_group_id":local_group_id,
-        "requester_group_title":body["local_group_title"],"requester_endpoint":"",
+        "requester_group_title":body["local_group_title"],"requester_endpoint":requester_endpoint,
         "requester_peer_id":identity["peer_id"],"requester_node_id":identity["node_id"],"requester_multiaddrs":[]
     });
     let (remote_response, error) = post_remote(
@@ -684,6 +685,27 @@ fn normalize_endpoint(raw: &str) -> Result<String, ApiError> {
     ))
 }
 
+fn requester_endpoint(home: &cccc_core::HomeLayout) -> String {
+    cccc_core::settings::load(home)
+        .ok()
+        .and_then(|settings| {
+            settings
+                .remote_access
+                .get("web_public_url")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
+        .or_else(|| {
+            std::env::var("CCCC_WEB_PUBLIC_URL")
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_default()
+}
+
 async fn post_remote(endpoint: &str, path: &str, body: &Value) -> (Value, String) {
     let client = match reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -767,5 +789,18 @@ mod tests {
             assert!(public["remote_request"]["remote_send_token"].is_null());
             assert!(public["remote_request"]["request"]["remote_send_token"].is_null());
         }
+    }
+
+    #[test]
+    fn requester_advertises_configured_public_web_endpoint() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        std::fs::write(
+            home.root().join("settings.yaml"),
+            "remote_access:\n  web_public_url: https://requester.example\n",
+        )
+        .expect("settings");
+        assert_eq!(requester_endpoint(&home), "https://requester.example");
     }
 }

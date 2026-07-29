@@ -310,6 +310,58 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
 }
 
 #[tokio::test]
+async fn signed_python_style_websocket_is_authorized_without_bearer_token() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("local")).expect("home");
+    let remote_home = HomeLayout::from_path(temp.path().join("remote")).expect("remote home");
+    let group = GroupStore::new(home.clone())
+        .expect("store")
+        .create("receiver", "")
+        .expect("group");
+    let remote_identity =
+        cccc_core::group_bridge_identity::GroupBridgeIdentity::load_or_create(&remote_home)
+            .expect("remote identity");
+    integration_state::global_update(&home, "group_bridge", |value| {
+        *value = json!({"trusts":[{
+            "trust_id":"trust_signed","registration_id":"registration_signed",
+            "transport":"group_bridge_session","group_id":group.group_id.clone(),
+            "remote_group_id":"g_sender","remote_peer_id":remote_identity.peer_id.clone(),
+            "status":"active","access_level":"messages"
+        }]});
+        Ok(())
+    })
+    .expect("bridge state");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(home)).await });
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async(format!("ws://{address}/api/group-bridge/session/ws"))
+            .await
+            .expect("connect");
+    socket
+        .send(WsMessage::Text(
+            remote_identity
+                .sign_session_hello(&group.group_id, "g_sender")
+                .expect("hello")
+                .to_string()
+                .into(),
+        ))
+        .await
+        .expect("send hello");
+    let ready = next_socket_json(&mut socket).await;
+    assert_eq!(ready["ok"], true);
+    assert_eq!(ready["type"], "ready");
+    socket
+        .send(WsMessage::Text(json!({"type":"ping"}).to_string().into()))
+        .await
+        .expect("ping");
+    assert_eq!(next_socket_json(&mut socket).await["type"], "pong");
+    server.abort();
+}
+
+#[tokio::test]
 async fn cross_group_send_falls_back_to_remote_mcp_for_python_peers() {
     let remote = Router::new()
         .route(

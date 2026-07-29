@@ -57,6 +57,10 @@ Group Bridge compatibility includes daemon-level `remote_send`,
 addition to the Web and MCP routes. Remote delivery requires an explicit
 recipient, validates the active registration or trust route, records idempotent
 receipts, and falls back to the remote Group Bridge MCP endpoint when needed.
+The Rust daemon also owns Python-compatible signed outbound WebSocket sessions:
+it scans active trusts, maintains heartbeats, reconnects with bounded
+exponential backoff, projects connection health onto each trust, and prefers
+the live route for message delivery before HTTP/MCP fallback.
 
 The Rust NotebookLM adapter owns notebook sources, Studio artifact
 create/list/download operations, and incremental work/memory synchronization.

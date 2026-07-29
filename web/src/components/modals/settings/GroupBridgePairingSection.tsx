@@ -370,6 +370,9 @@ export function GroupBridgePairingSection({
             const currentAccessLevel = normalizeGroupBridgeAccessLevel(trust.access_level);
             const remoteAccessLevel = normalizeGroupBridgeAccessLevel(trust.remote_access_level);
             const remoteAccessKnown = String(trust.remote_access_level || "").trim().length > 0;
+            const sessionHealthKnown =
+              typeof trust.session_connected === "boolean" ||
+              Boolean(String(trust.session_last_error || "").trim());
             const refreshError = remoteRefreshErrors[trust.trust_id] || "";
             const remoteRefreshBusy = remoteRefreshBusyTrustId === trust.trust_id;
             return (
@@ -387,12 +390,30 @@ export function GroupBridgePairingSection({
                         {t("group_bridge.trustedBadge")}
                       </span>
                       <span>{t("group_bridge.status", { status: trust.status })}</span>
+                      {sessionHealthKnown && (
+                        <span
+                          className={
+                            trust.session_connected
+                              ? "rounded-full bg-emerald-100 px-2 py-0.5 font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-200"
+                              : "rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-200"
+                          }
+                        >
+                          {trust.session_connected
+                            ? t("group_bridge.sessionConnected")
+                            : t("group_bridge.sessionReconnecting")}
+                        </span>
+                      )}
                       {remoteGroupId && (
                         <code className="max-w-[18rem] truncate rounded-md bg-[var(--glass-panel-bg)] px-1.5 py-0.5 font-mono text-[10px] text-[var(--color-text-primary)]">
                           {remoteGroupId}
                         </code>
                       )}
                     </div>
+                    {trust.session_last_error && !trust.session_connected && (
+                      <p className="mt-2 max-w-xl break-words text-xs text-amber-700 dark:text-amber-300">
+                        {trust.session_last_error}
+                      </p>
+                    )}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2">
                     {remoteGroupId && (

@@ -1613,6 +1613,8 @@
     "deleteSentRequestFailed": "送信済みリクエストの削除に失敗しました",
     "pendingBadge": "保留中",
     "trustedBadge": "信頼済み",
+    "sessionConnected": "ライブ接続",
+    "sessionReconnecting": "再接続中",
     "status": "ステータス: {{status}}",
     "unknownPeer": "不明な peer",
     "noneYet": "まだありません。",

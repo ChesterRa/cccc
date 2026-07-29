@@ -51,6 +51,11 @@ pub fn write_yaml<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     atomic_write(path, text.as_bytes())
 }
 
+pub fn write_secret_yaml<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+    write_yaml(path, value)?;
+    protect(path)
+}
+
 pub fn read_yaml<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
     serde_yaml::from_reader(File::open(path)?).map_err(io::Error::other)
 }

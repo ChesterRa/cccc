@@ -161,7 +161,25 @@ fn remote_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "last_attempt_at":utc_now(),"error":null
         }),
     )?;
-    let remote = match post_delivery(&endpoint, &credential, &idempotency_key, &body) {
+    let session_request = json!({
+        "op":"remote_send",
+        "src_group_id":group_id,
+        "target_group_id":remote_group_id,
+        "remote_peer_id":route["remote_peer_id"],
+        "idempotency_key":idempotency_key,
+        "payload":body.clone()
+    });
+    let session_remote = crate::group_bridge_sessions::send(
+        &group_id,
+        &remote_group_id,
+        route["remote_peer_id"].as_str().unwrap_or(""),
+        session_request,
+    )
+    .filter(delivery_succeeded);
+    let remote_result = session_remote
+        .map(Ok)
+        .unwrap_or_else(|| post_delivery(&endpoint, &credential, &idempotency_key, &body));
+    let remote = match remote_result {
         Ok(remote) => remote,
         Err(error) => {
             let terminal = attempt >= 5;
@@ -236,6 +254,7 @@ fn receive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let state = bridge_state(home)?;
     let registration = items(&state, "registrations")
         .iter()
+        .chain(items(&state, "trusts").iter())
         .find(|item| {
             item["status"] == "active"
                 && item["group_id"] == target_group_id
@@ -377,4 +396,11 @@ fn post_delivery(
             format!("session={value}; mcp={fallback_value}"),
         ))
     }
+}
+
+fn delivery_succeeded(value: &Value) -> bool {
+    value.get("error").is_none()
+        && value.get("detail").is_none()
+        && value.get("ok").and_then(Value::as_bool) != Some(false)
+        && value["result"]["isError"] != true
 }

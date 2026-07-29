@@ -1613,6 +1613,8 @@
     "deleteSentRequestFailed": "Failed to remove sent request",
     "pendingBadge": "pending",
     "trustedBadge": "trusted",
+    "sessionConnected": "live connection",
+    "sessionReconnecting": "reconnecting",
     "status": "status: {{status}}",
     "unknownPeer": "Unknown peer",
     "noneYet": "None yet.",

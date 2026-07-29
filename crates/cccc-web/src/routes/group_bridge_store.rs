@@ -1,6 +1,7 @@
 use cccc_core::HomeLayout;
 use cccc_core::integration_state;
 use serde_json::{Map, Value, json};
+use sha2::Digest;
 use std::io;
 use uuid::Uuid;
 
@@ -38,13 +39,16 @@ impl<'a> BridgeStore<'a> {
     }
 
     pub fn identity(&self) -> io::Result<Value> {
+        let signing =
+            cccc_core::group_bridge_identity::GroupBridgeIdentity::load_or_create(self.home)?;
+        let digest = format!("{:x}", sha2::Sha256::digest(signing.peer_id.as_bytes()));
+        let node_id = format!("node_{}", &digest[..24]);
         self.update(|state| {
-            let identity = state.entry("identity").or_insert_with(|| {
-                json!({
-                    "node_id":format!("node_{}", short_id()),
-                    "peer_id":format!("peer_{}", Uuid::new_v4().simple())
-                })
+            let identity = json!({
+                "node_id":node_id,
+                "peer_id":signing.peer_id
             });
+            state.insert("identity".into(), identity.clone());
             Ok(identity.clone())
         })
     }

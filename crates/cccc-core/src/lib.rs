@@ -15,6 +15,7 @@ pub mod codex_hook_state;
 pub mod context;
 pub mod fs;
 pub mod group;
+pub mod group_bridge_identity;
 pub mod group_bridge_legacy;
 pub mod group_copy;
 pub mod group_prompts;

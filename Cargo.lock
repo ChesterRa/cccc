@@ -215,6 +215,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4342d8937fc7e5dd9b1c60292261c0670c882a2cd1719cfc11b1af41731e32ad"
 dependencies = [
  "aws-lc-sys",
+ "untrusted 0.7.1",
  "zeroize",
 ]
 
@@ -470,6 +471,8 @@ dependencies = [
 name = "cccc-core"
 version = "0.4.33"
 dependencies = [
+ "aws-lc-rs",
+ "base64",
  "cccc-contracts",
  "chrono",
  "chrono-tz",
@@ -503,6 +506,7 @@ dependencies = [
  "chrono",
  "clap",
  "fs2",
+ "futures-util",
  "nix",
  "regex",
  "reqwest 0.12.28",
@@ -513,6 +517,7 @@ dependencies = [
  "shell-words",
  "tempfile",
  "tokio",
+ "tokio-tungstenite 0.29.0",
  "tracing",
  "tracing-subscriber",
  "unicode-width",
@@ -2839,7 +2844,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.2.17",
  "libc",
- "untrusted",
+ "untrusted 0.9.0",
  "windows-sys 0.52.0",
 ]
 
@@ -2994,7 +2999,7 @@ checksum = "64ca1bc8749bd4cf37b5ce386cc146580777b4e8572c7b97baf22c83f444bee9"
 dependencies = [
  "ring",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -3006,7 +3011,7 @@ dependencies = [
  "aws-lc-rs",
  "ring",
  "rustls-pki-types",
- "untrusted",
+ "untrusted 0.9.0",
 ]
 
 [[package]]
@@ -4125,6 +4130,12 @@ name = "unsafe-libyaml"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+
+[[package]]
+name = "untrusted"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a156c684c91ea7d62626509bce3cb4e1d9ed5c4d978f7b4352658f96a4c26b4a"
 
 [[package]]
 name = "untrusted"

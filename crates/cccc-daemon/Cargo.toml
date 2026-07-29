@@ -17,6 +17,7 @@ cccc-runtime = { path = "../cccc-runtime" }
 chrono.workspace = true
 clap.workspace = true
 fs2.workspace = true
+futures-util.workspace = true
 nix.workspace = true
 regex.workspace = true
 reqwest.workspace = true
@@ -26,6 +27,7 @@ serde_yaml.workspace = true
 sha2.workspace = true
 shell-words.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 unicode-width.workspace = true

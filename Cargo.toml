@@ -28,6 +28,7 @@ anyhow = "1.0"
 aes = "0.8"
 async-stream = "0.3"
 async-trait = "0.1"
+aws-lc-rs = "1.17"
 axum = { version = "0.8", features = ["form", "json", "multipart", "ws"] }
 base64 = "0.22"
 bzip2 = "0.6"

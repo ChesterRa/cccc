@@ -171,6 +171,10 @@ fn public_target(trust: &Value) -> Value {
         "registration_id":trust["registration_id"],
         "endpoint":trust["remote_endpoint"],
         "status":trust["status"],
+        "session_connected":trust["session_connected"].as_bool().unwrap_or(false),
+        "session_connected_at":trust["session_connected_at"],
+        "session_last_error":trust["session_last_error"],
+        "session_last_error_at":trust["session_last_error_at"],
         "remote_access_level":access,
         "permissions":{
             "messages":true,
@@ -227,7 +231,9 @@ mod tests {
             *value = json!({"trusts":[{
                 "trust_id":"trust_1","group_id":"g_local","remote_group_id":"g_remote",
                 "remote_endpoint":"https://remote.example","credential":"secret",
-                "remote_access_level":"read","status":"active"
+                "remote_access_level":"read","status":"active",
+                "session_connected":true,"session_connected_at":"2026-07-29T00:00:00Z",
+                "session_last_error":"","session_last_error_at":null
             }]});
             Ok(())
         })
@@ -244,6 +250,10 @@ mod tests {
         .expect("access");
         assert_eq!(
             result["structuredContent"]["targets"][0]["permissions"]["read"],
+            true
+        );
+        assert_eq!(
+            result["structuredContent"]["targets"][0]["session_connected"],
             true
         );
         assert!(!result.to_string().contains("secret"));

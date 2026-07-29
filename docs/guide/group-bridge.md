@@ -75,7 +75,9 @@ After the first bridge setup, restart already-running actor runtimes once if you
 
 The Rust service reads the legacy `group_bridge_identity.yaml`, `group_bridge_pairing.yaml`, `group_bridge_registrations.yaml`, and `group_bridge_credentials.yaml` files from the same CCCC home. Imports are idempotent and leave the legacy files unchanged, so switching branches does not require deleting or recreating bridge data. Existing peer identity is retained when legacy identity data is present.
 
-Pairing and message delivery also support mixed Python/Rust peers. Rust accepts both pairing response shapes used by the two implementations and falls back to the authorized remote MCP message route when an older Python peer does not accept cross-machine session HTTP delivery.
+Pairing and message delivery also support mixed Python/Rust peers. Rust accepts both pairing response shapes used by the two implementations and shares Python's Ed25519 signing identity file. The Rust daemon scans active session trusts, opens the same signed WebSocket used by Python, keeps it alive with heartbeats, and reconnects with bounded exponential backoff. Message delivery prefers this live route and falls back to authenticated HTTP and then the authorized remote MCP route.
+
+An active pairing is authorization, not proof of reachability. A healthy Rust trust reports `session_connected=true`; `session_connected_at`, `session_last_error`, and `session_last_error_at` provide connection diagnostics. The remote endpoint must still be a non-empty HTTP(S) address reachable from the dialing peer.
 
 ## Sending Messages
 
@@ -149,6 +151,7 @@ Runtime state, credentials, and browser sessions remain local to each CCCC insta
 | Pairing request cannot be submitted | The requester must paste the full JSON pairing invitation, and the issuer endpoint must be reachable from the requester. |
 | Pairing code is invalid or expired | Generate a fresh pairing invitation from the issuer group. Raw codes are mainly for same-instance diagnostics. |
 | Outbound remains `submitted` after approval | Refresh or sync the outbound record. Do not delete legacy YAML files; current Rust builds normalize older pairing responses and retain the existing request. |
+| Pairing is active but `session_connected=false` | Verify that `remote_endpoint` is non-empty and reachable. Inspect `session_last_error`; the daemon retries automatically with exponential backoff. |
 | Remote group does not appear in recipients | Refresh **Settings > Group Bridge**, confirm the trust is active, then refresh the Web UI group list. |
 | Agents cannot see remote read/full tools | Restart already-running actor runtimes after setup and check the capability allowlist. |
 | `bridge_remote_mcp_unavailable` | The bridge exists for messages, but the HTTP(S) remote MCP endpoint or token is not available. Refresh the bridge state and verify the remote endpoint. |

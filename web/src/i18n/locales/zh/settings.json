@@ -1608,6 +1608,8 @@
     "deleteSentRequestFailed": "移除已发送请求失败",
     "pendingBadge": "待处理",
     "trustedBadge": "可信",
+    "sessionConnected": "实时连接正常",
+    "sessionReconnecting": "正在重连",
     "status": "状态：{{status}}",
     "unknownPeer": "未知 peer",
     "noneYet": "暂无。",

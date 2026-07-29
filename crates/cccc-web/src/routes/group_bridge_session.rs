@@ -214,9 +214,6 @@ async fn session_socket(
     let generation = daemon_value(&state, "group_bridge_session_open", &route_args)
         .await
         .and_then(|opened| opened["generation"].as_str().map(str::to_owned));
-    if generation.is_none() && !legacy {
-        return;
-    }
     if !legacy
         && socket
             .send(Message::Text(
@@ -242,7 +239,7 @@ async fn session_socket(
                     Some(Ok(Message::Text(text))) => {
                         let (response, close) = match serde_json::from_str::<Value>(&text) {
                             Ok(value) if value["type"] == "send" => {
-                                match reauthorize(&state, &registration).map(|active| {
+                                match reauthorize_session(&state, &registration, legacy).map(|active| {
                                     (active, value.get("payload").cloned().unwrap_or_else(||json!({})))
                                 }) {
                                     Ok((active, payload)) => (match receive_delivery(&state,&active,payload).await {
@@ -284,7 +281,7 @@ async fn session_socket(
                 }
             }
             () = tokio::time::sleep(std::time::Duration::from_millis(500)) => {
-                let active = match reauthorize(&state, &registration) {
+                let active = match reauthorize_session(&state, &registration, legacy) {
                     Ok(active) => active,
                     Err(error) => {
                         let _ = socket.send(Message::Text(
@@ -356,16 +353,19 @@ fn authorize_signed_hello(state: &AppState, hello: &Value) -> Option<Value> {
             && item["remote_group_id"] == src_group_id
             && item["remote_peer_id"] == remote_peer_id
     })?;
-    items(&bridge, "registrations")
-        .iter()
-        .find(|registration| {
-            registration["status"] == "active"
-                && registration["registration_id"] == trust["registration_id"]
-                && registration["group_id"] == target_group_id
-                && registration["remote_group_id"] == src_group_id
-                && registration["remote_peer_id"] == remote_peer_id
-        })
-        .cloned()
+    Some(
+        items(&bridge, "registrations")
+            .iter()
+            .find(|registration| {
+                registration["status"] == "active"
+                    && registration["registration_id"] == trust["registration_id"]
+                    && registration["group_id"] == target_group_id
+                    && registration["remote_group_id"] == src_group_id
+                    && registration["remote_peer_id"] == remote_peer_id
+            })
+            .cloned()
+            .unwrap_or_else(|| trust.clone()),
+    )
 }
 
 fn verify_session_hello(hello: &Value, expected_peer_id: &str) -> bool {
@@ -838,6 +838,33 @@ fn reauthorize(state: &AppState, registration: &Value) -> Result<Value, ApiError
         .iter()
         .find(|item| item["status"] == "active" && same_registration_snapshot(item, registration))
         .filter(|item| valid_registration(&bridge, item))
+        .cloned()
+        .ok_or_else(|| ApiError::forbidden("group bridge session is no longer authorized"))
+}
+
+fn reauthorize_session(
+    state: &AppState,
+    registration: &Value,
+    legacy: bool,
+) -> Result<Value, ApiError> {
+    if legacy {
+        return reauthorize(state, registration);
+    }
+    let bridge = BridgeStore::new(&state.home).load().map_err(io_error)?;
+    items(&bridge, "trusts")
+        .iter()
+        .find(|trust| {
+            trust["status"] == "active"
+                && trust["transport"] == "group_bridge_session"
+                && [
+                    "registration_id",
+                    "group_id",
+                    "remote_group_id",
+                    "remote_peer_id",
+                ]
+                .into_iter()
+                .all(|field| trust[field] == registration[field])
+        })
         .cloned()
         .ok_or_else(|| ApiError::forbidden("group bridge session is no longer authorized"))
 }

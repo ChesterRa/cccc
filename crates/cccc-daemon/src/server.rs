@@ -32,12 +32,15 @@ pub async fn run(home: HomeLayout) -> Result<()> {
         .map_err(|error| anyhow::anyhow!(error.message))?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let dispatch_locks = DispatchLocks::default();
+    let group_bridge_sessions =
+        crate::group_bridge_sessions::SessionManager::start(lifecycle.paths.home.clone());
 
     let result = if use_tcp() {
         serve_tcp(&lifecycle.paths, shutdown_tx, shutdown_rx, dispatch_locks).await
     } else {
         serve_platform_default(&lifecycle.paths, shutdown_tx, shutdown_rx, dispatch_locks).await
     };
+    group_bridge_sessions.shutdown().await;
     lifecycle.finish(result)
 }
 
