@@ -155,10 +155,8 @@ export function useAgentTerminalConnection(args: {
     let disposable: { dispose: () => void } | null = null;
     let resizeDisposable: { dispose: () => void } | null = null;
     // Absolute offset (in raw PTY bytes) of everything delivered so far this
-    // mount. null until the first attach. The first attach replays the full
-    // backlog (current screen); transient reconnects resume from this exact
-    // cursor so output produced while disconnected is delivered, not skipped,
-    // and the whole ring isn't re-streamed/re-cleared on every blip.
+    // mount. The first attach replays the retained ANSI stream in bounded
+    // chunks; reconnects then resume from this cursor.
     let deliveredCursor: number | null = null;
 
     // Seed the delivered-byte cursor from the daemon's attach frame. If the daemon
@@ -171,7 +169,7 @@ export function useAgentTerminalConnection(args: {
     ): number | null => {
       const rc = Number(result?.replay_cursor);
       if (!Number.isFinite(rc)) return current;
-      if (current !== null && rc > current) {
+      if (current !== null && rc !== current) {
         try {
           terminalRef.current?.reset();
         } catch {
@@ -181,7 +179,7 @@ export function useAgentTerminalConnection(args: {
       return rc;
     };
 
-    const connect = () => {
+    const connect = async () => {
       if (disposed) return;
       const existingWs = wsRef.current;
       if (
@@ -209,12 +207,8 @@ export function useAgentTerminalConnection(args: {
 
       const openWebSocket = (isFirstAttach: boolean) => {
         if (disposed) return;
-        // First attach (since=null): full backlog replay so xterm — a real
-        // terminal emulator — reconstructs the current screen (wide chars, SGR,
-        // alt-screen). We let xterm own all emulation instead of pre-rendering a
-        // lossy snapshot. Reconnect (since=deliveredCursor): the daemon sends
-        // exactly the bytes produced since we left off, so nothing is skipped and
-        // the whole ring isn't re-streamed.
+        // The first attach rebuilds xterm from the retained raw ANSI stream.
+        // Later attaches request only bytes produced after the tracked cursor.
         const wsUrl = buildTerminalWebSocketUrl({
           protocol: window.location.protocol,
           host: window.location.host,
@@ -250,14 +244,6 @@ export function useAgentTerminalConnection(args: {
               // ignore
             }
           }
-
-          if (terminalReadyTimeoutRef.current) {
-            clearTimeout(terminalReadyTimeoutRef.current);
-          }
-          setTerminalReady(false);
-          terminalReadyTimeoutRef.current = setTimeout(() => {
-            if (!disposed) setTerminalReady(true);
-          }, TERMINAL_SHOW_DELAY_MS);
 
           void fetchTerminalTail(groupId, actorId, 4000, true, true)
             .then((resp) => {
@@ -323,6 +309,22 @@ export function useAgentTerminalConnection(args: {
           }
         };
 
+        const handleAttachResult = (result: Record<string, unknown>) => {
+          deliveredCursor = seedCursorFromAttach(result, deliveredCursor);
+          const writable = Boolean(result.terminal_writable);
+          setTerminalWritable(writable);
+          if (canControlRef.current && !writable) {
+            handleDecoded("\r\n[terminal] read-only connection; reconnect to take control.\r\n");
+          }
+          if (terminalReadyTimeoutRef.current) {
+            clearTimeout(terminalReadyTimeoutRef.current);
+          }
+          setTerminalReady(false);
+          terminalReadyTimeoutRef.current = setTimeout(() => {
+            if (!disposed) setTerminalReady(true);
+          }, TERMINAL_SHOW_DELAY_MS);
+        };
+
         ws.onmessage = (event) => {
           if (disposed) return;
 
@@ -343,14 +345,7 @@ export function useAgentTerminalConnection(args: {
             }
             if (frame.type === "attach") {
               const result = decodeTerminalJsonFrame<Record<string, unknown>>(frame.payload) || {};
-              deliveredCursor = seedCursorFromAttach(result, deliveredCursor);
-              const writable = Boolean(result.terminal_writable);
-              setTerminalWritable(writable);
-              if (canControlRef.current && !writable) {
-                handleDecoded(
-                  "\r\n[terminal] read-only connection; reconnect to take control.\r\n",
-                );
-              }
+              handleAttachResult(result);
               return;
             }
             if (frame.type === "input_ack") {
@@ -373,14 +368,7 @@ export function useAgentTerminalConnection(args: {
               const msg = JSON.parse(event.data);
               if (msg.type === "terminal.attach" && msg.ok === true) {
                 const result = msg.result && typeof msg.result === "object" ? msg.result : {};
-                deliveredCursor = seedCursorFromAttach(result, deliveredCursor);
-                const writable = Boolean(result.terminal_writable);
-                setTerminalWritable(writable);
-                if (canControlRef.current && !writable) {
-                  handleDecoded(
-                    "\r\n[terminal] read-only connection; reconnect to take control.\r\n",
-                  );
-                }
+                handleAttachResult(result);
                 return;
               }
               if (msg.type === "terminal.input_ack" && msg.ok === false) {
@@ -438,7 +426,7 @@ export function useAgentTerminalConnection(args: {
               } else {
                 reconnectAttemptRef.current++;
               }
-              connect();
+              void connect();
             }, delay);
           } else {
             setConnectionStatus("disconnected");
@@ -473,15 +461,12 @@ export function useAgentTerminalConnection(args: {
       };
 
       // Fit once so the initial resize frame (sent on open) matches the visible
-      // size; xterm renders the replayed backlog correctly regardless, and the
-      // resize SIGWINCH prompts the runtime to repaint at the right dimensions.
+      // size and the resize SIGWINCH prompts the runtime to repaint correctly.
       fitBeforeAttach?.();
-      // First attach (no delivered cursor yet) replays the full backlog; later
-      // reconnects resume from the cursor we've tracked.
       openWebSocket(deliveredCursor === null);
     };
 
-    connect();
+    void connect();
 
     return () => {
       disposed = true;

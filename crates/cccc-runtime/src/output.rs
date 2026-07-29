@@ -67,12 +67,33 @@ impl OutputBuffer {
         }
     }
 
+    pub fn retained_page(&self) -> HistoryPage {
+        let bytes = self.bytes_between(self.start, self.end);
+        let complete_len = complete_utf8_prefix_len(&bytes);
+        let page_end = self.start.saturating_add(complete_len as u64);
+        HistoryPage {
+            data: cursor_preserving_text(&bytes[..complete_len]),
+            start_cursor: self.start,
+            end_cursor: page_end,
+            has_more: page_end < self.end,
+            cursor_expired: false,
+        }
+    }
+
     pub fn page_since(&self, after: u64, limit: usize) -> HistoryPage {
         let page_start = after.clamp(self.start, self.end);
-        let page_end = page_start.saturating_add(limit.max(1) as u64).min(self.end);
-        let bytes = self.bytes_between(page_start, page_end);
+        let candidate_end = page_start.saturating_add(limit.max(1) as u64).min(self.end);
+        let lookahead_end = candidate_end.saturating_add(3).min(self.end);
+        let lookahead = self.bytes_between(page_start, lookahead_end);
+        let candidate_len = candidate_end.saturating_sub(page_start) as usize;
+        let mut requested_len = candidate_len;
+        while requested_len < lookahead.len() && is_utf8_continuation(lookahead[requested_len]) {
+            requested_len += 1;
+        }
+        let complete_len = complete_utf8_prefix_len(&lookahead[..requested_len]);
+        let page_end = page_start.saturating_add(complete_len as u64);
         HistoryPage {
-            data: cursor_preserving_text(&bytes),
+            data: cursor_preserving_text(&lookahead[..complete_len]),
             start_cursor: page_start,
             end_cursor: page_end,
             has_more: page_end < self.end,
@@ -125,6 +146,27 @@ impl OutputBuffer {
     }
 }
 
+const fn is_utf8_continuation(byte: u8) -> bool {
+    byte & 0b1100_0000 == 0b1000_0000
+}
+
+fn complete_utf8_prefix_len(bytes: &[u8]) -> usize {
+    let mut offset = 0;
+    while offset < bytes.len() {
+        match std::str::from_utf8(&bytes[offset..]) {
+            Ok(_) => return bytes.len(),
+            Err(error) => {
+                offset += error.valid_up_to();
+                match error.error_len() {
+                    Some(invalid) => offset += invalid,
+                    None => return offset,
+                }
+            }
+        }
+    }
+    offset
+}
+
 fn cursor_preserving_text(bytes: &[u8]) -> String {
     let mut output = String::with_capacity(bytes.len());
     let mut remaining = bytes;
@@ -159,6 +201,52 @@ mod tests {
         assert_eq!(page.data, "world");
         assert_eq!(page.start_cursor, 6);
         assert_eq!(page.end_cursor, 11);
+    }
+
+    #[test]
+    fn retained_page_returns_the_complete_buffer() {
+        let mut output = OutputBuffer::default();
+        output.push("prefix 你好".as_bytes());
+        output.push(b" suffix");
+
+        let page = output.retained_page();
+
+        assert_eq!(page.data, "prefix 你好 suffix");
+        assert_eq!(page.start_cursor, 0);
+        assert_eq!(page.end_cursor, "prefix 你好 suffix".len() as u64);
+        assert!(!page.has_more);
+        assert!(!page.cursor_expired);
+    }
+
+    #[test]
+    fn history_since_extends_a_page_to_the_next_utf8_boundary() {
+        let mut output = OutputBuffer::default();
+        output.push("ab你cd".as_bytes());
+
+        let page = output.page_since(0, 3);
+
+        assert_eq!(page.data, "ab你");
+        assert_eq!(page.start_cursor, 0);
+        assert_eq!(page.end_cursor, 5);
+        assert!(page.has_more);
+    }
+
+    #[test]
+    fn forward_pages_wait_for_an_incomplete_utf8_suffix() {
+        let mut output = OutputBuffer::default();
+        let encoded = "你".as_bytes();
+        output.push(&encoded[..2]);
+
+        let partial_snapshot = output.retained_page();
+        assert!(partial_snapshot.data.is_empty());
+        assert_eq!(partial_snapshot.end_cursor, 0);
+        assert!(partial_snapshot.has_more);
+
+        output.push(&encoded[2..]);
+        let completed = output.page_since(partial_snapshot.end_cursor, 64);
+        assert_eq!(completed.data, "你");
+        assert_eq!(completed.end_cursor, 3);
+        assert!(!completed.has_more);
     }
 
     #[test]

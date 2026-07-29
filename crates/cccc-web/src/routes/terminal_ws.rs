@@ -10,6 +10,7 @@ use serde_json::{Map, Value, json};
 use crate::AppState;
 
 const MAX_CONSECUTIVE_POLL_FAILURES: usize = 20;
+const TERMINAL_POLL_LIMIT_BYTES: usize = 64_000;
 
 #[derive(Debug, Deserialize)]
 struct AttachQuery {
@@ -162,8 +163,13 @@ async fn poll_output(
 ) -> Option<PolledOutput> {
     let response = daemon_call(
         state,
-        "terminal_history",
-        json!({"group_id":group_id,"actor_id":actor_id,"limit_bytes":2_000_000}),
+        "terminal_since",
+        json!({
+            "group_id":group_id,
+            "actor_id":actor_id,
+            "after":cursor,
+            "limit_bytes":TERMINAL_POLL_LIMIT_BYTES,
+        }),
     )
     .await?;
     if !response.ok {
@@ -173,19 +179,11 @@ async fn poll_output(
     let data = history.get("data")?.as_str()?.as_bytes();
     let start = history.get("start_cursor")?.as_u64()?;
     let end = history.get("end_cursor")?.as_u64()?;
-    let (data, replay_cursor) = replay_window(data, start, end, cursor)?;
     Some(PolledOutput {
-        data,
-        replay_cursor,
+        data: data.to_vec(),
+        replay_cursor: start,
         next_cursor: end,
     })
-}
-
-fn replay_window(data: &[u8], start: u64, end: u64, cursor: u64) -> Option<(Vec<u8>, u64)> {
-    let replay_cursor = cursor.clamp(start, end);
-    let offset = usize::try_from(replay_cursor.saturating_sub(start)).ok()?;
-    let unread = data.get(offset..).unwrap_or_default();
-    Some((unread.to_vec(), replay_cursor))
 }
 
 async fn send_terminal_error(socket: &mut WebSocket, code: &str, message: &str) {
@@ -310,7 +308,7 @@ fn control() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{replay_window, terminal_disabled, terminal_writable};
+    use super::{terminal_disabled, terminal_writable};
     use crate::WebMode;
 
     #[test]
@@ -320,22 +318,5 @@ mod tests {
         assert!(!terminal_writable(WebMode::Exhibit, "control"));
         assert!(terminal_writable(WebMode::Normal, "control"));
         assert!(!terminal_writable(WebMode::Normal, "viewer"));
-    }
-
-    #[test]
-    fn expired_replay_cursor_starts_at_the_ring_boundary() {
-        let (data, replay_cursor) = replay_window(b"working", 120, 127, 0).expect("replay window");
-
-        assert_eq!(data, b"working");
-        assert_eq!(replay_cursor, 120);
-    }
-
-    #[test]
-    fn in_range_replay_cursor_only_returns_unread_output() {
-        let (data, replay_cursor) =
-            replay_window(b"working", 120, 127, 124).expect("replay window");
-
-        assert_eq!(data, b"ing");
-        assert_eq!(replay_cursor, 124);
     }
 }

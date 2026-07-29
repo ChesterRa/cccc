@@ -153,6 +153,10 @@ impl Session {
             .map(|output| output.page(before, limit))
     }
 
+    pub(crate) fn output_handle(&self) -> Arc<Mutex<OutputBuffer>> {
+        Arc::clone(&self.output)
+    }
+
     pub fn history_since(&self, after: u64, limit: usize) -> Result<HistoryPage, RuntimeError> {
         self.output
             .lock()

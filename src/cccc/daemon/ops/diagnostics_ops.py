@@ -269,12 +269,22 @@ def handle_terminal_tail(
         max_chars = 200_000
     try:
         raw = b""
+        end_cursor = 0
         try:
-            raw = pty_runner.SUPERVISOR.tail_output(
+            page = pty_runner.SUPERVISOR.history_page(
                 group_id=group_id,
                 actor_id=actor_id,
-                max_bytes=pty_backlog_bytes(),
+                before=None,
+                limit_bytes=pty_backlog_bytes(),
             )
+            raw = bytes(page.get("data") or b"")
+            end_cursor = int(page.get("end_cursor") or 0)
+            if not raw:
+                raw = pty_runner.SUPERVISOR.tail_output(
+                    group_id=group_id,
+                    actor_id=actor_id,
+                    max_bytes=pty_backlog_bytes(),
+                )
         except Exception:
             raw = b""
         raw_text = raw.decode("utf-8", errors="replace")
@@ -300,6 +310,7 @@ def handle_terminal_tail(
                 "warning": "Terminal transcript may include sensitive stdout/stderr.",
                 "hint": hint,
                 "text": text,
+                "end_cursor": end_cursor,
             },
         )
     except Exception as e:

@@ -237,6 +237,44 @@ class TestDiagnosticsOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_terminal_tail_returns_cursor_from_the_rendered_history_snapshot(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="terminal-tail-cursor")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")
+
+            with patch(
+                "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.history_page",
+                return_value={
+                    "data": b"screen",
+                    "start_cursor": 100,
+                    "end_cursor": 106,
+                    "has_more": False,
+                    "cursor_expired": False,
+                },
+            ):
+                resp = self._call(
+                    "terminal_tail",
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "strip_ansi": False,
+                        "compact": False,
+                    },
+                )[0]
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual((resp.result or {}).get("text"), "screen")
+            self.assertEqual((resp.result or {}).get("end_cursor"), 106)
+        finally:
+            cleanup()
+
     def test_terminal_tail_returns_last_output_for_stopped_pty_actor(self) -> None:
         from unittest.mock import patch
 

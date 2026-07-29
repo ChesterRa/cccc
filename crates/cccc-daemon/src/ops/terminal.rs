@@ -34,15 +34,29 @@ fn status(request: &DaemonRequest) -> OpResult {
 fn tail(request: &DaemonRequest) -> OpResult {
     let (group_id, actor_id) = ids(request)?;
     let max_chars = integer(request, "max_chars", 8_000).clamp(1, 2_000_000);
-    let page =
-        cccc_runtime::history(&group_id, &actor_id, None, max_chars).map_err(runtime_error)?;
+    let page = cccc_runtime::retained_history(&group_id, &actor_id).map_err(runtime_error)?;
     let (strip_ansi, compact) = tail_render_options(request);
-    let text = if strip_ansi {
-        terminal_text::render(&page.data, compact)
-    } else {
-        page.data
-    };
+    let text = render_tail(&page.data, max_chars, strip_ansi, compact);
     object(json!({"text": text, "hint": "", "end_cursor": page.end_cursor}))
+}
+
+fn render_tail(text: &str, max_chars: usize, strip_ansi: bool, compact: bool) -> String {
+    let rendered = if strip_ansi {
+        terminal_text::render(text, compact)
+    } else {
+        text.to_owned()
+    };
+    trailing_chars(&rendered, max_chars)
+}
+
+fn trailing_chars(text: &str, max_chars: usize) -> String {
+    let start = text
+        .char_indices()
+        .rev()
+        .nth(max_chars.saturating_sub(1))
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    text[start..].to_owned()
 }
 
 fn history(request: &DaemonRequest) -> OpResult {
@@ -143,7 +157,9 @@ fn runtime_error(error: cccc_runtime::RuntimeError) -> OpError {
 
 #[cfg(all(test, unix))]
 mod tests {
-    use super::{is_interrupt_input, tail_render_options, write};
+    use super::{
+        is_interrupt_input, render_tail, tail, tail_render_options, trailing_chars, write,
+    };
     use cccc_contracts::{DaemonRequest, RunnerKind};
     use cccc_core::HomeLayout;
     use cccc_runtime::LaunchSpec;
@@ -237,6 +253,90 @@ mod tests {
             ..request
         };
         assert_eq!(tail_render_options(&request), (false, false));
+    }
+
+    #[test]
+    fn terminal_tail_truncation_counts_unicode_characters() {
+        assert_eq!(trailing_chars("prefix你好世界", 4), "你好世界");
+        assert_eq!(trailing_chars("short", 20), "short");
+        assert_eq!(trailing_chars("abc", 1), "c");
+    }
+
+    #[test]
+    fn terminal_tail_renders_before_applying_the_display_limit() {
+        let raw = "abcdefgh\u{1b}[6DXY";
+        let expected = trailing_chars(&super::terminal_text::render(raw, false), 4);
+        let truncated_first = super::terminal_text::render(&trailing_chars(raw, 4), false);
+
+        assert_eq!(render_tail(raw, 4, true, false), expected);
+        assert_ne!(expected, truncated_first);
+        assert_eq!(render_tail("prefix你好", 2, false, true), "你好");
+    }
+
+    #[test]
+    fn terminal_tail_uses_the_complete_retained_stream_and_preserves_the_raw_cursor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let group_id = format!("g_terminal_{}", uuid::Uuid::new_v4().simple());
+        let actor_id = "tail-peer";
+        cccc_runtime::start(LaunchSpec {
+            group_id: group_id.clone(),
+            actor_id: actor_id.into(),
+            runner: RunnerKind::Pty,
+            command: vec![
+                "sh".into(),
+                "-c".into(),
+                "printf '\\033[1;1Habcdefgh\\033[1;1HXY'; sleep 2".into(),
+            ],
+            cwd: temp.path().into(),
+            env: BTreeMap::new(),
+            cols: 80,
+            rows: 24,
+        })
+        .expect("start runtime");
+
+        let mut retained = cccc_runtime::retained_history(&group_id, actor_id).expect("history");
+        for _ in 0..50 {
+            if retained.data.contains("abcdefgh") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+            retained = cccc_runtime::retained_history(&group_id, actor_id).expect("history");
+        }
+        assert!(
+            retained.data.contains("abcdefgh"),
+            "raw output was not captured"
+        );
+
+        let result = tail(&DaemonRequest {
+            v: 1,
+            op: "terminal_tail".into(),
+            args: json!({
+                "group_id": group_id,
+                "actor_id": actor_id,
+                "max_chars": 4,
+                "strip_ansi": true,
+                "compact": true,
+            })
+            .as_object()
+            .cloned()
+            .expect("args"),
+        })
+        .expect("terminal tail");
+
+        let rendered = super::terminal_text::render(&retained.data, true);
+        let expected = trailing_chars(&rendered, 4);
+        assert_eq!(
+            result.get("text").and_then(Value::as_str),
+            Some(expected.as_str())
+        );
+        assert_eq!(
+            result.get("end_cursor").and_then(Value::as_u64),
+            Some(retained.end_cursor),
+        );
+        let since = cccc_runtime::history_since(&group_id, actor_id, retained.end_cursor, 1024)
+            .expect("history since tail cursor");
+        assert!(since.data.is_empty());
+        let _ = cccc_runtime::stop(&group_id, actor_id);
     }
 
     #[test]

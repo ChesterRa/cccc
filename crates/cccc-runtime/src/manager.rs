@@ -234,6 +234,15 @@ pub fn history(
     with_session(group_id, actor_id, |session| session.history(before, limit))
 }
 
+pub fn retained_history(group_id: &str, actor_id: &str) -> Result<HistoryPage, RuntimeError> {
+    let output = with_session(group_id, actor_id, |session| Ok(session.output_handle()))?;
+    let page = output
+        .lock()
+        .map_err(|_| RuntimeError::Poisoned)?
+        .retained_page();
+    Ok(page)
+}
+
 pub fn history_since(
     group_id: &str,
     actor_id: &str,
