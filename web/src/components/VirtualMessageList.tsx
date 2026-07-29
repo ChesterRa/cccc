@@ -3,7 +3,11 @@ import { measureElement as measureVirtualElement, useVirtualizer } from "@tansta
 import { useTranslation } from "react-i18next";
 import { ArrowDownIcon, MessageSquareTextIcon } from "./Icons";
 import { getChatTailMutationSnapshot, getChatTailSnapshot } from "../utils/chatAutoFollow";
-import type { ChatFollowMode, ChatScrollSnapshot } from "../stores/useUIStore";
+import {
+  CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+  type ChatFollowMode,
+  type ChatScrollSnapshot,
+} from "../stores/useUIStore";
 import {
   getStableMessageKey,
   isVirtualizedScrollNearEnd,
@@ -33,6 +37,10 @@ import { useScrollAnchorRestoration } from "./virtualMessageList/useScrollAnchor
 import { useInitialMessageScroll } from "./virtualMessageList/useInitialMessageScroll";
 import { useMessageTailAutoFollow } from "./virtualMessageList/useMessageTailAutoFollow";
 import { cacheMessageRowHeight } from "./virtualMessageList/rowHeightCache";
+import {
+  getMessageAnchorOffset,
+  getScrollOffsetForMessageAnchor,
+} from "./virtualMessageListAnchorRestore";
 
 export type { VirtualMessageListProps } from "./virtualMessageList/types";
 
@@ -167,7 +175,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         if (anchorId) {
           return {
             anchorId,
-            offsetPx: Math.max(0, containerRect.top - visibleRow.getBoundingClientRect().top),
+            offsetPx: containerRect.top - visibleRow.getBoundingClientRect().top,
           };
         }
       }
@@ -179,14 +187,14 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         const msg = displayMessages[anchorItem.index];
         const anchorId = msg?.id ? String(msg.id) : "";
         if (!anchorId) return null;
-        return { anchorId, offsetPx: Math.max(0, scrollTop - anchorItem.start) };
+        return { anchorId, offsetPx: getMessageAnchorOffset(scrollTop, anchorItem.start) };
       }
 
       if (renderedRows.length <= 0) return null;
       const anchorRow = renderedRows[0];
       const anchorId = String(anchorRow.dataset.messageId || "").trim();
       if (!anchorId) return null;
-      return { anchorId, offsetPx: Math.max(0, scrollTop - anchorRow.offsetTop) };
+      return { anchorId, offsetPx: getMessageAnchorOffset(scrollTop, anchorRow.offsetTop) };
     },
     [displayMessages, shouldVirtualize, virtualizer],
   );
@@ -233,7 +241,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
         if (idx < 0) return false;
         const offsetInfo = virtualizer.getOffsetForIndex(idx, "start");
         if (offsetInfo) {
-          virtualizer.scrollToOffset(offsetInfo[0] + Math.max(0, offsetPx), {
+          virtualizer.scrollToOffset(getScrollOffsetForMessageAnchor(offsetInfo[0], offsetPx), {
             align: "start",
             behavior: "auto",
           });
@@ -245,7 +253,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
       const row = getMessageRowById(String(eventId));
       if (!row) return false;
-      el.scrollTo({ top: row.offsetTop + Math.max(0, offsetPx), behavior: "auto" });
+      el.scrollTo({
+        top: getScrollOffsetForMessageAnchor(row.offsetTop, offsetPx),
+        behavior: "auto",
+      });
       return true;
     },
     [displayMessages, getMessageRowById, shouldVirtualize, virtualizer],
@@ -294,6 +305,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (!el || displayMessages.length <= 0) return latestSnapshotRef.current;
     if (checkIsAtBottom()) {
       return {
+        coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
         mode: "follow",
         anchorId: "",
         offsetPx: 0,
@@ -304,6 +316,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     const anchor = getAnchorSnapshot(el.scrollTop);
     if (!anchor) return latestSnapshotRef.current;
     return {
+      coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
       mode: "detached",
       anchorId: anchor.anchorId,
       offsetPx: anchor.offsetPx,
@@ -370,7 +383,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
       const row = getMessageRowById(anchorId);
       if (row) {
-        const desiredAnchorTop = el.getBoundingClientRect().top - Math.max(0, offsetPx);
+        const desiredAnchorTop = el.getBoundingClientRect().top - offsetPx;
         const correctedTop = getCorrectedScrollTopForAnchor({
           currentScrollTop: el.scrollTop,
           lockedAnchorTop: desiredAnchorTop,
@@ -394,7 +407,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
           virtualizer.scrollToIndex(idx, { align: "start", behavior: "auto" });
           return true;
         }
-        virtualizer.scrollToOffset(offsetInfo[0] + Math.max(0, offsetPx), {
+        virtualizer.scrollToOffset(getScrollOffsetForMessageAnchor(offsetInfo[0], offsetPx), {
           align: "start",
           behavior: "auto",
         });
@@ -591,7 +604,8 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       if (!isRestoringAnchor) {
         const anchor = getAnchorSnapshot(curTop);
         if (anchor) {
-          const snap = {
+          const snap: ChatScrollSnapshot = {
+            coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
             mode: atBottom ? ("follow" as const) : followModeRef.current,
             anchorId: atBottom ? "" : anchor.anchorId,
             offsetPx: atBottom ? 0 : anchor.offsetPx,

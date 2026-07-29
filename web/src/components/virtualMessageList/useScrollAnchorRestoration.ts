@@ -13,7 +13,7 @@ export function getScrollRestorationRequestKey(input: {
   if (targetId) return `target:${targetId}`;
   const anchorId = String(input.anchorId || "").trim();
   if (!anchorId) return "bottom";
-  const offsetPx = Math.round(Math.max(0, Number(input.offsetPx) || 0) * 2) / 2;
+  const offsetPx = Math.round((Number(input.offsetPx) || 0) * 2) / 2;
   return `anchor:${anchorId}:${offsetPx}`;
 }
 
@@ -64,7 +64,7 @@ export function useScrollAnchorRestoration(applyAnchor: (anchor: RestoredScrollA
       }
       activeRef.current = {
         anchorId,
-        offsetPx: Math.max(0, Number(anchor.offsetPx) || 0),
+        offsetPx: Number(anchor.offsetPx) || 0,
         expiresAt: performance.now() + RESTORATION_WINDOW_MS,
       };
       const applied = applyAnchorRef.current(activeRef.current);

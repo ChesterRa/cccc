@@ -18,8 +18,10 @@ interface UINotice {
 
 export type ChatFilter = "all" | "user" | "attention" | "task";
 export type ChatFollowMode = "follow" | "detached";
+export const CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION = 1;
 
 export interface ChatScrollSnapshot {
+  coordinateVersion: typeof CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION;
   mode: ChatFollowMode;
   anchorId: string;
   offsetPx: number;

@@ -1,13 +1,18 @@
 import type { ChatMessageData, GroupMeta, LedgerEvent } from "../../types";
 import { isDelegationSourceOutboundEvent } from "../../components/messageBubbleDelegation";
+import { CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION } from "../../stores/useUIStore";
 
 export const CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS = 30 * 60 * 1000;
 
 export function shouldRestoreDetachedScrollSnapshot(
-  snapshot: { mode?: unknown; anchorId?: unknown; updatedAt?: unknown } | null | undefined,
+  snapshot:
+    | { coordinateVersion?: unknown; mode?: unknown; anchorId?: unknown; updatedAt?: unknown }
+    | null
+    | undefined,
   now = Date.now(),
 ): boolean {
   if (!snapshot || snapshot.mode !== "detached") return false;
+  if (snapshot.coordinateVersion !== CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION) return false;
   const anchorId = typeof snapshot.anchorId === "string" ? snapshot.anchorId.trim() : "";
   if (!anchorId) return false;
   const updatedAt = Number(snapshot.updatedAt);

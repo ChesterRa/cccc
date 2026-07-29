@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import type { MutableRefObject } from "react";
-import type { ChatFollowMode, ChatScrollSnapshot } from "../../stores/useUIStore";
+import {
+  CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+  type ChatFollowMode,
+  type ChatScrollSnapshot,
+} from "../../stores/useUIStore";
 import type { LedgerEvent } from "../../types";
 import { getScrollRestorationRequestKey } from "./useScrollAnchorRestoration";
 
@@ -108,7 +112,13 @@ export function useInitialMessageScroll({
           markRestoredAwayFromBottom();
           return;
         }
-        onScrollSnapshot?.({ mode: "follow", anchorId: "", offsetPx: 0, updatedAt: Date.now() });
+        onScrollSnapshot?.({
+          coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+          mode: "follow",
+          anchorId: "",
+          offsetPx: 0,
+          updatedAt: Date.now(),
+        });
       }
       setAtBottom(true);
       setFollowMode("follow");

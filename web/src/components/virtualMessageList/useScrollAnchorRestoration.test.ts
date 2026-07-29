@@ -20,6 +20,12 @@ describe("getScrollRestorationRequestKey", () => {
     );
   });
 
+  it("keeps signed offsets that place the first row below the viewport top", () => {
+    expect(getScrollRestorationRequestKey({ anchorId: "event-1", offsetPx: -72 })).toBe(
+      "anchor:event-1:-72",
+    );
+  });
+
   it("keeps explicit deep-link targets separate from restored anchors", () => {
     expect(
       getScrollRestorationRequestKey({

@@ -1,7 +1,10 @@
 import { useCallback } from "react";
 import type { TFunction } from "i18next";
 import { useGroupStore, useUIStore } from "../../stores";
-import type { ChatScrollSnapshot } from "../../stores/useUIStore";
+import {
+  CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+  type ChatScrollSnapshot,
+} from "../../stores/useUIStore";
 import type { Actor, GroupMeta, LedgerEvent } from "../../types";
 import { buildReplyComposerState } from "../../utils/chatReply";
 import { copyTextToClipboard } from "../../utils/copy";
@@ -37,12 +40,7 @@ export function useChatMessageActions(input: {
   setChatUnreadCount: (groupId: string, value: number) => void;
   setChatScrollSnapshot: (
     groupId: string,
-    snapshot: {
-      mode: "follow" | "detached";
-      anchorId: string;
-      offsetPx: number;
-      updatedAt: number;
-    },
+    snapshot: ChatScrollSnapshot,
   ) => void;
   setNewActorRole: (role: "foreman" | "peer") => void;
   openModal: (name: "addActor") => void;
@@ -148,6 +146,7 @@ export function useChatMessageActions(input: {
     input.setShowScrollButton(input.selectedGroupId, false);
     input.setChatUnreadCount(input.selectedGroupId, 0);
     input.setChatScrollSnapshot(input.selectedGroupId, {
+      coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
       mode: "follow",
       anchorId: "",
       offsetPx: 0,
