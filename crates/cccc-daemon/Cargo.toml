@@ -17,6 +17,7 @@ cccc-runtime = { path = "../cccc-runtime" }
 chrono.workspace = true
 clap.workspace = true
 fs2.workspace = true
+nix.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true

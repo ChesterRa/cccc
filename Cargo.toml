@@ -73,6 +73,7 @@ tower = "0.5"
 mime_guess = "2.0"
 md-5 = "0.10"
 notify = "8.2"
+nix = { version = "0.28", features = ["signal"] }
 uuid = { version = "1.17", features = ["v4", "serde"] }
 unicode-width = "0.2"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }

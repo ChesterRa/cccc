@@ -503,6 +503,7 @@ dependencies = [
  "chrono",
  "clap",
  "fs2",
+ "nix",
  "regex",
  "reqwest 0.12.28",
  "serde",

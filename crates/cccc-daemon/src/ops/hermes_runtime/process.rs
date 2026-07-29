@@ -88,8 +88,12 @@ fn configure_process_group(_command: &mut Command) {}
 
 #[cfg(unix)]
 fn terminate_process_group(child: &mut std::process::Child) {
-    let group = format!("-{}", child.id());
-    let _ = Command::new("/bin/kill").args(["-KILL", &group]).status();
+    use nix::sys::signal::{Signal, killpg};
+    use nix::unistd::Pid;
+
+    if let Ok(group_id) = i32::try_from(child.id()) {
+        let _ = killpg(Pid::from_raw(group_id), Signal::SIGKILL);
+    }
     let _ = child.kill();
 }
 
