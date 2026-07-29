@@ -372,7 +372,11 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 )
 
             self.assertIsInstance(session, FallbackSession)
-            self.assertEqual(calls, [["codex", "-c", "shell_environment_policy.inherit=all"]])
+            self.assertEqual(
+                calls[0][:3],
+                ["codex", "-c", "shell_environment_policy.inherit=all"],
+            )
+            self.assertIn("hooks.UserPromptSubmit=", " ".join(calls[0]))
             self.assertEqual(len(scheduled), 1)
             self.assertEqual(scheduled[0]["group_id"], "g1")
             self.assertEqual(scheduled[0]["actor_id"], "peer1")
@@ -576,10 +580,12 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 )
 
             self.assertIsInstance(session, FreshSession)
+            self.assertEqual(calls[0][:3], ["claude", "--resume", "old-session-id"])
             self.assertEqual(
-                calls,
-                [["claude", "--resume", "old-session-id"], ["claude", "--session-id", new_session_id]],
+                calls[1][:3], ["claude", "--session-id", new_session_id]
             )
+            self.assertIn("--settings", calls[0])
+            self.assertIn("--settings", calls[1])
             stored = read_runtime_session("g1", "peer1")
             self.assertEqual(stored.get("runtime"), "claude")
             self.assertEqual(stored.get("provider_session_id"), new_session_id)
@@ -723,10 +729,12 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 )
 
             self.assertIsInstance(session, FreshSession)
+            self.assertEqual(calls[0][:3], ["claude", "--resume", "old-session-id"])
             self.assertEqual(
-                calls,
-                [["claude", "--resume", "old-session-id"], ["claude", "--session-id", new_session_id]],
+                calls[1][:3], ["claude", "--session-id", new_session_id]
             )
+            self.assertIn("--settings", calls[0])
+            self.assertIn("--settings", calls[1])
             stored = read_runtime_session("g1", "peer1")
             self.assertEqual(stored.get("runtime"), "claude")
             self.assertEqual(stored.get("provider_session_id"), new_session_id)
@@ -765,11 +773,19 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 pid = 222
 
             calls: list[list[str]] = []
+            launch_tokens: list[str] = []
             stopped: list[tuple[str, str]] = []
             scheduled: list[dict] = []
 
             def fake_start_actor(**kwargs):
                 calls.append(list(kwargs.get("command") or []))
+                launch_tokens.append(
+                    str(
+                        (kwargs.get("env") or {}).get(
+                            "CCCC_HOOK_LAUNCH_TOKEN", ""
+                        )
+                    )
+                )
                 return ResumeSession() if len(calls) == 1 else FreshSession()
 
             with patch(
@@ -800,7 +816,15 @@ class TestRuntimeSessionOps(unittest.TestCase):
                 )
 
             self.assertIsInstance(session, FreshSession)
-            self.assertEqual(calls, [["codex", "resume", "019dbe1d-cd97-7d31-9ba6-212d3e57b15c"], ["codex"]])
+            self.assertEqual(
+                calls[0][:3],
+                ["codex", "resume", "019dbe1d-cd97-7d31-9ba6-212d3e57b15c"],
+            )
+            self.assertIn("hooks.UserPromptSubmit=", " ".join(calls[0]))
+            self.assertEqual(calls[1][0], "codex")
+            self.assertIn("hooks.UserPromptSubmit=", " ".join(calls[1]))
+            self.assertTrue(all(launch_tokens))
+            self.assertNotEqual(launch_tokens[0], launch_tokens[1])
             self.assertEqual(stopped, [("g1", "peer1")])
             self.assertEqual(len(scheduled), 1)
             self.assertEqual(read_runtime_session("g1", "peer1"), {})

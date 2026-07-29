@@ -63,6 +63,9 @@ class PtySession:
         command: Iterable[str],
         env: Dict[str, str],
         on_exit: Optional[Callable[["PtySession"], None]] = None,
+        input_observer: Optional[
+            Callable[["PtySession", bytes], None]
+        ] = None,
         runtime: str = "",
         max_backlog_bytes: int = 2_000_000,
         max_client_buffer_bytes: int = 8_000_000,
@@ -73,6 +76,8 @@ class PtySession:
         self.actor_id = actor_id
         self._runtime = str(runtime or "")
         self._on_exit = on_exit
+        self._input_observer = input_observer
+        self._runtime_hook_capability: object | None = None
         self._started_at = time.monotonic()
         self._first_output_at: Optional[float] = None
         self._last_output_at: Optional[float] = None
@@ -331,7 +336,24 @@ class PtySession:
                 # Real error (fd closed, etc.)
                 return False
 
-        return len(remaining) == 0
+        success = len(remaining) == 0
+        if success and self._input_observer is not None:
+            try:
+                self._input_observer(self, data)
+            except Exception:
+                pass
+        return success
+
+    def bind_input_observer(
+        self,
+        observer: Optional[Callable[["PtySession", bytes], None]],
+        capability: object | None,
+    ) -> None:
+        self._input_observer = observer
+        self._runtime_hook_capability = capability
+
+    def input_capability(self) -> object | None:
+        return self._runtime_hook_capability
 
     def stop(self) -> None:
         _best_effort_killpg(self.pid, signal.SIGTERM)
@@ -710,10 +732,8 @@ class PtySession:
             return
         if not is_writer:
             return
-        try:
-            os.write(self._master_fd, data)
-        except Exception:
-            pass
+        if not self.write_input(data):
+            self.detach_client(fileno)
 
     def _on_client_writable(self, fileno: int) -> None:
         with self._lock:
@@ -785,10 +805,29 @@ class PtySupervisor:
         self._sessions: Dict[Tuple[str, str], PtySession] = {}
         self._last_backlogs = PtyBacklogSnapshotCache()
         self._exit_hook: Optional[Callable[[PtySession], None]] = None
+        self._input_observer: Optional[Callable[[str, str, bytes], None]] = None
 
     def set_exit_hook(self, hook: Optional[Callable[[PtySession], None]]) -> None:
         with self._lock:
             self._exit_hook = hook
+
+    def set_input_observer(
+        self, observer: Optional[Callable[[str, str, bytes], None]]
+    ) -> None:
+        # Legacy registration is retained for API compatibility. Input
+        # authorization is bound explicitly to each newly launched session.
+        with self._lock:
+            self._input_observer = observer
+
+    def input_capability(
+        self, *, group_id: str, actor_id: str
+    ) -> object | None:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            session = self._sessions.get(key)
+        if session is None or not session.is_running():
+            return None
+        return session.input_capability()
 
     def _drop_if_same(self, group_id: str, actor_id: str, session: PtySession) -> None:
         key = (group_id, actor_id)
@@ -824,6 +863,10 @@ class PtySupervisor:
         self._last_backlogs.remember(key, snapshot)
 
     def _finalize_stopped_session(self, key: Tuple[str, str], session: PtySession) -> None:
+        try:
+            session.bind_input_observer(None, None)
+        except Exception:
+            pass
         snapshot = self._snapshot_session(session)
         with self._lock:
             current = self._sessions.get(key)
@@ -835,6 +878,10 @@ class PtySupervisor:
 
     def _on_session_exit(self, session: PtySession) -> None:
         try:
+            try:
+                session.bind_input_observer(None, None)
+            except Exception:
+                pass
             self._drop_if_same(session.group_id, session.actor_id, session)
         finally:
             hook: Optional[Callable[[PtySession], None]] = None
@@ -984,6 +1031,7 @@ class PtySupervisor:
                 env=env,
                 runtime=runtime,
                 on_exit=on_exit_after_registration,
+                input_observer=None,
                 max_backlog_bytes=int(max_backlog_bytes or 0),
             )
         except BaseException:

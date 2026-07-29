@@ -7,7 +7,7 @@ CCCC projects verified Codex and Claude PTY hook events into the Web runtime tic
 1. A CCCC-injected provider hook submits a lifecycle event to `cccc hook`.
 2. The CLI first applies the existing launch, session, turn, and operation fences.
 3. Accepted events are normalized into a small structured activity record.
-4. The Web backend serves a snapshot and an SSE stream.
+4. The Rust or Python Web backend serves the same snapshot and SSE contract.
 5. The browser keeps activity in an independent, group-scoped store and projects it into the existing `RuntimeDockTicker`.
 
 Codex events retain exact turn and operation fencing. Claude tool events retain the verified session
@@ -67,6 +67,8 @@ synthetic `stuck` diagnosis for the same activity, regardless of delivery timest
   an active tool.
 - A fresh snapshot includes active records and completions from the last 15 seconds.
 - SSE replay restores the current short-lived view after a brief disconnect.
+- `replay=false` starts from changes observed after the stream is attached; disconnects stop
+  polling without emitting a replay.
 - The browser retains active records for at most five minutes and completed records for eight seconds.
 - Leaving a group closes its activity stream and immediately clears that group's browser state;
   returning hydrates it again from snapshot and SSE replay.
@@ -84,5 +86,9 @@ per-actor critical section, preventing an older start event from being appended 
 terminal event. Ambiguous post-rename filesystem errors are verified against the committed JSON
 before rollback, so hook state and activity do not diverge merely because directory sync or explicit
 unlock reported a late error.
+
+If the snapshot store is corrupt, the Web route returns
+`runtime_activity_unavailable` instead of serving a partial or empty snapshot. The SSE stream keeps
+its last accepted view and waits for a later valid store revision.
 
 The channel does not grant or block tool execution, send operating-system notifications, or alter runtime permission policy.

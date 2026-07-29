@@ -16,9 +16,30 @@ class PtySession:
     actor_id: str = ""
     pid: int = 0
 
+    def bind_input_observer(
+        self, observer: object | None, capability: object | None
+    ) -> None:
+        _ = observer
+        self._runtime_hook_capability = capability
+
+    def input_capability(self) -> object | None:
+        return getattr(self, "_runtime_hook_capability", None)
+
 
 class PtySupervisor:
     def set_exit_hook(self, hook: Optional[Callable[[PtySession], None]]) -> None:
+        return None
+
+    def set_input_observer(
+        self, observer: Optional[Callable[[str, str, bytes], None]]
+    ) -> None:
+        return None
+
+    def input_capability(
+        self, *, group_id: str, actor_id: str
+    ) -> object | None:
+        _ = group_id
+        _ = actor_id
         return None
 
     def group_running(self, group_id: str) -> bool:
