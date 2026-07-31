@@ -228,12 +228,17 @@ jobs:
     if: github.event_name != 'schedule'
     needs: web
     runs-on: ubuntu-latest
+    env:
+      CCCC_TEST_PYTHON: python
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: bundled-web
           path: web/dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -249,7 +254,9 @@ jobs:
       - name: Lint Rust workspace
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test Rust workspace
-        run: cargo test --workspace --locked
+        run: |
+          cargo test --workspace --exclude cccc-daemon --locked
+          cargo test --package cccc-daemon --locked -- --test-threads=1
       - name: Build and verify Rust distribution
         run: |
           cargo build --workspace --release --locked
@@ -260,18 +267,24 @@ jobs:
     if: github.event_name != 'schedule'
     needs: web
     runs-on: macos-latest
+    env:
+      CCCC_TEST_PYTHON: python
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: bundled-web
           path: web/dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Check and test Rust workspace
         run: |
           cargo check --workspace --all-targets --locked
-          cargo test --workspace --locked
+          cargo test --workspace --exclude cccc-daemon --locked
+          cargo test --package cccc-daemon --locked -- --test-threads=1
           cargo build --release --locked -p cccc-cli --bin cccc
       - name: Test Unix installer
         shell: bash

@@ -1,20 +1,13 @@
-use std::net::{IpAddr, Ipv4Addr, UdpSocket};
+use std::net::Ipv4Addr;
+
+use crate::network::detect_lan_ipv4;
 
 pub fn print(host: &str, port: u16) {
-    let (local_url, network_url) = urls(host, port, detect_lan_ip());
+    let (local_url, network_url) = urls(host, port, detect_lan_ipv4());
     eprintln!("[cccc] Starting web server...");
     eprintln!("[cccc]   Local:   {local_url}");
     if let Some(network_url) = network_url {
         eprintln!("[cccc]   Network: {network_url}");
-    }
-}
-
-fn detect_lan_ip() -> Option<Ipv4Addr> {
-    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
-    socket.connect((Ipv4Addr::new(8, 8, 8, 8), 80)).ok()?;
-    match socket.local_addr().ok()?.ip() {
-        IpAddr::V4(ip) if !ip.is_loopback() && !ip.is_unspecified() => Some(ip),
-        _ => None,
     }
 }
 

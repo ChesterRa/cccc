@@ -567,6 +567,9 @@ class TestRuntimeSessionOps(unittest.TestCase):
             with patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
                 side_effect=fake_start_actor,
+            ), patch(
+                "cccc.daemon.runtime_hooks.launch._probe_claude_version",
+                return_value=(2, 1, 999),
             ), patch("cccc.daemon.runtime_session_ops.uuid.uuid4", return_value=new_session_id):
                 session = start_pty_actor_with_runtime_resume(
                     group_id="g1",
@@ -708,6 +711,9 @@ class TestRuntimeSessionOps(unittest.TestCase):
             with patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.start_actor",
                 side_effect=fake_start_actor,
+            ), patch(
+                "cccc.daemon.runtime_hooks.launch._probe_claude_version",
+                return_value=(2, 1, 999),
             ), patch(
                 "cccc.daemon.runtime_session_ops.pty_runner.SUPERVISOR.actor_running",
                 return_value=False,

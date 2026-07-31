@@ -3,23 +3,19 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { refreshGlobalEventsFallback } from "./globalEventFallback";
 
 describe("global event polling fallback", () => {
-  it("refreshes groups and actors while visible", () => {
+  it("refreshes groups while visible", () => {
     const refreshGroups = vi.fn();
-    const refreshActors = vi.fn();
 
-    refreshGlobalEventsFallback(false, refreshGroups, refreshActors);
+    refreshGlobalEventsFallback(false, refreshGroups);
 
     expect(refreshGroups).toHaveBeenCalledOnce();
-    expect(refreshActors).toHaveBeenCalledOnce();
   });
 
   it("does not refresh while the document is hidden", () => {
     const refreshGroups = vi.fn();
-    const refreshActors = vi.fn();
 
-    refreshGlobalEventsFallback(true, refreshGroups, refreshActors);
+    refreshGlobalEventsFallback(true, refreshGroups);
 
     expect(refreshGroups).not.toHaveBeenCalled();
-    expect(refreshActors).not.toHaveBeenCalled();
   });
 });

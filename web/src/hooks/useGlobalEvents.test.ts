@@ -26,21 +26,21 @@ describe("useGlobalEvents Group Bridge pairing refresh", () => {
 });
 
 describe("useGlobalEvents actor status refresh", () => {
-  it("refreshes the selected actor list for authoritative activity changes", () => {
+  it("does not refetch actors for activity events handled by the group ledger stream", () => {
     expect(
       shouldRefreshActorsAfterGlobalEvent(
         { kind: "actor.activity", group_id: "g_active" },
         "g_active",
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  it("does not refresh a different group for activity changes", () => {
+  it("still refreshes actors for selected-group lifecycle changes", () => {
     expect(
       shouldRefreshActorsAfterGlobalEvent(
-        { kind: "actor.activity", group_id: "g_other" },
+        { kind: "actor.start", group_id: "g_active" },
         "g_active",
       ),
-    ).toBe(false);
+    ).toBe(true);
   });
 });

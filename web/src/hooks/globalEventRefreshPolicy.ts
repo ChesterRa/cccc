@@ -15,7 +15,8 @@ const GLOBAL_REFRESH_EVENT_KINDS = new Set([
 ]);
 
 const ACTOR_REFRESH_EVENT_KINDS = new Set([
-  "actor.activity",
+  // actor.activity is projected directly by the selected group's ledger stream.
+  // Refetching the full actor list here duplicates that owner and causes visible churn.
   "actor.remove",
   "actor.start",
   "actor.stop",

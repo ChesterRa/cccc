@@ -66,6 +66,27 @@ def test_full_rust_platform_is_macos_only() -> None:
     assert "scripts/tests/install_windows.ps1" not in runs
 
 
+def test_rust_jobs_provision_python_for_interop_and_serialize_daemon_tests() -> None:
+    jobs = _workflow()["jobs"]
+
+    for name in ("rust", "rust-platform"):
+        job = jobs[name]
+        runs = _runs(job)
+        python_setup = next(
+            step
+            for step in job["steps"]
+            if step.get("uses", "").startswith("actions/setup-python")
+        )
+
+        assert job["env"]["CCCC_TEST_PYTHON"] == "python"
+        assert python_setup["with"]["python-version"] == "3.14"
+        assert "cargo test --workspace --exclude cccc-daemon --locked" in runs
+        assert (
+            "cargo test --package cccc-daemon --locked -- --test-threads=1"
+            in runs
+        )
+
+
 def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance() -> None:
     runs = "\n".join(_runs(job) for job in _workflow()["jobs"].values())
 

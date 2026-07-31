@@ -159,7 +159,10 @@ print_plan() {
     printf '%q ' cargo clippy --workspace --all-targets --locked --jobs "$cargo_jobs" -- -D warnings
     echo ""
     printf "rust_test="
-    printf '%q ' cargo test --workspace --locked --jobs "$cargo_jobs"
+    printf '%q ' cargo test --workspace --exclude cccc-daemon --locked --jobs "$cargo_jobs"
+    echo ""
+    printf "rust_daemon_test="
+    printf '%q ' cargo test --package cccc-daemon --locked --jobs "$cargo_jobs" -- --test-threads=1
     echo ""
     return
   fi
@@ -197,7 +200,8 @@ run_timed "Rust format" cargo fmt --all --check
 
 if [[ "$full" == "1" ]]; then
   run_timed "Rust lint" cargo clippy --workspace --all-targets --locked --jobs "$cargo_jobs" -- -D warnings
-  run_timed "Rust tests" cargo test --workspace --locked --jobs "$cargo_jobs"
+  run_timed "Rust tests" cargo test --workspace --exclude cccc-daemon --locked --jobs "$cargo_jobs"
+  run_timed "Rust daemon tests" cargo test --package cccc-daemon --locked --jobs "$cargo_jobs" -- --test-threads=1
   echo "Rust checks passed"
   echo ""
   exit 0

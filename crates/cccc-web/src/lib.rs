@@ -3,6 +3,7 @@ mod auth;
 mod browser_surface;
 mod im_runtime;
 mod ledger_event_hub;
+mod network;
 mod notebooklm_auth;
 mod readonly;
 mod routes;

@@ -110,11 +110,7 @@ export function useGlobalEvents({
       if (fallbackTimer) return;
       fallbackTimer = window.setTimeout(() => {
         fallbackTimer = null;
-        refreshGlobalEventsFallback(
-          document.hidden,
-          invalidateAndRefreshGroups,
-          refreshSelectedActors,
-        );
+        refreshGlobalEventsFallback(document.hidden, invalidateAndRefreshGroups);
         if (!document.hidden) {
           // While in polling fallback, periodically attempt to restore SSE.
           // If reconnect succeeds, onopen() clears fallback polling.
