@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, ActorRuntime};
+use cccc_contracts::{Actor, ActorRuntime, RuntimeStateSource};
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
@@ -13,15 +13,20 @@ pub fn runtime_actor_fields(
     } else {
         "pty"
     };
-    fields(home, actor, group_id, running, runner_effective)
+    let pid = running
+        .then(|| super::actor_runtime::status(group_id, &actor.id))
+        .flatten()
+        .and_then(|status| status.pid);
+    fields(home, actor, group_id, running, runner_effective, pid)
 }
 
-fn fields(
+pub(super) fn fields(
     home: &HomeLayout,
     actor: &Actor,
     group_id: &str,
     running: bool,
     runner_effective: &str,
+    pid: Option<u32>,
 ) -> Map<String, Value> {
     let local_state = (running && super::local_headless::supports(actor))
         .then(|| super::local_headless::status(group_id, &actor.id))
@@ -31,10 +36,22 @@ fn fields(
         ActorRuntime::Claude => Some("claude"),
         _ => None,
     };
+    let capability = hook_runtime.and_then(|runtime| {
+        (actor.runtime_state_source == RuntimeStateSource::Terminal)
+            .then(|| {
+                super::runtime_hook_session::validated(home, runtime, group_id, &actor.id, pid)
+            })
+            .flatten()
+    });
     let hook_state = (running && !super::local_headless::supports(actor))
         .then(|| {
             hook_runtime.and_then(|runtime| {
                 cccc_core::codex_hook_state::read_runtime(home, runtime, group_id, &actor.id)
+                    .filter(|state| {
+                        capability
+                            .as_ref()
+                            .is_some_and(|current| current.launch_token == state.launch_token)
+                    })
             })
         })
         .flatten();
@@ -95,139 +112,4 @@ fn fields(
         ("effective_working_updated_at".into(), json!(updated_at)),
         ("effective_active_task_id".into(), json!(active_task_id)),
     ])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::fields;
-    use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
-    use cccc_core::HomeLayout;
-    use serde_json::json;
-
-    #[test]
-    fn codex_state_comes_from_hooks() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path()).expect("home");
-        let mut actor = Actor::new("peer1");
-        actor.runtime = ActorRuntime::Codex;
-        cccc_core::codex_hook_state::begin_launch(
-            &home,
-            "codex",
-            "g_test",
-            "peer1",
-            "token",
-            "HookPending",
-        )
-        .expect("launch");
-        cccc_core::codex_hook_state::record(
-            &home,
-            "g_test",
-            "peer1",
-            "token",
-            &json!({"hook_event_name":"SessionStart","session_id":"s1"}),
-        )
-        .expect("session state");
-        cccc_core::codex_hook_state::record(
-            &home,
-            "g_test",
-            "peer1",
-            "token",
-            &json!({
-                "hook_event_name":"UserPromptSubmit",
-                "session_id":"s1",
-                "turn_id":"turn-1"
-            }),
-        )
-        .expect("hook state");
-
-        let state = fields(&home, &actor, "g_test", true, "pty");
-        assert_eq!(state["effective_working_state"], "working");
-        assert_eq!(
-            state["effective_working_reason"],
-            "codex_hook_UserPromptSubmit"
-        );
-        assert_eq!(state["effective_active_task_id"], "turn-1");
-    }
-
-    #[test]
-    fn externally_managed_headless_actor_without_local_session_is_idle() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path()).expect("home");
-        let mut actor = Actor::new("peer1");
-        actor.runtime = ActorRuntime::Custom;
-        actor.runner = RunnerKind::Headless;
-
-        let state = fields(&home, &actor, "g_test", true, "headless");
-        assert_eq!(state["effective_working_state"], "idle");
-        assert_eq!(state["effective_working_reason"], "headless_running");
-    }
-
-    #[test]
-    fn claude_pty_state_comes_from_hooks() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path()).expect("home");
-        let mut actor = Actor::new("peer1");
-        actor.runtime = ActorRuntime::Claude;
-        cccc_core::codex_hook_state::begin_launch(
-            &home,
-            "claude",
-            "g_test",
-            "peer1",
-            "token",
-            "HookPending",
-        )
-        .expect("launch");
-        cccc_core::codex_hook_state::record_runtime(
-            &home,
-            "claude",
-            "g_test",
-            "peer1",
-            "token",
-            &json!({"hook_event_name":"SessionStart","session_id":"session-1"}),
-        )
-        .expect("hook state");
-
-        let state = fields(&home, &actor, "g_test", true, "pty");
-        assert_eq!(state["effective_working_state"], "idle");
-        assert_eq!(
-            state["effective_working_reason"],
-            "claude_pty_fail_closed_SessionStart"
-        );
-    }
-
-    #[test]
-    fn claude_pty_without_hook_is_pending_not_terminal_inferred() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path()).expect("home");
-        let mut actor = Actor::new("peer1");
-        actor.runtime = ActorRuntime::Claude;
-
-        let state = fields(&home, &actor, "g_test", true, "pty");
-        assert_eq!(state["effective_working_state"], "waiting");
-        assert_eq!(state["effective_working_reason"], "claude_hook_pending");
-    }
-
-    #[test]
-    fn claude_hook_setup_issue_is_visible() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = HomeLayout::from_path(temp.path()).expect("home");
-        let mut actor = Actor::new("peer1");
-        actor.runtime = ActorRuntime::Claude;
-        cccc_core::codex_hook_state::begin_launch(
-            &home,
-            "claude",
-            "g_test",
-            "peer1",
-            "token",
-            "HookUnavailableVersion",
-        )
-        .expect("setup issue");
-
-        let state = fields(&home, &actor, "g_test", true, "pty");
-        assert_eq!(state["effective_working_state"], "waiting");
-        assert_eq!(
-            state["effective_working_reason"],
-            "claude_pty_fail_closed_HookUnavailableVersion"
-        );
-    }
 }

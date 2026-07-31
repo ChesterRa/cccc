@@ -260,13 +260,6 @@ fn wake_idle_group(home: &HomeLayout, group: GroupDoc, by: &str) -> Result<Group
             Ok(current.clone())
         })
         .map_err(OpError::io)
-        .inspect(|current| {
-            if current.state == GroupState::Active
-                && let Ok(state_dir) = store.state_dir(&current.group_id)
-            {
-                let _ = std::fs::remove_file(state_dir.join("automation-runtime.json"));
-            }
-        })
 }
 
 fn reply_ack(

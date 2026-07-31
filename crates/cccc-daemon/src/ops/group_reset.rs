@@ -23,7 +23,7 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let created = store.create(&old.title, &old.topic).map_err(OpError::io)?;
     let replacement = prepare_replacement(&store, &old, &created)
         .and_then(|replacement| {
-            copy_actor_secrets(&store, &old.group_id, &replacement.group_id)?;
+            super::actor_secrets::copy_group(home, &old.group_id, &replacement.group_id)?;
             super::groups::append_group_event(
                 home,
                 &replacement,
@@ -52,6 +52,9 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(OpError::io)
         .err()
         .map(|error| error.message);
+    if old_delete_error.is_none() {
+        super::actor_secrets::remove_group(home, &old.group_id)?;
+    }
     object(json!({
         "old_group_id":old.group_id,
         "new_group_id":replacement.group_id,
@@ -97,22 +100,6 @@ fn prepare_replacement(
     })
     .map_err(OpError::io)?;
     Ok(replacement)
-}
-
-fn copy_actor_secrets(store: &GroupStore, old: &str, new: &str) -> Result<(), OpError> {
-    let source = store
-        .state_dir(old)
-        .map_err(OpError::io)?
-        .join("actor-secrets.json");
-    if !source.is_file() {
-        return Ok(());
-    }
-    let target = store
-        .state_dir(new)
-        .map_err(OpError::io)?
-        .join("actor-secrets.json");
-    std::fs::copy(source, target).map_err(OpError::io)?;
-    Ok(())
 }
 
 fn rollback_new(store: &GroupStore, old: &GroupDoc, group_id: &str, original: OpError) -> OpError {

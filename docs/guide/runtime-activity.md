@@ -76,6 +76,21 @@ synthetic `stuck` diagnosis for the same activity, regardless of delivery timest
 
 This is an observability buffer, not an audit log. Restarting with an empty buffer is safe.
 
+## Authoritative Actor Working State
+
+PTY hook state is accepted for actor status only when the current runtime session, the committed
+launch identity, and the hook state agree on the runtime, process ID, and launch token. A daemon
+restart, actor restart, non-hook provider command, corrupt identity, or late event from an older
+process therefore fails closed to an unavailable/pending state instead of reusing stale
+`working` or `idle` data.
+
+The daemon derives the current state once per second and appends `actor.activity` only when an
+actor's effective state changes or a previously running actor stops. The selected-group ledger
+stream applies these events directly. The global event stream also refreshes the authoritative
+actor list, and its polling fallback refreshes both groups and actors while the page is visible.
+This keeps local and LAN clients consistent after SSE reconnects without turning hook files into a
+network protocol.
+
 ## Privacy Boundary
 
 Runtime activity never stores prompts, command lines, tool inputs, tool outputs, or notification

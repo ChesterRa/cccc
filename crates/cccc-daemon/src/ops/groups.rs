@@ -275,6 +275,9 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     actor_delivery::shutdown_group(&group.group_id);
     actor_runtime::stop_group(&group)?;
     let deleted = store(home)?.delete(&group.group_id).map_err(OpError::io)?;
+    if deleted {
+        super::actor_secrets::remove_group(home, &group.group_id)?;
+    }
     if active::get(home).map_err(OpError::io)?.as_deref() == Some(&group.group_id) {
         active::clear(home).map_err(OpError::io)?;
     }

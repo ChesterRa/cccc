@@ -1,13 +1,17 @@
 use cccc_contracts::{Actor, ActorRuntime, RunnerKind, RuntimeStateSource};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout};
-use cccc_runtime::{LaunchSpec, SessionStatus};
+use cccc_runtime::SessionStatus;
 use std::path::PathBuf;
 
 use crate::dispatch::OpError;
 use crate::ops::{actor_profile_runtime, actor_secrets, runtime_session};
 
+mod hook_launch;
+#[cfg(test)]
+mod hook_launch_tests;
 mod persistence;
 mod reconcile;
+mod resume_verification;
 pub use persistence::persist_lifecycle;
 pub use reconcile::{reap_exited, reconcile_exited};
 
@@ -98,10 +102,10 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
             resumed_session_id: None,
         },
     };
-    let status = launch(home, group, &actor, &cwd, &env, prepared.command)?;
+    let status = hook_launch::launch(home, group, &actor, &cwd, &env, prepared.command)?;
 
     if prepared.resumed_session_id.is_some() {
-        schedule_resume_verification(
+        resume_verification::schedule(
             home.clone(),
             group.clone(),
             actor.clone(),
@@ -114,51 +118,6 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
         schedule_capture(home, group, &actor, cwd, base_command, &status);
     }
     Ok(status)
-}
-
-fn launch(
-    home: &HomeLayout,
-    group: &GroupDoc,
-    actor: &Actor,
-    cwd: &std::path::Path,
-    env: &std::collections::BTreeMap<String, String>,
-    mut command: Vec<String>,
-) -> Result<SessionStatus, OpError> {
-    let _start_permit = crate::runtime_start_gate::permit(home)
-        .map_err(|message| OpError::new("runtime_shutting_down", message))?;
-    let mut launch_env = env.clone();
-    crate::ops::codex_mcp::configure_actor_cli(&mut launch_env);
-    if actor.runtime == ActorRuntime::Codex {
-        crate::ops::codex_mcp::configure(
-            home,
-            &group.group_id,
-            &actor.id,
-            &mut command,
-            &mut launch_env,
-        )
-        .map_err(OpError::io)?;
-    } else if actor.runtime == ActorRuntime::Claude {
-        crate::ops::claude_hooks::configure(
-            home,
-            &group.group_id,
-            &actor.id,
-            cwd,
-            &mut command,
-            &mut launch_env,
-        )
-        .map_err(OpError::io)?;
-    }
-    cccc_runtime::start(LaunchSpec {
-        group_id: group.group_id.clone(),
-        actor_id: actor.id.clone(),
-        runner: actor.runner,
-        command,
-        cwd: cwd.to_path_buf(),
-        env: launch_env,
-        cols: 120,
-        rows: 40,
-    })
-    .map_err(runtime_error)
 }
 
 fn schedule_capture(
@@ -184,93 +143,13 @@ fn schedule_capture(
     }
 }
 
-fn schedule_resume_verification(
-    home: HomeLayout,
-    group: GroupDoc,
-    actor: Actor,
-    cwd: PathBuf,
-    env: std::collections::BTreeMap<String, String>,
-    base_command: Vec<String>,
-    resumed_status: SessionStatus,
-) {
-    let _ = std::thread::Builder::new()
-        .name(format!(
-            "cccc-resume-verify:{}:{}",
-            group.group_id, actor.id
-        ))
-        .spawn(move || {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            let mut error = None;
-            while std::time::Instant::now() < deadline {
-                let Ok(current) = cccc_runtime::status(&group.group_id, &actor.id) else {
-                    return;
-                };
-                if current.started_at != resumed_status.started_at {
-                    return;
-                }
-                if !current.running {
-                    error = Some("provider resume process exited early".to_owned());
-                    break;
-                }
-                if let Some(message) = runtime_session::resume_failure(&group.group_id, &actor.id) {
-                    error = Some(message);
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
-
-            if let Some(error) = error {
-                let stopped = cccc_runtime::stop_if_started_at(
-                    &group.group_id,
-                    &actor.id,
-                    &resumed_status.started_at,
-                );
-                if !matches!(stopped, Ok(Some(_))) {
-                    return;
-                }
-                if let Err(persist_error) =
-                    runtime_session::mark_resume_failed(&home, &group.group_id, &actor.id, &error)
-                {
-                    tracing::warn!(
-                        %persist_error,
-                        group_id = %group.group_id,
-                        actor_id = %actor.id,
-                        "failed to persist resume failure"
-                    );
-                }
-                let fresh_command = if actor.runtime == ActorRuntime::Grok {
-                    runtime_session::prepare_fresh_grok_command(
-                        &home,
-                        &group.group_id,
-                        &actor.id,
-                        &cwd,
-                        &base_command,
-                    )
-                    .command
-                } else {
-                    base_command.clone()
-                };
-                match launch(&home, &group, &actor, &cwd, &env, fresh_command) {
-                    Ok(fresh) => {
-                        schedule_capture(&home, &group, &actor, cwd, base_command, &fresh);
-                    }
-                    Err(fallback_error) => tracing::warn!(
-                        group_id = %group.group_id,
-                        actor_id = %actor.id,
-                        message = %fallback_error.message,
-                        "failed to start fresh actor after resume failure"
-                    ),
-                }
-                return;
-            }
-
-            schedule_capture(&home, &group, &actor, cwd, base_command, &resumed_status);
-        });
-}
-
 fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {
     match cccc_runtime::stop(&group.group_id, actor_id) {
-        Ok(status) => Ok(Some(status)),
+        Ok(status) => {
+            super::runtime_hook_session::revoke(&group.group_id, actor_id);
+            super::runtime_hook_input::reset(&group.group_id, actor_id);
+            Ok(Some(status))
+        }
         Err(cccc_runtime::RuntimeError::NotFound(_, _)) => Ok(None),
         Err(error) => Err(runtime_error(error)),
     }

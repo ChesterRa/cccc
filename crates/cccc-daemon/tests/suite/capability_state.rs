@@ -96,17 +96,34 @@ fn native_updates_override_legacy_capability_flags() {
     call(
         &home,
         "capability_enable",
-        json!({"capability_id":"skill:test:enabled","enabled":false}),
+        json!({
+            "group_id":"g_test",
+            "actor_id":"user",
+            "scope":"group",
+            "capability_id":"skill:test:enabled",
+            "enabled":false
+        }),
     );
     call(
         &home,
         "capability_block",
-        json!({"capability_id":"skill:test:blocked","blocked":false}),
+        json!({
+            "group_id":"g_test",
+            "actor_id":"user",
+            "scope":"global",
+            "capability_id":"skill:test:blocked",
+            "blocked":false
+        }),
     );
     call(
         &home,
         "capability_visibility",
-        json!({"capability_id":"skill:test:hidden","hidden":false}),
+        json!({
+            "group_id":"g_test",
+            "actor_id":"user",
+            "capability_id":"skill:test:hidden",
+            "hidden":false
+        }),
     );
 
     let state = call(
@@ -116,9 +133,18 @@ fn native_updates_override_legacy_capability_flags() {
     );
     assert_eq!(state["enabled_capabilities"], json!([]));
     assert_eq!(state["actor_hidden_capabilities"], json!([]));
-    assert_eq!(state["state"]["disabled"], json!(["skill:test:enabled"]));
-    assert_eq!(state["state"]["unblocked"], json!(["skill:test:blocked"]));
-    assert_eq!(state["state"]["visible"], json!(["skill:test:hidden"]));
+    let stored: Value = serde_json::from_slice(
+        &std::fs::read(home.root().join("state/capabilities/state.json")).expect("state"),
+    )
+    .expect("state JSON");
+    assert!(stored["group_enabled"].get("g_test").is_none());
+    assert!(
+        stored["global_blocked"]
+            .as_object()
+            .expect("global")
+            .is_empty()
+    );
+    assert!(stored["actor_hidden"].get("g_test").is_none());
 
     let blocked = call(
         &home,

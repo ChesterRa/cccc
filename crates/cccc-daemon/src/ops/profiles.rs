@@ -39,11 +39,20 @@ fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let profile_id = required_arg(request, "profile_id")?;
     let profiles = store(home)?;
     let profile = profiles
-        .get(&profile_id)
+        .get_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+        )
         .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("not_found", "profile not found"))?;
     super::profile_access::require_read(request, &profile)?;
-    object(json!({"profile":profile,"usage":profiles.usage(&profile_id).map_err(OpError::io)?}))
+    object(json!({
+        "profile":profile,
+        "usage":profiles
+            .usage_ref(&profile_id,&profile_scope(request),&profile_owner(request))
+            .map_err(OpError::io)?
+    }))
 }
 fn upsert(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let mut profile = request
@@ -79,7 +88,19 @@ fn upsert(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .get("id")
         .and_then(Value::as_str)
         .filter(|id| !id.is_empty())
-        .map(|id| profiles.get(id))
+        .map(|id| {
+            profiles.get_ref(
+                id,
+                profile
+                    .get("scope")
+                    .and_then(Value::as_str)
+                    .unwrap_or("global"),
+                profile
+                    .get("owner_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+            )
+        })
         .transpose()
         .map_err(OpError::io)?
         .flatten();
@@ -113,12 +134,21 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let profile_id = required_arg(request, "profile_id")?;
     let profiles = store(home)?;
     let profile = profiles
-        .get(&profile_id)
+        .get_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+        )
         .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("not_found", "profile not found"))?;
     super::profile_access::require_write(request, &profile)?;
     let (deleted, detached) = profiles
-        .delete(&profile_id, bool_arg(request, "force_detach", false))
+        .delete_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+            bool_arg(request, "force_detach", false),
+        )
         .map_err(OpError::invalid)?;
     object(
         json!({"deleted":deleted,"profile_id":profile_id,"detached_count":detached.len(),"detached":detached}),
@@ -128,11 +158,21 @@ fn secret_keys(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let profile_id = required_arg(request, "profile_id")?;
     let profiles = store(home)?;
     let profile = profiles
-        .get(&profile_id)
+        .get_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+        )
         .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("not_found", "profile not found"))?;
     super::profile_access::require_read(request, &profile)?;
-    let keys = profiles.secret_keys(&profile_id).map_err(OpError::io)?;
+    let keys = profiles
+        .secret_keys_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+        )
+        .map_err(OpError::io)?;
     let masked = keys
         .iter()
         .map(|key| (key.clone(), json!("********")))
@@ -143,7 +183,11 @@ fn secret_update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let profile_id = required_arg(request, "profile_id")?;
     let profiles = store(home)?;
     let profile = profiles
-        .get(&profile_id)
+        .get_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+        )
         .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("not_found", "profile not found"))?;
     super::profile_access::require_write(request, &profile)?;
@@ -160,7 +204,14 @@ fn secret_update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .and_then(Value::as_array)
         .unwrap_or(&empty_unset);
     let keys = profiles
-        .update_secrets(&profile_id, set, unset, bool_arg(request, "clear", false))
+        .update_secrets_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+            set,
+            unset,
+            bool_arg(request, "clear", false),
+        )
         .map_err(OpError::io)?;
     object(json!({"profile_id":profile_id,"keys":keys}))
 }
@@ -168,7 +219,11 @@ fn copy_actor(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let profile_id = required_arg(request, "profile_id")?;
     let profiles = store(home)?;
     let profile = profiles
-        .get(&profile_id)
+        .get_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+        )
         .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("not_found", "profile not found"))?;
     super::profile_access::require_write(request, &profile)?;
@@ -183,7 +238,12 @@ fn copy_actor(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let values = actor_secrets::values(home, &group_id, &actor_id)?;
     let keys = profiles
-        .replace_secrets(&profile_id, values)
+        .replace_secrets_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+            values,
+        )
         .map_err(OpError::io)?;
     object(json!({"profile_id":profile_id,"group_id":group_id,"actor_id":actor_id,"keys":keys}))
 }
@@ -194,18 +254,44 @@ fn copy_profile(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .ok_or_else(|| OpError::new("invalid_args", "source_profile_id is required"))?;
     let profiles = store(home)?;
     let target = profiles
-        .get(&profile_id)
+        .get_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+        )
         .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("not_found", "profile not found"))?;
     super::profile_access::require_write(request, &target)?;
+    let source_scope =
+        string_arg(request, "source_profile_scope").unwrap_or_else(|| "global".into());
+    let source_owner = string_arg(request, "source_profile_owner").unwrap_or_default();
     let source_profile = profiles
-        .get(&source)
+        .get_ref(&source, &source_scope, &source_owner)
         .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("not_found", "source profile not found"))?;
     super::profile_access::require_read(request, &source_profile)?;
-    let values = profiles.secret_values(&source).map_err(OpError::io)?;
+    let values = profiles
+        .secret_values_ref(&source, &source_scope, &source_owner)
+        .map_err(OpError::io)?;
     let keys = profiles
-        .replace_secrets(&profile_id, values)
+        .replace_secrets_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+            values,
+        )
         .map_err(OpError::io)?;
     object(json!({"profile_id":profile_id,"source_profile_id":source,"keys":keys}))
+}
+
+fn profile_scope(request: &DaemonRequest) -> String {
+    string_arg(request, "profile_scope")
+        .or_else(|| string_arg(request, "scope"))
+        .unwrap_or_else(|| "global".into())
+}
+
+fn profile_owner(request: &DaemonRequest) -> String {
+    string_arg(request, "profile_owner")
+        .or_else(|| string_arg(request, "owner_id"))
+        .unwrap_or_default()
 }

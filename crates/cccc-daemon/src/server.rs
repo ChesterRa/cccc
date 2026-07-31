@@ -14,6 +14,7 @@ use tokio::net::UnixListener;
 
 use crate::dispatch_concurrency::DispatchLocks;
 use crate::paths::DaemonPaths;
+use crate::server_actor_activity::ActorActivityService;
 use crate::server_automation::AutomationScheduler;
 use crate::server_connection::spawn_connection;
 use crate::server_connections::ConnectionTasks;
@@ -31,6 +32,7 @@ pub async fn run(home: HomeLayout) -> Result<()> {
     crate::ops::runtime_restore::restore_running(&lifecycle.paths.home)
         .map_err(|error| anyhow::anyhow!(error.message))?;
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let actor_activity = ActorActivityService::start(lifecycle.paths.home.clone());
     let dispatch_locks = DispatchLocks::default();
     let group_bridge_sessions =
         crate::group_bridge_sessions::SessionManager::start(lifecycle.paths.home.clone());
@@ -40,6 +42,7 @@ pub async fn run(home: HomeLayout) -> Result<()> {
     } else {
         serve_platform_default(&lifecycle.paths, shutdown_tx, shutdown_rx, dispatch_locks).await
     };
+    actor_activity.finish().await;
     group_bridge_sessions.shutdown().await;
     lifecycle.finish(result)
 }

@@ -60,6 +60,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 sha2 = "0.10"
+sha1 = "0.10"
 sherpa-onnx = "1.13.4"
 shell-words = "1.1"
 tar = "0.4"
@@ -87,3 +88,11 @@ unsafe_code = "forbid"
 dbg_macro = "deny"
 todo = "deny"
 unwrap_used = "deny"
+
+[profile.dev]
+debug = 0
+incremental = true
+
+[profile.test]
+debug = 0
+incremental = true

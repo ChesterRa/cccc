@@ -59,7 +59,39 @@ pub fn read_json<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
 
 pub fn write_yaml<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     let text = serde_yaml::to_string(value).map_err(io::Error::other)?;
+    let text = quote_rfc3339_yaml_scalars(&text);
     atomic_write(path, text.as_bytes())
+}
+
+fn quote_rfc3339_yaml_scalars(text: &str) -> String {
+    text.split_inclusive('\n')
+        .map(|line| {
+            let body = line.strip_suffix('\n').unwrap_or(line);
+            let newline = if line.ends_with('\n') { "\n" } else { "" };
+            let Some((prefix, scalar)) = yaml_scalar_parts(body) else {
+                return line.to_owned();
+            };
+            if chrono::DateTime::parse_from_rfc3339(scalar).is_err() {
+                return line.to_owned();
+            }
+            format!(
+                "{prefix}{}{}",
+                serde_json::to_string(scalar).unwrap_or_else(|_| "\"\"".into()),
+                newline
+            )
+        })
+        .collect()
+}
+
+fn yaml_scalar_parts(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim_start();
+    if let Some(scalar) = trimmed.strip_prefix("- ") {
+        let prefix_len = line.len() - trimmed.len() + 2;
+        return Some((&line[..prefix_len], scalar.trim()));
+    }
+    let separator = line.find(": ")?;
+    let scalar_start = separator + 2;
+    Some((&line[..scalar_start], line[scalar_start..].trim()))
 }
 
 pub fn write_yaml_committed<T>(path: &Path, value: &T) -> io::Result<()>
@@ -125,4 +157,20 @@ fn protect(_path: &Path) -> io::Result<()> {
 #[cfg(not(unix))]
 fn sync_dir(_path: &Path) -> io::Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quote_rfc3339_yaml_scalars;
+
+    #[test]
+    fn python_yaml_loaders_keep_rfc3339_values_as_strings() {
+        let output = quote_rfc3339_yaml_scalars(
+            "created_at: 2026-07-31T01:02:03.456789Z\nitems:\n- 2026-07-31T01:02:03Z\n",
+        );
+        assert_eq!(
+            output,
+            "created_at: \"2026-07-31T01:02:03.456789Z\"\nitems:\n- \"2026-07-31T01:02:03Z\"\n"
+        );
+    }
 }

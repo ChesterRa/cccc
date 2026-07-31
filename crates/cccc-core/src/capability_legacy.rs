@@ -165,14 +165,16 @@ fn collect_session(value: Option<&Value>, output: &mut BTreeSet<String>) {
 }
 
 fn strings(value: Option<&Value>) -> Vec<String> {
-    value
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|item| item.as_str().map(str::trim))
-        .filter(|item| !item.is_empty())
-        .map(str::to_owned)
-        .collect()
+    match value {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.as_str().map(str::trim))
+            .filter(|item| !item.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        Some(Value::Object(items)) => items.keys().cloned().collect(),
+        _ => Vec::new(),
+    }
 }
 
 fn nonempty(value: Option<&Value>) -> Option<&str> {

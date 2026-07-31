@@ -5,109 +5,18 @@ import { useEffect, useRef } from "react";
 import * as api from "../services/api";
 import { publishCapabilityChanged } from "../utils/capabilityEvents";
 import { publishGroupBridgePairingChanged } from "../utils/groupBridgePairingEvents";
+import { refreshGlobalEventsFallback } from "./globalEventFallback";
+import {
+  shouldKeepGlobalEventsConnected,
+  shouldRefreshActorsAfterGlobalEvent,
+  shouldRefreshCapabilitiesAfterGlobalEvent,
+  shouldRefreshGroupBridgePairingAfterGlobalEvent,
+  shouldRefreshGroupBridgePairingAfterGlobalEventsOpen,
+  shouldRefreshGroupsAfterGlobalEvent,
+  shouldRefreshGroupsAfterGlobalEventsOpen,
+} from "./globalEventRefreshPolicy";
 
-const GLOBAL_REFRESH_EVENT_KINDS = new Set([
-  // Python publishes global lifecycle events; Rust forwards canonical ledger events.
-  "group.created",
-  "group.updated",
-  "group.deleted",
-  "group.state_changed",
-  "group.create",
-  "group.update",
-  "group.start",
-  "group.stop",
-  "group.set_state",
-  "actor.remove",
-  "actor.start",
-  "actor.stop",
-  "actor.restart",
-]);
-
-export function shouldRefreshGroupsAfterGlobalEvent(ev: unknown): boolean {
-  if (!ev || typeof ev !== "object") return false;
-  const kind = String((ev as { kind?: unknown }).kind || "").trim();
-  return GLOBAL_REFRESH_EVENT_KINDS.has(kind);
-}
-
-const ACTOR_REFRESH_EVENT_KINDS = new Set([
-  "actor.remove",
-  "actor.start",
-  "actor.stop",
-  "actor.restart",
-  "group.state_changed",
-  "group.start",
-  "group.stop",
-  "group.set_state",
-]);
-
-const CAPABILITY_REFRESH_EVENT_KINDS = new Set(["capability.changed"]);
-
-const GROUP_BRIDGE_PAIRING_EVENT_KINDS = new Set([
-  "group_bridge.pairing.invite_created",
-  "group_bridge.pairing.request_created",
-  "group_bridge.pairing.request_approved",
-  "group_bridge.pairing.request_rejected",
-  "group_bridge.pairing.trust_access_updated",
-  "group_bridge.pairing.trust_revoked",
-  "group_bridge.pairing.outbound_changed",
-  "group_bridge.pairing.outbound_approved",
-]);
-
-export function shouldRefreshGroupsAfterGlobalEventsOpen(_hasConnectedOnce: boolean): boolean {
-  return true;
-}
-
-export function shouldRefreshGroupBridgePairingAfterGlobalEventsOpen(
-  _hasConnectedOnce: boolean,
-): boolean {
-  return true;
-}
-
-export function shouldKeepGlobalEventsConnected(documentHidden: boolean): boolean {
-  return !documentHidden;
-}
-
-export function getGlobalEventGroupId(ev: unknown): string {
-  if (!ev || typeof ev !== "object") return "";
-  const directGroupId = String((ev as { group_id?: unknown }).group_id || "").trim();
-  if (directGroupId) return directGroupId;
-  const data = (ev as { data?: unknown }).data;
-  if (!data || typeof data !== "object") return "";
-  return String((data as { group_id?: unknown }).group_id || "").trim();
-}
-
-export function shouldRefreshActorsAfterGlobalEvent(ev: unknown, selectedGroupId: string): boolean {
-  if (!ev || typeof ev !== "object") return false;
-  const kind = String((ev as { kind?: unknown }).kind || "").trim();
-  if (!ACTOR_REFRESH_EVENT_KINDS.has(kind)) return false;
-  const selected = String(selectedGroupId || "").trim();
-  if (!selected) return false;
-  return getGlobalEventGroupId(ev) === selected;
-}
-
-export function shouldRefreshCapabilitiesAfterGlobalEvent(
-  ev: unknown,
-  selectedGroupId: string,
-): boolean {
-  if (!ev || typeof ev !== "object") return false;
-  const kind = String((ev as { kind?: unknown }).kind || "").trim();
-  if (!CAPABILITY_REFRESH_EVENT_KINDS.has(kind)) return false;
-  const selected = String(selectedGroupId || "").trim();
-  if (!selected) return false;
-  return getGlobalEventGroupId(ev) === selected;
-}
-
-export function shouldRefreshGroupBridgePairingAfterGlobalEvent(
-  ev: unknown,
-  selectedGroupId: string,
-): boolean {
-  if (!ev || typeof ev !== "object") return false;
-  const kind = String((ev as { kind?: unknown }).kind || "").trim();
-  if (!GROUP_BRIDGE_PAIRING_EVENT_KINDS.has(kind)) return false;
-  const selected = String(selectedGroupId || "").trim();
-  if (!selected) return false;
-  return getGlobalEventGroupId(ev) === selected;
-}
+export * from "./globalEventRefreshPolicy";
 
 interface UseGlobalEventsOptions {
   /** Callback to refresh groups when events are received */
@@ -201,8 +110,12 @@ export function useGlobalEvents({
       if (fallbackTimer) return;
       fallbackTimer = window.setTimeout(() => {
         fallbackTimer = null;
+        refreshGlobalEventsFallback(
+          document.hidden,
+          invalidateAndRefreshGroups,
+          refreshSelectedActors,
+        );
         if (!document.hidden) {
-          invalidateAndRefreshGroups();
           // While in polling fallback, periodically attempt to restore SSE.
           // If reconnect succeeds, onopen() clears fallback polling.
           if (!es) {

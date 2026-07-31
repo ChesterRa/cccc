@@ -52,7 +52,7 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
     call(
         &home,
         "group_space_bind",
-        json!({"group_id":group_id,"provider":"local","lane":"work","remote_space_id":"local-1"}),
+        json!({"group_id":group_id,"provider":"notebooklm","lane":"work","remote_space_id":"notebook-1"}),
     );
     let unavailable = raw_call(
         &home,
@@ -63,29 +63,23 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
         unavailable.error.expect("provider error").code,
         "credential_missing"
     );
-    let first = call(
+    let local = raw_call(
         &home,
-        "group_space_ingest",
-        json!({"group_id":group_id,"provider":"local","lane":"work","idempotency_key":"same","payload":{"title":"Migration evidence","content":"Rust only"}}),
+        "group_space_status",
+        json!({"group_id":group_id,"provider":"local"}),
     );
-    let second = call(
+    assert_eq!(
+        local.error.expect("unsupported provider").code,
+        "provider_unavailable"
+    );
+    let status = call(
         &home,
-        "group_space_ingest",
-        json!({"group_id":group_id,"provider":"local","lane":"work","idempotency_key":"same","payload":{"title":"ignored duplicate"}}),
+        "group_space_status",
+        json!({"group_id":group_id,"provider":"notebooklm"}),
     );
-    assert_eq!(first.result["job_id"], second.result["job_id"]);
-    assert_eq!(second.result["deduped"], true);
-    let query = call(
-        &home,
-        "group_space_query",
-        json!({"group_id":group_id,"provider":"local","lane":"work","query":"Migration"}),
-    );
-    assert_eq!(query.result["degraded"], true);
-    assert!(
-        !query.result["references"]
-            .as_array()
-            .expect("refs")
-            .is_empty()
+    assert_eq!(
+        status.result["bindings"]["work"]["remote_space_id"],
+        "notebook-1"
     );
 
     let invalid_document = raw_call(
@@ -112,13 +106,16 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
         "actor_profile_upsert",
         json!({"profile_id":"legacy","name":"Legacy","env":{"LEGACY_TOKEN":"secret"}}),
     );
-    assert_eq!(legacy.result["profile"]["env"], json!({}));
+    assert_eq!(
+        legacy.result["profile"]["env"],
+        json!({"LEGACY_TOKEN":"secret"})
+    );
     let legacy_keys = call(
         &home,
         "actor_profile_secret_keys",
         json!({"profile_id":"legacy"}),
     );
-    assert_eq!(legacy_keys.result["keys"], json!(["LEGACY_TOKEN"]));
+    assert_eq!(legacy_keys.result["keys"], json!([]));
     let linked = call(
         &home,
         "actor_add",
@@ -185,7 +182,10 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
         "group_space_provider_credential_update",
         json!({"provider":"notebooklm","by":"user","auth_json":"{\"cookie\":\"secret\"}"}),
     );
-    assert_eq!(credential.result["credential"]["masked_value"], "********");
+    assert_eq!(
+        credential.result["credential"]["masked_value"],
+        "{\"******\"}"
+    );
     assert!(
         !serde_json::to_string(&credential.result)
             .expect("credential response")

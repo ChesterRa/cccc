@@ -15,9 +15,10 @@ use crate::{GroupDoc, GroupStore, Registry, Scope, scope};
 
 const KIND: &str = "cccc.group_copy";
 const VERSION: u8 = 1;
-pub const MAX_PACKAGE_BYTES: usize = 100 * 1024 * 1024;
-const MAX_UNCOMPRESSED_BYTES: u64 = 256 * 1024 * 1024;
+pub const MAX_PACKAGE_BYTES: usize = 1024 * 1024 * 1024;
+const MAX_UNCOMPRESSED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const MAX_FILE_COUNT: usize = 20_000;
+const MAX_COMPRESSION_RATIO: f64 = 200.0;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Manifest {
@@ -102,9 +103,9 @@ pub fn export(store: &GroupStore, group_id: &str) -> io::Result<(Vec<u8>, Manife
     let mut files = collect_files(&store.group_dir(group_id)?)?;
     files.insert(
         "group.yaml".into(),
-        serde_yaml::to_string(&group)
-            .map_err(io::Error::other)?
-            .into_bytes(),
+        // JSON is valid YAML and keeps ISO timestamps as strings when Python's
+        // yaml.safe_load reads a Rust-created package.
+        serde_json::to_vec_pretty(&group).map_err(io::Error::other)?,
     );
     let digest = content_digest(&files);
     let paths = files.keys().cloned().collect::<Vec<_>>();
@@ -143,7 +144,7 @@ pub fn export(store: &GroupStore, group_id: &str) -> io::Result<(Vec<u8>, Manife
     }
     let bytes = writer.finish().map_err(io::Error::other)?.into_inner();
     if bytes.len() > MAX_PACKAGE_BYTES {
-        return Err(io::Error::other("group copy package exceeds 100 MiB"));
+        return Err(io::Error::other("group copy package exceeds 1 GiB"));
     }
     let filename = format!(
         "cccc-group--{}--{}--{}.zip",
@@ -207,6 +208,7 @@ pub fn import(
         replace_active_scope(&mut group, detected, &old_scope);
     }
     scrub_group(&mut group);
+    sanitize_import_profiles(store, &mut group)?;
     let imported = store.import(group.clone())?;
     let target = store.group_dir(&final_group_id)?;
     let result = (|| {
@@ -291,13 +293,11 @@ fn read_package(bytes: &[u8]) -> io::Result<Package> {
     let mut names = BTreeSet::new();
     let mut folded = BTreeSet::new();
     let mut total = 0_u64;
+    let mut total_compressed = 0_u64;
     let mut manifest = None;
     let mut files = HashMap::new();
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(io::Error::other)?;
-        if entry.is_dir() {
-            continue;
-        }
         let name = safe_zip_name(entry.name())?;
         if entry
             .unix_mode()
@@ -310,9 +310,19 @@ fn read_package(bytes: &[u8]) -> io::Result<Package> {
         if !names.insert(name.clone()) || !folded.insert(name.to_ascii_lowercase()) {
             return Err(io::Error::other("duplicate group copy entry"));
         }
+        if entry.is_dir() {
+            continue;
+        }
         total = total.saturating_add(entry.size());
         if total > MAX_UNCOMPRESSED_BYTES {
-            return Err(io::Error::other("group copy expands beyond 256 MiB"));
+            return Err(io::Error::other("group copy expands beyond 2 GiB"));
+        }
+        total_compressed = total_compressed.saturating_add(entry.compressed_size());
+        let compressed = entry.compressed_size().max(1);
+        if entry.size() > 1024 * 1024
+            && entry.size() as f64 / compressed as f64 > MAX_COMPRESSION_RATIO
+        {
+            return Err(io::Error::other("suspicious group copy compression ratio"));
         }
         let mut data = Vec::with_capacity(entry.size().min(8 * 1024 * 1024) as usize);
         entry.read_to_end(&mut data)?;
@@ -321,6 +331,9 @@ fn read_package(bytes: &[u8]) -> io::Result<Package> {
         } else if let Some(relative) = name.strip_prefix("group/") {
             files.insert(relative.into(), data);
         }
+    }
+    if total_compressed > 0 && total as f64 / total_compressed as f64 > MAX_COMPRESSION_RATIO {
+        return Err(io::Error::other("suspicious group copy compression ratio"));
     }
     let manifest = manifest.ok_or_else(|| io::Error::other("manifest.json missing"))?;
     validate_manifest(&manifest)?;
@@ -450,7 +463,7 @@ fn collect_dir(
                 return Err(io::Error::other("group copy has too many files"));
             }
             if budget.bytes > MAX_UNCOMPRESSED_BYTES {
-                return Err(io::Error::other("group copy exceeds 256 MiB"));
+                return Err(io::Error::other("group copy exceeds 2 GiB"));
             }
             output.insert(relative, fs::read(path)?);
         }
@@ -458,7 +471,7 @@ fn collect_dir(
     Ok(())
 }
 
-fn excluded(relative: &str, is_dir: bool) -> bool {
+fn excluded(relative: &str, _is_dir: bool) -> bool {
     let lower = relative.to_ascii_lowercase();
     let parts = lower.split('/').collect::<Vec<_>>();
     let sensitive = [
@@ -470,7 +483,9 @@ fn excluded(relative: &str, is_dir: bool) -> bool {
         "credentials",
         "auth",
         "password",
-        "env_private",
+        "cookie",
+        "oauth",
+        "session_auth",
     ];
     let runtime = [
         "browser",
@@ -478,7 +493,13 @@ fn excluded(relative: &str, is_dir: bool) -> bool {
         "cdp",
         "chrome",
         "chrome_profile",
+        "claude",
+        "codex",
+        "devin",
+        "grok",
         "headless",
+        "hermes",
+        "kiro",
         "playwright",
         "projections",
         "pty",
@@ -486,16 +507,35 @@ fn excluded(relative: &str, is_dir: bool) -> bool {
         "runtime_sessions",
         "web_model",
     ];
-    parts
+    let name = parts.last().copied().unwrap_or_default();
+    parts.iter().any(|part| sensitive.contains(part))
+        || name.ends_with('~')
+        || name.ends_with(".tmp")
+        || parts.iter().any(|part| part.starts_with(".deleting-"))
+        || [
+            ".db", ".db-shm", ".db-wal", ".lock", ".pid", ".sock", ".sqlite", ".sqlite3",
+        ]
         .iter()
-        .any(|part| sensitive.iter().any(|word| part.contains(word)))
-        || is_dir && parts.iter().any(|part| runtime.contains(part))
-        || lower.ends_with(".pid")
-        || lower.ends_with(".sock")
-        || lower.ends_with(".lock")
-        || lower.ends_with(".sqlite")
-        || lower.ends_with(".sqlite3")
+        .any(|suffix| name.ends_with(suffix))
+        || parts.first() == Some(&"runtime")
+        || parts.len() >= 2
+            && parts[0] == "state"
+            && (runtime.contains(&parts[1])
+                || matches!(parts[1], "group_space" | "notebooklm" | "notebooklm_auth")
+                || parts[1] == "ledger"
+                    && parts.len() >= 3
+                    && matches!(
+                        parts[2],
+                        "index.sqlite3"
+                            | "ledger.lock"
+                            | "manifest.json"
+                            | "status.sqlite3"
+                            | "tmp"
+                    ))
+        || lower == "state/preamble_sent.json"
+        || lower == "state/unread_index.json"
         || lower == "state/assistants.json"
+        || lower == "state/env_private.json"
 }
 
 fn scrub_group(group: &mut GroupDoc) {
@@ -503,20 +543,29 @@ fn scrub_group(group: &mut GroupDoc) {
     group.extra.remove("im_bridge");
     group.extra.remove("im");
     for actor in &mut group.actors {
-        actor.env.retain(|key, _| {
-            let key = key.to_ascii_lowercase();
-            ![
-                "secret",
-                "token",
-                "password",
-                "credential",
-                "cookie",
-                "auth",
-            ]
-            .iter()
-            .any(|word| key.contains(word))
-        });
+        actor.env.clear();
     }
+}
+
+fn sanitize_import_profiles(store: &GroupStore, group: &mut GroupDoc) -> io::Result<()> {
+    let profiles = crate::profiles::ProfileStore::new(store.home().clone())?;
+    for actor in &mut group.actors {
+        if !actor.profile_id.is_empty()
+            && profiles
+                .get_ref(
+                    &actor.profile_id,
+                    &actor.profile_scope,
+                    &actor.profile_owner,
+                )?
+                .is_none()
+        {
+            actor.profile_id.clear();
+            actor.profile_scope = "global".into();
+            actor.profile_owner.clear();
+            actor.profile_revision_applied = 0;
+        }
+    }
+    Ok(())
 }
 
 fn replace_active_scope(group: &mut GroupDoc, scope: Scope, old_key: &str) {
@@ -587,7 +636,26 @@ fn safe_zip_name(name: &str) -> io::Result<String> {
     }) {
         return Err(io::Error::other("group copy path traversal rejected"));
     }
+    if name.split('/').any(is_windows_reserved) {
+        return Err(io::Error::other(
+            "windows reserved group copy path rejected",
+        ));
+    }
     Ok(name.into())
+}
+
+fn is_windows_reserved(part: &str) -> bool {
+    let stem = part
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || stem
+            .strip_prefix("COM")
+            .or_else(|| stem.strip_prefix("LPT"))
+            .is_some_and(|suffix| suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'))
 }
 
 fn safe_relative(name: &str) -> io::Result<PathBuf> {
@@ -670,7 +738,7 @@ mod tests {
             .expect("size sparse file");
 
         let error = collect_files(directory.path()).expect_err("oversized export must fail");
-        assert!(error.to_string().contains("256 MiB"));
+        assert!(error.to_string().contains("2 GiB"));
     }
 
     #[test]

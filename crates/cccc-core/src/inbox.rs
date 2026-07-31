@@ -1,7 +1,6 @@
 use cccc_contracts::{ActorRole, Event};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::{BTreeMap, HashMap};
+use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 use std::io;
 use std::path::PathBuf;
 
@@ -10,9 +9,8 @@ use crate::fs::{read_json, write_json};
 use crate::ledger;
 use crate::{GroupDoc, GroupStore, HomeLayout};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Default)]
 struct InboxState {
-    #[serde(default)]
     cursors: BTreeMap<String, String>,
 }
 
@@ -37,9 +35,7 @@ pub fn list_unread_many(
     }
     let store = GroupStore::new(home.clone())?;
     let state = load(home, &group.group_id)?;
-    let legacy = load_legacy(home, &group.group_id);
     ledger::inspect(&store.ledger_path(&group.group_id)?, |events, positions| {
-        let state = merge_legacy(state, legacy, positions);
         actor_ids
             .iter()
             .map(|actor_id| {
@@ -77,24 +73,26 @@ pub fn advance(
 ) -> io::Result<bool> {
     let store = GroupStore::new(home.clone())?;
     let state = load(home, group_id)?;
-    let legacy = load_legacy(home, group_id);
-    let (mut state, current, next) =
-        ledger::inspect(&store.ledger_path(group_id)?, |_, positions| {
-            let state = merge_legacy(state, legacy, positions);
+    let (mut state, current, next, next_ts) =
+        ledger::inspect(&store.ledger_path(group_id)?, |events, positions| {
             let next = positions.get(event_id).copied();
             let current = state
                 .cursors
                 .get(actor_id)
                 .and_then(|current| positions.get(current))
                 .copied();
-            (state, current, next)
+            let next_ts = next
+                .and_then(|index| events.get(index))
+                .map(|event| event.ts.clone())
+                .unwrap_or_default();
+            (state, current, next, next_ts)
         })?;
     let next = next.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "event not found"))?;
     if current.is_some_and(|current| current >= next) {
         return Ok(false);
     }
     state.cursors.insert(actor_id.into(), event_id.into());
-    write_json(&path(home, group_id)?, &state)?;
+    save(home, group_id, &state, actor_id, &next_ts)?;
     Ok(true)
 }
 
@@ -178,33 +176,16 @@ fn is_legacy_chat_notice(event: &Event) -> bool {
 
 fn load(home: &HomeLayout, group_id: &str) -> io::Result<InboxState> {
     let path = path(home, group_id)?;
-    if path.exists() {
-        read_json(&path)
-    } else {
-        Ok(InboxState::default())
+    if !path.exists() {
+        migrate_legacy_inbox(home, group_id, &path)?;
     }
-}
-
-fn load_effective(home: &HomeLayout, group_id: &str) -> io::Result<InboxState> {
-    let store = GroupStore::new(home.clone())?;
-    let state = load(home, group_id)?;
-    let legacy = load_legacy(home, group_id);
-    ledger::inspect(&store.ledger_path(group_id)?, |_, positions| {
-        merge_legacy(state, legacy, positions)
-    })
-}
-
-fn load_legacy(home: &HomeLayout, group_id: &str) -> BTreeMap<String, String> {
-    let Ok(path) = GroupStore::new(home.clone())
-        .and_then(|store| store.state_dir(group_id))
-        .map(|state| state.join("read_cursors.json"))
-    else {
-        return BTreeMap::new();
+    let doc = if path.exists() {
+        read_json::<Value>(&path)?
+    } else {
+        Value::Object(Map::new())
     };
-    let Ok(doc) = read_json::<Value>(&path) else {
-        return BTreeMap::new();
-    };
-    doc.as_object()
+    let cursors = doc
+        .as_object()
         .into_iter()
         .flatten()
         .filter_map(|(actor_id, cursor)| {
@@ -214,31 +195,89 @@ fn load_legacy(home: &HomeLayout, group_id: &str) -> BTreeMap<String, String> {
                 .filter(|event_id| !event_id.is_empty())
                 .map(|event_id| (actor_id.clone(), event_id.to_owned()))
         })
-        .collect()
+        .collect();
+    Ok(InboxState { cursors })
 }
 
-fn merge_legacy(
-    mut state: InboxState,
-    legacy: BTreeMap<String, String>,
-    positions: &HashMap<String, usize>,
-) -> InboxState {
-    for (actor_id, legacy_id) in legacy {
-        let Some(legacy_position) = positions.get(&legacy_id) else {
-            continue;
+fn save(
+    home: &HomeLayout,
+    group_id: &str,
+    state: &InboxState,
+    updated_actor_id: &str,
+    updated_ts: &str,
+) -> io::Result<()> {
+    let path = path(home, group_id)?;
+    let previous = read_json::<Value>(&path).unwrap_or_else(|_| json!({}));
+    let mut output = Map::new();
+    for (actor_id, event_id) in &state.cursors {
+        let ts = if actor_id == updated_actor_id {
+            updated_ts
+        } else {
+            previous
+                .get(actor_id)
+                .and_then(|cursor| cursor.get("ts"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
         };
-        let current_position = state
-            .cursors
-            .get(&actor_id)
-            .and_then(|event_id| positions.get(event_id));
-        if current_position.is_none_or(|current| legacy_position > current) {
-            state.cursors.insert(actor_id, legacy_id);
-        }
+        output.insert(
+            actor_id.clone(),
+            json!({
+                "event_id":event_id,
+                "ts":ts,
+                "updated_at":if actor_id == updated_actor_id {
+                    cccc_contracts::utc_now()
+                } else {
+                    previous
+                        .get(actor_id)
+                        .and_then(|cursor| cursor.get("updated_at"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned()
+                },
+            }),
+        );
     }
-    state
+    write_json(&path, &Value::Object(output))
+}
+
+fn migrate_legacy_inbox(
+    home: &HomeLayout,
+    group_id: &str,
+    canonical: &std::path::Path,
+) -> io::Result<()> {
+    let legacy = GroupStore::new(home.clone())?
+        .state_dir(group_id)?
+        .join("inbox.json");
+    if !legacy.exists() {
+        return Ok(());
+    }
+    let doc = read_json::<Value>(&legacy)?;
+    let cursors = doc
+        .get("cursors")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(actor_id, event_id)| {
+            (
+                actor_id,
+                json!({
+                    "event_id":event_id.as_str().unwrap_or_default(),
+                    "ts":"",
+                    "updated_at":cccc_contracts::utc_now(),
+                }),
+            )
+        })
+        .collect::<Map<_, _>>();
+    write_json(canonical, &Value::Object(cursors))
+}
+
+fn load_effective(home: &HomeLayout, group_id: &str) -> io::Result<InboxState> {
+    load(home, group_id)
 }
 
 fn path(home: &HomeLayout, group_id: &str) -> io::Result<PathBuf> {
     Ok(GroupStore::new(home.clone())?
         .state_dir(group_id)?
-        .join("inbox.json"))
+        .join("read_cursors.json"))
 }

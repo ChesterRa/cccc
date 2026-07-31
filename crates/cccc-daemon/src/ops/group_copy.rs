@@ -89,7 +89,7 @@ fn package_bytes(home: &HomeLayout, request: &DaemonRequest) -> Result<Vec<u8>, 
     if fs::metadata(&path).map_err(OpError::io)?.len() > group_copy::MAX_PACKAGE_BYTES as u64 {
         return Err(OpError::new(
             "invalid_args",
-            "group copy package exceeds 100 MiB",
+            "group copy package exceeds 1 GiB",
         ));
     }
     fs::read(path).map_err(OpError::io)
@@ -118,6 +118,6 @@ mod tests {
 
         let error = package_bytes(&home, &request).expect_err("oversized package");
         assert_eq!(error.code, "invalid_args");
-        assert!(error.message.contains("100 MiB"));
+        assert!(error.message.contains("1 GiB"));
     }
 }

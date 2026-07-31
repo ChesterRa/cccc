@@ -159,22 +159,22 @@ fn payload(home: &HomeLayout, group: &GroupDoc) -> Value {
     let runtime_path = store(home)
         .ok()
         .and_then(|store| store.state_dir(&group.group_id).ok())
-        .map(|path| path.join("automation-runtime.json"));
+        .map(|path| path.join("automation.json"));
     let runtime: Value = runtime_path
         .as_deref()
         .filter(|path| path.exists())
         .and_then(|path| read_json(path).ok())
         .unwrap_or_else(|| json!({}));
     let status = runtime
-        .get("last_rule")
+        .get("rules")
         .and_then(Value::as_object)
         .map(|items| {
             items
                 .iter()
-                .map(|(id, timestamp)| {
-                    let timestamp = timestamp.as_i64().unwrap_or(0);
-                    let at = chrono::DateTime::from_timestamp(timestamp, 0)
-                        .map(|value| value.to_rfc3339())
+                .map(|(id, entry)| {
+                    let at = entry
+                        .get("last_fired_at")
+                        .and_then(Value::as_str)
                         .unwrap_or_default();
                     (id.clone(), json!({"last_fired_at":at}))
                 })

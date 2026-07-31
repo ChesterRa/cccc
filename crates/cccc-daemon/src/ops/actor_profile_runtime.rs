@@ -44,14 +44,18 @@ pub fn profile_secrets(
     }
     ProfileStore::new(home.clone())
         .map_err(OpError::io)?
-        .secret_values(&actor.profile_id)
+        .secret_values_ref(
+            &actor.profile_id,
+            &actor.profile_scope,
+            &actor.profile_owner,
+        )
         .map_err(OpError::io)
 }
 
 fn apply(home: &HomeLayout, actor: &Actor, profile_id: &str) -> Result<Actor, OpError> {
     let profile = ProfileStore::new(home.clone())
         .map_err(OpError::io)?
-        .get(profile_id)
+        .get_ref(profile_id, &actor.profile_scope, &actor.profile_owner)
         .map_err(OpError::io)?
         .ok_or_else(|| {
             OpError::new(

@@ -73,18 +73,19 @@ fn user_profiles_are_isolated_for_list_get_upsert_secrets_and_delete() {
         assert_denied(raw_call(&home, op, Value::Object(args)));
     }
 
-    assert_denied(raw_call(
+    let same_id_other_owner = call(
         &home,
         "actor_profile_upsert",
         json!({
             "profile_id":"a-profile",
             "scope":"user",
             "owner_id":"user-b",
-            "name":"stolen",
+            "name":"same id, different owner",
             "caller_id":"user-b",
             "is_admin":false
         }),
-    ));
+    );
+    assert_eq!(same_id_other_owner.result["profile"]["owner_id"], "user-b");
     assert_denied(raw_call(
         &home,
         "actor_profile_copy_actor_secrets",
@@ -102,7 +103,11 @@ fn user_profiles_are_isolated_for_list_get_upsert_secrets_and_delete() {
     let empty = call(
         &home,
         "actor_profile_secret_keys",
-        json!({"profile_id":"a-profile"}),
+        json!({
+            "profile_id":"a-profile",
+            "profile_scope":"user",
+            "profile_owner":"user-a"
+        }),
     );
     assert_eq!(empty.result["keys"], json!([]));
     let copied = call(
@@ -110,6 +115,8 @@ fn user_profiles_are_isolated_for_list_get_upsert_secrets_and_delete() {
         "actor_profile_copy_actor_secrets",
         json!({
             "profile_id":"a-profile",
+            "profile_scope":"user",
+            "profile_owner":"user-a",
             "group_id":group_b,
             "actor_id":"secret-source"
         }),
@@ -118,7 +125,11 @@ fn user_profiles_are_isolated_for_list_get_upsert_secrets_and_delete() {
     let a = call(
         &home,
         "actor_profile_get",
-        json!({"profile_id":"a-profile"}),
+        json!({
+            "profile_id":"a-profile",
+            "profile_scope":"user",
+            "profile_owner":"user-a"
+        }),
     );
     assert_eq!(a.result["profile"]["name"], "A");
     assert_eq!(a.result["profile"]["owner_id"], "user-a");

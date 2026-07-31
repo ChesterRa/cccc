@@ -10,7 +10,28 @@ Run the impacted fast gate while developing:
 scripts/quality_gate.sh fast
 ```
 
-It runs Ruff error-level rules, whitespace checks, Web checks when Web files changed, Python syntax checks, and impacted Python tests. It does not run the complete test suites.
+It runs Ruff error-level rules and whitespace checks, then selects checks from the changed files:
+
+- Rust source changes run workspace formatting plus lib/bin Clippy and unit tests for the directly changed crates.
+- Changed Rust integration-test files run only their owning test binary. Modules under `tests/suite/` map to the crate's `integration` target.
+- Root Cargo configuration, the lockfile, toolchain configuration, or bundled third-party crate changes use workspace lib/bin checks.
+- Web and Python checks run only when their respective files changed.
+
+Local Cargo checks default to two build jobs to avoid memory pressure from the workspace's large integration-test binaries. Override that bound when the machine has enough memory:
+
+```bash
+CCCC_CARGO_JOBS=4 scripts/quality_gate.sh fast
+```
+
+Inspect the selection without running checks:
+
+```bash
+scripts/pre_commit_checks.sh --dry-run
+```
+
+The impacted gate reports its wall-clock time against a 120-second local feedback budget. Override the reporting threshold with `CCCC_PRECOMMIT_BUDGET_SECONDS`; exceeding it warns but does not hide a successful check. A cold Rust dependency build may exceed the target, while normal warm-cache runs should stay within it.
+
+The fast gate does not replace complete pull-request coverage. CI and `scripts/pre_commit_checks.sh --full` still run every Rust integration target.
 
 Before handing off a broad change, run the full local gate:
 

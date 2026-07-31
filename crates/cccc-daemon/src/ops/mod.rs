@@ -1,3 +1,4 @@
+pub(crate) mod actor_activity;
 pub(crate) mod actor_delivery;
 mod actor_delivery_preamble;
 mod actor_delivery_render;
@@ -48,6 +49,8 @@ mod profile_access;
 mod profiles;
 mod remote_access;
 mod runtime_completion;
+mod runtime_hook_input;
+mod runtime_hook_session;
 pub(crate) mod runtime_restore;
 mod runtime_session;
 mod runtime_state;
@@ -55,6 +58,8 @@ mod settings;
 mod terminal;
 mod terminal_text;
 mod working_state;
+#[cfg(test)]
+mod working_state_tests;
 
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;

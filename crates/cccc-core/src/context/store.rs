@@ -1,12 +1,11 @@
-use cccc_contracts::utc_now;
 use serde_json::{Map, Value};
-use sha2::{Digest, Sha256};
 use std::io;
-use std::path::PathBuf;
 
 use super::apply::apply_all;
+use super::migration::migrate_legacy_json;
 use super::model::{ContextDoc, ContextSyncResult};
-use crate::fs::{read_json, write_json};
+use super::python_storage::{self, PythonContextPaths};
+use crate::fs::with_exclusive_lock;
 use crate::{GroupStore, HomeLayout};
 
 #[derive(Debug, Clone)]
@@ -21,17 +20,15 @@ impl ContextStore {
     }
 
     pub fn load(&self, group_id: &str) -> io::Result<ContextDoc> {
-        let path = self.path(group_id)?;
-        if path.exists() {
-            read_json(&path)
-        } else {
-            Ok(ContextDoc::default())
-        }
+        let paths = self.paths(group_id)?;
+        with_exclusive_lock(&paths.lock_file, || {
+            migrate_legacy_json(&paths)?;
+            python_storage::load(&paths)
+        })
     }
 
     pub fn version(&self, document: &ContextDoc) -> io::Result<String> {
-        let bytes = serde_json::to_vec(document).map_err(io::Error::other)?;
-        Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
+        Ok(format!("ctxv:{}", document.revision))
     }
 
     pub fn sync(
@@ -42,30 +39,35 @@ impl ContextStore {
         by: &str,
         dry_run: bool,
     ) -> io::Result<ContextSyncResult> {
-        let mut document = self.load(group_id)?;
-        let current_version = self.version(&document)?;
-        if if_version.is_some_and(|expected| expected != current_version) {
-            return Err(io::Error::other("version_conflict"));
-        }
-        let changes = apply_all(&mut document, operations, by)?;
-        if !changes.is_empty() {
-            document.revision += 1;
-            document.updated_at = utc_now();
-        }
-        let version = self.version(&document)?;
-        if !dry_run && !changes.is_empty() {
-            write_json(&self.path(group_id)?, &document)?;
-        }
-        Ok(ContextSyncResult {
-            context: document,
-            version,
-            changes,
-            dry_run,
+        let paths = self.paths(group_id)?;
+        with_exclusive_lock(&paths.lock_file, || {
+            migrate_legacy_json(&paths)?;
+            let before = python_storage::load(&paths)?;
+            let current_version = self.version(&before)?;
+            if if_version.is_some_and(|expected| expected != current_version) {
+                return Err(io::Error::other("version_conflict"));
+            }
+            let mut document = before.clone();
+            let changes = apply_all(&mut document, operations, by)?;
+            python_storage::touch_updated_at(&mut document);
+            let version = if dry_run {
+                current_version
+            } else {
+                let state = python_storage::persist_diff(&paths, &before, &document)?;
+                document.revision = state.global_rev;
+                self.version(&document)?
+            };
+            Ok(ContextSyncResult {
+                context: document,
+                version,
+                changes,
+                dry_run,
+            })
         })
     }
 
-    fn path(&self, group_id: &str) -> io::Result<PathBuf> {
-        let state = GroupStore::new(self.home.clone())?.state_dir(group_id)?;
-        Ok(state.join("context.json"))
+    fn paths(&self, group_id: &str) -> io::Result<PythonContextPaths> {
+        let groups = GroupStore::new(self.home.clone())?;
+        Ok(PythonContextPaths::new(&groups.group_dir(group_id)?))
     }
 }

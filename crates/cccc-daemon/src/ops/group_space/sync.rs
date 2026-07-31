@@ -18,9 +18,7 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         return Err(OpError::new("invalid_args", "action must be status or run"));
     }
     let provider = provider(request);
-    if provider != "notebooklm" {
-        require_local(&provider)?;
-    }
+    require_notebooklm(&provider)?;
     let value = load(home, &group_id)?;
     let remote_space_id = binding_id(&value, &lane)?;
     let root_path = sync_root(home, &group_id, &lane)?;
@@ -50,44 +48,27 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             unchanged += 1;
             continue;
         }
-        if provider == "notebooklm" {
-            let source = notebooklm::add_text(home, &remote_space_id, &relative, &content)?;
-            if let Some(source_id) = old.and_then(|item| item["source_id"].as_str()) {
-                // Publish the replacement before removing the previous source.
-                // A failed upload must never erase the last good remote copy.
-                notebooklm::delete_source(home, &remote_space_id, source_id)?;
-                updated += 1;
-            } else {
-                added += 1;
-            }
-            next.insert(relative, json!({
-                "source_id":source.id,"content_hash":hash,"bytes":content.len(),"updated_at":utc_now()
-            }));
+        let source = notebooklm::add_text(home, &remote_space_id, &relative, &content)?;
+        if let Some(source_id) = old.and_then(|item| item["source_id"].as_str()) {
+            // Publish the replacement before removing the previous source.
+            // A failed upload must never erase the last good remote copy.
+            notebooklm::delete_source(home, &remote_space_id, source_id)?;
+            updated += 1;
         } else {
-            if old.is_some() {
-                updated += 1
-            } else {
-                added += 1
-            }
-            next.insert(
-                relative,
-                json!({
-                    "source_id":format!("local_{}",short_id()),"content_hash":hash,
-                    "bytes":content.len(),"updated_at":utc_now()
-                }),
-            );
+            added += 1;
         }
+        next.insert(relative, json!({
+            "source_id":source.id,"content_hash":hash,"bytes":content.len(),"updated_at":utc_now()
+        }));
     }
     let removed_paths = previous
         .keys()
         .filter(|path| !next.contains_key(*path))
         .cloned()
         .collect::<Vec<_>>();
-    if provider == "notebooklm" {
-        for path in &removed_paths {
-            if let Some(source_id) = previous[path]["source_id"].as_str() {
-                notebooklm::delete_source(home, &remote_space_id, source_id)?;
-            }
+    for path in &removed_paths {
+        if let Some(source_id) = previous[path]["source_id"].as_str() {
+            notebooklm::delete_source(home, &remote_space_id, source_id)?;
         }
     }
     let result = json!({

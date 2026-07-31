@@ -1,0 +1,230 @@
+use cccc_contracts::DaemonRequest;
+use cccc_core::HomeLayout;
+use cccc_core::fs::{read_yaml, with_exclusive_lock, write_yaml};
+use serde_json::{Value, json};
+use sha1::{Digest, Sha1};
+use std::io;
+
+use crate::dispatch::{OpError, OpResult, object, string_arg};
+
+const DEFAULT_TEXT: &str =
+    include_str!("../../../../../src/cccc/resources/capability-allowlist.default.yaml");
+
+pub(super) fn get(home: &HomeLayout) -> OpResult {
+    object(snapshot(home)?)
+}
+
+pub(super) fn validate(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let overlay = next_overlay(home, request)?;
+    let default = default_doc()?;
+    let effective = merged(&default, &overlay);
+    object(json!({
+        "valid":true,
+        "reason":"",
+        "default":default,
+        "overlay":overlay,
+        "effective":effective,
+        "revision":revision(&default,&overlay),
+        "external_capability_safety_mode":safety_mode(&effective),
+    }))
+}
+
+pub(super) fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    if string_arg(request, "by").as_deref().unwrap_or("user") != "user" {
+        return Err(OpError::new(
+            "permission_denied",
+            "only user can update capability allowlist overlay",
+        ));
+    }
+    let current = snapshot(home)?;
+    let expected = string_arg(request, "expected_revision").unwrap_or_default();
+    if !expected.is_empty() && current["revision"].as_str() != Some(&expected) {
+        let mut error = OpError::new(
+            "allowlist_revision_mismatch",
+            "expected_revision does not match current revision",
+        );
+        error
+            .details
+            .insert("current_revision".into(), current["revision"].clone());
+        return Err(error);
+    }
+    let overlay = next_overlay(home, request)?;
+    let path = overlay_path(home);
+    with_exclusive_lock(&path.with_extension("yaml.lock"), || {
+        if overlay.as_object().is_some_and(serde_json::Map::is_empty) {
+            match std::fs::remove_file(&path) {
+                Ok(()) => Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            }
+        } else {
+            write_yaml(&path, &overlay)
+        }
+    })
+    .map_err(OpError::io)?;
+    let mut result = snapshot(home)?;
+    result["updated"] = json!(true);
+    object(result)
+}
+
+pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    if string_arg(request, "by").as_deref().unwrap_or("user") != "user" {
+        return Err(OpError::new(
+            "permission_denied",
+            "only user can reset capability allowlist overlay",
+        ));
+    }
+    let path = overlay_path(home);
+    let removed = match std::fs::remove_file(&path) {
+        Ok(()) => true,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(error) => return Err(OpError::io(error)),
+    };
+    let mut result = snapshot(home)?;
+    result["reset"] = json!(true);
+    result["removed_overlay_file"] = json!(removed);
+    object(result)
+}
+
+fn snapshot(home: &HomeLayout) -> Result<Value, OpError> {
+    let default = default_doc()?;
+    let overlay = load_overlay(home)?;
+    let effective = merged(&default, &overlay);
+    Ok(json!({
+        "default":default,
+        "overlay":overlay,
+        "effective":effective,
+        "revision":revision(&default,&overlay),
+        "default_source":"builtin:cccc.resources/capability-allowlist.default.yaml",
+        "overlay_source":if overlay_path(home).exists(){overlay_path(home).to_string_lossy().into_owned()}else{String::new()},
+        "overlay_error":"",
+        "policy_source":"python-compatible-rust",
+        "policy_error":"",
+        "external_capability_safety_mode":safety_mode(&effective),
+    }))
+}
+
+fn next_overlay(home: &HomeLayout, request: &DaemonRequest) -> Result<Value, OpError> {
+    let mode = string_arg(request, "mode").unwrap_or_else(|| "patch".into());
+    match mode.as_str() {
+        "replace" => request
+            .args
+            .get("overlay")
+            .filter(|value| value.is_object())
+            .cloned()
+            .ok_or_else(|| {
+                OpError::new(
+                    "invalid_request",
+                    "overlay must be an object when mode=replace",
+                )
+            }),
+        "patch" => {
+            let patch = request
+                .args
+                .get("patch")
+                .filter(|value| value.is_object())
+                .ok_or_else(|| {
+                    OpError::new("invalid_request", "patch must be an object when mode=patch")
+                })?;
+            Ok(merged(&load_overlay(home)?, patch))
+        }
+        _ => Err(OpError::new(
+            "invalid_request",
+            "mode must be patch or replace",
+        )),
+    }
+}
+
+fn default_doc() -> Result<Value, OpError> {
+    serde_yaml::from_str(DEFAULT_TEXT).map_err(OpError::invalid)
+}
+
+fn load_overlay(home: &HomeLayout) -> Result<Value, OpError> {
+    let path = overlay_path(home);
+    if path.exists() {
+        let value = read_yaml::<Value>(&path).map_err(OpError::io)?;
+        if value.is_object() {
+            Ok(value)
+        } else {
+            Err(OpError::new(
+                "allowlist_validation_failed",
+                "allowlist YAML root must be a mapping",
+            ))
+        }
+    } else {
+        Ok(json!({}))
+    }
+}
+
+fn overlay_path(home: &HomeLayout) -> std::path::PathBuf {
+    home.root().join("config/capability-allowlist.user.yaml")
+}
+
+fn merged(base: &Value, overlay: &Value) -> Value {
+    let mut output = base.clone();
+    merge_value(&mut output, overlay);
+    output
+}
+
+fn merge_value(target: &mut Value, patch: &Value) {
+    if let (Some(target), Some(patch)) = (target.as_object_mut(), patch.as_object()) {
+        for (key, value) in patch {
+            if let Some(existing) = target.get_mut(key)
+                && existing.is_object()
+                && value.is_object()
+            {
+                merge_value(existing, value);
+            } else {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+    } else {
+        *target = patch.clone();
+    }
+}
+
+fn revision(default: &Value, overlay: &Value) -> String {
+    let payload = json!({"default":default,"overlay":overlay});
+    format!("{:x}", Sha1::digest(python_json(&payload).as_bytes()))
+}
+
+fn python_json(value: &Value) -> String {
+    match value {
+        Value::Null => "null".into(),
+        Value::Bool(value) => value.to_string(),
+        Value::Number(value) => value.to_string(),
+        Value::String(value) => serde_json::to_string(value).unwrap_or_else(|_| "\"\"".into()),
+        Value::Array(items) => format!(
+            "[{}]",
+            items.iter().map(python_json).collect::<Vec<_>>().join(", ")
+        ),
+        Value::Object(items) => format!(
+            "{{{}}}",
+            items
+                .iter()
+                .map(|(key, value)| format!(
+                    "{}: {}",
+                    serde_json::to_string(key).unwrap_or_else(|_| "\"\"".into()),
+                    python_json(value)
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    }
+}
+
+fn safety_mode(effective: &Value) -> &'static str {
+    let source_levels = effective
+        .get("defaults")
+        .and_then(|value| value.get("source_level"))
+        .and_then(Value::as_object);
+    if source_levels
+        .into_iter()
+        .flatten()
+        .any(|(_, level)| level.as_str().unwrap_or("mounted") != "indexed")
+    {
+        "normal"
+    } else {
+        "conservative"
+    }
+}

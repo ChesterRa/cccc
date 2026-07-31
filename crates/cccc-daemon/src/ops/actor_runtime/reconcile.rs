@@ -13,6 +13,8 @@ pub fn reap_exited() -> Result<Vec<SessionStatus>, OpError> {
 pub fn reconcile_exited(home: &HomeLayout, exited: Vec<SessionStatus>) -> Result<(), OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     for status in exited {
+        super::super::runtime_hook_session::revoke(&status.group_id, &status.actor_id);
+        super::super::runtime_hook_input::reset(&status.group_id, &status.actor_id);
         let Ok(group) = store.load(&status.group_id) else {
             continue;
         };

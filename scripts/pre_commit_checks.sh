@@ -3,14 +3,34 @@ set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
+precommit_started=$SECONDS
 
 full=0
+dry_run=0
 if [[ "${CCCC_PRECOMMIT_FULL:-}" == "1" || "${PRECOMMIT_FULL:-}" == "1" ]]; then
   full=1
 fi
-if [[ "${1:-}" == "--all" || "${1:-}" == "--full" ]]; then
-  full=1
+for arg in "$@"; do
+  case "$arg" in
+    --all|--full)
+      full=1
+      ;;
+    --dry-run)
+      dry_run=1
+      ;;
+    *)
+      echo "usage: scripts/pre_commit_checks.sh [--full|--all] [--dry-run]" >&2
+      exit 2
+      ;;
+  esac
+done
+
+fast_budget_seconds="${CCCC_PRECOMMIT_BUDGET_SECONDS:-120}"
+if [[ ! "$fast_budget_seconds" =~ ^[1-9][0-9]*$ ]]; then
+  echo "CCCC_PRECOMMIT_BUDGET_SECONDS must be a positive integer" >&2
+  exit 2
 fi
+bash -n scripts/pre_commit_checks.sh scripts/pre_commit_rust.sh
 
 staged=1
 changed_files=()
@@ -28,12 +48,12 @@ append_changed_file() {
 
 while IFS= read -r file; do
   append_changed_file "$file"
-done < <(git diff --cached --name-only --diff-filter=ACMR)
+done < <(git diff --cached --name-only --diff-filter=ACMRD)
 if [[ ${#changed_files[@]} -eq 0 ]]; then
   staged=0
   while IFS= read -r file; do
     append_changed_file "$file"
-  done < <(git diff --name-only --diff-filter=ACMR)
+  done < <(git diff --name-only --diff-filter=ACMRD)
   while IFS= read -r file; do
     append_changed_file "$file"
   done < <(git ls-files --others --exclude-standard)
@@ -58,12 +78,38 @@ run_frontend_checks() {
 }
 
 run_rust_checks() {
-  echo "Running Rust format, lint, and tests..."
-  cargo fmt --all --check
-  cargo clippy --workspace --all-targets -- -D warnings
-  cargo test --workspace --locked
-  echo "Rust checks passed"
-  echo ""
+  local rust_args=()
+  if [[ "$full" == "1" ]]; then
+    rust_args+=("--full")
+  fi
+  rust_args+=("--")
+  if [[ ${#rust_files[@]} -gt 0 ]]; then
+    rust_args+=("${rust_files[@]}")
+  fi
+  scripts/pre_commit_rust.sh "${rust_args[@]}"
+}
+
+print_check_plan() {
+  echo "=== Pre-commit check plan ==="
+  echo "mode=$([[ "$full" == "1" ]] && echo full || echo impacted)"
+  if [[ "$full" != "1" ]]; then
+    echo "budget_seconds=$fast_budget_seconds"
+  fi
+  if [[ "$needs_rust" == "1" ]]; then
+    local rust_args=("--dry-run")
+    if [[ "$full" == "1" ]]; then
+      rust_args+=("--full")
+    fi
+    rust_args+=("--")
+    if [[ ${#rust_files[@]} -gt 0 ]]; then
+      rust_args+=("${rust_files[@]}")
+    fi
+    scripts/pre_commit_rust.sh "${rust_args[@]}"
+  else
+    echo "rust_scope=skip"
+  fi
+  echo "web=$([[ "$needs_web" == "1" ]] && echo check || echo skip)"
+  echo "python=$([[ "$needs_python" == "1" ]] && echo check || echo skip)"
 }
 
 run_full_python_tests() {
@@ -131,30 +177,16 @@ run_targeted_python_tests() {
   echo ""
 }
 
-if [[ "$full" == "1" ]]; then
-  echo "=== Pre-commit checks (full) ==="
-  echo ""
-  run_whitespace_check
-  run_frontend_checks
-  npm -C web test
-  npm -C web run build
-  run_full_python_tests
-  run_rust_checks
-  echo "All checks passed."
-  exit 0
-fi
-
-echo "=== Pre-commit checks (impacted) ==="
-echo ""
-
-if [[ ${#changed_files[@]} -eq 0 ]]; then
+if [[ ${#changed_files[@]} -eq 0 && "$full" != "1" ]]; then
   echo "No staged or working-tree file changes found."
   exit 0
 fi
 
 needs_web=0
 needs_python=0
+needs_rust=0
 python_tests=()
+rust_files=()
 
 for file in "${changed_files[@]}"; do
   case "$file" in
@@ -192,11 +224,47 @@ for file in "${changed_files[@]}"; do
       needs_python=1
       append_unique_python_source "$file"
       ;;
+    Cargo.toml|Cargo.lock|rust-toolchain|rust-toolchain.toml|.cargo/*|crates/*|*.rs)
+      needs_rust=1
+      rust_files+=("$file")
+      ;;
   esac
 done
 
+if [[ "$full" == "1" ]]; then
+  needs_web=1
+  needs_python=1
+  needs_rust=1
+fi
+
+if [[ "$dry_run" == "1" ]]; then
+  print_check_plan
+  exit 0
+fi
+
+if [[ "$full" == "1" ]]; then
+  echo "=== Pre-commit checks (full) ==="
+  echo ""
+  run_whitespace_check
+  run_frontend_checks
+  npm -C web test
+  npm -C web run build
+  run_full_python_tests
+  run_rust_checks
+  echo "All checks passed."
+  exit 0
+fi
+
+echo "=== Pre-commit checks (impacted) ==="
+echo ""
+
 run_whitespace_check
-run_rust_checks
+if [[ "$needs_rust" == "1" ]]; then
+  run_rust_checks
+else
+  echo "Skipping Rust checks; no Rust files changed."
+  echo ""
+fi
 
 if [[ "$needs_web" == "1" ]]; then
   run_frontend_checks
@@ -214,3 +282,8 @@ else
 fi
 
 echo "All impacted checks passed."
+elapsed=$((SECONDS - precommit_started))
+echo "Impacted checks completed in ${elapsed}s (budget: ${fast_budget_seconds}s)."
+if ((elapsed > fast_budget_seconds)); then
+  echo "Warning: impacted checks exceeded the local feedback budget; inspect the timed steps above." >&2
+fi

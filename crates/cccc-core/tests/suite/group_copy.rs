@@ -93,11 +93,10 @@ fn copy_excludes_secrets_and_imports_with_new_identity_on_conflict() {
     assert_eq!(doc.title, "Imported");
     assert_eq!(doc.state, GroupState::Idle);
     assert!(!doc.running);
-    assert_eq!(
-        doc.actors[0].env.get("PUBLIC_VALUE").map(String::as_str),
-        Some("ok")
+    assert!(
+        doc.actors[0].env.is_empty(),
+        "Python group copies clear all actor env values"
     );
-    assert!(!doc.actors[0].env.contains_key("API_TOKEN"));
     assert!(!doc.extra.contains_key("im_bridge"));
     assert!(!doc.extra.contains_key("im"));
     let imported_state = store.state_dir(&imported.group_id).expect("imported state");

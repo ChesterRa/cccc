@@ -121,11 +121,11 @@ fn actor_lifecycle_controls_terminal_process() {
     assert_eq!(working.result["actors"][0]["running"], true);
     assert_eq!(
         working.result["actors"][0]["effective_working_state"],
-        "working"
+        "waiting"
     );
     assert_eq!(
         working.result["actors"][0]["effective_working_reason"],
-        "codex_hook_UserPromptSubmit"
+        "codex_hook_pending"
     );
     assert!(
         call(

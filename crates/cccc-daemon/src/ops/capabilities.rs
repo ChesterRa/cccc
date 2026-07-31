@@ -1,11 +1,11 @@
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
 use cccc_core::capabilities::{Capability, CapabilityStore};
-use cccc_core::settings;
 use serde_json::{Value, json};
 
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 
+mod allowlist;
 mod effective_state;
 mod external_runtime;
 mod overview;
@@ -26,10 +26,10 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "capability_install_target" => {
             object(json!({"target": home.root().join("capabilities"), "runtime": "rust"}))
         }
-        "capability_allowlist_get" => allowlist_get(home),
-        "capability_allowlist_validate" => allowlist_validate(home, request),
-        "capability_allowlist_update" => allowlist_update(home, request),
-        "capability_allowlist_reset" => allowlist_reset(home),
+        "capability_allowlist_get" => allowlist::get(home),
+        "capability_allowlist_validate" => allowlist::validate(home, request),
+        "capability_allowlist_update" => allowlist::update(home, request),
+        "capability_allowlist_reset" => allowlist::reset(home, request),
         _ => return None,
     })
 }
@@ -43,7 +43,18 @@ fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn enable(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let id = required_arg(request, "capability_id")?;
     let state = CapabilityStore::new(home.clone())
-        .set_enabled(&id, bool_arg(request, "enabled", true))
+        .set_enabled_for(
+            &id,
+            bool_arg(request, "enabled", true),
+            &required_arg(request, "group_id")?,
+            &string_arg(request, "actor_id").unwrap_or_default(),
+            &string_arg(request, "scope").unwrap_or_else(|| "group".into()),
+            request
+                .args
+                .get("ttl_seconds")
+                .and_then(Value::as_i64)
+                .unwrap_or(3600),
+        )
         .map_err(OpError::invalid)?;
     object(json!({"capability_id": id, "state": state}))
 }
@@ -52,14 +63,34 @@ fn visibility(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let hidden = string_arg(request, "visibility").as_deref() == Some("hidden")
         || bool_arg(request, "hidden", false);
     let state = CapabilityStore::new(home.clone())
-        .set_hidden(&id, hidden)
+        .set_hidden_for(
+            &id,
+            hidden,
+            &required_arg(request, "group_id")?,
+            &required_arg(request, "actor_id")?,
+        )
         .map_err(OpError::invalid)?;
     object(json!({"capability_id": id, "state": state}))
 }
 fn block(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let id = required_arg(request, "capability_id")?;
+    let group_id = string_arg(request, "group_id").unwrap_or_default();
+    let scope = string_arg(request, "scope").unwrap_or_else(|| "group".into());
     let state = CapabilityStore::new(home.clone())
-        .set_blocked(&id, bool_arg(request, "blocked", true))
+        .set_blocked_for(
+            &id,
+            bool_arg(request, "blocked", true),
+            if scope == "global" { "" } else { &group_id },
+            &string_arg(request, "reason").unwrap_or_default(),
+            &string_arg(request, "by")
+                .or_else(|| string_arg(request, "actor_id"))
+                .unwrap_or_default(),
+            request
+                .args
+                .get("ttl_seconds")
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+        )
         .map_err(OpError::invalid)?;
     object(json!({"capability_id": id, "state": state}))
 }
@@ -149,7 +180,20 @@ fn install(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let target = required_arg(request, "target")?;
     let store = CapabilityStore::new(home.clone());
     let capability = store.require(&target).map_err(OpError::not_found)?;
-    let state = store.set_enabled(&target, true).map_err(OpError::invalid)?;
+    let state = store
+        .set_enabled_for(
+            &target,
+            true,
+            &required_arg(request, "group_id")?,
+            &string_arg(request, "actor_id").unwrap_or_default(),
+            &string_arg(request, "scope").unwrap_or_else(|| "group".into()),
+            request
+                .args
+                .get("ttl_seconds")
+                .and_then(Value::as_i64)
+                .unwrap_or(3600),
+        )
+        .map_err(OpError::invalid)?;
     object(json!({"target":target,"capability":capability,"installed":true,"state":state}))
 }
 fn source_delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -290,48 +334,4 @@ fn visible_tools(
         }
     }
     Ok(names.into_iter().collect())
-}
-fn allowlist_get(home: &HomeLayout) -> OpResult {
-    object(json!({"allowlist": settings::load(home).map_err(OpError::io)?.capability_allowlist}))
-}
-fn allowlist_validate(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let values = ids(request)?;
-    let catalog: std::collections::BTreeSet<_> = CapabilityStore::new(home.clone())
-        .catalog()
-        .map_err(OpError::io)?
-        .into_iter()
-        .map(|item| item.id)
-        .collect();
-    let unknown: Vec<_> = values
-        .iter()
-        .filter(|id| !catalog.contains(*id))
-        .cloned()
-        .collect();
-    object(json!({"valid": unknown.is_empty(), "unknown": unknown}))
-}
-fn allowlist_update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let values = ids(request)?;
-    let mut global = settings::load(home).map_err(OpError::io)?;
-    global.capability_allowlist.clone_from(&values);
-    settings::save(home, &global).map_err(OpError::io)?;
-    object(json!({"allowlist": values}))
-}
-fn allowlist_reset(home: &HomeLayout) -> OpResult {
-    let mut global = settings::load(home).map_err(OpError::io)?;
-    global.capability_allowlist.clear();
-    settings::save(home, &global).map_err(OpError::io)?;
-    object(json!({"allowlist": []}))
-}
-fn ids(request: &DaemonRequest) -> Result<Vec<String>, OpError> {
-    Ok(request
-        .args
-        .get("allowlist")
-        .filter(|value| value.as_array().is_some_and(|items| !items.is_empty()))
-        .or_else(|| request.args.get("ids"))
-        .and_then(Value::as_array)
-        .ok_or_else(|| OpError::new("invalid_args", "allowlist must be an array"))?
-        .iter()
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect())
 }

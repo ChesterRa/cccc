@@ -26,7 +26,7 @@ pub fn configure(
     cwd: &Path,
     command: &mut Vec<String>,
     env: &mut BTreeMap<String, String>,
-) -> std::io::Result<()> {
+) -> std::io::Result<super::runtime_hook_session::HookSetup> {
     let launch_token =
         super::codex_mcp::begin_hook_launch(home, "claude", group_id, actor_id, env)?;
     if !is_direct_claude_command(command) {
@@ -38,7 +38,7 @@ pub fn configure(
             &launch_token,
             "HookUnavailableCommand",
         )?;
-        return Ok(());
+        return Ok(setup(launch_token, false));
     }
     if !supported_version(&command[0], cwd, env) {
         super::codex_mcp::record_launch_issue(
@@ -49,7 +49,7 @@ pub fn configure(
             &launch_token,
             "HookUnavailableVersion",
         )?;
-        return Ok(());
+        return Ok(setup(launch_token, false));
     }
     let Some(executable) = super::codex_mcp::configure_actor_cli(env) else {
         super::codex_mcp::record_launch_issue(
@@ -60,7 +60,7 @@ pub fn configure(
             &launch_token,
             "HookUnavailableExecutable",
         )?;
-        return Ok(());
+        return Ok(setup(launch_token, false));
     };
     if append_settings(command, cwd, &executable).is_err() {
         super::codex_mcp::record_launch_issue(
@@ -71,7 +71,7 @@ pub fn configure(
             &launch_token,
             "HookUnavailableSettings",
         )?;
-        return Ok(());
+        return Ok(setup(launch_token, false));
     }
     env.insert(
         "CCCC_HOME".into(),
@@ -79,7 +79,15 @@ pub fn configure(
     );
     env.insert("CCCC_GROUP_ID".into(), group_id.to_owned());
     env.insert("CCCC_ACTOR_ID".into(), actor_id.to_owned());
-    Ok(())
+    Ok(setup(launch_token, true))
+}
+
+fn setup(launch_token: String, hook_enabled: bool) -> super::runtime_hook_session::HookSetup {
+    super::runtime_hook_session::HookSetup {
+        runtime: "claude".into(),
+        launch_token,
+        hook_enabled,
+    }
 }
 
 fn is_direct_claude_command(command: &[String]) -> bool {

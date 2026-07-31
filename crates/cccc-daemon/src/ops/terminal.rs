@@ -104,19 +104,11 @@ fn write(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .filter(|value| !value.is_empty())
         .ok_or_else(|| OpError::new("invalid_args", "data is required"))?;
     cccc_runtime::write(&group_id, &actor_id, data.as_bytes()).map_err(runtime_error)?;
-    if is_interrupt_input(&data) {
-        for runtime in ["codex", "claude"] {
-            let _ =
-                cccc_core::codex_hook_state::record_interrupt(home, runtime, &group_id, &actor_id);
-        }
-    } else {
-        let _ = cccc_core::codex_hook_state::record_terminal_input(
-            home, "claude", &group_id, &actor_id,
-        );
-    }
+    super::runtime_hook_input::observe(home, &group_id, &actor_id, data.as_bytes());
     object(json!({"written": data.len()}))
 }
 
+#[cfg(test)]
 fn is_interrupt_input(data: &str) -> bool {
     data.as_bytes().contains(&0x03) || data == "\u{1b}"
 }
@@ -366,7 +358,7 @@ mod tests {
         .expect("session state");
         cccc_core::codex_hook_state::record_terminal_input(&home, "claude", &group_id, actor_id)
             .expect("working state");
-        cccc_runtime::start(LaunchSpec {
+        let runtime = cccc_runtime::start(LaunchSpec {
             group_id: group_id.clone(),
             actor_id: actor_id.into(),
             runner: RunnerKind::Pty,
@@ -377,11 +369,19 @@ mod tests {
             rows: 24,
         })
         .expect("start runtime");
+        crate::ops::runtime_hook_session::bind_for_test(
+            &home,
+            &group_id,
+            actor_id,
+            "claude",
+            "token",
+            runtime.pid.expect("pid"),
+        );
 
         let request = DaemonRequest {
             v: 1,
             op: "terminal_write".into(),
-            args: json!({"group_id":group_id,"actor_id":actor_id,"data":"\u{1b}"})
+            args: json!({"group_id":group_id,"actor_id":actor_id,"data":"\u{3}"})
                 .as_object()
                 .cloned()
                 .expect("args"),
@@ -424,7 +424,7 @@ mod tests {
             &json!({"hook_event_name":"SessionStart","session_id":"s1"}),
         )
         .expect("session state");
-        cccc_runtime::start(LaunchSpec {
+        let runtime = cccc_runtime::start(LaunchSpec {
             group_id: group_id.clone(),
             actor_id: actor_id.into(),
             runner: RunnerKind::Pty,
@@ -435,11 +435,19 @@ mod tests {
             rows: 24,
         })
         .expect("start runtime");
+        crate::ops::runtime_hook_session::bind_for_test(
+            &home,
+            &group_id,
+            actor_id,
+            "claude",
+            "token",
+            runtime.pid.expect("pid"),
+        );
 
         let request = DaemonRequest {
             v: 1,
             op: "terminal_write".into(),
-            args: json!({"group_id":group_id,"actor_id":actor_id,"data":"y"})
+            args: json!({"group_id":group_id,"actor_id":actor_id,"data":"\r"})
                 .as_object()
                 .cloned()
                 .expect("args"),

@@ -274,7 +274,13 @@ fn provider_command(
         let mut command = vec![base[0].clone()];
         command.extend(preserved_codex_args(&base[1..]));
         command.extend(["app-server".into(), "--listen".into(), "stdio://".into()]);
-        super::super::codex_mcp::configure(home, &group.group_id, &actor.id, &mut command, env)?;
+        super::super::codex_mcp::configure_mcp_only(
+            home,
+            &group.group_id,
+            &actor.id,
+            &mut command,
+            env,
+        );
         Ok(command)
     } else {
         let mut command = vec![base[0].clone()];

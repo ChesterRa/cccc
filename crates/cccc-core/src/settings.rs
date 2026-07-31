@@ -3,28 +3,26 @@ use serde_json::{Map, Value};
 use std::io;
 
 use crate::HomeLayout;
-use crate::fs::{read_json, read_yaml, write_json};
+use crate::fs::{read_json, read_yaml, with_exclusive_lock, write_yaml};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalSettings {
     #[serde(default)]
     pub observability: Map<String, Value>,
     #[serde(default)]
+    #[serde(rename = "web_branding", alias = "branding")]
     pub branding: Map<String, Value>,
     #[serde(default)]
     pub remote_access: Map<String, Value>,
-    #[serde(default)]
-    pub capability_allowlist: Vec<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
 pub fn load(home: &HomeLayout) -> io::Result<GlobalSettings> {
-    let path = home.root().join("settings.json");
+    migrate_legacy_json(home)?;
+    let path = home.root().join("settings.yaml");
     let mut settings = if path.exists() {
-        read_json(&path)
-    } else if home.root().join("settings.yaml").exists() {
-        read_yaml(&home.root().join("settings.yaml"))
+        read_yaml(&path)
     } else {
         Ok(GlobalSettings::default())
     }?;
@@ -33,7 +31,52 @@ pub fn load(home: &HomeLayout) -> io::Result<GlobalSettings> {
 }
 
 pub fn save(home: &HomeLayout, settings: &GlobalSettings) -> io::Result<()> {
-    write_json(&home.root().join("settings.json"), settings)
+    write_yaml(&home.root().join("settings.yaml"), settings)
+}
+
+fn migrate_legacy_json(home: &HomeLayout) -> io::Result<()> {
+    let legacy_path = home.root().join("settings.json");
+    let canonical_path = home.root().join("settings.yaml");
+    let marker_path = home.root().join(".rust-settings-migrated-v1");
+    if marker_path.exists() || !legacy_path.exists() {
+        return Ok(());
+    }
+    with_exclusive_lock(&home.root().join("settings.yaml.lock"), || {
+        if marker_path.exists() {
+            return Ok(());
+        }
+        let mut legacy: Value = read_json(&legacy_path)?;
+        if let Some(object) = legacy.as_object_mut()
+            && let Some(branding) = object.remove("branding")
+        {
+            object.entry("web_branding").or_insert(branding);
+        }
+        let mut canonical = if canonical_path.exists() {
+            read_yaml::<Value>(&canonical_path)?
+        } else {
+            Value::Object(Map::new())
+        };
+        merge_missing(&mut canonical, &legacy);
+        write_yaml(&canonical_path, &canonical)?;
+        std::fs::write(&marker_path, b"migrated from settings.json\n")
+    })
+}
+
+fn merge_missing(target: &mut Value, source: &Value) {
+    let (Some(target), Some(source)) = (target.as_object_mut(), source.as_object()) else {
+        return;
+    };
+    for (key, value) in source {
+        match target.get_mut(key) {
+            Some(existing) if existing.is_object() && value.is_object() => {
+                merge_missing(existing, value);
+            }
+            Some(_) => {}
+            None => {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+    }
 }
 
 pub fn merge(target: &mut Map<String, Value>, patch: &Map<String, Value>) {
@@ -98,7 +141,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn loads_legacy_python_yaml_when_json_is_absent() {
+    fn loads_canonical_python_yaml() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
@@ -106,15 +149,15 @@ mod tests {
             home.root().join("settings.yaml"),
             "remote_access:\n  web_host: 0.0.0.0\n  web_port: 9000\n",
         )
-        .expect("legacy settings");
+        .expect("canonical settings");
 
-        let settings = load(&home).expect("load legacy settings");
+        let settings = load(&home).expect("load canonical settings");
         assert_eq!(settings.remote_access["web_host"], json!("0.0.0.0"));
         assert_eq!(settings.remote_access["web_port"], json!(9000));
     }
 
     #[test]
-    fn json_settings_take_precedence_over_legacy_yaml() {
+    fn saved_settings_replace_existing_canonical_yaml() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
@@ -122,7 +165,7 @@ mod tests {
             home.root().join("settings.yaml"),
             "remote_access:\n  web_host: 0.0.0.0\n",
         )
-        .expect("legacy settings");
+        .expect("existing settings");
         save(
             &home,
             &GlobalSettings {
@@ -133,9 +176,9 @@ mod tests {
                 ..GlobalSettings::default()
             },
         )
-        .expect("json settings");
+        .expect("save settings");
 
-        let settings = load(&home).expect("load json settings");
+        let settings = load(&home).expect("load saved settings");
         assert_eq!(settings.remote_access["web_host"], json!("127.0.0.2"));
     }
 

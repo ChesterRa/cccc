@@ -28,21 +28,13 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if action == "list" {
         let kind = string_arg(request, "kind").unwrap_or_default();
         let provider = provider(request);
-        let artifacts = if provider == "notebooklm" {
-            let remote_space_id = binding_id(&value, &lane)?;
-            notebooklm::artifacts(home, &remote_space_id)?
-                .into_iter()
-                .filter(|item| kind.is_empty() || item.kind == kind)
-                .map(|item| serde_json::to_value(item).unwrap_or(Value::Null))
-                .collect::<Vec<_>>()
-        } else {
-            require_local(&provider)?;
-            array(&value, "artifacts")
-                .iter()
-                .filter(|item| kind.is_empty() || item["kind"] == kind)
-                .cloned()
-                .collect::<Vec<_>>()
-        };
+        require_notebooklm(&provider)?;
+        let remote_space_id = binding_id(&value, &lane)?;
+        let artifacts = notebooklm::artifacts(home, &remote_space_id)?
+            .into_iter()
+            .filter(|item| kind.is_empty() || item.kind == kind)
+            .map(|item| serde_json::to_value(item).unwrap_or(Value::Null))
+            .collect::<Vec<_>>();
         return object(
             json!({"group_id":group_id,"provider":provider,"lane":lane,"action":"list","kind":kind,"artifacts":artifacts,"list_result":{"cached":true,"artifacts":artifacts}}),
         );
@@ -55,28 +47,14 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         if let Some(parent) = output.parent() {
             std::fs::create_dir_all(parent).map_err(OpError::io)?;
         }
-        if provider == "notebooklm" {
-            let remote_space_id = binding_id(&value, &lane)?;
-            let artifact = notebooklm::artifacts(home, &remote_space_id)?
-                .into_iter()
-                .find(|item| item.id == artifact_id)
-                .ok_or_else(|| OpError::new("not_found", "artifact not found"))?;
-            let bytes = notebooklm::download_artifact(home, &artifact)?;
-            std::fs::write(&output, bytes).map_err(OpError::io)?;
-        } else {
-            require_local(&provider)?;
-            let artifact = array(&value, "artifacts")
-                .iter()
-                .find(|item| item["artifact_id"] == artifact_id)
-                .ok_or_else(|| OpError::new("not_found", "artifact not found"))?;
-            let source = artifact["output_path"]
-                .as_str()
-                .map(PathBuf::from)
-                .ok_or_else(|| OpError::new("not_found", "artifact output is unavailable"))?;
-            if output != source {
-                std::fs::copy(source, &output).map_err(OpError::io)?;
-            }
-        }
+        require_notebooklm(&provider)?;
+        let remote_space_id = binding_id(&value, &lane)?;
+        let artifact = notebooklm::artifacts(home, &remote_space_id)?
+            .into_iter()
+            .find(|item| item.id == artifact_id)
+            .ok_or_else(|| OpError::new("not_found", "artifact not found"))?;
+        let bytes = notebooklm::download_artifact(home, &artifact)?;
+        std::fs::write(&output, bytes).map_err(OpError::io)?;
         return object(
             json!({"group_id":group_id,"provider":provider,"lane":lane,"action":"download","kind":kind,"output_path":output,"download_result":{"output_path":output}}),
         );
@@ -88,9 +66,7 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         ));
     }
     let provider = provider(request);
-    if provider != "notebooklm" {
-        require_local(&provider)?;
-    }
+    require_notebooklm(&provider)?;
     let remote_space_id = binding_id(&value, &lane)?;
     let options = request.args.get("options").and_then(Value::as_object);
     let language = options
@@ -112,28 +88,19 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .map(str::to_owned)
                 .collect::<Vec<_>>()
         });
-    let generation = if provider == "notebooklm" {
-        notebooklm::generate_artifact(
-            home,
-            &remote_space_id,
-            &kind,
-            language,
-            instructions,
-            source_ids.as_deref(),
-        )?
-    } else {
-        cccc_notebooklm::ArtifactGeneration {
-            artifact_id: format!("gsa_{}", short_id()),
-            kind: kind.clone(),
-            status: "completed".into(),
-            raw: json!({}),
-        }
-    };
+    let generation = notebooklm::generate_artifact(
+        home,
+        &remote_space_id,
+        &kind,
+        language,
+        instructions,
+        source_ids.as_deref(),
+    )?;
     let artifact_id = generation.artifact_id.clone();
     let artifact = json!({
         "artifact_id":artifact_id,"provider":provider,"lane":lane,"remote_space_id":remote_space_id,
         "kind":kind,"status":generation.status,"created_at":utc_now(),"updated_at":utc_now(),
-        "generation_backend":if provider=="notebooklm"{"notebooklm_studio"}else{"local"},
+        "generation_backend":"notebooklm_studio",
         "provider_result":generation.raw
     });
     update(home, &group_id, |value| {
