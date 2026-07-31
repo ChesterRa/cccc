@@ -381,6 +381,9 @@ export function normalizeApiResponse<T>(data: unknown): ApiResponse<T> {
       error: { code, message, details: errorRecord?.details },
     };
   }
+  if (record.ok !== true || !Object.prototype.hasOwnProperty.call(record, "result")) {
+    return makeErrorResponse("PARSE_ERROR", "Invalid API response");
+  }
   return record as ApiResponse<T>;
 }
 

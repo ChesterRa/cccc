@@ -22,7 +22,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "group_resolve" => resolve(home, request),
         "group_update" => update(home, request),
         "group_delete" => delete(home, request),
-        "group_reset" => reset(home, request),
+        "group_reset" => super::group_reset::reset(home, request),
         "group_set_state" => set_state(home, request),
         "group_start" => running(home, request, true),
         "group_stop" => running(home, request, false),
@@ -109,16 +109,34 @@ fn resolve_remote(home: &HomeLayout, request: &DaemonRequest, token: &str, raw: 
 fn create(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let title = string_arg(request, "title").unwrap_or_else(|| "working-group".into());
     let topic = string_arg(request, "topic").unwrap_or_default();
-    let group = store(home)?.create(&title, &topic).map_err(OpError::io)?;
-    append_group_event(
+    let group_store = store(home)?;
+    let previous_active = active::get(home).map_err(OpError::io)?;
+    let group = group_store.create(&title, &topic).map_err(OpError::io)?;
+    if let Err(error) = append_group_event(
         home,
         &group,
         "group.create",
         request,
         json!({"title": group.title, "topic": group.topic}),
-    )?;
-    active::set(home, &group.group_id).map_err(OpError::io)?;
-    object(json!({"group": group_runtime::group(group)}))
+    ) {
+        return Err(super::group_create_rollback::run(
+            home,
+            &group_store,
+            &group.group_id,
+            None,
+            error,
+        ));
+    }
+    if let Err(error) = active::set(home, &group.group_id).map_err(OpError::io) {
+        return Err(super::group_create_rollback::run(
+            home,
+            &group_store,
+            &group.group_id,
+            Some(previous_active),
+            error,
+        ));
+    }
+    object(json!({"group_id": group.group_id, "group": group_runtime::group(group)}))
 }
 
 fn list(home: &HomeLayout) -> OpResult {
@@ -263,31 +281,6 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"group_id": group.group_id, "deleted": deleted}))
 }
 
-fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let old = load(home, request)?;
-    authorize(&old, request)?;
-    actor_delivery::shutdown_group(&old.group_id);
-    actor_runtime::stop_group(&old)?;
-    store(home)?.delete(&old.group_id).map_err(OpError::io)?;
-    let created = store(home)?
-        .create(&old.title, &old.topic)
-        .map_err(OpError::io)?;
-    for item in old.scopes {
-        cccc_core::group_scope::attach(&store(home)?, &created.group_id, item)
-            .map_err(OpError::io)?;
-    }
-    let group = store(home)?.load(&created.group_id).map_err(OpError::io)?;
-    append_group_event(
-        home,
-        &group,
-        "group.create",
-        request,
-        json!({"title": group.title, "topic": group.topic, "reset_from": old.group_id}),
-    )?;
-    active::set(home, &group.group_id).map_err(OpError::io)?;
-    object(json!({"old_group_id": old.group_id, "group": group_runtime::group(group)}))
-}
-
 fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     authorize(&group, request)?;
@@ -352,7 +345,7 @@ fn authorize(group: &GroupDoc, request: &DaemonRequest) -> Result<(), OpError> {
     .map_err(OpError::invalid)
 }
 
-fn append_group_event(
+pub(super) fn append_group_event(
     home: &HomeLayout,
     group: &GroupDoc,
     kind: &str,

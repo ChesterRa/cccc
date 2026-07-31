@@ -38,9 +38,19 @@ async fn project_get(
     Path(group_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let path = scope_path(&state, &group_id, "PROJECT.md").await?;
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
+    let (content, exists) = match std::fs::read_to_string(&path) {
+        Ok(content) => (content, true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (String::new(), false),
+        Err(error) => {
+            return Err(ApiError::bad_code(
+                "READ_FAILED",
+                error.to_string(),
+                json!({"path":path}),
+            ));
+        }
+    };
     Ok(success(
-        json!({"content":content,"path":path,"exists":path.exists()}),
+        json!({"content":content,"path":path,"exists":exists}),
     ))
 }
 
@@ -50,7 +60,9 @@ async fn project_put(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
     let path = scope_path(&state, &group_id, "PROJECT.md").await?;
-    let content = body.get("content").and_then(Value::as_str).unwrap_or("");
+    let content = body.get("content").and_then(Value::as_str).ok_or_else(|| {
+        ApiError::bad_code("invalid_content", "content must be a string", json!({}))
+    })?;
     std::fs::write(&path, content).map_err(|error| ApiError::bad(error.to_string()))?;
     Ok(success(
         json!({"content":content,"path":path,"exists":true}),
@@ -76,10 +88,25 @@ async fn prompt_put(
     let normalized_kind = normalize_kind(&kind)?;
     let root = prompts_root(&state, &group_id)?;
     let path = root.join(prompt_filename(normalized_kind));
-    let content = body.get("content").and_then(Value::as_str).unwrap_or("");
+    let previous = prompt_info(&root, normalized_kind)?["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
+    let content = body.get("content").and_then(Value::as_str).ok_or_else(|| {
+        ApiError::bad_code("invalid_content", "content must be a string", json!({}))
+    })?;
     if content.trim().is_empty() {
         remove_override(&path)?;
-        return Ok(success(builtin_prompt_info(normalized_kind, &path)));
+        let value = builtin_prompt_info(normalized_kind, &path);
+        let (notified, failures) = super::group_prompt_notify::notify(
+            &state,
+            &group_id,
+            normalized_kind == "help" && previous != builtin_prompt(normalized_kind),
+        )
+        .await?;
+        return Ok(success(super::group_prompt_notify::annotate(
+            value, notified, failures,
+        )));
     }
     std::fs::create_dir_all(&root)
         .and_then(|()| cccc_core::fs::atomic_write(&path, content.as_bytes()))
@@ -93,7 +120,16 @@ async fn prompt_put(
                 json!({}),
             )
         })?;
-    Ok(success(home_prompt_info(normalized_kind, &path, content)))
+    let value = home_prompt_info(normalized_kind, &path, content);
+    let (notified, failures) = super::group_prompt_notify::notify(
+        &state,
+        &group_id,
+        normalized_kind == "help" && previous != content,
+    )
+    .await?;
+    Ok(success(super::group_prompt_notify::annotate(
+        value, notified, failures,
+    )))
 }
 
 async fn prompt_delete(
@@ -110,8 +146,22 @@ async fn prompt_delete(
         ));
     }
     let path = prompts_root(&state, &group_id)?.join(prompt_filename(normalized_kind));
+    let root = prompts_root(&state, &group_id)?;
+    let previous = prompt_info(&root, normalized_kind)?["content"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
     remove_override(&path)?;
-    Ok(success(builtin_prompt_info(normalized_kind, &path)))
+    let value = builtin_prompt_info(normalized_kind, &path);
+    let (notified, failures) = super::group_prompt_notify::notify(
+        &state,
+        &group_id,
+        normalized_kind == "help" && previous != builtin_prompt(normalized_kind),
+    )
+    .await?;
+    Ok(success(super::group_prompt_notify::annotate(
+        value, notified, failures,
+    )))
 }
 
 async fn scope_root(state: &AppState, group_id: &str) -> Result<std::path::PathBuf, ApiError> {

@@ -8,12 +8,16 @@ mod capabilities;
 mod context;
 mod diagnostics;
 mod file_response;
+mod filesystem;
 mod group_bridge;
+mod group_bridge_close;
 mod group_bridge_command_sessions;
 mod group_bridge_pairing;
+mod group_bridge_seen;
 mod group_bridge_session;
 mod group_bridge_store;
 mod group_copy;
+mod group_prompt_notify;
 mod group_prompts;
 mod group_space;
 mod group_space_provider;
@@ -21,7 +25,9 @@ mod groups;
 mod headless;
 mod headless_store;
 mod im;
+mod im_authorization;
 mod messaging;
+mod messaging_cross_group;
 mod nomcp;
 mod nomcp_admin;
 mod nomcp_pages;
@@ -31,14 +37,28 @@ mod nomcp_send;
 mod presentation;
 mod presentation_browser;
 mod remote_access;
+mod remote_access_projection;
 mod runtime_activity;
 mod settings;
 mod streams;
 mod system;
+mod system_branding;
+mod system_branding_assets;
+mod system_scope;
 mod terminal;
 mod terminal_ws;
 mod web_model_browser;
+mod web_model_connector_activity;
+mod web_model_connector_provisioning;
+mod web_model_connector_store;
 mod web_model_connectors;
+mod web_model_delivery;
+mod web_model_delivery_completion;
+mod web_model_delivery_state;
+#[cfg(test)]
+mod web_model_delivery_test_support;
+#[cfg(test)]
+mod web_model_delivery_tests;
 
 use crate::AppState;
 use axum::Router;
@@ -57,6 +77,10 @@ fn first_non_blank<'a>(value: &'a Value, names: &[&str]) -> Option<&'a str> {
 pub fn router() -> Router<AppState> {
     Router::new()
         .merge(system::routes())
+        .merge(system_branding::routes())
+        .merge(system_branding_assets::routes())
+        .merge(system_scope::routes())
+        .merge(filesystem::routes())
         .merge(access_tokens::routes())
         .merge(groups::routes())
         .merge(group_copy::routes())
@@ -70,6 +94,7 @@ pub fn router() -> Router<AppState> {
         .merge(headless::routes())
         .merge(im::routes())
         .merge(messaging::routes())
+        .merge(messaging_cross_group::routes())
         .merge(presentation::routes())
         .merge(presentation_browser::routes())
         .merge(web_model_connectors::routes())

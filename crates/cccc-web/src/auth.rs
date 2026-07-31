@@ -171,7 +171,6 @@ fn is_public(method: &Method, path: &str) -> bool {
 
 fn requires_admin(method: &Method, path: &str) -> bool {
     path.starts_with("/api/v1/access-tokens")
-        || path.starts_with("/api/v1/profiles")
         || path.starts_with("/api/v1/actor_profiles")
         || path.starts_with("/api/v1/nomcp/")
         || path.starts_with("/api/v1/web-model/")
@@ -229,9 +228,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn global_profile_and_provider_routes_require_admin() {
-        assert!(requires_admin(&Method::GET, "/api/v1/profiles"));
+    fn legacy_profiles_stay_admin_only_while_scoped_profiles_use_user_policy() {
+        assert!(!requires_admin(&Method::GET, "/api/v1/profiles"));
         assert!(requires_admin(&Method::POST, "/api/v1/actor_profiles"));
+        assert!(requires_admin(
+            &Method::GET,
+            "/api/v1/actor_profiles/ap_one/env_private"
+        ));
         assert!(requires_admin(
             &Method::POST,
             "/api/v1/space/providers/notebooklm/credential"

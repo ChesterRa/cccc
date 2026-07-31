@@ -103,11 +103,10 @@ async fn automation_manage(
 async fn automation_reset(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
+    Json(body): Json<Value>,
 ) -> ApiResult {
-    call(
-        &state,
-        "group_automation_reset_baseline",
-        object(json!({"group_id":group_id,"by":"user"})),
-    )
-    .await
+    let mut args = body_object(body)?;
+    args.insert("group_id".into(), Value::String(group_id));
+    args.insert("by".into(), Value::String("user".into()));
+    call(&state, "group_automation_reset_baseline", args).await
 }

@@ -173,10 +173,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
       if (visibleRow) {
         const anchorId = String(visibleRow.dataset.messageId || "").trim();
         if (anchorId) {
-          return {
-            anchorId,
-            offsetPx: containerRect.top - visibleRow.getBoundingClientRect().top,
-          };
+          return { anchorId, offsetPx: containerRect.top - visibleRow.getBoundingClientRect().top };
         }
       }
 

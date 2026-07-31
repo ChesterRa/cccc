@@ -13,7 +13,7 @@ pub fn tail(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let path = ledger_path(home, request)?;
     let (events, has_more) =
         ledger::tail_filtered(&path, limit, kind.filter()).map_err(OpError::io)?;
-    result(Page { events, has_more })
+    result(home, request, Page { events, has_more })
 }
 
 pub fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -27,7 +27,7 @@ pub fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         limit: integer(request, "limit", 50).clamp(1, 200),
     };
     let page = ledger::inspect(&path, |events, _| page(events, query)).map_err(OpError::io)??;
-    result(page)
+    result(home, request, page)
 }
 
 pub fn window(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -76,13 +76,15 @@ pub fn window(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             Ok((combined, center_index, before.has_more, after.has_more))
         })
         .map_err(OpError::io)??;
+    let count = combined.len();
+    let events = super::messaging_query_status::decorate(home, request, combined)?;
     object(json!({
         "center_id":center_id,
         "center_index":center_index,
-        "events":combined,
+        "events":events,
         "has_more_before":has_more_before,
         "has_more_after":has_more_after,
-        "count":combined.len(),
+        "count":count,
     }))
 }
 
@@ -179,8 +181,10 @@ fn ledger_path(home: &HomeLayout, request: &DaemonRequest) -> Result<std::path::
     store(home)?.ledger_path(&group_id).map_err(OpError::io)
 }
 
-fn result(page: Page) -> OpResult {
-    object(json!({"count":page.events.len(),"events":page.events,"has_more":page.has_more}))
+fn result(home: &HomeLayout, request: &DaemonRequest, page: Page) -> OpResult {
+    let count = page.events.len();
+    let events = super::messaging_query_status::decorate(home, request, page.events)?;
+    object(json!({"count":count,"events":events,"has_more":page.has_more}))
 }
 
 fn kind(request: &DaemonRequest, default: &str) -> Kind {

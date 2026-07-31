@@ -1,8 +1,16 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { revokeIMChatAuthorization } from "./imBridgeRevoke";
+import { imRevokeKey, revokeIMChatAuthorization } from "./imBridgeRevoke";
 
 describe("revokeIMChatAuthorization", () => {
+  it("keys in-flight revokes by chat and thread", () => {
+    const current = imRevokeKey("same-chat", 0);
+
+    expect(current).toBe("same-chat:0");
+    expect(imRevokeKey("same-chat", 0)).toBe(current);
+    expect(imRevokeKey("same-chat", 1)).not.toBe(current);
+  });
+
   it("reports a business failure without refreshing authorization state", async () => {
     const refresh = vi.fn(async () => undefined);
 

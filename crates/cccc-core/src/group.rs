@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use uuid::Uuid;
 
-use crate::fs::{read_yaml, with_exclusive_lock, write_yaml};
+use crate::fs::{read_yaml, with_exclusive_lock, write_yaml, write_yaml_committed};
 use crate::home::HomeLayout;
 use crate::registry::{GroupMeta, Registry};
 
@@ -56,6 +56,20 @@ impl GroupStore {
     }
 
     pub fn create(&self, title: &str, topic: &str) -> io::Result<GroupDoc> {
+        self.create_with_registry(title, topic, |home, meta| {
+            Registry::mutate(home, |registry| {
+                registry.groups.insert(meta.group_id.clone(), meta);
+                Ok(())
+            })
+        })
+    }
+
+    fn create_with_registry(
+        &self,
+        title: &str,
+        topic: &str,
+        register: impl FnOnce(&HomeLayout, GroupMeta) -> io::Result<()>,
+    ) -> io::Result<GroupDoc> {
         let now = utc_now();
         let group = GroupDoc {
             v: 1,
@@ -73,28 +87,35 @@ impl GroupStore {
             extra: Map::new(),
         };
         let dir = self.group_dir(&group.group_id)?;
-        for child in ["context", "scopes", "state", "state/blobs"] {
-            fs::create_dir_all(dir.join(child))?;
-        }
-        fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("ledger.jsonl"))?;
-        self.save(&group)?;
-        let meta = GroupMeta {
-            group_id: group.group_id.clone(),
-            title: group.title.clone(),
-            topic: group.topic.clone(),
-            path: dir.to_string_lossy().into_owned(),
-            default_scope_key: String::new(),
-            created_at: group.created_at.clone(),
-            updated_at: group.updated_at.clone(),
-        };
-        Registry::mutate(&self.home, |registry| {
-            registry.groups.insert(meta.group_id.clone(), meta);
-            Ok(())
-        })?;
-        Ok(group)
+        let result = (|| {
+            for child in ["context", "scopes", "state", "state/blobs"] {
+                fs::create_dir_all(dir.join(child))?;
+            }
+            fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(dir.join("ledger.jsonl"))?;
+            self.save(&group)?;
+            let meta = GroupMeta {
+                group_id: group.group_id.clone(),
+                title: group.title.clone(),
+                topic: group.topic.clone(),
+                path: dir.to_string_lossy().into_owned(),
+                default_scope_key: String::new(),
+                created_at: group.created_at.clone(),
+                updated_at: group.updated_at.clone(),
+            };
+            register(&self.home, meta)?;
+            Ok(group)
+        })();
+        result.map_err(|error| match fs::remove_dir_all(&dir) {
+            Ok(()) => error,
+            Err(rollback) if rollback.kind() == io::ErrorKind::NotFound => error,
+            Err(rollback) => io::Error::other(format!(
+                "{error}; rollback_failed: could not remove {}: {rollback}",
+                dir.display()
+            )),
+        })
     }
 
     pub fn load(&self, group_id: &str) -> io::Result<GroupDoc> {
@@ -109,12 +130,17 @@ impl GroupStore {
     }
 
     fn save_unlocked(&self, group: &GroupDoc) -> io::Result<()> {
+        self.save_unlocked_doc(group).map(|_| ())
+    }
+
+    fn save_unlocked_doc(&self, group: &GroupDoc) -> io::Result<GroupDoc> {
         let mut stored = group.clone();
         stored.updated_at = utc_now();
-        write_yaml(
+        write_yaml_committed(
             &self.group_dir(&stored.group_id)?.join("group.yaml"),
             &stored,
-        )
+        )?;
+        Ok(stored)
     }
 
     pub fn list(&self) -> io::Result<Vec<GroupMeta>> {
@@ -151,18 +177,7 @@ impl GroupStore {
     }
 
     pub fn delete(&self, group_id: &str) -> io::Result<bool> {
-        let dir = self.group_dir(group_id)?;
-        let existed = dir.exists();
-        crate::ledger_index::invalidate_path(&dir.join("ledger.jsonl"));
-        if existed {
-            fs::remove_dir_all(dir)?;
-        }
-        Registry::mutate(&self.home, |registry| {
-            registry.groups.remove(group_id);
-            registry.defaults.retain(|_, value| value != group_id);
-            Ok(())
-        })?;
-        Ok(existed)
+        crate::group_delete::delete(self, group_id)
     }
 
     pub fn ledger_path(&self, group_id: &str) -> io::Result<std::path::PathBuf> {
@@ -178,6 +193,37 @@ impl GroupStore {
             let mut group = self.load(group_id)?;
             let result = change(&mut group)?;
             self.save_unlocked(&group)?;
+            Ok(result)
+        })
+    }
+
+    pub(crate) fn mutate_with_rollback<T>(
+        &self,
+        group_id: &str,
+        change: impl FnOnce(&mut GroupDoc) -> io::Result<T>,
+        side_effect: impl FnOnce(&T) -> io::Result<()>,
+    ) -> io::Result<T> {
+        with_exclusive_lock(&self.group_lock_path(group_id)?, || {
+            let before = self.load(group_id)?;
+            let mut group = before.clone();
+            let result = change(&mut group)?;
+            let written = self.save_unlocked_doc(&group)?;
+            if let Err(error) = side_effect(&result) {
+                return match self.load(group_id) {
+                    Ok(current) if current == written => match self.save_unlocked(&before) {
+                        Ok(()) => Err(error),
+                        Err(rollback) => Err(io::Error::other(format!(
+                            "{error}; rollback_failed: could not restore group: {rollback}"
+                        ))),
+                    },
+                    Ok(_) => Err(io::Error::other(format!(
+                        "{error}; rollback_skipped: group changed concurrently"
+                    ))),
+                    Err(rollback) => Err(io::Error::other(format!(
+                        "{error}; rollback_failed: could not verify current group: {rollback}"
+                    ))),
+                };
+            }
             Ok(result)
         })
     }
@@ -328,5 +374,34 @@ mod tests {
             .map(|group| group.group_id)
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(listed, group_ids);
+    }
+
+    #[test]
+    fn committed_registry_error_does_not_delete_the_created_group_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let created = store.create_with_registry("committed", "", |home, meta| {
+            Registry::mutate_with_writer(
+                home,
+                |registry| {
+                    registry.groups.insert(meta.group_id.clone(), meta);
+                    Ok(())
+                },
+                |path, value| {
+                    crate::fs::write_json(path, value)?;
+                    Err(io::Error::other("injected sync_dir failure"))
+                },
+            )
+        });
+        assert!(created.is_ok(), "{created:?}");
+        let group = created.expect("group");
+        assert!(store.group_dir(&group.group_id).expect("dir").is_dir());
+        assert!(
+            Registry::load(&home)
+                .expect("registry")
+                .groups
+                .contains_key(&group.group_id)
+        );
     }
 }

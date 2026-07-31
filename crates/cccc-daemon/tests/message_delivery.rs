@@ -630,7 +630,7 @@ fn tracked_send_creates_links_and_recovers_idempotently() {
             "context_get",
             json!({"group_id":group_id,"by":"user"})
         )
-        .result["context"]["tasks"]
+        .result["coordination"]["tasks"]
             .as_array()
             .expect("tasks")
             .len(),
@@ -674,7 +674,7 @@ fn tracked_send_creates_links_and_recovers_idempotently() {
             "context_get",
             json!({"group_id":group_id,"by":"user"})
         )
-        .result["context"]["tasks"]
+        .result["coordination"]["tasks"]
             .as_array()
             .expect("tasks")
             .len(),
@@ -709,7 +709,7 @@ fn tracked_send_creates_links_and_recovers_idempotently() {
         "context_get",
         json!({"group_id":group_id,"by":"user"}),
     );
-    let task = context.result["context"]["tasks"]
+    let task = context.result["coordination"]["tasks"]
         .as_array()
         .expect("tasks")
         .iter()
@@ -729,7 +729,7 @@ fn tracked_send_creates_links_and_recovers_idempotently() {
             "context_get",
             json!({"group_id":group_id,"by":"user"})
         )
-        .result["context"]["tasks"]
+        .result["coordination"]["tasks"]
             .as_array()
             .expect("tasks")
             .len(),
@@ -751,7 +751,7 @@ fn tracked_send_creates_links_and_recovers_idempotently() {
         "context_get",
         json!({"group_id":group_id,"by":"user"}),
     );
-    let no_key_task = context.result["context"]["tasks"]
+    let no_key_task = context.result["coordination"]["tasks"]
         .as_array()
         .expect("tasks")
         .iter()

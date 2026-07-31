@@ -13,7 +13,7 @@ use std::io;
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
 
-const TARGETS_KEY: &str = "web_model_browser_targets";
+pub(super) const TARGETS_KEY: &str = "web_model_browser_targets";
 
 #[derive(Debug, Deserialize)]
 struct SessionQuery {
@@ -39,7 +39,9 @@ async fn info(State(state): State<AppState>, Query(query): Query<SessionQuery>) 
     let group_id = required_identifier(&query.group_id, "group_id")?;
     let actor_id = required_identifier(&query.actor_id, "actor_id")?;
     validate_actor(&state, group_id, actor_id)?;
-    let _ = query.inspect;
+    if query.inspect {
+        super::web_model_delivery::deliver_pending(&state, group_id, actor_id).await?;
+    }
     payload(&state, group_id, actor_id).await
 }
 
@@ -49,7 +51,7 @@ async fn open(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResu
     validate_actor(&state, &group_id, &actor_id)?;
     let width = dimension(&body, "width", 1366, 640, 2560);
     let height = dimension(&body, "height", 900, 480, 1600);
-    let provider = super::web_model_connectors::for_actor(&state, &group_id, &actor_id)
+    let provider = super::web_model_connector_store::for_actor(&state, &group_id, &actor_id)
         .and_then(|item| item["provider"].as_str().map(str::to_owned))
         .unwrap_or_else(|| "chatgpt".into());
     let profile = state
@@ -69,6 +71,8 @@ async fn open(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResu
         )
         .await
         .map_err(|error| ApiError::bad(error.to_string()))?;
+    super::web_model_delivery::ensure_worker(state.clone(), group_id.clone(), actor_id.clone())
+        .await;
     payload(&state, &group_id, &actor_id).await
 }
 
@@ -127,6 +131,10 @@ async fn bind_current(State(state): State<AppState>, Json(body): Json<Value>) ->
         Ok(())
     })
     .map_err(io_error)?;
+    if !clear && current["active"].as_bool().unwrap_or(false) {
+        super::web_model_delivery::ensure_worker(state.clone(), group_id.clone(), actor_id.clone())
+            .await;
+    }
     payload(&state, &group_id, &actor_id).await
 }
 
@@ -150,7 +158,13 @@ async fn upgrade(
         }));
     }
     Ok(ws.on_upgrade(move |socket| async move {
-        crate::browser_surface::serve_socket(socket, &state.browser_surfaces, &session_key).await;
+        crate::browser_surface::serve_socket(
+            socket,
+            &state.browser_surfaces,
+            &session_key,
+            state.shutdown.subscribe(),
+        )
+        .await;
     }))
 }
 
@@ -205,7 +219,7 @@ fn provider_url(provider: &str) -> &'static str {
     }
 }
 
-fn key(group_id: &str, actor_id: &str) -> String {
+pub(super) fn key(group_id: &str, actor_id: &str) -> String {
     format!("web-model::{group_id}::{actor_id}")
 }
 

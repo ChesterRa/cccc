@@ -156,6 +156,10 @@ mod tests {
             "inbox_mark_read",
             "inbox_mark_all_read",
             "ledger_snapshot",
+            "runtime_wait_next_turn",
+            "web_model_runtime_wait_next_turn",
+            "runtime_complete_turn",
+            "web_model_runtime_complete_turn",
             "future_unknown_operation",
         ] {
             assert!(

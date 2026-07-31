@@ -38,10 +38,7 @@ export function useChatMessageActions(input: {
   closeChatWindow: (groupId?: string) => void;
   setShowScrollButton: (groupId: string, value: boolean) => void;
   setChatUnreadCount: (groupId: string, value: number) => void;
-  setChatScrollSnapshot: (
-    groupId: string,
-    snapshot: ChatScrollSnapshot,
-  ) => void;
+  setChatScrollSnapshot: (groupId: string, snapshot: ChatScrollSnapshot) => void;
   setNewActorRole: (role: "foreman" | "peer") => void;
   openModal: (name: "addActor") => void;
   loadMoreHistory: (groupId: string) => Promise<unknown>;

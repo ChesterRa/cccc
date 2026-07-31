@@ -132,7 +132,13 @@ async fn auth_ws(
         }));
     }
     Ok(ws.on_upgrade(move |socket| async move {
-        crate::browser_surface::serve_socket(socket, &state.browser_surfaces, &key).await;
+        crate::browser_surface::serve_socket(
+            socket,
+            &state.browser_surfaces,
+            &key,
+            state.shutdown.subscribe(),
+        )
+        .await;
     }))
 }
 

@@ -39,6 +39,7 @@ serde.workspace = true
 serde_json.workspace = true
 serenity.workspace = true
 sha2.workspace = true
+shell-words.workspace = true
 sherpa-onnx.workspace = true
 tar.workspace = true
 tempfile.workspace = true

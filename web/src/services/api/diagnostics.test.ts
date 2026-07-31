@@ -50,10 +50,7 @@ describe("diagnostics terminal history api", () => {
     vi.stubGlobal("window", { location: { search: "" } });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(
-        JSON.stringify({
-          ok: true,
-          result: { text: "screen", hint: "", end_cursor: 1234 },
-        }),
+        JSON.stringify({ ok: true, result: { text: "screen", hint: "", end_cursor: 1234 } }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
     );

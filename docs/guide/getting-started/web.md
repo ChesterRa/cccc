@@ -150,7 +150,25 @@ Agents can read and update this shared context.
 
 ### Can't see my project?
 
-Run `cccc attach .` in your project directory, then refresh the Web UI.
+Administrators can use **Create Group → Browse** to select a directory on the machine
+running the CCCC daemon. Project paths must be absolute (or start with `~`). Entering
+one missing final directory creates that exact directory when its parent already
+exists; relative paths and missing parent chains are rejected. A directory already
+attached to another group opens that existing group instead of creating a duplicate.
+
+Group creation, scope attachment, ledger registration, and active-group selection are
+one compensated operation. Each committed file is read back against the exact value
+written before the next step starts. A failure restores the previous visible state or
+returns an explicit `rollback_failed` error. This is committed-state detection, not a
+claim of stronger filesystem durability than the host platform provides.
+The same single-request contract is used by both the Python and Rust Web backends;
+omitting `path` keeps the legacy group-only creation behavior.
+For a request that includes `path`, CCCC publishes `group.created` only after the
+group, scope, ledger event, and active-group selection have all committed. A failed
+transaction removes its internal group without publishing a matching create or
+delete event.
+
+Alternatively, run `cccc attach .` in your project directory, then refresh the Web UI.
 
 ## Next Steps
 

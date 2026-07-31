@@ -9,6 +9,7 @@ pub(super) fn is_global_write(request: &DaemonRequest) -> bool {
             request.op.as_str(),
             "shutdown"
                 | "group_create"
+                | "group_create_with_scope"
                 | "group_delete"
                 | "group_import"
                 | "group_update"
@@ -89,13 +90,11 @@ pub(super) fn is_read_only(op: &str) -> bool {
             | "terminal_status"
             | "terminal_tail"
             | "version"
-            | "runtime_wait_next_turn"
             | "group_bridge_session_open"
             | "group_bridge_session_close"
             | "group_bridge_session_poll"
             | "group_bridge_session_complete"
             | "group_bridge_session_ready"
             | "group_bridge_session_deliver"
-            | "web_model_runtime_wait_next_turn"
     )
 }

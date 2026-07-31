@@ -1,7 +1,7 @@
 // Included by the crate-level integration test harness.
 use cccc_contracts::{DaemonRequest, DaemonResponse};
 use cccc_core::access_tokens::AccessTokenStore;
-use cccc_core::{GroupStore, HomeLayout, ledger, settings};
+use cccc_core::{GroupStore, HomeLayout, Registry, group_scope, ledger, scope, settings};
 use serde_json::{Map, Value, json};
 
 #[test]
@@ -153,18 +153,78 @@ fn group_reset_appends_a_creation_event_for_the_replacement_group() {
     let created = ok(&home, "group_create", json!({"title":"reset lifecycle"}));
     let old_group_id = created.result["group"]["group_id"]
         .as_str()
-        .expect("old group id");
-    let reset = ok(
+        .expect("old group id")
+        .to_owned();
+    let store = GroupStore::new(home.clone()).expect("store");
+    store
+        .mutate(&old_group_id, |group| {
+            group.automation.insert("version".into(), json!(7));
+            Ok(())
+        })
+        .expect("automation");
+    ok(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":old_group_id,
+            "actor_id":"reset-peer",
+            "env_private":{"TOKEN":"secret"},
+            "by":"user"
+        }),
+    );
+    store
+        .mutate(&old_group_id, |group| {
+            group.actors[0].avatar_asset_path = "state/blobs/old-avatar.png".into();
+            Ok(())
+        })
+        .expect("avatar path");
+    let project = temp.path().join("reset-project");
+    std::fs::create_dir(&project).expect("project");
+    let attached_scope = scope::detect(&project).expect("scope");
+    group_scope::attach(&store, &old_group_id, attached_scope.clone()).expect("attach scope");
+    cccc_core::active::set(&home, &old_group_id).expect("active");
+    let missing_confirm = raw(
         &home,
         "group_reset",
         json!({"group_id":old_group_id,"by":"user"}),
     );
-    let new_group_id = reset.result["group"]["group_id"]
-        .as_str()
-        .expect("new group id");
-    let store = GroupStore::new(home).expect("store");
+    assert_eq!(
+        missing_confirm.error.expect("confirm error").code,
+        "invalid_args"
+    );
+    assert!(store.load(&old_group_id).is_ok());
+    let reset = ok(
+        &home,
+        "group_reset",
+        json!({"group_id":old_group_id,"confirm":old_group_id,"by":"user"}),
+    );
+    let new_group_id = reset.result["new_group_id"].as_str().expect("new group id");
     let events = ledger::tail(&store.ledger_path(new_group_id).expect("ledger"), 1).expect("tail");
 
+    assert_eq!(reset.result["group_id"], new_group_id);
+    assert_eq!(reset.result["deleted_old"], true);
+    assert!(store.load(&old_group_id).is_err());
+    let replacement = store.load(new_group_id).expect("replacement");
+    assert_eq!(replacement.automation["version"], 7);
+    assert_eq!(replacement.actors[0].id, "reset-peer");
+    assert!(replacement.actors[0].avatar_asset_path.is_empty());
+    assert_eq!(
+        Registry::load(&home).expect("registry").defaults[&attached_scope.scope_key],
+        new_group_id
+    );
+    assert_eq!(
+        ok(
+            &home,
+            "actor_env_private_keys",
+            json!({"group_id":new_group_id,"actor_id":"reset-peer"})
+        )
+        .result["keys"],
+        json!(["TOKEN"])
+    );
+    assert_eq!(
+        cccc_core::active::get(&home).expect("active").as_deref(),
+        Some(new_group_id)
+    );
     assert_eq!(events[0].kind, "group.create");
     assert_eq!(events[0].data["reset_from"], old_group_id);
 }

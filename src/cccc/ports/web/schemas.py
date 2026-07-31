@@ -23,6 +23,7 @@ class CreateGroupRequest(BaseModel):
     title: str = Field(default="working-group")
     topic: str = Field(default="")
     by: str = Field(default="user")
+    path: Any = Field(default=None)
 
 
 class AttachRequest(BaseModel):

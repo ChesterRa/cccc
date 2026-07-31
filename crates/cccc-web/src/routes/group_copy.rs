@@ -114,9 +114,10 @@ async fn import(
         group_copy::import(&store, &bytes, &workspace_root, &title)
     })
     .await?;
-    if let Some(path) = staged {
-        let _ = fs::remove_file(path);
-    }
+    let cleanup_warning = staged.and_then(cleanup_staged_upload);
+    let mut result =
+        serde_json::to_value(result).map_err(|error| ApiError::bad(error.to_string()))?;
+    result["cleanup_warning"] = cleanup_warning.unwrap_or(Value::Null);
     Ok(Json(json!({"ok":true,"result":result})))
 }
 
@@ -240,6 +241,18 @@ fn require_admin(principal: &Principal) -> Result<(), ApiError> {
     }
 }
 
+fn cleanup_staged_upload(path: PathBuf) -> Option<Value> {
+    match fs::remove_file(&path) {
+        Ok(()) => None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => Some(json!({
+            "code":"group_copy_cleanup_failed",
+            "message":format!("group import committed but staged upload cleanup failed: {error}"),
+            "upload_path":path,
+        })),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,5 +272,13 @@ mod tests {
             .expect("permit was leaked")
             .expect("second permit");
         drop(permit);
+    }
+
+    #[test]
+    fn committed_import_cleanup_failure_is_returned_as_a_warning() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let warning = cleanup_staged_upload(directory.path().to_path_buf()).expect("warning");
+        assert_eq!(warning["code"], "group_copy_cleanup_failed");
+        assert!(directory.path().is_dir());
     }
 }

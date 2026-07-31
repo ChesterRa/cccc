@@ -28,7 +28,18 @@ pub fn write_json_committed<T>(path: &Path, value: &T) -> io::Result<()>
 where
     T: Serialize + DeserializeOwned + PartialEq,
 {
-    match write_json(path, value) {
+    write_json_committed_with(path, value, write_json)
+}
+
+pub(crate) fn write_json_committed_with<T>(
+    path: &Path,
+    value: &T,
+    write: impl FnOnce(&Path, &T) -> io::Result<()>,
+) -> io::Result<()>
+where
+    T: Serialize + DeserializeOwned + PartialEq,
+{
+    match write(path, value) {
         Ok(()) => Ok(()),
         Err(error) => match read_json::<T>(path) {
             Ok(actual) if actual == *value => Ok(()),
@@ -49,6 +60,19 @@ pub fn read_json<T: DeserializeOwned>(path: &Path) -> io::Result<T> {
 pub fn write_yaml<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
     let text = serde_yaml::to_string(value).map_err(io::Error::other)?;
     atomic_write(path, text.as_bytes())
+}
+
+pub fn write_yaml_committed<T>(path: &Path, value: &T) -> io::Result<()>
+where
+    T: Serialize + DeserializeOwned + PartialEq,
+{
+    match write_yaml(path, value) {
+        Ok(()) => Ok(()),
+        Err(error) => match read_yaml::<T>(path) {
+            Ok(actual) if actual == *value => Ok(()),
+            _ => Err(error),
+        },
+    }
 }
 
 pub fn write_secret_yaml<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {

@@ -9,7 +9,7 @@
     "groupName": "工作组名称",
     "groupNamePlaceholder": "根据目录名自动填充",
     "pathPlaceholder": "/项目/路径",
-    "pathAutoCreateHint": "如果文件夹还不存在，将自动创建。",
+    "pathAutoCreateHint": "如果文件夹不存在且父目录已存在，将自动创建该文件夹。",
     "creating": "创建中…",
     "createGroup": "创建工作组"
   },

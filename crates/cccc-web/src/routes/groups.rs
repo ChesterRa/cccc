@@ -50,7 +50,22 @@ async fn list(
 }
 
 async fn create(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
-    call(&state, "group_create", body_object(body)?).await
+    let mut args = body_object(body)?;
+    let op = match args.get("path") {
+        None => "group_create",
+        Some(Value::String(path)) if !path.trim().is_empty() => {
+            args.insert("path".into(), Value::String(path.trim().into()));
+            "group_create_with_scope"
+        }
+        Some(_) => {
+            return Err(ApiError::bad_code(
+                "invalid_path",
+                "path must be a non-empty string",
+                json!({}),
+            ));
+        }
+    };
+    call(&state, op, args).await
 }
 
 async fn show(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
@@ -83,11 +98,28 @@ async fn remove(
     Ok(response)
 }
 
-async fn reset(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
+#[derive(serde::Deserialize)]
+struct ResetQuery {
+    #[serde(default)]
+    confirm: String,
+}
+
+async fn reset(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<ResetQuery>,
+) -> ApiResult {
+    if query.confirm != group_id {
+        return Err(ApiError::bad_code(
+            "confirm_required",
+            format!("confirm must equal group_id: {group_id}"),
+            json!({}),
+        ));
+    }
     let mut response = call(
         &state,
         "group_reset",
-        object(json!({"group_id":group_id,"by":"user"})),
+        object(json!({"group_id":group_id,"confirm":query.confirm,"by":"user"})),
     )
     .await?;
     cleanup_group_resources(&state, &group_id, &mut response).await;

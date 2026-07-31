@@ -228,7 +228,16 @@ fn schedule_resume_verification(
                 if !matches!(stopped, Ok(Some(_))) {
                     return;
                 }
-                runtime_session::mark_resume_failed(&home, &group.group_id, &actor.id, &error);
+                if let Err(persist_error) =
+                    runtime_session::mark_resume_failed(&home, &group.group_id, &actor.id, &error)
+                {
+                    tracing::warn!(
+                        %persist_error,
+                        group_id = %group.group_id,
+                        actor_id = %actor.id,
+                        "failed to persist resume failure"
+                    );
+                }
                 let fresh_command = if actor.runtime == ActorRuntime::Grok {
                     runtime_session::prepare_fresh_grok_command(
                         &home,

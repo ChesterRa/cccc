@@ -257,9 +257,11 @@ fn items(value: &Value) -> Box<dyn Iterator<Item = &Value> + '_> {
 
 fn matches_chat(item: &Value, platform: &str, chat_id: &str) -> bool {
     item["chat_id"].as_str() == Some(chat_id)
+        && item["subscribed"].as_bool().unwrap_or(true)
         && item["platform"]
             .as_str()
-            .is_none_or(|value| value == platform)
+            .map(str::trim)
+            .is_none_or(|value| value.is_empty() || value == platform)
 }
 
 #[derive(Clone, Copy)]

@@ -798,6 +798,7 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
     String(streamingRuntime?.status || "not_installed").trim() || "not_installed";
   const streamingRuntimeInstalling = streamingRuntimeStatus === "installing";
   const streamingRuntimeReady = streamingRuntimeStatus === "ready";
+  const streamingRuntimeRemovable = streamingRuntime?.removable !== false;
   const streamingRuntimeUpdateAvailable = Boolean(streamingRuntime?.update_available);
   const streamingRuntimeInstalledVersion = String(streamingRuntime?.installed_version || "").trim();
   const streamingRuntimeLatestVersion = String(streamingRuntime?.latest_version || "").trim();
@@ -1044,17 +1045,19 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
           return;
         }
       }
-      const runtimeResp = await api.removeVoiceAssistantRuntime(gid, {
-        runtimeId: STREAMING_ASR_RUNTIME_ID,
-        by: "user",
-      });
-      if (!isCurrentGroup(gid)) return;
-      if (!runtimeResp.ok) {
-        setError(
-          runtimeResp.error?.message ||
-            t("assistants.localAsrRemoveFailed", { defaultValue: "Failed to remove local ASR." }),
-        );
-        return;
+      if (streamingRuntimeRemovable) {
+        const runtimeResp = await api.removeVoiceAssistantRuntime(gid, {
+          runtimeId: STREAMING_ASR_RUNTIME_ID,
+          by: "user",
+        });
+        if (!isCurrentGroup(gid)) return;
+        if (!runtimeResp.ok) {
+          setError(
+            runtimeResp.error?.message ||
+              t("assistants.localAsrRemoveFailed", { defaultValue: "Failed to remove local ASR." }),
+          );
+          return;
+        }
       }
       setNotice(t("assistants.localAsrRemoved", { defaultValue: "Local ASR cache removed." }));
       await loadAssistants({ quiet: true });
@@ -1096,34 +1099,36 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
           return;
         }
       }
-      const runtimeRemove = await api.removeVoiceAssistantRuntime(gid, {
-        runtimeId: STREAMING_ASR_RUNTIME_ID,
-        by: "user",
-      });
-      if (!isCurrentGroup(gid)) return;
-      if (!runtimeRemove.ok) {
-        setError(
-          runtimeRemove.error?.message ||
-            t("assistants.localAsrReinstallFailed", {
-              defaultValue: "Failed to reinstall local ASR.",
-            }),
-        );
-        return;
-      }
-      const runtimeInstall = await api.installVoiceAssistantRuntime(gid, {
-        runtimeId: STREAMING_ASR_RUNTIME_ID,
-        by: "user",
-        background: true,
-      });
-      if (!isCurrentGroup(gid)) return;
-      if (!runtimeInstall.ok) {
-        setError(
-          runtimeInstall.error?.message ||
-            t("assistants.localAsrReinstallFailed", {
-              defaultValue: "Failed to reinstall local ASR.",
-            }),
-        );
-        return;
+      if (streamingRuntimeRemovable) {
+        const runtimeRemove = await api.removeVoiceAssistantRuntime(gid, {
+          runtimeId: STREAMING_ASR_RUNTIME_ID,
+          by: "user",
+        });
+        if (!isCurrentGroup(gid)) return;
+        if (!runtimeRemove.ok) {
+          setError(
+            runtimeRemove.error?.message ||
+              t("assistants.localAsrReinstallFailed", {
+                defaultValue: "Failed to reinstall local ASR.",
+              }),
+          );
+          return;
+        }
+        const runtimeInstall = await api.installVoiceAssistantRuntime(gid, {
+          runtimeId: STREAMING_ASR_RUNTIME_ID,
+          by: "user",
+          background: true,
+        });
+        if (!isCurrentGroup(gid)) return;
+        if (!runtimeInstall.ok) {
+          setError(
+            runtimeInstall.error?.message ||
+              t("assistants.localAsrReinstallFailed", {
+                defaultValue: "Failed to reinstall local ASR.",
+              }),
+          );
+          return;
+        }
       }
       for (const modelId of localAsrModelIds) {
         const modelInstall = await api.installVoiceAssistantModel(gid, {
@@ -1832,34 +1837,40 @@ export function AssistantsTab({ isDark, groupId, isActive, busy }: AssistantsTab
                             ) : null}
                           </div>
                           <div className="mt-3 flex flex-wrap gap-2">
-                            <button
-                              type="button"
-                              onClick={() => void reinstallLocalAsrBundle()}
-                              disabled={
-                                busy ||
-                                voiceSaveBusy ||
-                                selectedServiceModelInstalling ||
-                                !canManageLocalAsr
-                              }
-                              className={secondaryButtonClass("sm")}
-                            >
-                              {t("assistants.localAsrReinstall", {
-                                defaultValue: "Reinstall local ASR",
-                              })}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => void removeLocalAsrBundle()}
-                              disabled={
-                                busy ||
-                                voiceSaveBusy ||
-                                selectedServiceModelInstalling ||
-                                !canManageLocalAsr
-                              }
-                              className={secondaryButtonClass("sm")}
-                            >
-                              {t("assistants.localAsrRemove", { defaultValue: "Remove local ASR" })}
-                            </button>
+                            {streamingRuntimeRemovable ? (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => void reinstallLocalAsrBundle()}
+                                  disabled={
+                                    busy ||
+                                    voiceSaveBusy ||
+                                    selectedServiceModelInstalling ||
+                                    !canManageLocalAsr
+                                  }
+                                  className={secondaryButtonClass("sm")}
+                                >
+                                  {t("assistants.localAsrReinstall", {
+                                    defaultValue: "Reinstall local ASR",
+                                  })}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void removeLocalAsrBundle()}
+                                  disabled={
+                                    busy ||
+                                    voiceSaveBusy ||
+                                    selectedServiceModelInstalling ||
+                                    !canManageLocalAsr
+                                  }
+                                  className={secondaryButtonClass("sm")}
+                                >
+                                  {t("assistants.localAsrRemove", {
+                                    defaultValue: "Remove local ASR",
+                                  })}
+                                </button>
+                              </>
+                            ) : null}
                             <button
                               type="button"
                               onClick={() => void reinstallDiarizationModel()}

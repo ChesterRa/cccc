@@ -33,8 +33,35 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-async fn context_get(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
-    call(&state, "context_get", object(json!({"group_id":group_id}))).await
+async fn context_get(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<ContextQuery>,
+) -> ApiResult {
+    let detail = query.detail.as_deref().unwrap_or("summary");
+    if !matches!(detail, "summary" | "full") {
+        return Err(crate::api::ApiError::bad_code(
+            "invalid_detail",
+            "detail must be 'summary' or 'full'",
+            json!({"detail":detail}),
+        ));
+    }
+    call(
+        &state,
+        "context_get",
+        object(json!({
+            "group_id":group_id,
+            "detail":detail,
+            "fresh":strict_bool(query.fresh.as_deref(), "fresh")?,
+        })),
+    )
+    .await
+}
+
+#[derive(Default, serde::Deserialize)]
+struct ContextQuery {
+    detail: Option<String>,
+    fresh: Option<String>,
 }
 async fn context_sync(
     State(state): State<AppState>,
@@ -67,7 +94,14 @@ async fn ledger_tail(
     call(
         &state,
         "ledger_tail",
-        object(json!({"group_id":group_id,"limit":limit,"kind":query.get("kind")})),
+        object(json!({
+            "group_id":group_id,
+            "limit":limit,
+            "kind":query.get("kind"),
+            "with_read_status":query_bool(&query, "with_read_status")?,
+            "with_ack_status":query_bool(&query, "with_ack_status")?,
+            "with_obligation_status":query_bool(&query, "with_obligation_status")?,
+        })),
     )
     .await
 }
@@ -87,6 +121,9 @@ async fn ledger_search(
             "before":query.get("before"),
             "after":query.get("after"),
             "limit":query.get("limit"),
+            "with_read_status":query_bool(&query, "with_read_status")?,
+            "with_ack_status":query_bool(&query, "with_ack_status")?,
+            "with_obligation_status":query_bool(&query, "with_obligation_status")?,
         })),
     )
     .await
@@ -118,9 +155,29 @@ async fn ledger_window(
             "kind":query.get("kind"),
             "before":query.get("before"),
             "after":query.get("after"),
+            "with_read_status":query_bool(&query, "with_read_status")?,
+            "with_ack_status":query_bool(&query, "with_ack_status")?,
+            "with_obligation_status":query_bool(&query, "with_obligation_status")?,
         })),
     )
     .await
+}
+
+fn query_bool(query: &HashMap<String, String>, name: &str) -> Result<bool, crate::api::ApiError> {
+    strict_bool(query.get(name).map(String::as_str), name)
+}
+
+fn strict_bool(value: Option<&str>, name: &str) -> Result<bool, crate::api::ApiError> {
+    match value.map(str::trim).filter(|value| !value.is_empty()) {
+        None => Ok(false),
+        Some("1" | "true" | "yes" | "on") => Ok(true),
+        Some("0" | "false" | "no" | "off") => Ok(false),
+        Some(value) => Err(crate::api::ApiError::bad_code(
+            "invalid_boolean",
+            format!("{name} must be a boolean"),
+            json!({"field":name,"value":value}),
+        )),
+    }
 }
 async fn ledger_statuses(
     State(state): State<AppState>,

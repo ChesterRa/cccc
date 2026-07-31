@@ -11,7 +11,6 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use std::collections::HashSet;
 use uuid::Uuid;
 
 use super::group_bridge_command_sessions;
@@ -214,6 +213,9 @@ async fn session_socket(
     let generation = daemon_value(&state, "group_bridge_session_open", &route_args)
         .await
         .and_then(|opened| opened["generation"].as_str().map(str::to_owned));
+    let mut close_guard = generation.as_deref().map(|generation| {
+        super::group_bridge_close::SessionClose::new(state.clone(), &route_args, generation)
+    });
     if !legacy
         && socket
             .send(Message::Text(
@@ -222,18 +224,21 @@ async fn session_socket(
             .await
             .is_err()
     {
-        if let Some(generation) = generation.as_deref() {
-            let mut close = route_args.clone();
-            close["generation"] = json!(generation);
-            let _ = daemon_value(&state, "group_bridge_session_close", &close).await;
+        if let Some(close) = close_guard.as_mut() {
+            close.close().await;
         }
         return;
     }
-    let mut seen = HashSet::new();
+    let mut seen = super::group_bridge_seen::SeenEvents::default();
     let mut session_poll = tokio::time::interval(std::time::Duration::from_millis(25));
     session_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut shutdown = state.shutdown.subscribe();
     'session: loop {
         tokio::select! {
+            _ = shutdown.recv() => {
+                let _ = socket.send(Message::Close(None)).await;
+                break;
+            }
             incoming = socket.next() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
@@ -257,6 +262,9 @@ async fn session_socket(
                                 complete["result"] = value.get("result").cloned().unwrap_or_else(||json!({"ok":false}));
                                 let _ = daemon_value(&state, "group_bridge_session_complete", &complete).await;
                                 continue;
+                            }
+                            Ok(value) if value["type"] == "request" => {
+                                handle_session_request(&state, &registration, legacy, &value).await
                             }
                             Ok(value) if value["type"] == "ping" => (json!({"type":"pong","ts":utc_now()}), false),
                             _ => (json!({"type":"error","message":"unsupported session message"}), false),
@@ -303,11 +311,63 @@ async fn session_socket(
             }
         }
     }
-    if let Some(generation) = generation {
-        let mut close = route_args;
-        close["generation"] = json!(generation);
-        let _ = daemon_value(&state, "group_bridge_session_close", &close).await;
+    if let Some(close) = close_guard.as_mut() {
+        close.close().await;
     }
+}
+
+async fn handle_session_request(
+    state: &AppState,
+    registration: &Value,
+    legacy: bool,
+    frame: &Value,
+) -> (Value, bool) {
+    let response_to = frame["request_id"].clone();
+    let active = match reauthorize_session(state, registration, legacy) {
+        Ok(active) => active,
+        Err(error) => {
+            return (
+                json!({
+                    "type":"response",
+                    "response_to":response_to,
+                    "result":{"ok":false,"error":{"code":"permission_denied","message":error.to_string()}}
+                }),
+                true,
+            );
+        }
+    };
+    let result = if frame["op"] != "remote_send" {
+        json!({
+            "ok":false,
+            "error":{"code":"unsupported_op","message":"unsupported Group Bridge session operation"}
+        })
+    } else {
+        let mut payload = frame
+            .get("payload")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        for (field, value) in [
+            ("source_group_id", &frame["src_group_id"]),
+            ("src_group_id", &frame["src_group_id"]),
+            ("idempotency_key", &frame["idempotency_key"]),
+        ] {
+            if !payload.contains_key(field) && !value.is_null() {
+                payload.insert(field.into(), value.clone());
+            }
+        }
+        match receive_delivery(state, &active, Value::Object(payload)).await {
+            Ok(result) => result,
+            Err(error) => json!({
+                "ok":false,
+                "error":{"code":"remote_delivery_failed","message":error.to_string()}
+            }),
+        }
+    };
+    (
+        json!({"type":"response","response_to":response_to,"result":result}),
+        false,
+    )
 }
 
 async fn poll_session_request(

@@ -4,6 +4,7 @@ use cccc_core::group_scope;
 use cccc_core::scope;
 use cccc_core::{HomeLayout, Registry};
 use serde_json::json;
+use std::collections::BTreeSet;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 
@@ -12,7 +13,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "attach" => attach(home, request),
         "group_detach_scope" => detach(home, request),
         "group_use" => use_group(home, request),
-        "registry_reconcile" => reconcile(home),
+        "registry_reconcile" => reconcile(home, request),
         _ => return None,
     })
 }
@@ -53,7 +54,57 @@ fn use_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"group": updated}))
 }
 
-fn reconcile(home: &HomeLayout) -> OpResult {
+fn reconcile(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let registry = Registry::load(home).map_err(OpError::io)?;
-    object(json!({"groups": registry.groups, "reconciled": true}))
+    let scanned_groups = registry.groups.len();
+    let mut missing_group_ids = Vec::new();
+    let mut corrupt_group_ids = Vec::new();
+    let group_store = store(home)?;
+    for (group_id, meta) in &registry.groups {
+        let document = std::path::Path::new(&meta.path).join("group.yaml");
+        if !document.is_file() {
+            missing_group_ids.push(group_id.clone());
+        } else if group_store.load(group_id).is_err() {
+            corrupt_group_ids.push(group_id.clone());
+        }
+    }
+    let remove_missing = request
+        .args
+        .get("remove_missing")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let mut removed_group_ids = Vec::new();
+    let mut removed_default_scope_keys = Vec::new();
+    if remove_missing && !missing_group_ids.is_empty() {
+        let missing = missing_group_ids.iter().cloned().collect::<BTreeSet<_>>();
+        Registry::mutate(home, |registry| {
+            for group_id in &missing {
+                if registry.groups.remove(group_id).is_some() {
+                    removed_group_ids.push(group_id.clone());
+                }
+            }
+            registry.defaults.retain(|scope_key, group_id| {
+                if missing.contains(group_id) {
+                    removed_default_scope_keys.push(scope_key.clone());
+                    false
+                } else {
+                    true
+                }
+            });
+            Ok(())
+        })
+        .map_err(OpError::io)?;
+    }
+    missing_group_ids.sort();
+    corrupt_group_ids.sort();
+    removed_group_ids.sort();
+    removed_default_scope_keys.sort();
+    object(json!({
+        "dry_run":!remove_missing,
+        "scanned_groups":scanned_groups,
+        "missing_group_ids":missing_group_ids,
+        "corrupt_group_ids":corrupt_group_ids,
+        "removed_group_ids":removed_group_ids,
+        "removed_default_scope_keys":removed_default_scope_keys,
+    }))
 }

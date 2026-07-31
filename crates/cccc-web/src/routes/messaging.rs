@@ -1,7 +1,6 @@
-use axum::extract::{DefaultBodyLimit, Multipart, Path, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
-use base64::Engine;
 use serde_json::{Value, json};
 
 use crate::AppState;
@@ -14,10 +13,6 @@ const MULTIPART_OVERHEAD_BYTES: usize = 1024 * 1024;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/groups/{group_id}/send", post(send))
-        .route(
-            "/api/v1/groups/{group_id}/send_cross_group",
-            post(send_cross_group),
-        )
         .route("/api/v1/groups/{group_id}/tracked_send", post(tracked_send))
         .route(
             "/api/v1/groups/{group_id}/delegate_contact",
@@ -46,10 +41,6 @@ pub fn routes() -> Router<AppState> {
 
 fn upload_routes() -> Router<AppState> {
     Router::new()
-        .route(
-            "/api/v1/groups/{group_id}/send_cross_group_upload",
-            post(send_cross_group_upload),
-        )
         .route("/api/v1/groups/{group_id}/send_upload", post(send_upload))
         .route("/api/v1/groups/{group_id}/reply_upload", post(reply_upload))
         .layer(DefaultBodyLimit::max(
@@ -63,19 +54,6 @@ async fn send(
     Json(body): Json<Value>,
 ) -> ApiResult {
     daemon_body(&state, "send", group_id, body).await
-}
-async fn send_cross_group(
-    State(state): State<AppState>,
-    Path(group_id): Path<String>,
-    Json(body): Json<Value>,
-) -> ApiResult {
-    let destination = body["dst_group_id"].as_str().unwrap_or("").to_owned();
-    if let Some(result) =
-        super::group_bridge_session::send_remote(&state, &group_id, &destination, &body).await
-    {
-        return result;
-    }
-    daemon_body(&state, "send_cross_group", group_id, body).await
 }
 async fn tracked_send(
     State(state): State<AppState>,
@@ -113,7 +91,8 @@ async fn ack(
     Path((group_id, event_id)): Path<(String, String)>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let actor_id = super::first_non_blank(&body, &["actor_id", "by"]).unwrap_or("user");
+    let _ = body_object(body)?;
+    let actor_id = "user";
     call(
         &state,
         "chat_ack",
@@ -124,13 +103,24 @@ async fn ack(
 async fn inbox_list(
     State(state): State<AppState>,
     Path((group_id, actor_id)): Path<(String, String)>,
+    Query(query): Query<InboxQuery>,
 ) -> ApiResult {
     call(
         &state,
         "inbox_list",
-        object(json!({"group_id":group_id,"actor_id":actor_id,"by":"user","limit":1000})),
+        object(json!({
+            "group_id":group_id,
+            "actor_id":actor_id,
+            "by":"user",
+            "limit":query.limit.unwrap_or(50).clamp(1, 1000),
+        })),
     )
     .await
+}
+
+#[derive(serde::Deserialize)]
+struct InboxQuery {
+    limit: Option<u64>,
 }
 async fn inbox_read(
     State(state): State<AppState>,
@@ -149,93 +139,6 @@ async fn send_upload(
     multipart: Multipart,
 ) -> ApiResult {
     upload(&state, &group_id, multipart, false).await
-}
-async fn send_cross_group_upload(
-    State(state): State<AppState>,
-    Path(group_id): Path<String>,
-    mut multipart: Multipart,
-) -> ApiResult {
-    let mut args = serde_json::Map::new();
-    let mut files = Vec::new();
-    while let Some(field) = multipart
-        .next_field()
-        .await
-        .map_err(|error| ApiError::bad(error.to_string()))?
-    {
-        let name = field.name().unwrap_or("").to_owned();
-        if name == "files" || name == "file" {
-            let filename = field.file_name().unwrap_or("attachment").to_owned();
-            let content_type = field
-                .content_type()
-                .unwrap_or("application/octet-stream")
-                .to_owned();
-            let data = field
-                .bytes()
-                .await
-                .map_err(|error| ApiError::bad(error.to_string()))?;
-            if data.len() > 10 * 1024 * 1024 {
-                return Err(ApiError::bad("remote attachment exceeds 10 MiB"));
-            }
-            files.push((data, filename, content_type));
-        } else {
-            let value = field
-                .text()
-                .await
-                .map_err(|error| ApiError::bad(error.to_string()))?;
-            if name == "to_json" {
-                args.insert(
-                    "to".into(),
-                    serde_json::from_str(&value).unwrap_or_else(|_| json!([])),
-                );
-            } else if name == "reply_required" {
-                args.insert(
-                    name,
-                    Value::Bool(matches!(value.as_str(), "true" | "1" | "yes")),
-                );
-            } else {
-                args.insert(name, Value::String(value));
-            }
-        }
-    }
-    let destination = args
-        .get("dst_group_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| ApiError::bad("dst_group_id is required"))?
-        .to_owned();
-    args.insert("dst_group_id".into(), Value::String(destination.clone()));
-    let mut attachments = Vec::with_capacity(files.len());
-    for (data, filename, content_type) in files {
-        let blob = cccc_core::blobs::store(&state.home, &group_id, &data)
-            .map_err(|error| ApiError::bad(error.to_string()))?;
-        attachments.push(json!({
-            "kind":"file","path":blob.path,"title":filename,"mime_type":content_type,
-            "bytes":blob.bytes,"sha256":blob.sha256,
-            "content_base64":base64::engine::general_purpose::STANDARD.encode(&data)
-        }));
-    }
-    args.insert("group_id".into(), Value::String(group_id));
-    args.insert("attachments".into(), Value::Array(attachments));
-    let remote_body = Value::Object(args.clone());
-    if let Some(result) = super::group_bridge_session::send_remote(
-        &state,
-        remote_body["group_id"].as_str().unwrap_or(""),
-        &destination,
-        &remote_body,
-    )
-    .await
-    {
-        return result;
-    }
-    if let Some(attachments) = args.get_mut("attachments").and_then(Value::as_array_mut) {
-        for attachment in attachments {
-            if let Some(item) = attachment.as_object_mut() {
-                item.remove("content_base64");
-            }
-        }
-    }
-    call(&state, "send_cross_group", args).await
 }
 async fn reply_upload(
     State(state): State<AppState>,
@@ -288,7 +191,7 @@ async fn upload(
                 .text()
                 .await
                 .map_err(|error| ApiError::bad(error.to_string()))?;
-            insert_upload_field(&mut args, name, value);
+            insert_upload_field(&mut args, name, value)?;
         }
     }
     for (upload, filename, content_type) in staged_uploads {
@@ -302,7 +205,11 @@ async fn upload(
     call(state, if is_reply { "reply" } else { "send" }, args).await
 }
 
-fn insert_upload_field(args: &mut serde_json::Map<String, Value>, name: String, value: String) {
+pub(super) fn insert_upload_field(
+    args: &mut serde_json::Map<String, Value>,
+    name: String,
+    value: String,
+) -> Result<(), ApiError> {
     match name.as_str() {
         "to_json" => {
             args.insert(
@@ -311,9 +218,20 @@ fn insert_upload_field(args: &mut serde_json::Map<String, Value>, name: String, 
             );
         }
         "refs_json" => {
+            let refs = serde_json::from_str::<Value>(&value).map_err(|error| {
+                ApiError::bad_code("invalid_refs", error.to_string(), json!({}))
+            })?;
+            let refs = refs.as_array().ok_or_else(|| {
+                ApiError::bad_code("invalid_refs", "refs_json must be a JSON array", json!({}))
+            })?;
             args.insert(
                 "refs".into(),
-                serde_json::from_str(&value).unwrap_or_else(|_| json!([])),
+                Value::Array(
+                    refs.iter()
+                        .filter(|item| item.is_object())
+                        .cloned()
+                        .collect(),
+                ),
             );
         }
         "reply_required" => {
@@ -326,6 +244,7 @@ fn insert_upload_field(args: &mut serde_json::Map<String, Value>, name: String, 
             args.insert(name, Value::String(value));
         }
     }
+    Ok(())
 }
 
 async fn blob_download(

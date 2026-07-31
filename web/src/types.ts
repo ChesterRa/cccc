@@ -763,6 +763,9 @@ export type AssistantServiceModel = {
   status?: "not_installed" | "downloading" | "installing" | "ready" | "failed" | "unknown" | string;
   available?: boolean;
   installed?: boolean;
+  managed?: boolean;
+  removable?: boolean;
+  implementation?: string;
   install_dir?: string;
   installed_at?: string;
   updated_at?: string;
@@ -799,6 +802,9 @@ export type AssistantServiceRuntime = {
   status?: "not_installed" | "installing" | "ready" | "failed" | string;
   available?: boolean;
   installed?: boolean;
+  managed?: boolean;
+  removable?: boolean;
+  implementation?: string;
   install_dir?: string;
   python?: string;
   packages?: string[];

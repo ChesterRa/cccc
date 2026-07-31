@@ -98,14 +98,13 @@ async fn scoped_token_cannot_delegate_into_another_group() {
 }
 
 #[tokio::test]
-async fn scoped_token_cannot_access_global_profiles_or_provider_credentials() {
+async fn scoped_token_cannot_access_legacy_profiles_or_provider_credentials() {
     let (_temp, home) = home();
     let token = AccessTokenStore::new(home.clone())
         .expect("store")
         .create("member", vec!["g_allowed".into()], false, None)
         .expect("token");
     for path in [
-        "/api/v1/profiles",
         "/api/v1/actor_profiles",
         "/api/v1/space/providers/notebooklm/credential",
     ] {

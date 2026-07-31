@@ -22,7 +22,16 @@ fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let contexts = ContextStore::new(home.clone()).map_err(OpError::io)?;
     let document = contexts.load(&group_id).map_err(OpError::io)?;
     let version = contexts.version(&document).map_err(OpError::io)?;
-    object(json!({"context": document, "version": version}))
+    let detail = string_arg(request, "detail").unwrap_or_else(|| "full".into());
+    if !matches!(detail.as_str(), "summary" | "full") {
+        return Err(OpError::new(
+            "invalid_detail",
+            "detail must be 'summary' or 'full'",
+        ));
+    }
+    object(super::context_projection::project(
+        document, version, &detail,
+    ))
 }
 
 fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

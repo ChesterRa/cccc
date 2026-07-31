@@ -63,7 +63,12 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: GroupArgs) -> R
         } => {
             let group_id = group(home, group_id)?;
             confirm_id(&group_id, &confirm)?;
-            call(client, "group_reset", json!({"group_id":group_id,"by":by})).await?
+            call(
+                client,
+                "group_reset",
+                json!({"group_id":group_id,"confirm":confirm,"by":by}),
+            )
+            .await?
         }
         GroupAction::Use { group_id, path } => {
             let attach = call(

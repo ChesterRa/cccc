@@ -46,7 +46,12 @@ async fn global_events(
             };
             match received {
                 Ok(event) => yield Ok(sse_event(GLOBAL_EVENT_NAME, event)),
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    yield Ok(stream_error(
+                        "global_stream_lagged",
+                        format!("global event stream skipped {skipped} events"),
+                    ));
+                }
                 Err(broadcast::error::RecvError::Closed) => break,
             }
         }
@@ -80,7 +85,13 @@ async fn group_events(
         let mut replayed_order = VecDeque::new();
         if !cursor.is_empty() {
             loop {
-                let page = event_hub.replay_after(&group_id, &cursor, 2048).unwrap_or_default();
+                let page = match event_hub.replay_after(&group_id, &cursor, 2048) {
+                    Ok(page) => page,
+                    Err(error) => {
+                        yield Ok(stream_error("ledger_replay_failed", error.to_string()));
+                        return;
+                    }
+                };
                 let count = page.len();
                 for event in page {
                     cursor.clone_from(&event.id);
@@ -110,7 +121,13 @@ async fn group_events(
                     let Ok(replacement) = event_hub.subscribe_group(&group_id) else { break; };
                     receiver = replacement;
                     loop {
-                        let page = event_hub.replay_after(&group_id, &cursor, 2048).unwrap_or_default();
+                        let page = match event_hub.replay_after(&group_id, &cursor, 2048) {
+                            Ok(page) => page,
+                            Err(error) => {
+                                yield Ok(stream_error("ledger_replay_failed", error.to_string()));
+                                return;
+                            }
+                        };
                         let count = page.len();
                         for event in page {
                             cursor.clone_from(&event.id);
@@ -125,6 +142,16 @@ async fn group_events(
         }
     };
     Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+fn stream_error(code: &str, message: String) -> Event {
+    Event::default()
+        .event("error")
+        .json_data(serde_json::json!({
+            "ok":false,
+            "error":{"code":code,"message":message}
+        }))
+        .unwrap_or_default()
 }
 
 fn remember_replayed(seen: &mut HashSet<String>, order: &mut VecDeque<String>, event_id: &str) {

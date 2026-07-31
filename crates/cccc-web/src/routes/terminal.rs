@@ -19,6 +19,11 @@ struct TerminalQuery {
     compact: bool,
 }
 
+#[derive(Debug, Deserialize)]
+struct TerminalClearQuery {
+    actor_id: String,
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/groups/{group_id}/terminal/tail", get(tail))
@@ -98,9 +103,18 @@ async fn resize(
 async fn clear(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
-    Json(body): Json<Value>,
+    Query(query): Query<TerminalClearQuery>,
 ) -> ApiResult {
-    command(&state, "terminal_clear", group_id, body).await
+    call(
+        &state,
+        "terminal_clear",
+        object(json!({
+            "group_id": group_id,
+            "actor_id": query.actor_id,
+            "by": "user",
+        })),
+    )
+    .await
 }
 
 async fn command(state: &AppState, op: &str, group_id: String, body: Value) -> ApiResult {

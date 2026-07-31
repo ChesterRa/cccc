@@ -1,10 +1,12 @@
-use axum::extract::{Multipart, Path, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, body_object, call, object};
+
+const MAX_AVATAR_BYTES: usize = 2 * 1024 * 1024;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -16,6 +18,7 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/groups/{group_id}/actors/{actor_id}/avatar",
             get(avatar_get).post(avatar_upload).delete(avatar_clear),
         )
+        .layer(DefaultBodyLimit::max(MAX_AVATAR_BYTES + 64 * 1024))
 }
 
 async fn secret_keys(
@@ -83,6 +86,13 @@ async fn avatar_upload(
                 .await
                 .map_err(|error| ApiError::bad(error.to_string()))?
                 .to_vec();
+            if data.len() > MAX_AVATAR_BYTES {
+                return Err(ApiError::bad_code(
+                    "avatar_too_large",
+                    "avatar file exceeds 2 MiB",
+                    json!({"max_bytes":MAX_AVATAR_BYTES}),
+                ));
+            }
             break;
         }
     }

@@ -218,6 +218,9 @@ function normalizeAssistantServiceModel(value: unknown): AssistantServiceModel |
     status: asOptionalString(record.status) || undefined,
     available: typeof record.available === "boolean" ? record.available : undefined,
     installed: typeof record.installed === "boolean" ? record.installed : undefined,
+    managed: typeof record.managed === "boolean" ? record.managed : undefined,
+    removable: typeof record.removable === "boolean" ? record.removable : undefined,
+    implementation: asOptionalString(record.implementation) || undefined,
     install_dir: asOptionalString(record.install_dir) || undefined,
     installed_at: asOptionalString(record.installed_at) || undefined,
     updated_at: asOptionalString(record.updated_at) || undefined,
@@ -291,6 +294,9 @@ function normalizeAssistantServiceRuntime(value: unknown): AssistantServiceRunti
     status: asOptionalString(record.status) || undefined,
     available: typeof record.available === "boolean" ? record.available : undefined,
     installed: typeof record.installed === "boolean" ? record.installed : undefined,
+    managed: typeof record.managed === "boolean" ? record.managed : undefined,
+    removable: typeof record.removable === "boolean" ? record.removable : undefined,
+    implementation: asOptionalString(record.implementation) || undefined,
     install_dir: asOptionalString(record.install_dir) || undefined,
     python: asOptionalString(record.python) || undefined,
     packages: Array.isArray(record.packages)
@@ -1567,14 +1573,6 @@ export function getPresentationBrowserSurfaceWebSocketUrl(groupId: string, slotI
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const base = `${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(groupId)}/presentation/browser_surface/ws?slot=${encodeURIComponent(slotId)}`;
   return withAuthToken(base);
-}
-
-export async function createGroup(title: string, topic: string = "") {
-  clearGroupsReadRequest();
-  return apiJson<{ group_id: string }>("/api/v1/groups", {
-    method: "POST",
-    body: JSON.stringify({ title, topic, by: "user" }),
-  });
 }
 
 export type GroupCopyPreviewActor = {

@@ -45,7 +45,8 @@ fn collect_active_chat_ids(value: Option<&Value>, chat_ids: &mut HashSet<String>
         _ => Vec::new(),
     };
     for item in items {
-        if !item["paused"].as_bool().unwrap_or(false)
+        if item["subscribed"].as_bool().unwrap_or(true)
+            && !item["paused"].as_bool().unwrap_or(false)
             && let Some(chat_id) = item.get("chat_id").and_then(Value::as_str)
         {
             chat_ids.insert(chat_id.to_owned());
@@ -180,6 +181,28 @@ fn send_payload(text: &str) -> Option<(String, Vec<String>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn canonical_empty_state_prevents_legacy_subscriber_resurrection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("IM", "").expect("group");
+        let state_dir = store.state_dir(&group.group_id).expect("state dir");
+        std::fs::write(
+            state_dir.join("im_subscribers.json"),
+            r#"{"legacy":{"chat_id":"legacy","subscribed":true}}"#,
+        )
+        .expect("legacy");
+        cccc_core::integration_state::group_update(&store, &group.group_id, "im_bridge", |state| {
+            *state = json!({"authorized":[],"subscribers":[]});
+            Ok(())
+        })
+        .expect("canonical");
+
+        assert!(authorized_chat_ids_from_store(&store, &group.group_id).is_empty());
+    }
 
     #[test]
     fn im_inbound_is_a_user_message_with_source_metadata() {

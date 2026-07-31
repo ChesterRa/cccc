@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 
 use crate::AppState;
-use crate::api::{ApiResult, body_object, call, object};
+use crate::api::{ApiError, ApiResult, body_object, call, object};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -16,11 +16,15 @@ pub fn routes() -> Router<AppState> {
 }
 
 async fn state(State(state): State<AppState>) -> ApiResult {
-    call(&state, "remote_access_state", Map::new()).await
+    let mut response = call(&state, "remote_access_state", Map::new()).await?;
+    super::remote_access_projection::apply(&state, &mut response.0["result"]["remote_access"]);
+    Ok(response)
 }
 
 async fn configure(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
-    call(&state, "remote_access_configure", body_object(body)?).await
+    let mut response = call(&state, "remote_access_configure", body_object(body)?).await?;
+    super::remote_access_projection::apply(&state, &mut response.0["result"]["remote_access"]);
+    Ok(response)
 }
 
 async fn start(
@@ -49,11 +53,47 @@ async fn stop(
 
 async fn apply(State(state): State<AppState>) -> ApiResult {
     let response = call(&state, "remote_access_state", Map::new()).await?;
-    let remote = response.0["result"]["remote_access"].clone();
+    let mut remote = response.0["result"]["remote_access"].clone();
+    super::remote_access_projection::apply(&state, &mut remote);
+    if !remote
+        .get("restart_required")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(Json(json!({"ok":true,"result":{
+            "accepted":false,
+            "remote_access":remote
+        }})));
+    }
+    if !remote
+        .get("apply_supported")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(ApiError::conflict(
+            "web_apply_unsupported",
+            "the running Web service is not supervisor-managed, so it cannot self-apply binding changes",
+            json!({}),
+        ));
+    }
+    let restart = state.restart.as_ref().ok_or_else(|| {
+        ApiError::conflict(
+            "web_apply_unavailable",
+            "web apply is not available in this runtime",
+            json!({}),
+        )
+    })?;
+    restart.request().map_err(|error| {
+        ApiError::unavailable(
+            "web_apply_failed",
+            format!("failed to request restart: {error}"),
+        )
+    })?;
+    let diagnostics = remote.get("diagnostics").cloned().unwrap_or_default();
     Ok(Json(json!({"ok":true,"result":{
         "accepted":true,
-        "target_local_url":remote.get("config").map(|config| format!("http://{}:{}", config["web_host"].as_str().unwrap_or("127.0.0.1"), config["web_port"].as_u64().unwrap_or(8848))),
-        "target_remote_url":remote.get("endpoint").cloned().unwrap_or(Value::Null),
+        "target_local_url":diagnostics.get("desired_local_url").cloned().unwrap_or(Value::Null),
+        "target_remote_url":diagnostics.get("desired_remote_url").cloned().unwrap_or(Value::Null),
         "remote_access":remote
     }})))
 }

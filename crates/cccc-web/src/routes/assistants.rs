@@ -23,6 +23,7 @@ mod voice_final_asr;
 mod voice_inference;
 mod voice_pcm_recording;
 mod voice_recording_lease;
+mod voice_runtime;
 
 const STORE_KEY: &str = "assistants";
 
@@ -87,11 +88,11 @@ pub fn routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/groups/{group_id}/assistants/voice_secretary/runtime/install",
-            post(runtime_install),
+            post(voice_runtime::install),
         )
         .route(
             "/api/v1/groups/{group_id}/assistants/voice_secretary/runtime/remove",
-            post(runtime_remove),
+            post(voice_runtime::remove),
         )
         .route(
             "/api/v1/groups/{group_id}/assistants/voice_secretary/sessions/latest",
@@ -275,7 +276,15 @@ async fn serve_transcription_ws(
     let mut stopped = false;
     let mut audio_seq = 0_u64;
     let mut lease_checked_at = std::time::Instant::now();
-    while let Some(Ok(message)) = socket.recv().await {
+    let mut shutdown = state.shutdown.subscribe();
+    loop {
+        let message = tokio::select! {
+            _ = shutdown.recv() => break,
+            message = socket.recv() => message,
+        };
+        let Some(Ok(message)) = message else {
+            break;
+        };
         if matches!(message, Message::Close(_)) {
             break;
         }
@@ -410,16 +419,27 @@ async fn serve_transcription_ws(
             break;
         } else if command["type"] == "stop" {
             if let Some(mut active) = session.take() {
-                if let Ok((active, event)) = tokio::task::spawn_blocking(move || {
+                match tokio::task::spawn_blocking(move || {
                     let event = active.finish();
                     (active, event)
                 })
                 .await
                 {
-                    session = Some(active);
-                    if let Some(mut event) = event {
-                        event["seq"] = command["seq"].clone();
-                        let _ = socket.send(Message::Text(event.to_string().into())).await;
+                    Ok((active, event)) => {
+                        session = Some(active);
+                        if let Some(mut event) = event {
+                            event["seq"] = command["seq"].clone();
+                            let _ = socket.send(Message::Text(event.to_string().into())).await;
+                        }
+                    }
+                    Err(error) => {
+                        let wrapped = voice_asr::VoiceError {
+                            code: "asr_task_failed",
+                            message: error.to_string(),
+                            details: Map::new(),
+                        };
+                        let _ = send_voice_ws_error(&mut socket, &wrapped).await;
+                        break;
                     }
                 }
             }
@@ -484,7 +504,7 @@ async fn serve_transcription_ws(
         let args = object(
             json!({"group_id":group_id,"by":"user","session_id":if client_session_id.is_empty(){format!("ws_{}",short_id())}else{client_session_id},"segment_id":format!("ws-final-{}",short_id()),"text":text,"language":language,"document_path":document_path,"is_final":true,"flush":true,"trigger":{"trigger_kind":"websocket_disconnect","capture_mode":"service","recognition_backend":"assistant_service_local_asr"}}),
         );
-        let _ = state
+        let result = state
             .client
             .call(&DaemonRequest {
                 v: 1,
@@ -492,6 +512,18 @@ async fn serve_transcription_ws(
                 args,
             })
             .await;
+        match result {
+            Ok(response) if response.ok => {}
+            Ok(response) => {
+                tracing::warn!(
+                    ?response.error,
+                    "final voice transcript was rejected during disconnect"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(%error, "final voice transcript could not be delivered during disconnect");
+            }
+        }
     }
 }
 
@@ -527,24 +559,6 @@ async fn model_remove(
     let model = voice_asr::remove_model(&state.home, &model_id).map_err(voice_error)?;
     Ok(success(
         json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"model":model,"service_runtime":voice_asr::runtime_status()}),
-    ))
-}
-async fn runtime_install(
-    State(state): State<AppState>,
-    Path(group_id): Path<String>,
-    Json(_body): Json<Value>,
-) -> ApiResult {
-    Ok(success(
-        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"service_runtime":voice_asr::runtime_status()}),
-    ))
-}
-async fn runtime_remove(
-    State(state): State<AppState>,
-    Path(group_id): Path<String>,
-    Json(_body): Json<Value>,
-) -> ApiResult {
-    Ok(success(
-        json!({"group_id":group_id,"assistant":assistant(&load(&state,&group_id)?),"service_runtime":voice_asr::runtime_status()}),
     ))
 }
 
@@ -738,7 +752,7 @@ async fn runtime_assistant(state: &AppState, group_id: &str) -> Option<Value> {
         .ok()?;
     response.ok.then(|| response.result["assistant"].clone())
 }
-fn assistant(value: &Value) -> Value {
+pub(super) fn assistant(value: &Value) -> Value {
     value
         .get("assistant")
         .cloned()
@@ -793,7 +807,7 @@ async fn send_voice_ws_error(
 ) -> Result<(), axum::Error> {
     socket.send(Message::Text(json!({"type":"error","ok":false,"error":{"code":error.code,"message":error.message,"details":error.details}}).to_string().into())).await
 }
-fn load(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
+pub(super) fn load(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
     integration_state::group_get(&store, group_id, STORE_KEY)
         .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))

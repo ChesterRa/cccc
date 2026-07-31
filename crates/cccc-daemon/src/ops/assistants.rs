@@ -153,12 +153,13 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                     }
                     Ok(())
                 }) {
-                    tracing::error!(
-                        %rollback_error,
-                        %group_id,
-                        document_path = %path,
-                        "failed to reconcile voice document after state save failure"
-                    );
+                    return Err(OpError::new(
+                        "rollback_failed",
+                        format!(
+                            "{}; failed to reconcile voice document {path}: {rollback_error}",
+                            error.message
+                        ),
+                    ));
                 }
             }
             return Err(error);

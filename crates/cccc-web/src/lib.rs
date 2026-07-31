@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -43,8 +44,32 @@ pub(crate) struct AppState {
     ledger_events: ledger_event_hub::LedgerEventHub,
     im_workers: Arc<im_runtime::ImWorkerRegistry>,
     shutdown: broadcast::Sender<()>,
+    restart: Option<Arc<RestartHandle>>,
     web_mode: WebMode,
     exhibit_allow_terminal: bool,
+}
+
+pub(crate) struct RestartHandle {
+    requested: AtomicBool,
+    shutdown: broadcast::Sender<()>,
+}
+
+impl RestartHandle {
+    fn new(shutdown: broadcast::Sender<()>) -> Self {
+        Self {
+            requested: AtomicBool::new(false),
+            shutdown,
+        }
+    }
+
+    pub(crate) fn request(&self) -> Result<(), broadcast::error::SendError<()>> {
+        self.requested.store(true, Ordering::Release);
+        self.shutdown.send(()).map(|_| ())
+    }
+
+    fn requested(&self) -> bool {
+        self.requested.load(Ordering::Acquire)
+    }
 }
 
 pub fn app(home: HomeLayout) -> Router {
@@ -53,13 +78,14 @@ pub fn app(home: HomeLayout) -> Router {
 
 pub fn app_with_mode(home: HomeLayout, web_mode: WebMode) -> Router {
     let (shutdown, _) = broadcast::channel(1);
-    app_with_shutdown(home, shutdown, web_mode).0
+    app_with_shutdown(home, shutdown, web_mode, None).0
 }
 
 fn app_with_shutdown(
     home: HomeLayout,
     shutdown: broadcast::Sender<()>,
     web_mode: WebMode,
+    restart: Option<Arc<RestartHandle>>,
 ) -> (
     Router,
     Arc<im_runtime::ImWorkerRegistry>,
@@ -90,6 +116,7 @@ fn app_with_shutdown(
         ledger_events,
         im_workers: Arc::clone(&im_workers),
         shutdown,
+        restart,
         web_mode,
         exhibit_allow_terminal: readonly::exhibit_allow_terminal_from_env(),
     };
@@ -255,15 +282,19 @@ where
     web_banner::print(host, address.port());
     tracing::info!(%address, "CCCC Rust Web listening");
     let (web_shutdown, _) = broadcast::channel(1);
+    let restart = environment_flag("CCCC_WEB_SUPERVISED")
+        .then(|| Arc::new(RestartHandle::new(web_shutdown.clone())));
+    let mut restart_rx = web_shutdown.subscribe();
     let (shutdown_started, mut shutdown_started_rx) = tokio::sync::oneshot::channel();
     let (app, im_workers, browser_surfaces) =
-        app_with_shutdown(home, web_shutdown.clone(), web_mode);
+        app_with_shutdown(home, web_shutdown.clone(), web_mode, restart.clone());
     let server = async move {
         axum::serve(listener, app)
             .with_graceful_shutdown(async move {
                 tokio::select! {
                     _ = shutdown => {},
                     _ = shutdown_signal() => {},
+                    _ = restart_rx.recv() => {},
                 }
                 let _ = web_shutdown.send(());
                 let _ = shutdown_started.send(());
@@ -301,7 +332,19 @@ where
         }
     }
     server_result?;
+    if restart.as_ref().is_some_and(|handle| handle.requested()) {
+        std::process::exit(75);
+    }
     Ok(address)
+}
+
+fn environment_flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 fn ensure_listener_auth(home: &HomeLayout, address: SocketAddr) -> Result<()> {
@@ -372,7 +415,7 @@ mod lifecycle_tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
         let (shutdown, _) = broadcast::channel(1);
-        let response = app_with_shutdown(home, shutdown.clone(), WebMode::Normal)
+        let response = app_with_shutdown(home, shutdown.clone(), WebMode::Normal, None)
             .0
             .oneshot(
                 axum::http::Request::builder()
@@ -393,6 +436,42 @@ mod lifecycle_tests {
             tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
                 .await
                 .expect("SSE shutdown timeout")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_closes_headless_sse_response() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+        let group = store.create("headless shutdown", "").expect("group");
+        let events = store
+            .state_dir(&group.group_id)
+            .expect("state")
+            .join("headless/events.jsonl");
+        std::fs::create_dir_all(events.parent().expect("events parent")).expect("headless dir");
+        std::fs::write(&events, "").expect("events file");
+        let (shutdown, _) = broadcast::channel(1);
+        let response = app_with_shutdown(home, shutdown.clone(), WebMode::Normal, None)
+            .0
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!(
+                        "/api/v1/groups/{}/headless/stream?replay=false",
+                        group.group_id
+                    ))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("headless SSE response");
+        let mut body = response.into_body().into_data_stream();
+        shutdown.send(()).expect("active headless SSE subscriber");
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
+                .await
+                .expect("headless SSE shutdown timeout")
                 .is_none()
         );
     }

@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, VecDeque};
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, Read, Seek, Write};
+use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -111,23 +111,86 @@ impl LedgerFollower {
 }
 
 pub fn append(path: &Path, event: &Event) -> io::Result<()> {
+    append_with(path, event, append_locked)
+}
+
+fn append_with(
+    path: &Path,
+    event: &Event,
+    write: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
+) -> io::Result<()> {
+    let lock_path = ledger_lock_path(path);
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    if lock.metadata()?.len() == 0 {
+        lock.write_all(&[0])?;
+        lock.flush()?;
+    }
+    lock.seek(SeekFrom::Start(0))?;
+    lock.lock_exclusive()?;
+
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .read(true)
         .open(path)?;
-    file.lock_exclusive()?;
-    let encoded_len = serde_json::to_vec(event).map_err(io::Error::other)?.len() + 1;
-    let result = append_locked(&mut file, event);
-    let unlock_result = FileExt::unlock(&file);
-    result.and(unlock_result)?;
-    crate::ledger_index::note_append(path, event, encoded_len);
+    let original_len = file.metadata()?.len();
+    let mut encoded = serde_json::to_vec(event).map_err(io::Error::other)?;
+    encoded.push(b'\n');
+    let result = write(&mut file, &encoded);
+    if let Err(error) = result {
+        if matches!(
+            appended_bytes_match(&mut file, original_len, &encoded),
+            Ok(true)
+        ) {
+            let _ = FileExt::unlock(&lock);
+            crate::ledger_index::note_append(path, event, encoded.len());
+            return Ok(());
+        }
+        file.set_len(original_len).map_err(|rollback| {
+            io::Error::other(format!(
+                "{error}; rollback_failed: could not truncate incomplete ledger append: {rollback}"
+            ))
+        })?;
+        file.sync_data().map_err(|rollback| {
+            io::Error::other(format!(
+                "{error}; rollback_failed: could not sync ledger rollback: {rollback}"
+            ))
+        })?;
+        let _ = FileExt::unlock(&lock);
+        return Err(error);
+    }
+    let _ = FileExt::unlock(&lock);
+    crate::ledger_index::note_append(path, event, encoded.len());
     Ok(())
 }
 
-fn append_locked(file: &mut File, event: &Event) -> io::Result<()> {
-    serde_json::to_writer(&mut *file, event).map_err(io::Error::other)?;
-    file.write_all(b"\n")?;
+fn ledger_lock_path(path: &Path) -> PathBuf {
+    path.parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join("state/ledger/ledger.lock")
+}
+
+fn appended_bytes_match(file: &mut File, original_len: u64, expected: &[u8]) -> io::Result<bool> {
+    let expected_len = u64::try_from(expected.len()).map_err(io::Error::other)?;
+    if file.metadata()?.len() != original_len.saturating_add(expected_len) {
+        return Ok(false);
+    }
+    file.seek(SeekFrom::Start(original_len))?;
+    let mut actual = vec![0; expected.len()];
+    file.read_exact(&mut actual)?;
+    Ok(actual == expected)
+}
+
+fn append_locked(file: &mut File, encoded: &[u8]) -> io::Result<()> {
+    file.write_all(encoded)?;
     file.sync_data()
 }
 
@@ -570,6 +633,50 @@ mod tests {
         let events = tail(&path, 1).expect("tail");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, "chat.message");
+    }
+
+    #[test]
+    fn failed_retry_rolls_back_partial_bytes_when_the_event_already_exists() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let event = Event::new("chat.message", "g_test");
+        append(&path, &event).expect("initial append");
+        let original = std::fs::read(&path).expect("original ledger");
+
+        let error = append_with(&path, &event, |file, encoded| {
+            file.write_all(&encoded[..encoded.len() / 2])?;
+            Err(io::Error::other("injected partial write failure"))
+        })
+        .expect_err("partial retry must fail");
+
+        assert!(error.to_string().contains("injected partial write failure"));
+        assert_eq!(
+            std::fs::read(&path).expect("rolled back ledger"),
+            original,
+            "a historical matching event must not make a partial retry look committed"
+        );
+        assert_eq!(
+            read_all_uncached(&path).expect("read rolled back ledger"),
+            vec![event]
+        );
+    }
+
+    #[test]
+    fn failed_sync_is_success_when_this_attempt_wrote_the_exact_event() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let event = Event::new("chat.message", "g_test");
+
+        append_with(&path, &event, |file, encoded| {
+            file.write_all(encoded)?;
+            Err(io::Error::other("injected sync failure"))
+        })
+        .expect("exact appended bytes are committed");
+
+        assert_eq!(
+            read_all_uncached(&path).expect("read committed ledger"),
+            vec![event]
+        );
     }
 
     #[test]

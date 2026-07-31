@@ -19,7 +19,7 @@ import {
 } from "./types";
 import { copyTextToClipboard } from "../../../utils/copy";
 import { canStartIMBridge } from "./imBridgeConfig";
-import { revokeIMChatAuthorization } from "./imBridgeRevoke";
+import { imRevokeKey, revokeIMChatAuthorization } from "./imBridgeRevoke";
 
 const IM_PENDING_AUTO_REFRESH_MS = 12000;
 
@@ -361,7 +361,7 @@ export function IMBridgeTab({
 
   const handleRevoke = async (chatId: string, threadId: number) => {
     if (!groupId) return;
-    const key = `${chatId}:${threadId}`;
+    const key = imRevokeKey(chatId, threadId);
     setRevoking(key);
     setAuthError("");
     setAuthInfo("");
@@ -439,8 +439,8 @@ export function IMBridgeTab({
           ),
         );
       }
-    } catch {
-      // silent fail — user can retry
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Failed to update verbose mode.");
     }
   };
 
@@ -1107,7 +1107,7 @@ export function IMBridgeTab({
                   className={`${settingsWorkspaceSoftPanelClass(_isDark)} mt-3 space-y-0 divide-y divide-[var(--glass-border-subtle)]`}
                 >
                   {authChats.map((chat) => {
-                    const key = `${chat.chat_id}:${chat.thread_id}`;
+                    const key = imRevokeKey(chat.chat_id, chat.thread_id);
                     const isRevoking = revoking === key;
                     return (
                       <div

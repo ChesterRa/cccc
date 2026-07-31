@@ -103,8 +103,13 @@ async fn serve(
     let mut consecutive_poll_failures = 0;
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut shutdown = state.shutdown.subscribe();
     loop {
         tokio::select! {
+            _ = shutdown.recv() => {
+                let _ = socket.send(Message::Close(None)).await;
+                break;
+            }
             _ = interval.tick() => {
                 let Some(output) = poll_output(&state, &group_id, &actor_id, cursor).await else {
                     consecutive_poll_failures += 1;

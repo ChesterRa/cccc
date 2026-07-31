@@ -247,3 +247,8 @@ pub(crate) fn note_append(path: &Path, event: &Event, encoded_len: usize) {
 pub(crate) fn invalidate_path(path: &Path) {
     cache::invalidate(path);
 }
+
+#[cfg(test)]
+pub(crate) fn is_cached(path: &Path) -> bool {
+    cache::get(path).is_some()
+}

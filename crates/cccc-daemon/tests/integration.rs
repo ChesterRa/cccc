@@ -18,6 +18,14 @@ mod ledger_pagination;
 mod message_reliability;
 #[path = "suite/presentation_ops.rs"]
 mod presentation_ops;
+#[path = "suite/profile_access.rs"]
+mod profile_access;
+#[path = "suite/registry_reconcile.rs"]
+mod registry_reconcile;
+#[path = "suite/runtime_completion.rs"]
+mod runtime_completion;
+#[path = "suite/runtime_completion_replay.rs"]
+mod runtime_completion_replay;
 #[path = "suite/runtime_lifecycle.rs"]
 mod runtime_lifecycle;
 #[path = "suite/runtime_state_ops.rs"]

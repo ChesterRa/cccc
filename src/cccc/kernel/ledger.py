@@ -47,6 +47,11 @@ def _notify_append(event: Dict[str, Any]) -> None:
         return
 
 
+def notify_appended_event(event: Dict[str, Any]) -> None:
+    """Notify in-process observers after the caller's wider transaction commits."""
+    _notify_append(event)
+
+
 def _spill_text(group_dir: Path, *, event_id: str, text: str) -> Dict[str, Any]:
     raw = text or ""
     b = raw.encode("utf-8", errors="replace")
@@ -73,6 +78,7 @@ def append_event(
     scope_key: str,
     by: str,
     data: Optional[Dict[str, Any]] = None,
+    notify: bool = True,
 ) -> Dict[str, Any]:
     payload = normalize_event_data(kind, data or {})
     event = Event(kind=kind, group_id=group_id, scope_key=scope_key, by=by, data=payload)
@@ -115,7 +121,8 @@ def append_event(
         update_message_status_cache_on_append(out)
     except Exception:
         pass
-    _notify_append(out)
+    if notify:
+        _notify_append(out)
     return out
 
 

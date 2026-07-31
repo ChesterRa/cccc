@@ -22,11 +22,8 @@ describe("shouldReconcileStoppedActorStatus", () => {
     ["disabled", { isActorEnabled: false }],
     ["being started or stopped", { isActorBusy: true }],
   ])("does not reconcile when the actor is %s", (_label, override) => {
-    expect(
-      shouldReconcileStoppedActorStatus({
-        ...recoverableStoppedActor,
-        ...override,
-      }),
-    ).toBe(false);
+    expect(shouldReconcileStoppedActorStatus({ ...recoverableStoppedActor, ...override })).toBe(
+      false,
+    );
   });
 });

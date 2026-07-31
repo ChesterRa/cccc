@@ -46,7 +46,7 @@ fn prompt(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     authorize(&group, request, ActorAction::List, "")?;
-    object(json!({"actors": actors_with_roles(home, &group)}))
+    object(json!({"actors": super::actor_listing::list(home, &group, request)?}))
 }
 
 fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -67,16 +67,24 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let added = store(home)?
         .mutate(&group_id, |doc| actors::add(doc, actor))
         .map_err(OpError::invalid)?;
-    if let Some(values) = private_env {
-        actor_secrets::replace(home, &group_id, &added.id, values)?;
+    if let Some(values) = private_env
+        && let Err(error) = actor_secrets::replace(home, &group_id, &added.id, values)
+    {
+        return Err(super::actor_saga::rollback_added(
+            home, &group_id, &added.id, error,
+        ));
     }
-    append_event(
+    if let Err(error) = append_event(
         home,
         &group_id,
         "actor.add",
         request,
         json!({"actor": added}),
-    )?;
+    ) {
+        return Err(super::actor_saga::rollback_added(
+            home, &group_id, &added.id, error,
+        ));
+    }
     object(json!({"actor": added}))
 }
 
@@ -175,20 +183,54 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let actor_id = required_arg(request, "actor_id")?;
     let group = store(home)?.load(&group_id).map_err(OpError::not_found)?;
     authorize(&group, request, ActorAction::Remove, &actor_id)?;
+    let index = group
+        .actors
+        .iter()
+        .position(|actor| actor.id == actor_id)
+        .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
+    let original_actor = group.actors[index].clone();
+    let original_secrets = actor_secrets::values(home, &group_id, &actor_id)?;
     actor_delivery::shutdown_actor(&group_id, &actor_id);
     actor_runtime::apply(home, &group, &actor_id, "actor.stop")?;
     let actor = store(home)?
         .mutate(&group_id, |doc| actors::remove(doc, &actor_id))
         .map_err(OpError::invalid)?;
-    runtime_session::remove(home, &group_id, &actor_id);
-    actor_secrets::remove(home, &group_id, &actor_id)?;
-    append_event(
+    if let Err(error) = runtime_session::remove(home, &group_id, &actor_id).map_err(OpError::io) {
+        return Err(super::actor_saga::restore_removed(
+            home,
+            &group_id,
+            original_actor,
+            index,
+            original_secrets,
+            error,
+        ));
+    }
+    if let Err(error) = actor_secrets::remove(home, &group_id, &actor_id) {
+        return Err(super::actor_saga::restore_removed(
+            home,
+            &group_id,
+            original_actor,
+            index,
+            original_secrets,
+            error,
+        ));
+    }
+    if let Err(error) = append_event(
         home,
         &group_id,
         "actor.remove",
         request,
         json!({"actor_id": actor_id}),
-    )?;
+    ) {
+        return Err(super::actor_saga::restore_removed(
+            home,
+            &group_id,
+            original_actor,
+            index,
+            original_secrets,
+            error,
+        ));
+    }
     object(json!({"removed": true, "actor": actor}))
 }
 
@@ -203,7 +245,7 @@ fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult
     };
     authorize(&group, request, action, &actor_id)?;
     if kind == "actor.new_session" {
-        runtime_session::remove(home, &group_id, &actor_id);
+        runtime_session::remove(home, &group_id, &actor_id).map_err(OpError::io)?;
     }
     if kind != "actor.start" {
         actor_delivery::shutdown_actor(&group_id, &actor_id);
@@ -294,50 +336,4 @@ fn append_event(
         &event,
     )
     .map_err(OpError::io)
-}
-
-fn actors_with_roles(home: &HomeLayout, group: &GroupDoc) -> Vec<Value> {
-    group
-        .actors
-        .iter()
-        .cloned()
-        .map(|mut actor| {
-            actor.role = actors::effective_role(group, &actor.id);
-            let status = actor_runtime::status(&group.group_id, &actor.id);
-            let running = if actor_runtime::is_structured(&actor) {
-                if super::local_headless::supports(&actor) {
-                    super::local_headless::running(&group.group_id, &actor.id)
-                } else {
-                    actor.enabled
-                        && group.running
-                        && group.state != cccc_contracts::GroupState::Stopped
-                }
-            } else {
-                status.as_ref().is_some_and(|item| item.running)
-            };
-            let mut value = serde_json::to_value(&actor).unwrap_or_else(|_| json!({}));
-            if let Some(object) = value.as_object_mut() {
-                object.extend(runtime_session::actor_fields(
-                    home,
-                    &group.group_id,
-                    &actor.id,
-                ));
-                object.insert("running".into(), Value::Bool(running));
-                object.insert(
-                    "pid".into(),
-                    super::local_headless::status(&group.group_id, &actor.id)
-                        .and_then(|item| item.pid)
-                        .or_else(|| status.and_then(|item| item.pid))
-                        .map_or(Value::Null, |pid| Value::from(u64::from(pid))),
-                );
-                object.extend(super::working_state::runtime_actor_fields(
-                    home,
-                    &actor,
-                    &group.group_id,
-                    running,
-                ));
-            }
-            value
-        })
-        .collect()
 }

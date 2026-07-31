@@ -11,6 +11,7 @@ from ...kernel.ledger import append_event
 from ...kernel.registry import load_registry
 from ...kernel.scope import detect_scope
 from ...paths import ensure_home
+from .group_creation_ops import create_group_with_scope
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -84,4 +85,6 @@ def try_handle_group_bootstrap_op(
         return handle_attach(args)
     if op == "group_create":
         return handle_group_create(args)
+    if op == "group_create_with_scope":
+        return create_group_with_scope(args)
     return None

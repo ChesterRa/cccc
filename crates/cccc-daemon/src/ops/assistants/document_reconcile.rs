@@ -97,3 +97,57 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> Result<Value, O
 
     Ok(state)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Map;
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_document_is_reported_instead_of_treated_as_unchanged() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("documents", "").expect("group");
+        let relative = "notes/reconcile.md";
+        let path = home
+            .root()
+            .join("voice-secretary")
+            .join(&group.group_id)
+            .join("documents")
+            .join(relative);
+        std::fs::create_dir_all(path.parent().expect("parent")).expect("document dir");
+        std::fs::write(&path, "disk content").expect("document");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))
+            .expect("make unreadable");
+        cccc_core::integration_state::group_update(
+            &store,
+            &group.group_id,
+            "assistants",
+            |value| {
+                *value = json!({
+                    "documents":[{
+                        "document_path":relative,
+                        "content":"stored content",
+                        "revision_count":1
+                    }]
+                });
+                Ok(())
+            },
+        )
+        .expect("assistant state");
+        let request = DaemonRequest {
+            v: 1,
+            op: "assistant_index".into(),
+            args: Map::from_iter([("group_id".into(), json!(group.group_id))]),
+        };
+
+        let error = run(&home, &request).expect_err("unreadable file must fail");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+            .expect("restore permissions");
+        assert!(!error.message.is_empty());
+    }
+}

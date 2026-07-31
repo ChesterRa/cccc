@@ -110,7 +110,13 @@ async fn upgrade(
 }
 
 async fn serve(socket: WebSocket, state: AppState, key: String) {
-    crate::browser_surface::serve_socket(socket, &state.browser_surfaces, &key).await;
+    crate::browser_surface::serve_socket(
+        socket,
+        &state.browser_surfaces,
+        &key,
+        state.shutdown.subscribe(),
+    )
+    .await;
 }
 
 fn key(group_id: &str, slot: &str) -> String {

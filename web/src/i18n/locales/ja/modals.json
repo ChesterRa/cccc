@@ -9,7 +9,7 @@
     "groupName": "グループ名",
     "groupNamePlaceholder": "ディレクトリ名から自動入力",
     "pathPlaceholder": "/あなたの/プロジェクト/パス",
-    "pathAutoCreateHint": "フォルダが存在しない場合は自動的に作成されます。",
+    "pathAutoCreateHint": "親ディレクトリが存在する場合、未作成のフォルダだけを自動作成します。",
     "creating": "作成…",
     "createGroup": "グループの作成"
   },

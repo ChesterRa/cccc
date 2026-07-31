@@ -2,6 +2,10 @@ import type { ApiResponse } from "../../../services/api";
 
 type RevokeResponse = ApiResponse<{ revoked: boolean }>;
 
+export function imRevokeKey(chatId: string, threadId: number): string {
+  return `${chatId}:${threadId}`;
+}
+
 export async function revokeIMChatAuthorization({
   request,
   refresh,

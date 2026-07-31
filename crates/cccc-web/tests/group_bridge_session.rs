@@ -48,6 +48,7 @@ async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
         json!({"ok":true,"type":"ready"})
     );
     assert!(session_ready(&home, &group.group_id, &peer_id).await);
+    complete_client_initiated_delivery(&mut socket).await;
     complete_daemon_delivery(&home, &mut socket, &group.group_id, &peer_id, "first").await;
 
     socket.close(None).await.expect("close");
@@ -70,6 +71,32 @@ async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
     socket.close(None).await.expect("close second");
     server.abort();
     daemon.abort();
+}
+
+async fn complete_client_initiated_delivery(socket: &mut TestSocket) {
+    socket
+        .send(WsMessage::Text(
+            json!({
+                "type":"request",
+                "request_id":"client-request",
+                "op":"remote_send",
+                "src_group_id":"g_sender",
+                "idempotency_key":"client-delivery",
+                "payload":{
+                    "source_by":"sender-agent",
+                    "text":"hello from the outbound Rust session",
+                    "to":["@foreman"]
+                }
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("client request");
+    let response = next_socket_json(socket).await;
+    assert_eq!(response["type"], "response");
+    assert_eq!(response["response_to"], "client-request");
+    assert_eq!(response["result"]["receipt"]["status"], "delivered");
 }
 
 async fn connect_signed_socket(

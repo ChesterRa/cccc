@@ -70,7 +70,14 @@ async fn stream(
     let output = async_stream::stream! {
         let (mut tail, replay_events) = match tokio::task::spawn_blocking(move || HeadlessEventTail::open(path, query.replay)).await {
             Ok(Ok(value)) => value,
-            _ => return,
+            Ok(Err(error)) => {
+                yield Ok(stream_error("headless_stream_open_failed", &error.to_string()));
+                return;
+            }
+            Err(error) => {
+                yield Ok(stream_error("headless_stream_task_failed", &error.to_string()));
+                return;
+            }
         };
         for item in replay_events {
             yield Ok(Event::default().event("headless").json_data(item).unwrap_or_default());
@@ -79,9 +86,13 @@ async fn stream(
             tokio::select! {
                 _ = shutdown.recv() => break,
                 _ = tokio::time::sleep(Duration::from_millis(300)) => {
-                    if let Ok(events) = tail.read_new() {
-                        for item in events {
+                    match tail.read_new() {
+                        Ok(events) => for item in events {
                             yield Ok(Event::default().event("headless").json_data(item).unwrap_or_default());
+                        },
+                        Err(error) => {
+                            yield Ok(stream_error("headless_stream_read_failed", &error.to_string()));
+                            break;
                         }
                     }
                 },
@@ -89,6 +100,13 @@ async fn stream(
         }
     };
     Sse::new(output).keep_alive(KeepAlive::default())
+}
+
+fn stream_error(code: &str, message: &str) -> Event {
+    Event::default()
+        .event("error")
+        .json_data(json!({"ok":false,"error":{"code":code,"message":message}}))
+        .unwrap_or_default()
 }
 
 async fn validate_group(state: &AppState, group_id: &str) -> Result<(), crate::api::ApiError> {

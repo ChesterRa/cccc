@@ -59,6 +59,25 @@ async fn group_prompt_routes_follow_the_web_contract() {
     assert_eq!(saved["result"]["kind"], "help");
     assert_eq!(saved["result"]["source"], "home");
     assert_eq!(saved["result"]["content"], actor_note);
+    assert_eq!(saved["result"]["notified_actor_ids"], json!([]));
+    assert_eq!(
+        saved["result"]["notification_failures"][0]["stage"],
+        "actor_list"
+    );
+
+    let (status, unchanged) = request_json(
+        &app,
+        Request::put(format!("{base}/help"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"content":actor_note,"by":"user"}).to_string(),
+            ))
+            .expect("put unchanged help"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(unchanged["result"]["notified_actor_ids"], json!([]));
+    assert_eq!(unchanged["result"]["notification_failures"], json!([]));
 
     let override_path = store
         .group_dir(&group.group_id)

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 
 const EVENT_CHANNEL_CAPACITY: usize = 1024;
 const WATCH_QUEUE_CAPACITY: usize = 1024;
@@ -29,6 +29,7 @@ struct HubInner {
     global_sender: broadcast::Sender<Event>,
     global_followers: Mutex<HashMap<String, LedgerFollower>>,
     shutdown: watch::Sender<bool>,
+    monitor_started: AtomicBool,
 }
 
 struct GroupFeed {
@@ -43,16 +44,16 @@ impl LedgerEventHub {
         let (global_sender, _) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
         let groups_dir = home.groups_dir();
         let groups_root = groups_dir.canonicalize().unwrap_or(groups_dir);
-        let (shutdown, shutdown_rx) = watch::channel(false);
+        let (shutdown, _) = watch::channel(false);
         let inner = Arc::new(HubInner {
-            groups_root: groups_root.clone(),
+            groups_root,
             home,
             feeds: Mutex::new(HashMap::new()),
             global_sender,
             global_followers: Mutex::new(HashMap::new()),
             shutdown,
+            monitor_started: AtomicBool::new(false),
         });
-        start_watcher(Arc::downgrade(&inner), groups_root, shutdown_rx);
         Self { inner }
     }
 
@@ -66,33 +67,37 @@ impl LedgerEventHub {
         group_id: &str,
     ) -> io::Result<(broadcast::Receiver<Event>, Option<String>)> {
         prune_deleted_groups(&self.inner);
-        let mut feeds = self
-            .inner
-            .feeds
-            .lock()
-            .map_err(|_| io::Error::other("ledger event feeds lock poisoned"))?;
-        feeds.retain(|_, feed| feed.sender.receiver_count() > 0);
-        if let Some(feed) = feeds.get(group_id) {
-            let cursor = feed
-                .last_event_id
+        let (receiver, cursor) = {
+            let mut feeds = self
+                .inner
+                .feeds
                 .lock()
-                .map_err(|_| io::Error::other("ledger event cursor lock poisoned"))?;
-            let receiver = feed.sender.subscribe();
-            return Ok((receiver, cursor.clone()));
-        }
-
-        let path = GroupStore::new(self.inner.home.clone())?.ledger_path(group_id)?;
-        let (follower, cursor) = LedgerFollower::at_end(&path)?;
-        let (sender, receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
-        feeds.insert(
-            group_id.to_owned(),
-            Arc::new(GroupFeed {
-                path,
-                follower: Mutex::new(follower),
-                sender,
-                last_event_id: Mutex::new(cursor.clone()),
-            }),
-        );
+                .map_err(|_| io::Error::other("ledger event feeds lock poisoned"))?;
+            feeds.retain(|_, feed| feed.sender.receiver_count() > 0);
+            if let Some(feed) = feeds.get(group_id) {
+                let cursor = feed
+                    .last_event_id
+                    .lock()
+                    .map_err(|_| io::Error::other("ledger event cursor lock poisoned"))?;
+                (feed.sender.subscribe(), cursor.clone())
+            } else {
+                let path = GroupStore::new(self.inner.home.clone())?.ledger_path(group_id)?;
+                let (follower, cursor) = LedgerFollower::at_end(&path)?;
+                let (sender, receiver) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+                feeds.insert(
+                    group_id.to_owned(),
+                    Arc::new(GroupFeed {
+                        path,
+                        follower: Mutex::new(follower),
+                        sender,
+                        last_event_id: Mutex::new(cursor.clone()),
+                    }),
+                );
+                (receiver, cursor)
+            }
+        };
+        ensure_watcher(&self.inner);
+        publish_group_changes(&self.inner, group_id);
         Ok((receiver, cursor))
     }
 
@@ -100,7 +105,10 @@ impl LedgerEventHub {
         if self.inner.global_sender.receiver_count() == 0 {
             initialize_global_followers(&self.inner);
         }
-        self.inner.global_sender.subscribe()
+        let receiver = self.inner.global_sender.subscribe();
+        ensure_watcher(&self.inner);
+        publish_all_changes(&self.inner);
+        receiver
     }
 
     pub(crate) fn replay_after(
@@ -120,50 +128,110 @@ impl Drop for HubInner {
     }
 }
 
-fn start_watcher(inner: Weak<HubInner>, groups_root: PathBuf, shutdown: watch::Receiver<bool>) {
+fn ensure_watcher(inner: &Arc<HubInner>) {
+    if inner
+        .monitor_started
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+    if !start_watcher(
+        Arc::downgrade(inner),
+        inner.groups_root.clone(),
+        inner.shutdown.subscribe(),
+    ) {
+        inner.monitor_started.store(false, Ordering::Release);
+    }
+}
+
+fn start_watcher(
+    inner: Weak<HubInner>,
+    groups_root: PathBuf,
+    shutdown: watch::Receiver<bool>,
+) -> bool {
+    let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+        tracing::error!("cannot start ledger event monitor without a Tokio runtime");
+        return false;
+    };
     let (sender, receiver) = mpsc::channel(WATCH_QUEUE_CAPACITY);
     let rescan_required = Arc::new(AtomicBool::new(false));
     let callback_rescan = Arc::clone(&rescan_required);
-    let callback_root = groups_root.clone();
-    let watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
-        if let Ok(event) = result {
-            for path in event.paths {
-                if is_ledger_path(&path) || (!path.exists() && path.starts_with(&callback_root)) {
-                    enqueue_watch_path(&sender, &callback_rescan, path);
-                }
-            }
-        }
-    });
-    let Ok(mut watcher) = watcher else {
-        tracing::error!("failed to create ledger filesystem watcher");
-        return;
-    };
-    if let Err(error) = watcher.watch(&groups_root, RecursiveMode::Recursive) {
-        tracing::error!(%error, path = %groups_root.display(), "failed to watch ledger directory");
-        return;
+    let sender_guard = sender.clone();
+    let (watcher_tx, watcher_rx) = oneshot::channel();
+    let watcher_thread = std::thread::Builder::new()
+        .name("cccc-ledger-watch".into())
+        .spawn(move || {
+            let result = create_watcher(groups_root, sender, callback_rescan);
+            watcher_tx.send(result).ok();
+        });
+    if let Err(error) = watcher_thread {
+        tracing::error!(%error, "failed to start ledger filesystem watcher thread");
+        return false;
     }
-    tokio::spawn(run_watcher(
+    runtime.spawn(run_monitor(
         inner,
         receiver,
-        watcher,
+        sender_guard,
+        watcher_rx,
         shutdown,
         rescan_required,
     ));
+    true
 }
 
-async fn run_watcher(
+fn create_watcher(
+    groups_root: PathBuf,
+    sender: mpsc::Sender<PathBuf>,
+    rescan_required: Arc<AtomicBool>,
+) -> Result<RecommendedWatcher, String> {
+    let callback_root = groups_root.clone();
+    let mut watcher = notify::recommended_watcher(move |result: notify::Result<notify::Event>| {
+        if let Ok(event) = result {
+            for path in event.paths {
+                if is_ledger_path(&path) || (!path.exists() && path.starts_with(&callback_root)) {
+                    enqueue_watch_path(&sender, &rescan_required, path);
+                }
+            }
+        }
+    })
+    .map_err(|error| error.to_string())?;
+    watcher
+        .watch(&groups_root, RecursiveMode::Recursive)
+        .map_err(|error| error.to_string())?;
+    Ok(watcher)
+}
+
+async fn run_monitor(
     inner: Weak<HubInner>,
     mut receiver: mpsc::Receiver<PathBuf>,
-    _watcher: RecommendedWatcher,
+    _sender_guard: mpsc::Sender<PathBuf>,
+    watcher_rx: oneshot::Receiver<Result<RecommendedWatcher, String>>,
     mut shutdown: watch::Receiver<bool>,
     rescan_required: Arc<AtomicBool>,
 ) {
+    let mut watcher_rx = watcher_rx;
+    let mut watcher_setup_complete = false;
+    let mut watcher = None;
     let mut rescan_interval = tokio::time::interval(ACTIVE_FEED_RESCAN_INTERVAL);
     rescan_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut prune_interval = tokio::time::interval(DELETED_GROUP_PRUNE_INTERVAL);
     prune_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         let path = tokio::select! {
+            setup = &mut watcher_rx, if !watcher_setup_complete => {
+                watcher_setup_complete = true;
+                match setup {
+                    Ok(Ok(value)) => watcher = Some(value),
+                    Ok(Err(error)) => {
+                        tracing::error!(%error, "failed to create ledger filesystem watcher; polling remains active");
+                    }
+                    Err(_) => {
+                        tracing::error!("ledger filesystem watcher setup stopped; polling remains active");
+                    }
+                }
+                continue;
+            }
             changed = shutdown.changed() => {
                 if changed.is_err() || *shutdown.borrow() {
                     break;
@@ -201,6 +269,9 @@ async fn run_watcher(
         if rescan_required.swap(false, Ordering::AcqRel) {
             publish_all_changes(&inner);
         }
+    }
+    if let Some(watcher) = watcher {
+        let _ = std::thread::spawn(move || drop(watcher));
     }
 }
 
@@ -406,16 +477,16 @@ mod tests {
         assert!(groups.is_empty());
     }
 
-    #[tokio::test]
-    async fn dropping_last_hub_releases_inner_and_stops_watcher() {
+    #[test]
+    fn creating_hub_does_not_start_the_filesystem_watcher() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
         let hub = LedgerEventHub::new(home);
+        assert!(!hub.inner.monitor_started.load(Ordering::Acquire));
         let inner = Arc::downgrade(&hub.inner);
         drop(hub);
         assert!(inner.upgrade().is_none());
-        tokio::task::yield_now().await;
     }
 
     #[test]
@@ -460,9 +531,11 @@ mod tests {
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("watcher", "").expect("group");
         let hub = LedgerEventHub::new(home);
+        assert!(!hub.inner.monitor_started.load(Ordering::Acquire));
         let mut first = hub
             .subscribe_group(&group.group_id)
             .expect("first subscriber");
+        assert!(hub.inner.monitor_started.load(Ordering::Acquire));
         let mut second = hub
             .subscribe_group(&group.group_id)
             .expect("second subscriber");

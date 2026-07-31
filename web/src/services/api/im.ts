@@ -123,7 +123,7 @@ export async function fetchIMPending(groupId: string) {
 }
 
 export async function revokeIMChat(groupId: string, chatId: string, threadId: number = 0) {
-  return apiJson<{ revoked: boolean }>(
+  return apiJson<{ revoked: boolean; unsubscribed?: boolean }>(
     `/api/im/revoke?group_id=${encodeURIComponent(groupId)}&chat_id=${encodeURIComponent(chatId)}&thread_id=${threadId}`,
     { method: "POST" },
   );

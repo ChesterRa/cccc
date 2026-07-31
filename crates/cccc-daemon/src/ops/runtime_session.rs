@@ -77,7 +77,10 @@ pub fn prepare_codex_command(
     let now = utc_now();
     document.insert("last_resume_attempt_at".into(), json!(now));
     document.insert("updated_at".into(), json!(utc_now()));
-    let _ = write(home, group_id, actor_id, &document);
+    if let Err(error) = write(home, group_id, actor_id, &document) {
+        tracing::warn!(%error, %group_id, %actor_id, "failed to persist resume attempt");
+        return fresh();
+    }
 
     let mut command = base_command.to_vec();
     command.extend(["resume".into(), session_id.clone()]);
@@ -132,9 +135,14 @@ pub fn resume_failure(group_id: &str, actor_id: &str) -> Option<String> {
     .map(|marker| (*marker).to_owned())
 }
 
-pub fn mark_resume_failed(home: &HomeLayout, group_id: &str, actor_id: &str, error: &str) {
+pub fn mark_resume_failed(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    error: &str,
+) -> std::io::Result<()> {
     let Ok(mut document) = read(home, group_id, actor_id) else {
-        return;
+        return Ok(());
     };
     let failures = document
         .get("failure_count")
@@ -146,12 +154,15 @@ pub fn mark_resume_failed(home: &HomeLayout, group_id: &str, actor_id: &str, err
     document.insert("failure_count".into(), json!(failures));
     document.insert("last_resume_error".into(), json!(truncate(error, 1000)));
     document.insert("updated_at".into(), json!(utc_now()));
-    let _ = write(home, group_id, actor_id, &document);
+    write(home, group_id, actor_id, &document)
 }
 
-pub fn remove(home: &HomeLayout, group_id: &str, actor_id: &str) {
-    if let Ok(path) = path(home, group_id, actor_id) {
-        let _ = std::fs::remove_file(path);
+pub fn remove(home: &HomeLayout, group_id: &str, actor_id: &str) -> std::io::Result<()> {
+    let path = path(home, group_id, actor_id)?;
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
     }
 }
 
@@ -585,7 +596,8 @@ mod tests {
         let base = vec!["grok".into(), "--always-approve".into()];
         let first = prepare_grok_command(&home, &group_id, "peer1", &cwd, &base);
         let old_session = first.command[2].clone();
-        mark_resume_failed(&home, &group_id, "peer1", "session not found");
+        mark_resume_failed(&home, &group_id, "peer1", "session not found")
+            .expect("mark resume failed");
 
         let fresh = prepare_fresh_grok_command(&home, &group_id, "peer1", &cwd, &base);
         assert_eq!(fresh.command[1], "--session-id");
@@ -600,7 +612,7 @@ mod tests {
         let (_temp, home, group_id, cwd) = fixture();
         let base = vec!["grok".into(), "--always-approve".into()];
         let first = prepare_grok_command(&home, &group_id, "peer1", &cwd, &base);
-        remove(&home, &group_id, "peer1");
+        remove(&home, &group_id, "peer1").expect("remove session");
         let next = prepare_grok_command(&home, &group_id, "peer1", &cwd, &base);
         assert_eq!(next.command[1], "--session-id");
         assert_ne!(first.command[2], next.command[2]);

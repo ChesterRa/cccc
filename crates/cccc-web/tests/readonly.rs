@@ -70,6 +70,30 @@ async fn exhibit_mode_rejects_mutating_get_and_websocket_routes() {
 }
 
 #[tokio::test]
+async fn exhibit_mode_rejects_filesystem_reads_like_legacy_web() {
+    let (_temp, home) = home();
+    let app = cccc_web::app_with_mode(home, cccc_web::WebMode::Exhibit);
+    for path in ["/api/v1/fs/recent", "/api/v1/fs/list?path=~"] {
+        let response = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).expect("request"))
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{path}");
+        let payload: Value = serde_json::from_slice(
+            &response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes(),
+        )
+        .expect("json");
+        assert_eq!(payload["error"]["code"], "read_only", "{path}");
+    }
+}
+
+#[tokio::test]
 async fn exhibit_ping_matches_python_contract() {
     let (_temp, home) = home();
     let daemon_home = home.clone();

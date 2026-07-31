@@ -13,6 +13,33 @@ use std::collections::HashSet;
 use super::BrowserSurfaces;
 
 impl BrowserSurfaces {
+    pub async fn submit_prompt(&self, key: &str, target_url: &str, prompt: &str) -> Result<Value> {
+        if prompt.trim().is_empty() {
+            bail!("browser prompt is empty");
+        }
+        let mut sessions = self.sessions.lock().await;
+        let session = sessions
+            .get_mut(key)
+            .context("browser surface is not active")?;
+        if !target_url.is_empty() {
+            let current = session.page.url().await?.unwrap_or_default();
+            if current != target_url {
+                session.page.goto(target_url).await?;
+            }
+        }
+        session
+            .page
+            .evaluate(
+                "(() => { const input = document.querySelector('#prompt-textarea, textarea, [contenteditable=\"true\"]'); if (!input) throw new Error('prompt input unavailable'); input.focus(); if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) { input.value = ''; } else { input.textContent = ''; } input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' })); })()",
+            )
+            .await?;
+        session.page.execute(InsertTextParams::new(prompt)).await?;
+        press_key(&session.page, "Enter").await?;
+        let url = session.page.url().await?.unwrap_or_default();
+        session.updated_at = utc_now();
+        Ok(json!({"submitted":true,"tab_url":url}))
+    }
+
     pub async fn command(&self, key: &str, command: &Value) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
         let session = sessions
@@ -92,7 +119,12 @@ impl BrowserSurfaces {
     }
 }
 
-pub async fn serve_socket(mut socket: WebSocket, surfaces: &BrowserSurfaces, key: &str) {
+pub async fn serve_socket(
+    mut socket: WebSocket,
+    surfaces: &BrowserSurfaces,
+    key: &str,
+    mut shutdown: tokio::sync::broadcast::Receiver<()>,
+) {
     if socket
         .send(Message::Text(
             json!({"t":"state","active":true,"state":"ready"})
@@ -107,6 +139,10 @@ pub async fn serve_socket(mut socket: WebSocket, surfaces: &BrowserSurfaces, key
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(300));
     loop {
         tokio::select! {
+            _ = shutdown.recv() => {
+                let _ = socket.send(Message::Close(None)).await;
+                break;
+            }
             _ = interval.tick() => match surfaces.frame(key).await {
                 Ok(frame) => {
                     if socket.send(Message::Text(frame.to_string().into())).await.is_err() {

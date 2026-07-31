@@ -18,6 +18,14 @@ pub fn statuses(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"statuses": statuses}))
 }
 
+pub(super) fn for_events(
+    home: &HomeLayout,
+    group_id: &str,
+    event_ids: &[String],
+) -> Result<BTreeMap<String, Value>, OpError> {
+    StatusSnapshot::with(home, group_id, |snapshot| snapshot.for_events(event_ids))
+}
+
 pub fn read_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let event_id = required_arg(request, "event_id")?;

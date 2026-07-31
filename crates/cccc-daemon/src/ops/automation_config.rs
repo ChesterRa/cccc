@@ -4,9 +4,7 @@ use cccc_core::permissions;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 
-use crate::dispatch::{
-    OpError, OpResult, first_non_blank_arg, object, required_arg, store, string_arg,
-};
+use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 
 const STANDUP_SNIPPET: &str = "{{interval_minutes}} minutes have passed. Stand-up checkpoint (foreman only).\n\nUse MCP chat for any visible update. Keep this short.";
 
@@ -75,46 +73,66 @@ fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn manage(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     authorize(&group, request)?;
-    let action = required_arg(request, "action")?;
-    let rule_id = first_non_blank_arg(request, &["rule_id", "key"]);
-    let updated = store(home)?
-        .mutate(&group.group_id, |doc| {
-            if let Some(rule_id) = &rule_id {
-                if let Some(rules) = doc
-                    .automation
-                    .get_mut("rules")
-                    .and_then(Value::as_array_mut)
-                {
-                    for rule in rules.iter_mut().filter(|rule| rule["id"] == **rule_id) {
-                        rule["enabled"] = json!(action != "disable");
-                    }
-                }
-            }
-            let version = doc
-                .automation
-                .get("version")
-                .and_then(Value::as_u64)
-                .unwrap_or(1)
-                + 1;
-            doc.automation.insert("version".into(), json!(version));
-            Ok(doc.clone())
-        })
-        .map_err(OpError::io)?;
-    object(payload(home, &updated))
+    let outcome = super::automation_manage::apply(&group, request)?;
+    let updated = if outcome.changed {
+        let current = group
+            .automation
+            .get("version")
+            .and_then(Value::as_u64)
+            .unwrap_or(1);
+        let rules = outcome.rules.clone();
+        let snippets = outcome.snippets.clone();
+        let updated = store(home)?
+            .mutate(&group.group_id, |doc| {
+                doc.automation.insert("rules".into(), Value::Array(rules));
+                doc.automation
+                    .insert("snippets".into(), Value::Object(snippets));
+                doc.automation.insert("version".into(), json!(current + 1));
+                Ok(doc.clone())
+            })
+            .map_err(OpError::io)?;
+        append_event(home, &group.group_id, request, "group.automation_update")?;
+        updated
+    } else {
+        group
+    };
+    let mut result = payload(home, &updated);
+    result["applied_actions"] = Value::Array(outcome.applied_actions);
+    result["changed"] = Value::Bool(outcome.changed);
+    object(result)
 }
 
 fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     authorize(&group, request)?;
+    let current = group
+        .automation
+        .get("version")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    if let Some(expected) = request.args.get("expected_version").and_then(Value::as_u64)
+        && expected != current
+    {
+        return Err(OpError::new(
+            "version_conflict",
+            format!("automation version mismatch: expected {expected}, current {current}"),
+        ));
+    }
     let updated = store(home)?
         .mutate(&group.group_id, |doc| {
-            doc.automation = json!({"version":1,"rules":[],"snippets":{},"snippet_overrides":{}})
-                .as_object()
-                .cloned()
-                .unwrap_or_default();
+            doc.automation = json!({
+                "version":current + 1,
+                "rules":default_rules(),
+                "snippets":{},
+                "snippet_overrides":{}
+            })
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
             Ok(doc.clone())
         })
         .map_err(OpError::io)?;
+    append_event(home, &group.group_id, request, "group.automation_update")?;
     object(payload(home, &updated))
 }
 

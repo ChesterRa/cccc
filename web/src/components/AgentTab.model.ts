@@ -44,10 +44,6 @@ export function shouldReconcileStoppedActorStatus(args: {
   isActorBusy: boolean;
 }): boolean {
   return Boolean(
-    args.activated &&
-    args.isVisible &&
-    !args.isRunning &&
-    args.isActorEnabled &&
-    !args.isActorBusy,
+    args.activated && args.isVisible && !args.isRunning && args.isActorEnabled && !args.isActorBusy,
   );
 }

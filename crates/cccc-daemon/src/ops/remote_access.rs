@@ -172,6 +172,29 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
     let tailscale_installed = command_exists("tailscale");
     let reachable =
         !matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1") || !public_url.is_empty();
+    let supervised = environment_flag("CCCC_WEB_SUPERVISED");
+    let live_host = std::env::var("CCCC_WEB_EFFECTIVE_HOST")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    let live_port = std::env::var("CCCC_WEB_EFFECTIVE_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok());
+    let live_runtime_present = supervised || live_host.is_some() || live_port.is_some();
+    let live_matches = live_runtime_present
+        && live_host.as_deref().unwrap_or("127.0.0.1") == host
+        && live_port.unwrap_or(8848) == port;
+    let restart_required = live_runtime_present && !live_matches;
+    let display_host = if matches!(host.as_str(), "0.0.0.0" | "::") {
+        "127.0.0.1"
+    } else {
+        host.as_str()
+    };
+    let desired_local_url = format!("http://{display_host}:{port}");
+    let desired_remote_url = if public_url.is_empty() {
+        format!("http://{host}:{port}")
+    } else {
+        public_url.clone()
+    };
     let misconfigured = enabled && ((require_token && tokens == 0) || !reachable);
     let status = if misconfigured {
         "misconfigured"
@@ -200,8 +223,8 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
         "status_reason":status,
         "endpoint":endpoint,
         "updated_at":config.get("updated_at").cloned().unwrap_or(Value::Null),
-        "restart_required":false,
-        "apply_supported":true,
+        "restart_required":restart_required,
+        "apply_supported":supervised && live_runtime_present,
         "diagnostics":{
             "mode_supported":true,
             "web_bind_reachable":reachable,
@@ -209,6 +232,14 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
             "access_token_count":tokens,
             "effective_require_access_token":require_token,
             "tailscale_installed":tailscale_installed
+            ,"desired_local_url":desired_local_url
+            ,"desired_remote_url":desired_remote_url
+            ,"live_runtime_present":live_runtime_present
+            ,"live_runtime_pid":if live_runtime_present {Value::from(std::process::id())} else {Value::Null}
+            ,"live_runtime_host":live_host
+            ,"live_runtime_port":live_port
+            ,"live_runtime_supervisor_managed":supervised
+            ,"live_runtime_matches_binding":live_matches
         },
         "config":{
             "web_host":host,
@@ -220,6 +251,15 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
         },
         "next_steps":[]
     }})
+}
+
+fn environment_flag(name: &str) -> bool {
+    std::env::var(name).is_ok_and(|value| {
+        matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
 }
 
 fn require_user(request: &DaemonRequest) -> Result<(), OpError> {

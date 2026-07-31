@@ -44,6 +44,7 @@ fn test_state(home: HomeLayout) -> AppState {
         ledger_events: ledger_events.clone(),
         im_workers: Arc::new(im_runtime::ImWorkerRegistry::new(ledger_events)),
         shutdown: broadcast::channel(1).0,
+        restart: None,
         web_mode: crate::WebMode::Normal,
         exhibit_allow_terminal: false,
         home,

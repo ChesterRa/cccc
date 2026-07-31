@@ -265,9 +265,10 @@ async fn authorized(
     Query(query): Query<GroupQuery>,
 ) -> ApiResult {
     ensure_access(&principal, &query.group_id)?;
-    Ok(success(
-        json!({"authorized":array_field(&load(&state,&query.group_id)?,"authorized")}),
-    ))
+    let value = load(&state, &query.group_id)?;
+    let mut authorized = array_field(&value, "authorized");
+    super::im_authorization::enrich_verbose(&mut authorized, &array_field(&value, "subscribers"));
+    Ok(success(json!({"authorized":authorized})))
 }
 
 async fn pending(
@@ -307,16 +308,8 @@ async fn bind(
                     && item["expires_at"].as_f64().unwrap_or(0.0) > chrono_now() as f64
             })
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "pending request not found"))?;
-        let mut item = pending.remove(index);
-        item["authorized_at"] = json!(chrono_now());
-        let authorized = array_mut(state, "authorized");
-        authorized.retain(|existing| {
-            existing["chat_id"] != item["chat_id"]
-                || existing["thread_id"].as_i64().unwrap_or(0)
-                    != item["thread_id"].as_i64().unwrap_or(0)
-        });
-        authorized.push(item.clone());
-        Ok(item)
+        let item = pending.remove(index);
+        Ok(super::im_authorization::upsert_authorized(state, item))
     })?;
     Ok(success(bound))
 }
@@ -344,16 +337,16 @@ async fn revoke(
     Query(query): Query<GroupQuery>,
 ) -> ApiResult {
     ensure_access(&principal, &query.group_id)?;
-    let revoked = update(&state, &query.group_id, |value| {
-        let items = array_mut(object(value), "authorized");
-        let before = items.len();
-        items.retain(|item| {
-            item["chat_id"].as_str() != Some(&query.chat_id)
-                || item["thread_id"].as_i64().unwrap_or(0) != query.thread_id
-        });
-        Ok(items.len() != before)
+    let (revoked, unsubscribed) = update(&state, &query.group_id, |value| {
+        Ok(super::im_authorization::revoke(
+            object(value),
+            &query.chat_id,
+            query.thread_id,
+        ))
     })?;
-    Ok(success(json!({"revoked":revoked})))
+    Ok(success(
+        json!({"revoked":revoked,"unsubscribed":unsubscribed}),
+    ))
 }
 
 async fn verbose(
@@ -363,15 +356,13 @@ async fn verbose(
 ) -> ApiResult {
     ensure_access(&principal, &query.group_id)?;
     let changed = update(&state, &query.group_id, |value| {
-        let item = array_mut(object(value), "authorized")
-            .iter_mut()
-            .find(|item| {
-                item["chat_id"].as_str() == Some(&query.chat_id)
-                    && item["thread_id"].as_i64().unwrap_or(0) == query.thread_id
-            })
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "authorized chat not found"))?;
-        item["verbose"] = Value::Bool(query.verbose);
-        Ok(item.clone())
+        super::im_authorization::set_verbose(
+            object(value),
+            &query.chat_id,
+            query.thread_id,
+            query.verbose,
+        )
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "authorized chat not found"))
     })?;
     Ok(success(changed))
 }
@@ -434,8 +425,9 @@ fn migrate_legacy_im_state(store: &GroupStore, group_id: &str) -> io::Result<()>
     let legacy = group.extra.get("im").and_then(Value::as_object).cloned();
     let needs_config = !current.get("config").is_some_and(Value::is_object);
     let needs_authorized = !current.get("authorized").is_some_and(Value::is_array);
+    let needs_subscribers = !current.get("subscribers").is_some_and(Value::is_array);
     let needs_pending = !current.get("pending").is_some_and(Value::is_array);
-    if !needs_config && !needs_authorized && !needs_pending {
+    if !needs_config && !needs_authorized && !needs_subscribers && !needs_pending {
         return Ok(());
     }
     let state_dir = store.state_dir(group_id)?;
@@ -459,6 +451,16 @@ fn migrate_legacy_im_state(store: &GroupStore, group_id: &str) -> io::Result<()>
     } else {
         Vec::new()
     };
+    let subscribers = if needs_subscribers {
+        let current_items = normalize_im_items(current.get("subscribers"), false);
+        if current_items.is_empty() {
+            read_legacy_im_items(&state_dir.join("im_subscribers.json"), false)
+        } else {
+            current_items
+        }
+    } else {
+        Vec::new()
+    };
     integration_state::group_update(store, group_id, STORE_KEY, |value| {
         let state = object(value);
         if needs_config && let Some(mut config) = legacy.clone() {
@@ -476,6 +478,9 @@ fn migrate_legacy_im_state(store: &GroupStore, group_id: &str) -> io::Result<()>
         }
         if needs_authorized {
             state.insert("authorized".into(), Value::Array(authorized.clone()));
+        }
+        if needs_subscribers {
+            state.insert("subscribers".into(), Value::Array(subscribers.clone()));
         }
         if needs_pending {
             state.insert("pending".into(), Value::Array(pending.clone()));
@@ -504,8 +509,21 @@ fn normalize_im_items(value: Option<&Value>, include_key: bool) -> Vec<Value> {
         .flatten()
         .map(|(key, item)| {
             let mut item = item.clone();
-            if include_key && let Some(object) = item.as_object_mut() {
-                object.entry("key").or_insert_with(|| json!(key));
+            if let Some(object) = item.as_object_mut() {
+                if include_key {
+                    object.entry("key").or_insert_with(|| json!(key));
+                } else {
+                    let (chat_id, thread_id) = key
+                        .rsplit_once(':')
+                        .and_then(|(chat_id, thread)| {
+                            thread.parse::<i64>().ok().map(|thread| (chat_id, thread))
+                        })
+                        .unwrap_or((key.as_str(), 0));
+                    object.entry("chat_id").or_insert_with(|| json!(chat_id));
+                    object
+                        .entry("thread_id")
+                        .or_insert_with(|| json!(thread_id));
+                }
             }
             item
         })

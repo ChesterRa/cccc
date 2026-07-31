@@ -6,7 +6,6 @@ use sha2::{Digest, Sha256};
 use std::io;
 
 use crate::dispatch::{OpError, OpResult, first_non_blank_arg, object, required_arg, string_arg};
-use crate::ops::messaging::append;
 
 const KEY: &str = "runtime_states";
 
@@ -207,21 +206,17 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let active_state = actor_state(home, &group.group_id, &actor_id)?;
     let active_turn_id = active_state["active_turn_id"].as_str().unwrap_or_default();
-    let completed_turn_id = string_arg(request, "turn_id").filter(|value| !value.is_empty());
-    if active_turn_id.is_empty()
-        || completed_turn_id
-            .as_deref()
-            .is_some_and(|turn_id| turn_id != active_turn_id)
-    {
+    let turn_id = string_arg(request, "turn_id")
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| active_turn_id.to_owned());
+    let raw_event_ids = request.args.get("event_ids").and_then(Value::as_array);
+    if raw_event_ids.is_some_and(|items| items.iter().any(|item| !item.is_string())) {
         return Err(OpError::new(
-            "stale_turn",
-            "turn_id does not match the actor's active structured turn",
+            "invalid_event_ids",
+            "event_ids must contain only strings",
         ));
     }
-    let mut event_ids: Vec<String> = request
-        .args
-        .get("event_ids")
-        .and_then(Value::as_array)
+    let mut event_ids: Vec<String> = raw_event_ids
         .map(|items| {
             items
                 .iter()
@@ -239,36 +234,64 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if event_ids.is_empty() {
         return Err(OpError::new("missing_event_ids", "event_ids is required"));
     }
+    let delivery_id = string_arg(request, "delivery_id")
+        .filter(|value| !value.is_empty())
+        .or_else(|| (request.op == "runtime_complete_turn").then(|| format!("runtime:{turn_id}")))
+        .ok_or_else(|| OpError::new("missing_delivery_id", "delivery_id is required"))?;
+    let completion = super::runtime_completion::Completion {
+        turn_id: turn_id.clone(),
+        event_ids: event_ids.clone(),
+        status,
+        delivery_id,
+    };
+    if let Some(receipt) =
+        super::runtime_completion::find(home, &group.group_id, &actor_id, &completion)?
+    {
+        return finish_completion(home, &group, &actor_id, &completion, receipt, request);
+    }
+    if active_turn_id.is_empty() || turn_id != active_turn_id {
+        return Err(OpError::new(
+            "stale_turn",
+            "turn_id does not match the actor's active structured turn",
+        ));
+    }
     let unread = inbox::list_unread(home, &group, &actor_id, 1000).map_err(OpError::io)?;
     validate_completed_prefix(&unread, &event_ids)?;
-    let mut cursor_committed = false;
-    let mut read_event = Value::Null;
-    if matches!(status.as_str(), "done" | "partial") {
-        let latest = event_ids.last().expect("event_ids is not empty");
-        inbox::mark_read(home, &group.group_id, &actor_id, latest).map_err(OpError::not_found)?;
-        read_event = serde_json::to_value(append(
-            home,
-            &group.group_id,
-            "chat.read",
-            &actor_id,
-            json!({"actor_id":actor_id,"event_id":latest})
-                .as_object()
-                .cloned()
-                .unwrap_or_default(),
-        )?)
-        .map_err(OpError::invalid)?;
-        cursor_committed = true;
+    let receipt = super::runtime_completion::append(home, &group.group_id, &actor_id, &completion)?;
+    finish_completion(home, &group, &actor_id, &completion, receipt, request)
+}
+
+fn finish_completion(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    completion: &super::runtime_completion::Completion,
+    receipt: Event,
+    request: &DaemonRequest,
+) -> OpResult {
+    let cursor_committed = matches!(completion.status.as_str(), "done" | "partial");
+    let runtime = actor_state(home, &group.group_id, actor_id)?;
+    let owns_active_projection = runtime["active_turn_id"].as_str()
+        == Some(completion.turn_id.as_str())
+        && runtime["status"].as_str() == Some("working");
+    if owns_active_projection {
+        if cursor_committed {
+            let latest = completion.event_ids.last().expect("event ids validated");
+            inbox::mark_read(home, &group.group_id, actor_id, latest)
+                .map_err(OpError::not_found)?;
+        }
+        set_runtime_status(home, group, actor_id, "waiting", "", "")?;
     }
-    set_runtime_status(home, &group, &actor_id, "waiting", "", "")?;
-    let cursor = inbox::cursor(home, &group.group_id, &actor_id).map_err(OpError::io)?;
+    let cursor = inbox::cursor(home, &group.group_id, actor_id).map_err(OpError::io)?;
     object(json!({
-        "status":status,
-        "turn_id":completed_turn_id.unwrap_or_else(|| active_turn_id.to_owned()),
+        "status":completion.status,
+        "turn_id":completion.turn_id,
+        "delivery_id":completion.delivery_id,
         "cursor_committed":cursor_committed,
         "cursor":{"event_id":cursor,"ts":""},
-        "read_event":read_event,
+        "read_event":receipt,
         "ack_events":[],
-        "processed_event_ids":event_ids,
+        "processed_event_ids":completion.event_ids,
         "followup_delivery_scheduled":false,
         "summary":string_arg(request,"summary").unwrap_or_default()
     }))

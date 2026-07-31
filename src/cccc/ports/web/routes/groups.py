@@ -1385,7 +1385,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @global_router.post("/groups", dependencies=[Depends(require_admin)])
     async def group_create(req: CreateGroupRequest) -> Dict[str, Any]:
-        return await ctx.daemon({"op": "group_create", "args": {"title": req.title, "topic": req.topic, "by": req.by}})
+        args = {"title": req.title, "topic": req.topic, "by": req.by}
+        if "path" not in req.model_fields_set:
+            return await ctx.daemon({"op": "group_create", "args": args})
+        path, error = _normalize_web_attach_path(req.path)
+        if error is not None:
+            return error
+        args["path"] = path
+        return await ctx.daemon({"op": "group_create_with_scope", "args": args})
 
     @global_router.post("/groups/copy/preview_import", dependencies=[Depends(require_admin)])
     async def group_copy_preview_import(file: UploadFile = File(...)) -> Dict[str, Any]:

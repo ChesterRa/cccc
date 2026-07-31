@@ -37,10 +37,26 @@ impl ApiError {
             details: json!({}),
         }
     }
+    pub fn not_found_code(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::NOT_FOUND,
+            code: code.into(),
+            message: message.into(),
+            details: json!({}),
+        }
+    }
     pub fn forbidden(message: impl Into<String>) -> Self {
         Self {
             status: StatusCode::FORBIDDEN,
             code: "permission_denied".into(),
+            message: message.into(),
+            details: json!({}),
+        }
+    }
+    pub fn forbidden_code(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::FORBIDDEN,
+            code: code.into(),
             message: message.into(),
             details: json!({}),
         }
@@ -114,8 +130,14 @@ pub async fn call(state: &AppState, op: &str, args: Map<String, Value>) -> ApiRe
         return Ok(Json(json!({"ok":true,"result":response.result})));
     }
     let error = response.error.map_or_else(
-        || ("daemon_error".into(), "daemon operation failed".into()),
-        |error| (error.code, error.message),
+        || {
+            (
+                "daemon_error".into(),
+                "daemon operation failed".into(),
+                Map::new(),
+            )
+        },
+        |error| (error.code, error.message, error.details),
     );
     let status = if error.0.contains("not_found") {
         StatusCode::NOT_FOUND
@@ -128,7 +150,7 @@ pub async fn call(state: &AppState, op: &str, args: Map<String, Value>) -> ApiRe
         status,
         code: error.0,
         message: error.1,
-        details: json!({}),
+        details: Value::Object(error.2),
     })
 }
 

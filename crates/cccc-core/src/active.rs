@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::io;
 
 use crate::HomeLayout;
-use crate::fs::{read_json, write_json};
+use crate::fs::{read_json, write_json_committed};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 struct ActiveState {
     #[serde(default)]
     group_id: String,
@@ -23,7 +23,7 @@ pub fn set(home: &HomeLayout, group_id: &str) -> io::Result<()> {
     if group_id.is_empty() {
         return Err(io::Error::other("group_id is required"));
     }
-    write_json(
+    write_json_committed(
         &home.root().join("active.json"),
         &ActiveState {
             group_id: group_id.into(),

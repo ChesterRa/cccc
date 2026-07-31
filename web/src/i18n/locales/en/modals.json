@@ -9,7 +9,7 @@
     "groupName": "Group Name",
     "groupNamePlaceholder": "Auto-filled from directory name",
     "pathPlaceholder": "/path/to/your/project",
-    "pathAutoCreateHint": "If the folder doesn't exist yet, it will be created automatically.",
+    "pathAutoCreateHint": "If the folder is missing, it will be created when its parent exists.",
     "creating": "Creating...",
     "createGroup": "Create Group"
   },

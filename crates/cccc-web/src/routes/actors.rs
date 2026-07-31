@@ -1,4 +1,4 @@
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::{Map, Value, json};
@@ -33,11 +33,28 @@ pub fn routes() -> Router<AppState> {
         .merge(super::actor_profiles::routes())
 }
 
-async fn list(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
+#[derive(Default, serde::Deserialize)]
+struct ActorListQuery {
+    #[serde(default)]
+    include_unread: bool,
+    #[serde(default)]
+    include_internal: bool,
+}
+
+async fn list(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<ActorListQuery>,
+) -> ApiResult {
     call(
         &state,
         "actor_list",
-        object(json!({"group_id":group_id,"by":"user"})),
+        object(json!({
+            "group_id":group_id,
+            "by":"user",
+            "include_unread":query.include_unread,
+            "include_internal":query.include_internal,
+        })),
     )
     .await
 }
@@ -47,7 +64,7 @@ async fn create(
     Json(body): Json<Value>,
 ) -> ApiResult {
     let mut args = body_object(body)?;
-    normalize_command(&mut args);
+    normalize_command(&mut args)?;
     args.insert("group_id".into(), Value::String(group_id));
     call(&state, "actor_add", args).await
 }
@@ -57,7 +74,7 @@ async fn update(
     Json(body): Json<Value>,
 ) -> ApiResult {
     let mut args = body_object(body)?;
-    normalize_command(&mut args);
+    normalize_command(&mut args)?;
     args.insert("group_id".into(), Value::String(group_id));
     args.insert("actor_id".into(), Value::String(actor_id));
     call(&state, "actor_update", args).await
@@ -106,11 +123,12 @@ async fn lifecycle(state: &AppState, group_id: &str, actor_id: &str, op: &str) -
     .await
 }
 
-fn normalize_command(args: &mut Map<String, Value>) {
+fn normalize_command(args: &mut Map<String, Value>) -> Result<(), crate::api::ApiError> {
     if let Some(Value::String(command)) = args.get("command").cloned() {
-        args.insert(
-            "command".into(),
-            json!(command.split_whitespace().collect::<Vec<_>>()),
-        );
+        let command = shell_words::split(&command).map_err(|error| {
+            crate::api::ApiError::bad_code("invalid_command", error.to_string(), json!({}))
+        })?;
+        args.insert("command".into(), json!(command));
     }
+    Ok(())
 }

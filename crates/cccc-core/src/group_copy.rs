@@ -246,10 +246,25 @@ pub fn import(
             active_scope_key: imported.active_scope_key,
         })
     })();
-    if result.is_err() {
-        let _ = store.delete(&final_group_id);
+    rollback_import(result, &final_group_id, || {
+        store.delete(&final_group_id).map(|_| ())
+    })
+}
+
+fn rollback_import<T>(
+    result: io::Result<T>,
+    group_id: &str,
+    rollback: impl FnOnce() -> io::Result<()>,
+) -> io::Result<T> {
+    let Err(error) = result else {
+        return result;
+    };
+    match rollback() {
+        Ok(()) => Err(error),
+        Err(rollback) => Err(io::Error::other(format!(
+            "{error}; rollback_failed: could not remove imported group {group_id}: {rollback}"
+        ))),
     }
-    result
 }
 
 fn operation_guard() -> MutexGuard<'static, ()> {
@@ -309,7 +324,7 @@ fn read_package(bytes: &[u8]) -> io::Result<Package> {
     }
     let manifest = manifest.ok_or_else(|| io::Error::other("manifest.json missing"))?;
     validate_manifest(&manifest)?;
-    if manifest.content_digest != content_digest(&files) {
+    if !content_digest_matches(&manifest.content_digest, &files) {
         return Err(io::Error::other("group copy content digest mismatch"));
     }
     let group: GroupDoc = serde_yaml::from_slice(
@@ -586,6 +601,23 @@ fn content_digest(files: &HashMap<String, Vec<u8>>) -> String {
     for name in names {
         digest.update(name.as_bytes());
         digest.update([0]);
+        digest.update(format!("{:x}", Sha256::digest(&files[name])).as_bytes());
+        digest.update([0]);
+    }
+    format!("sha256:{:x}", digest.finalize())
+}
+
+fn content_digest_matches(expected: &str, files: &HashMap<String, Vec<u8>>) -> bool {
+    expected == content_digest(files) || expected == legacy_rust_content_digest(files)
+}
+
+fn legacy_rust_content_digest(files: &HashMap<String, Vec<u8>>) -> String {
+    let mut names = files.keys().collect::<Vec<_>>();
+    names.sort();
+    let mut digest = Sha256::new();
+    for name in names {
+        digest.update(name.as_bytes());
+        digest.update([0]);
         digest.update(Sha256::digest(&files[name]));
         digest.update([b'\n']);
     }
@@ -639,5 +671,33 @@ mod tests {
 
         let error = collect_files(directory.path()).expect_err("oversized export must fail");
         assert!(error.to_string().contains("256 MiB"));
+    }
+
+    #[test]
+    fn rollback_failure_is_explicit() {
+        let error =
+            rollback_import::<()>(Err(io::Error::other("import failed")), "g_import", || {
+                Err(io::Error::other("delete failed"))
+            })
+            .expect_err("rollback failure");
+        assert!(error.to_string().contains("rollback_failed"));
+        assert!(error.to_string().contains("g_import"));
+    }
+
+    #[test]
+    fn content_digest_matches_the_python_package_contract() {
+        let files = HashMap::from([
+            ("a.txt".into(), b"hello".to_vec()),
+            ("b.bin".into(), vec![0, 255]),
+        ]);
+        assert_eq!(
+            content_digest(&files),
+            "sha256:9bce08b1462fc2e8bdff4c2b8e0fd1fcbc0977775d40a3d2820df78e3e2ef243"
+        );
+        assert!(content_digest_matches(&content_digest(&files), &files));
+        assert!(content_digest_matches(
+            &legacy_rust_content_digest(&files),
+            &files
+        ));
     }
 }
