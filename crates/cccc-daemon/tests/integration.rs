@@ -6,6 +6,8 @@ mod assistant_voice_ops;
 mod automation_ops;
 #[path = "suite/capability_state.rs"]
 mod capability_state;
+#[path = "suite/cross_group_foreman_default.rs"]
+mod cross_group_foreman_default;
 #[path = "suite/daemon_cancellation.rs"]
 mod daemon_cancellation;
 #[path = "suite/group_preamble_ops.rs"]

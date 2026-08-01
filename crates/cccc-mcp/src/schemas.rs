@@ -9,7 +9,7 @@ pub fn input(name: &str) -> Value {
                     "reply_to":{"type":"string","description":"Optional event ID. Omit for a new message; set it to reply to that message."},
                     "to":{
                         "oneOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}],
-                        "description":"Optional recipients. New local messages default to user; replies default to the original sender."
+                        "description":"Optional recipients. New local messages default to user; new cross-group messages default to the target group's unique available foreman; replies default to the original sender."
                     }
                 }),
             ),
@@ -334,7 +334,7 @@ fn messaging() -> Value {
         common(),
         json!({
             "text":{"type":"string"},"to":{"oneOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}]},
-            "dst_group_id":{"type":"string","description":"Optional local or trusted remote group ID. For a remote Group Bridge route, use its exact remote_group_id and provide an explicit remote recipient."},
+            "dst_group_id":{"type":"string","description":"Optional local or trusted remote group ID. When omitted `to` defaults to the target group's unique available foreman; resolution fails closed if none or multiple are available."},
             "idempotency_key":{"type":"string","description":"Stable retry key for trusted remote Group Bridge delivery."},
             "refs":{"type":"array","items":{"type":"object"}},
             "insight":{"type":"string","maxLength":cccc_core::peer_insight::INSIGHT_MAX_CHARS,"description":cccc_core::peer_insight::PEER_INSIGHT_FIELD_DESCRIPTION},
@@ -414,7 +414,7 @@ mod tests {
                 .as_str()
                 .is_some_and(|description| {
                     description.contains("trusted remote")
-                        && description.contains("explicit remote recipient")
+                        && description.contains("unique available foreman")
                 })
         );
         assert_eq!(schema["properties"]["idempotency_key"]["type"], "string");

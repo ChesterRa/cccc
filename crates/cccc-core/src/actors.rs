@@ -9,6 +9,15 @@ const RESERVED: &[&str] = &[
     "user", "all", "system", "foreman", "peers", "admin", "root", "cccc",
 ];
 
+/// Existing recipient selector used when a cross-group caller omits `to`.
+pub const CROSS_GROUP_FOREMAN_RECIPIENT: &str = "@foreman";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UniqueForemanError {
+    NotFound,
+    NotUnique,
+}
+
 pub fn validate_actor_id(value: &str) -> io::Result<String> {
     let id = value.trim();
     let mut chars = id.chars();
@@ -36,6 +45,19 @@ pub fn visible(group: &GroupDoc) -> impl Iterator<Item = &Actor> {
 
 pub fn find<'a>(group: &'a GroupDoc, actor_id: &str) -> Option<&'a Actor> {
     group.actors.iter().find(|actor| actor.id == actor_id)
+}
+
+pub fn unique_available_foreman(group: &GroupDoc) -> Result<&Actor, UniqueForemanError> {
+    let matches = visible(group)
+        .filter(|actor| {
+            actor.enabled && effective_role(group, &actor.id) == Some(ActorRole::Foreman)
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [actor] => Ok(actor),
+        [] => Err(UniqueForemanError::NotFound),
+        _ => Err(UniqueForemanError::NotUnique),
+    }
 }
 
 pub fn effective_role(group: &GroupDoc, actor_id: &str) -> Option<ActorRole> {

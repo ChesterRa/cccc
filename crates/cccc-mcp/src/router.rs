@@ -17,6 +17,9 @@ pub async fn call(
     if message_operation {
         arguments.insert("require_peer_insight".into(), Value::Bool(true));
     }
+    if name == "cccc_message_send" {
+        crate::remote_messages::apply_cross_group_default(&mut arguments)?;
+    }
     if matches!(name, "cccc_message_send" | "cccc_message_reply")
         && let Some(result) =
             crate::remote_messages::try_send(home, client, arguments.clone()).await

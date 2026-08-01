@@ -52,6 +52,51 @@ pub(super) fn normalize_chat_data(
     Ok(())
 }
 
+pub(super) fn apply_cross_group_recipient(
+    group: &GroupDoc,
+    data: &mut Map<String, Value>,
+) -> Result<(), OpError> {
+    if !data.contains_key("to") {
+        data.insert(
+            "to".into(),
+            json!([cccc_core::actors::CROSS_GROUP_FOREMAN_RECIPIENT]),
+        );
+    }
+    let Some(items) = data.get("to").and_then(Value::as_array) else {
+        return Err(OpError::new(
+            "invalid_recipient",
+            "cross-group to must be a non-empty string array",
+        ));
+    };
+    if items.is_empty()
+        || items
+            .iter()
+            .any(|item| !item.as_str().is_some_and(|value| !value.trim().is_empty()))
+    {
+        return Err(OpError::new(
+            "invalid_recipient",
+            "cross-group to must be a non-empty string array",
+        ));
+    }
+    let requested = items.len() == 1
+        && items[0].as_str() == Some(cccc_core::actors::CROSS_GROUP_FOREMAN_RECIPIENT);
+    if !requested {
+        return Ok(());
+    }
+    let actor =
+        cccc_core::actors::unique_available_foreman(group).map_err(|error| match error {
+            cccc_core::actors::UniqueForemanError::NotFound => {
+                OpError::new("foreman_not_found", "target group has no available foreman")
+            }
+            cccc_core::actors::UniqueForemanError::NotUnique => OpError::new(
+                "foreman_not_unique",
+                "target group has more than one available foreman",
+            ),
+        })?;
+    data.insert("to".into(), json!([actor.id]));
+    Ok(())
+}
+
 fn default_local_recipient(group: &GroupDoc, by: &str) -> &'static str {
     if actors::visible(group).any(|actor| actor.id == by) {
         "user"

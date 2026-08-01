@@ -6,7 +6,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use cccc_contracts::{DaemonRequest, utc_now};
-use cccc_core::{GroupStore, ledger};
+use cccc_core::{GroupStore, actors, ledger};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -607,6 +607,7 @@ async fn receive_delivery(
     }
     args.remove("source_by");
     args.remove("idempotency_key");
+    resolve_cross_group_foreman(&state.home, group_id, &mut args)?;
     if let Some(attachments) = args.get_mut("attachments").and_then(Value::as_array_mut) {
         for attachment in attachments {
             let Some(item) = attachment.as_object_mut() else {
@@ -821,6 +822,39 @@ fn default_remote_recipient(args: &mut Map<String, Value>) {
     if !has_remote_recipient(args.get("to")) {
         args.insert("to".into(), json!(["@foreman"]));
     }
+}
+
+fn resolve_cross_group_foreman(
+    home: &cccc_core::HomeLayout,
+    group_id: &str,
+    args: &mut Map<String, Value>,
+) -> Result<(), ApiError> {
+    let requested = args
+        .get("to")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items.len() == 1 && items[0].as_str() == Some(actors::CROSS_GROUP_FOREMAN_RECIPIENT)
+        });
+    if !requested {
+        return Ok(());
+    }
+    let group = GroupStore::new(home.clone())
+        .and_then(|store| store.load(group_id))
+        .map_err(io_error)?;
+    let foreman = actors::unique_available_foreman(&group).map_err(|error| match error {
+        actors::UniqueForemanError::NotFound => ApiError::bad_code(
+            "foreman_not_found",
+            "target group has no available foreman",
+            json!({}),
+        ),
+        actors::UniqueForemanError::NotUnique => ApiError::bad_code(
+            "foreman_not_unique",
+            "target group has more than one available foreman",
+            json!({}),
+        ),
+    })?;
+    args.insert("to".into(), json!([foreman.id]));
+    Ok(())
 }
 
 async fn send_via_remote_mcp(

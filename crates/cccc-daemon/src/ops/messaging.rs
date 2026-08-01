@@ -142,6 +142,7 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     delivery_data.remove("transport");
     delivery_data.remove("to_group_id");
+    super::messaging_recipients::apply_cross_group_recipient(&destination, &mut delivery_data)?;
     super::messaging_recipients::normalize_chat_data(
         &destination,
         &destination_by,

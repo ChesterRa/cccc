@@ -81,7 +81,7 @@ An active pairing is authorization, not proof of reachability. A healthy Rust tr
 
 ## Sending Messages
 
-Once paired, remote groups appear as explicit remote recipients in the Web composer and in MCP group resolution. Prefer sending to the remote foreman:
+Once paired, remote groups appear in the Web composer and in MCP group resolution. When `dst_group_id` is supplied and `to` is omitted, CCCC targets the remote group's unique available foreman. An explicit `to` always overrides that default; delivery fails closed when the target has no unique available foreman:
 
 ```text
 to: @foreman

@@ -4,7 +4,7 @@ use axum::routing::post;
 use axum::{Json, Router};
 use base64::Engine;
 use cccc_client::DaemonClient;
-use cccc_contracts::DaemonRequest;
+use cccc_contracts::{Actor, ActorRole, DaemonRequest};
 use cccc_core::integration_state;
 use cccc_core::{GroupStore, HomeLayout, Scope, ledger};
 use ed25519_dalek::{Signer, SigningKey};
@@ -21,6 +21,7 @@ async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
     let group = GroupStore::new(home.clone())
         .and_then(|store| store.create("target", ""))
         .expect("group");
+    seed_foreman(&home, &group.group_id);
     let signing = SigningKey::from_bytes(&[7; 32]);
     let public = signing.verifying_key().to_bytes();
     let peer_id = test_peer_id(&public);
@@ -96,7 +97,10 @@ async fn complete_client_initiated_delivery(socket: &mut TestSocket) {
     let response = next_socket_json(socket).await;
     assert_eq!(response["type"], "response");
     assert_eq!(response["response_to"], "client-request");
-    assert_eq!(response["result"]["receipt"]["status"], "delivered");
+    assert_eq!(
+        response["result"]["receipt"]["status"], "delivered",
+        "{response}"
+    );
 }
 
 async fn connect_signed_socket(
@@ -163,6 +167,19 @@ fn daemon_request(op: &str, args: Value) -> DaemonRequest {
     }
 }
 
+fn seed_foreman(home: &HomeLayout, group_id: &str) {
+    GroupStore::new(home.clone())
+        .and_then(|store| {
+            store.mutate(group_id, |group| {
+                let mut actor = Actor::new("foreman");
+                actor.role = Some(ActorRole::Foreman);
+                group.actors.push(actor);
+                Ok(())
+            })
+        })
+        .expect("seed foreman");
+}
+
 fn test_peer_id(public: &[u8; 32]) -> String {
     let mut protobuf = vec![0x08, 0x01, 0x12, 32];
     protobuf.extend_from_slice(public);
@@ -199,6 +216,7 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("receiver", "").expect("group");
+    seed_foreman(&home, &group.group_id);
     integration_state::global_update(&home, "group_bridge", |value| {
         *value = json!({
             "registrations":[{
@@ -334,6 +352,44 @@ async fn authenticated_delivery_is_idempotent_and_writes_remote_provenance() {
         b"evidence"
     );
     daemon.abort();
+}
+
+#[tokio::test]
+async fn remote_foreman_selector_fails_before_ledger_write_when_group_has_no_foreman() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .and_then(|store| store.create("receiver", ""))
+        .expect("group");
+    integration_state::global_update(&home, "group_bridge", |value| {
+        *value = json!({
+            "registrations":[{"registration_id":"greg_test","transport":"group_bridge_session",
+                "group_id":group.group_id,"remote_group_id":"g_sender",
+                "remote_peer_id":"peer_sender","credential":"bridge-secret","status":"active"}],
+            "trusts":[{"trust_id":"trust_test","registration_id":"greg_test",
+                "transport":"group_bridge_session","group_id":group.group_id,
+                "remote_group_id":"g_sender","remote_peer_id":"peer_sender",
+                "status":"active","access_level":"messages"}],
+            "deliveries":[]
+        });
+        Ok(())
+    })
+    .expect("bridge state");
+
+    let response = cccc_web::app(home.clone())
+        .oneshot(request(
+            &json!({"source_group_id":"g_sender","text":"must not append",
+                "to":["@foreman"],"idempotency_key":"missing-foreman"}),
+            Some("bridge-secret"),
+        ))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let events = GroupStore::new(home)
+        .and_then(|store| store.ledger_path(&group.group_id))
+        .and_then(|path| ledger::read_all(&path))
+        .expect("ledger");
+    assert!(events.is_empty());
 }
 
 #[tokio::test]
