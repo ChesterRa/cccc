@@ -509,8 +509,11 @@ mod tests {
         let output = history("g_submit_sequence", "peer1", None, 1024)
             .expect("history")
             .data;
+        let output_tokens = output.split_ascii_whitespace().collect::<Vec<_>>();
         assert!(
-            output.contains("78  0a  0a"),
+            output_tokens
+                .windows(3)
+                .any(|tokens| tokens == ["78", "0a", "0a"]),
             "unexpected output: {output:?}"
         );
         stop("g_submit_sequence", "peer1").expect("cleanup");
