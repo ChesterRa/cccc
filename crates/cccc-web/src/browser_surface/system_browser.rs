@@ -24,6 +24,7 @@ pub(super) struct SystemBrowserLaunch {
     height: u32,
     display: Option<VirtualDisplay>,
     headless: bool,
+    #[cfg(target_os = "macos")]
     managed_profile: Option<PathBuf>,
 }
 
@@ -46,6 +47,7 @@ impl SystemBrowserLaunch {
             height,
             display,
             headless,
+            #[cfg(target_os = "macos")]
             managed_profile: None,
         })
     }
@@ -491,6 +493,7 @@ mod tests {
             height: 900,
             display: None,
             headless: false,
+            #[cfg(target_os = "macos")]
             managed_profile: None,
         };
         let profile = Path::new("/tmp/cccc-web-model-profile");
@@ -527,6 +530,7 @@ mod tests {
             height: 900,
             display: None,
             headless: true,
+            #[cfg(target_os = "macos")]
             managed_profile: None,
         };
         let metadata = launch.metadata(42, Path::new("/tmp/profile"));

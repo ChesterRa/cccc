@@ -32,6 +32,40 @@ pub use readonly::WebMode;
 const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 const COMPONENT_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServeOutcome {
+    Stopped(SocketAddr),
+    RestartRequested,
+}
+
+#[derive(Clone)]
+pub(crate) struct LiveBinding {
+    host: String,
+    port: u16,
+}
+
+impl LiveBinding {
+    fn from_env() -> Self {
+        Self {
+            host: std::env::var("CCCC_WEB_EFFECTIVE_HOST")
+                .or_else(|_| std::env::var("CCCC_WEB_HOST"))
+                .unwrap_or_else(|_| "127.0.0.1".into()),
+            port: std::env::var("CCCC_WEB_EFFECTIVE_PORT")
+                .or_else(|_| std::env::var("CCCC_WEB_PORT"))
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(8848),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RestartBehavior {
+    Disabled,
+    ExitProcess,
+    ReturnToSupervisor,
+}
+
 #[derive(RustEmbed)]
 #[folder = "$CCCC_WEB_DIST_DIR/"]
 struct WebAssets;
@@ -46,6 +80,7 @@ pub(crate) struct AppState {
     im_workers: Arc<im_runtime::ImWorkerRegistry>,
     shutdown: broadcast::Sender<()>,
     restart: Option<Arc<RestartHandle>>,
+    live_binding: LiveBinding,
     web_mode: WebMode,
     exhibit_allow_terminal: bool,
 }
@@ -79,7 +114,7 @@ pub fn app(home: HomeLayout) -> Router {
 
 pub fn app_with_mode(home: HomeLayout, web_mode: WebMode) -> Router {
     let (shutdown, _) = broadcast::channel(1);
-    app_with_shutdown(home, shutdown, web_mode, None).0
+    app_with_shutdown(home, shutdown, web_mode, None, LiveBinding::from_env()).0
 }
 
 fn app_with_shutdown(
@@ -87,6 +122,7 @@ fn app_with_shutdown(
     shutdown: broadcast::Sender<()>,
     web_mode: WebMode,
     restart: Option<Arc<RestartHandle>>,
+    live_binding: LiveBinding,
 ) -> (
     Router,
     Arc<im_runtime::ImWorkerRegistry>,
@@ -118,6 +154,7 @@ fn app_with_shutdown(
         im_workers: Arc::clone(&im_workers),
         shutdown,
         restart,
+        live_binding,
         web_mode,
         exhibit_allow_terminal: readonly::exhibit_allow_terminal_from_env(),
     };
@@ -276,6 +313,51 @@ pub async fn serve_until_mode<F>(
 where
     F: Future<Output = ()> + Send + 'static,
 {
+    let restart_behavior = if environment_flag("CCCC_WEB_SUPERVISED") {
+        RestartBehavior::ExitProcess
+    } else {
+        RestartBehavior::Disabled
+    };
+    match serve_until_mode_with_restart(home, host, port, web_mode, shutdown, restart_behavior)
+        .await?
+    {
+        ServeOutcome::Stopped(address) => Ok(address),
+        ServeOutcome::RestartRequested => unreachable!("process restart exits before returning"),
+    }
+}
+
+pub async fn serve_until_mode_supervised<F>(
+    home: HomeLayout,
+    host: &str,
+    port: u16,
+    web_mode: WebMode,
+    shutdown: F,
+) -> Result<ServeOutcome>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
+    serve_until_mode_with_restart(
+        home,
+        host,
+        port,
+        web_mode,
+        shutdown,
+        RestartBehavior::ReturnToSupervisor,
+    )
+    .await
+}
+
+async fn serve_until_mode_with_restart<F>(
+    home: HomeLayout,
+    host: &str,
+    port: u16,
+    web_mode: WebMode,
+    shutdown: F,
+    restart_behavior: RestartBehavior,
+) -> Result<ServeOutcome>
+where
+    F: Future<Output = ()> + Send + 'static,
+{
     home.initialize()?;
     let listener = tokio::net::TcpListener::bind((host, port)).await?;
     let address = listener.local_addr()?;
@@ -283,12 +365,20 @@ where
     web_banner::print(host, address.port());
     tracing::info!(%address, "CCCC Rust Web listening");
     let (web_shutdown, _) = broadcast::channel(1);
-    let restart = environment_flag("CCCC_WEB_SUPERVISED")
+    let restart = (!matches!(restart_behavior, RestartBehavior::Disabled))
         .then(|| Arc::new(RestartHandle::new(web_shutdown.clone())));
     let mut restart_rx = web_shutdown.subscribe();
     let (shutdown_started, mut shutdown_started_rx) = tokio::sync::oneshot::channel();
-    let (app, im_workers, browser_surfaces) =
-        app_with_shutdown(home, web_shutdown.clone(), web_mode, restart.clone());
+    let (app, im_workers, browser_surfaces) = app_with_shutdown(
+        home,
+        web_shutdown.clone(),
+        web_mode,
+        restart.clone(),
+        LiveBinding {
+            host: host.to_owned(),
+            port: address.port(),
+        },
+    );
     let server = async move {
         axum::serve(listener, app)
             .with_graceful_shutdown(async move {
@@ -334,9 +424,13 @@ where
     }
     server_result?;
     if restart.as_ref().is_some_and(|handle| handle.requested()) {
-        std::process::exit(75);
+        match restart_behavior {
+            RestartBehavior::ExitProcess => std::process::exit(75),
+            RestartBehavior::ReturnToSupervisor => return Ok(ServeOutcome::RestartRequested),
+            RestartBehavior::Disabled => {}
+        }
     }
-    Ok(address)
+    Ok(ServeOutcome::Stopped(address))
 }
 
 fn environment_flag(name: &str) -> bool {
@@ -416,16 +510,22 @@ mod lifecycle_tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         home.initialize().expect("initialize");
         let (shutdown, _) = broadcast::channel(1);
-        let response = app_with_shutdown(home, shutdown.clone(), WebMode::Normal, None)
-            .0
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri("/api/v1/events/stream")
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("SSE response");
+        let response = app_with_shutdown(
+            home,
+            shutdown.clone(),
+            WebMode::Normal,
+            None,
+            LiveBinding::from_env(),
+        )
+        .0
+        .oneshot(
+            axum::http::Request::builder()
+                .uri("/api/v1/events/stream")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("SSE response");
         let mut body = response.into_body().into_data_stream();
         tokio::time::timeout(std::time::Duration::from_secs(1), body.next())
             .await
@@ -454,19 +554,25 @@ mod lifecycle_tests {
         std::fs::create_dir_all(events.parent().expect("events parent")).expect("headless dir");
         std::fs::write(&events, "").expect("events file");
         let (shutdown, _) = broadcast::channel(1);
-        let response = app_with_shutdown(home, shutdown.clone(), WebMode::Normal, None)
-            .0
-            .oneshot(
-                axum::http::Request::builder()
-                    .uri(format!(
-                        "/api/v1/groups/{}/headless/stream?replay=false",
-                        group.group_id
-                    ))
-                    .body(Body::empty())
-                    .expect("request"),
-            )
-            .await
-            .expect("headless SSE response");
+        let response = app_with_shutdown(
+            home,
+            shutdown.clone(),
+            WebMode::Normal,
+            None,
+            LiveBinding::from_env(),
+        )
+        .0
+        .oneshot(
+            axum::http::Request::builder()
+                .uri(format!(
+                    "/api/v1/groups/{}/headless/stream?replay=false",
+                    group.group_id
+                ))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("headless SSE response");
         let mut body = response.into_body().into_data_stream();
         shutdown.send(()).expect("active headless SSE subscriber");
         assert!(

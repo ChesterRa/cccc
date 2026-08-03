@@ -21,12 +21,8 @@ async fn main() -> Result<()> {
     let home = HomeLayout::resolve()?;
     let client = DaemonClient::new(home.clone());
     match cli.command {
-        None => {
-            let binding = web_launch::resolve(&home, cli.host.as_deref(), cli.port)?;
-            launch(home, binding, None).await
-        }
+        None => launch(home, cli.host, cli.port, None).await,
         Some(CommandKind::Web(args)) => {
-            let binding = web_launch::resolve(&home, cli.host.as_deref(), cli.port)?;
             let mode = if args.exhibit {
                 Some(cccc_web::WebMode::Exhibit)
             } else {
@@ -35,7 +31,7 @@ async fn main() -> Result<()> {
                     WebModeArg::Exhibit => cccc_web::WebMode::Exhibit,
                 })
             };
-            launch(home, binding, mode).await
+            launch(home, cli.host, cli.port, mode).await
         }
         Some(CommandKind::Mcp) => cccc_mcp::run_stdio(home).await,
         Some(CommandKind::Version) => {
@@ -105,10 +101,12 @@ fn web_endpoint(host: &str, port: u16) -> String {
 
 async fn launch(
     home: HomeLayout,
-    binding: web_launch::WebBinding,
+    host_override: Option<String>,
+    port_override: Option<u16>,
     web_mode: Option<cccc_web::WebMode>,
 ) -> Result<()> {
     home.initialize()?;
+    let mut binding = web_launch::resolve(&home, host_override.as_deref(), port_override)?;
     let client =
         DaemonClient::new(home.clone()).with_timeout(std::time::Duration::from_millis(250));
     let _instance = claim_web_instance(&home, &client).await?;
@@ -125,20 +123,40 @@ async fn launch(
         finish_embedded_daemon(&client, embedded_daemon.take()).await;
         bail!("embedded Rust daemon failed to start");
     }
-    let monitor = DaemonClient::new(home.clone()).with_timeout(std::time::Duration::from_secs(2));
-    let daemon_address = home.daemon_dir().join("ccccd.addr.json");
-    let shutdown = async move {
-        wait_for_daemon_loss(&monitor, &daemon_address).await;
-        eprintln!("CCCC daemon stopped; Web server closed");
-    };
     let shutdown_feedback = tokio::spawn(report_interrupt());
-    let result = match web_mode {
-        Some(mode) => {
-            cccc_web::serve_until_mode(home, &binding.host, binding.port, mode, shutdown).await
+    let mode = web_mode.unwrap_or_else(cccc_web::WebMode::from_env);
+    let result = loop {
+        let monitor =
+            DaemonClient::new(home.clone()).with_timeout(std::time::Duration::from_secs(2));
+        let daemon_address = home.daemon_dir().join("ccccd.addr.json");
+        let shutdown = async move {
+            wait_for_daemon_loss(&monitor, &daemon_address).await;
+            eprintln!("CCCC daemon stopped; Web server closed");
+        };
+        match cccc_web::serve_until_mode_supervised(
+            home.clone(),
+            &binding.host,
+            binding.port,
+            mode,
+            shutdown,
+        )
+        .await
+        {
+            Ok(cccc_web::ServeOutcome::Stopped(_)) => break Ok(()),
+            Ok(cccc_web::ServeOutcome::RestartRequested) => {
+                binding = match web_launch::resolve(&home, host_override.as_deref(), port_override)
+                {
+                    Ok(binding) => binding,
+                    Err(error) => break Err(error),
+                };
+                eprintln!(
+                    "[cccc] Applying saved Web binding: http://{}:{}",
+                    binding.host, binding.port
+                );
+            }
+            Err(error) => break Err(error),
         }
-        None => cccc_web::serve_until(home, &binding.host, binding.port, shutdown).await,
-    }
-    .map(|_| ());
+    };
     shutdown_feedback.abort();
     finish_embedded_daemon(&client, embedded_daemon.take()).await;
     result

@@ -45,6 +45,7 @@ fn test_state(home: HomeLayout) -> AppState {
         im_workers: Arc::new(im_runtime::ImWorkerRegistry::new(ledger_events)),
         shutdown: broadcast::channel(1).0,
         restart: None,
+        live_binding: crate::LiveBinding::from_env(),
         web_mode: crate::WebMode::Normal,
         exhibit_allow_terminal: false,
         home,
@@ -185,7 +186,7 @@ async fn reconnect_replays_actor_activity_changes_from_the_disconnect_window() {
             .expect("SSE replay timeout")
             .expect("SSE body ended")
             .expect("SSE body chunk");
-        replayed.push_str(&String::from_utf8(chunk.to_vec()).expect("SSE is UTF-8"));
+        replayed.push_str(std::str::from_utf8(&chunk).expect("SSE is UTF-8"));
     }
     assert!(replayed.contains(&missed_activity.id));
 
@@ -198,6 +199,6 @@ async fn reconnect_replays_actor_activity_changes_from_the_disconnect_window() {
             .expect("live SSE timeout")
             .expect("SSE body ended")
             .expect("SSE body chunk");
-        live.push_str(&String::from_utf8(chunk.to_vec()).expect("SSE is UTF-8"));
+        live.push_str(std::str::from_utf8(&chunk).expect("SSE is UTF-8"));
     }
 }

@@ -73,7 +73,7 @@ impl ProfileLease {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 pub(super) fn browser_pid_from_singleton(profile: &Path) -> Result<u32> {
     let target = std::fs::read_link(profile.join("SingletonLock"))?;
     let target = target.to_string_lossy();
@@ -82,7 +82,7 @@ pub(super) fn browser_pid_from_singleton(profile: &Path) -> Result<u32> {
         .with_context(|| format!("browser profile contains a malformed SingletonLock: {target}"))
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "macos")]
 pub(super) async fn terminate_browser_for_profile(profile: &Path) -> Result<bool> {
     let Ok(pid) = browser_pid_from_singleton(profile) else {
         return Ok(false);

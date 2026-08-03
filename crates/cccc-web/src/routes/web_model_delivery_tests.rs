@@ -37,8 +37,13 @@ async fn connector_activity_binding_and_browser_delivery_share_one_turn() {
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
     let (shutdown, _) = broadcast::channel(2);
-    let (app, _, surfaces) =
-        crate::app_with_shutdown(home.clone(), shutdown.clone(), crate::WebMode::Normal, None);
+    let (app, _, surfaces) = crate::app_with_shutdown(
+        home.clone(),
+        shutdown.clone(),
+        crate::WebMode::Normal,
+        None,
+        crate::LiveBinding::from_env(),
+    );
     let (page_url, page_server) = prompt_page().await;
     surfaces
         .open(

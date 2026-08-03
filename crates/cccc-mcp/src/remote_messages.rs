@@ -231,6 +231,24 @@ async fn deliver(
         .as_str()
         .map(str::trim)
         .filter(|value| !value.is_empty());
+    let session_error =
+        if endpoint.is_some() && credential.is_some() && session_route_ready(client, trust).await {
+            match deliver_via_session(
+                client,
+                args,
+                trust,
+                idempotency_key,
+                source_event_id,
+                reply_to_remote_event_id,
+            )
+            .await
+            {
+                Ok(receipt) => return Ok(receipt),
+                Err(error) => Some(error),
+            }
+        } else {
+            None
+        };
     let (Some(endpoint), Some(credential)) = (endpoint, credential) else {
         return deliver_via_session(
             client,
@@ -281,6 +299,22 @@ async fn deliver(
         payload.insert("reply_to".into(), json!(reply_to_remote_event_id));
     }
 
+    deliver_via_http(endpoint, credential, payload, idempotency_key)
+        .await
+        .map_err(|http_error| match session_error {
+            Some(session_error) => format!(
+                "live Group Bridge session failed: {session_error}; HTTP fallback failed: {http_error}"
+            ),
+            None => http_error,
+        })
+}
+
+async fn deliver_via_http(
+    endpoint: &str,
+    credential: &str,
+    payload: Map<String, Value>,
+    idempotency_key: &str,
+) -> Result<Value, String> {
     let http = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(std::time::Duration::from_secs(15))
@@ -332,17 +366,18 @@ async fn deliver(
 }
 
 async fn route_ready(client: &DaemonClient, trust: &Value) -> bool {
-    route_delivery_ready(trust, false) || {
-        let Some(args) = session_route_args(trust) else {
-            return false;
-        };
-        let session_ready = daemon(client, "group_bridge_session_ready", args)
-            .await
-            .ok()
-            .and_then(|result| result.get("ready").and_then(Value::as_bool))
-            .unwrap_or(false);
-        route_delivery_ready(trust, session_ready)
-    }
+    route_delivery_ready(trust, false) || session_route_ready(client, trust).await
+}
+
+async fn session_route_ready(client: &DaemonClient, trust: &Value) -> bool {
+    let Some(args) = session_route_args(trust) else {
+        return false;
+    };
+    daemon(client, "group_bridge_session_ready", args)
+        .await
+        .ok()
+        .and_then(|result| result.get("ready").and_then(Value::as_bool))
+        .unwrap_or(false)
 }
 
 fn route_delivery_ready(trust: &Value, session_ready: bool) -> bool {
@@ -818,7 +853,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn remote_message_uses_live_daemon_session_without_a_complete_direct_route() {
+    async fn remote_message_prefers_live_daemon_session_over_a_complete_direct_route() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
         let group = GroupStore::new(home.clone())
@@ -829,6 +864,7 @@ mod tests {
                 "registration_id":"session-registration","group_id":group.group_id,
                 "remote_group_id":"g_remote","remote_peer_id":"peer-remote",
                 "remote_endpoint":"https://direct.example.invalid",
+                "credential":"direct-credential",
                 "remote_access_level":"messages","status":"active"
             }]});
             Ok(())
@@ -898,6 +934,109 @@ mod tests {
             "group_bridge_session"
         );
         daemon_task.abort();
+    }
+
+    #[tokio::test]
+    async fn remote_message_falls_back_to_http_after_live_session_failure() {
+        let captured = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let remote =
+            Router::new()
+                .route(
+                    "/api/group-bridge/session/send",
+                    post(
+                        |State(captured): State<Arc<Mutex<Vec<Value>>>>,
+                         Json(body): Json<Value>| async move {
+                            captured.lock().expect("capture").push(body);
+                            Json(json!({"ok":true,"result":{"receipt":{
+                                "status":"delivered","remote_event_id":"remote-http-fallback"
+                            }}}))
+                        },
+                    ),
+                )
+                .with_state(captured.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let endpoint = format!("http://{}", listener.local_addr().expect("address"));
+        let remote_task = tokio::spawn(async move { axum::serve(listener, remote).await });
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+        let group = GroupStore::new(home.clone())
+            .and_then(|store| store.create("source", ""))
+            .expect("source group");
+        integration_state::global_update(&home, STORE_KEY, |state| {
+            *state = json!({"trusts":[{
+                "registration_id":"session-registration","group_id":group.group_id,
+                "remote_group_id":"g_remote","remote_peer_id":"peer-remote",
+                "remote_endpoint":endpoint,"credential":"direct-credential",
+                "remote_access_level":"messages","status":"active"
+            }]});
+            Ok(())
+        })
+        .expect("bridge state");
+        let daemon_home = home.clone();
+        let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+        wait_for_daemon(&home).await;
+        let client = DaemonClient::new(home.clone());
+        let route = json!({"group_id":group.group_id,"remote_group_id":"g_remote","remote_peer_id":"peer-remote"});
+        let opened = daemon(
+            &client,
+            "group_bridge_session_open",
+            route.as_object().cloned().expect("route"),
+        )
+        .await
+        .expect("open");
+
+        let send_home = home.clone();
+        let send_client = client.clone();
+        let group_id = group.group_id.clone();
+        let send_task = tokio::spawn(async move {
+            try_send(
+                &send_home,
+                &send_client,
+                json!({
+                    "group_id":group_id,"by":"helper","dst_group_id":"g_remote",
+                    "to":["user"],"text":"fall back after session failure"
+                })
+                .as_object()
+                .cloned()
+                .expect("send args"),
+            )
+            .await
+        });
+        let mut poll_args = route.as_object().cloned().expect("poll route");
+        poll_args.insert("generation".into(), opened["generation"].clone());
+        poll_args.insert("timeout_ms".into(), json!(1_000));
+        let polled = daemon(&client, "group_bridge_session_poll", poll_args)
+            .await
+            .expect("poll");
+        let mut complete_args = route.as_object().cloned().expect("complete route");
+        complete_args.insert("generation".into(), opened["generation"].clone());
+        complete_args.insert(
+            "response_to".into(),
+            polled["request"]["request_id"].clone(),
+        );
+        complete_args.insert(
+            "result".into(),
+            json!({"ok":false,"error":{"code":"peer_busy","message":"retry over HTTP"}}),
+        );
+        daemon(&client, "group_bridge_session_complete", complete_args)
+            .await
+            .expect("complete");
+
+        let result = send_task
+            .await
+            .expect("join")
+            .expect("remote classification")
+            .expect("HTTP fallback");
+        assert_eq!(
+            result["structuredContent"]["receipt"]["remote_event_id"],
+            "remote-http-fallback"
+        );
+        assert_eq!(captured.lock().expect("capture").len(), 1);
+        daemon_task.abort();
+        remote_task.abort();
     }
 
     #[tokio::test]
