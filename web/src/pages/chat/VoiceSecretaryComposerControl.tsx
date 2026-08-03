@@ -903,7 +903,7 @@ export function VoiceSecretaryComposerControl({
   const acquireDaemonVoiceRecordingLease = useCallback(
     async (
       groupId: string,
-      opts: { captureMode: string; recognitionBackend: string },
+      opts: { captureMode: string; recognitionBackend: string; dispatchTarget: string },
     ): Promise<VoiceRecordingLeaseConflict | null> => {
       const resp = await updateVoiceAssistantRecordingLease(groupId, {
         action: "acquire",
@@ -911,6 +911,7 @@ export function VoiceSecretaryComposerControl({
         ttlSeconds: VOICE_RECORDING_LEASE_TTL_SECONDS,
         captureMode: opts.captureMode,
         recognitionBackend: opts.recognitionBackend,
+        dispatchTarget: opts.dispatchTarget,
       });
       if (resp.ok) {
         voiceRecordingLeaseAcquiredRef.current = true;
@@ -3009,6 +3010,7 @@ export function VoiceSecretaryComposerControl({
       const activeLease = await acquireDaemonVoiceRecordingLease(gid, {
         captureMode,
         recognitionBackend: "browser_asr",
+        dispatchTarget: captureDispatchTarget,
       });
       if (!isActiveRecordingRun(runId)) return;
       if (activeLease) {
@@ -3374,6 +3376,7 @@ export function VoiceSecretaryComposerControl({
     acquireDaemonVoiceRecordingLease,
     beginRecordingRun,
     browserSpeechReady,
+    captureDispatchTarget,
     captureMode,
     clearBrowserSpeechMediaHandlers,
     clearBrowserSpeechRestartTimer,
@@ -3540,6 +3543,7 @@ export function VoiceSecretaryComposerControl({
       const activeLease = await acquireDaemonVoiceRecordingLease(gid, {
         captureMode: captureTransportMode,
         recognitionBackend: "assistant_service_local_asr",
+        dispatchTarget: captureDispatchTarget,
       });
       if (!isActiveRecordingRun(runId)) return;
       if (activeLease) {
@@ -3979,6 +3983,7 @@ export function VoiceSecretaryComposerControl({
         ttlSeconds: VOICE_RECORDING_LEASE_TTL_SECONDS,
         captureMode,
         recognitionBackend,
+        dispatchTarget: captureDispatchTarget,
       })
         .then((resp) => {
           if (leaseId !== voiceRecordingLeaseIdRef.current) return;
@@ -3991,7 +3996,7 @@ export function VoiceSecretaryComposerControl({
         .catch(() => undefined);
     }, 5000);
     return () => window.clearInterval(interval);
-  }, [captureMode, recognitionBackend, recording, selectedGroupId]);
+  }, [captureDispatchTarget, captureMode, recognitionBackend, recording, selectedGroupId]);
 
   const setAssistantEnabledForGroup = useCallback(
     async (nextEnabled: boolean) => {

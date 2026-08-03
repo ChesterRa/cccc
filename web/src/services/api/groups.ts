@@ -771,6 +771,7 @@ export async function updateVoiceAssistantRecordingLease(
     ttlSeconds?: number;
     captureMode?: string;
     recognitionBackend?: string;
+    dispatchTarget?: string;
     by?: string;
   },
 ): Promise<ApiResponse<AssistantVoiceRecordingLeaseResult>> {
@@ -788,6 +789,7 @@ export async function updateVoiceAssistantRecordingLease(
           : 30,
         capture_mode: String(payload.captureMode || "").trim(),
         recognition_backend: String(payload.recognitionBackend || "").trim(),
+        dispatch_target: String(payload.dispatchTarget || "").trim(),
         by: String(payload.by || "user").trim() || "user",
       }),
     },

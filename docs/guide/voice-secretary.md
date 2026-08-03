@@ -75,10 +75,10 @@ existing request; it never appends another Voice Secretary input. Empty or
 non-substantive refinements use `no_op=true`.
 
 When Voice Secretary is disabled, microphone input remains available as direct
-dictation. The configured Rust local ASR backend may still transcribe audio, but
-the browser appends the transcript straight to the composer without creating a
-secretary input, running prompt refinement, updating a document, or starting
-speaker diarization.
+dictation. Both Rust and Python local ASR paths accept the explicit `composer`
+dispatch target, but the browser appends the transcript straight to the composer
+without creating a secretary input, running prompt refinement, updating a
+document, persisting a secretary session, or starting speaker diarization.
 
 An active Rust local-ASR audio stream renews its recording lease. The browser's
 HTTP heartbeat remains a cross-tab status signal, but transient heartbeat

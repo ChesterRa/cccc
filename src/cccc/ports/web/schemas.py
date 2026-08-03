@@ -294,6 +294,7 @@ class AssistantVoiceRecordingLeaseRequest(BaseModel):
     ttl_seconds: int = Field(default=30)
     capture_mode: str = Field(default="")
     recognition_backend: str = Field(default="")
+    dispatch_target: str = Field(default="")
     by: str = Field(default="user")
 
 

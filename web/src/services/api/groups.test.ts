@@ -4,6 +4,7 @@ import {
   fetchVoiceAssistantStatus,
   fetchVoiceAssistantWorkspace,
   transcribeVoiceAssistantAudio,
+  updateVoiceAssistantRecordingLease,
 } from "./groups";
 import { fetchVoiceAssistantDocumentContent } from "./voiceSecretary";
 
@@ -121,5 +122,31 @@ describe("assistant API helpers", () => {
     expect(String(url)).toContain("by=user");
     expect(init?.body).toBe(audio);
     expect(new Headers(init?.headers).get("content-type")).toBe("audio/pcm");
+  });
+
+  it("sends the direct composer target with a recording lease", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: { group_id: "g1", action: "acquire", acquired: true, lease: {} },
+          }),
+        ),
+      );
+
+    await updateVoiceAssistantRecordingLease("g1", {
+      action: "acquire",
+      ownerId: "owner-1",
+      captureMode: "prompt",
+      recognitionBackend: "assistant_service_local_asr",
+      dispatchTarget: "composer",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] || [];
+    const body = JSON.parse(String(init?.body || "{}"));
+    expect(body.dispatch_target).toBe("composer");
   });
 });

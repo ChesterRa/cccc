@@ -337,6 +337,93 @@ class TestWebAssistantRoutes(unittest.TestCase):
                 os.environ["CCCC_VOICE_SECRETARY_STREAMING_PCM16_MAX_BYTES"] = old_limit
             cleanup()
 
+    def test_disabled_voice_secretary_direct_dictation_returns_text_without_artifacts(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        home, cleanup = self._with_home()
+        try:
+            class FakeStreamingSession:
+                def __init__(self) -> None:
+                    self.sent: list[dict] = []
+
+                async def send(self, payload: dict):
+                    self.sent.append(dict(payload))
+
+                async def receive(self, timeout=None):
+                    from cccc.daemon.assistants.sherpa_streaming_asr import SherpaStreamingAsrError
+
+                    if self.sent and self.sent[-1].get("type") == "stop":
+                        return {"type": "closed"}
+                    raise SherpaStreamingAsrError("asr_backend_timeout", "ASR worker timed out")
+
+                async def close(self):
+                    return None
+
+            fake_session = FakeStreamingSession()
+
+            async def fake_open_streaming_session(_model_id: str = ""):
+                return fake_session
+
+            async def fake_final_asr_event(*args, **kwargs):
+                return {"type": "final_asr_text", "text": "好"}
+
+            group_id = self._create_group()
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon), patch(
+                "cccc.ports.web.routes.groups.open_sherpa_streaming_session",
+                side_effect=fake_open_streaming_session,
+            ), patch(
+                "cccc.ports.web.routes.groups.build_final_asr_text_event",
+                side_effect=fake_final_asr_event,
+            ), patch("cccc.ports.web.routes.groups._write_voice_meeting_session") as write_session, patch(
+                "cccc.ports.web.routes.groups._write_voice_speaker_transcript_artifact"
+            ) as write_artifact:
+                with TestClient(create_app()) as client:
+                    lease_response = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/recording_lease",
+                        json={
+                            "action": "acquire",
+                            "owner_id": "direct-owner",
+                            "capture_mode": "prompt",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "dispatch_target": "composer",
+                        },
+                    )
+                    self.assertTrue(bool(lease_response.json().get("ok")), lease_response.json())
+                    with client.websocket_connect(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws"
+                    ) as ws:
+                        ws.send_json(
+                            {
+                                "type": "start",
+                                "seq": 1,
+                                "session_id": "direct-composer",
+                                "capture_mode": "prompt",
+                                "dispatch_target": "composer",
+                                "sample_rate": 16000,
+                                "language": "zh-CN",
+                            }
+                        )
+                        self.assertEqual(ws.receive_json().get("type"), "ready")
+                        ws.send_json(
+                            {
+                                "type": "audio",
+                                "seq": 2,
+                                "sample_rate": 16000,
+                                "audio_base64": base64.b64encode(b"\x01\x00" * 800).decode("ascii"),
+                            }
+                        )
+                        ws.send_json({"type": "stop", "seq": 3})
+                        final_event = ws.receive_json()
+                        closed_event = ws.receive_json()
+
+            self.assertEqual(final_event.get("text"), "好")
+            self.assertEqual(closed_event.get("type"), "closed")
+            write_session.assert_not_called()
+            write_artifact.assert_not_called()
+            self.assertFalse((Path(home) / "voice-secretary" / group_id / "direct-composer").exists())
+        finally:
+            cleanup()
+
     def test_web_voice_secretary_model_install_route_downloads_and_enables_managed_model(self) -> None:
         from cccc.ports.web.app import create_app
 
