@@ -222,7 +222,13 @@ async fn deliver(
     reply_to_remote_event_id: &str,
 ) -> Result<Value, String> {
     ensure_message_access(trust)?;
-    let source_group_id = required_text(args, "group_id")?;
+    let payload = build_delivery_payload(
+        home,
+        args,
+        idempotency_key,
+        source_event_id,
+        reply_to_remote_event_id,
+    )?;
     let endpoint = trust["remote_endpoint"]
         .as_str()
         .map(str::trim)
@@ -233,16 +239,7 @@ async fn deliver(
         .filter(|value| !value.is_empty());
     let session_error =
         if endpoint.is_some() && credential.is_some() && session_route_ready(client, trust).await {
-            match deliver_via_session(
-                client,
-                args,
-                trust,
-                idempotency_key,
-                source_event_id,
-                reply_to_remote_event_id,
-            )
-            .await
-            {
+            match deliver_via_session(client, trust, &payload, idempotency_key).await {
                 Ok(receipt) => return Ok(receipt),
                 Err(error) => Some(error),
             }
@@ -250,17 +247,28 @@ async fn deliver(
             None
         };
     let (Some(endpoint), Some(credential)) = (endpoint, credential) else {
-        return deliver_via_session(
-            client,
-            args,
-            trust,
-            idempotency_key,
-            source_event_id,
-            reply_to_remote_event_id,
-        )
-        .await;
+        return deliver_via_session(client, trust, &payload, idempotency_key).await;
     };
     let endpoint = endpoint.trim_end_matches('/');
+
+    deliver_via_http(endpoint, credential, payload, idempotency_key)
+        .await
+        .map_err(|http_error| match session_error {
+            Some(session_error) => format!(
+                "live Group Bridge session failed: {session_error}; HTTP fallback failed: {http_error}"
+            ),
+            None => http_error,
+        })
+}
+
+fn build_delivery_payload(
+    home: &HomeLayout,
+    args: &Map<String, Value>,
+    idempotency_key: &str,
+    source_event_id: &str,
+    reply_to_remote_event_id: &str,
+) -> Result<Map<String, Value>, String> {
+    let source_group_id = required_text(args, "group_id")?;
     let source_title = GroupStore::new(home.clone())
         .and_then(|store| store.load(source_group_id))
         .map(|group| group.title)
@@ -283,11 +291,13 @@ async fn deliver(
         payload.remove(key);
     }
     if args.get("insight").is_some() {
-        let remote_text = cccc_core::peer_insight::append_to_delivery(
-            text(args, "text").unwrap_or(""),
-            args.get("insight"),
+        payload.insert(
+            "text".into(),
+            Value::String(cccc_core::peer_insight::append_to_delivery(
+                text(args, "text").unwrap_or(""),
+                args.get("insight"),
+            )),
         );
-        payload.insert("text".into(), Value::String(remote_text));
     }
     payload.insert("source_group_id".into(), json!(source_group_id));
     payload.insert("src_group_id".into(), json!(source_group_id));
@@ -298,15 +308,7 @@ async fn deliver(
     if !reply_to_remote_event_id.is_empty() {
         payload.insert("reply_to".into(), json!(reply_to_remote_event_id));
     }
-
-    deliver_via_http(endpoint, credential, payload, idempotency_key)
-        .await
-        .map_err(|http_error| match session_error {
-            Some(session_error) => format!(
-                "live Group Bridge session failed: {session_error}; HTTP fallback failed: {http_error}"
-            ),
-            None => http_error,
-        })
+    Ok(payload)
 }
 
 async fn deliver_via_http(
@@ -395,47 +397,13 @@ fn route_delivery_ready(trust: &Value, session_ready: bool) -> bool {
 
 async fn deliver_via_session(
     client: &DaemonClient,
-    args: &Map<String, Value>,
     trust: &Value,
+    payload: &Map<String, Value>,
     idempotency_key: &str,
-    source_event_id: &str,
-    reply_to_remote_event_id: &str,
 ) -> Result<Value, String> {
     let mut route = session_route_args(trust)
         .ok_or("peer_session_unavailable: Group Bridge session route is incomplete")?;
-    let mut payload = args.clone();
-    for key in [
-        "group_id",
-        "dst_group_id",
-        "actor_id",
-        "by",
-        "reply_to",
-        "idempotency_key",
-        "client_id",
-    ] {
-        payload.remove(key);
-    }
-    payload.insert(
-        "source_group_id".into(),
-        json!(required_text(args, "group_id")?),
-    );
-    payload.insert(
-        "src_group_id".into(),
-        json!(required_text(args, "group_id")?),
-    );
-    payload.insert(
-        "source_by".into(),
-        json!(
-            text(args, "by")
-                .or_else(|| text(args, "actor_id"))
-                .unwrap_or("user")
-        ),
-    );
-    payload.insert("src_event_id".into(), json!(source_event_id));
-    if !reply_to_remote_event_id.is_empty() {
-        payload.insert("reply_to".into(), json!(reply_to_remote_event_id));
-    }
-    route.insert("payload".into(), Value::Object(payload));
+    route.insert("payload".into(), Value::Object(payload.clone()));
     route.insert("idempotency_key".into(), json!(idempotency_key));
     route.insert("timeout_ms".into(), json!(5_000));
     let result = daemon(client, "group_bridge_session_deliver", route).await?;
@@ -896,7 +864,8 @@ mod tests {
                 &send_client,
                 json!({
                     "group_id":group_id,"by":"helper","dst_group_id":"g_remote",
-                    "to":["user"],"text":"through the live reverse session"
+                    "to":["user"],"text":"through the live reverse session",
+                    "insight":"The live route must preserve the same peer perspective as HTTP delivery."
                 })
                 .as_object()
                 .cloned()
@@ -912,7 +881,14 @@ mod tests {
             .expect("poll");
         let frame = &polled["request"];
         assert_eq!(frame["op"], "remote_send");
-        assert_eq!(frame["payload"]["text"], "through the live reverse session");
+        assert!(frame["payload"]["text"].as_str().is_some_and(|text| {
+            text.starts_with("through the live reverse session")
+                && text.contains(cccc_core::peer_insight::PEER_PERSPECTIVE_AGENT_LABEL)
+                && text.contains(
+                    "The live route must preserve the same peer perspective as HTTP delivery.",
+                )
+        }));
+        assert!(frame["payload"].get("insight").is_none());
         let mut complete_args = route.as_object().cloned().expect("complete route");
         complete_args.insert("generation".into(), opened["generation"].clone());
         complete_args.insert("response_to".into(), frame["request_id"].clone());

@@ -144,8 +144,7 @@ async fn launch(
         {
             Ok(cccc_web::ServeOutcome::Stopped(_)) => break Ok(()),
             Ok(cccc_web::ServeOutcome::RestartRequested) => {
-                binding = match web_launch::resolve(&home, host_override.as_deref(), port_override)
-                {
+                binding = match web_launch::resolve(&home, None, None) {
                     Ok(binding) => binding,
                     Err(error) => break Err(error),
                 };

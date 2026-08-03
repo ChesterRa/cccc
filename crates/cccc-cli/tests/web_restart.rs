@@ -6,7 +6,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::test]
-async fn default_cli_applies_saved_web_binding_without_exiting() {
+async fn cli_override_is_replaced_by_saved_binding_when_apply_is_requested() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
@@ -15,8 +15,9 @@ async fn default_cli_applies_saved_web_binding_without_exiting() {
 
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_cccc"));
     command
+        .arg("--port")
+        .arg(live_port.to_string())
         .env("CCCC_HOME", home.root())
-        .env("CCCC_WEB_PORT", live_port.to_string())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
