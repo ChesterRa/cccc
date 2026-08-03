@@ -30,13 +30,6 @@ pub fn actor(value: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
-pub fn dispatch(value: &str) -> Option<&'static str> {
-    Some(match value {
-        "assign" | "dispatch" => "elastic_dispatch",
-        "release" => "elastic_release",
-        _ => return None,
-    })
-}
 pub fn memory(value: &str) -> Option<&'static str> {
     Some(match value {
         "layout_get" => "memory_reme_layout_get",

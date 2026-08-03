@@ -7,7 +7,7 @@ pub const PEER_PERSPECTIVE_AGENT_LABEL: &str = "[Peer higher-order perspective -
 
 pub const TEAM_MODE_SEED: &str = "- Work as a thinking teammate, not a delivery endpoint. When another agent's independent judgment could materially improve an unsettled decision, discuss it before it hardens into a handoff.";
 
-pub const FOREMAN_TEAM_MODE_SEED: &str = "- Keep independent ready work parallel: use `cccc_dispatch` to reuse an idle peer or create an elastic peer when existing peers are busy. Keep sequential or cheaper work local; integrate results, then release elastic peers only after accepting their completed task.";
+pub const FOREMAN_TEAM_MODE_SEED: &str = "- Keep independent ready work parallel: assign durable tasks with `cccc_task`, notify the responsible peer with `cccc_message_send`, and integrate accepted results. Keep sequential or cheaper work local.";
 
 pub const POST_MESSAGE_NUDGE: &str = "This message operation is complete for this call. Step outside its mental track now. Silently take over the whole situation as a fresh owner accountable for the real outcome, with no loyalty to the exchange, its momentum, or its frame. Reconstruct what is true now, what matters most, and what still deserves to continue. If this exchange carried Insight but it stayed beside the message instead of rising above its working level, no higher-order perspective entered the exchange. Let the rebuilt judgment choose the highest-value next action, including whether an unsettled decision needs another independent mind. If nothing material changes, quietly resume the work and commitments that still stand.";
 
@@ -197,9 +197,9 @@ mod tests {
     }
 
     #[test]
-    fn foreman_elastic_pool_seed_stays_compact() {
-        assert!(FOREMAN_TEAM_MODE_SEED.contains("cccc_dispatch"));
-        assert!(FOREMAN_TEAM_MODE_SEED.contains("release elastic peers"));
+    fn foreman_team_mode_seed_stays_compact() {
+        assert!(FOREMAN_TEAM_MODE_SEED.contains("cccc_task"));
+        assert!(FOREMAN_TEAM_MODE_SEED.contains("cccc_message_send"));
         assert!(FOREMAN_TEAM_MODE_SEED.split_whitespace().count() <= 45);
     }
 }

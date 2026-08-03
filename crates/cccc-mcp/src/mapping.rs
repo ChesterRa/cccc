@@ -61,12 +61,6 @@ pub fn daemon_call(
         }
         "cccc_group" => return action(args, actions::group),
         "cccc_actor" => return action(args, actions::actor),
-        "cccc_dispatch" => {
-            if args.contains_key("dst_group_id") {
-                return Err("cccc_dispatch only supports the current local group".into());
-            }
-            return action(args, actions::dispatch);
-        }
         "cccc_coordination" => return context_action(args, "coordination"),
         "cccc_task" => return context_action(args, "task"),
         "cccc_agent_state" => return context_action(args, "agent_state"),
@@ -279,40 +273,6 @@ mod tests {
             let (_, args) = daemon_call(tool, args).expect("mapping");
             assert_eq!(args["by"], "backend", "tool={tool}");
         }
-    }
-
-    #[test]
-    fn elastic_dispatch_actions_map_to_daemon_operations() {
-        let assign = daemon_call(
-            "cccc_dispatch",
-            json!({"action":"assign","text":"work"})
-                .as_object()
-                .cloned()
-                .expect("args"),
-        )
-        .expect("assign mapping");
-        assert_eq!(assign.0, "elastic_dispatch");
-        let release = daemon_call(
-            "cccc_dispatch",
-            json!({"action":"release","actor_id":"elastic-1","task_id":"T001"})
-                .as_object()
-                .cloned()
-                .expect("args"),
-        )
-        .expect("release mapping");
-        assert_eq!(release.0, "elastic_release");
-
-        let cross_group = daemon_call(
-            "cccc_dispatch",
-            json!({"action":"assign","dst_group_id":"g_remote","text":"work"})
-                .as_object()
-                .cloned()
-                .expect("args"),
-        );
-        assert_eq!(
-            cross_group.expect_err("cross-group dispatch must fail"),
-            "cccc_dispatch only supports the current local group"
-        );
     }
 
     #[test]

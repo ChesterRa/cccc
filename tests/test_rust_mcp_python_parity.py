@@ -7,7 +7,7 @@ from pathlib import Path
 from cccc.ports.mcp.toolspecs import MCP_TOOLS
 
 
-RUST_ONLY_TOOLS = {"cccc_dispatch"}
+RUST_ONLY_TOOLS: set[str] = set()
 
 
 class TestRustMcpPythonParity(unittest.TestCase):

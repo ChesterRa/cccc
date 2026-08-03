@@ -4,8 +4,7 @@ pub mod ipc;
 pub mod message;
 
 pub use actor::{
-    Actor, ActorRole, ActorRuntime, ActorSubmit, ElasticActorLease, GroupState, RunnerKind,
-    RuntimeStateSource,
+    Actor, ActorRole, ActorRuntime, ActorSubmit, GroupState, RunnerKind, RuntimeStateSource,
 };
 pub use event::Event;
 pub use ipc::{DaemonAddress, DaemonError, DaemonRequest, DaemonResponse, Transport};

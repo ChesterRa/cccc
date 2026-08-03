@@ -22,7 +22,6 @@ mod codex_mcp;
 mod context;
 mod context_projection;
 mod diagnostics;
-mod elastic_dispatch;
 mod group_bridge;
 mod group_copy;
 mod group_create_rollback;
@@ -84,7 +83,6 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Result<Option<OpRes
         presentation::handle,
         profiles::handle,
         diagnostics::handle,
-        elastic_dispatch::handle,
         remote_access::handle,
         runtime_state::handle,
         maintenance::handle,

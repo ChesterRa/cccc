@@ -94,20 +94,6 @@ fn authorize_tool(
             "{name} is only available to the voice-secretary actor"
         ));
     }
-    if name == "cccc_dispatch" && !matches!(actor_id, "user" | "system") {
-        let group_id = arguments
-            .get("group_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "group_id is required".to_owned())?;
-        let group = cccc_core::GroupStore::new(home.clone())
-            .and_then(|store| store.load(group_id))
-            .map_err(|error| error.to_string())?;
-        if cccc_core::actors::effective_role(&group, actor_id)
-            != Some(cccc_contracts::ActorRole::Foreman)
-        {
-            return Err("cccc_dispatch is only available to the foreman".into());
-        }
-    }
     if !matches!(
         name,
         "cccc_capability_import" | "cccc_capability_block" | "cccc_capability_uninstall"
@@ -353,9 +339,7 @@ fn is_message_operation(name: &str, arguments: &Map<String, Value>) -> bool {
     matches!(
         name,
         "cccc_message_send" | "cccc_tracked_send" | "cccc_message_reply"
-    ) || (name == "cccc_dispatch"
-        && arguments.get("action").and_then(Value::as_str) != Some("release"))
-        || (name == "cccc_file" && arguments.get("action").and_then(Value::as_str) == Some("send"))
+    ) || (name == "cccc_file" && arguments.get("action").and_then(Value::as_str) == Some("send"))
 }
 
 fn with_post_message_nudge(mut result: Value) -> Value {
@@ -440,20 +424,6 @@ mod tests {
                 .as_object()
                 .cloned()
                 .expect("read args")
-        ));
-        assert!(is_message_operation(
-            "cccc_dispatch",
-            &json!({"action":"assign"})
-                .as_object()
-                .cloned()
-                .expect("assign args")
-        ));
-        assert!(!is_message_operation(
-            "cccc_dispatch",
-            &json!({"action":"release"})
-                .as_object()
-                .cloned()
-                .expect("release args")
         ));
         let result = with_post_message_nudge(super::tool_result(json!({"event":{}})));
         assert_eq!(
