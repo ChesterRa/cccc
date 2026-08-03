@@ -6249,7 +6249,7 @@ export function VoiceSecretaryComposerControl({
                 {directDictationLabel}
               </span>
             ) : null}
-            {captureMode === "prompt" ? (
+            {assistantEnabled && captureMode === "prompt" ? (
               <button
                 type="button"
                 className={classNames(
@@ -6276,94 +6276,96 @@ export function VoiceSecretaryComposerControl({
                 <SparklesIcon size={15} aria-hidden="true" />
               </button>
             ) : null}
-            <Popover open={showAssistantLanguageMenu} onOpenChange={setShowAssistantLanguageMenu}>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className={classNames(
-                    "inline-flex h-11 shrink-0 items-center justify-center rounded-md px-1.5 text-[10px] font-bold tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8",
-                    isDark
-                      ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
-                      : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
-                  )}
-                  disabled={
-                    controlDisabled ||
-                    !assistantEnabled ||
-                    recording ||
-                    recordingStarting ||
-                    recognitionLanguageSaving
-                  }
-                  title={
-                    recording
-                      ? recordingSettingsLockedTitle
-                      : `${t("voiceSecretaryLanguage", { defaultValue: "Language" })}: ${configuredRecognitionLanguageLabel}`
-                  }
-                  aria-label={`${t("voiceSecretaryLanguage", { defaultValue: "Language" })}: ${configuredRecognitionLanguageLabel}`}
-                >
-                  {configuredRecognitionLanguageShortLabel}
-                </button>
-              </PopoverTrigger>
-              <PopoverContent align="start" sideOffset={6} className="w-52 rounded-2xl p-1.5">
-                <div
-                  role="menu"
-                  aria-label={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
-                >
-                  {voiceLanguageOptions.map((optionValue) => {
-                    const active = optionValue === configuredRecognitionLanguage;
-                    return (
-                      <button
-                        key={optionValue}
-                        type="button"
-                        className={classNames(
-                          "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors",
-                          active
-                            ? isDark
-                              ? "bg-white/10"
-                              : "bg-black/5"
-                            : isDark
-                              ? "hover:bg-white/5"
-                              : "hover:bg-black/5",
-                        )}
-                        role="menuitemradio"
-                        aria-checked={active}
-                        onPointerDown={(event) => {
-                          event.preventDefault();
-                          setShowAssistantLanguageMenu(false);
-                          void updateRecognitionLanguage(optionValue);
-                        }}
-                      >
-                        <span
+            {assistantEnabled ? (
+              <Popover open={showAssistantLanguageMenu} onOpenChange={setShowAssistantLanguageMenu}>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className={classNames(
+                      "inline-flex h-11 shrink-0 items-center justify-center rounded-md px-1.5 text-[10px] font-bold tracking-[0.08em] transition-colors disabled:cursor-not-allowed disabled:opacity-50 sm:h-8",
+                      isDark
+                        ? "text-[var(--color-text-secondary)] hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+                        : "text-[var(--color-text-secondary)] hover:bg-black/5 hover:text-gray-900",
+                    )}
+                    disabled={
+                      controlDisabled ||
+                      !assistantEnabled ||
+                      recording ||
+                      recordingStarting ||
+                      recognitionLanguageSaving
+                    }
+                    title={
+                      recording
+                        ? recordingSettingsLockedTitle
+                        : `${t("voiceSecretaryLanguage", { defaultValue: "Language" })}: ${configuredRecognitionLanguageLabel}`
+                    }
+                    aria-label={`${t("voiceSecretaryLanguage", { defaultValue: "Language" })}: ${configuredRecognitionLanguageLabel}`}
+                  >
+                    {configuredRecognitionLanguageShortLabel}
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent align="start" sideOffset={6} className="w-52 rounded-2xl p-1.5">
+                  <div
+                    role="menu"
+                    aria-label={t("voiceSecretaryLanguage", { defaultValue: "Language" })}
+                  >
+                    {voiceLanguageOptions.map((optionValue) => {
+                      const active = optionValue === configuredRecognitionLanguage;
+                      return (
+                        <button
+                          key={optionValue}
+                          type="button"
                           className={classNames(
-                            "flex h-6 w-8 shrink-0 items-center justify-center rounded-md text-[10px] font-bold tracking-[0.08em]",
-                            isDark ? "bg-white/10 text-slate-200" : "bg-gray-100 text-gray-700",
+                            "flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left transition-colors",
+                            active
+                              ? isDark
+                                ? "bg-white/10"
+                                : "bg-black/5"
+                              : isDark
+                                ? "hover:bg-white/5"
+                                : "hover:bg-black/5",
                           )}
+                          role="menuitemradio"
+                          aria-checked={active}
+                          onPointerDown={(event) => {
+                            event.preventDefault();
+                            setShowAssistantLanguageMenu(false);
+                            void updateRecognitionLanguage(optionValue);
+                          }}
                         >
-                          {voiceLanguageShortLabel(optionValue)}
-                        </span>
-                        <span
-                          className={classNames(
-                            "min-w-0 flex-1 truncate text-sm font-semibold",
-                            isDark ? "text-slate-100" : "text-gray-900",
-                          )}
-                        >
-                          {voiceLanguageLabel(optionValue)}
-                        </span>
-                        {active ? (
                           <span
                             className={classNames(
-                              "text-xs font-semibold",
-                              isDark ? "text-slate-200" : "text-[rgb(35,36,37)]",
+                              "flex h-6 w-8 shrink-0 items-center justify-center rounded-md text-[10px] font-bold tracking-[0.08em]",
+                              isDark ? "bg-white/10 text-slate-200" : "bg-gray-100 text-gray-700",
                             )}
                           >
-                            ✓
+                            {voiceLanguageShortLabel(optionValue)}
                           </span>
-                        ) : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              </PopoverContent>
-            </Popover>
+                          <span
+                            className={classNames(
+                              "min-w-0 flex-1 truncate text-sm font-semibold",
+                              isDark ? "text-slate-100" : "text-gray-900",
+                            )}
+                          >
+                            {voiceLanguageLabel(optionValue)}
+                          </span>
+                          {active ? (
+                            <span
+                              className={classNames(
+                                "text-xs font-semibold",
+                                isDark ? "text-slate-200" : "text-[rgb(35,36,37)]",
+                              )}
+                            >
+                              ✓
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            ) : null}
             <button
               type="button"
               className={classNames(
