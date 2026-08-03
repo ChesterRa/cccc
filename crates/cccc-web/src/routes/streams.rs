@@ -14,6 +14,11 @@ use crate::api::ApiError;
 
 const GLOBAL_EVENT_NAME: &str = "event";
 const GROUP_LEDGER_EVENT_NAME: &str = "ledger";
+const ACTOR_ACTIVITY_EVENT_KIND: &str = "actor.activity";
+
+fn should_replay_group_event(event: &cccc_contracts::Event) -> bool {
+    event.kind != ACTOR_ACTIVITY_EVENT_KIND
+}
 
 fn sse_event(name: &'static str, event: cccc_contracts::Event) -> Event {
     let event_id = event.id.clone();
@@ -96,7 +101,9 @@ async fn group_events(
                 for event in page {
                     cursor.clone_from(&event.id);
                     remember_replayed(&mut replayed, &mut replayed_order, &event.id);
-                    yield Ok(sse_event(GROUP_LEDGER_EVENT_NAME, event));
+                    if should_replay_group_event(&event) {
+                        yield Ok(sse_event(GROUP_LEDGER_EVENT_NAME, event));
+                    }
                 }
                 if count < 2048 { break; }
             }
@@ -132,7 +139,9 @@ async fn group_events(
                         for event in page {
                             cursor.clone_from(&event.id);
                             remember_replayed(&mut replayed, &mut replayed_order, &event.id);
-                            yield Ok(sse_event(GROUP_LEDGER_EVENT_NAME, event));
+                            if should_replay_group_event(&event) {
+                                yield Ok(sse_event(GROUP_LEDGER_EVENT_NAME, event));
+                            }
                         }
                         if count < 2048 { break; }
                     }

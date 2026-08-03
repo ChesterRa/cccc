@@ -151,7 +151,7 @@ async fn initial_replay_suppresses_events_already_queued_by_the_subscription() {
 }
 
 #[tokio::test]
-async fn reconnect_replays_actor_activity_changes_from_the_disconnect_window() {
+async fn reconnect_skips_stale_actor_activity_but_keeps_durable_and_live_events() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let store = GroupStore::new(home.clone()).expect("store");
@@ -188,7 +188,7 @@ async fn reconnect_replays_actor_activity_changes_from_the_disconnect_window() {
             .expect("SSE body chunk");
         replayed.push_str(std::str::from_utf8(&chunk).expect("SSE is UTF-8"));
     }
-    assert!(replayed.contains(&missed_activity.id));
+    assert!(!replayed.contains(&missed_activity.id));
 
     let live_activity = cccc_contracts::Event::new("actor.activity", &group.group_id);
     ledger::append(&path, &live_activity).expect("live activity");
