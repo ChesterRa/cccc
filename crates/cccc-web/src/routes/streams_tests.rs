@@ -148,3 +148,56 @@ async fn initial_replay_suppresses_events_already_queued_by_the_subscription() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn reconnect_replays_actor_activity_changes_from_the_disconnect_window() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("SSE activity replay", "").expect("group");
+    let path = store.ledger_path(&group.group_id).expect("ledger path");
+    let cursor = cccc_contracts::Event::new("chat.message", &group.group_id);
+    ledger::append(&path, &cursor).expect("cursor");
+
+    let missed_activity = cccc_contracts::Event::new("actor.activity", &group.group_id);
+    ledger::append(&path, &missed_activity).expect("missed activity");
+    let durable_event = cccc_contracts::Event::new("chat.message", &group.group_id);
+    ledger::append(&path, &durable_event).expect("durable event");
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("last-event-id"),
+        cursor.id.parse().expect("header value"),
+    );
+    let response = group_events(
+        State(test_state(home)),
+        Path(group.group_id.clone()),
+        headers,
+    )
+    .await
+    .expect("group stream")
+    .into_response();
+    let mut body = response.into_body().into_data_stream();
+    let mut replayed = String::new();
+    while !replayed.contains(&durable_event.id) {
+        let chunk = tokio::time::timeout(Duration::from_secs(2), body.next())
+            .await
+            .expect("SSE replay timeout")
+            .expect("SSE body ended")
+            .expect("SSE body chunk");
+        replayed.push_str(&String::from_utf8(chunk.to_vec()).expect("SSE is UTF-8"));
+    }
+    assert!(replayed.contains(&missed_activity.id));
+
+    let live_activity = cccc_contracts::Event::new("actor.activity", &group.group_id);
+    ledger::append(&path, &live_activity).expect("live activity");
+    let mut live = String::new();
+    while !live.contains(&live_activity.id) {
+        let chunk = tokio::time::timeout(Duration::from_secs(2), body.next())
+            .await
+            .expect("live SSE timeout")
+            .expect("SSE body ended")
+            .expect("SSE body chunk");
+        live.push_str(&String::from_utf8(chunk.to_vec()).expect("SSE is UTF-8"));
+    }
+}
