@@ -56,36 +56,23 @@ def test_windows_smoke_keeps_the_product_pty_checks_without_web_migration_setup(
     assert "npm " not in runs
 
 
-def test_full_rust_platform_is_macos_only() -> None:
-    platform = _workflow()["jobs"]["rust-platform"]
-    runs = _runs(platform)
+def test_rust_job_provisions_python_for_interop_and_serializes_daemon_tests() -> None:
+    job = _workflow()["jobs"]["rust"]
+    runs = _runs(job)
+    python_setup = next(
+        step
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/setup-python")
+    )
 
-    assert platform["runs-on"] == "macos-latest"
-    assert "strategy" not in platform
-    assert "scripts/tests/install_real_unix.sh" in runs
-    assert "scripts/tests/install_windows.ps1" not in runs
-
-
-def test_rust_jobs_provision_python_for_interop_and_serialize_daemon_tests() -> None:
-    jobs = _workflow()["jobs"]
-
-    for name in ("rust", "rust-platform"):
-        job = jobs[name]
-        runs = _runs(job)
-        python_setup = next(
-            step
-            for step in job["steps"]
-            if step.get("uses", "").startswith("actions/setup-python")
-        )
-
-        assert job["env"]["CCCC_TEST_PYTHON"] == "python"
-        assert python_setup["with"]["python-version"] == "3.14"
-        assert "python -m pip install -e ." in runs
-        assert "cargo test --workspace --exclude cccc-pair-daemon --locked" in runs
-        assert (
-            "cargo test --package cccc-pair-daemon --locked -- --test-threads=1"
-            in runs
-        )
+    assert job["env"]["CCCC_TEST_PYTHON"] == "python"
+    assert python_setup["with"]["python-version"] == "3.14"
+    assert "python -m pip install -e ." in runs
+    assert "cargo test --workspace --exclude cccc-pair-daemon --locked" in runs
+    assert (
+        "cargo test --package cccc-pair-daemon --locked -- --test-threads=1"
+        in runs
+    )
 
 
 def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance() -> None:

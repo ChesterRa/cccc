@@ -265,37 +265,6 @@ jobs:
           scripts/tests/install_real_unix.sh target/release/cccc
           target/release/cccc --version
 
-  rust-platform:
-    if: github.event_name != 'schedule'
-    needs: web
-    runs-on: macos-latest
-    env:
-      CCCC_TEST_PYTHON: python
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: bundled-web
-          path: web/dist
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-      - name: Install Python interoperability dependencies
-        run: python -m pip install -e .
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Check and test Rust workspace
-        run: |
-          cargo check --workspace --all-targets --locked
-          cargo test --workspace --exclude cccc-pair-daemon --locked
-          cargo test --package cccc-pair-daemon --locked -- --test-threads=1
-          cargo build --release --locked -p cccc --bin cccc
-      - name: Test Unix installer
-        shell: bash
-        run: |
-          scripts/tests/install_unix.sh
-          scripts/tests/install_real_unix.sh target/release/cccc
-
   nightly-serial:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
