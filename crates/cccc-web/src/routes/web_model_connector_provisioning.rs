@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::extract::{Path, State};
 use cccc_contracts::{ActorRuntime, utc_now};
-use cccc_core::GroupStore;
+use cccc_core::{GroupStore, settings};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -14,8 +14,9 @@ use super::web_model_connectors::required;
 pub(super) async fn list(State(state): State<AppState>) -> ApiResult {
     let mut connectors = store::load(&state)?;
     connectors.sort_by(|a, b| b["created_at"].as_str().cmp(&a["created_at"].as_str()));
+    let base_url = connector_base_url(&state)?;
     Ok(success(json!({
-        "connectors": connectors.iter().map(public).collect::<Vec<_>>()
+        "connectors": connectors.iter().map(|item| public(item, &base_url)).collect::<Vec<_>>()
     })))
 }
 
@@ -58,20 +59,43 @@ pub(super) async fn create(State(state): State<AppState>, Json(body): Json<Value
         "revoked":false
     });
     let replaced = store::replace_active(&state, &connector)?;
+    let base_url = connector_base_url(&state)?;
     Ok(success(json!({
-        "connector": public(&connector),
+        "connector": public(&connector, &base_url),
         "secret": secret,
         "replaced_connector_ids": replaced
     })))
 }
 
-fn public(item: &Value) -> Value {
+fn connector_base_url(state: &AppState) -> Result<String, ApiError> {
+    let settings = settings::load(&state.home).map_err(store::io_error)?;
+    let mut base = settings
+        .remote_access
+        .get("web_public_url")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .trim_end_matches('/')
+        .to_owned();
+    if base.ends_with("/ui") {
+        base.truncate(base.len() - "/ui".len());
+    }
+    Ok(base)
+}
+
+fn public(item: &Value, base_url: &str) -> Value {
     let mut result = item.as_object().cloned().unwrap_or_default();
     let secret = result
         .remove("secret")
         .and_then(|value| value.as_str().map(str::to_owned));
     let id = item["connector_id"].as_str().unwrap_or("");
     let secret_value = secret.as_deref().unwrap_or_default();
+    let connector_path = format!("/mcp/web-model/{id}");
+    let connector_url = if base_url.is_empty() {
+        connector_path
+    } else {
+        format!("{base_url}{connector_path}")
+    };
     result.insert("secret_available".into(), Value::Bool(secret.is_some()));
     result.insert(
         "secret_preview".into(),
@@ -79,17 +103,14 @@ fn public(item: &Value) -> Value {
             format!("...{}", &value[value.len().saturating_sub(6)..])
         })),
     );
-    result.insert(
-        "connector_url".into(),
-        json!(format!("/mcp/web-model/{id}")),
-    );
+    result.insert("connector_url".into(), json!(connector_url));
     result.insert(
         "connector_url_path_token".into(),
-        json!(format!("/mcp/web-model/{id}/token/{secret_value}")),
+        json!(format!("{connector_url}/token/{secret_value}")),
     );
     result.insert(
         "connector_url_with_token".into(),
-        json!(format!("/mcp/web-model/{id}?token={secret_value}")),
+        json!(format!("{connector_url}?token={secret_value}")),
     );
     Value::Object(result)
 }
@@ -102,4 +123,31 @@ pub(super) async fn revoke(
         return Err(ApiError::not_found("web-model connector not found"));
     }
     Ok(success(json!({"revoked":true,"connector_id":connector_id})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_connector_uses_configured_public_base_url() {
+        let connector = json!({
+            "connector_id":"wmc_test",
+            "secret":"secret-value",
+            "group_id":"g_test",
+            "actor_id":"web1"
+        });
+
+        let public = public(&connector, "https://cccc.example");
+
+        assert_eq!(
+            public["connector_url_with_token"],
+            json!("https://cccc.example/mcp/web-model/wmc_test?token=secret-value")
+        );
+        assert_eq!(
+            public["connector_url_path_token"],
+            json!("https://cccc.example/mcp/web-model/wmc_test/token/secret-value")
+        );
+        assert!(public.get("secret").is_none());
+    }
 }

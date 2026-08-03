@@ -26,13 +26,13 @@ fn main() {
         .expect("cccc-web must be inside the workspace crates directory");
     let web = workspace.join("web");
     if !web.join("package.json").is_file() {
-        let assets = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR must be set"))
-            .join("web-dist");
-        fs::create_dir_all(&assets).expect("failed to create the empty Web assets directory");
-        export_assets_dir(&assets);
-        println!(
-            "cargo:warning=workspace Web sources not found; building cccc-web without embedded UI"
+        let assets = manifest_dir.join("assets/web-dist");
+        assert!(
+            assets.join("index.html").is_file(),
+            "packaged Web assets are missing from {}",
+            assets.display()
         );
+        export_assets_dir(&assets);
         return;
     }
     for input in WEB_INPUTS {

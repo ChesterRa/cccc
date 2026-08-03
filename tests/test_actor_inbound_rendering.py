@@ -1,5 +1,8 @@
 from cccc.daemon.messaging.chat_ops import _build_headless_delivery_text
-from cccc.daemon.messaging.actor_turn_rendering import build_actor_delivery_text, render_group_bridge_route_ref
+from cccc.daemon.messaging.actor_turn_rendering import (
+    build_actor_delivery_text,
+    render_group_bridge_route_ref,
+)
 from cccc.daemon.messaging.delivery import PendingMessage, render_single_message
 from cccc.daemon.messaging.inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
 
@@ -145,6 +148,29 @@ def test_actor_delivery_text_renders_group_bridge_route_refs() -> None:
     assert "endpoint: https://remote.example" not in text
     assert "peer_id: peer_remote" not in text
     assert "trust_id: ptrust_1" not in text
+
+
+def test_actor_delivery_text_renders_local_group_route_as_ai_owned_context() -> None:
+    text = build_actor_delivery_text(
+        text="请 #Self Agent 主动打个招呼",
+        priority="normal",
+        reply_required=False,
+        event_id="evt-1",
+        refs=[
+            {
+                "kind": "local_group_route",
+                "group_id": "g_self_agent",
+                "group_title": "Self Agent",
+                "token": "#Self Agent",
+            }
+        ],
+        attachments=[],
+    )
+
+    assert "Local group route Self Agent (group_id=g_self_agent)" in text
+    assert "this is context, not an automatic send" in text
+    assert "your own natural message" in text
+    assert "Do not forward the user's text or a template" in text
 
 
 def test_actor_delivery_text_does_not_render_hidden_slash_control_refs() -> None:

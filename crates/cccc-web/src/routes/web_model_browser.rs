@@ -62,7 +62,7 @@ async fn open(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResu
         .join(safe_segment(&actor_id)?);
     state
         .browser_surfaces
-        .ensure_open(
+        .ensure_open_system(
             &key(&group_id, &actor_id),
             &profile,
             provider_url(&provider),
@@ -70,7 +70,7 @@ async fn open(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResu
             height,
         )
         .await
-        .map_err(|error| ApiError::bad(error.to_string()))?;
+        .map_err(|error| ApiError::bad(format!("{error:#}")))?;
     super::web_model_delivery::ensure_worker(state.clone(), group_id.clone(), actor_id.clone())
         .await;
     payload(&state, &group_id, &actor_id).await

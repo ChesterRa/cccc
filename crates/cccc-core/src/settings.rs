@@ -1,3 +1,4 @@
+use chrono::DateTime;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::io;
@@ -37,7 +38,7 @@ pub fn save(home: &HomeLayout, settings: &GlobalSettings) -> io::Result<()> {
 fn migrate_legacy_json(home: &HomeLayout) -> io::Result<()> {
     let legacy_path = home.root().join("settings.json");
     let canonical_path = home.root().join("settings.yaml");
-    let marker_path = home.root().join(".rust-settings-migrated-v1");
+    let marker_path = home.root().join(".rust-settings-migrated-v2");
     if marker_path.exists() || !legacy_path.exists() {
         return Ok(());
     }
@@ -56,10 +57,36 @@ fn migrate_legacy_json(home: &HomeLayout) -> io::Result<()> {
         } else {
             Value::Object(Map::new())
         };
+        replace_section_when_source_is_newer(&mut canonical, &legacy, "remote_access");
         merge_missing(&mut canonical, &legacy);
         write_yaml(&canonical_path, &canonical)?;
         std::fs::write(&marker_path, b"migrated from settings.json\n")
     })
+}
+
+fn replace_section_when_source_is_newer(target: &mut Value, source: &Value, section: &str) {
+    let (Some(target), Some(source)) = (target.as_object_mut(), source.as_object()) else {
+        return;
+    };
+    let Some(source_section) = source.get(section).and_then(Value::as_object) else {
+        return;
+    };
+    let source_updated_at = source_section
+        .get("updated_at")
+        .and_then(Value::as_str)
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok());
+    let target_updated_at = target
+        .get(section)
+        .and_then(Value::as_object)
+        .and_then(|value| value.get("updated_at"))
+        .and_then(Value::as_str)
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok());
+    let source_is_newer = source_updated_at
+        .zip(target_updated_at)
+        .is_some_and(|(source, target)| source > target);
+    if source_is_newer {
+        target.insert(section.to_owned(), Value::Object(source_section.clone()));
+    }
 }
 
 fn merge_missing(target: &mut Value, source: &Value) {
@@ -221,5 +248,69 @@ mod tests {
                 .observability
                 .contains_key("assistant_runtime_visibility")
         );
+    }
+
+    #[test]
+    fn newer_legacy_remote_access_replaces_older_empty_canonical_values() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        std::fs::write(
+            home.root().join("settings.yaml"),
+            "remote_access:\n  updated_at: '2026-07-08T08:06:03Z'\n  web_public_url: ''\n",
+        )
+        .expect("canonical settings");
+        std::fs::write(
+            home.root().join("settings.json"),
+            serde_json::to_vec(&json!({
+                "remote_access": {
+                    "updated_at": "2026-07-26T15:25:45Z",
+                    "web_public_url": "https://cccc.example/",
+                    "require_access_token": true
+                }
+            }))
+            .expect("legacy settings json"),
+        )
+        .expect("legacy settings");
+        std::fs::write(
+            home.root().join(".rust-settings-migrated-v1"),
+            "previous migration\n",
+        )
+        .expect("old marker");
+
+        let settings = load(&home).expect("load settings");
+
+        assert_eq!(
+            settings.remote_access["web_public_url"],
+            json!("https://cccc.example/")
+        );
+        assert!(home.root().join(".rust-settings-migrated-v2").exists());
+    }
+
+    #[test]
+    fn older_legacy_remote_access_does_not_replace_newer_canonical_values() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        std::fs::write(
+            home.root().join("settings.yaml"),
+            "remote_access:\n  updated_at: '2026-07-30T08:06:03Z'\n  web_public_url: ''\n",
+        )
+        .expect("canonical settings");
+        std::fs::write(
+            home.root().join("settings.json"),
+            serde_json::to_vec(&json!({
+                "remote_access": {
+                    "updated_at": "2026-07-26T15:25:45Z",
+                    "web_public_url": "https://stale.example/"
+                }
+            }))
+            .expect("legacy settings json"),
+        )
+        .expect("legacy settings");
+
+        let settings = load(&home).expect("load settings");
+
+        assert_eq!(settings.remote_access["web_public_url"], json!(""));
     }
 }

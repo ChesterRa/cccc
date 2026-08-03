@@ -65,8 +65,41 @@ def reduce_hook_event(
             updated_at=updated_at,
         )
     if previous.runtime == "claude":
-        return previous
+        return _reduce_claude_completion(
+            previous, event, payload, updated_at=updated_at
+        )
     return _reduce_codex(previous, event, payload, updated_at=updated_at)
+
+
+def _reduce_claude_completion(
+    previous: HookState,
+    event: str,
+    payload: Mapping[str, Any],
+    *,
+    updated_at: str,
+) -> HookState:
+    notification = _field(payload, "notification_type")
+    is_completion = event == "Stop" or (
+        event == "Notification"
+        and notification in {"idle_prompt", "agent_completed"}
+    )
+    if (
+        not is_completion
+        or previous.status not in {"working", "waiting"}
+        or previous.turn_id is None
+        or not previous.turn_id.startswith("local:")
+    ):
+        return previous
+    return replace(
+        previous,
+        status="idle",
+        event=event,
+        turn_id=None,
+        operation_id=None,
+        interrupted=False,
+        diagnostic=None,
+        updated_at=updated_at,
+    )
 
 
 def _reduce_codex(

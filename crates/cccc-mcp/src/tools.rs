@@ -32,6 +32,10 @@ const TOOLS: &[(&str, &str)] = &[
         "cccc_tracked_send",
         "Create a durable delegation and linked message.",
     ),
+    (
+        "cccc_dispatch",
+        "Foreman-only local-group dispatch: assign independent work to an idle peer or create one within capacity, then release temporary peers after accepted completion.",
+    ),
     ("cccc_file", "Read or send a CCCC blob attachment."),
     ("cccc_repo", "Inspect files under the active project scope."),
     (
@@ -200,5 +204,6 @@ mod tests {
             .collect();
         assert!(names.iter().any(|name| name == "cccc_message_send"));
         assert!(names.iter().any(|name| name == "cccc_message_reply"));
+        assert!(names.iter().any(|name| name == "cccc_dispatch"));
     }
 }

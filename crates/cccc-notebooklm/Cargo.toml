@@ -1,11 +1,13 @@
 [package]
-name = "cccc-notebooklm"
+name = "cccc-pair-notebooklm"
 autotests = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Native NotebookLM adapter for CCCC"
+publish = ["crates-io"]
 
 [dependencies]
 regex.workspace = true
@@ -20,6 +22,9 @@ workspace = true
 
 [features]
 live-tests = []
+
+[lib]
+name = "cccc_notebooklm"
 
 [[test]]
 name = "live"

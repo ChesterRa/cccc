@@ -16,6 +16,22 @@ pub fn input(name: &str) -> Value {
             &["text"],
         ),
         "cccc_tracked_send" => object(messaging(), &["text", "to"]),
+        "cccc_dispatch" => action(
+            &["assign", "release"],
+            merge(
+                dispatching(),
+                json!({
+                    "title":{"type":"string"},
+                    "outcome":{"type":"string"},
+                    "checklist":{"type":"array","items":{"type":"object"}},
+                    "task_id":{"type":"string"},
+                    "template_actor_id":{"type":"string"},
+                    "runtime":{"type":"string"},
+                    "max_parallel_peers":{"type":"integer","minimum":1,"maximum":32},
+                    "idempotency_key":{"type":"string"}
+                }),
+            ),
+        ),
         "cccc_message_reply" => object(
             merge(
                 messaging(),
@@ -344,6 +360,20 @@ fn messaging() -> Value {
     )
 }
 
+fn dispatching() -> Value {
+    merge(
+        common(),
+        json!({
+            "text":{"type":"string"},
+            "refs":{"type":"array","items":{"type":"object"}},
+            "insight":{"type":"string","maxLength":cccc_core::peer_insight::INSIGHT_MAX_CHARS,"description":cccc_core::peer_insight::PEER_INSIGHT_FIELD_DESCRIPTION},
+            "priority":{"type":"string","enum":["normal","attention"]},
+            "reply_required":{"type":"boolean"},
+            "suggested_user_message":{"type":"string","description":"Optional CCCC Web composer hint; not sent automatically and must not be used for approvals."}
+        }),
+    )
+}
+
 fn repo_read() -> Value {
     json!({"path":{"type":"string"},"query":{"type":"string"},"regex":{"type":"boolean"},
         "include_globs":{"type":"array","items":{"type":"string"}},"exclude_globs":{"type":"array","items":{"type":"string"}},
@@ -394,6 +424,21 @@ mod tests {
                 cccc_core::peer_insight::PEER_INSIGHT_FIELD_DESCRIPTION
             );
         }
+    }
+
+    #[test]
+    fn elastic_dispatch_schema_bounds_capacity_and_exposes_release_identity() {
+        let schema = input("cccc_dispatch");
+        assert_eq!(schema["properties"]["max_parallel_peers"]["maximum"], 32);
+        assert!(schema["properties"]["actor_id"].is_object());
+        assert!(schema["properties"]["task_id"].is_object());
+        assert!(
+            schema["properties"]["action"]["enum"]
+                .as_array()
+                .is_some_and(|actions| actions.contains(&json!("release")))
+        );
+        assert!(schema["properties"].get("dst_group_id").is_none());
+        assert!(schema["properties"].get("to").is_none());
     }
 
     #[test]

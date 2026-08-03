@@ -21,6 +21,7 @@ uv.lock
 /dist/
 /build/
 /target/
+**/target/
 *.egg-info/
 
 # Web UI build/cache artifacts
@@ -28,6 +29,7 @@ uv.lock
 /web/.vite/
 /web/dist/
 /src/cccc/ports/web/dist/
+/crates/cccc-web/assets/web-dist/
 /space
 
 # Local/editor/platform noise

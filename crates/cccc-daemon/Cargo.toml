@@ -1,19 +1,21 @@
 [package]
-name = "cccc-daemon"
+name = "cccc-pair-daemon"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Native daemon and control-plane operations for CCCC"
+publish = ["crates-io"]
 
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
-cccc-client = { path = "../cccc-client" }
-cccc-contracts = { path = "../cccc-contracts" }
-cccc-core = { path = "../cccc-core" }
-cccc-notebooklm = { path = "../cccc-notebooklm" }
-cccc-runtime = { path = "../cccc-runtime" }
+cccc-client = { package = "cccc-pair-client", version = "=0.4.33", path = "../cccc-client" }
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.33", path = "../cccc-contracts" }
+cccc-core = { package = "cccc-pair-core", version = "=0.4.33", path = "../cccc-core" }
+cccc-notebooklm = { package = "cccc-pair-notebooklm", version = "=0.4.33", path = "../cccc-notebooklm" }
+cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.33", path = "../cccc-runtime" }
 chrono.workspace = true
 clap.workspace = true
 fs2.workspace = true
@@ -39,6 +41,9 @@ tempfile.workspace = true
 
 [lints]
 workspace = true
+
+[lib]
+name = "cccc_daemon"
 
 [[bin]]
 name = "ccccd"

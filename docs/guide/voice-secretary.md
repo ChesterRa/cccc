@@ -74,6 +74,18 @@ text through
 existing request; it never appends another Voice Secretary input. Empty or
 non-substantive refinements use `no_op=true`.
 
+When Voice Secretary is disabled, microphone input remains available as direct
+dictation. The configured Rust local ASR backend may still transcribe audio, but
+the browser appends the transcript straight to the composer without creating a
+secretary input, running prompt refinement, updating a document, or starting
+speaker diarization.
+
+An active Rust local-ASR audio stream renews its recording lease. The browser's
+HTTP heartbeat remains a cross-tab status signal, but transient heartbeat
+failures do not stop or orphan an otherwise healthy recording WebSocket. This
+matches the Python runtime's recording-liveness behavior while retaining Rust's
+explicit single-recorder lease validation.
+
 Documents use the active workspace under `docs/voice-secretary/`. Groups without
 an active workspace store the Markdown fallback under CCCC_HOME. Removing a
 model, disabling the assistant, or restarting CCCC does not delete documents or

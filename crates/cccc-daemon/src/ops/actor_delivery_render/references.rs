@@ -27,11 +27,27 @@ fn render(item: &Value) -> Option<String> {
     if kind == "group_bridge_route" {
         return render_group_bridge_route(item);
     }
+    if kind == "local_group_route" {
+        return render_local_group_route(item);
+    }
     let label = ["title", "path", "url", "task_id", "slot_id"]
         .into_iter()
         .find_map(|key| nonempty(item, key))
         .unwrap_or(kind);
     Some(format!("- {kind}: {}", compact(label, 120)))
+}
+
+fn render_local_group_route(item: &Value) -> Option<String> {
+    let group_id = nonempty(item, "group_id")?;
+    let label = nonempty(item, "group_title")
+        .or_else(|| nonempty(item, "token"))
+        .unwrap_or(group_id);
+    Some(format!(
+        "- Local group route {} (group_id={}); this is context, not an automatic send. If the user asks you to contact it, decide first, then use cccc_message_send with dst_group_id=\"{}\", to=\"@foreman\" or a target actor, and your own natural message. Do not forward the user's text or a template.",
+        compact(label, 72),
+        compact(group_id, 48),
+        compact(group_id, 48)
+    ))
 }
 
 fn render_group_bridge_route(item: &Value) -> Option<String> {
@@ -117,5 +133,27 @@ mod tests {
             .expect("event data");
 
         assert!(lines(&event).is_empty());
+    }
+
+    #[test]
+    fn renders_local_group_route_as_ai_owned_contact_context() {
+        let mut event = Event::new("chat.message", "g_local");
+        event.data = json!({
+            "refs":[{
+                "kind":"local_group_route",
+                "group_id":"g_self_agent",
+                "group_title":"Self Agent",
+                "token":"#Self Agent"
+            }]
+        })
+        .as_object()
+        .cloned()
+        .expect("event data");
+
+        let rendered = lines(&event).join("\n");
+        assert!(rendered.contains("Local group route Self Agent (group_id=g_self_agent)"));
+        assert!(rendered.contains("this is context, not an automatic send"));
+        assert!(rendered.contains("your own natural message"));
+        assert!(rendered.contains("Do not forward the user's text or a template"));
     }
 }

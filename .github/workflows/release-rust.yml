@@ -52,12 +52,17 @@ jobs:
       - name: Build Web UI
         shell: bash
         run: |
-          npm ci --prefix web
+          node scripts/prepare_rust_web_assets.mjs --install-deps
           npm -C web run check
           npm -C web test
-          npm -C web run build
+      - name: Verify packaged Rust Web assets
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          cargo package -p cccc-pair-web --allow-dirty --no-verify --list \
+            | grep -q '^assets/web-dist/index.html$'
       - name: Build Rust distribution
-        run: cargo build --release --locked --target ${{ matrix.target }} -p cccc-cli --bin cccc
+        run: cargo build --release --locked --target ${{ matrix.target }} -p cccc --bin cccc
       - name: Resolve package name
         shell: bash
         run: |

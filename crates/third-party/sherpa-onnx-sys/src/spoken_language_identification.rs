@@ -37,9 +37,7 @@ extern "C" {
         config: *const SpokenLanguageIdentificationConfig,
     ) -> *const SpokenLanguageIdentification;
 
-    pub fn SherpaOnnxDestroySpokenLanguageIdentification(
-        slid: *const SpokenLanguageIdentification,
-    );
+    pub fn SherpaOnnxDestroySpokenLanguageIdentification(slid: *const SpokenLanguageIdentification);
 
     pub fn SherpaOnnxSpokenLanguageIdentificationCreateOfflineStream(
         slid: *const SpokenLanguageIdentification,

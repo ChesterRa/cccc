@@ -223,6 +223,7 @@ const CORE_BASIC_TOOLS: &[&str] = &[
     "cccc_inbox_mark_read",
     "cccc_message_send",
     "cccc_message_reply",
+    "cccc_dispatch",
     "cccc_file",
     "cccc_context_get",
     "cccc_coordination",
@@ -265,6 +266,7 @@ const WEB_MODEL_CORE_TOOLS: &[&str] = &[
     "cccc_capability_enable",
     "cccc_capability_install",
     "cccc_tracked_send",
+    "cccc_dispatch",
     "cccc_repo",
     "cccc_presentation",
     "cccc_memory",
@@ -301,7 +303,9 @@ fn visible_tools(
         || actor.and_then(|actor| actor.internal_kind.as_deref()) == Some("voice_secretary");
     let web_model =
         actor.map(|actor| actor.runtime) == Some(cccc_contracts::ActorRuntime::WebModel);
-    let peer = actor.and_then(|actor| actor.role) == Some(cccc_contracts::ActorRole::Peer);
+    let peer = group.as_ref().is_some_and(|group| {
+        cccc_core::actors::effective_role(group, actor_id) == Some(cccc_contracts::ActorRole::Peer)
+    });
     let mut names = if voice_secretary {
         VOICE_SECRETARY_TOOLS
             .iter()
@@ -329,6 +333,7 @@ fn visible_tools(
             .filter_map(|item| item["name"].as_str().map(str::to_owned)),
     );
     if peer {
+        names.remove("cccc_dispatch");
         for name in CAPABILITY_ADMIN_TOOLS {
             names.remove(*name);
         }

@@ -8,8 +8,12 @@ mod automation_ops;
 mod capability_state;
 #[path = "suite/cross_group_foreman_default.rs"]
 mod cross_group_foreman_default;
+#[path = "suite/cross_group_sender_snapshot.rs"]
+mod cross_group_sender_snapshot;
 #[path = "suite/daemon_cancellation.rs"]
 mod daemon_cancellation;
+#[path = "suite/elastic_dispatch.rs"]
+mod elastic_dispatch;
 #[path = "suite/group_preamble_ops.rs"]
 mod group_preamble_ops;
 #[path = "suite/integration_ops.rs"]

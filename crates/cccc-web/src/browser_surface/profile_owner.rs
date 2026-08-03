@@ -51,6 +51,10 @@ impl ProfileLease {
             .get_mut_child()
             .and_then(|child| child.as_mut_inner().id())
             .context("launched Chromium process has no PID")?;
+        self.record_pid(browser_pid).await
+    }
+
+    pub(super) async fn record_pid(&mut self, browser_pid: u32) -> Result<()> {
         let process_start = process_start(browser_pid).await.unwrap_or_default();
         let owner = OwnerMetadata {
             version: OWNER_VERSION,
@@ -67,6 +71,33 @@ impl ProfileLease {
         self.file.sync_data()?;
         Ok(())
     }
+}
+
+#[cfg(unix)]
+pub(super) fn browser_pid_from_singleton(profile: &Path) -> Result<u32> {
+    let target = std::fs::read_link(profile.join("SingletonLock"))?;
+    let target = target.to_string_lossy();
+    parse_singleton_target(&target)
+        .map(|(_, pid)| pid)
+        .with_context(|| format!("browser profile contains a malformed SingletonLock: {target}"))
+}
+
+#[cfg(unix)]
+pub(super) async fn terminate_browser_for_profile(profile: &Path) -> Result<bool> {
+    let Ok(pid) = browser_pid_from_singleton(profile) else {
+        return Ok(false);
+    };
+    let Some(snapshot) = process_snapshot(pid).await? else {
+        return Ok(false);
+    };
+    if !snapshot
+        .command
+        .contains(profile.to_string_lossy().as_ref())
+    {
+        bail!("refusing to terminate Chromium process {pid}: profile does not match");
+    }
+    terminate_process(pid, &snapshot.start).await?;
+    Ok(true)
 }
 
 impl Drop for ProfileLease {

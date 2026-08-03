@@ -9,8 +9,8 @@ FROM rust:1.88-bookworm AS rust-builder
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
-COPY --from=web-builder /src/web/dist ./web/dist
-RUN cargo build --release --locked -p cccc-cli --bin cccc
+COPY --from=web-builder /src/web/dist ./crates/cccc-web/assets/web-dist
+RUN cargo build --release --locked -p cccc --bin cccc
 
 FROM debian:bookworm-slim
 ARG HTTP_PROXY

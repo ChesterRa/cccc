@@ -18,11 +18,16 @@ fn report(home: &HomeLayout, browser: Option<&Path>) -> Value {
         "home":home.root(),
         "runtimes":cccc_runtime::detect_runtimes(),
         "projected_browser":{
-            "mode":"headless",
+            "mode":"hybrid",
+            "web_model_mode":"system_browser_cdp",
+            "other_surface_mode":"headless",
             "browser_available":browser.is_some(),
             "browser_path":browser,
             "xvfb_required":false,
-            "note":"Rust browser surfaces run headless and do not attach to the host desktop."
+            "system_browser_available":browser.is_some(),
+            "system_browser_path":browser,
+            "xvfb_required_for_linux_web_model":false,
+            "note":"Web Model uses system Chrome/Edge/Chromium via CDP; Linux uses Xvfb when available and otherwise falls back to headless CDP projection."
         }
     })
 }
@@ -34,10 +39,10 @@ fn find_browser() -> Option<PathBuf> {
         &[
             "google-chrome",
             "google-chrome-stable",
-            "chromium",
-            "chromium-browser",
             "microsoft-edge",
             "microsoft-edge-stable",
+            "chromium",
+            "chromium-browser",
         ][..]
     };
     if let Some(path) = std::env::var_os("PATH").and_then(|path| {
@@ -66,17 +71,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reports_rust_headless_browser_contract_without_xvfb_requirement() {
+    fn reports_hybrid_browser_contract() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let browser = Path::new("/usr/bin/google-chrome");
         let value = report(&home, Some(browser));
-        assert_eq!(value["projected_browser"]["mode"], "headless");
+        assert_eq!(value["projected_browser"]["mode"], "hybrid");
+        assert_eq!(
+            value["projected_browser"]["web_model_mode"],
+            "system_browser_cdp"
+        );
+        assert_eq!(value["projected_browser"]["other_surface_mode"], "headless");
         assert_eq!(value["projected_browser"]["browser_available"], true);
         assert_eq!(
             value["projected_browser"]["browser_path"],
             browser.to_string_lossy().as_ref()
         );
         assert_eq!(value["projected_browser"]["xvfb_required"], false);
+        assert_eq!(value["projected_browser"]["system_browser_available"], true);
+        assert_eq!(
+            value["projected_browser"]["system_browser_path"],
+            browser.to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            value["projected_browser"]["xvfb_required_for_linux_web_model"],
+            false
+        );
     }
 }

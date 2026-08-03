@@ -48,12 +48,27 @@ impl AuthFlowManager {
             None,
         )
         .await;
+        if let Err(error) = context.browsers.close(BROWSER_KEY).await {
+            self.finish(
+                &context.session_id,
+                "failed",
+                "failed",
+                "Failed to reset the previous sign-in browser.",
+                Some(error.to_string()),
+            )
+            .await;
+            tracing::warn!(
+                profile = %context.profile.display(),
+                "keeping NotebookLM auth profile because the previous browser did not close cleanly"
+            );
+            return;
+        }
         let storage_state = saved_raw
             .as_deref()
             .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
         if let Err(error) = context
             .browsers
-            .open_seeded(
+            .open_seeded_system(
                 BROWSER_KEY,
                 &context.profile,
                 LOGIN_URL,
@@ -114,10 +129,21 @@ impl AuthFlowManager {
             if context.browsers.info(BROWSER_KEY).await["active"].as_bool() != Some(true) {
                 self.finish(
                     &context.session_id,
-                    "failed",
-                    "failed",
-                    "The sign-in browser closed unexpectedly.",
-                    Some("browser session unavailable".into()),
+                    "canceled",
+                    "canceled",
+                    "Google sign-in was canceled because the browser was closed.",
+                    None,
+                )
+                .await;
+                break;
+            }
+            if !context.browsers.page_available(BROWSER_KEY).await {
+                self.finish(
+                    &context.session_id,
+                    "canceled",
+                    "canceled",
+                    "Google sign-in was canceled because the browser tab was closed.",
+                    None,
                 )
                 .await;
                 break;
@@ -202,9 +228,28 @@ impl AuthFlowManager {
                 }
             }
         }
-        let _ = context.browsers.close(BROWSER_KEY).await;
-        remove_profile(&context.profile).await;
+        close_browser_and_remove_profile(&context.browsers, &context.profile).await;
         self.clear_active(&context.session_id).await;
+    }
+}
+
+pub(super) async fn close_browser_and_remove_profile(
+    browsers: &crate::browser_surface::BrowserSurfaces,
+    profile: &Path,
+) {
+    remove_profile_after_close(profile, browsers.close(BROWSER_KEY).await).await;
+}
+
+async fn remove_profile_after_close(profile: &Path, close_result: anyhow::Result<bool>) {
+    match close_result {
+        Ok(_) => remove_profile(profile).await,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                profile = %profile.display(),
+                "keeping NotebookLM auth profile because its browser did not close cleanly"
+            );
+        }
     }
 }
 
@@ -242,5 +287,25 @@ pub(super) async fn remove_profile(profile: &Path) {
         && error.kind() != std::io::ErrorKind::NotFound
     {
         tracing::warn!(path=%profile.display(), %error, "failed to remove NotebookLM auth profile");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remove_profile_after_close;
+
+    #[tokio::test]
+    async fn profile_is_removed_only_after_browser_close_succeeds() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let profile = temp.path().join("profile");
+        tokio::fs::create_dir_all(&profile)
+            .await
+            .expect("create profile");
+
+        remove_profile_after_close(&profile, Err(anyhow::anyhow!("browser still running"))).await;
+        assert!(profile.exists(), "failed close must preserve the profile");
+
+        remove_profile_after_close(&profile, Ok(true)).await;
+        assert!(!profile.exists(), "successful close may remove the profile");
     }
 }

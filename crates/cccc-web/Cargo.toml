@@ -1,10 +1,18 @@
 [package]
-name = "cccc-web"
-version.workspace = true
+name = "cccc-pair-web"
+version = "0.4.33-compat.1"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Web API, UI server, and integration adapters for CCCC"
+publish = ["crates-io"]
+include = [
+  "assets/web-dist/**",
+  "build.rs",
+  "resources/**",
+  "src/**",
+]
 
 [dependencies]
 anyhow.workspace = true
@@ -14,11 +22,11 @@ async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
 bzip2.workspace = true
-cccc-client = { path = "../cccc-client" }
-cccc-contracts = { path = "../cccc-contracts" }
-cccc-core = { path = "../cccc-core" }
-cccc-mcp = { path = "../cccc-mcp" }
-cccc-runtime = { path = "../cccc-runtime" }
+cccc-client = { package = "cccc-pair-client", version = "=0.4.33", path = "../cccc-client" }
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.33", path = "../cccc-contracts" }
+cccc-core = { package = "cccc-pair-core", version = "=0.4.33", path = "../cccc-core" }
+cccc-mcp = { package = "cccc-pair-mcp", version = "=0.4.33", path = "../cccc-mcp" }
+cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.33", path = "../cccc-runtime" }
 chromiumoxide.workspace = true
 chrono.workspace = true
 cbc.workspace = true
@@ -42,6 +50,7 @@ sha2.workspace = true
 shell-words.workspace = true
 sherpa-onnx.workspace = true
 tar.workspace = true
+takecell.workspace = true
 tempfile.workspace = true
 hound.workspace = true
 tokio.workspace = true
@@ -54,12 +63,15 @@ uuid.workspace = true
 weixin-agent.workspace = true
 
 [dev-dependencies]
-cccc-daemon = { path = "../cccc-daemon" }
+cccc-daemon = { package = "cccc-pair-daemon", version = "=0.4.33", path = "../cccc-daemon" }
 http-body-util.workspace = true
 tower.workspace = true
 
 [lints]
 workspace = true
+
+[lib]
+name = "cccc_web"
 
 [[bin]]
 name = "cccc-web"

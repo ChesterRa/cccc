@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, ActorRuntime, RuntimeStateSource};
+use cccc_contracts::{Actor, ActorRuntime};
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
@@ -37,11 +37,7 @@ pub(super) fn fields(
         _ => None,
     };
     let capability = hook_runtime.and_then(|runtime| {
-        (actor.runtime_state_source == RuntimeStateSource::Terminal)
-            .then(|| {
-                super::runtime_hook_session::validated(home, runtime, group_id, &actor.id, pid)
-            })
-            .flatten()
+        super::runtime_hook_session::validated(home, runtime, group_id, &actor.id, pid)
     });
     let hook_state = (running && !super::local_headless::supports(actor))
         .then(|| {

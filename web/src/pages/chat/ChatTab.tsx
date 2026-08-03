@@ -12,7 +12,7 @@ import {
   type MutableRefObject,
   type RefObject,
 } from "react";
-import { BookmarkIcon, CompassIcon, InfoIcon } from "../../components/Icons";
+import { BookmarkIcon, InfoIcon } from "../../components/Icons";
 import { Actor, LedgerEvent, PresentationMessageRef, TaskMessageRef } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
@@ -689,37 +689,20 @@ export function ChatTab({
 
         {/* Compact setup card */}
         {!readOnly && showSetupCard && chatMessages.length > 0 && (
-          <div className="px-4 pt-4 pb-2">
-            <div
-              className={classNames(
-                "rounded-2xl border p-4 sm:p-5",
-                isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70",
-              )}
-              role="region"
-              aria-label={t("setupChecklist")}
-            >
-              <div
-                className={classNames(
-                  "text-sm font-semibold",
-                  isDark ? "text-slate-200" : "text-gray-800",
-                )}
-              >
-                {t("nextSteps")}
-              </div>
-              <Suspense fallback={<ChatLazyFallback />}>
-                <SetupChecklist
-                  isDark={isDark}
-                  selectedGroupId={selectedGroupId}
-                  busy={busy}
-                  needsScope={needsScope}
-                  needsActors={needsActors}
-                  needsStart={needsStart}
-                  onAddAgent={addAgent}
-                  onStartGroup={onStartGroup}
-                  variant="compact"
-                />
-              </Suspense>
-            </div>
+          <div className="px-4 pt-3 pb-2">
+            <Suspense fallback={<ChatLazyFallback />}>
+              <SetupChecklist
+                isDark={isDark}
+                selectedGroupId={selectedGroupId}
+                busy={busy}
+                needsScope={needsScope}
+                needsActors={needsActors}
+                needsStart={needsStart}
+                onAddAgent={addAgent}
+                onStartGroup={onStartGroup}
+                variant="compact"
+              />
+            </Suspense>
           </div>
         )}
       </header>
@@ -878,31 +861,17 @@ export function ChatTab({
                         isDark ? "text-slate-200" : "text-gray-800",
                       )}
                     >
-                      <div className="mb-4 flex justify-center" aria-hidden="true">
-                        <CompassIcon
-                          size={32}
-                          className={isDark ? "text-white" : "text-[rgb(35,36,37)]"}
-                        />
-                      </div>
-                      <div
-                        className={classNames(
-                          "text-sm font-semibold",
-                          isDark ? "text-slate-200" : "text-gray-800",
-                        )}
-                      >
-                        {t("nextSteps")}
-                      </div>
                       {readOnly ? (
                         <div
                           className={classNames(
-                            "mt-3 text-sm",
+                            "text-sm",
                             isDark ? "text-slate-400" : "text-gray-600",
                           )}
                         >
                           {t("noMessagesYet")}
                         </div>
                       ) : (
-                        <Suspense fallback={<ChatLazyFallback className="mt-4" />}>
+                        <Suspense fallback={<ChatLazyFallback />}>
                           <SetupChecklist
                             isDark={isDark}
                             selectedGroupId={selectedGroupId}

@@ -165,6 +165,31 @@ pub(super) fn validate(
     ))
 }
 
+/// Keep an authenticated recording lease alive from the active audio stream.
+///
+/// Python keeps the transcription WebSocket alive independently of the HTTP
+/// heartbeat. Rust still validates the lease at connection time, then renews it
+/// from received audio so a transient HTTP failure cannot terminate a healthy
+/// recording session.
+pub(super) fn renew(
+    home: &HomeLayout,
+    group_id: &str,
+    owner_id: &str,
+    lease_id: &str,
+) -> Result<bool, ApiError> {
+    let result = update(
+        home,
+        group_id,
+        &json!({
+            "action": "heartbeat",
+            "owner_id": owner_id,
+            "lease_id": lease_id,
+            "ttl_seconds": DEFAULT_TTL_SECONDS,
+        }),
+    )?;
+    Ok(!result["lost"].as_bool().unwrap_or(true))
+}
+
 fn active_lease(stored: &Value, now_ms: i64) -> Option<Value> {
     stored.is_object().then(|| stored.clone()).filter(|lease| {
         lease["expires_at_ms"]
@@ -262,5 +287,31 @@ mod tests {
             )
             .is_ok()
         );
+    }
+
+    #[test]
+    fn active_audio_renewal_extends_the_recording_lease() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("recording", "").expect("group");
+        let acquired = update(
+            &home,
+            &group.group_id,
+            &json!({"action":"acquire","owner_id":"tab-1","ttl_seconds":5}),
+        )
+        .expect("acquire");
+        let lease_id = acquired["lease_id"].as_str().expect("lease id");
+        let original_expiry = current_private(&home)["expires_at_ms"]
+            .as_i64()
+            .expect("original expiry");
+
+        assert!(renew(&home, &group.group_id, "tab-1", lease_id).expect("renew"));
+
+        let renewed_expiry = current_private(&home)["expires_at_ms"]
+            .as_i64()
+            .expect("renewed expiry");
+        assert!(renewed_expiry > original_expiry);
+        assert!(!renew(&home, &group.group_id, "tab-2", lease_id).expect("lost"));
     }
 }

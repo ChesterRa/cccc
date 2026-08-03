@@ -161,7 +161,6 @@ impl AuthFlowManager {
             }
             active
         };
-        let _ = browsers.close(BROWSER_KEY).await;
         if let Some(mut active) = active {
             if let Some(mut task) = active.task.take()
                 && tokio::time::timeout(Duration::from_secs(2), &mut task)
@@ -171,7 +170,7 @@ impl AuthFlowManager {
                 task.abort();
                 let _ = task.await;
             }
-            run::remove_profile(&active.profile).await;
+            run::close_browser_and_remove_profile(browsers, &active.profile).await;
         }
     }
 
@@ -191,7 +190,11 @@ impl AuthFlowManager {
                 .notebooklm_auth_ready(BROWSER_KEY)
                 .await
                 .unwrap_or(false);
-            surface["metadata"] = json!({"auth_ready":ready});
+            if let Some(metadata) = surface["metadata"].as_object_mut() {
+                metadata.insert("auth_ready".into(), Value::Bool(ready));
+            } else {
+                surface["metadata"] = json!({"auth_ready":ready});
+            }
         }
         json!({
             "provider":PROVIDER,"state":state.state,"phase":state.phase,

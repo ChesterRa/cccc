@@ -69,6 +69,13 @@ pub enum GroupState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ElasticActorLease {
+    pub owner_actor_id: String,
+    #[serde(default)]
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Actor {
     #[serde(default = "version")]
     pub v: u8,
@@ -99,6 +106,8 @@ pub struct Actor {
     pub runtime_state_source: RuntimeStateSource,
     #[serde(default)]
     pub internal_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elastic_lease: Option<ElasticActorLease>,
     #[serde(default)]
     pub avatar_asset_path: String,
     #[serde(default)]
@@ -135,6 +144,7 @@ impl Actor {
             runtime: ActorRuntime::default(),
             runtime_state_source: RuntimeStateSource::default(),
             internal_kind: None,
+            elastic_lease: None,
             avatar_asset_path: String::new(),
             profile_id: String::new(),
             profile_scope: global_scope(),

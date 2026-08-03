@@ -114,6 +114,13 @@ export type GroupBridgeRouteMessageRef = MessageRef & {
   token?: string;
 };
 
+export type LocalGroupRouteMessageRef = MessageRef & {
+  kind: "local_group_route";
+  group_id: string;
+  group_title?: string;
+  token?: string;
+};
+
 export type StreamingActivity = {
   id: string;
   kind: "queued" | "thinking" | "plan" | "search" | "command" | "patch" | "tool" | "reply" | string;

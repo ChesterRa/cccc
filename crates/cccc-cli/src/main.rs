@@ -13,6 +13,8 @@ use clap::Parser;
 use commands::common::{call, print};
 use serde_json::json;
 
+const PRODUCT_VERSION: &str = env!("CCCC_PRODUCT_VERSION");
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -37,7 +39,7 @@ async fn main() -> Result<()> {
         }
         Some(CommandKind::Mcp) => cccc_mcp::run_stdio(home).await,
         Some(CommandKind::Version) => {
-            println!("cccc {} (rust)", env!("CARGO_PKG_VERSION"));
+            println!("cccc {PRODUCT_VERSION} (rust)");
             Ok(())
         }
         Some(CommandKind::Home) => {
@@ -381,7 +383,7 @@ fn is_compatible_daemon(response: &cccc_contracts::DaemonResponse) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_compatible_daemon, web_endpoint};
+    use super::{PRODUCT_VERSION, is_compatible_daemon, web_endpoint};
     use cccc_contracts::DaemonResponse;
     use serde_json::json;
 
@@ -390,7 +392,7 @@ mod tests {
         let rust = DaemonResponse::success(
             json!({
                 "implementation":"rust",
-                "version":env!("CARGO_PKG_VERSION"),
+                "version":PRODUCT_VERSION,
                 "compatibility":cccc_contracts::RUST_DAEMON_COMPATIBILITY,
             })
             .as_object()
@@ -404,7 +406,7 @@ mod tests {
                 .expect("object"),
         );
         let stale_rust = DaemonResponse::success(
-            json!({"implementation":"rust","version":env!("CARGO_PKG_VERSION")})
+            json!({"implementation":"rust","version":PRODUCT_VERSION})
                 .as_object()
                 .cloned()
                 .expect("object"),

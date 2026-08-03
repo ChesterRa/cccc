@@ -157,6 +157,7 @@ fn core_tools(catalog: Vec<Value>) -> Vec<Value> {
         "cccc_inbox_mark_read",
         "cccc_message_send",
         "cccc_message_reply",
+        "cccc_dispatch",
         "cccc_file",
         "cccc_context_get",
         "cccc_coordination",

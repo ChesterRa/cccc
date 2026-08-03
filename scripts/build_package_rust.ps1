@@ -7,8 +7,15 @@ $version = (Select-String -Path (Join-Path $rootDir "Cargo.toml") -Pattern '^ver
 $target = ((& rustc -vV) | Select-String '^host: ').Line.Substring(6)
 $name = "cccc-v$version-$target"
 
-& (Join-Path $rootDir "scripts\build_web.ps1") -InstallDeps:$InstallDeps
-& cargo build --manifest-path (Join-Path $rootDir "Cargo.toml") --release --locked -p cccc-cli --bin cccc
+$prepareArgs = @((Join-Path $rootDir "scripts\prepare_rust_web_assets.mjs"))
+if ($InstallDeps) {
+  $prepareArgs += "--install-deps"
+}
+& node @prepareArgs
+if ($LASTEXITCODE -ne 0) {
+  throw "Rust Web 资源构建失败，退出码 $LASTEXITCODE"
+}
+& cargo build --manifest-path (Join-Path $rootDir "Cargo.toml") --release --locked -p cccc --bin cccc
 
 $output = Join-Path $rootDir "dist\$name"
 Remove-Item -Recurse -Force $output -ErrorAction SilentlyContinue

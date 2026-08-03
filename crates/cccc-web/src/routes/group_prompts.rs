@@ -12,7 +12,7 @@ use crate::AppState;
 use crate::api::{ApiError, call, object, success};
 
 const HELP_FILENAME: &str = "CCCC_HELP.md";
-const BUILTIN_HELP_MARKDOWN: &str = include_str!("../../../../src/cccc/resources/cccc-help.md");
+const BUILTIN_HELP_MARKDOWN: &str = include_str!("../../resources/cccc-help.md");
 
 #[derive(Deserialize)]
 struct PromptDeleteQuery {

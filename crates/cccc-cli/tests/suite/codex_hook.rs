@@ -98,6 +98,37 @@ fn hidden_claude_hook_command_is_fail_closed_after_session_start() {
 }
 
 #[test]
+fn hidden_claude_stop_hook_completes_the_active_terminal_turn() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    home.initialize().expect("initialize home");
+    codex_hook_state::begin_launch(&home, "claude", "g_test", "peer1", "token", "HookPending")
+        .expect("launch");
+    run_hook(
+        temp.path(),
+        "claude-state",
+        "token",
+        br#"{"hook_event_name":"SessionStart","session_id":"session-1"}"#,
+    );
+    let active = codex_hook_state::record_terminal_input(&home, "claude", "g_test", "peer1")
+        .expect("terminal input")
+        .expect("state");
+    assert_eq!(active.status, "working");
+
+    run_hook(
+        temp.path(),
+        "claude-state",
+        "token",
+        br#"{"hook_event_name":"Stop","session_id":"session-1"}"#,
+    );
+    let completed =
+        codex_hook_state::read_runtime(&home, "claude", "g_test", "peer1").expect("completed");
+    assert_eq!(completed.status, "idle");
+    assert_eq!(completed.event, "Stop");
+    assert_eq!(completed.turn_id, None);
+}
+
+#[test]
 fn hidden_hook_receiver_rejects_an_old_process_environment() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");

@@ -208,9 +208,45 @@ fn record_runtime_locked(
         return Ok(state);
     }
     if runtime == CLAUDE {
-        return Ok(previous);
+        return record_claude_completion(home, group_id, actor_id, previous, event, payload);
     }
     record_codex_event(home, group_id, actor_id, previous, event, payload)
+}
+
+fn record_claude_completion(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    previous: CodexHookState,
+    event: &str,
+    payload: &Value,
+) -> io::Result<CodexHookState> {
+    let notification = string_field(payload, "notification_type");
+    let is_completion = event == "Stop"
+        || event == "Notification"
+            && matches!(notification.as_str(), "idle_prompt" | "agent_completed");
+    let owns_local_turn = previous
+        .turn_id
+        .as_deref()
+        .is_some_and(|turn_id| turn_id.starts_with("local:"));
+    if !is_completion
+        || !matches!(previous.status.as_str(), "working" | "waiting")
+        || !owns_local_turn
+    {
+        return Ok(previous);
+    }
+    let state = CodexHookState {
+        status: "idle".into(),
+        event: event.to_owned(),
+        turn_id: None,
+        operation_id: None,
+        interrupted: false,
+        diagnostic: None,
+        updated_at: utc_now(),
+        ..previous
+    };
+    write_json(&path(home, CLAUDE, group_id, actor_id), &state)?;
+    Ok(state)
 }
 
 fn record_codex_event(
@@ -1017,6 +1053,38 @@ mod tests {
             .expect("state");
         assert_eq!(g1.status, "working");
         assert_eq!(g1.turn_id.as_deref(), Some("local:1"));
+        let completed = hook(
+            &home,
+            CLAUDE,
+            TOKEN,
+            json!({"hook_event_name":"Stop","session_id":"s1"}),
+        );
+        assert_eq!(completed.status, "idle");
+        assert_eq!(completed.event, "Stop");
+        assert_eq!(completed.turn_id, None);
+
+        let g2 = record_terminal_input(&home, CLAUDE, "g_test", "peer1")
+            .expect("input")
+            .expect("state");
+        assert_eq!(g2.turn_id.as_deref(), Some("local:2"));
+        let notified = hook(
+            &home,
+            CLAUDE,
+            TOKEN,
+            json!({
+                "hook_event_name":"Notification",
+                "notification_type":"agent_completed",
+                "session_id":"s1"
+            }),
+        );
+        assert_eq!(notified.status, "idle");
+        assert_eq!(notified.event, "Notification");
+        assert_eq!(notified.turn_id, None);
+
+        let g3 = record_terminal_input(&home, CLAUDE, "g_test", "peer1")
+            .expect("input")
+            .expect("state");
+        assert_eq!(g3.turn_id.as_deref(), Some("local:3"));
         let interrupted = record_interrupt(&home, CLAUDE, "g_test", "peer1")
             .expect("interrupt")
             .expect("state");
@@ -1031,11 +1099,11 @@ mod tests {
             ),
             interrupted
         );
-        let g2 = record_terminal_input(&home, CLAUDE, "g_test", "peer1")
+        let g4 = record_terminal_input(&home, CLAUDE, "g_test", "peer1")
             .expect("new input")
             .expect("state");
-        assert_eq!(g2.turn_id.as_deref(), Some("local:2"));
-        assert!(!g2.interrupted);
+        assert_eq!(g4.turn_id.as_deref(), Some("local:4"));
+        assert!(!g4.interrupted);
     }
 
     #[test]

@@ -136,11 +136,15 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         },
         |event| event.data.clone(),
     );
+    if existing_source.is_none() {
+        super::message_metadata::add_sender_snapshot(&source, &by, &mut delivery_data);
+    }
     if existing_source.is_some() {
         // The accepted source event is authoritative on a relay retry.
         delivery_data.remove("require_peer_insight");
     }
     delivery_data.remove("transport");
+    delivery_data.remove("dst_group_id");
     delivery_data.remove("to_group_id");
     super::messaging_recipients::apply_cross_group_recipient(&destination, &mut delivery_data)?;
     super::messaging_recipients::normalize_chat_data(
@@ -153,7 +157,7 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         existing
     } else {
         let mut source_data = delivery_data.clone();
-        source_data.insert("to_group_id".into(), json!(destination.group_id));
+        source_data.insert("dst_group_id".into(), json!(destination.group_id));
         source_data.insert("transport".into(), json!("local"));
         append(home, &source.group_id, "chat.message", &by, source_data)?
     };

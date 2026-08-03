@@ -7,8 +7,7 @@ use std::io;
 
 use crate::dispatch::{OpError, OpResult, object, string_arg};
 
-const DEFAULT_TEXT: &str =
-    include_str!("../../../../../src/cccc/resources/capability-allowlist.default.yaml");
+const DEFAULT_TEXT: &str = include_str!("../../../resources/capability-allowlist.default.yaml");
 
 pub(super) fn get(home: &HomeLayout) -> OpResult {
     object(snapshot(home)?)

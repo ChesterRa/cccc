@@ -14,6 +14,7 @@ This is the working playbook for a CCCC group. Run `cccc_bootstrap` first on a n
 
 - Use `cccc_message_send` for new messages and replies; set `reply_to` when answering an existing event.
 - Use `cccc_tracked_send` when ownership, completion evidence, and history must survive chat.
+- Foremen use `cccc_dispatch` for independent ready work in the current local group: it reuses a truly idle peer or creates an elastic peer when existing peers are busy. Release elastic peers only after accepting a terminal task; resident peers are retained. Use `cccc_message_send` for cross-group collaboration.
 - Shared truth lives in the coordination brief and task cards; refresh actor state at meaningful transitions.
 - Inbox is an unread queue, not a task board. Mark an item read only after its obligation is handled.
 - Terminal output is local runtime output and is not automatically delivered to other actors.
@@ -34,7 +35,7 @@ This is the working playbook for a CCCC group. Run `cccc_bootstrap` first on a n
 
 ## Roles
 
-Foreman owns outcome quality, integration, and acceptance. Peer actors deliver bounded, verifiable work and surface risks early. Voice Secretary handles transcript-backed documents and secretary requests, not project implementation or deployment.
+Foreman owns outcome quality, elastic scheduling, integration, and acceptance. Peer actors deliver bounded, verifiable work and surface risks early. Voice Secretary handles transcript-backed documents and secretary requests, not project implementation or deployment.
 
 ## Group states
 

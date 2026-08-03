@@ -140,8 +140,9 @@ pub struct SherpaOnnxGenerationConfig {
     pub extra: *const c_char,
 }
 
-pub type SherpaOnnxGeneratedAudioProgressCallbackWithArg =
-    Option<unsafe extern "C" fn(samples: *const f32, n: i32, progress: c_float, arg: *mut c_void) -> i32>;
+pub type SherpaOnnxGeneratedAudioProgressCallbackWithArg = Option<
+    unsafe extern "C" fn(samples: *const f32, n: i32, progress: c_float, arg: *mut c_void) -> i32,
+>;
 
 #[repr(C)]
 pub struct SherpaOnnxOfflineTts {

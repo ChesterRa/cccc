@@ -80,9 +80,10 @@ def test_rust_jobs_provision_python_for_interop_and_serialize_daemon_tests() -> 
 
         assert job["env"]["CCCC_TEST_PYTHON"] == "python"
         assert python_setup["with"]["python-version"] == "3.14"
-        assert "cargo test --workspace --exclude cccc-daemon --locked" in runs
+        assert "python -m pip install -e ." in runs
+        assert "cargo test --workspace --exclude cccc-pair-daemon --locked" in runs
         assert (
-            "cargo test --package cccc-daemon --locked -- --test-threads=1"
+            "cargo test --package cccc-pair-daemon --locked -- --test-threads=1"
             in runs
         )
 

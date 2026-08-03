@@ -1,5 +1,5 @@
 use super::working_state::fields;
-use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
+use cccc_contracts::{Actor, ActorRuntime, RunnerKind, RuntimeStateSource};
 use cccc_core::HomeLayout;
 use serde_json::json;
 
@@ -34,6 +34,45 @@ fn codex_state_comes_only_from_the_current_hook_process() {
 
     let current = fields(&home, &actor, group_id, true, "pty", Some(42));
     assert_eq!(current["effective_working_state"], "working");
+    assert_eq!(current["effective_active_task_id"], "turn-1");
+
+    let stale = fields(&home, &actor, group_id, true, "pty", Some(43));
+    assert_eq!(stale["effective_working_state"], "waiting");
+    assert_eq!(stale["effective_working_reason"], "codex_hook_pending");
+}
+
+#[test]
+fn app_server_codex_uses_the_bound_hook_process_state() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let group_id = "g_app_server_codex_projection";
+    let mut actor = Actor::new("peer1");
+    actor.runtime = ActorRuntime::Codex;
+    actor.runtime_state_source = RuntimeStateSource::AppServer;
+    cccc_core::codex_hook_state::begin_launch(
+        &home,
+        "codex",
+        group_id,
+        "peer1",
+        "token",
+        "HookPending",
+    )
+    .expect("launch");
+    for payload in [
+        json!({"hook_event_name":"SessionStart","session_id":"s1"}),
+        json!({"hook_event_name":"UserPromptSubmit","session_id":"s1","turn_id":"turn-1"}),
+    ] {
+        cccc_core::codex_hook_state::record(&home, group_id, "peer1", "token", &payload)
+            .expect("hook state");
+    }
+    bind(&home, group_id, "codex", "token", 42);
+
+    let current = fields(&home, &actor, group_id, true, "pty", Some(42));
+    assert_eq!(current["effective_working_state"], "working");
+    assert_eq!(
+        current["effective_working_reason"],
+        "codex_hook_UserPromptSubmit"
+    );
     assert_eq!(current["effective_active_task_id"], "turn-1");
 
     let stale = fields(&home, &actor, group_id, true, "pty", Some(43));

@@ -5,14 +5,15 @@ use std::fs;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::{collections::HashSet, ffi::OsString};
 use std::process::Command;
+use std::{collections::HashSet, ffi::OsString};
 
 use bzip2::read::BzDecoder;
 use sha2::{Digest, Sha256};
 use tar::Archive;
 
 const RELEASE_BASE_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
+const UPSTREAM_VERSION: &str = "1.13.4";
 const SHERPA_ONNX_STATIC_LIBS: &[&str] = &[
     "sherpa-onnx-c-api",
     "sherpa-onnx-core",
@@ -130,8 +131,7 @@ fn download_prebuilt_libs(
     let verified_marker = extracted_dir.join(".archive-sha256");
 
     if lib_dir.is_dir()
-        && fs::read_to_string(&verified_marker)
-            .is_ok_and(|value| value.trim() == expected_sha256)
+        && fs::read_to_string(&verified_marker).is_ok_and(|value| value.trim() == expected_sha256)
     {
         return Ok(lib_dir);
     }
@@ -156,8 +156,7 @@ fn download_prebuilt_libs(
 
             copy_file_atomically(&local_archive_path, &archive_path)?;
         } else {
-            let version = env!("CARGO_PKG_VERSION");
-            let url = format!("{RELEASE_BASE_URL}/v{version}/{archive_name}");
+            let url = format!("{RELEASE_BASE_URL}/v{UPSTREAM_VERSION}/{archive_name}");
             eprintln!("Downloading sherpa-onnx libs from {url}");
 
             if !download_with_curl(&url, &archive_path)? {
@@ -166,7 +165,9 @@ fn download_prebuilt_libs(
                     .build()
                     .get(&url)
                     .call()
-                    .map_err(|e| format!("Failed to download sherpa-onnx archive from {url}: {e}"))?;
+                    .map_err(|e| {
+                        format!("Failed to download sherpa-onnx archive from {url}: {e}")
+                    })?;
                 let mut reader = response.into_reader();
                 write_reader_atomically(&mut reader, &archive_path)?;
             }
@@ -279,11 +280,22 @@ fn download_with_curl(url: &str, output: &Path) -> Result<bool, DynError> {
     };
     let temp = parent.join(format!(
         ".{}.{}.part",
-        output.file_name().and_then(OsStr::to_str).unwrap_or("sherpa-onnx"),
+        output
+            .file_name()
+            .and_then(OsStr::to_str)
+            .unwrap_or("sherpa-onnx"),
         std::process::id()
     ));
     let status = match Command::new("curl")
-        .args(["--fail", "--location", "--silent", "--show-error", "--connect-timeout", "30", "--output"])
+        .args([
+            "--fail",
+            "--location",
+            "--silent",
+            "--show-error",
+            "--connect-timeout",
+            "30",
+            "--output",
+        ])
         .arg(&temp)
         .arg(url)
         .status()
@@ -305,7 +317,7 @@ fn archive_name(
     target_os: &str,
     target_arch: &str,
 ) -> Result<String, DynError> {
-    let version = env!("CARGO_PKG_VERSION");
+    let version = UPSTREAM_VERSION;
     let name = match (link_mode, target_os, target_arch) {
         (LinkMode::Static, "linux", "x86_64") => {
             format!("sherpa-onnx-v{version}-linux-x64-static-lib.tar.bz2")
@@ -337,10 +349,12 @@ fn archive_name(
         (LinkMode::Shared, "windows", "x86_64") => {
             format!("sherpa-onnx-v{version}-win-x64-shared-MT-Release-lib.tar.bz2")
         }
-        _ => return Err(format!(
+        _ => {
+            return Err(format!(
             "Unsupported target for sherpa-onnx prebuilt libs: os={target_os}, arch={target_arch}"
         )
-        .into()),
+            .into())
+        }
     };
 
     Ok(name)
@@ -427,11 +441,7 @@ fn copy_unix_runtime_libs(lib_dir: &Path, target_os: &str) -> Result<(), DynErro
         .collect();
 
     if runtime_libs.is_empty() {
-        return Err(format!(
-            "No shared runtime libraries found in {}",
-            lib_dir.display()
-        )
-        .into());
+        return Err(format!("No shared runtime libraries found in {}", lib_dir.display()).into());
     }
 
     let mut copy_plan = Vec::<(PathBuf, OsString)>::new();

@@ -1,5 +1,5 @@
 [workspace]
-resolver = "2"
+resolver = "3"
 default-members = ["crates/cccc-cli"]
 members = [
   "crates/cccc-contracts",
@@ -12,9 +12,10 @@ members = [
   "crates/cccc-web",
   "crates/cccc-cli",
 ]
-
-[patch.crates-io]
-sherpa-onnx-sys = { path = "crates/third-party/sherpa-onnx-sys" }
+exclude = [
+  "crates/third-party/sherpa-onnx-sys",
+  "crates/third-party/sherpa-onnx",
+]
 
 [workspace.package]
 version = "0.4.33"
@@ -61,9 +62,10 @@ serde_json = "1.0"
 serde_yaml = "0.9"
 sha2 = "0.10"
 sha1 = "0.10"
-sherpa-onnx = "1.13.4"
+sherpa-onnx = { package = "cccc-pair-sherpa-onnx", version = "=1.13.4-cccc.1", path = "crates/third-party/sherpa-onnx" }
 shell-words = "1.1"
 tar = "0.4"
+takecell = "=0.1.1"
 tempfile = "3.20"
 thiserror = "2.0"
 tokio = { version = "1.47", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }

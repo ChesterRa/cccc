@@ -207,6 +207,7 @@ export function ProjectedBrowserSurfacePanel({
   const rfbRef = useRef<RfbInstance | null>(null);
   const frameRef = useRef<ProjectedBrowserFrame | null>(null);
   const renderedFrameRef = useRef<ProjectedBrowserFrame | null>(null);
+  const frameRenderTokenRef = useRef(0);
   const lastFrameCallbackAtRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
   const loadSessionRef = useRef(loadSession);
@@ -357,6 +358,7 @@ export function ProjectedBrowserSurfacePanel({
       }
       frameRef.current = null;
       renderedFrameRef.current = null;
+      frameRenderTokenRef.current += 1;
       const ws = wsRef.current;
       wsRef.current = null;
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -467,19 +469,26 @@ export function ProjectedBrowserSurfacePanel({
               url: String(payload.url || "").trim(),
             };
             frameRef.current = nextFrame;
-            if (imageRef.current) {
-              // High-frequency browser frames bypass React state so input handling stays responsive.
-              imageRef.current.src = nextFrame.dataUrl;
-            }
-            const rendered = renderedFrameRef.current;
-            if (
-              !rendered ||
-              rendered.width !== nextFrame.width ||
-              rendered.height !== nextFrame.height
-            ) {
+            const renderToken = frameRenderTokenRef.current + 1;
+            frameRenderTokenRef.current = renderToken;
+            const decoded = new Image();
+            decoded.onload = () => {
+              if (
+                disposed ||
+                runIdRef.current !== runId ||
+                frameRenderTokenRef.current !== renderToken
+              ) {
+                return;
+              }
               renderedFrameRef.current = nextFrame;
-              setRenderedFrame(nextFrame);
-            }
+              if (imageRef.current) {
+                // Keep the previous frame visible until the replacement JPEG is decoded.
+                imageRef.current.src = nextFrame.dataUrl;
+              } else {
+                setRenderedFrame(nextFrame);
+              }
+            };
+            decoded.src = nextFrame.dataUrl;
             if (onFrameUpdate) {
               const now = window.performance?.now?.() ?? Date.now();
               if (!lastFrameCallbackAtRef.current || now - lastFrameCallbackAtRef.current >= 250) {
@@ -569,6 +578,7 @@ export function ProjectedBrowserSurfacePanel({
       vncTargetRef.current?.replaceChildren();
       frameRef.current = null;
       renderedFrameRef.current = null;
+      frameRenderTokenRef.current += 1;
       lastFrameCallbackAtRef.current = 0;
       setRenderedFrame(null);
       onFrameUpdate?.(null);
@@ -776,6 +786,7 @@ export function ProjectedBrowserSurfacePanel({
   const handleReconnect = () => {
     frameRef.current = null;
     renderedFrameRef.current = null;
+    frameRenderTokenRef.current += 1;
     if (rfbRef.current) {
       rfbRef.current.disconnect();
       rfbRef.current = null;
@@ -804,6 +815,7 @@ export function ProjectedBrowserSurfacePanel({
       const timer = window.setTimeout(() => {
         frameRef.current = null;
         renderedFrameRef.current = null;
+        frameRenderTokenRef.current += 1;
         if (rfbRef.current) {
           rfbRef.current.disconnect();
           rfbRef.current = null;

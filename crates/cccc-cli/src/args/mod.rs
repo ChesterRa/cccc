@@ -39,7 +39,7 @@ pub struct SetupArgs {
 #[derive(Debug, Parser)]
 #[command(
     name = "cccc",
-    version,
+    version = crate::PRODUCT_VERSION,
     about = "Collaborative Code Coordination Center"
 )]
 pub struct Cli {

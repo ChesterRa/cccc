@@ -18,6 +18,7 @@ use crate::api::{ApiError, ApiResult, call, object, success};
 
 mod voice_asr;
 mod voice_audio_upload;
+mod voice_backend_access;
 mod voice_diarization;
 mod voice_final_asr;
 mod voice_inference;
@@ -190,7 +191,7 @@ async fn transcribe(
     voice_audio_upload::validate_content_length(&headers)?;
     let current = load(&state, &group_id)?;
     let assistant = assistant(&current);
-    require_voice_backend(&assistant)?;
+    voice_backend_access::require_local_asr(&assistant)?;
     let selected = assistant["config"]["service_model_id"]
         .as_str()
         .unwrap_or("");
@@ -252,7 +253,7 @@ async fn serve_transcription_ws(
     let loaded = load(&state, &group_id);
     let assistant = match loaded
         .map(|value| assistant(&value))
-        .and_then(|item| require_voice_backend(&item).map(|_| item))
+        .and_then(|item| voice_backend_access::require_local_asr(&item).map(|_| item))
     {
         Ok(value) => value,
         Err(error) => {
@@ -272,10 +273,11 @@ async fn serve_transcription_ws(
     let mut client_session_id = String::new();
     let mut document_path = String::new();
     let mut language = String::new();
+    let mut persist_secretary_transcript = true;
     let mut recording: Option<voice_pcm_recording::PcmRecording> = None;
     let mut stopped = false;
     let mut audio_seq = 0_u64;
-    let mut lease_checked_at = std::time::Instant::now();
+    let mut lease_renewed_at = std::time::Instant::now();
     let mut shutdown = state.shutdown.subscribe();
     loop {
         let message = tokio::select! {
@@ -298,14 +300,28 @@ async fn serve_transcription_ws(
                 let _ = send_voice_ws_error(&mut socket, &error).await;
                 break;
             }
-            if lease_checked_at.elapsed() >= std::time::Duration::from_secs(5) {
-                if let Err(error) =
-                    voice_recording_lease::validate(&state.home, &group_id, &owner_id, &lease_id)
-                {
-                    let _=socket.send(Message::Text(json!({"type":"error","ok":false,"error":{"code":"assistant_voice_recording_lease_lost","message":error.to_string()}}).to_string().into())).await;
-                    break;
+            if lease_renewed_at.elapsed() >= std::time::Duration::from_secs(5) {
+                match voice_recording_lease::renew(&state.home, &group_id, &owner_id, &lease_id) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        tracing::warn!(
+                            %group_id,
+                            %owner_id,
+                            "voice transcription websocket lost its recording lease"
+                        );
+                        let _=socket.send(Message::Text(json!({"type":"error","ok":false,"error":{"code":"assistant_voice_recording_lease_lost","message":"voice secretary recording lease is missing, expired, or owned by another client"}}).to_string().into())).await;
+                        break;
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            %group_id,
+                            %owner_id,
+                            %error,
+                            "voice transcription websocket could not renew its recording lease; keeping the active stream"
+                        );
+                    }
                 }
-                lease_checked_at = std::time::Instant::now();
+                lease_renewed_at = std::time::Instant::now();
             }
             let Some(active_recording) = recording.as_mut() else {
                 let error = voice_asr::VoiceError {
@@ -374,6 +390,7 @@ async fn serve_transcription_ws(
             client_session_id = command["session_id"].as_str().unwrap_or("").to_owned();
             document_path = command["document_path"].as_str().unwrap_or("").to_owned();
             language = command["language"].as_str().unwrap_or("").to_owned();
+            persist_secretary_transcript = command["dispatch_target"].as_str() != Some("composer");
             let home = state.home.clone();
             let selected = selected.clone();
             match tokio::task::spawn_blocking(move || {
@@ -465,23 +482,25 @@ async fn serve_transcription_ws(
                 let _ = socket
                     .send(Message::Text(final_asr.to_string().into()))
                     .await;
-                let status = voice_diarization::spawn(
-                    state.clone(),
-                    group_id.clone(),
-                    client_session_id.clone(),
-                    document_path.clone(),
-                    diarization_model.clone(),
-                    recording_file,
-                );
-                let payload = match status {
-                    voice_diarization::SpawnStatus::Started => {
-                        json!({"type":"diarization_status","ok":true,"seq":command["seq"],"status":"separating_speakers"})
-                    }
-                    voice_diarization::SpawnStatus::Skipped(reason) => {
-                        json!({"type":"diarization_skipped","ok":true,"seq":command["seq"],"reason":reason})
-                    }
-                };
-                let _ = socket.send(Message::Text(payload.to_string().into())).await;
+                if persist_secretary_transcript {
+                    let status = voice_diarization::spawn(
+                        state.clone(),
+                        group_id.clone(),
+                        client_session_id.clone(),
+                        document_path.clone(),
+                        diarization_model.clone(),
+                        recording_file,
+                    );
+                    let payload = match status {
+                        voice_diarization::SpawnStatus::Started => {
+                            json!({"type":"diarization_status","ok":true,"seq":command["seq"],"status":"separating_speakers"})
+                        }
+                        voice_diarization::SpawnStatus::Skipped(reason) => {
+                            json!({"type":"diarization_skipped","ok":true,"seq":command["seq"],"reason":reason})
+                        }
+                    };
+                    let _ = socket.send(Message::Text(payload.to_string().into())).await;
+                }
             }
             let _ = socket
                 .send(Message::Text(
@@ -494,7 +513,8 @@ async fn serve_transcription_ws(
             break;
         }
     }
-    if !stopped
+    if persist_secretary_transcript
+        && !stopped
         && let Some(mut active) = session.take()
         && let Ok(Some(final_event)) = tokio::task::spawn_blocking(move || active.finish()).await
         && let Some(text) = final_event["text"]
@@ -777,26 +797,6 @@ fn root(value: &mut Value) -> &mut Map<String, Value> {
         root.entry(key).or_insert_with(|| json!([]));
     }
     root
-}
-fn require_voice_backend(assistant: &Value) -> Result<(), ApiError> {
-    if !assistant["enabled"].as_bool().unwrap_or(false) {
-        return Err(ApiError::bad_code(
-            "assistant_disabled",
-            "voice_secretary is disabled",
-            json!({}),
-        ));
-    }
-    let backend = assistant["config"]["recognition_backend"]
-        .as_str()
-        .unwrap_or("browser_asr");
-    if backend != "assistant_service_local_asr" {
-        return Err(ApiError::bad_code(
-            "assistant_voice_backend_mismatch",
-            "voice transcription requires recognition_backend=assistant_service_local_asr",
-            json!({"recognition_backend":backend}),
-        ));
-    }
-    Ok(())
 }
 fn voice_error(error: voice_asr::VoiceError) -> ApiError {
     ApiError::bad_code(error.code, error.message, Value::Object(error.details))

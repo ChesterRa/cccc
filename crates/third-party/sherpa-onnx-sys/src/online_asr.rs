@@ -193,10 +193,7 @@ extern "C" {
         key: *const c_char,
     ) -> *const c_char;
 
-    pub fn SherpaOnnxOnlineStreamHasOption(
-        stream: *const OnlineStream,
-        key: *const c_char,
-    ) -> i32;
+    pub fn SherpaOnnxOnlineStreamHasOption(stream: *const OnlineStream, key: *const c_char) -> i32;
 
     pub fn SherpaOnnxOnlineStreamIsEndpoint(
         recognizer: *const OnlineRecognizer,

@@ -3,6 +3,26 @@
 The `rust` branch replaces the Python backend while keeping the React/TypeScript
 frontend and its external product contracts stable.
 
+## Rust package distribution
+
+The installable crates.io package is `cccc`; its executable is also `cccc`.
+The initial registry bootstrap release is installed with:
+
+```bash
+cargo install cccc
+```
+
+Implementation crates are published under the `cccc-pair-*` namespace so the
+public package name stays simple while Rust module imports remain unchanged.
+Normal product releases continue to use the workspace version; the `0.0.x`
+releases only reserve and validate the new crates.io distribution path.
+
+Rust release packaging runs `scripts/prepare_rust_web_assets.mjs` before Cargo.
+The generated `crates/cccc-web/assets/web-dist/` directory is intentionally
+ignored by Git, but `cccc-pair-web` explicitly includes it in the crate archive.
+This keeps hashed frontend bundles out of source commits while preserving a
+Node.js-free install from crates.io.
+
 ## Data compatibility
 
 The Rust and Python implementations use the same `CCCC_HOME` and default to

@@ -1,10 +1,12 @@
 [package]
-name = "cccc-contracts"
+name = "cccc-pair-contracts"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+description = "Wire contracts for the CCCC collaborative agent control plane"
+publish = ["crates-io"]
 
 [dependencies]
 chrono.workspace = true
@@ -14,3 +16,6 @@ uuid.workspace = true
 
 [lints]
 workspace = true
+
+[lib]
+name = "cccc_contracts"

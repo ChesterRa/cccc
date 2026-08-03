@@ -426,17 +426,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "cccc-cli"
+name = "cccc"
 version = "0.4.33"
 dependencies = [
  "anyhow",
- "cccc-client",
- "cccc-contracts",
- "cccc-core",
- "cccc-daemon",
- "cccc-mcp",
- "cccc-runtime",
- "cccc-web",
+ "cccc-pair-client",
+ "cccc-pair-contracts",
+ "cccc-pair-core",
+ "cccc-pair-daemon",
+ "cccc-pair-mcp",
+ "cccc-pair-runtime",
+ "cccc-pair-web",
  "clap",
  "fs2",
  "reqwest 0.12.28",
@@ -447,18 +447,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "cccc-client"
+name = "cccc-pair-client"
 version = "0.4.33"
 dependencies = [
- "cccc-contracts",
- "cccc-core",
+ "cccc-pair-contracts",
+ "cccc-pair-core",
  "serde_json",
  "thiserror 2.0.18",
  "tokio",
 ]
 
 [[package]]
-name = "cccc-contracts"
+name = "cccc-pair-contracts"
 version = "0.4.33"
 dependencies = [
  "chrono",
@@ -468,12 +468,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "cccc-core"
+name = "cccc-pair-core"
 version = "0.4.33"
 dependencies = [
  "aws-lc-rs",
  "base64",
- "cccc-contracts",
+ "cccc-pair-contracts",
  "chrono",
  "chrono-tz",
  "cron",
@@ -493,16 +493,16 @@ dependencies = [
 ]
 
 [[package]]
-name = "cccc-daemon"
+name = "cccc-pair-daemon"
 version = "0.4.33"
 dependencies = [
  "anyhow",
  "base64",
- "cccc-client",
- "cccc-contracts",
- "cccc-core",
- "cccc-notebooklm",
- "cccc-runtime",
+ "cccc-pair-client",
+ "cccc-pair-contracts",
+ "cccc-pair-core",
+ "cccc-pair-notebooklm",
+ "cccc-pair-runtime",
  "chrono",
  "clap",
  "fs2",
@@ -526,17 +526,17 @@ dependencies = [
 ]
 
 [[package]]
-name = "cccc-mcp"
+name = "cccc-pair-mcp"
 version = "0.4.33"
 dependencies = [
  "anyhow",
  "axum",
  "base64",
- "cccc-client",
- "cccc-contracts",
- "cccc-core",
- "cccc-daemon",
- "cccc-runtime",
+ "cccc-pair-client",
+ "cccc-pair-contracts",
+ "cccc-pair-core",
+ "cccc-pair-daemon",
+ "cccc-pair-runtime",
  "mime_guess",
  "regex",
  "reqwest 0.12.28",
@@ -550,7 +550,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "cccc-notebooklm"
+name = "cccc-pair-notebooklm"
 version = "0.4.33"
 dependencies = [
  "cookie",
@@ -562,10 +562,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "cccc-runtime"
+name = "cccc-pair-runtime"
 version = "0.4.33"
 dependencies = [
- "cccc-contracts",
+ "cccc-pair-contracts",
  "portable-pty",
  "serde",
  "serde_json",
@@ -574,8 +574,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "cccc-web"
-version = "0.4.33"
+name = "cccc-pair-sherpa-onnx"
+version = "1.13.4-cccc.1"
+dependencies = [
+ "cccc-pair-sherpa-onnx-sys",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "cccc-pair-sherpa-onnx-sys"
+version = "1.13.4-cccc.1"
+dependencies = [
+ "bzip2 0.4.4",
+ "sha2 0.10.9",
+ "tar",
+ "ureq",
+]
+
+[[package]]
+name = "cccc-pair-web"
+version = "0.4.33-compat.1"
 dependencies = [
  "aes",
  "anyhow",
@@ -585,12 +604,13 @@ dependencies = [
  "base64",
  "bzip2 0.6.1",
  "cbc",
- "cccc-client",
- "cccc-contracts",
- "cccc-core",
- "cccc-daemon",
- "cccc-mcp",
- "cccc-runtime",
+ "cccc-pair-client",
+ "cccc-pair-contracts",
+ "cccc-pair-core",
+ "cccc-pair-daemon",
+ "cccc-pair-mcp",
+ "cccc-pair-runtime",
+ "cccc-pair-sherpa-onnx",
  "chromiumoxide",
  "chrono",
  "dingtalk-stream",
@@ -613,7 +633,7 @@ dependencies = [
  "serenity",
  "sha2 0.10.9",
  "shell-words",
- "sherpa-onnx",
+ "takecell",
  "tar",
  "teloxide",
  "tempfile",
@@ -3353,27 +3373,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sherpa-onnx"
-version = "1.13.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b142d3f255cb4e4b7808ea25869db6f5714e0a3550da355234483b4db552055"
-dependencies = [
- "serde",
- "serde_json",
- "sherpa-onnx-sys",
-]
-
-[[package]]
-name = "sherpa-onnx-sys"
-version = "1.13.4"
-dependencies = [
- "bzip2 0.4.4",
- "sha2 0.10.9",
- "tar",
- "ureq",
-]
-
-[[package]]
 name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3450,9 +3449,9 @@ dependencies = [
 
 [[package]]
 name = "spin"
-version = "0.9.8"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
 
 [[package]]
 name = "spki"

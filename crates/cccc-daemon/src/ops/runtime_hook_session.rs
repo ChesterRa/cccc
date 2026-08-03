@@ -22,7 +22,6 @@ pub struct HookSessionCapability {
     pub runtime: String,
     pub launch_token: String,
     pub pid: u32,
-    pub runtime_state_source: String,
 }
 
 fn capabilities() -> &'static Mutex<HashMap<Key, HookSessionCapability>> {
@@ -102,7 +101,6 @@ pub fn bind(
                     runtime: setup.runtime.clone(),
                     launch_token: setup.launch_token.clone(),
                     pid,
-                    runtime_state_source: "terminal".into(),
                 },
             );
     }
@@ -130,10 +128,7 @@ pub fn validated(
         .ok()?
         .get(&(group_id.to_owned(), actor_id.to_owned()))
         .cloned()?;
-    if capability.runtime != runtime
-        || capability.runtime_state_source != "terminal"
-        || capability.pid != pid
-        || capability.launch_token.is_empty()
+    if capability.runtime != runtime || capability.pid != pid || capability.launch_token.is_empty()
     {
         return None;
     }

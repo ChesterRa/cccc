@@ -44,7 +44,103 @@ async fn launches_chromium_and_captures_nonempty_frame() {
         .expect("jpeg");
     assert!(image.len() > 1_000);
     assert_eq!(&image[..2], &[0xff, 0xd8]);
+    assert_eq!(frame["width"], 800);
+    assert_eq!(frame["height"], 600);
     assert!(manager.close("g_test::slot-1").await.expect("close"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn frame_recreates_a_tab_closed_from_the_system_browser() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = local_page("CCCC recovered browser tab").await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let key = "closed-tab-recovery";
+    manager
+        .open(key, &temp.path().join("profile"), &url, 800, 600)
+        .await
+        .expect("open");
+    let page = manager
+        .sessions
+        .lock()
+        .await
+        .get(key)
+        .expect("session")
+        .page
+        .clone();
+    page.close().await.expect("close browser tab");
+
+    let frame = manager.frame(key).await.expect("recover and capture frame");
+
+    assert!(!frame["data_base64"].as_str().unwrap_or_default().is_empty());
+    assert_eq!(
+        frame["url"]
+            .as_str()
+            .unwrap_or_default()
+            .trim_end_matches('/'),
+        url.trim_end_matches('/')
+    );
+    assert!(manager.close(key).await.expect("close"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn closed_auth_tab_is_not_recreated() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = local_page("CCCC close auth tab").await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let key = "closed-auth-tab";
+    manager
+        .open(key, &temp.path().join("profile"), &url, 800, 600)
+        .await
+        .expect("open");
+    let page = {
+        let mut sessions = manager.sessions.lock().await;
+        let session = sessions.get_mut(key).expect("session");
+        session.recover_closed_page = false;
+        session.page.clone()
+    };
+    page.close().await.expect("close auth tab");
+
+    assert!(manager.frame(key).await.is_err());
+    let status = manager.info(key).await;
+    assert_eq!(status["active"], false);
+    assert_eq!(status["state"], "closed");
+    assert!(manager.sessions.lock().await.get(key).is_none());
+    server.abort();
+}
+
+#[tokio::test]
+async fn open_completes_after_dom_content_loaded_without_waiting_for_subresources() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = page_with_stalled_subresource().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+
+    let state = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        manager.open(
+            "dom-content-loaded",
+            &temp.path().join("profile"),
+            &url,
+            800,
+            600,
+        ),
+    )
+    .await
+    .expect("open must not wait for the stalled image")
+    .expect("open browser");
+
+    assert_eq!(state["state"], "ready");
+    assert!(manager.close("dom-content-loaded").await.expect("close"));
     server.abort();
 }
 
@@ -165,6 +261,65 @@ async fn close_releases_key_for_a_different_profile() {
 }
 
 #[tokio::test]
+async fn inactive_stale_profile_is_replaced_for_the_same_key() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let first_profile = temp.path().join("profile-1");
+    let second_profile = temp.path().join("profile-2");
+
+    manager
+        .register_profile("space-provider::notebooklm", &first_profile)
+        .await
+        .expect("register stale profile");
+    manager
+        .register_profile("space-provider::notebooklm", &second_profile)
+        .await
+        .expect("replace inactive stale profile");
+
+    assert_eq!(
+        manager
+            .key_profiles
+            .lock()
+            .await
+            .get("space-provider::notebooklm"),
+        Some(&second_profile)
+    );
+}
+
+#[tokio::test]
+async fn failed_open_releases_profile_registration() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = local_page("CCCC failed open cleanup").await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    let profile = temp.path().join("profile");
+    let invalid_storage = json!({"cookies":"not-an-array"});
+
+    manager
+        .open_seeded(
+            "failed-open",
+            &profile,
+            &url,
+            800,
+            600,
+            Some(&invalid_storage),
+        )
+        .await
+        .expect_err("invalid cookies should fail initialization");
+
+    assert!(
+        !manager
+            .key_profiles
+            .lock()
+            .await
+            .contains_key("failed-open")
+    );
+    server.abort();
+}
+
+#[tokio::test]
 async fn open_and_close_share_one_profile_lifecycle_boundary() {
     if !chrome_available() {
         return;
@@ -244,6 +399,41 @@ async fn local_page(body: &'static str) -> (String, JoinHandle<()>) {
     (format!("http://{address}"), server)
 }
 
+async fn page_with_stalled_subresource() -> (String, JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("listener");
+    let address = listener.local_addr().expect("address");
+    let server = tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                return;
+            };
+            tokio::spawn(async move {
+                let mut request = [0_u8; 2048];
+                let Ok(read) = stream.read(&mut request).await else {
+                    return;
+                };
+                if String::from_utf8_lossy(&request[..read]).starts_with("GET /never ") {
+                    futures_util::future::pending::<()>().await;
+                    return;
+                }
+                let body = "<!doctype html><html><body><h1>DOMContentLoaded</h1><img src='/never'></body></html>";
+                let _ = stream
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await;
+            });
+        }
+    });
+    (format!("http://{address}"), server)
+}
+
 #[tokio::test]
 async fn restores_seeded_cookie_and_detects_real_auth_tokens() {
     if !chrome_available() {
@@ -256,7 +446,7 @@ async fn restores_seeded_cookie_and_detects_real_auth_tokens() {
     let temp = tempfile::tempdir().expect("tempdir");
     let manager = BrowserSurfaces::default();
     let seed = json!({"cookies":[{
-        "name":"seeded", "value":"present", "url":url, "path":"/",
+        "name":"SID", "value":"present", "url":url, "path":"/",
         "secure":false, "httpOnly":false
     }]});
     manager
@@ -284,7 +474,7 @@ async fn restores_seeded_cookie_and_detects_real_auth_tokens() {
         .expect("evaluate cookie")
         .into_value()
         .expect("cookie string");
-    assert!(cookie.contains("seeded=present"));
+    assert!(cookie.contains("SID=present"));
     assert!(
         manager
             .notebooklm_auth_ready("notebooklm-test")

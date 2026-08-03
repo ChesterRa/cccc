@@ -117,7 +117,14 @@ fn render_with_body(group: &GroupDoc, actor: &Actor, body: &str) -> String {
         format!("- {MESSAGE_DELIVERY_GUIDANCE}"),
     ]);
     if enabled.len() > 1 {
-        lines.push(crate::peer_insight::TEAM_MODE_SEED.into());
+        lines.push(
+            if role == "foreman" {
+                crate::peer_insight::FOREMAN_TEAM_MODE_SEED
+            } else {
+                crate::peer_insight::TEAM_MODE_SEED
+            }
+            .into(),
+        );
     }
     let header = lines.join("\n").trim_end().to_owned();
     let body = body.trim();
@@ -229,9 +236,14 @@ mod tests {
         let mut group = store.create("test", "migration").expect("group");
         let actor = Actor::new("foreman");
         group.actors.push(actor.clone());
-        assert!(!render(&group, &actor).contains(crate::peer_insight::TEAM_MODE_SEED));
+        assert!(!render(&group, &actor).contains(crate::peer_insight::FOREMAN_TEAM_MODE_SEED));
         group.actors.push(Actor::new("peer1"));
-        assert!(render(&group, &actor).contains(crate::peer_insight::TEAM_MODE_SEED));
+        assert!(render(&group, &actor).contains(crate::peer_insight::FOREMAN_TEAM_MODE_SEED));
+        assert!(!render(&group, &actor).contains(crate::peer_insight::TEAM_MODE_SEED));
+
+        let peer = group.actors.last().expect("peer");
+        assert!(render(&group, peer).contains(crate::peer_insight::TEAM_MODE_SEED));
+        assert!(!render(&group, peer).contains(crate::peer_insight::FOREMAN_TEAM_MODE_SEED));
     }
 
     #[test]

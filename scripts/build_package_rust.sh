@@ -6,8 +6,8 @@ TARGET="$(rustc -vV | sed -n 's/^host: //p')"
 VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)"
 NAME="cccc-v${VERSION}-${TARGET}"
 
-"$ROOT_DIR/scripts/build_web.sh"
-cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --release --locked -p cccc-cli --bin cccc
+node "$ROOT_DIR/scripts/prepare_rust_web_assets.mjs" --install-deps
+cargo build --manifest-path "$ROOT_DIR/Cargo.toml" --release --locked -p cccc --bin cccc
 
 rm -rf "$ROOT_DIR/dist/$NAME"
 mkdir -p "$ROOT_DIR/dist/$NAME"

@@ -169,6 +169,80 @@ def test_claude_generation_is_owned_by_logical_input_and_interrupt(tmp_path: Pat
     assert second.turn_id == "local:2"
 
 
+def test_claude_completion_hook_closes_only_an_active_local_turn(tmp_path: Path) -> None:
+    begin_launch(tmp_path, "claude", "g1", "peer", "token")
+    idle = record_hook_event(
+        tmp_path,
+        "claude",
+        "g1",
+        "peer",
+        "token",
+        _payload("SessionStart", session_id="session-1"),
+    )
+    assert record_hook_event(
+        tmp_path,
+        "claude",
+        "g1",
+        "peer",
+        "token",
+        _payload("Stop", session_id="session-1"),
+    ) == idle
+
+    active = record_terminal_input(tmp_path, "claude", "g1", "peer")
+    assert active is not None
+    completed = record_hook_event(
+        tmp_path,
+        "claude",
+        "g1",
+        "peer",
+        "token",
+        _payload("Stop", session_id="session-1"),
+    )
+    assert (completed.status, completed.event, completed.turn_id) == (
+        "idle",
+        "Stop",
+        None,
+    )
+
+    next_turn = record_terminal_input(tmp_path, "claude", "g1", "peer")
+    assert next_turn is not None
+    assert next_turn.turn_id == "local:2"
+    completed_by_notification = record_hook_event(
+        tmp_path,
+        "claude",
+        "g1",
+        "peer",
+        "token",
+        _payload(
+            "Notification",
+            session_id="session-1",
+            notification_type="agent_completed",
+        ),
+    )
+    assert (
+        completed_by_notification.status,
+        completed_by_notification.event,
+        completed_by_notification.turn_id,
+    ) == ("idle", "Notification", None)
+
+    assert record_hook_event(
+        tmp_path,
+        "claude",
+        "g1",
+        "peer",
+        "old-token",
+        _payload("Stop", session_id="session-1"),
+    ) == completed_by_notification
+    assert record_hook_event(
+        tmp_path,
+        "claude",
+        "g1",
+        "peer",
+        "token",
+        _payload("Stop", session_id="old-session"),
+    ) == completed_by_notification
+
+
 def test_cross_process_lock_serializes_interrupt_and_late_hook(tmp_path: Path) -> None:
     begin_launch(tmp_path, "claude", "g1", "peer", "token")
     record_hook_event(

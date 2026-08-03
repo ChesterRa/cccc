@@ -71,7 +71,7 @@ pub(super) fn apply_cross_group_recipient(
     if items.is_empty()
         || items
             .iter()
-            .any(|item| !item.as_str().is_some_and(|value| !value.trim().is_empty()))
+            .any(|item| item.as_str().is_none_or(|value| value.trim().is_empty()))
     {
         return Err(OpError::new(
             "invalid_recipient",

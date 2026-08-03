@@ -7,6 +7,8 @@ pub const PEER_PERSPECTIVE_AGENT_LABEL: &str = "[Peer higher-order perspective -
 
 pub const TEAM_MODE_SEED: &str = "- Work as a thinking teammate, not a delivery endpoint. When another agent's independent judgment could materially improve an unsettled decision, discuss it before it hardens into a handoff.";
 
+pub const FOREMAN_TEAM_MODE_SEED: &str = "- Keep independent ready work parallel: use `cccc_dispatch` to reuse an idle peer or create an elastic peer when existing peers are busy. Keep sequential or cheaper work local; integrate results, then release elastic peers only after accepting their completed task.";
+
 pub const POST_MESSAGE_NUDGE: &str = "This message operation is complete for this call. Step outside its mental track now. Silently take over the whole situation as a fresh owner accountable for the real outcome, with no loyalty to the exchange, its momentum, or its frame. Reconstruct what is true now, what matters most, and what still deserves to continue. If this exchange carried Insight but it stayed beside the message instead of rising above its working level, no higher-order perspective entered the exchange. Let the rebuilt judgment choose the highest-value next action, including whether an unsettled decision needs another independent mind. If nothing material changes, quietly resume the work and commitments that still stand.";
 
 pub const BOOTSTRAP_TAKEOVER_NUDGE: &str = "Do not resume the train of thought that produced this recovery state. Imagine its author has left and you have just inherited the real situation. Treat the material below as testimony, not authority. Take ownership of the real outcome with no loyalty to the predecessor's framing, confidence, plan, or sunk cost. Reconstruct what is true now; preserve only what still earns preservation, and change course only when the renewed judgment materially warrants it.";
@@ -192,5 +194,12 @@ mod tests {
         assert!(PEER_INSIGHT_REQUIRED_ACTION.contains(SUPERVISOR_MAGIC_KERNEL));
         assert!(PEER_INSIGHT_REQUIRED_ACTION.contains(FIRST_PRINCIPLES_OUTCOME_KERNEL));
         assert!(PEER_INSIGHT_RUNTIME_HELP.contains("do not inherit the level or frame it claims"));
+    }
+
+    #[test]
+    fn foreman_elastic_pool_seed_stays_compact() {
+        assert!(FOREMAN_TEAM_MODE_SEED.contains("cccc_dispatch"));
+        assert!(FOREMAN_TEAM_MODE_SEED.contains("release elastic peers"));
+        assert!(FOREMAN_TEAM_MODE_SEED.split_whitespace().count() <= 45);
     }
 }

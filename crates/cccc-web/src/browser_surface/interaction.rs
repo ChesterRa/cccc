@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use std::collections::HashSet;
 
 use super::BrowserSurfaces;
+use super::navigation::goto_dom_content_loaded;
 
 impl BrowserSurfaces {
     pub async fn submit_prompt(&self, key: &str, target_url: &str, prompt: &str) -> Result<Value> {
@@ -24,7 +25,7 @@ impl BrowserSurfaces {
         if !target_url.is_empty() {
             let current = session.page.url().await?.unwrap_or_default();
             if current != target_url {
-                session.page.goto(target_url).await?;
+                goto_dom_content_loaded(&session.page, target_url).await?;
             }
         }
         session
@@ -100,6 +101,13 @@ impl BrowserSurfaces {
             "resize" => {
                 let width = number(command, "width").round().clamp(320.0, 3840.0) as u32;
                 let height = number(command, "height").round().clamp(240.0, 2160.0) as u32;
+                if !should_override_viewport(
+                    session.system_browser.is_some(),
+                    (session.width, session.height),
+                    (width, height),
+                ) {
+                    return Ok(());
+                }
                 session
                     .page
                     .execute(SetDeviceMetricsOverrideParams::new(
@@ -136,7 +144,7 @@ pub async fn serve_socket(
     {
         return;
     }
-    let mut interval = tokio::time::interval(std::time::Duration::from_millis(300));
+    let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
     loop {
         tokio::select! {
             _ = shutdown.recv() => {
@@ -150,8 +158,9 @@ pub async fn serve_socket(
                     }
                 }
                 Err(error) => {
+                    let message = error.to_string();
                     let _ = socket.send(Message::Text(
-                        json!({"t":"error","message":error.to_string()}).to_string().into(),
+                        json!({"t":"state","active":false,"state":"failed","message":message,"error":{"code":"browser_surface_unavailable","message":message}}).to_string().into(),
                     )).await;
                     break;
                 }
@@ -183,6 +192,14 @@ pub async fn serve_socket(
             }
         }
     }
+}
+
+fn should_override_viewport(
+    system_browser: bool,
+    current: (u32, u32),
+    requested: (u32, u32),
+) -> bool {
+    !system_browser && current != requested
 }
 
 fn number(value: &Value, key: &str) -> f64 {
@@ -222,4 +239,20 @@ async fn press_key(page: &Page, key: &str) -> Result<()> {
     )
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_override_viewport;
+
+    #[test]
+    fn visible_system_browser_keeps_its_native_viewport_stable() {
+        assert!(!should_override_viewport(true, (1366, 900), (900, 640)));
+    }
+
+    #[test]
+    fn headless_browser_only_resizes_when_dimensions_change() {
+        assert!(!should_override_viewport(false, (800, 600), (800, 600)));
+        assert!(should_override_viewport(false, (800, 600), (1024, 768)));
+    }
 }

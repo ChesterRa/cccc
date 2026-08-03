@@ -352,8 +352,14 @@ async fn list_outbounds(
     Extension(principal): Extension<Principal>,
     Query(query): Query<GroupQuery>,
 ) -> ApiResult {
+    let store = BridgeStore::new(&state.home);
+    // Read-time back-compat repair: fold stale `active` outbounds (from the old
+    // sync_outbound bug) back to `approved` when a matching `active` trust proves
+    // the pairing completed. Persist once so the frontend never needs a per-render
+    // special case; the in-memory `normalize` keeps every other read consistent.
+    store.repair_legacy_active_outbounds().map_err(io_error)?;
     let outbounds = filtered(
-        &BridgeStore::new(&state.home).load().map_err(io_error)?,
+        &store.load().map_err(io_error)?,
         "outbounds",
         &query.group_id,
         &principal,
@@ -494,7 +500,13 @@ async fn sync_outbound(
             }
             if let Some(claim) = claim.get("claim") {
                 item["credential"] = claim["credential"].clone();
-                item["status"] = json!("active");
+                // Outbound is a pairing-flow record: its terminal state is `approved`,
+                // mirroring the Python `pairing_outbound_sync.approve_outbound_from_remote_request`
+                // contract. Routing/session liveness lives on `trust` and `registration`,
+                // which stay `active` below — the outbound's own `status` is never read by
+                // any routing path, and `approved` is what `projectRecentOutbounds` filters
+                // out so completed requests leave the "sent requests" list.
+                item["status"] = json!("approved");
                 let local_group_id = item["local_group_id"].clone();
                 let remote_group_id = item["issuer_group_id"].clone();
                 let existing = items_mut(value, "trusts").iter_mut().find(|trust| {

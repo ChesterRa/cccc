@@ -30,6 +30,7 @@ import {
   pruneComposerAgentMentionTokens,
   pruneComposerGroupMentionTokens,
 } from "./composerGroupMentions";
+import { buildComposerLocalGroupRouteRefs } from "./composerLocalGroupRouteRefs";
 import { buildComposerSendPlanTargets } from "./composerSendPlan";
 import {
   buildComposerMentionSuggestions,
@@ -607,6 +608,12 @@ export function useChatTab({
     const quotedPresentationRefSnapshot = composerStateSnapshot.quotedPresentationRef;
     const refsSnapshot: MessageRef[] = [
       ...(quotedPresentationRefSnapshot ? [quotedPresentationRefSnapshot] : []),
+      ...buildComposerLocalGroupRouteRefs({
+        text: composerStateSnapshot.composerText,
+        selectedGroupId,
+        tokens: composerGroupMentionTokens,
+        groups: composerRouteGroups,
+      }),
       ...buildComposerGroupBridgeRouteRefs({
         text: composerStateSnapshot.composerText,
         tokens: composerGroupMentionTokens,

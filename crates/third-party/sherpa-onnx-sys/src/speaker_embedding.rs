@@ -121,9 +121,7 @@ extern "C" {
         name: *const c_char,
     ) -> i32;
 
-    pub fn SherpaOnnxSpeakerEmbeddingManagerNumSpeakers(
-        p: *const SpeakerEmbeddingManager,
-    ) -> i32;
+    pub fn SherpaOnnxSpeakerEmbeddingManagerNumSpeakers(p: *const SpeakerEmbeddingManager) -> i32;
 
     pub fn SherpaOnnxSpeakerEmbeddingManagerGetAllSpeakers(
         p: *const SpeakerEmbeddingManager,

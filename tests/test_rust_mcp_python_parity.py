@@ -7,6 +7,9 @@ from pathlib import Path
 from cccc.ports.mcp.toolspecs import MCP_TOOLS
 
 
+RUST_ONLY_TOOLS = {"cccc_dispatch"}
+
+
 class TestRustMcpPythonParity(unittest.TestCase):
     def test_static_tool_catalog_names_match(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -17,7 +20,8 @@ class TestRustMcpPythonParity(unittest.TestCase):
             for tool in MCP_TOOLS
             if isinstance(tool, dict) and str(tool.get("name") or "")
         }
-        self.assertSetEqual(rust_names, python_names)
+        self.assertSetEqual(rust_names - RUST_ONLY_TOOLS, python_names)
+        self.assertTrue(RUST_ONLY_TOOLS <= rust_names)
 
 
 if __name__ == "__main__":
