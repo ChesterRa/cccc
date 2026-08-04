@@ -1,8 +1,37 @@
 use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, GroupState, RunnerKind};
-use cccc_core::{GroupStore, HomeLayout, actors};
+use cccc_core::{GroupStore, HomeLayout, Scope, actors};
 use serde_json::{Map, json};
 
 use super::{actor_runtime, runtime_restore};
+
+#[test]
+fn restore_migrates_legacy_actor_scope_paths_even_for_stopped_groups() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("restore migration", "").expect("group");
+    let project = temp.path().join("project");
+    std::fs::create_dir(&project).expect("project");
+    store
+        .mutate(&group.group_id, |group| {
+            group.scopes.push(Scope {
+                scope_key: "s_project".into(),
+                url: project.to_string_lossy().into_owned(),
+                label: "project".into(),
+                git_remote: String::new(),
+            });
+            group.active_scope_key = "s_project".into();
+            let mut actor = Actor::new("peer1");
+            actor.default_scope_key = project.to_string_lossy().into_owned();
+            actors::add(group, actor)
+        })
+        .expect("legacy actor");
+
+    runtime_restore::restore_running(&home).expect("restore");
+
+    let stored = store.load(&group.group_id).expect("stored group");
+    assert_eq!(stored.actors[0].default_scope_key, "s_project");
+}
 
 #[test]
 fn restores_enabled_actors_for_persisted_running_groups() {
@@ -13,6 +42,13 @@ fn restores_enabled_actors_for_persisted_running_groups() {
     let group_id = group.group_id.clone();
     store
         .mutate(&group_id, |group| {
+            group.scopes.push(Scope {
+                scope_key: "s_project".into(),
+                url: temp.path().to_string_lossy().into_owned(),
+                label: "project".into(),
+                git_remote: String::new(),
+            });
+            group.active_scope_key = "s_project".into();
             let mut actor = Actor::new("peer1");
             actor.runtime = ActorRuntime::Custom;
             actor.runner = RunnerKind::Pty;
@@ -38,6 +74,13 @@ fn relaunch_preserves_runtime_metadata_but_new_session_clears_it() {
     let group_id = group.group_id.clone();
     store
         .mutate(&group_id, |group| {
+            group.scopes.push(Scope {
+                scope_key: "s_project".into(),
+                url: temp.path().to_string_lossy().into_owned(),
+                label: "project".into(),
+                git_remote: String::new(),
+            });
+            group.active_scope_key = "s_project".into();
             let mut actor = Actor::new("peer1");
             actor.runtime = ActorRuntime::Codex;
             actor.runner = RunnerKind::Pty;

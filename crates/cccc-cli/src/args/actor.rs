@@ -48,6 +48,8 @@ pub enum ActorAction {
         #[arg(long)]
         runner: Option<String>,
         #[arg(long)]
+        scope: Option<String>,
+        #[arg(long)]
         command: Option<String>,
         #[arg(long = "env")]
         env: Vec<String>,

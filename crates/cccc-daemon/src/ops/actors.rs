@@ -2,7 +2,7 @@ use cccc_contracts::{Actor, DaemonRequest, Event};
 use cccc_core::actors;
 use cccc_core::ledger;
 use cccc_core::permissions::{self, ActorAction};
-use cccc_core::{GroupDoc, HomeLayout};
+use cccc_core::{GroupDoc, HomeLayout, group_scope};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -64,6 +64,7 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
         actor = actor_profile_runtime::link(home, &actor, &actor.profile_id)?;
     }
+    actor.default_scope_key = normalize_default_scope_key(&group, &actor.default_scope_key)?;
     let added = store(home)?
         .mutate(&group_id, |doc| actors::add(doc, actor))
         .map_err(OpError::invalid)?;
@@ -104,7 +105,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if !profile_action.is_empty() && profile_action != "convert_to_custom" {
         return Err(OpError::new("invalid_args", "invalid profile_action"));
     }
-    let patch = request
+    let mut patch = request
         .args
         .get("patch")
         .and_then(Value::as_object)
@@ -122,6 +123,15 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect()
         });
+    if let Some(value) = patch.get("default_scope_key") {
+        let reference = value
+            .as_str()
+            .ok_or_else(|| OpError::new("invalid_args", "default_scope_key must be a string"))?;
+        patch.insert(
+            "default_scope_key".into(),
+            Value::String(normalize_default_scope_key(&group, reference)?),
+        );
+    }
     let current = group
         .actors
         .iter()
@@ -279,6 +289,21 @@ fn actor_from_args(request: &DaemonRequest) -> Result<Actor, OpError> {
         }
     }
     serde_json::from_value(value).map_err(OpError::invalid)
+}
+
+fn normalize_default_scope_key(group: &GroupDoc, reference: &str) -> Result<String, OpError> {
+    let reference = reference.trim();
+    if reference.is_empty() {
+        return Ok(String::new());
+    }
+    group_scope::resolve_attached_scope(group, reference)
+        .map(|scope| scope.scope_key.clone())
+        .ok_or_else(|| {
+            OpError::new(
+                "scope_not_attached",
+                format!("scope not attached: {reference}"),
+            )
+        })
 }
 
 fn private_env_arg(request: &DaemonRequest) -> Result<Option<BTreeMap<String, String>>, OpError> {

@@ -2,6 +2,7 @@ use anyhow::Result;
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
+use std::path::Path;
 
 use crate::args::{ActorAction, ActorArgs};
 use crate::commands::common::{call, env, group, print};
@@ -29,6 +30,7 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: ActorArgs) -> R
             by,
         } => {
             let command = parse_command(&command)?;
+            let scope = canonical_scope_key(&scope)?;
             call(
                 client,
                 "actor_add",
@@ -50,6 +52,7 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: ActorArgs) -> R
             title,
             runtime,
             runner,
+            scope,
             command,
             env: raw_env,
             submit,
@@ -61,6 +64,12 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: ActorArgs) -> R
             optional(&mut patch, "title", title);
             optional(&mut patch, "runtime", runtime);
             optional(&mut patch, "runner", runner);
+            if let Some(scope) = scope {
+                patch.insert(
+                    "default_scope_key".into(),
+                    Value::String(canonical_scope_key(&scope)?),
+                );
+            }
             optional(&mut patch, "submit", submit);
             optional(&mut patch, "runtime_state_source", runtime_state_source);
             if let Some(enabled) = enabled {
@@ -100,6 +109,13 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: ActorArgs) -> R
         }
     };
     print(response)
+}
+
+fn canonical_scope_key(path: &str) -> Result<String> {
+    if path.trim().is_empty() {
+        return Ok(String::new());
+    }
+    Ok(cccc_core::scope::detect(Path::new(path))?.scope_key)
 }
 
 async fn lifecycle(

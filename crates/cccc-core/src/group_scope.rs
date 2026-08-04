@@ -3,6 +3,49 @@ use std::io;
 
 use crate::{GroupDoc, GroupStore, Registry, Scope};
 
+#[must_use]
+pub fn resolve_attached_scope<'a>(group: &'a GroupDoc, reference: &str) -> Option<&'a Scope> {
+    let wanted = reference.trim();
+    if wanted.is_empty() {
+        return None;
+    }
+    group.scopes.iter().find(|scope| {
+        scope.scope_key == wanted
+            || scope.url == wanted
+            || paths_resolve_to_same_location(&scope.url, wanted)
+    })
+}
+
+pub fn normalize_actor_scope_keys(group: &mut GroupDoc) -> usize {
+    let replacements = group
+        .actors
+        .iter()
+        .enumerate()
+        .filter_map(|(index, actor)| {
+            let reference = actor.default_scope_key.trim();
+            if reference.is_empty() {
+                return None;
+            }
+            let scope = resolve_attached_scope(group, reference)?;
+            (scope.scope_key != reference).then(|| (index, scope.scope_key.clone()))
+        })
+        .collect::<Vec<_>>();
+    for (index, scope_key) in &replacements {
+        group.actors[*index].default_scope_key.clone_from(scope_key);
+    }
+    replacements.len()
+}
+
+fn paths_resolve_to_same_location(left: &str, right: &str) -> bool {
+    let Ok(left) = std::path::Path::new(left).canonicalize() else {
+        return false;
+    };
+    let Ok(right) = std::path::Path::new(right).canonicalize() else {
+        return false;
+    };
+    left == right
+}
+
 pub fn attach(store: &GroupStore, group_id: &str, scope: Scope) -> io::Result<GroupDoc> {
     attach_with(store, group_id, scope, |result| {
         Registry::mutate(store.home(), |registry| {
@@ -129,6 +172,31 @@ mod tests {
     use crate::HomeLayout;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    #[test]
+    fn legacy_actor_scope_paths_normalize_to_attached_scope_keys() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope_path = temp.path().join("project");
+        std::fs::create_dir(&scope_path).expect("project");
+        let mut group =
+            GroupStore::new(HomeLayout::from_path(temp.path().join("home")).expect("home"))
+                .expect("store")
+                .create("scope migration", "")
+                .expect("group");
+        group.scopes.push(Scope {
+            scope_key: "s_project".into(),
+            url: scope_path.to_string_lossy().into_owned(),
+            label: "project".into(),
+            git_remote: String::new(),
+        });
+        let mut actor = cccc_contracts::Actor::new("peer");
+        actor.default_scope_key = scope_path.to_string_lossy().into_owned();
+        group.actors.push(actor);
+
+        assert_eq!(normalize_actor_scope_keys(&mut group), 1);
+        assert_eq!(group.actors[0].default_scope_key, "s_project");
+        assert_eq!(normalize_actor_scope_keys(&mut group), 0);
+    }
 
     #[test]
     fn failed_attach_rollback_does_not_overwrite_a_concurrent_group_update() {

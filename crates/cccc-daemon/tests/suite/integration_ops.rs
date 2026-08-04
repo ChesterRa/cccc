@@ -4,6 +4,74 @@ use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
 #[test]
+fn actor_scope_paths_are_persisted_as_attached_scope_keys() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let project = temp.path().join("project");
+    std::fs::create_dir(&project).expect("project");
+    let created = call(&home, "group_create", json!({"title":"scoped actors"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    let attached = call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":project,"by":"user"}),
+    );
+    let scope_key = attached.result["group"]["active_scope_key"]
+        .as_str()
+        .expect("scope key");
+
+    let added = call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer",
+            "default_scope_key":project,
+            "by":"user"
+        }),
+    );
+    assert_eq!(added.result["actor"]["default_scope_key"], scope_key);
+
+    let updated = call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer",
+            "patch":{"default_scope_key":project},
+            "by":"user"
+        }),
+    );
+    assert_eq!(updated.result["actor"]["default_scope_key"], scope_key);
+    assert_eq!(
+        cccc_core::GroupStore::new(home.clone())
+            .expect("store")
+            .load(group_id)
+            .expect("group")
+            .actors[0]
+            .default_scope_key,
+        scope_key
+    );
+
+    let invalid = raw_call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer",
+            "patch":{"default_scope_key":temp.path().join("other")},
+            "by":"user"
+        }),
+    );
+    assert_eq!(
+        invalid.error.expect("scope error").code,
+        "scope_not_attached"
+    );
+}
+
+#[test]
 fn prompt_im_space_and_voice_operations_share_rust_state() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

@@ -73,7 +73,7 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     } else {
         actor.command.clone()
     };
-    let cwd = working_directory(group, &actor);
+    let cwd = working_directory(group, &actor)?;
     let mut env = actor.env.clone();
     env.extend(actor_profile_runtime::profile_secrets(home, &actor)?);
     env.extend(actor_secrets::values(home, &group.group_id, &actor.id)?);
@@ -192,21 +192,29 @@ pub fn stop_group(group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {
     Ok(stopped)
 }
 
-fn working_directory(group: &GroupDoc, actor: &Actor) -> PathBuf {
+fn working_directory(group: &GroupDoc, actor: &Actor) -> Result<PathBuf, OpError> {
     let wanted = if actor.default_scope_key.is_empty() {
         &group.active_scope_key
     } else {
         &actor.default_scope_key
     };
-    group
-        .scopes
-        .iter()
-        .find(|scope| &scope.scope_key == wanted)
-        .or_else(|| group.scopes.first())
-        .map(|scope| PathBuf::from(&scope.url))
-        .filter(|path| path.is_dir())
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| PathBuf::from("."))
+    if wanted.is_empty() {
+        return std::env::current_dir().map_err(OpError::io);
+    }
+    let scope = cccc_core::group_scope::resolve_attached_scope(group, wanted).ok_or_else(|| {
+        OpError::new(
+            "scope_not_attached",
+            format!("scope not attached: {wanted}"),
+        )
+    })?;
+    let path = PathBuf::from(&scope.url);
+    if !path.is_dir() {
+        return Err(OpError::new(
+            "invalid_project_root",
+            format!("project root path does not exist: {}", path.display()),
+        ));
+    }
+    Ok(path)
 }
 
 fn runtime_error(error: cccc_runtime::RuntimeError) -> OpError {

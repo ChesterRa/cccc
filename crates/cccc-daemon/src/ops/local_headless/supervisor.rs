@@ -64,7 +64,7 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
     }
     stop(&group.group_id, &actor.id);
 
-    let cwd = working_directory(group, actor);
+    let cwd = working_directory(group, actor)?;
     let mut env = actor.env.clone();
     env.insert(
         "CCCC_HOME".into(),
@@ -353,21 +353,29 @@ fn preserved_claude_args(args: &[String]) -> Vec<String> {
     preserved
 }
 
-fn working_directory(group: &GroupDoc, actor: &Actor) -> std::path::PathBuf {
+fn working_directory(group: &GroupDoc, actor: &Actor) -> io::Result<std::path::PathBuf> {
     let wanted = if actor.default_scope_key.is_empty() {
         &group.active_scope_key
     } else {
         &actor.default_scope_key
     };
-    group
-        .scopes
-        .iter()
-        .find(|scope| &scope.scope_key == wanted)
-        .or_else(|| group.scopes.first())
-        .map(|scope| std::path::PathBuf::from(&scope.url))
-        .filter(|path| path.is_dir())
-        .or_else(|| std::env::current_dir().ok())
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
+    if wanted.is_empty() {
+        return std::env::current_dir();
+    }
+    let scope = cccc_core::group_scope::resolve_attached_scope(group, wanted).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("scope not attached: {wanted}"),
+        )
+    })?;
+    let path = std::path::PathBuf::from(&scope.url);
+    if !path.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("project root path does not exist: {}", path.display()),
+        ));
+    }
+    Ok(path)
 }
 
 fn model_from_command(command: &[String]) -> String {
@@ -464,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn invalid_scope_directory_falls_back_to_current_directory() {
+    fn invalid_scope_directory_is_rejected() {
         let temp = tempfile::tempdir().expect("tempdir");
         let missing = temp.path().join("missing");
         let mut group =
@@ -480,9 +488,11 @@ mod tests {
         });
         group.active_scope_key = "missing".into();
 
-        assert_eq!(
-            working_directory(&group, &Actor::new("actor")),
-            std::env::current_dir().expect("current directory")
+        let error = working_directory(&group, &Actor::new("actor")).expect_err("invalid scope");
+        assert!(
+            error
+                .to_string()
+                .contains("project root path does not exist")
         );
     }
 
@@ -496,6 +506,13 @@ mod tests {
             .expect("store")
             .create("concurrent", "")
             .expect("group");
+        group.scopes.push(Scope {
+            scope_key: "s_project".into(),
+            url: temp.path().to_string_lossy().into_owned(),
+            label: "project".into(),
+            git_remote: String::new(),
+        });
+        group.active_scope_key = "s_project".into();
         let starts_path = temp.path().join("starts");
         let mut actor = Actor::new("headless");
         actor.role = Some(ActorRole::Foreman);

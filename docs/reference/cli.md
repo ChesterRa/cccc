@@ -120,13 +120,17 @@ Manage actors.
 
 ```bash
 cccc actor list                    # List actors
+cccc actor add <actor_id> --scope /path/to/project
 cccc actor start <actor_id>        # Start actor
 cccc actor stop <actor_id>         # Stop actor
 cccc actor restart <actor_id>      # Restart actor
 cccc actor remove <actor_id>       # Remove actor
-cccc actor update <actor_id> ...   # Update actor settings
+cccc actor update <actor_id> --scope /path/to/project
 cccc actor secrets <actor_id> ...  # Manage runtime-only secrets
 ```
+
+Actor scope arguments are project paths at the CLI boundary. Rust resolves them to the attached
+scope key before persistence, keeping the stored group document compatible with the Python backend.
 
 ## Message Commands
 
