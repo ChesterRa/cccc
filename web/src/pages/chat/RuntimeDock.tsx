@@ -304,7 +304,7 @@ function RuntimeDockActorButtonView({
   isDark,
   isSmallScreen,
   isInspectorOpen,
-  selectedGroupActorsHydrating,
+  actorStatusProvisional,
   onOpenInspector,
 }: {
   groupId: string;
@@ -312,14 +312,14 @@ function RuntimeDockActorButtonView({
   isDark: boolean;
   isSmallScreen: boolean;
   isInspectorOpen: boolean;
-  selectedGroupActorsHydrating: boolean;
+  actorStatusProvisional: boolean;
   onOpenInspector: (actorId: string) => void;
 }) {
   const { t } = useTranslation(["chat", "actors"]);
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
     actor: item.actor,
-    selectedGroupActorsHydrating,
+    actorStatusProvisional,
   });
   const ringTone = getRuntimeRingTone(item, isRunning, workingState);
   const ringPresentation = getRuntimeRingPresentation(ringTone, isDark);
@@ -443,7 +443,7 @@ const RuntimeDockActorButton = memo(
     previous.isDark === next.isDark &&
     previous.isSmallScreen === next.isSmallScreen &&
     previous.isInspectorOpen === next.isInspectorOpen &&
-    previous.selectedGroupActorsHydrating === next.selectedGroupActorsHydrating &&
+    previous.actorStatusProvisional === next.actorStatusProvisional &&
     previous.onOpenInspector === next.onOpenInspector,
 );
 
@@ -455,7 +455,7 @@ export interface RuntimeDockProps {
   isDark: boolean;
   isSmallScreen: boolean;
   readOnly?: boolean;
-  selectedGroupActorsHydrating: boolean;
+  actorStatusProvisional: boolean;
   onAddAgent?: () => void;
   onOpenRuntimeActor: (actorId: string) => void;
 }
@@ -468,7 +468,7 @@ export function RuntimeDock({
   isDark,
   isSmallScreen,
   readOnly,
-  selectedGroupActorsHydrating,
+  actorStatusProvisional,
   onAddAgent,
   onOpenRuntimeActor,
 }: RuntimeDockProps) {
@@ -516,7 +516,7 @@ export function RuntimeDock({
                   isDark={isDark}
                   isSmallScreen={isSmallScreen}
                   isInspectorOpen={activeRuntimeActorId === item.actorId}
-                  selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+                  actorStatusProvisional={actorStatusProvisional}
                   onOpenInspector={onOpenRuntimeActor}
                 />
               ))}

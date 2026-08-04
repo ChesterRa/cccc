@@ -110,6 +110,7 @@ export interface ChatTabProps {
   selectedGroupId: string;
   selectedGroupRunning: boolean;
   selectedGroupActorsHydrating: boolean;
+  selectedGroupActorStatusProvisional: boolean;
   groupLabelById: Record<string, string>;
   actors: Actor[];
   runtimeActors: Actor[];
@@ -156,6 +157,7 @@ export function ChatTab({
   selectedGroupId,
   selectedGroupRunning,
   selectedGroupActorsHydrating,
+  selectedGroupActorStatusProvisional,
   groupLabelById,
   actors,
   runtimeActors,
@@ -937,7 +939,7 @@ export function ChatTab({
                     isDark={isDark}
                     isSmallScreen={isSmallScreen}
                     readOnly={readOnly}
-                    selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+                    actorStatusProvisional={selectedGroupActorStatusProvisional}
                     onAddAgent={!readOnly ? addAgent : undefined}
                     onOpenRuntimeActor={onOpenRuntimeActor}
                   />

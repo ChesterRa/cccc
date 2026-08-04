@@ -103,6 +103,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   groupPresentation: null,
   runtimes: [],
   selectedGroupActorsHydrating: false,
+  selectedGroupActorStatusProvisional: false,
   hasMoreHistory: true,
   isLoadingHistory: false,
   isChatWindowLoading: false,
@@ -198,6 +199,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           groupSettings: null,
           groupPresentation: null,
           selectedGroupActorsHydrating: false,
+          selectedGroupActorStatusProvisional: false,
           chatWindow: null,
           hasMoreHistory: false,
           isLoadingHistory: false,
@@ -210,6 +212,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         selectedGroupId: gid,
         chatByGroup: nextChatByGroup,
         selectedGroupActorsHydrating: !!gid,
+        selectedGroupActorStatusProvisional: !!gid,
         ...buildPrimedGroupState(gid, state.groups),
       };
     });

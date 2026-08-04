@@ -263,6 +263,7 @@ export function createGroupStoreAsyncActions(
           if (current.selectedGroupId === gid) {
             patch.actors = nextActors;
             patch.selectedGroupActorsHydrating = false;
+            patch.selectedGroupActorStatusProvisional = false;
             if (nextGroupDoc) patch.groupDoc = nextGroupDoc;
           }
           if (Object.keys(patch).length > 0) {
@@ -276,7 +277,10 @@ export function createGroupStoreAsyncActions(
         // resp.ok. A failed/throwing refresh of the selected group must not leave
         // selectedGroupActorsHydrating stuck true (which would disable Send).
         if (get().selectedGroupId === gid) {
-          set({ selectedGroupActorsHydrating: false });
+          set({
+            selectedGroupActorsHydrating: false,
+            selectedGroupActorStatusProvisional: false,
+          });
         }
         refreshActorsInFlight.delete(gid);
         const queuedIncludeUnread = refreshActorsQueued.get(gid);
@@ -400,7 +404,12 @@ export function createGroupStoreAsyncActions(
           hasMoreHistory: chatBucket.hasMoreHistory,
         });
         if (isLatestSelection()) {
-          set({ chatByGroup: nextChatByGroup, selectedGroupActorsHydrating: true, ...primedState });
+          set({
+            chatByGroup: nextChatByGroup,
+            selectedGroupActorsHydrating: true,
+            selectedGroupActorStatusProvisional: true,
+            ...primedState,
+          });
         }
       }
 
@@ -504,6 +513,8 @@ export function createGroupStoreAsyncActions(
                 ...state.internalRuntimeActorsByGroup,
                 [gid]: split.internalRuntimeActors,
               },
+              selectedGroupActorsHydrating: false,
+              selectedGroupActorStatusProvisional: false,
             }));
           }
         })
@@ -511,18 +522,12 @@ export function createGroupStoreAsyncActions(
           console.error(`Failed to load actors for group=${gid}:`, error);
         })
         .finally(() => {
-          // Readiness flag clearing must NOT inherit the load-token guard used for
-          // data writes. The token guards against a stale load overwriting a newer
-          // group's data; but whether the *currently selected* group's actors are
-          // done loading only depends on still being on that group. Gating this with
-          // the token lets a rapid A->B->A switch (where the re-entrant loadGroup(A)
-          // is swallowed by loadGroupInFlight and the original A load's token is now
-          // stale) leave the spinner stuck true forever, disabling Send.
-          if (get().selectedGroupId === gid) {
+          // Recipient loading and runtime-status freshness are independent. A failed
+          // initial read must not keep cached recipients disabled, but its cached
+          // `running` values stay provisional until the full refresh finishes.
+          if (isLatestSelection()) {
             set({ selectedGroupActorsHydrating: false });
           }
-        })
-        .finally(() => {
           scheduleDeferredUnreadRefresh(gid, () => {
             if (isLatestSelection()) {
               void get().refreshActors(gid, { includeUnread: true });

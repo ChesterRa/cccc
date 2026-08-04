@@ -58,6 +58,9 @@ export default function App() {
   const groupContext = useGroupStore((state) => state.groupContext);
   const groupSettings = useGroupStore((state) => state.groupSettings);
   const selectedGroupActorsHydrating = useGroupStore((state) => state.selectedGroupActorsHydrating);
+  const selectedGroupActorStatusProvisional = useGroupStore(
+    (state) => state.selectedGroupActorStatusProvisional,
+  );
   const setSelectedGroupId = useGroupStore((state) => state.setSelectedGroupId);
   const refreshGroups = useGroupStore((state) => state.refreshGroups);
   const refreshActors = useGroupStore((state) => state.refreshActors);
@@ -388,6 +391,7 @@ export default function App() {
         selectedGroupRunning={selectedGroupRunning}
         selectedGroupRuntimeStatus={selectedGroupRuntimeStatus}
         selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+        selectedGroupActorStatusProvisional={selectedGroupActorStatusProvisional}
         theme={theme}
         textScale={textScale}
         sseStatus={sseStatus}

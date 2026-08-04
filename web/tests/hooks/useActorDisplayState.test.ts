@@ -28,30 +28,22 @@ describe("useActorDisplayState terminal signal refresh scheduling", () => {
 });
 
 describe("resolveActorRunningState", () => {
-  it("keeps a cached stopped actor provisionally running while its running group hydrates", () => {
+  it("keeps a cached stopped actor provisionally running until status refresh", () => {
     expect(
       resolveActorRunningState({
         actor: { running: false, enabled: true },
-        selectedGroupActorsHydrating: true,
+        actorStatusProvisional: true,
       }),
     ).toEqual({ isRunning: true, assumeRunning: true });
   });
 
-  it("accepts a confirmed stopped actor after hydration", () => {
+  it("accepts a confirmed stopped actor after status refresh", () => {
     expect(
       resolveActorRunningState({
         actor: { running: false, enabled: true },
-        selectedGroupActorsHydrating: false,
+        actorStatusProvisional: false,
       }),
     ).toEqual({ isRunning: false, assumeRunning: false });
   });
 
-  it("does not trust stale stopped group metadata while actor hydration is pending", () => {
-    expect(
-      resolveActorRunningState({
-        actor: { running: false, enabled: true },
-        selectedGroupActorsHydrating: true,
-      }),
-    ).toEqual({ isRunning: true, assumeRunning: true });
-  });
 });

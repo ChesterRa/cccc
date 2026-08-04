@@ -14,6 +14,7 @@ describe("group selection", () => {
       selectedGroupId: "g_active",
       actors,
       selectedGroupActorsHydrating: false,
+      selectedGroupActorStatusProvisional: false,
     });
     useComposerStore.setState({ activeGroupId: "g_active", destGroupId: "g_active" });
   });
@@ -25,6 +26,7 @@ describe("group selection", () => {
     expect(state.selectedGroupId).toBe("g_active");
     expect(state.actors).toBe(actors);
     expect(state.selectedGroupActorsHydrating).toBe(false);
+    expect(state.selectedGroupActorStatusProvisional).toBe(false);
   });
 
   it("still repairs composer ownership during an idempotent group selection", () => {
@@ -35,5 +37,6 @@ describe("group selection", () => {
     expect(useComposerStore.getState().activeGroupId).toBe("g_active");
     expect(useComposerStore.getState().destGroupId).toBe("g_active");
     expect(useGroupStore.getState().selectedGroupActorsHydrating).toBe(false);
+    expect(useGroupStore.getState().selectedGroupActorStatusProvisional).toBe(false);
   });
 });

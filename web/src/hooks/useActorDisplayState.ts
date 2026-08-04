@@ -20,19 +20,19 @@ export type ActorDisplayState = {
 type UseActorDisplayStateInput = {
   groupId: string;
   actor: Actor;
-  selectedGroupActorsHydrating?: boolean;
+  actorStatusProvisional?: boolean;
 };
 
 const TERMINAL_SIGNAL_REFRESH_SKEW_MS = 50;
 
 export function resolveActorRunningState(args: {
   actor: Pick<Actor, "running" | "enabled">;
-  selectedGroupActorsHydrating: boolean;
+  actorStatusProvisional: boolean;
 }): Pick<ActorDisplayState, "isRunning" | "assumeRunning"> {
   const runningKnown = typeof args.actor.running === "boolean";
   const observedRunning = runningKnown ? Boolean(args.actor.running) : Boolean(args.actor.enabled);
   const assumeRunning =
-    !observedRunning && args.selectedGroupActorsHydrating && args.actor.enabled !== false;
+    !observedRunning && args.actorStatusProvisional && args.actor.enabled !== false;
   return { isRunning: observedRunning || assumeRunning, assumeRunning };
 }
 
@@ -54,7 +54,7 @@ export function getTerminalSignalRefreshDelayMs(
 export function useActorDisplayState({
   groupId,
   actor,
-  selectedGroupActorsHydrating = false,
+  actorStatusProvisional = false,
 }: UseActorDisplayStateInput): ActorDisplayState {
   const terminalSignal = useTerminalSignalsStore(
     (state) => state.signals[getTerminalSignalKey(groupId, actor.id)],
@@ -73,11 +73,11 @@ export function useActorDisplayState({
   return useMemo(() => {
     const { isRunning, assumeRunning } = resolveActorRunningState({
       actor,
-      selectedGroupActorsHydrating,
+      actorStatusProvisional,
     });
     const workingState = getActorDisplayWorkingState(actor, terminalSignal, now);
     const indicator = getActorTabIndicatorState({ isRunning, workingState, assumeRunning });
 
     return { isRunning, assumeRunning, workingState, indicator };
-  }, [actor, now, selectedGroupActorsHydrating, terminalSignal]);
+  }, [actor, actorStatusProvisional, now, terminalSignal]);
 }

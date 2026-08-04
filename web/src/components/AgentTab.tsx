@@ -90,7 +90,7 @@ interface AgentTabProps {
   agentState: AgentState | null;
   isVisible: boolean;
   readOnly?: boolean;
-  selectedGroupActorsHydrating: boolean;
+  actorStatusProvisional: boolean;
   onQuit: () => void;
   onLaunch: () => void;
   onRelaunch: () => void;
@@ -112,7 +112,7 @@ export function AgentTab({
   agentState,
   isVisible,
   readOnly,
-  selectedGroupActorsHydrating,
+  actorStatusProvisional,
   onQuit,
   onLaunch,
   onRelaunch,
@@ -130,7 +130,7 @@ export function AgentTab({
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
     actor,
-    selectedGroupActorsHydrating,
+    actorStatusProvisional,
   });
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
