@@ -829,9 +829,8 @@ describe("useGroupStore actors fetch policy", () => {
   });
 
   it("keeps cached actor running state provisional until the full refresh finishes", async () => {
-    let resolveFullRefresh:
-      | ((value: Awaited<ReturnType<typeof api.fetchActors>>) => void)
-      | null = null;
+    let resolveFullRefresh: ((value: Awaited<ReturnType<typeof api.fetchActors>>) => void) | null =
+      null;
     useGroupStore.setState({
       groups: [
         { group_id: "g-other", title: "Other", topic: "", state: "active" },
@@ -881,6 +880,54 @@ describe("useGroupStore actors fetch policy", () => {
       expect(useGroupStore.getState().actors).toEqual([
         { id: "peer-1", enabled: true, running: true },
       ]);
+    });
+  });
+
+  it("keeps cached actor status provisional when a failed refresh has a queued follow-up", async () => {
+    let rejectFirstRefresh: ((reason?: unknown) => void) | null = null;
+    let resolveQueuedRefresh:
+      | ((value: Awaited<ReturnType<typeof api.fetchActors>>) => void)
+      | null = null;
+    useGroupStore.setState({
+      selectedGroupId: "g-demo",
+      actors: [{ id: "peer-1", enabled: true, running: false }],
+      selectedGroupActorsHydrating: true,
+      selectedGroupActorStatusProvisional: true,
+    });
+    vi.mocked(api.fetchActors)
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirstRefresh = reject;
+          }) as ReturnType<typeof api.fetchActors>,
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveQueuedRefresh = resolve as (
+              value: Awaited<ReturnType<typeof api.fetchActors>>,
+            ) => void;
+          }) as ReturnType<typeof api.fetchActors>,
+      );
+
+    const firstRefresh = useGroupStore.getState().refreshActors("g-demo", { includeUnread: false });
+    void useGroupStore.getState().refreshActors("g-demo", { includeUnread: true });
+
+    rejectFirstRefresh?.(new Error("temporary failure"));
+    await firstRefresh;
+    await vi.waitFor(() => {
+      expect(api.fetchActors).toHaveBeenCalledTimes(2);
+    });
+    expect(useGroupStore.getState().selectedGroupActorsHydrating).toBe(false);
+    expect(useGroupStore.getState().selectedGroupActorStatusProvisional).toBe(true);
+
+    resolveQueuedRefresh?.({
+      ok: true,
+      result: { actors: [{ id: "peer-1", enabled: true, running: false }] },
+    } as Awaited<ReturnType<typeof api.fetchActors>>);
+
+    await vi.waitFor(() => {
+      expect(useGroupStore.getState().selectedGroupActorStatusProvisional).toBe(false);
     });
   });
 

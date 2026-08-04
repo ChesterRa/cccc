@@ -45,5 +45,4 @@ describe("resolveActorRunningState", () => {
       }),
     ).toEqual({ isRunning: false, assumeRunning: false });
   });
-
 });

@@ -273,17 +273,19 @@ export function createGroupStoreAsyncActions(
       } catch (e) {
         console.error(`Failed to refresh actors for group=${gid}:`, e);
       } finally {
+        const queuedIncludeUnread = refreshActorsQueued.get(gid);
         // Fallback clear: the success branch above only clears the spinner when
         // resp.ok. A failed/throwing refresh of the selected group must not leave
-        // selectedGroupActorsHydrating stuck true (which would disable Send).
+        // selectedGroupActorsHydrating stuck true (which would disable Send). Keep
+        // cached runtime state provisional while a follow-up refresh is queued.
         if (get().selectedGroupId === gid) {
-          set({
-            selectedGroupActorsHydrating: false,
-            selectedGroupActorStatusProvisional: false,
-          });
+          set(
+            queuedIncludeUnread === undefined
+              ? { selectedGroupActorsHydrating: false, selectedGroupActorStatusProvisional: false }
+              : { selectedGroupActorsHydrating: false },
+          );
         }
         refreshActorsInFlight.delete(gid);
-        const queuedIncludeUnread = refreshActorsQueued.get(gid);
         if (queuedIncludeUnread !== undefined) {
           refreshActorsQueued.delete(gid);
           void get().refreshActors(gid, { includeUnread: queuedIncludeUnread });
