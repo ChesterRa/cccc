@@ -36,6 +36,13 @@ pub struct SetupArgs {
     pub path: String,
 }
 
+#[derive(Debug, Args)]
+pub struct UpdateArgs {
+    /// Show the crates.io update command without running it.
+    #[arg(long)]
+    pub check: bool,
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "cccc",
@@ -87,6 +94,8 @@ pub enum CommandKind {
     Status,
     Doctor,
     Setup(SetupArgs),
+    /// Update this Rust installation from crates.io.
+    Update(UpdateArgs),
     Version,
     Home,
     Mcp,
@@ -162,6 +171,15 @@ mod tests {
                 mode: Some(WebModeArg::Exhibit),
                 ..
             }))
+        ));
+    }
+
+    #[test]
+    fn parses_update_check() {
+        let cli = Cli::try_parse_from(["cccc", "update", "--check"]).expect("update check");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Update(UpdateArgs { check: true }))
         ));
     }
 }

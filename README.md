@@ -86,7 +86,9 @@ pip install -U --pre \
 cccc update
 ```
 
-Use `cccc update --check` to inspect the detected install type and the command that would run.
+Use `cccc update --check` to inspect the command that would run. Python installs
+report their detected package source/channel; Rust crates.io installs report both
+the product and crate versions and require Cargo to perform the update.
 
 ### Launch
 

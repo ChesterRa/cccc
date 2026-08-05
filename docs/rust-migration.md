@@ -12,6 +12,17 @@ The initial registry bootstrap release is installed with:
 cargo install cccc
 ```
 
+Existing crates.io installations can be upgraded in place:
+
+```bash
+cccc update
+cccc update --check
+```
+
+The Rust updater runs `cargo install cccc --force --locked`. It requires Cargo
+to remain available and stops an older running CCCC daemon only after the new
+binary has installed successfully.
+
 Implementation crates are published under the `cccc-pair-*` namespace so the
 public package name stays simple while Rust module imports remain unchanged.
 Normal product releases continue to use the workspace version; the `0.0.x`

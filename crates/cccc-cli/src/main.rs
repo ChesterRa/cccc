@@ -14,6 +14,7 @@ use commands::common::{call, print};
 use serde_json::json;
 
 const PRODUCT_VERSION: &str = env!("CCCC_PRODUCT_VERSION");
+const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -81,7 +82,27 @@ async fn main() -> Result<()> {
         Some(CommandKind::Status) => status(&client).await,
         Some(CommandKind::Doctor) => commands::doctor::run(&home),
         Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
+        Some(CommandKind::Update(args)) => {
+            let installed = commands::update::run(args, PRODUCT_VERSION, CRATE_VERSION)?;
+            if installed {
+                stop_daemon_after_update(&client, &home).await?;
+            }
+            Ok(())
+        }
     }
+}
+
+async fn stop_daemon_after_update(client: &DaemonClient, home: &HomeLayout) -> Result<()> {
+    if running_daemon_pid(client).await.is_none() {
+        return Ok(());
+    }
+    let response = call(client, "shutdown", json!({})).await?;
+    if !response.ok {
+        bail!("the update installed, but the previous CCCC daemon could not be stopped");
+    }
+    wait_for_daemon_loss(client, &home.daemon_dir().join("ccccd.addr.json")).await;
+    println!("Stopped the previous CCCC daemon; the next command will start the updated version.");
+    Ok(())
 }
 
 fn web_endpoint(host: &str, port: u16) -> String {

@@ -1,7 +1,7 @@
 [package]
 name = "cccc"
 default-run = "cccc"
-version = "0.0.4"
+version = "0.0.5"
 edition.workspace = true
 resolver = "3"
 license.workspace = true

@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "cccc"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "anyhow",
  "cccc-pair-client",
