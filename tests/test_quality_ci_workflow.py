@@ -56,6 +56,25 @@ def test_windows_smoke_keeps_the_product_pty_checks_without_web_migration_setup(
     assert "npm " not in runs
 
 
+def test_rust_job_provisions_python_for_interop_and_serializes_daemon_tests() -> None:
+    job = _workflow()["jobs"]["rust"]
+    runs = _runs(job)
+    python_setup = next(
+        step
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/setup-python")
+    )
+
+    assert job["env"]["CCCC_TEST_PYTHON"] == "python"
+    assert python_setup["with"]["python-version"] == "3.14"
+    assert "python -m pip install -e ." in runs
+    assert "cargo test --workspace --exclude cccc-pair-daemon --locked" in runs
+    assert (
+        "cargo test --package cccc-pair-daemon --locked -- --test-threads=1"
+        in runs
+    )
+
+
 def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance() -> None:
     runs = "\n".join(_runs(job) for job in _workflow()["jobs"].values())
 
@@ -67,7 +86,17 @@ def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance(
 def test_pr_python_matrix_uses_four_stable_file_shards_without_xdist() -> None:
     job = _workflow()["jobs"]["python-tests"]
     runs = _runs(job)
+    web_bundle = next(
+        step
+        for step in job["steps"]
+        if step.get("uses", "").startswith("actions/download-artifact")
+    )
 
+    assert job["needs"] == "web"
+    assert web_bundle["with"] == {
+        "name": "bundled-web",
+        "path": "src/cccc/ports/web/dist",
+    }
     assert job["strategy"]["matrix"]["shard"] == ["0", "1", "2", "3"]
     assert "scripts/quality/pytest_shards.py" in runs
     assert "--total 4" in runs

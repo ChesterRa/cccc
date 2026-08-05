@@ -8,6 +8,7 @@ import type {
   StreamingActivity,
 } from "../../types";
 import { isHeadlessActorRunner } from "../../utils/headlessRuntimeSupport";
+import { resolveRuntimeActivityPhase } from "./runtimeActivityPhase";
 
 export type LiveWorkPhase = "pending" | "streaming" | "completed" | "failed";
 
@@ -20,6 +21,7 @@ export type LiveWorkCard = {
   text: string;
   transcriptBlocks: HeadlessPreviewBlock[];
   activities: StreamingActivity[];
+  runtimeActivities?: StreamingActivity[];
   previewSessions?: HeadlessPreviewSession[];
   updatedAt: string;
   streamId: string;
@@ -91,6 +93,7 @@ export function buildLiveWorkCards(args: {
   previewSessionsByActorId?: Record<string, HeadlessPreviewSession[]>;
   latestActorTextByActorId: Record<string, string>;
   latestActorActivitiesByActorId: Record<string, StreamingActivity[]>;
+  runtimeActivitiesByActorId?: Record<string, StreamingActivity[]>;
   replySessionsByPendingEventId: Record<string, StreamingReplySession>;
 }): LiveWorkCard[] {
   const latestEventByActorId = new Map<string, LedgerEvent>();
@@ -114,12 +117,15 @@ export function buildLiveWorkCards(args: {
 
   const cards: LiveWorkCard[] = [];
   for (const actor of Array.isArray(args.actors) ? args.actors : []) {
-    if (!isHeadlessActor(actor)) continue;
     const actorId = String(actor.id || "").trim();
     if (!actorId) continue;
+    const runtimeActivities = Array.isArray(args.runtimeActivitiesByActorId?.[actorId])
+      ? args.runtimeActivitiesByActorId?.[actorId] || []
+      : [];
+    const headless = isHeadlessActor(actor);
     const event = latestEventByActorId.get(actorId);
     const session = latestSessionByActorId.get(actorId);
-    if (!event && !session) continue;
+    if ((!headless || (!event && !session)) && runtimeActivities.length <= 0) continue;
     const previewSessions = Array.isArray(args.previewSessionsByActorId?.[actorId])
       ? (args.previewSessionsByActorId?.[actorId] || []).filter(Boolean)
       : [];
@@ -141,18 +147,24 @@ export function buildLiveWorkCards(args: {
     const text = String(
       preview?.latestText || args.latestActorTextByActorId?.[actorId] || data?.text || "",
     ).trim();
-    const activities = Array.isArray(preview?.activities)
+    const headlessActivities = Array.isArray(preview?.activities)
       ? preview.activities
       : Array.isArray(args.latestActorActivitiesByActorId?.[actorId])
         ? args.latestActorActivitiesByActorId[actorId]
         : normalizeActivities(data?.activities);
+    const activities = Array.from(
+      new Map(
+        [...headlessActivities, ...runtimeActivities].map((activity) => [activity.id, activity]),
+      ).values(),
+    );
     const pendingPlaceholder = Boolean(data?.pending_placeholder);
-    const phase = resolvePhase({
+    const basePhase = resolvePhase({
       session,
       event,
       pendingPlaceholder,
       hasRenderableContent: Boolean(text) || transcriptBlocks.length > 0 || activities.length > 0,
     });
+    const phase = resolveRuntimeActivityPhase(basePhase, runtimeActivities);
     if (!text && transcriptBlocks.length === 0 && activities.length === 0 && phase === "completed")
       continue;
 
@@ -167,10 +179,12 @@ export function buildLiveWorkCards(args: {
       text,
       transcriptBlocks,
       activities,
+      runtimeActivities,
       previewSessions,
       updatedAt:
         String(preview?.updatedAt || event?.ts || "").trim() ||
-        normalizeSessionTime(session?.updatedAt),
+        normalizeSessionTime(session?.updatedAt) ||
+        String(runtimeActivities[runtimeActivities.length - 1]?.ts || "").trim(),
       streamId: String(
         preview?.currentStreamId || data?.stream_id || session?.currentStreamId || "",
       ).trim(),

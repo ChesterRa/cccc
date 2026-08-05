@@ -102,7 +102,7 @@ export function GroupEditModal({
       panelClassName="w-full h-full sm:h-auto sm:max-w-2xl sm:mt-12 sm:max-h-[calc(100dvh-6rem)]"
       modalRef={modalRef}
       footerActions={
-        <div className="flex flex-col-reverse sm:flex-row gap-3 sm:items-center sm:justify-between w-full">
+        <div className="flex w-full flex-col-reverse gap-3 pb-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-col gap-2 w-full sm:w-auto">
             <div className="flex flex-col gap-3 sm:flex-row">
               <HoverTooltip label={t("groupEdit.resetHint")}>

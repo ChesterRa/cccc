@@ -69,6 +69,7 @@ from .voice_service_runtime import (
     stop_voice_service,
     transcribe_voice_audio,
 )
+from .voice_direct_dictation import disabled_assistant_allows_recording
 
 
 logger = logging.getLogger(__name__)
@@ -88,7 +89,7 @@ _MAX_TRANSCRIPT_CHARS = 32_000
 _MAX_TRANSCRIPT_SESSION_CHARS = 16_000
 _MAX_PROMPT_REFINE_CHARS = 16_000
 _MAX_PROMPT_DRAFT_CHARS = 16_000
-_MAX_AUDIO_BYTES = 25 * 1024 * 1024
+_MAX_AUDIO_BYTES = 100 * 1024 * 1024
 _MAX_VOICE_DOCUMENT_CHARS = 200_000
 _MAX_VOICE_DOCUMENTS = 100
 _DEFAULT_AUTO_DOCUMENT_QUIET_MS = 5_000
@@ -342,6 +343,7 @@ def _public_voice_recording_lease(lease: Dict[str, Any]) -> Dict[str, Any]:
             "group_title": str(lease.get("group_title") or "").strip(),
             "capture_mode": str(lease.get("capture_mode") or "").strip(),
             "recognition_backend": str(lease.get("recognition_backend") or "").strip(),
+            "dispatch_target": str(lease.get("dispatch_target") or "").strip(),
             "by": str(lease.get("by") or "").strip(),
             "created_at": str(lease.get("created_at") or "").strip(),
             "updated_at": str(lease.get("updated_at") or "").strip(),
@@ -3897,6 +3899,29 @@ def _decode_audio_base64(raw: Any) -> bytes:
     return audio
 
 
+def _resolve_voice_http_upload(raw: Any) -> Path:
+    text = str(raw or "").strip()
+    if not text:
+        raise ValueError("audio_path cannot be empty")
+    upload_root = (ensure_home() / "cache" / "voice-http-uploads").resolve()
+    candidate = Path(text).expanduser()
+    if not candidate.is_absolute() or candidate.is_symlink():
+        raise ValueError("audio_path must be a regular managed upload")
+    try:
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(upload_root)
+    except (OSError, ValueError) as exc:
+        raise ValueError("audio_path is outside the managed upload directory") from exc
+    if not resolved.is_file():
+        raise ValueError("audio_path must be a regular managed upload")
+    size = resolved.stat().st_size
+    if size <= 0:
+        raise ValueError("audio payload cannot be empty")
+    if size > _MAX_AUDIO_BYTES:
+        raise ValueError("audio payload is too large")
+    return resolved
+
+
 def _set_voice_assistant_runtime(group: Group, *, lifecycle: str, health: Dict[str, Any]) -> Dict[str, Any]:
     now = utc_now_iso()
     state = _load_runtime_state(group)
@@ -3919,6 +3944,7 @@ def handle_assistant_voice_recording_lease(args: Dict[str, Any]) -> DaemonRespon
     lease_id = str(args.get("lease_id") or "").strip()
     capture_mode = str(args.get("capture_mode") or "").strip()
     recognition_backend = str(args.get("recognition_backend") or "").strip()
+    dispatch_target = str(args.get("dispatch_target") or "").strip().lower()
     ttl_seconds = _voice_recording_lease_ttl_seconds(args.get("ttl_seconds"))
     if not group_id:
         return _error("missing_group_id", "missing group_id")
@@ -3935,7 +3961,11 @@ def handle_assistant_voice_recording_lease(args: Dict[str, Any]) -> DaemonRespon
         return _error("assistant_voice_recording_lease_failed", str(exc))
 
     assistant = _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY)
-    if not bool(assistant.get("enabled")) and action in {"acquire", "heartbeat"}:
+    if (
+        not bool(assistant.get("enabled"))
+        and action in {"acquire", "heartbeat"}
+        and not disabled_assistant_allows_recording(action, dispatch_target)
+    ):
         return _error("assistant_disabled", "voice_secretary is disabled")
 
     with _VOICE_RECORDING_LEASE_LOCK:
@@ -4019,6 +4049,7 @@ def handle_assistant_voice_recording_lease(args: Dict[str, Any]) -> DaemonRespon
             "group_title": str(group.doc.get("title") or group.group_id),
             "capture_mode": capture_mode,
             "recognition_backend": recognition_backend,
+            "dispatch_target": dispatch_target,
             "by": by,
             "created_at": created_at,
             "updated_at": utc_now_iso(),
@@ -4050,7 +4081,16 @@ def handle_assistant_voice_transcribe(args: Dict[str, Any]) -> DaemonResponse:
         return _error("group_not_found", f"group not found: {group_id}")
     try:
         _require_status_permission(group, assistant_id=ASSISTANT_ID_VOICE_SECRETARY, by=by)
-        audio_bytes = _decode_audio_base64(args.get("audio_base64") or args.get("audio_b64"))
+        audio_path = (
+            _resolve_voice_http_upload(args.get("audio_path"))
+            if str(args.get("audio_path") or "").strip()
+            else None
+        )
+        audio_bytes = (
+            None
+            if audio_path is not None
+            else _decode_audio_base64(args.get("audio_base64") or args.get("audio_b64"))
+        )
     except Exception as exc:
         return _error("assistant_voice_transcribe_failed", str(exc))
     assistant = _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY)
@@ -4076,7 +4116,13 @@ def handle_assistant_voice_transcribe(args: Dict[str, Any]) -> DaemonResponse:
         },
     )
     try:
-        result = transcribe_voice_audio(group, audio_bytes=audio_bytes, mime_type=mime_type, language=language)
+        result = transcribe_voice_audio(
+            group,
+            audio_bytes=audio_bytes,
+            audio_path=audio_path,
+            mime_type=mime_type,
+            language=language,
+        )
     except VoiceServiceRuntimeError as exc:
         assistant_after = _set_voice_assistant_runtime(
             group,

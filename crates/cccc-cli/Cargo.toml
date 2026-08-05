@@ -1,0 +1,40 @@
+[package]
+name = "cccc"
+default-run = "cccc"
+version = "0.0.5"
+edition.workspace = true
+resolver = "3"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Collaborative multi-agent control plane and CLI"
+readme = "README.md"
+keywords = ["ai", "agents", "collaboration", "mcp", "automation"]
+categories = ["command-line-utilities", "development-tools"]
+publish = ["crates-io"]
+
+[dependencies]
+anyhow.workspace = true
+cccc-client = { package = "cccc-pair-client", version = "=0.4.33", path = "../cccc-client" }
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.33", path = "../cccc-contracts" }
+cccc-core = { package = "cccc-pair-core", version = "=0.4.33", path = "../cccc-core" }
+cccc-daemon = { package = "cccc-pair-daemon", version = "=0.4.33", path = "../cccc-daemon" }
+cccc-mcp = { package = "cccc-pair-mcp", version = "=0.4.33", path = "../cccc-mcp" }
+cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.33", path = "../cccc-runtime" }
+cccc-web = { package = "cccc-pair-web", version = "=0.4.33-compat.2", path = "../cccc-web" }
+clap.workspace = true
+fs2.workspace = true
+reqwest.workspace = true
+serde_json.workspace = true
+shell-words.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "cccc"
+path = "src/main.rs"

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { estimateMessageRowHeight } from "../../src/components/messageBubble/estimate";
+import {
+  getMessageImageGridHeight,
+  MESSAGE_ATTACHMENT_SECTION_LEADING_PX,
+  MESSAGE_IMAGE_PREVIEW_HEIGHT_PX,
+} from "../../src/components/messageBubble/imageLayout";
 import type { LedgerEvent } from "../../src/types";
 
 describe("estimateMessageRowHeight", () => {
@@ -39,6 +44,22 @@ describe("estimateMessageRowHeight", () => {
     };
 
     expect(estimateMessageRowHeight(message)).toBeGreaterThan(72 + 60 + 200 + 48);
+  });
+
+  it("uses the fixed rendered preview height for one image", () => {
+    const withoutImage = estimateMessageRowHeight({ data: { text: "same text" } });
+    const withImage = estimateMessageRowHeight({
+      data: { text: "same text", attachments: [{ mime_type: "image/png" }] },
+    });
+
+    expect(withImage - withoutImage).toBe(
+      MESSAGE_ATTACHMENT_SECTION_LEADING_PX + MESSAGE_IMAGE_PREVIEW_HEIGHT_PX.hero,
+    );
+  });
+
+  it("matches fixed two-column grid rows without charging a trailing gap", () => {
+    expect(getMessageImageGridHeight(2)).toBe(MESSAGE_IMAGE_PREVIEW_HEIGHT_PX.grid);
+    expect(getMessageImageGridHeight(3)).toBe(MESSAGE_IMAGE_PREVIEW_HEIGHT_PX.grid * 2 + 8);
   });
 
   it("adds extra code block height for markdown code fences", () => {

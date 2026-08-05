@@ -43,6 +43,7 @@ type AppShellProps = {
   selectedGroupRunning: boolean;
   selectedGroupRuntimeStatus: GroupRuntimeStatus | null;
   selectedGroupActorsHydrating: boolean;
+  selectedGroupActorStatusProvisional: boolean;
   theme: "light" | "dark" | "system";
   textScale: TextScale;
   sseStatus: "connected" | "connecting" | "disconnected";
@@ -90,7 +91,7 @@ type AppShellProps = {
   setMentionSelectedIndex: React.Dispatch<React.SetStateAction<number>>;
   setShowMentionMenu: React.Dispatch<React.SetStateAction<boolean>>;
   getTermEpoch: (actorId: string) => number;
-  onToggleActorEnabled: (actor: Actor) => void;
+  onToggleActorEnabled: (actor: Actor, isRunning?: boolean) => void;
   onRelaunchActor: (actor: Actor) => void;
   onNewActorSession: (actor: Actor) => void;
   onEditActor: (actor: Actor) => void;
@@ -173,6 +174,7 @@ export function AppShell({
   selectedGroupRunning,
   selectedGroupRuntimeStatus,
   selectedGroupActorsHydrating,
+  selectedGroupActorStatusProvisional,
   theme,
   textScale,
   sseStatus,
@@ -273,7 +275,7 @@ export function AppShell({
         onRestoreGroup={onRestoreGroup}
       />
 
-      <main className="absolute inset-0 flex h-full min-h-0 flex-col overflow-hidden md:relative md:inset-auto bg-transparent md:bg-[var(--color-chat-bg)] md:backdrop-blur-md">
+      <main className="absolute inset-0 flex h-full min-h-0 flex-col overflow-hidden md:relative md:inset-auto bg-transparent md:bg-[var(--color-chat-bg)]">
         <AppHeader
           isDark={isDark}
           theme={theme}
@@ -316,6 +318,7 @@ export function AppShell({
                 selectedGroupId={selectedGroupId}
                 selectedGroupRunning={selectedGroupRunning}
                 selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+                selectedGroupActorStatusProvisional={selectedGroupActorStatusProvisional}
                 groupLabelById={groupLabelById}
                 actors={actors}
                 runtimeActors={runtimeActors}
@@ -383,7 +386,10 @@ export function AppShell({
                       isSmallScreen={isSmallScreen}
                       isVisible={isVisible}
                       readOnly={webReadOnly}
-                      onToggleEnabled={() => actor && onToggleActorEnabled(actor)}
+                      actorStatusProvisional={selectedGroupActorStatusProvisional}
+                      onToggleEnabled={(isRunning) =>
+                        actor && onToggleActorEnabled(actor, isRunning)
+                      }
                       onRelaunch={() => actor && onRelaunchActor(actor)}
                       onNewSession={() => actor && onNewActorSession(actor)}
                       onEdit={() => actor && onEditActor(actor)}

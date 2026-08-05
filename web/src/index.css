@@ -63,6 +63,23 @@
 .runtime-flow-ring {
   pointer-events: none;
   isolation: isolate;
+  backface-visibility: hidden;
+  opacity: 1;
+  transform: translateZ(0);
+  transition: opacity 0.15s ease-out;
+  will-change: opacity;
+}
+
+.runtime-flow-ring--inactive {
+  opacity: 0;
+}
+
+.runtime-flow-ring--inactive .runtime-flow-ring__base,
+.runtime-flow-ring--inactive .runtime-flow-ring__stream,
+.runtime-flow-ring--inactive .runtime-flow-ring__glow,
+.runtime-flow-ring--inactive .runtime-flow-ring__shine,
+.runtime-flow-ring--inactive .runtime-flow-ring__shine * {
+  animation-play-state: paused !important;
 }
 
 .runtime-flow-ring__base,
@@ -154,7 +171,7 @@
 :root {
   /* Light theme (default for prefers-color-scheme: light) */
   --color-body-bg: #ffffff; /* Clean white canvas background like Codex */
-  --color-sidebar-bg: #f8f9fa; /* Extremely light cool gray for clean sidebar */
+  --color-sidebar-bg: #fbfbfb; /* Soft neutral gray for the light sidebar */
   --color-chat-bg: rgba(255, 255, 255, 0.96); /* Soft glass paper tone for the main chat panel */
 
   --color-bg-primary: #ffffff;
@@ -1232,7 +1249,7 @@ select {
 
 /* Glass sidebar - enhanced */
 .glass-sidebar {
-  background: linear-gradient(180deg, var(--glass-bg) 0%, var(--color-sidebar-bg) 100%);
+  background: var(--color-sidebar-bg);
   backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
   -webkit-backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
   box-shadow: var(--glass-shadow), var(--glass-inner-glow);

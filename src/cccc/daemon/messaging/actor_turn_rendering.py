@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterable, List
 from ...kernel.peer_insight import PEER_PERSPECTIVE_AGENT_LABEL, append_peer_perspective
 
 from .inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
+from .local_group_route import render_local_group_route_ref
 
 
 def compact_delivery_text(value: Any, *, limit: int) -> str:
@@ -149,6 +150,15 @@ def render_delivery_refs(refs: list[dict[str, Any]]) -> list[str]:
 
         if kind == "group_bridge_route":
             route_lines = render_group_bridge_route_ref(ref)
+            if route_lines:
+                lines.extend(route_lines)
+                rendered += 1
+                if rendered >= 4:
+                    break
+                continue
+
+        if kind == "local_group_route":
+            route_lines = render_local_group_route_ref(ref)
             if route_lines:
                 lines.extend(route_lines)
                 rendered += 1

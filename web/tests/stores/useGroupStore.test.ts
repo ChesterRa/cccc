@@ -828,6 +828,109 @@ describe("useGroupStore actors fetch policy", () => {
     expect(api.fetchGroup).toHaveBeenNthCalledWith(3, "g-a", { signal: expect.any(AbortSignal) });
   });
 
+  it("keeps cached actor running state provisional until the full refresh finishes", async () => {
+    let resolveFullRefresh: ((value: Awaited<ReturnType<typeof api.fetchActors>>) => void) | null =
+      null;
+    useGroupStore.setState({
+      groups: [
+        { group_id: "g-other", title: "Other", topic: "", state: "active" },
+        { group_id: "g-demo", title: "Demo", topic: "", state: "active" },
+      ],
+      groupOrder: ["g-other", "g-demo"],
+      selectedGroupId: "g-other",
+      actors: [],
+    });
+    groupStoreCore.saveGroupView("g-demo", {
+      actors: [{ id: "peer-1", enabled: true, running: false }],
+    });
+    vi.mocked(api.fetchActors).mockImplementation((_groupId: string, includeUnread = false) => {
+      if (!includeUnread) {
+        return Promise.resolve({
+          ok: false,
+          error: { code: "temporary_failure", message: "retry" },
+        }) as ReturnType<typeof api.fetchActors>;
+      }
+      return new Promise((resolve) => {
+        resolveFullRefresh = resolve as (
+          value: Awaited<ReturnType<typeof api.fetchActors>>,
+        ) => void;
+      }) as ReturnType<typeof api.fetchActors>;
+    });
+
+    useGroupStore.getState().setSelectedGroupId("g-demo");
+    void useGroupStore.getState().loadGroup("g-demo");
+
+    await vi.waitFor(() => {
+      expect(api.fetchActors).toHaveBeenCalledTimes(2);
+    });
+    expect(useGroupStore.getState().actors).toEqual([
+      { id: "peer-1", enabled: true, running: false },
+    ]);
+    expect(useGroupStore.getState().selectedGroupActorsHydrating).toBe(false);
+    expect(useGroupStore.getState().selectedGroupActorStatusProvisional).toBe(true);
+
+    resolveFullRefresh?.({
+      ok: true,
+      result: { actors: [{ id: "peer-1", enabled: true, running: true }] },
+    } as Awaited<ReturnType<typeof api.fetchActors>>);
+
+    await vi.waitFor(() => {
+      expect(useGroupStore.getState().selectedGroupActorsHydrating).toBe(false);
+      expect(useGroupStore.getState().selectedGroupActorStatusProvisional).toBe(false);
+      expect(useGroupStore.getState().actors).toEqual([
+        { id: "peer-1", enabled: true, running: true },
+      ]);
+    });
+  });
+
+  it("keeps cached actor status provisional when a failed refresh has a queued follow-up", async () => {
+    let rejectFirstRefresh: ((reason?: unknown) => void) | null = null;
+    let resolveQueuedRefresh:
+      | ((value: Awaited<ReturnType<typeof api.fetchActors>>) => void)
+      | null = null;
+    useGroupStore.setState({
+      selectedGroupId: "g-demo",
+      actors: [{ id: "peer-1", enabled: true, running: false }],
+      selectedGroupActorsHydrating: true,
+      selectedGroupActorStatusProvisional: true,
+    });
+    vi.mocked(api.fetchActors)
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirstRefresh = reject;
+          }) as ReturnType<typeof api.fetchActors>,
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveQueuedRefresh = resolve as (
+              value: Awaited<ReturnType<typeof api.fetchActors>>,
+            ) => void;
+          }) as ReturnType<typeof api.fetchActors>,
+      );
+
+    const firstRefresh = useGroupStore.getState().refreshActors("g-demo", { includeUnread: false });
+    void useGroupStore.getState().refreshActors("g-demo", { includeUnread: true });
+
+    rejectFirstRefresh?.(new Error("temporary failure"));
+    await firstRefresh;
+    await vi.waitFor(() => {
+      expect(api.fetchActors).toHaveBeenCalledTimes(2);
+    });
+    expect(useGroupStore.getState().selectedGroupActorsHydrating).toBe(false);
+    expect(useGroupStore.getState().selectedGroupActorStatusProvisional).toBe(true);
+
+    resolveQueuedRefresh?.({
+      ok: true,
+      result: { actors: [{ id: "peer-1", enabled: true, running: false }] },
+    } as Awaited<ReturnType<typeof api.fetchActors>>);
+
+    await vi.waitFor(() => {
+      expect(useGroupStore.getState().selectedGroupActorStatusProvisional).toBe(false);
+    });
+  });
+
   it("loadGroup waits for pure-read actors before scheduling unread refresh", async () => {
     let resolvePureRead: ((value: Awaited<ReturnType<typeof api.fetchActors>>) => void) | null =
       null;

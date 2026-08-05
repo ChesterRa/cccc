@@ -146,6 +146,8 @@ describe("group_bridge settings placement", () => {
     expect(src).toContain('t("group_bridge.pasteConnectionInfo")');
     expect(src).toContain('t("group_bridge.pendingBadge")');
     expect(src).toContain('t("group_bridge.trustedBadge")');
+    expect(src).toContain('t("group_bridge.sessionConnected")');
+    expect(src).toContain('t("group_bridge.sessionReconnecting")');
     expect(src).toContain('t("group_bridge.revokeTrust")');
     expect(src).not.toContain("This node");
     expect(src).not.toContain("Create invite");

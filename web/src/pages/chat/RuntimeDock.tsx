@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
 import { ActorAvatar } from "../../components/ActorAvatar";
@@ -9,6 +9,7 @@ import type { Actor } from "../../types";
 import { classNames } from "../../utils/classNames";
 import type { LiveWorkCard } from "./liveWorkCards";
 import {
+  areRuntimeDockTickerEntriesEqual,
   createRuntimeDockTickerCache,
   hasRuntimeDockTickerWork,
   pruneRuntimeDockTickerCache,
@@ -27,7 +28,6 @@ type RuntimeRingPresentation = {
   ringStyle: CSSProperties;
   unreadBadgeClassName: string;
   avatarClassName?: string;
-  customRing?: ReactNode;
 };
 
 const RUNTIME_RING_GEOMETRY_CLASS = "absolute -inset-[0.5px] rounded-full";
@@ -80,20 +80,24 @@ function buildFlowRingStyle(args: {
   };
 }
 
-function renderFlowRing(args: {
-  tone: "active" | "attention";
+const RuntimeFlowRing = memo(function RuntimeFlowRing(args: {
+  tone: RuntimeRingTone;
   isDark: boolean;
-  shineColors: [string, string, string];
-  duration: number;
-}): ReactNode {
+}) {
+  const visible = args.tone === "active" || args.tone === "attention";
+  const tone = args.tone === "attention" ? "attention" : "active";
+  const duration = tone === "attention" ? 5.4 : 6.2;
+  const shineColors: [string, string, string] =
+    tone === "attention" ? ["#fb7185", "#ef4444", "#fda4af"] : ["#A07CFE", "#FE8FB5", "#FFBE7B"];
   return (
     <span
       className={classNames(
         "runtime-flow-ring",
-        args.tone === "attention" ? "runtime-flow-ring--attention" : "runtime-flow-ring--active",
+        visible ? `runtime-flow-ring--${tone}` : "runtime-flow-ring--inactive",
         RUNTIME_RING_GEOMETRY_CLASS,
       )}
-      style={buildFlowRingStyle({ tone: args.tone, isDark: args.isDark })}
+      style={buildFlowRingStyle({ tone, isDark: args.isDark })}
+      aria-hidden="true"
     >
       <span className="runtime-flow-ring__base" />
       <span className="runtime-flow-ring__stream runtime-flow-ring__stream--primary" />
@@ -102,13 +106,13 @@ function renderFlowRing(args: {
       <ShineBorder
         className={classNames(RUNTIME_RING_GEOMETRY_CLASS, "runtime-flow-ring__shine")}
         borderWidth={RUNTIME_RING_STROKE_PX}
-        duration={args.duration}
-        shineColor={args.shineColors}
+        duration={duration}
+        shineColor={shineColors}
         topGlow={true}
       />
     </span>
   );
-}
+});
 
 function getRuntimeStatusLabel(
   isRunning: boolean,
@@ -150,12 +154,6 @@ function getRuntimeRingPresentation(
       return {
         ringClassName: "hidden",
         ringStyle: {},
-        customRing: renderFlowRing({
-          tone: "active",
-          isDark,
-          duration: 6.2,
-          shineColors: ["#A07CFE", "#FE8FB5", "#FFBE7B"],
-        }),
         unreadBadgeClassName: isDark
           ? "bg-emerald-300/[0.18] text-emerald-50"
           : "bg-emerald-500/[0.14] text-emerald-700",
@@ -164,12 +162,6 @@ function getRuntimeRingPresentation(
       return {
         ringClassName: "hidden",
         ringStyle: {},
-        customRing: renderFlowRing({
-          tone: "attention",
-          isDark,
-          duration: 5.4,
-          shineColors: ["#fb7185", "#ef4444", "#fda4af"],
-        }),
         unreadBadgeClassName: isDark
           ? "bg-rose-300/[0.18] text-rose-50"
           : "bg-rose-500/[0.14] text-rose-700",
@@ -205,7 +197,7 @@ function getRuntimeRingPresentation(
   }
 }
 
-function RuntimeDockTicker({
+function RuntimeDockTickerView({
   entries,
   isDark,
   suppressed,
@@ -221,7 +213,9 @@ function RuntimeDockTicker({
   useEffect(() => {
     const timer = window.setTimeout(() => {
       const nextEntries = upsertRuntimeDockTickerCache(cacheRef.current, entries, Date.now());
-      setVisibleEntries(nextEntries);
+      setVisibleEntries((current) =>
+        areRuntimeDockTickerEntriesEqual(current, nextEntries) ? current : nextEntries,
+      );
       setTickerWorkPending(hasRuntimeDockTickerWork(cacheRef.current));
     }, 0);
     return () => window.clearTimeout(timer);
@@ -231,7 +225,9 @@ function RuntimeDockTicker({
     if (!tickerWorkPending) return;
     const timer = window.setInterval(() => {
       const nextEntries = pruneRuntimeDockTickerCache(cacheRef.current, Date.now());
-      setVisibleEntries(nextEntries);
+      setVisibleEntries((current) =>
+        areRuntimeDockTickerEntriesEqual(current, nextEntries) ? current : nextEntries,
+      );
       setTickerWorkPending(hasRuntimeDockTickerWork(cacheRef.current));
     }, 250);
     return () => window.clearInterval(timer);
@@ -294,14 +290,21 @@ function RuntimeDockTicker({
   );
 }
 
-function RuntimeDockActorButton({
+const RuntimeDockTicker = memo(
+  RuntimeDockTickerView,
+  (previous, next) =>
+    previous.isDark === next.isDark &&
+    previous.suppressed === next.suppressed &&
+    areRuntimeDockTickerEntriesEqual(previous.entries, next.entries),
+);
+
+function RuntimeDockActorButtonView({
   groupId,
   item,
   isDark,
   isSmallScreen,
   isInspectorOpen,
-  selectedGroupRunning,
-  selectedGroupActorsHydrating,
+  actorStatusProvisional,
   onOpenInspector,
 }: {
   groupId: string;
@@ -309,16 +312,14 @@ function RuntimeDockActorButton({
   isDark: boolean;
   isSmallScreen: boolean;
   isInspectorOpen: boolean;
-  selectedGroupRunning: boolean;
-  selectedGroupActorsHydrating: boolean;
+  actorStatusProvisional: boolean;
   onOpenInspector: (actorId: string) => void;
 }) {
   const { t } = useTranslation(["chat", "actors"]);
   const { isRunning, workingState } = useActorDisplayState({
     groupId,
     actor: item.actor,
-    selectedGroupRunning,
-    selectedGroupActorsHydrating,
+    actorStatusProvisional,
   });
   const ringTone = getRuntimeRingTone(item, isRunning, workingState);
   const ringPresentation = getRuntimeRingPresentation(ringTone, isDark);
@@ -389,7 +390,7 @@ function RuntimeDockActorButton({
             className={classNames("pointer-events-none", ringPresentation.ringClassName)}
             style={ringPresentation.ringStyle}
           />
-          {ringPresentation.customRing ? ringPresentation.customRing : null}
+          <RuntimeFlowRing tone={ringTone} isDark={isDark} />
         </span>
 
         <ActorAvatar
@@ -428,6 +429,24 @@ function RuntimeDockActorButton({
   );
 }
 
+const RuntimeDockActorButton = memo(
+  RuntimeDockActorButtonView,
+  (previous, next) =>
+    previous.groupId === next.groupId &&
+    previous.item.actor === next.item.actor &&
+    previous.item.liveWorkCard === next.item.liveWorkCard &&
+    previous.item.actorId === next.item.actorId &&
+    previous.item.actorLabel === next.item.actorLabel &&
+    previous.item.runtime === next.item.runtime &&
+    previous.item.runner === next.item.runner &&
+    previous.item.webModelQueuedCount === next.item.webModelQueuedCount &&
+    previous.isDark === next.isDark &&
+    previous.isSmallScreen === next.isSmallScreen &&
+    previous.isInspectorOpen === next.isInspectorOpen &&
+    previous.actorStatusProvisional === next.actorStatusProvisional &&
+    previous.onOpenInspector === next.onOpenInspector,
+);
+
 export interface RuntimeDockProps {
   groupId: string;
   runtimeActors: Actor[];
@@ -436,8 +455,7 @@ export interface RuntimeDockProps {
   isDark: boolean;
   isSmallScreen: boolean;
   readOnly?: boolean;
-  selectedGroupRunning: boolean;
-  selectedGroupActorsHydrating: boolean;
+  actorStatusProvisional: boolean;
   onAddAgent?: () => void;
   onOpenRuntimeActor: (actorId: string) => void;
 }
@@ -450,8 +468,7 @@ export function RuntimeDock({
   isDark,
   isSmallScreen,
   readOnly,
-  selectedGroupRunning,
-  selectedGroupActorsHydrating,
+  actorStatusProvisional,
   onAddAgent,
   onOpenRuntimeActor,
 }: RuntimeDockProps) {
@@ -499,8 +516,7 @@ export function RuntimeDock({
                   isDark={isDark}
                   isSmallScreen={isSmallScreen}
                   isInspectorOpen={activeRuntimeActorId === item.actorId}
-                  selectedGroupRunning={selectedGroupRunning}
-                  selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+                  actorStatusProvisional={actorStatusProvisional}
                   onOpenInspector={onOpenRuntimeActor}
                 />
               ))}

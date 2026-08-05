@@ -35,3 +35,15 @@ export function shouldFetchStoppedTerminalTail(args: {
     !args.isActorBusy,
   );
 }
+
+export function shouldReconcileStoppedActorStatus(args: {
+  activated: boolean;
+  isVisible: boolean;
+  isRunning: boolean;
+  isActorEnabled: boolean;
+  isActorBusy: boolean;
+}): boolean {
+  return Boolean(
+    args.activated && args.isVisible && !args.isRunning && args.isActorEnabled && !args.isActorBusy,
+  );
+}

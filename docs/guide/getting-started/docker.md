@@ -2,6 +2,16 @@
 
 Run CCCC in a Docker container — ideal for servers, teams, and reproducible environments.
 
+The default `docker/Dockerfile` and `docker/docker-compose.yml` keep the Python distribution stable.
+To run the Rust distribution instead, use the explicit Rust files:
+
+```bash
+docker compose -f docker/docker-compose.rust.yml up --build
+```
+
+The two Compose projects use separate image, container, and volume names. Stop one implementation
+before pointing the other at the same `CCCC_HOME` data.
+
 ## AI-Assisted Deployment
 
 Copy the prompt below and paste it to any AI assistant — it will guide you through the entire deployment interactively.

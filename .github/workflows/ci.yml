@@ -2,8 +2,7 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main, rust]
   pull_request:
   schedule:
     - cron: "17 2 * * *"
@@ -66,11 +65,12 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bundled-web
-          path: src/cccc/ports/web/dist
+          path: web/dist
           if-no-files-found: error
 
   python-tests:
     if: github.event_name != 'schedule'
+    needs: web
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -79,6 +79,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download Web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: bundled-web
+          path: src/cccc/ports/web/dist
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -217,6 +223,47 @@ jobs:
         run: >-
           python -m pytest -q --timeout=90 --timeout-method=thread
           tests/test_socket_special_ops.py tests/test_windows_pty_backend.py
+
+  rust:
+    if: github.event_name != 'schedule'
+    needs: web
+    runs-on: ubuntu-latest
+    env:
+      CCCC_TEST_PYTHON: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundled-web
+          path: web/dist
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install Python interoperability dependencies
+        run: python -m pip install -e .
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Check Python and Rust version parity
+        run: scripts/check_version_parity.sh
+      - name: Test installer and release assets
+        run: |
+          scripts/tests/install_unix.sh
+          scripts/tests/release_assets.sh
+      - name: Check Rust formatting
+        run: cargo fmt --all --check
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test Rust workspace
+        run: |
+          cargo test --workspace --exclude cccc-pair-daemon --locked
+          cargo test --package cccc-pair-daemon --locked -- --test-threads=1
+      - name: Build and verify Rust distribution
+        run: |
+          cargo build --workspace --release --locked
+          scripts/tests/install_real_unix.sh target/release/cccc
+          target/release/cccc --version
 
   nightly-serial:
     if: github.event_name == 'schedule'

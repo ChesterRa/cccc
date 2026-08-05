@@ -277,5 +277,23 @@
   "headlessControlStalled": "控制任务等待中",
   "headlessControlCompleted": "控制任务处理完成",
   "headlessControlFailed": "控制任务处理失败",
-  "headlessControlUpdated": "控制任务更新"
+  "headlessControlUpdated": "控制任务更新",
+  "runtimeActivity": {
+    "toolFallback": "工具",
+    "sessionStarted": "运行会话已启动",
+    "sessionCompleted": "运行会话已结束，用时 {{seconds}} 秒",
+    "turnStarted": "正在处理新请求",
+    "turnWaiting": "正在等待输入",
+    "turnCompleted": "请求处理完成，用时 {{seconds}} 秒",
+    "turnFailed": "请求处理失败，已运行 {{seconds}} 秒",
+    "turnStuck": "疑似卡住：已等待 {{seconds}} 秒",
+    "toolStarted": "正在调用 {{tool}}",
+    "toolWaiting": "等待 {{tool}} 权限",
+    "toolCompleted": "{{tool}} 已完成，用时 {{seconds}} 秒",
+    "toolFailed": "{{tool}} 执行失败，已运行 {{seconds}} 秒",
+    "toolStuck": "{{tool}} 已 {{seconds}} 秒无返回",
+    "subagentStarted": "子代理已启动",
+    "subagentCompleted": "子代理已完成，用时 {{seconds}} 秒",
+    "subagentFailed": "子代理执行失败，已运行 {{seconds}} 秒"
+  }
 }

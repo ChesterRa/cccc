@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { fetchVoiceAssistantStatus, fetchVoiceAssistantWorkspace } from "./groups";
+import {
+  fetchVoiceAssistantStatus,
+  fetchVoiceAssistantWorkspace,
+  transcribeVoiceAssistantAudio,
+  updateVoiceAssistantRecordingLease,
+} from "./groups";
 import { fetchVoiceAssistantDocumentContent } from "./voiceSecretary";
 
 describe("assistant API helpers", () => {
@@ -99,5 +104,49 @@ describe("assistant API helpers", () => {
     expect(url).toContain("document_path=docs%2Fvoice-secretary%2Fa.md");
     expect(url).toContain("include_content=true");
     expect(resp.ok && resp.result.document?.content).toBe("body");
+  });
+
+  it("uploads Voice Secretary audio as a binary request body", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(JSON.stringify({ ok: true, result: { group_id: "g1", transcript: "ok" } })),
+      );
+    const audio = new Blob([new Uint8Array([1, 2, 3, 4])], { type: "audio/pcm" });
+
+    await transcribeVoiceAssistantAudio("g1", { audio, language: "zh-CN", by: "user" });
+
+    const [url, init] = fetchMock.mock.calls[0] || [];
+    expect(String(url)).toContain("language=zh-CN");
+    expect(String(url)).toContain("by=user");
+    expect(init?.body).toBe(audio);
+    expect(new Headers(init?.headers).get("content-type")).toBe("audio/pcm");
+  });
+
+  it("sends the direct composer target with a recording lease", async () => {
+    vi.stubGlobal("window", { location: { search: "" } });
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            result: { group_id: "g1", action: "acquire", acquired: true, lease: {} },
+          }),
+        ),
+      );
+
+    await updateVoiceAssistantRecordingLease("g1", {
+      action: "acquire",
+      ownerId: "owner-1",
+      captureMode: "prompt",
+      recognitionBackend: "assistant_service_local_asr",
+      dispatchTarget: "composer",
+    });
+
+    const [, init] = fetchMock.mock.calls[0] || [];
+    const body = JSON.parse(String(init?.body || "{}"));
+    expect(body.dispatch_target).toBe("composer");
   });
 });

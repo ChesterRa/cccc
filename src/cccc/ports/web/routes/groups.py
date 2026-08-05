@@ -17,6 +17,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import quote, urlparse
 
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
@@ -50,6 +51,7 @@ from ....daemon.assistants.voice_speaker_identity import (
     run_provisional_diarization_prefix,
 )
 from ....daemon.assistants.voice_final_asr import build_final_asr_text_event
+from ....daemon.assistants.voice_direct_dictation import is_direct_composer_dictation
 from ....daemon.assistants.voice_final_document_apply import (
     apply_final_speaker_transcript_to_document,
     apply_final_text_to_document,
@@ -83,6 +85,7 @@ from ....util.fs import atomic_write_text
 from ....util.time import utc_now_iso
 from ....util.process import pid_is_alive
 from ..stream_close import close_stream_writer
+from .voice_transcription_upload import receive_voice_transcription
 from ..schemas import (
     AttachRequest,
     AssistantSettingsUpdateRequest,
@@ -99,7 +102,6 @@ from ..schemas import (
     AssistantVoicePromptDraftAckRequest,
     AssistantVoiceTranscriptClearRequest,
     AssistantVoiceTranscriptSegmentRequest,
-    AssistantVoiceTranscriptionRequest,
     CreateGroupRequest,
     GroupAutomationManageRequest,
     GroupAutomationRequest,
@@ -883,7 +885,7 @@ def _read_group_local(group_id: str) -> Dict[str, Any]:
     group = load_group(gid)
     if group is None:
         return {"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {gid}"}}
-    doc = json.loads(json.dumps(group.doc))
+    doc = jsonable_encoder(group.doc)
     runtime_status = _group_runtime_status_local(group)
     doc["state"] = str(runtime_status.get("lifecycle_state") or doc.get("state") or "active")
     doc["running"] = bool(runtime_status.get("runtime_running"))
@@ -1384,7 +1386,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @global_router.post("/groups", dependencies=[Depends(require_admin)])
     async def group_create(req: CreateGroupRequest) -> Dict[str, Any]:
-        return await ctx.daemon({"op": "group_create", "args": {"title": req.title, "topic": req.topic, "by": req.by}})
+        args = {"title": req.title, "topic": req.topic, "by": req.by}
+        if "path" not in req.model_fields_set:
+            return await ctx.daemon({"op": "group_create", "args": args})
+        path, error = _normalize_web_attach_path(req.path)
+        if error is not None:
+            return error
+        args["path"] = path
+        return await ctx.daemon({"op": "group_create_with_scope", "args": args})
 
     @global_router.post("/groups/copy/preview_import", dependencies=[Depends(require_admin)])
     async def group_copy_preview_import(file: UploadFile = File(...)) -> Dict[str, Any]:
@@ -2413,20 +2422,26 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     @group_router.post("/assistants/voice_secretary/transcriptions")
     async def group_voice_secretary_transcription_create(
         group_id: str,
-        req: AssistantVoiceTranscriptionRequest,
+        request: Request,
+        language: str = "",
+        by: str = "user",
     ) -> Dict[str, Any]:
-        return await ctx.daemon(
-            {
-                "op": "assistant_voice_transcribe",
-                "args": {
-                    "group_id": group_id,
-                    "audio_base64": req.audio_base64,
-                    "mime_type": req.mime_type,
-                    "language": req.language,
-                    "by": req.by,
-                },
-            }
-        )
+        upload = await receive_voice_transcription(request, language=language, by=by)
+        try:
+            return await ctx.daemon(
+                {
+                    "op": "assistant_voice_transcribe",
+                    "args": {
+                        "group_id": group_id,
+                        "audio_path": str(upload.path),
+                        "mime_type": upload.mime_type,
+                        "language": upload.language,
+                        "by": upload.by,
+                    },
+                }
+            )
+        finally:
+            upload.cleanup()
 
     @group_router.post("/assistants/voice_secretary/recording_lease")
     async def group_voice_secretary_recording_lease_update(
@@ -2444,6 +2459,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "ttl_seconds": req.ttl_seconds,
                     "capture_mode": req.capture_mode,
                     "recognition_backend": req.recognition_backend,
+                    "dispatch_target": req.dispatch_target,
                     "by": req.by,
                 },
             }
@@ -2510,6 +2526,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         streaming_stable_diarization_segments: list[dict[str, Any]] = []
         streaming_stable_speaker_embeddings: list[dict[str, Any]] = []
         streaming_client_session_id = ""
+        streaming_dispatch_target = ""
 
         def cleanup_streaming_pcm16() -> None:
             nonlocal streaming_pcm16_path, streaming_pcm16_bytes
@@ -2563,6 +2580,23 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if not enabled:
                 return
             await websocket.send_json(payload)
+
+        def persist_secretary_artifacts() -> bool:
+            return not is_direct_composer_dictation(streaming_dispatch_target)
+
+        def write_streaming_session(patch: dict[str, Any]) -> dict[str, Any]:
+            if not persist_secretary_artifacts():
+                return {}
+            return _write_voice_meeting_session(group_id, streaming_client_session_id, patch)
+
+        def write_streaming_artifact(payload: dict[str, Any]) -> str:
+            if not persist_secretary_artifacts():
+                return ""
+            return _write_voice_speaker_transcript_artifact(
+                group_id,
+                streaming_client_session_id,
+                payload,
+            )
 
         async def finalize_streaming_state(
             *,
@@ -2637,9 +2671,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                         streaming_client_session_id,
                         streaming_pcm16_path,
                     )
-                    artifact_path = _write_voice_speaker_transcript_artifact(
-                        group_id,
-                        streaming_client_session_id,
+                    artifact_path = write_streaming_artifact(
                         {
                             "status": "separating_speakers",
                             "sample_rate": streaming_sample_rate,
@@ -2651,9 +2683,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                             "speaker_transcript_model_id": streaming_final_asr_model_id,
                         },
                     )
-                    _write_voice_meeting_session(
-                        group_id,
-                        streaming_client_session_id,
+                    write_streaming_session(
                         {
                             "status": "separating_speakers",
                             "audio_duration_ms": audio_duration_ms,
@@ -2707,7 +2737,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                             seq=seq,
                             language=streaming_language,
                         )
-                        if event is not None and is_meaningful_voice_text(event.get("text")):
+                        if event is not None and (
+                            is_direct_composer_dictation(streaming_dispatch_target)
+                            or is_meaningful_voice_text(event.get("text"))
+                        ):
                             await send_streaming_json(event, enabled=send_client_events)
                     elif (
                         streaming_capture_mode == "document"
@@ -2777,9 +2810,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                             final_apply_result = {"ok": True, "result": {"applied": False, "reason": "windowed_checkpoint_already_applied"}}
                         else:
                             final_apply_result = {"ok": True, "result": {"applied": False, "reason": "empty_final_transcript"}}
-                        artifact_path = _write_voice_speaker_transcript_artifact(
-                            group_id,
-                            streaming_client_session_id,
+                        artifact_path = write_streaming_artifact(
                             {
                                 "status": "failed" if final_asr_error else "closed",
                                 "sample_rate": streaming_sample_rate,
@@ -2803,9 +2834,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                 "final_apply_result": final_apply_result,
                             },
                         )
-                    _write_voice_meeting_session(
-                        group_id,
-                        streaming_client_session_id,
+                    write_streaming_session(
                         {
                             "status": "failed" if final_asr_error else "closed",
                             "audio_duration_ms": audio_duration_ms,
@@ -2818,9 +2847,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     )
                 await send_streaming_json({"type": "closed", "ok": True, "seq": seq}, enabled=send_client_events)
             except SherpaStreamingAsrError as exc:
-                _write_voice_meeting_session(
-                    group_id,
-                    streaming_client_session_id,
+                write_streaming_session(
                     {
                         "status": "failed",
                         "audio_duration_ms": _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate),
@@ -2862,6 +2889,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     streaming_capture_mode = str(payload.get("capture_mode") or payload.get("captureMode") or "document").strip().lower()
                     if streaming_capture_mode not in {"document", "instruction", "prompt"}:
                         streaming_capture_mode = "document"
+                    streaming_dispatch_target = str(
+                        payload.get("dispatch_target") or payload.get("dispatchTarget") or ""
+                    ).strip().lower()
                     streaming_document_path = (
                         str(payload.get("document_path") or payload.get("documentPath") or "").strip()
                         if streaming_capture_mode == "document"
@@ -2872,16 +2902,17 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     streaming_audio_level_stats = _empty_pcm16_audio_level_stats()
                     streaming_pcm16_audio = bytearray()
                     streaming_sample_rate = int(payload.get("sample_rate") or 16000)
-                    streaming_diarization_ready = bool(sherpa_diarization_status(streaming_diarization_model_id).get("ready"))
+                    streaming_diarization_ready = bool(
+                        persist_secretary_artifacts()
+                        and sherpa_diarization_status(streaming_diarization_model_id).get("ready")
+                    )
                     streaming_diarization_task = None
                     streaming_last_diarization_ms = 0
                     streaming_diarization_seq = 0
                     streaming_stable_diarization_segments = []
                     streaming_stable_speaker_embeddings = []
                     if streaming_capture_mode == "document":
-                        _write_voice_speaker_transcript_artifact(
-                            group_id,
-                            streaming_client_session_id,
+                        write_streaming_artifact(
                             {
                                 "status": "recording",
                                 "sample_rate": streaming_sample_rate,
@@ -2892,9 +2923,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                 "speaker_transcript_model_id": streaming_final_asr_model_id,
                             },
                         )
-                    _write_voice_meeting_session(
-                        group_id,
-                        streaming_client_session_id,
+                    write_streaming_session(
                         {
                             "status": "recording",
                             "sample_rate": streaming_sample_rate,
@@ -2910,9 +2939,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     try:
                         streaming_session = await open_sherpa_streaming_session(selected_model_id)
                     except SherpaStreamingAsrError as exc:
-                        _write_voice_meeting_session(
-                            group_id,
-                            streaming_client_session_id,
+                        write_streaming_session(
                             {
                                 "status": "failed",
                                 "error": {"code": exc.code, "message": exc.message, "details": exc.details},
@@ -2945,9 +2972,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                         "message": str(exc),
                                         "details": {"max_bytes": _voice_streaming_pcm16_max_bytes()},
                                     }
-                                    _write_voice_meeting_session(
-                                        group_id,
-                                        streaming_client_session_id,
+                                    write_streaming_session(
                                         {
                                             "status": "failed",
                                             "audio_duration_ms": _pcm16_duration_ms(streaming_pcm16_bytes, streaming_sample_rate),
@@ -3037,18 +3062,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                             event["ok"] = str(event.get("type") or "") != "error"
                             event_type = str(event.get("type") or "")
                             if event_type == "partial":
-                                _write_voice_meeting_session(
-                                    group_id,
-                                    streaming_client_session_id,
+                                write_streaming_session(
                                     {
                                         "status": "recording",
                                         "latest_partial": str(event.get("text") or "").strip(),
                                     },
                                 )
                             elif event_type == "final":
-                                _write_voice_meeting_session(
-                                    group_id,
-                                    streaming_client_session_id,
+                                write_streaming_session(
                                     {
                                         "status": "recording",
                                         "latest_partial": "",

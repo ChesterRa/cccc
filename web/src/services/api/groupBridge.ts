@@ -82,6 +82,10 @@ export interface GroupBridgeTrust {
   access_level?: GroupBridgeAccessLevel | string;
   remote_access_level?: GroupBridgeAccessLevel | string;
   access_updated_by?: string;
+  session_connected?: boolean;
+  session_connected_at?: string | null;
+  session_last_error?: string | null;
+  session_last_error_at?: string | null;
 }
 
 export interface GroupBridgePairingOutbound {

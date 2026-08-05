@@ -6,6 +6,7 @@ import type { Actor, SupportedRuntime } from "../types";
 import { formatCapabilityIdInput } from "../utils/capabilityAutoload";
 import { getEffectiveActorRunner } from "../utils/headlessRuntimeSupport";
 import { beginActorAction, endActorAction } from "./actorActionInFlight";
+import { resolveActorLifecycleRunning } from "./actorLifecycleAction";
 
 function latestActorHasResumeFailure(actorId: string): boolean {
   const aid = String(actorId || "").trim();
@@ -39,9 +40,9 @@ export function useActorActions(groupId: string) {
 
   // Start/stop actor
   const toggleActorEnabled = useCallback(
-    async (actor: Actor) => {
+    async (actor: Actor, runningOverride?: boolean) => {
       if (!actor || !groupId) return;
-      const isRunning = actor.running ?? actor.enabled ?? false;
+      const isRunning = resolveActorLifecycleRunning(actor, runningOverride);
       const actionKey = `actor-lifecycle:${actor.id}`;
       if (!beginActorAction(actorActionInFlightRef, actionKey)) return;
       setBusy(`actor-${isRunning ? "stop" : "start"}:${actor.id}`);

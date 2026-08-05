@@ -1,0 +1,100 @@
+[workspace]
+resolver = "3"
+default-members = ["crates/cccc-cli"]
+members = [
+  "crates/cccc-contracts",
+  "crates/cccc-core",
+  "crates/cccc-runtime",
+  "crates/cccc-client",
+  "crates/cccc-daemon",
+  "crates/cccc-mcp",
+  "crates/cccc-notebooklm",
+  "crates/cccc-web",
+  "crates/cccc-cli",
+]
+exclude = [
+  "crates/third-party/sherpa-onnx-sys",
+  "crates/third-party/sherpa-onnx",
+]
+
+[workspace.package]
+version = "0.4.33"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/ChesterRa/cccc"
+rust-version = "1.88"
+
+[workspace.dependencies]
+anyhow = "1.0"
+aes = "0.8"
+async-stream = "0.3"
+async-trait = "0.1"
+aws-lc-rs = "1.17"
+axum = { version = "0.8", features = ["form", "json", "multipart", "ws"] }
+base64 = "0.22"
+bzip2 = "0.6"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+chrono-tz = "0.10"
+cookie = "0.18"
+cbc = "0.1"
+chromiumoxide = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+cron = "0.15"
+directories = "6.0"
+ed25519-dalek = "2.2"
+dingtalk-stream = "0.1.7"
+teloxide = { version = "0.17", default-features = false, features = ["rustls"] }
+serenity = { version = "0.12.5", default-features = false, features = ["client", "gateway", "model", "http", "rustls_backend"] }
+lark-channel = { version = "0.4", features = ["websocket"] }
+weixin-agent = "0.2.0"
+fs2 = "0.4"
+flate2 = "1.1"
+futures-util = "0.3"
+http-body-util = "0.1"
+portable-pty = "0.9"
+percent-encoding = "2.3"
+regex = "1.11"
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "socks", "system-proxy"] }
+rust-embed = "8.7"
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+sha2 = "0.10"
+sha1 = "0.10"
+sherpa-onnx = { package = "cccc-pair-sherpa-onnx", version = "=1.13.4-cccc.1", path = "crates/third-party/sherpa-onnx" }
+shell-words = "1.1"
+tar = "0.4"
+takecell = "=0.1.1"
+tempfile = "3.20"
+thiserror = "2.0"
+tokio = { version = "1.47", features = ["fs", "io-std", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+tower = "0.5"
+mime_guess = "2.0"
+md-5 = "0.10"
+notify = "8.2"
+nix = { version = "0.28", features = ["signal"] }
+uuid = { version = "1.17", features = ["v4", "serde"] }
+unicode-width = "0.2"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
+hound = "3.5"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unwrap_used = "deny"
+
+[profile.dev]
+debug = 0
+incremental = true
+
+[profile.test]
+debug = 0
+incremental = true

@@ -13,7 +13,6 @@ import {
   loadArchivedGroupIds,
   loadGroupOrder,
   loadSelectedGroupId,
-  MAX_UI_EVENTS,
   mergeArchivedGroupIds,
   mergeGroupOrder,
   mergeLedgerEventStatuses,
@@ -52,6 +51,7 @@ import {
   upsertStreamingEventPatch,
   upsertStreamingTextPatch,
 } from "./groupStreamingReducers";
+import { mergeOlderLedgerEvents } from "./groupHistoryMerge";
 import { computeGroupRuntimePatch } from "../utils/groupRuntimeProjection";
 import { projectCrossGroupReceipts } from "../utils/mergeLedgerEvents";
 
@@ -103,6 +103,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   groupPresentation: null,
   runtimes: [],
   selectedGroupActorsHydrating: false,
+  selectedGroupActorStatusProvisional: false,
   hasMoreHistory: true,
   isLoadingHistory: false,
   isChatWindowLoading: false,
@@ -178,6 +179,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     set((state) => {
       const statePrevGid = String(state.selectedGroupId || "").trim();
 
+      // Re-selecting the active group does not trigger the selectedGroupId effect,
+      // so marking actors as hydrating here would leave recipient chips disabled.
+      if (gid && statePrevGid === gid) return state;
+
       // Cache the current view before switching groups so returning to it is instant.
       if (statePrevGid && statePrevGid !== gid) {
         saveCurrentViewSnapshot(statePrevGid, state);
@@ -194,6 +199,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           groupSettings: null,
           groupPresentation: null,
           selectedGroupActorsHydrating: false,
+          selectedGroupActorStatusProvisional: false,
           chatWindow: null,
           hasMoreHistory: false,
           isLoadingHistory: false,
@@ -206,6 +212,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         selectedGroupId: gid,
         chatByGroup: nextChatByGroup,
         selectedGroupActorsHydrating: !!gid,
+        selectedGroupActorStatusProvisional: !!gid,
         ...buildPrimedGroupState(gid, state.groups),
       };
     });
@@ -293,12 +300,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
       if (event.id && bucket.events.some((e) => e.id === event.id)) return state;
       const nextEvents = projectCrossGroupReceipts(bucket.events.concat([event]));
-      const patch: Partial<GroupChatBucket> = {
-        events:
-          nextEvents.length > MAX_UI_EVENTS
-            ? nextEvents.slice(nextEvents.length - MAX_UI_EVENTS)
-            : nextEvents,
-      };
+      const patch: Partial<GroupChatBucket> = { events: nextEvents };
       if (
         String(event.kind || "").trim() === "chat.message" &&
         String(event.by || "").trim() !== "user"
@@ -515,14 +517,8 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const gid = resolveChatGroupId(state, groupId);
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
-      const existingIds = new Set(bucket.events.map((event) => event.id).filter(Boolean));
-      const uniqueNew = newEvents.filter((event) => event.id && !existingIds.has(event.id));
-      const merged = [...uniqueNew, ...bucket.events];
-      return (
-        buildChatBucketPatch(state, gid, {
-          events: merged.length > MAX_UI_EVENTS ? merged.slice(0, MAX_UI_EVENTS) : merged,
-        }) ?? state
-      );
+      const merged = mergeOlderLedgerEvents(bucket.events, newEvents);
+      return buildChatBucketPatch(state, gid, { events: merged.events }) ?? state;
     }),
   setActors: (actors) =>
     set((state) => {

@@ -180,6 +180,10 @@ describe("MarkdownRenderer Mermaid contract", () => {
       resolve(process.cwd(), "src/components/MessageBubble.tsx"),
       "utf8",
     );
+    const messageContent = readFileSync(
+      resolve(process.cwd(), "src/components/messageBubble/MessageContent.tsx"),
+      "utf8",
+    );
     const inbox = readFileSync(
       resolve(process.cwd(), "src/components/modals/InboxModal.tsx"),
       "utf8",
@@ -189,7 +193,8 @@ describe("MarkdownRenderer Mermaid contract", () => {
       "utf8",
     );
 
-    expect(messageBubble).toContain("enableMermaid");
+    expect(messageBubble).toContain('from "./messageBubble/MessageContent"');
+    expect(messageContent).toContain("enableMermaid");
     expect(inbox).toContain("enableMermaid");
     expect(documentSurface).not.toContain("enableMermaid");
   });

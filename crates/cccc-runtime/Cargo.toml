@@ -1,0 +1,25 @@
+[package]
+name = "cccc-pair-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Process and terminal runtime management for CCCC"
+publish = ["crates-io"]
+
+[dependencies]
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.33", path = "../cccc-contracts" }
+portable-pty.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "cccc_runtime"

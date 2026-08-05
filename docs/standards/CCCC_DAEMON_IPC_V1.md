@@ -1,6 +1,6 @@
 # CCCC Daemon API/IPC Contract v1
 
-Status: Draft (for CCCC v0.4.x ecosystem)
+Status: Draft (for CCCC v0.5.x ecosystem)
 
 This document defines the **daemon-facing client contract** for CCCC: how a client (CLI/Web/MCP bridge/SDK) discovers the daemon endpoint, frames requests, and calls daemon operations.
 
@@ -106,15 +106,11 @@ For all non-streaming operations, requests and responses are framed as:
 - **One JSON object per line**, delimited by a single `\n` (newline).
 - Encoding MUST be UTF‑8.
 
-Baseline behavior (implemented by CCCC v0.4.x):
-- Each connection processes exactly **one** request line and produces exactly **one** response line.
-- The daemon then closes the connection.
-
-Clients MUST assume the daemon may close the connection after any successful response and MUST NOT rely on persistent connections.
-
-Forward-compatible extension (not required for v1):
-- A daemon MAY accept multiple request lines over a single connection (strictly serial, no pipelining).
+Baseline behavior (implemented by CCCC v0.5.x):
+- A connection accepts multiple request lines and produces one response line for each request.
+- Requests on one connection are processed strictly serially.
 - Clients MUST NOT pipeline requests (there is no request id / multiplexing in v1).
+- Clients SHOULD reuse successful connections, but MUST tolerate the daemon closing a connection after any response and reconnect through endpoint discovery.
 
 ### 4.3 Size Limits
 
@@ -122,7 +118,10 @@ Implementations MUST respect practical line limits to avoid truncation:
 - **Request line limit (daemon receive):** the daemon MAY stop reading after ~2,000,000 bytes without a newline; clients MUST keep request lines comfortably below this bound.
 - **Response line limit (typical clients):** the reference client reader MAY cap a response line at ~4,000,000 bytes; daemons SHOULD keep single-response payloads below this bound.
 
-Clients SHOULD treat truncated/invalid JSON as a transport failure.
+Clients SHOULD treat truncated/invalid JSON as a transport failure. Once any request bytes
+have been written, clients MUST NOT automatically replay the request after a send, read, or
+decode failure unless the operation carries a daemon-enforced idempotency key. Retrying a
+failure that occurred while establishing the connection is safe because no request was sent.
 
 ### 4.4 Streaming Upgrade: `term_attach`
 
@@ -334,12 +333,15 @@ Args: none
 
 Result:
 ```ts
-{ version: string; pid: number; ts: string; ipc_v?: 1; capabilities?: Record<string, unknown> }
+{ version: string; pid: number; ts: string; ipc_v: 1; capabilities: Record<string, unknown> }
 ```
 
 Notes:
-- `ipc_v` is RECOMMENDED for SDK compatibility checks.
-- `capabilities` is RECOMMENDED as a best-effort feature map (e.g., `{ "events_stream": true }`).
+- SDK-compatible daemons MUST return `ipc_v: 1`; omitting it is interpreted as IPC version `0`.
+- SDK-compatible daemons MUST return a `capabilities` feature map. Python and Rust daemons advertise supported `events_stream` and `remote_access` features here.
+- Clients SHOULD probe operation support independently; a recognized operation may reject empty probe arguments, but MUST NOT return `unknown_op`.
+- Clients MUST use protocol, compatibility, and capability fields instead of exact product-version equality.
+- Ordinary business commands MUST NOT stop, signal, or replace a reachable daemon. Implementation replacement is restricted to explicit daemon lifecycle commands.
 
 #### `shutdown`
 
@@ -1428,8 +1430,9 @@ Result:
 #### `assistant_state`
 
 Read the group-scoped state for first-party built-in assistants. Voice
-Secretary service-local ASR runs in a daemon-managed first-party service
-process; heavy ASR runtimes remain behind an explicit local command adapter.
+Secretary service-local ASR runs in-process through the Rust `sherpa-onnx`
+binding. The native runtime is linked into the CCCC binary; model weights remain
+explicit, checksummed downloads under `CCCC_HOME/cache/voice-models`.
 
 Args:
 ```ts
@@ -1463,8 +1466,10 @@ Result:
 Voice service runtime records may include `primary_package`, `package_versions`,
 `installed_version`, `latest_version`, `latest_checked_at`,
 `latest_check_error`, and `update_available` so local ASR settings can show the
-installed sherpa-onnx version and whether a newer official PyPI release is
-available. Voice model records may include `installed_manifest_sha256`,
+linked sherpa-onnx version. Rust reports the stable runtime ID
+`sherpa_onnx_streaming` for Web/API compatibility and `implementation="rust"`;
+runtime install/remove calls are idempotent compatibility operations because the
+linked runtime cannot be removed independently. Voice model records may include `installed_manifest_sha256`,
 `update_available`, `last_update_error`, and artifact source fields (`url`,
 `sha256`, `archive`) so model updates remain explicit and inspectable.
 
@@ -1510,8 +1515,8 @@ Args:
 
 `browser_asr` means browser-managed speech recognition and does not guarantee
 browser-device-local model execution. `assistant_service_local_asr` means ASR
-runs on the daemon host through the first-party Voice Secretary service and uses
-an installed local ASR model. The returned assistant health may include `health.service` with
+runs on the daemon host through native Rust and uses an installed local ASR
+model. The returned assistant health may include `health.service` with
 `status`, `alive`, `asr_command_configured`, `asr_mock_configured`,
 `selected_model_id`, `managed_model`, and `last_error` so Web can show whether
 service-local ASR is actually usable. `service_model_id` is optional and
@@ -1586,32 +1591,34 @@ Result:
 }
 ```
 
-#### `assistant_voice_transcribe`
+#### HTTP Voice Secretary transcription
 
 Transcribe a push-to-talk audio payload through the daemon-managed first-party
-Voice Secretary service. This endpoint only returns transcript text and service
+Voice Secretary runtime. Python is the default distribution and Rust implements
+the same HTTP contract. This endpoint only returns transcript text and service
 health; it does not create a chat message, proposal, or working document by
 itself. Call `assistant_voice_transcript_append` after transcription so the
 daemon can append stable transcript source material and update the current
 working document.
 
-Args:
+Request:
 ```ts
-{
-  group_id: string
-  by?: string
-  audio_base64: string
-  mime_type?: string
-  language?: string
-}
+POST /api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions
+  ?language={language}&by={actor_id}
+Content-Type: audio/pcm | audio/wav | application/octet-stream
+
+<streamed binary audio body>
 ```
 
 Preconditions:
 - `voice_secretary` is enabled for the group.
 - `recognition_backend` is `assistant_service_local_asr`.
-- The selected `service_model_id` is installed and exposes a managed command via
-  the manifest. The effective command receives the audio path as the final
-  argument unless it includes `{audio_path}` / `{input_path}` / `{input}`.
+- The selected offline `service_model_id` is installed and its manifest exposes
+  a supported sherpa-onnx model configuration. HTTP transcription accepts mono
+  PCM16 or WAV up to 100 MiB. The HTTP body and WebSocket PCM16 frames are
+  streamed to auto-deleted temporary files; browser service capture sends binary
+  PCM16 WebSocket frames. Python also accepts the former JSON/Base64 HTTP body
+  for compatibility, but clients should send the binary form above.
 
 Result:
 ```ts
@@ -1636,6 +1643,13 @@ daemon lease is the final cross-tab / cross-browser / cross-device guard that
 prevents two Voice Secretary recording streams from running at the same time.
 The lease is TTL-based so a crashed tab or disconnected browser eventually
 expires without manual cleanup.
+
+The service-local ASR WebSocket requires the active `owner_id` and `lease_id` as
+query parameters and revalidates them while audio is streaming. Opening the
+transcription WebSocket directly cannot bypass the daemon lease.
+Lease mutations match `group_id`, `owner_id`, and `lease_id`; public status and
+conflict payloads redact `lease_id`. The stable browser owner identifies the
+lease holder, while every recording uses a fresh `session_id`.
 
 Args:
 ```ts
@@ -1701,10 +1715,30 @@ created while the actor was stopped, the daemon re-dispatches that same notify:
 headless runtimes receive it as a control turn, and PTY runtimes receive it
 through the pending delivery queue so lazy preamble delivery is triggered.
 
+Rust commits an input under the group lock in this order: validate or create the
+Markdown target, append the stable segment log, append the semantic input log,
+then advance group session/cursor state. Retrying the same `session_id` and
+`segment_id` is idempotent. Document paths must be repository-relative `.md`
+paths and must not traverse symbolic links.
+
+Idempotency is checked against the complete semantic input log, not the bounded
+session display window. If the input log was committed but its ledger input or
+notify event was interrupted, retrying the same segment reuses the canonical
+input record and completes only the missing delivery work.
+
 The public document identity for Voice Secretary APIs is `document_path`, a
 repository-relative markdown path. `document_id` may exist in daemon sidecar
 state as an implementation detail, but runtime actors and Web clients should
 route by `document_path`.
+
+`assistant_index`, `assistant_voice_document_list`, and
+`assistant_voice_document_select` reconcile repository Markdown edits into the
+daemon document index before returning. Reconciliation updates content, hash,
+character count, and revision only when file content changed. Missing files do
+not clear indexed content, and path/symbolic-link validation is applied before
+reading. The emitted `assistant.voice.document` reconciliation event is an
+auxiliary signal; index persistence and ledger append are not one atomic
+transaction.
 
 Args:
 ```ts
@@ -1872,6 +1906,72 @@ Result:
   actor_notify_delivered?: boolean
   actor_notify_delivery_error?: string
   event?: CCCSEventV1
+}
+```
+
+#### `assistant_voice_input_append` (`kind="prompt_refine"`)
+
+Create or update a composer refinement request. The daemon persists the request
+before emitting one targeted `voice_secretary_input` notification. Its canonical
+`input_envelope` carries `request_id`, `operation`, `composer_snapshot_hash`, and
+matching composer metadata. This operation creates work for Voice Secretary; it
+does not create a prompt draft.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  kind: "prompt_refine"
+  request_id?: string
+  voice_transcript?: string
+  composer_text?: string
+  operation?: "append_to_composer_end" | "replace_with_refined_prompt" | string
+  composer_context?: Record<string, unknown>
+  composer_snapshot_hash?: string
+}
+```
+
+At least one of `voice_transcript` or `composer_text` must be non-empty.
+
+#### `assistant_voice_prompt_draft_submit`
+
+Submit the Voice Secretary result for an existing prompt refinement request.
+Only `voice-secretary` / `assistant:voice_secretary` may call this operation.
+The daemon inherits a missing operation and composer snapshot hash from the
+request, stores the result as `pending`, and emits
+`assistant.voice.prompt_draft`. `no_op=true` stores `no_change` with empty draft
+text. Submission MUST NOT append another semantic input or emit another
+`voice_secretary_input` notification.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: "voice-secretary" | "assistant:voice_secretary"
+  request_id: string
+  draft_text?: string
+  no_op?: boolean
+  summary?: string
+  operation?: string
+  composer_snapshot_hash?: string
+}
+```
+
+`draft_text` is required unless `no_op=true`.
+
+#### `assistant_voice_prompt_draft_ack`
+
+Mark a submitted draft as `applied`, `dismissed`, or `stale`. Acknowledgement
+removes it from the active `prompt_draft` projection while retaining bounded
+request history.
+
+Args:
+```ts
+{
+  group_id: string
+  request_id: string
+  status: "applied" | "dismissed" | "stale"
 }
 ```
 
@@ -3154,10 +3254,19 @@ Args:
 { group_id: string; actor_id: string; by?: string; max_chars?: number; strip_ansi?: boolean; compact?: boolean }
 ```
 
+`max_chars` limits the final returned Unicode text. Implementations MUST render the complete
+retained PTY backlog before applying this limit; truncating the raw ANSI/VT byte stream first can
+start replay inside an escape sequence or incremental screen update and produce corrupt snapshots.
+
 Result:
 ```ts
-{ group_id: string; actor_id: string; warning: string; hint: string; text: string }
+{ group_id: string; actor_id: string; warning: string; hint: string; text: string; end_cursor: number }
 ```
+
+`end_cursor` is the exclusive raw PTY byte cursor captured with the backlog used to produce
+`text`. A terminal client MAY display the rendered snapshot and then attach its live stream with
+`since=end_cursor`; the stream must replay output produced after the snapshot so the transition is
+gap-free.
 
 #### `terminal_history`
 
@@ -3180,6 +3289,32 @@ Result:
   cursor_expired: boolean
 }
 ```
+
+#### `terminal_since`
+
+Args:
+```ts
+{ group_id: string; actor_id: string; by?: string; after: number; limit_bytes?: number }
+```
+
+Result:
+```ts
+{
+  history: {
+    data: string
+    start_cursor: number
+    end_cursor: number
+    has_more: boolean
+    cursor_expired: boolean
+  }
+}
+```
+
+The cursors count raw PTY bytes. Because `data` is transported as UTF-8 JSON text, an
+implementation MUST NOT advance `end_cursor` through an incomplete UTF-8 code point. It MAY return
+up to three bytes beyond `limit_bytes` to finish a code point. If the retained stream currently ends
+inside a code point, it returns the complete prefix and leaves the incomplete suffix for a later
+call.
 
 #### `terminal_clear`
 
@@ -3571,6 +3706,45 @@ Result:
 ```ts
 { remote_access: Record<string, unknown> }
 ```
+
+### 8.17.1 Group Bridge delivery compatibility
+
+The daemon accepts the Python-compatible Group Bridge operations:
+
+- `remote_send`: send a payload through an active registration or trust. It
+  requires `group_id`, `registration_id`, `idempotency_key`, and an explicit
+  `payload.to` recipient list.
+- `remote_delivery_status`: return the stored receipt identified by
+  `registration_id` and `idempotency_key`.
+- `group_bridge_receive_remote_send`: authenticate an already-resolved inbound
+  session using `target_group_id`, `src_group_id`, `remote_peer_id`, and append
+  its payload idempotently to the target group.
+
+Implementations MUST persist delivery receipts and MUST NOT create duplicate
+events when the same registration and idempotency key are retried.
+
+The Rust WebSocket owner and MCP bridge share live reverse-session state through
+these daemon-internal operations:
+
+- `group_bridge_session_open`: register a live route identified by `group_id`,
+  `remote_group_id`, and `remote_peer_id`; returns a new opaque `generation`.
+- `group_bridge_session_close`: remove the route only when its `generation`
+  still matches. A stale socket MUST NOT close a replacement session.
+- `group_bridge_session_ready`: report whether that exact route currently has a
+  live session lease.
+- `group_bridge_session_poll`: let the owning WebSocket take the next queued
+  server-to-peer request for its generation.
+- `group_bridge_session_complete`: resolve a request using `response_to` and a
+  peer-provided `result`.
+- `group_bridge_session_deliver`: enqueue a `remote_send` request and await its
+  response for at most `timeout_ms`.
+
+These operations are runtime-only and MUST NOT treat persisted trust status as
+proof of reachability. Opening a replacement generation, closing the active
+generation, and completing a response MUST wake pending callers immediately.
+Delivery failures use `peer_session_unavailable` when no live lease exists or
+disconnects, `peer_session_timeout` when the peer does not answer in time, and
+`peer_session_failed` when a session is replaced or returns an invalid result.
 
 ### 8.18 Group Space (Provider-Backed Shared Memory, dual-lane NotebookLM)
 

@@ -73,7 +73,7 @@
   "signIn": "サインイン",
   "dropFilesToAttach": "ファイルをドロップして添付",
   "dropFilesHint": "入力欄に追加されます。準備できたら送信をクリックしてください。",
-  "maxFileSize": "1 ファイルあたり最大 {{size}}MB。",
+  "maxFileSize": "添付ファイルは合計 {{size}} MiB まで。",
   "somethingWentWrong": "問題が発生しました",
   "unexpectedError": "予期しないエラーが発生しました",
   "tryAgain": "再試行",

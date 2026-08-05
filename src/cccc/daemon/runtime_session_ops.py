@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, Iterable, Optional, Tuple
 
 from ..paths import ensure_home
 from ..runners import pty as pty_runner
+from .runtime_hooks.pty_launch import start_pty_actor_with_hooks
 from .runner_state_ops import pty_state_path
 from ..util.fs import atomic_write_json, read_json
 from ..util.time import utc_now_iso
@@ -1067,7 +1068,7 @@ def _start_fresh_pty_actor_after_resume_failure(
             raise RuntimeError(runtime_error) from cause
         raise RuntimeError(runtime_error)
     try:
-        session = pty_runner.SUPERVISOR.start_actor(
+        session = start_pty_actor_with_hooks(
             group_id=group_id,
             actor_id=actor_id,
             cwd=cwd,
@@ -1125,7 +1126,7 @@ def start_pty_actor_with_runtime_resume(
     if not resume_doc:
         try:
             if pty_runner.SUPERVISOR.actor_running(group_id=group_id, actor_id=actor_id):
-                session = pty_runner.SUPERVISOR.start_actor(
+                session = start_pty_actor_with_hooks(
                     group_id=group_id,
                     actor_id=actor_id,
                     cwd=cwd,
@@ -1190,7 +1191,7 @@ def start_pty_actor_with_runtime_resume(
         raise RuntimeError(runtime_error)
 
     try:
-        session = pty_runner.SUPERVISOR.start_actor(
+        session = start_pty_actor_with_hooks(
             group_id=group_id,
             actor_id=actor_id,
             cwd=cwd,
@@ -1270,7 +1271,7 @@ def start_pty_actor_with_runtime_resume(
         runtime_error = runtime_start_preflight_error(runtime, fallback_cmd, runner="pty")
         if runtime_error:
             raise RuntimeError(runtime_error) from exc
-        session = pty_runner.SUPERVISOR.start_actor(
+        session = start_pty_actor_with_hooks(
             group_id=group_id,
             actor_id=actor_id,
             cwd=cwd,

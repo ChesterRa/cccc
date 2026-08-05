@@ -1,0 +1,169 @@
+name: Release Rust
+
+on:
+  push:
+    tags: ["rust-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.5"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Check Python and Rust version parity
+        shell: bash
+        run: scripts/check_version_parity.sh
+      - name: Verify tag version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          test "${GITHUB_REF_NAME}" = "rust-v${version}"
+      - name: Build Web UI
+        shell: bash
+        run: |
+          node scripts/prepare_rust_web_assets.mjs --install-deps
+          npm -C web run check
+          npm -C web test
+      - name: Verify packaged Rust Web assets
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          cargo package -p cccc-pair-web --allow-dirty --no-verify --list \
+            | grep -q '^assets/web-dist/index.html$'
+      - name: Build Rust distribution
+        run: cargo build --release --locked --target ${{ matrix.target }} -p cccc --bin cccc
+      - name: Resolve package name
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          echo "PACKAGE_NAME=cccc-v${version}-${{ matrix.target }}" >> "$GITHUB_ENV"
+      - name: Package Unix distribution
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          mkdir -p "dist/${PACKAGE_NAME}"
+          cp target/${{ matrix.target }}/release/cccc "dist/${PACKAGE_NAME}/"
+          cp LICENSE README.md docs/rust-migration.md "dist/${PACKAGE_NAME}/"
+          tar -C dist -czf "dist/${PACKAGE_NAME}.tar.gz" "${PACKAGE_NAME}"
+      - name: Package Windows distribution
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $name = $env:PACKAGE_NAME
+          New-Item -ItemType Directory -Force "dist/$name" | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/cccc.exe" "dist/$name/"
+          Copy-Item LICENSE,README.md,docs/rust-migration.md "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cccc-${{ matrix.target }}
+          path: dist/*.${{ matrix.archive }}
+          if-no-files-found: error
+
+  prepare:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cccc-*
+          path: artifacts
+          merge-multiple: true
+      - name: Prepare release candidate
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          scripts/package_release_assets.sh artifacts "$version"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cccc-release-candidate
+          path: artifacts/*
+          if-no-files-found: error
+
+  verify:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            verifier: unix
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            verifier: unix
+          - os: macos-14
+            target: aarch64-apple-darwin
+            verifier: unix
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            verifier: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cccc-release-candidate
+          path: artifacts
+      - name: Verify Unix release candidate
+        if: matrix.verifier == 'unix'
+        shell: bash
+        run: bash scripts/tests/verify_release_unix.sh artifacts "${{ matrix.target }}"
+      - name: Verify Windows release candidate
+        if: matrix.verifier == 'windows'
+        shell: pwsh
+        run: ./scripts/tests/verify_release_windows.ps1 -ArtifactDir artifacts -Target "${{ matrix.target }}"
+
+  publish:
+    needs: [prepare, verify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cccc-release-candidate
+          path: artifacts
+      - name: Resolve release type
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          prerelease="$(scripts/release_prerelease.sh "$version")"
+          echo "RELEASE_PRERELEASE=$prerelease" >> "$GITHUB_ENV"
+      - uses: softprops/action-gh-release@v2
+        if: github.event_name == 'push'
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          prerelease: ${{ env.RELEASE_PRERELEASE }}

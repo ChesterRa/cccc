@@ -114,6 +114,13 @@ export type GroupBridgeRouteMessageRef = MessageRef & {
   token?: string;
 };
 
+export type LocalGroupRouteMessageRef = MessageRef & {
+  kind: "local_group_route";
+  group_id: string;
+  group_title?: string;
+  token?: string;
+};
+
 export type StreamingActivity = {
   id: string;
   kind: "queued" | "thinking" | "plan" | "search" | "command" | "patch" | "tool" | "reply" | string;
@@ -218,6 +225,24 @@ export type HeadlessStreamEvent = {
   actor_id?: string;
   type?: string;
   data?: Record<string, unknown>;
+};
+
+export type RuntimeActivityEvent = {
+  v: number;
+  id: string;
+  ts: string;
+  group_id: string;
+  actor_id: string;
+  runtime: string;
+  activity_id: string;
+  kind: "session" | "turn" | "tool" | "subagent" | string;
+  status: "started" | "waiting" | "completed" | "failed" | "stuck" | string;
+  event_type: string;
+  session_id: string;
+  turn_id?: string | null;
+  operation_id?: string | null;
+  tool_name?: string | null;
+  duration_ms?: number | null;
 };
 
 export type LedgerEventStatusPayload = {
@@ -745,6 +770,9 @@ export type AssistantServiceModel = {
   status?: "not_installed" | "downloading" | "installing" | "ready" | "failed" | "unknown" | string;
   available?: boolean;
   installed?: boolean;
+  managed?: boolean;
+  removable?: boolean;
+  implementation?: string;
   install_dir?: string;
   installed_at?: string;
   updated_at?: string;
@@ -781,6 +809,9 @@ export type AssistantServiceRuntime = {
   status?: "not_installed" | "installing" | "ready" | "failed" | string;
   available?: boolean;
   installed?: boolean;
+  managed?: boolean;
+  removable?: boolean;
+  implementation?: string;
   install_dir?: string;
   python?: string;
   packages?: string[];
@@ -1374,7 +1405,9 @@ export type IMStatus = {
   enabled: boolean;
   platform?: string;
   running: boolean;
-  pid?: number;
+  adapter_available?: boolean;
+  last_error?: string | null;
+  pid?: number | null;
   subscribers: number;
 };
 

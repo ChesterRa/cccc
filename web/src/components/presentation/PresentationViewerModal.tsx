@@ -27,6 +27,7 @@ import {
   fetchPresentationBrowserSurfaceSession,
   getGroupBlobUrl,
   getPresentationAssetUrl,
+  refreshAuthTokenInUrl,
   uploadPresentationReferenceSnapshot,
 } from "../../services/api";
 import { classNames } from "../../utils/classNames";
@@ -60,7 +61,7 @@ type PresentationViewerBaseProps = {
   onOpenMessageContext?: (eventId: string) => void;
   onReplyToMessage?: (event: LedgerEvent) => void;
   onReplaceSlot?: (slotId: string) => void;
-  onClearSlot?: (slotId: string) => void;
+  onClearSlot?: (slotId: string) => void | Promise<void>;
   onClose: () => void;
 };
 
@@ -90,7 +91,7 @@ function getReferenceHref(
   const card = slot?.card;
   if (!card) return "";
   const url = String(card.content.url || "").trim();
-  if (url) return url;
+  if (url) return refreshAuthTokenInUrl(url);
   return getPresentationAssetUrl(groupId, slot.slot_id, cacheBust);
 }
 
@@ -176,6 +177,7 @@ function PresentationViewer({
   const [linkedMarkdownError, setLinkedMarkdownError] = useState("");
   const [copiedReference, setCopiedReference] = useState(false);
   const [quotePending, setQuotePending] = useState(false);
+  const [clearingSlotId, setClearingSlotId] = useState("");
   const [browserFrameForQuote, setBrowserFrameForQuote] = useState<PresentationBrowserFrame | null>(
     null,
   );
@@ -284,7 +286,7 @@ function PresentationViewer({
       : "border-black/10 bg-[rgb(245,245,245)] text-[rgb(35,36,37)] hover:bg-white",
   );
   const destructiveIconButtonClassName = classNames(
-    "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors",
+    "inline-flex h-9 w-9 items-center justify-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60",
     isDark
       ? "bg-rose-500/15 text-rose-200 hover:bg-rose-500/25"
       : "bg-rose-50 text-rose-700 hover:bg-rose-100",
@@ -300,7 +302,9 @@ function PresentationViewer({
     ? t("presentationCopyReferenceCopied", { defaultValue: "Copied" })
     : t("presentationCopyReferenceAction", { defaultValue: "Copy URL/path" });
   const editActionLabel = t("presentationReplaceAction", { defaultValue: "Edit" });
-  const clearActionLabel = t("presentationClearAction", { defaultValue: "Clear" });
+  const clearActionLabel = clearingSlotId
+    ? t("presentationClearingAction", { defaultValue: "Clearing..." })
+    : t("presentationClearAction", { defaultValue: "Clear" });
   const embeddedModeLabel = t("presentationEmbeddedModeLabel", { defaultValue: "Standard" });
   const interactiveModeLabel = t("presentationInteractiveModeLabel", { defaultValue: "Enhanced" });
   const previewModeLabel = t("presentationPreviewModeLabel", { defaultValue: "Web preview mode" });
@@ -312,6 +316,18 @@ function PresentationViewer({
     defaultValue:
       "Enhanced mode works better for local or private pages and tries to keep navigation inside CCCC.",
   });
+
+  const handleClearSlot = async () => {
+    if (!slot || !onClearSlot || clearingSlotId) return;
+    setClearingSlotId(slot.slot_id);
+    try {
+      await onClearSlot(slot.slot_id);
+    } catch (error) {
+      showError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setClearingSlotId("");
+    }
+  };
 
   const modalHeaderActions = (
     <>
@@ -944,7 +960,8 @@ function PresentationViewer({
                 {!readOnly && onClearSlot ? (
                   <button
                     type="button"
-                    onClick={() => slot && onClearSlot(slot.slot_id)}
+                    onClick={() => void handleClearSlot()}
+                    disabled={!!clearingSlotId}
                     className={destructiveIconButtonClassName}
                     aria-label={clearActionLabel}
                     title={clearActionLabel}
@@ -1287,7 +1304,7 @@ function PresentationViewer({
                   void handleCopyReference();
                 }}
                 className={classNames(
-                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60",
                   copiedReference
                     ? isDark
                       ? "bg-white/[0.08] text-white"
@@ -1337,9 +1354,10 @@ function PresentationViewer({
             {!readOnly && onClearSlot && slot ? (
               <button
                 type="button"
-                onClick={() => onClearSlot(slot.slot_id)}
+                onClick={() => void handleClearSlot()}
+                disabled={!!clearingSlotId}
                 className={classNames(
-                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors",
+                  "inline-flex h-8 w-8 items-center justify-center rounded-full transition-colors disabled:cursor-wait disabled:opacity-60",
                   isDark
                     ? "bg-rose-500/15 text-rose-200 hover:bg-rose-500/25"
                     : "bg-rose-50 text-rose-700 hover:bg-rose-100",

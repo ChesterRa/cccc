@@ -2,8 +2,26 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useUIStore, useComposerStore } from "../stores";
 
-const WEB_MAX_FILE_MB = 20;
+const WEB_MAX_FILE_MB = 100;
 const WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024;
+
+export function partitionAttachments(
+  files: File[],
+  existingBytes = 0,
+): { accepted: File[]; rejected: File[] } {
+  let acceptedBytes = Math.max(0, existingBytes);
+  const accepted: File[] = [];
+  const rejected: File[] = [];
+  for (const file of files) {
+    if (file.size > WEB_MAX_FILE_BYTES || acceptedBytes + file.size > WEB_MAX_FILE_BYTES) {
+      rejected.push(file);
+      continue;
+    }
+    acceptedBytes += file.size;
+    accepted.push(file);
+  }
+  return { accepted, rejected };
+}
 
 interface UseDragDropOptions {
   selectedGroupId: string;
@@ -11,7 +29,7 @@ interface UseDragDropOptions {
 
 export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
   const { showError } = useUIStore();
-  const { appendComposerFiles } = useComposerStore();
+  const { appendComposerFiles, composerFiles } = useComposerStore();
 
   const [dropOverlayOpen, setDropOverlayOpen] = useState(false);
   const dragDepthRef = useRef<number>(0);
@@ -22,20 +40,23 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
       const files = Array.from(incoming || []);
       if (files.length === 0) return;
 
-      const tooLarge = files.filter((f) => f.size > WEB_MAX_FILE_BYTES);
-      const ok = files.filter((f) => f.size <= WEB_MAX_FILE_BYTES);
+      const existingBytes = composerFiles.reduce(
+        (total, file) => total + Math.max(0, file.size),
+        0,
+      );
+      const { accepted: ok, rejected: tooLarge } = partitionAttachments(files, existingBytes);
 
       if (tooLarge.length > 0) {
         const names = tooLarge.slice(0, 3).map((f) => f.name || "file");
         const more = tooLarge.length > 3 ? ` (+${tooLarge.length - 3} more)` : "";
-        showError(`File too large (> ${WEB_MAX_FILE_MB}MB): ${names.join(", ")}${more}`);
+        showError(`Attachments exceed ${WEB_MAX_FILE_MB} MiB: ${names.join(", ")}${more}`);
       }
 
       if (ok.length > 0) {
         appendComposerFiles(ok);
       }
     },
-    [showError, appendComposerFiles],
+    [showError, appendComposerFiles, composerFiles],
   );
 
   // Drag/drop event listeners.

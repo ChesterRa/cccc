@@ -1,0 +1,42 @@
+{
+  "state": {
+    "v": 3,
+    "runtime": "codex",
+    "group_id": "g_golden",
+    "actor_id": "peer-golden",
+    "status": "working",
+    "event": "PreToolUse",
+    "session_id": "session-golden",
+    "turn_id": "turn-golden",
+    "operation_id": "operation-golden",
+    "interrupted": false,
+    "awaiting_session_start": false,
+    "turn_generation": 1,
+    "launch_token": "token-golden",
+    "seen_turn_ids": ["turn-golden"],
+    "seen_operation_ids": ["operation-golden"],
+    "turn_fence_exhausted": false,
+    "operation_fence_exhausted": false,
+    "diagnostic": null,
+    "session_closed": false,
+    "observation": "full_fidelity",
+    "updated_at": "2026-07-29T00:00:00Z"
+  },
+  "activity": {
+    "v": 1,
+    "id": "event-golden",
+    "ts": "2026-07-29T00:00:01Z",
+    "group_id": "g_golden",
+    "actor_id": "peer-golden",
+    "runtime": "codex",
+    "activity_id": "codex:session-golden:tool:operation-golden",
+    "kind": "tool",
+    "status": "started",
+    "event_type": "PreToolUse",
+    "session_id": "session-golden",
+    "turn_id": "turn-golden",
+    "operation_id": "operation-golden",
+    "tool_name": "mcp__github__search",
+    "duration_ms": null
+  }
+}

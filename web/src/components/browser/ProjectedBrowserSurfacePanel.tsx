@@ -12,6 +12,8 @@ import type { ApiResponse } from "../../services/api";
 import type { PresentationBrowserSurfaceState } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { CollapseIcon, ExpandIcon } from "../Icons";
+import { mapContainedImagePoint } from "./projectedBrowserCoordinates";
+import { resolveBrowserObserverDisconnect } from "./projectedBrowserConnection";
 
 type RfbInstance = {
   viewOnly: boolean;
@@ -41,6 +43,8 @@ export type ProjectedBrowserFrame = {
 type ProjectedBrowserSurfacePanelProps = {
   isDark: boolean;
   refreshNonce: number;
+  reuseActiveSession?: boolean;
+  sessionIdentity?: string;
   chromeMode?: "standalone" | "embedded";
   viewportClassName?: string;
   onFrameUpdate?: (frame: ProjectedBrowserFrame | null) => void;
@@ -59,6 +63,10 @@ type ProjectedBrowserSurfacePanelProps = {
     closed: string;
     reconnecting: string;
     reconnect: string;
+    refreshPending: string;
+    refreshing: string;
+    refreshed: string;
+    refreshFailed: string;
     back: string;
     frameAlt: string;
     fullScreen: string;
@@ -94,6 +102,7 @@ type BrowserEventPayload =
       url?: string | null;
       mime?: string | null;
     }
+  | { t: "command_result"; id?: string | null; ok?: boolean; message?: string | null }
   | { t: "error"; code?: string | null; message?: string | null };
 
 const SPECIAL_KEY_MAP: Record<string, string> = {
@@ -180,6 +189,8 @@ function ProjectedBrowserExpandIcon({ expanded }: { expanded: boolean }) {
 export function ProjectedBrowserSurfacePanel({
   isDark,
   refreshNonce,
+  reuseActiveSession = true,
+  sessionIdentity = "",
   chromeMode = "standalone",
   viewportClassName,
   onFrameUpdate,
@@ -196,6 +207,7 @@ export function ProjectedBrowserSurfacePanel({
   const rfbRef = useRef<RfbInstance | null>(null);
   const frameRef = useRef<ProjectedBrowserFrame | null>(null);
   const renderedFrameRef = useRef<ProjectedBrowserFrame | null>(null);
+  const frameRenderTokenRef = useRef(0);
   const lastFrameCallbackAtRef = useRef(0);
   const wsRef = useRef<WebSocket | null>(null);
   const loadSessionRef = useRef(loadSession);
@@ -205,6 +217,8 @@ export function ProjectedBrowserSurfacePanel({
   const reconnectAttemptsRef = useRef(0);
   const runIdRef = useRef(0);
   const lastRefreshNonceRef = useRef(refreshNonce);
+  const pendingRefreshIdRef = useRef("");
+  const refreshFeedbackTimerRef = useRef<number | null>(null);
 
   const texts = {
     starting:
@@ -225,6 +239,16 @@ export function ProjectedBrowserSurfacePanel({
       t("presentationBrowserReconnecting", { defaultValue: "Reconnecting interactive view..." }),
     reconnect:
       labels?.reconnect || t("presentationBrowserReconnect", { defaultValue: "Reconnect" }),
+    refreshPending:
+      labels?.refreshPending ||
+      t("presentationBrowserRefreshPending", { defaultValue: "Refresh queued" }),
+    refreshing:
+      labels?.refreshing || t("presentationBrowserRefreshing", { defaultValue: "Refreshing..." }),
+    refreshed:
+      labels?.refreshed || t("presentationBrowserRefreshed", { defaultValue: "Refreshed" }),
+    refreshFailed:
+      labels?.refreshFailed ||
+      t("presentationBrowserRefreshFailed", { defaultValue: "Refresh failed" }),
     back: labels?.back || t("presentationBrowserBack", { defaultValue: "Back" }),
     frameAlt:
       labels?.frameAlt ||
@@ -303,6 +327,9 @@ export function ProjectedBrowserSurfacePanel({
   const [isExpanded, setIsExpanded] = useState(false);
   const [vncConnected, setVncConnected] = useState(false);
   const [vncFailed, setVncFailed] = useState(false);
+  const [refreshFeedback, setRefreshFeedback] = useState<
+    "" | "pending" | "refreshing" | "refreshed" | "failed"
+  >("");
 
   useEffect(() => {
     loadSessionRef.current = loadSession;
@@ -331,6 +358,7 @@ export function ProjectedBrowserSurfacePanel({
       }
       frameRef.current = null;
       renderedFrameRef.current = null;
+      frameRenderTokenRef.current += 1;
       const ws = wsRef.current;
       wsRef.current = null;
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
@@ -343,6 +371,10 @@ export function ProjectedBrowserSurfacePanel({
       if (reconnectTimerRef.current !== null) {
         window.clearTimeout(reconnectTimerRef.current);
         reconnectTimerRef.current = null;
+      }
+      if (refreshFeedbackTimerRef.current !== null) {
+        window.clearTimeout(refreshFeedbackTimerRef.current);
+        refreshFeedbackTimerRef.current = null;
       }
     };
   }, [onFrameUpdate]);
@@ -358,10 +390,21 @@ export function ProjectedBrowserSurfacePanel({
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [isExpanded]);
 
-  const sendCommand = (payload: Record<string, unknown>) => {
+  const sendCommand = (payload: Record<string, unknown>): boolean => {
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
     ws.send(JSON.stringify(payload));
+    return true;
+  };
+
+  const scheduleRefreshFeedbackReset = () => {
+    if (refreshFeedbackTimerRef.current !== null) {
+      window.clearTimeout(refreshFeedbackTimerRef.current);
+    }
+    refreshFeedbackTimerRef.current = window.setTimeout(() => {
+      refreshFeedbackTimerRef.current = null;
+      setRefreshFeedback("");
+    }, 2000);
   };
 
   useEffect(() => {
@@ -392,6 +435,14 @@ export function ProjectedBrowserSurfacePanel({
       const ws = new WebSocket(urlWithViewerParam(webSocketUrl, "viewer_mode", viewerMode));
       wsRef.current = ws;
 
+      ws.onopen = () => {
+        const pendingId = pendingRefreshIdRef.current;
+        if (!pendingId) return;
+        if (sendCommand({ t: "refresh", id: pendingId })) {
+          setRefreshFeedback("refreshing");
+        }
+      };
+
       ws.onmessage = (event) => {
         if (disposed || runIdRef.current !== runId) return;
         try {
@@ -407,6 +458,7 @@ export function ProjectedBrowserSurfacePanel({
           if (payload.t === "frame") {
             const rawBase64 = String(payload.data_base64 || "").trim();
             if (!rawBase64) return;
+            reconnectAttemptsRef.current = 0;
             const mime = String(payload.mime || "image/jpeg").trim() || "image/jpeg";
             const nextFrame = {
               seq: Number(payload.seq || 0) || 0,
@@ -417,25 +469,45 @@ export function ProjectedBrowserSurfacePanel({
               url: String(payload.url || "").trim(),
             };
             frameRef.current = nextFrame;
-            if (imageRef.current) {
-              // High-frequency browser frames bypass React state so input handling stays responsive.
-              imageRef.current.src = nextFrame.dataUrl;
-            }
-            const rendered = renderedFrameRef.current;
-            if (
-              !rendered ||
-              rendered.width !== nextFrame.width ||
-              rendered.height !== nextFrame.height
-            ) {
+            const renderToken = frameRenderTokenRef.current + 1;
+            frameRenderTokenRef.current = renderToken;
+            const decoded = new Image();
+            decoded.onload = () => {
+              if (
+                disposed ||
+                runIdRef.current !== runId ||
+                frameRenderTokenRef.current !== renderToken
+              ) {
+                return;
+              }
               renderedFrameRef.current = nextFrame;
-              setRenderedFrame(nextFrame);
-            }
+              if (imageRef.current) {
+                // Keep the previous frame visible until the replacement JPEG is decoded.
+                imageRef.current.src = nextFrame.dataUrl;
+              } else {
+                setRenderedFrame(nextFrame);
+              }
+            };
+            decoded.src = nextFrame.dataUrl;
             if (onFrameUpdate) {
               const now = window.performance?.now?.() ?? Date.now();
               if (!lastFrameCallbackAtRef.current || now - lastFrameCallbackAtRef.current >= 250) {
                 lastFrameCallbackAtRef.current = now;
                 onFrameUpdate(nextFrame);
               }
+            }
+            return;
+          }
+          if (payload.t === "command_result") {
+            const commandId = String(payload.id || "").trim();
+            if (!commandId || commandId !== pendingRefreshIdRef.current) return;
+            pendingRefreshIdRef.current = "";
+            if (payload.ok) {
+              setRefreshFeedback("refreshed");
+              scheduleRefreshFeedbackReset();
+            } else {
+              setRefreshFeedback("failed");
+              setPanelError(String(payload.message || texts.refreshFailed).trim());
             }
             return;
           }
@@ -454,50 +526,39 @@ export function ProjectedBrowserSurfacePanel({
         void (async () => {
           const info = await loadSessionRef.current();
           if (disposed || runIdRef.current !== runId) return;
-          if (
-            info.ok &&
-            info.result.browser_surface.active &&
-            (info.result.browser_surface.state === "ready" ||
-              info.result.browser_surface.state === "starting") &&
-            reconnectAttemptsRef.current < 3
-          ) {
+          if (info.ok) {
+            const resolution = resolveBrowserObserverDisconnect({
+              surface: info.result.browser_surface,
+              reconnectAttempts: reconnectAttemptsRef.current,
+              maxReconnectAttempts: 3,
+              reconnectingMessage: texts.reconnecting,
+              closedMessage: texts.closed,
+            });
+            setSessionState(normalizeState(resolution.state));
+            if (!resolution.shouldReconnect) {
+              const message = String(
+                info.result.browser_surface.error?.message ||
+                  info.result.browser_surface.message ||
+                  "",
+              ).trim();
+              if (message && info.result.browser_surface.state === "failed") {
+                setPanelError(message);
+              }
+              return;
+            }
             reconnectAttemptsRef.current += 1;
-            setSessionState(
-              normalizeState({ ...info.result.browser_surface, message: texts.reconnecting }),
-            );
             reconnectTimerRef.current = window.setTimeout(() => {
               reconnectTimerRef.current = null;
               attachSocket();
             }, 800);
             return;
           }
-          if (info.ok) {
-            setSessionState(
-              normalizeState({
-                ...info.result.browser_surface,
-                active: false,
-                state: info.result.browser_surface.state === "failed" ? "failed" : "closed",
-                message:
-                  info.result.browser_surface.state === "failed"
-                    ? info.result.browser_surface.message
-                    : texts.closed,
-              }),
-            );
-            const message = String(
-              info.result.browser_surface.error?.message ||
-                info.result.browser_surface.message ||
-                "",
-            ).trim();
-            if (message && info.result.browser_surface.state === "failed") {
-              setPanelError(message);
-            }
-            return;
-          }
-          setSessionState(
+          setSessionState((current) =>
             normalizeState({
-              active: false,
-              state: "closed",
-              message: texts.closed,
+              ...current,
+              active: current.active,
+              state: current.active ? "disconnected" : "closed",
+              message: current.active ? texts.reconnecting : texts.closed,
               error: { code: info.error.code, message: info.error.message },
             }),
           );
@@ -517,6 +578,7 @@ export function ProjectedBrowserSurfacePanel({
       vncTargetRef.current?.replaceChildren();
       frameRef.current = null;
       renderedFrameRef.current = null;
+      frameRenderTokenRef.current += 1;
       lastFrameCallbackAtRef.current = 0;
       setRenderedFrame(null);
       onFrameUpdate?.(null);
@@ -527,6 +589,7 @@ export function ProjectedBrowserSurfacePanel({
       if (disposed) return;
 
       if (
+        reuseActiveSession &&
         existing.ok &&
         existing.result.browser_surface.active &&
         ["starting", "ready"].includes(String(existing.result.browser_surface.state || "").trim())
@@ -582,7 +645,17 @@ export function ProjectedBrowserSurfacePanel({
       disposed = true;
       cleanupTransport();
     };
-  }, [onFrameUpdate, runNonce, texts.closed, texts.reconnecting, vncFailed, webSocketUrl]);
+  }, [
+    onFrameUpdate,
+    runNonce,
+    texts.closed,
+    texts.reconnecting,
+    texts.refreshFailed,
+    reuseActiveSession,
+    sessionIdentity,
+    vncFailed,
+    webSocketUrl,
+  ]);
 
   const vncAvailable =
     String(sessionState.viewer?.kind || "")
@@ -713,6 +786,7 @@ export function ProjectedBrowserSurfacePanel({
   const handleReconnect = () => {
     frameRef.current = null;
     renderedFrameRef.current = null;
+    frameRenderTokenRef.current += 1;
     if (rfbRef.current) {
       rfbRef.current.disconnect();
       rfbRef.current = null;
@@ -730,10 +804,18 @@ export function ProjectedBrowserSurfacePanel({
   useEffect(() => {
     if (refreshNonce === lastRefreshNonceRef.current) return;
     lastRefreshNonceRef.current = refreshNonce;
-    if (sessionState.state === "failed" || sessionState.state === "closed") {
+    const commandId = `refresh-${refreshNonce}`;
+    pendingRefreshIdRef.current = commandId;
+    setRefreshFeedback("pending");
+    if (
+      sessionState.state === "failed" ||
+      sessionState.state === "closed" ||
+      sessionState.state === "disconnected"
+    ) {
       const timer = window.setTimeout(() => {
         frameRef.current = null;
         renderedFrameRef.current = null;
+        frameRenderTokenRef.current += 1;
         if (rfbRef.current) {
           rfbRef.current.disconnect();
           rfbRef.current = null;
@@ -753,7 +835,11 @@ export function ProjectedBrowserSurfacePanel({
     }
     const timer = window.setTimeout(() => {
       setPanelError("");
-      sendCommand({ t: "refresh" });
+      if (sendCommand({ t: "refresh", id: commandId })) {
+        setRefreshFeedback("refreshing");
+      } else {
+        setRefreshFeedback("pending");
+      }
     }, 0);
     return () => window.clearTimeout(timer);
   }, [refreshNonce, sessionState.state, texts.starting]);
@@ -763,16 +849,9 @@ export function ProjectedBrowserSurfacePanel({
     const frame = frameRef.current || renderedFrame;
     if (!frame || !imageRef.current) return;
     const rect = imageRef.current.getBoundingClientRect();
-    if (rect.width <= 0 || rect.height <= 0 || frame.width <= 0 || frame.height <= 0) return;
-    const relativeX = (event.clientX - rect.left) / rect.width;
-    const relativeY = (event.clientY - rect.top) / rect.height;
-    if (relativeX < 0 || relativeX > 1 || relativeY < 0 || relativeY > 1) return;
-    sendCommand({
-      t: "click",
-      x: Math.round(relativeX * frame.width),
-      y: Math.round(relativeY * frame.height),
-      button: buttonFromMouseEvent(event.button),
-    });
+    const point = mapContainedImagePoint({ x: event.clientX, y: event.clientY }, rect, frame);
+    if (!point) return;
+    sendCommand({ t: "click", x: point.x, y: point.y, button: buttonFromMouseEvent(event.button) });
     containerRef.current?.focus();
     event.preventDefault();
   };
@@ -797,8 +876,21 @@ export function ProjectedBrowserSurfacePanel({
     event.preventDefault();
   };
 
-  const showReconnect = sessionState.state === "failed" || sessionState.state === "closed";
+  const showReconnect =
+    sessionState.state === "failed" ||
+    sessionState.state === "closed" ||
+    sessionState.state === "disconnected";
   const fullScreenLabel = isExpanded ? texts.exitFullScreen : texts.fullScreen;
+  const refreshFeedbackLabel =
+    refreshFeedback === "pending"
+      ? texts.refreshPending
+      : refreshFeedback === "refreshing"
+        ? texts.refreshing
+        : refreshFeedback === "refreshed"
+          ? texts.refreshed
+          : refreshFeedback === "failed"
+            ? texts.refreshFailed
+            : "";
   const panelClassName = classNames(
     "relative flex flex-col overflow-hidden outline-none",
     chromeMode === "embedded"
@@ -880,6 +972,23 @@ export function ProjectedBrowserSurfacePanel({
           ) : null}
         </span>
         <span className="min-w-0 flex-1 truncate">{sessionState.url || fallbackUrl || ""}</span>
+        {refreshFeedbackLabel ? (
+          <span
+            className={classNames(
+              "rounded-full px-2.5 py-1 font-medium",
+              refreshFeedback === "failed"
+                ? isDark
+                  ? "bg-rose-500/15 text-rose-200"
+                  : "bg-rose-50 text-rose-700"
+                : isDark
+                  ? "bg-cyan-500/15 text-cyan-200"
+                  : "bg-cyan-50 text-cyan-700",
+            )}
+            role="status"
+          >
+            {refreshFeedbackLabel}
+          </span>
+        ) : null}
         {chromeMode === "standalone" ? (
           <button
             type="button"

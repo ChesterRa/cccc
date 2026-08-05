@@ -9,7 +9,16 @@ There are two delivery modes behind the same actor identity:
 1. **Browser delivery**: CCCC injects the current unread message batch into a bound ChatGPT web chat through the shared daemon-owned projected browser session. If ChatGPT is already responding, CCCC may use the formal `Send prompt` control inside that composer, but it never treats the visible Stop control or a similarly named control elsewhere on the page as a send target. A confirmed injection commits the actor cursor. If no safe composer send control is available yet, the batch remains unread and is retried instead of being recorded as failed. Once a submit click has been invoked, any click exception is treated as dispatch-unknown unless the current prompt itself appears as a new message; CCCC advances the cursor rather than risking an automatic duplicate. A definite failure is recorded as a durable delivery failure; retry by sending a new message or using an explicit retry action when available.
 2. **Remote-MCP pull**: ChatGPT calls `cccc_runtime_wait_next_turn` through MCP and receives a pull-mode turn. Pull mode advances the cursor on `cccc_runtime_complete_turn`.
 
-In both modes, the model uses CCCC tools for visible replies and workspace work. Browser delivery does not depend on a completion call; `cccc_runtime_complete_turn` remains useful for remote-MCP pull and optional evidence, but it is not a browser-delivery gate.
+In both modes, the model uses CCCC tools for visible replies and workspace work. The
+model does not make a completion call for a browser-injected batch. After confirmed
+browser submission, CCCC records an exact ledger receipt keyed by the actor, turn,
+ordered event ids, status, and delivery id. If the daemon response is lost, the Web
+delivery worker retries only that completion identity; an exact retry returns the
+same receipt, while a mismatched retry is rejected. The browser prompt itself is
+never replayed during this reconciliation. An exact retry repairs cursor/status
+projection only while that same turn is still the active working turn. If a newer
+turn owns the actor, or the runtime is idle, failed, or stopped, the retry returns
+the historical receipt without changing current runtime state.
 
 Mental model: the ChatGPT Web Model actor is a normal CCCC agent whose model surface happens to be ChatGPT Web. It reuses the same `cccc_bootstrap`, `cccc_help`, messaging, coordination, capability, memory, and repository tool paths as Codex/Claude actors. Browser delivery and remote-MCP pull are transport adapters, not a separate help system.
 

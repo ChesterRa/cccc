@@ -1,0 +1,69 @@
+FROM node:20-bookworm-slim AS web-builder
+WORKDIR /src/web
+COPY web/package*.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+FROM rust:1.88-bookworm AS rust-builder
+WORKDIR /src
+COPY Cargo.toml Cargo.lock ./
+COPY crates/ ./crates/
+COPY --from=web-builder /src/web/dist ./crates/cccc-web/assets/web-dist
+RUN cargo build --release --locked -p cccc --bin cccc
+
+FROM debian:bookworm-slim
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY}
+RUN set -eux; \
+    for attempt in 1 2 3 4 5; do \
+      if apt-get -o Acquire::Retries=5 update \
+        && apt-get -o Acquire::Retries=5 install -y --no-install-recommends ca-certificates; then \
+        break; \
+      fi; \
+      if [ "$attempt" -eq 5 ]; then exit 1; fi; \
+      rm -rf /var/lib/apt/lists/*; \
+      sleep $((attempt * 2)); \
+    done; \
+    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources; \
+    rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    for attempt in 1 2 3 4 5; do \
+      if apt-get -o Acquire::Retries=5 update \
+        && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
+          bash chromium curl git libstdc++6 \
+          fonts-liberation fonts-noto-color-emoji fonts-unifont fonts-wqy-zenhei; then \
+        break; \
+      fi; \
+      if [ "$attempt" -eq 5 ]; then exit 1; fi; \
+      rm -rf /var/lib/apt/lists/*; \
+      sleep $((attempt * 2)); \
+    done; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+COPY --from=web-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=web-builder /usr/local/lib/node_modules /usr/local/lib/node_modules
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && npm install -g @openai/codex @factory/cli
+
+COPY --from=rust-builder /src/target/release/cccc /usr/local/bin/cccc
+RUN useradd -m -u 1000 -s /bin/bash cccc \
+    && mkdir -p /data /workspace \
+    && chown -R cccc:cccc /data /workspace
+
+USER cccc
+WORKDIR /workspace
+ENV HOME=/home/cccc
+ENV CCCC_HOME=/data
+ENV CCCC_DAEMON_TRANSPORT=tcp
+ENV CCCC_DAEMON_HOST=127.0.0.1
+ENV CCCC_DAEMON_PORT=9765
+ENV CCCC_WEB_HOST=0.0.0.0
+ENV CCCC_WEB_PORT=8848
+ENV http_proxy="" https_proxy=""
+
+EXPOSE 8848 9765
+VOLUME ["/data", "/workspace"]
+CMD ["cccc"]

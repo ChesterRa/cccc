@@ -15,7 +15,10 @@ from .runner_state_ops import headless_state_running, read_headless_state
 from ..kernel.actor_runtime_projection import actor_runtime_enabled
 from ..kernel.context import ContextStorage
 from ..kernel.runtime_state_source import actor_uses_codex_app_server_state
+from ..kernel.runtime_hooks.projection import runtime_hook_working_projection
+from .runtime_hooks.input_observer import current_session_capability
 from ..kernel.working_state import derive_effective_working_state
+from ..paths import ensure_home
 
 _LOG = logging.getLogger("cccc.daemon.serve_ops")
 _LOOP_ERROR_LAST_TS: Dict[str, float] = {}
@@ -406,6 +409,19 @@ def start_actor_activity_thread(
                                 pty_terminal_override=pty_terminal_override,
                                 agent_state=agent_state_by_id.get(aid),
                                 headless_state=headless_state,
+                                runtime_hook_projection=(
+                                    runtime_hook_working_projection(
+                                        ensure_home(),
+                                        running=running,
+                                        effective_runner=effective_runner,
+                                        runtime=str(actor.get("runtime") or ""),
+                                        group_id=gid,
+                                        actor_id=aid,
+                                        session_capability=current_session_capability(
+                                            pty_supervisor, gid, aid
+                                        ),
+                                    )
+                                ),
                             )
                             payload.update(working_state)
                             actors_data.append(payload)

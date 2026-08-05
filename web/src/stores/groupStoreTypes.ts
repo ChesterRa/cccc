@@ -30,6 +30,7 @@ export interface GroupState {
   groupPresentation: GroupPresentation | null;
   runtimes: RuntimeInfo[];
   selectedGroupActorsHydrating: boolean;
+  selectedGroupActorStatusProvisional: boolean;
   hasMoreHistory: boolean;
   isLoadingHistory: boolean;
   isChatWindowLoading: boolean;

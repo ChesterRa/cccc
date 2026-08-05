@@ -198,6 +198,18 @@ export function getStableMessageKey(
   return eventId || index;
 }
 
+export function getReplyQuoteText(
+  message: LedgerEvent | undefined,
+  messageTextById: ReadonlyMap<string, string>,
+): string {
+  if (!message?.data || typeof message.data !== "object") return "";
+  const data = message.data as { quote_text?: unknown; reply_to?: unknown };
+  const snapshot = typeof data.quote_text === "string" ? data.quote_text.trim() : "";
+  if (snapshot) return snapshot;
+  const replyTo = typeof data.reply_to === "string" ? data.reply_to.trim() : "";
+  return replyTo ? String(messageTextById.get(replyTo) || "").trim() : "";
+}
+
 export function shouldUseVirtualizedMessageList(messageCount: number): boolean {
   return Math.max(0, Number(messageCount) || 0) >= VIRTUALIZATION_THRESHOLD;
 }

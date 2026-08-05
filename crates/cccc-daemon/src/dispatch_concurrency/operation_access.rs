@@ -1,0 +1,100 @@
+use cccc_contracts::DaemonRequest;
+
+pub(super) fn is_global_write(request: &DaemonRequest) -> bool {
+    if request.op.starts_with("group_bridge_session_") {
+        return false;
+    }
+    request.args.contains_key("dst_group_id")
+        || matches!(
+            request.op.as_str(),
+            "shutdown"
+                | "group_create"
+                | "group_create_with_scope"
+                | "group_delete"
+                | "group_import"
+                | "group_update"
+                | "group_copy_import"
+                | "settings_update"
+                | "capability_enable"
+                | "capability_visibility"
+                | "capability_block"
+                | "capability_import"
+                | "capability_uninstall"
+                | "capability_install"
+                | "capability_source_delete"
+                | "capability_allowlist_update"
+                | "capability_allowlist_reset"
+        )
+        || request.op.starts_with("access_token_")
+        || request.op.starts_with("group_bridge_")
+        || request.op.starts_with("remote_access_")
+}
+
+pub(super) fn is_read_only(op: &str) -> bool {
+    matches!(
+        op,
+        "actor_env_private_keys"
+            | "actor_list"
+            | "actor_profile_env_private_keys"
+            | "actor_profile_get"
+            | "actor_profile_list"
+            | "actor_prompt"
+            | "assistant_index"
+            | "assistant_voice_document_input_read"
+            | "assistant_voice_document_list"
+            | "branding_get"
+            | "capability_allowlist_get"
+            | "capability_allowlist_validate"
+            | "capability_overview"
+            | "capability_search"
+            | "capability_state"
+            | "context_get"
+            | "debug_snapshot"
+            | "debug_tail_logs"
+            | "group_automation_state"
+            | "group_copy_export"
+            | "group_copy_preview_import"
+            | "group_list"
+            | "group_preamble_get"
+            | "group_show"
+            | "group_space_capabilities"
+            | "group_space_query"
+            | "group_space_status"
+            | "groups"
+            | "headless_status"
+            | "health"
+            | "home_get"
+            | "im_list_authorized"
+            | "im_list_pending"
+            | "im_status"
+            | "inbox_list"
+            | "ledger_search"
+            | "ledger_statuses"
+            | "ledger_tail"
+            | "ledger_window"
+            | "memory_get"
+            | "memory_health"
+            | "memory_profile_get"
+            | "memory_reme_context_check"
+            | "memory_reme_get"
+            | "memory_reme_layout_get"
+            | "memory_reme_search"
+            | "memory_search"
+            | "message_read_status"
+            | "observability_get"
+            | "ping"
+            | "presentation_get"
+            | "task_list"
+            | "terminal_history"
+            | "terminal_since"
+            | "terminal_status"
+            | "terminal_tail"
+            | "version"
+            | "group_bridge_session_open"
+            | "group_bridge_session_close"
+            | "group_bridge_session_poll"
+            | "group_bridge_session_complete"
+            | "group_bridge_session_ready"
+            | "group_bridge_session_deliver"
+    )
+}

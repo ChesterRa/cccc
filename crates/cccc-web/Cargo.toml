@@ -1,0 +1,78 @@
+[package]
+name = "cccc-pair-web"
+version = "0.4.33-compat.2"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Web API, UI server, and integration adapters for CCCC"
+publish = ["crates-io"]
+include = [
+  "assets/web-dist/**",
+  "build.rs",
+  "resources/**",
+  "src/**",
+]
+
+[dependencies]
+anyhow.workspace = true
+aes.workspace = true
+async-stream.workspace = true
+async-trait.workspace = true
+axum.workspace = true
+base64.workspace = true
+bzip2.workspace = true
+cccc-client = { package = "cccc-pair-client", version = "=0.4.33", path = "../cccc-client" }
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.33", path = "../cccc-contracts" }
+cccc-core = { package = "cccc-pair-core", version = "=0.4.33", path = "../cccc-core" }
+cccc-mcp = { package = "cccc-pair-mcp", version = "=0.4.33", path = "../cccc-mcp" }
+cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.33", path = "../cccc-runtime" }
+chromiumoxide.workspace = true
+chrono.workspace = true
+cbc.workspace = true
+dingtalk-stream.workspace = true
+ed25519-dalek.workspace = true
+futures-util.workspace = true
+flate2.workspace = true
+fs2.workspace = true
+mime_guess.workspace = true
+md-5.workspace = true
+lark-channel.workspace = true
+notify.workspace = true
+percent-encoding.workspace = true
+reqwest.workspace = true
+rust-embed = { workspace = true, features = ["interpolate-folder-path"] }
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serenity.workspace = true
+sha2.workspace = true
+shell-words.workspace = true
+sherpa-onnx.workspace = true
+tar.workspace = true
+takecell.workspace = true
+tempfile.workspace = true
+hound.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+teloxide.workspace = true
+uuid.workspace = true
+weixin-agent.workspace = true
+
+[dev-dependencies]
+cccc-daemon = { package = "cccc-pair-daemon", version = "=0.4.33", path = "../cccc-daemon" }
+http-body-util.workspace = true
+tower.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "cccc_web"
+
+[[bin]]
+name = "cccc-web"
+path = "src/main.rs"

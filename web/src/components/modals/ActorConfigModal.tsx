@@ -392,7 +392,7 @@ function CreateActorConfigModal({
             </div>
           ) : null}
 
-          <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+          <div className="flex flex-col-reverse gap-3 pb-2 sm:flex-row sm:justify-end">
             <Button
               type="button"
               variant="secondary"

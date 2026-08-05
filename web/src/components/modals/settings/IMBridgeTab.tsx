@@ -18,6 +18,8 @@ import {
   settingsWorkspaceSoftPanelClass,
 } from "./types";
 import { copyTextToClipboard } from "../../../utils/copy";
+import { canStartIMBridge } from "./imBridgeConfig";
+import { imRevokeKey, revokeIMChatAuthorization } from "./imBridgeRevoke";
 
 const IM_PENDING_AUTO_REFRESH_MS = 12000;
 
@@ -178,6 +180,7 @@ export function IMBridgeTab({
   const weixinLoggedIn = !!weixinLoginStatus?.logged_in;
   const weixinHasQr = !!String(weixinLoginStatus?.qrcode_url || "").trim();
   const weixinHasCustomAdvanced = !!String(imWeixinAccountId || "").trim();
+  const bridgeCanStart = canStartIMBridge(imPlatform, weixinLoggedIn);
   const getBotTokenLabel = () => {
     switch (imPlatform) {
       case "telegram":
@@ -343,7 +346,7 @@ export function IMBridgeTab({
     if (imStatus?.configured) {
       loadIMAuthState();
     }
-  }, [imStatus?.configured, loadIMAuthState]);
+  }, [imStatus?.configured, loadIMAuthState, weixinLoggedIn]);
 
   useEffect(() => {
     if (!imStatus?.configured) return;
@@ -358,21 +361,17 @@ export function IMBridgeTab({
 
   const handleRevoke = async (chatId: string, threadId: number) => {
     if (!groupId) return;
-    const key = `${chatId}:${threadId}`;
+    const key = imRevokeKey(chatId, threadId);
     setRevoking(key);
     setAuthError("");
     setAuthInfo("");
     try {
-      const resp = await api.revokeIMChat(groupId, chatId, threadId);
-      if (!resp.ok) {
-        setAuthError(
-          resp.error?.message || t("imBridge.revokeError", "Failed to revoke chat authorization."),
-        );
-        return;
-      }
-      await loadIMAuthState();
-    } catch {
-      setAuthError(t("imBridge.revokeError", "Failed to revoke chat authorization."));
+      const error = await revokeIMChatAuthorization({
+        request: () => api.revokeIMChat(groupId, chatId, threadId),
+        refresh: loadIMAuthState,
+        fallbackError: t("imBridge.revokeError", "Failed to revoke chat authorization."),
+      });
+      if (error) setAuthError(error);
     } finally {
       setRevoking(null);
     }
@@ -440,8 +439,8 @@ export function IMBridgeTab({
           ),
         );
       }
-    } catch {
-      // silent fail — user can retry
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Failed to update verbose mode.");
     }
   };
 
@@ -483,6 +482,11 @@ export function IMBridgeTab({
                 <div className="text-xs mt-1 text-[var(--color-text-tertiary)]">
                   {t("imBridge.platform")}: {imStatus.platform} • {t("imBridge.subscribers")}:{" "}
                   {imStatus.subscribers}
+                </div>
+              )}
+              {imStatus.last_error && (
+                <div className="mt-2 break-words text-xs text-red-600 dark:text-red-400">
+                  {imStatus.last_error}
                 </div>
               )}
             </div>
@@ -572,7 +576,7 @@ export function IMBridgeTab({
                       <Trans
                         i18nKey="imBridge.feishuPackageHint"
                         ns="settings"
-                        components={[<code key="package" />]}
+                        components={[<code key="command" />]}
                       />
                     </p>
                   </div>
@@ -650,7 +654,7 @@ export function IMBridgeTab({
                       <Trans
                         i18nKey="imBridge.dingtalkPackageHint"
                         ns="settings"
-                        components={[<code key="package" />]}
+                        components={[<code key="command" />]}
                       />
                     </p>
                   </div>
@@ -792,7 +796,7 @@ export function IMBridgeTab({
                             values={{ count: weixinAuthorizedChatCount }}
                             components={[
                               <code
-                                key="count"
+                                key="command"
                                 className="rounded bg-black/5 px-1 py-0.5 font-mono text-[11px] text-[var(--color-text-secondary)]"
                               />,
                             ]}
@@ -859,8 +863,9 @@ export function IMBridgeTab({
                   ) : (
                     <button
                       onClick={onStartBridge}
-                      disabled={imBusy}
+                      disabled={imBusy || !bridgeCanStart}
                       className={primaryButtonClass(imBusy)}
+                      title={!bridgeCanStart ? t("imBridge.weixinLoginRequired") : undefined}
                     >
                       {t("imBridge.startBridge")}
                     </button>
@@ -1102,7 +1107,7 @@ export function IMBridgeTab({
                   className={`${settingsWorkspaceSoftPanelClass(_isDark)} mt-3 space-y-0 divide-y divide-[var(--glass-border-subtle)]`}
                 >
                   {authChats.map((chat) => {
-                    const key = `${chat.chat_id}:${chat.thread_id}`;
+                    const key = imRevokeKey(chat.chat_id, chat.thread_id);
                     const isRevoking = revoking === key;
                     return (
                       <div

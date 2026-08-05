@@ -2,9 +2,10 @@ import { FloatingPortal } from "@floating-ui/react";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { classNames } from "../../utils/classNames";
-import { CloseIcon, ImageIcon } from "../Icons";
+import { CloseIcon } from "../Icons";
+import { MESSAGE_IMAGE_PREVIEW_HEIGHT_PX } from "./imageLayout";
+import { ImagePreviewFailure } from "./ImagePreviewFailure";
 
-const IMAGE_ASPECT_RATIO_CACHE = new Map<string, number>();
 const IMAGE_LOAD_ERROR_CACHE = new Set<string>();
 const LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE = {
   filter: "contrast(1.12) brightness(0.985) saturate(1.01)",
@@ -45,14 +46,11 @@ export function ImagePreview({
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const [resolvedHref, setResolvedHref] = useState<string>(isSvg ? "" : href);
   const [isResolvingSvg, setIsResolvingSvg] = useState<boolean>(isSvg);
-  const [aspectRatio, setAspectRatio] = useState<number | null>(
-    () => IMAGE_ASPECT_RATIO_CACHE.get(href) ?? null,
-  );
   const [displaySrc, setDisplaySrc] = useState<string>(isSvg ? "" : href);
   const { t } = useTranslation("chat");
   const isGridLayout = layout === "grid";
+  const previewHeight = MESSAGE_IMAGE_PREVIEW_HEIGHT_PX[layout];
   const rasterCanvasStyle = isDark ? DARK_IMAGE_CANVAS_STYLE : LIGHT_IMAGE_CANVAS_STYLE;
-  const useDarkFailureTone = isDark;
 
   useEffect(() => {
     let cancelled = false;
@@ -155,102 +153,21 @@ export function ImagePreview({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [isLightboxOpen]);
 
-  useEffect(() => {
-    const src = displaySrc || resolvedHref || href;
-    if (!src || isResolvingSvg || IMAGE_LOAD_ERROR_CACHE.has(href)) {
-      return undefined;
-    }
-    const cachedAspectRatio = IMAGE_ASPECT_RATIO_CACHE.get(href);
-    if (typeof cachedAspectRatio === "number" && cachedAspectRatio > 0) {
-      return undefined;
-    }
-    let cancelled = false;
-    const img = new Image();
-    img.onload = () => {
-      if (cancelled) return;
-      const width = Number(img.naturalWidth || 0);
-      const height = Number(img.naturalHeight || 0);
-      if (width > 0 && height > 0) {
-        const nextAspectRatio = width / height;
-        IMAGE_ASPECT_RATIO_CACHE.set(href, nextAspectRatio);
-        setAspectRatio(nextAspectRatio);
-      }
-    };
-    img.onerror = () => {
-      if (cancelled) return;
-      IMAGE_LOAD_ERROR_CACHE.add(href);
-      setLoadError(true);
-    };
-    img.src = src;
-    return () => {
-      cancelled = true;
-    };
-  }, [displaySrc, href, isResolvingSvg, resolvedHref]);
-
   if (loadError) {
     return (
-      <a
+      <ImagePreviewFailure
         href={href}
-        className={classNames(
-          "group flex w-full flex-col overflow-hidden rounded-xl border p-2 text-left transition-colors",
-          isUserMessage
-            ? isDark
-              ? "border-[rgb(35,36,37)]/24 bg-white/10 text-white hover:bg-white/14"
-              : "border-[rgba(15,23,42,0.18)] bg-white text-[rgb(35,36,37)] shadow-[0_8px_22px_-18px_rgba(15,23,42,0.34)] hover:bg-[rgb(248,250,252)]"
-            : isDark
-              ? "border-white/10 bg-slate-900/50 text-slate-300 hover:bg-slate-900/65"
-              : "border-[rgba(15,23,42,0.12)] bg-[rgb(238,241,245)] text-[var(--color-text-secondary)] hover:bg-[rgb(232,236,241)]",
-        )}
+        alt={alt}
+        isUserMessage={isUserMessage}
+        isDark={isDark}
+        layout={layout}
+        height={previewHeight}
         title={t("download", { name: alt })}
-        download
-      >
-        <div
-          className={classNames(
-            "flex aspect-[4/3] w-full flex-col items-center justify-center rounded-lg border border-dashed px-4 text-center",
-            isUserMessage
-              ? isDark
-                ? "border-white/20 bg-black/10"
-                : "border-[rgba(15,23,42,0.24)] bg-[rgb(241,245,249)]"
-              : isDark
-                ? "border-white/12 bg-slate-950/70"
-                : "border-[rgba(15,23,42,0.14)] bg-white/85",
-          )}
-        >
-          <ImageIcon
-            size={24}
-            className={classNames(
-              "mb-3 flex-shrink-0 opacity-75",
-              useDarkFailureTone ? "text-white" : "text-[rgb(71,85,105)]",
-            )}
-          />
-          <div
-            className={classNames(
-              "text-xs font-semibold",
-              useDarkFailureTone ? "text-white" : "text-[rgb(30,41,59)]",
-            )}
-          >
-            {t("imagePreviewUnavailable", { defaultValue: "Image preview unavailable" })}
-          </div>
-          <div
-            className={classNames(
-              "mt-1 text-[11px]",
-              useDarkFailureTone ? "text-white/72" : "text-[rgb(100,116,139)]",
-            )}
-          >
-            {t("downloadOriginalImage", { defaultValue: "Open the original image" })}
-          </div>
-        </div>
-        <div className="min-w-0 px-1 pt-2">
-          <div
-            className={classNames(
-              "truncate text-[11px] font-medium",
-              useDarkFailureTone ? "text-white/88" : "text-[rgb(51,65,85)]",
-            )}
-          >
-            {alt}
-          </div>
-        </div>
-      </a>
+        unavailableLabel={t("imagePreviewUnavailable", {
+          defaultValue: "Image preview unavailable",
+        })}
+        openOriginalLabel={t("downloadOriginalImage", { defaultValue: "Open the original image" })}
+      />
     );
   }
 
@@ -259,8 +176,7 @@ export function ImagePreview({
       <button
         type="button"
         className={classNames(
-          "group overflow-hidden rounded-xl border transition-colors",
-          isSvg ? "block" : "inline-flex w-full",
+          "group inline-flex w-full overflow-hidden rounded-xl border transition-colors",
           isGridLayout ? "p-1.5" : "p-2",
           isUserMessage
             ? "border-[rgb(35,36,37)]/14 bg-white/10 hover:bg-white/14"
@@ -272,13 +188,12 @@ export function ImagePreview({
         aria-label={t("openImagePreview", { name: alt })}
         title={t("openImagePreview", { name: alt })}
         disabled={isResolvingSvg}
-        style={isSvg ? { width: isGridLayout ? "10rem" : "12rem", maxWidth: "100%" } : undefined}
+        style={{ height: previewHeight }}
       >
         {isResolvingSvg ? (
           <div
             className={classNames(
-              "flex items-center justify-center rounded-lg border px-4 py-6 text-xs",
-              isGridLayout ? "min-h-32 min-w-32" : "min-h-28 min-w-28",
+              "flex h-full w-full items-center justify-center rounded-lg border px-4 text-xs",
               isUserMessage
                 ? "border-[rgb(35,36,37)]/40 bg-[rgb(35,36,37)]/16 text-white"
                 : "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]",
@@ -291,13 +206,7 @@ export function ImagePreview({
             src={displaySrc || resolvedHref || href}
             alt={alt}
             className={classNames(
-              "cursor-zoom-in rounded-lg transition-opacity group-hover:opacity-95",
-              isSvg
-                ? classNames(
-                    "block h-auto w-full",
-                    isGridLayout ? "max-h-40" : "max-h-64 sm:max-h-80",
-                  )
-                : "block h-full w-full object-cover",
+              "block h-full w-full cursor-zoom-in rounded-lg object-contain transition-opacity group-hover:opacity-95",
               isSvg
                 ? null
                 : isUserMessage
@@ -310,8 +219,6 @@ export function ImagePreview({
               isSvg
                 ? undefined
                 : {
-                    aspectRatio: isGridLayout ? "4 / 3" : (aspectRatio ?? "4 / 3"),
-                    maxHeight: isGridLayout ? "11rem" : "20rem",
                     ...rasterCanvasStyle,
                     ...(!isUserMessage && !isDark ? LIGHT_THEME_IMAGE_ENHANCEMENT_STYLE : null),
                   }
@@ -321,17 +228,6 @@ export function ImagePreview({
             onError={() => {
               IMAGE_LOAD_ERROR_CACHE.add(href);
               setLoadError(true);
-            }}
-            onLoad={(event) => {
-              if (isSvg) return;
-              const target = event.currentTarget;
-              const width = Number(target.naturalWidth || 0);
-              const height = Number(target.naturalHeight || 0);
-              if (width > 0 && height > 0) {
-                const nextAspectRatio = width / height;
-                IMAGE_ASPECT_RATIO_CACHE.set(href, nextAspectRatio);
-                setAspectRatio(nextAspectRatio);
-              }
             }}
           />
         )}

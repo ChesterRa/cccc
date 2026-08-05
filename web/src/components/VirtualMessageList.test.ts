@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
+import { readFileSync } from "node:fs";
 
 import type { LedgerEvent } from "../types";
-import { shouldAutoScrollToBottom, shouldPromoteScrollToFollow } from "./virtualMessageListHelpers";
+import {
+  getReplyQuoteText,
+  shouldAutoScrollToBottom,
+  shouldPromoteScrollToFollow,
+} from "./virtualMessageListHelpers";
 import { buildGroupBridgeDisplayNameMap } from "./virtualMessageListGroupBridge";
 
 describe("buildGroupBridgeDisplayNameMap", () => {
@@ -26,6 +31,23 @@ describe("buildGroupBridgeDisplayNameMap", () => {
     ];
 
     expect(buildGroupBridgeDisplayNameMap(messages).size).toBe(0);
+  });
+});
+
+describe("reply quote restoration", () => {
+  it("uses the persisted quote snapshot when available", () => {
+    const message: LedgerEvent = {
+      kind: "chat.message",
+      data: { reply_to: "target", quote_text: "persisted quote" },
+    };
+    expect(getReplyQuoteText(message, new Map([["target", "target text"]]))).toBe(
+      "persisted quote",
+    );
+  });
+
+  it("restores legacy reply text from the loaded target event", () => {
+    const message: LedgerEvent = { kind: "chat.message", data: { reply_to: "target" } };
+    expect(getReplyQuoteText(message, new Map([["target", "target text"]]))).toBe("target text");
   });
 });
 
@@ -68,5 +90,25 @@ describe("virtual message list tail append auto-scroll", () => {
         forceStickToBottom: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe("virtual message list group switch snapshot", () => {
+  it("captures the live DOM position in a layout cleanup before the old group is removed", () => {
+    const source = readFileSync(new URL("./VirtualMessageList.tsx", import.meta.url), "utf8");
+    expect(source).toMatch(
+      /useLayoutEffect\(\(\) => \{\s*return \(\) => \{[\s\S]*?captureScrollSnapshotRef\.current\(\)/,
+    );
+  });
+
+  it("does not clear fresh virtualizer measurements after a keyed group mount", () => {
+    const source = readFileSync(new URL("./VirtualMessageList.tsx", import.meta.url), "utf8");
+    expect(source).not.toContain("virtualizer.measure();");
+  });
+
+  it("seeds a remounted virtualizer from the captured absolute scroll offset", () => {
+    const source = readFileSync(new URL("./VirtualMessageList.tsx", import.meta.url), "utf8");
+    expect(source).toContain("initialOffset: Math.max(0, Number(initialScrollOffsetPx) || 0)");
+    expect(source).toContain("scrollTop: el.scrollTop");
   });
 });

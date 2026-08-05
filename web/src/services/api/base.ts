@@ -50,6 +50,13 @@ export function onAuthRequired(handler: () => void): void {
   authRequiredHandler = handler;
 }
 
+export function isAuthRequiredErrorCode(code: unknown): boolean {
+  const normalized = String(code || "")
+    .trim()
+    .toLowerCase();
+  return normalized === "unauthorized" || normalized === "auth_required";
+}
+
 function clearAllReadRequestCaches(): void {
   globalReadEpoch += 1;
   sharedReadRequests.clear();
@@ -138,8 +145,25 @@ function getAuthHeaders(): Record<string, string> {
 export function withAuthToken(url: string): string {
   const token = getAuthToken();
   if (!token) return url;
-  const sep = url.includes("?") ? "&" : "?";
-  return `${url}${sep}token=${encodeURIComponent(token)}`;
+  try {
+    const absolute = /^[a-z][a-z\d+.-]*:/i.test(url);
+    const parsed = new URL(url, window.location.origin);
+    parsed.searchParams.set("token", token);
+    return absolute ? parsed.toString() : `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    const sep = url.includes("?") ? "&" : "?";
+    return `${url}${sep}token=${encodeURIComponent(token)}`;
+  }
+}
+
+export function refreshAuthTokenInUrl(url: string): string {
+  try {
+    const parsed = new URL(url, window.location.href);
+    if (!parsed.searchParams.has("token")) return url;
+    return withAuthToken(url);
+  } catch {
+    return url;
+  }
 }
 
 function makeErrorResponse<T>(code: string, message: string): ApiResponse<T> {
@@ -356,6 +380,9 @@ export function normalizeApiResponse<T>(data: unknown): ApiResponse<T> {
       result: record.result,
       error: { code, message, details: errorRecord?.details },
     };
+  }
+  if (record.ok !== true || !Object.prototype.hasOwnProperty.call(record, "result")) {
+    return makeErrorResponse("PARSE_ERROR", "Invalid API response");
   }
   return record as ApiResponse<T>;
 }
@@ -762,7 +789,7 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
 
   try {
     const data = JSON.parse(text);
-    if (!data.ok && data.error?.code === "unauthorized") {
+    if (!data.ok && resp.status === 401 && isAuthRequiredErrorCode(data.error?.code)) {
       authRequiredHandler?.();
     }
     return normalizeApiResponse<T>(data);
@@ -812,7 +839,7 @@ export async function apiForm<T>(
 
   try {
     const data = JSON.parse(text);
-    if (!data.ok && data.error?.code === "unauthorized") {
+    if (!data.ok && resp.status === 401 && isAuthRequiredErrorCode(data.error?.code)) {
       authRequiredHandler?.();
     }
     return normalizeApiResponse<T>(data);

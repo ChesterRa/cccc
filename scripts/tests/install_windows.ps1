@@ -1,0 +1,288 @@
+$ErrorActionPreference = "Stop"
+Set-StrictMode -Version Latest
+
+$rootDir = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path))
+. (Join-Path $rootDir "scripts\tests\install_windows_concurrency.ps1")
+$tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("cccc-install-test-" + [Guid]::NewGuid().ToString("N"))
+$target = "x86_64-pc-windows-msvc"
+$binaries = @("cccc.exe")
+$versionMatch = Select-String -Path (Join-Path $rootDir "Cargo.toml") -Pattern '^version = "([^"]+)"'
+$realVersion = $versionMatch.Matches[0].Groups[1].Value
+$releaseBinaryDir = Join-Path $rootDir "target\release"
+$originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$originalProcessPath = $env:Path
+$installerSource = Get-Content -LiteralPath (Join-Path $rootDir "scripts\install.ps1") -Raw
+$lockSnapshot = $installerSource.IndexOf('$lockStream = [IO.File]::Open')
+$originalSnapshot = $installerSource.IndexOf('$originals += $binary')
+if ($lockSnapshot -lt 0 -or $originalSnapshot -lt 0 -or $lockSnapshot -gt $originalSnapshot) {
+  throw "installer snapshots existing binaries before acquiring its transaction lock"
+}
+
+function Write-ChecksumManifest([string]$ReleaseDir, [string]$Version, [string]$ArchiveChecksum) {
+  $entries = @(
+    "$("0" * 64)  cccc-v$Version-x86_64-unknown-linux-gnu.tar.gz",
+    "$("0" * 64)  cccc-v$Version-x86_64-apple-darwin.tar.gz",
+    "$("0" * 64)  cccc-v$Version-aarch64-apple-darwin.tar.gz",
+    "$ArchiveChecksum  cccc-v$Version-$target.zip"
+  )
+  Set-Content -LiteralPath (Join-Path $ReleaseDir "SHA256SUMS") -Value $entries
+}
+
+function New-FixtureRelease([string]$Version, [bool]$ValidChecksum, [string]$CcccSource = "") {
+  $package = "cccc-v$Version-$target"
+  $packageDir = Join-Path $tempRoot "package\$package"
+  $releaseDir = Join-Path $tempRoot "releases\download\v$Version"
+  New-Item -ItemType Directory -Force -Path $packageDir,$releaseDir | Out-Null
+  foreach ($binary in $binaries) {
+    $source = if ($CcccSource) { $CcccSource } else { Join-Path $releaseBinaryDir $binary }
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+      throw "Build release binaries before running the Windows installer test: missing $source"
+    }
+    Copy-Item -LiteralPath $source -Destination (Join-Path $packageDir $binary)
+  }
+  $archive = Join-Path $releaseDir "$package.zip"
+  Compress-Archive -Path $packageDir -DestinationPath $archive
+  $archiveChecksum = if ($ValidChecksum) {
+    (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+  } else {
+    "0" * 64
+  }
+  Write-ChecksumManifest $releaseDir $Version $archiveChecksum
+  Remove-Item -LiteralPath (Join-Path $tempRoot "package") -Recurse -Force
+}
+
+function New-UnsafeFixtureRelease([string]$Version, [string]$UnsafeKind) {
+  Add-Type -AssemblyName System.IO.Compression
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $package = "cccc-v$Version-$target"
+  $releaseDir = Join-Path $tempRoot "releases\download\v$Version"
+  New-Item -ItemType Directory -Force -Path $releaseDir | Out-Null
+  $archive = Join-Path $releaseDir "$package.zip"
+  $archiveStream = [IO.File]::Open($archive, [IO.FileMode]::Create)
+  $zip = [IO.Compression.ZipArchive]::new($archiveStream, [IO.Compression.ZipArchiveMode]::Create, $false)
+  try {
+    $binaryEntry = $zip.CreateEntry("$package/cccc.exe")
+    $sourceStream = [IO.File]::OpenRead((Join-Path $releaseBinaryDir "cccc.exe"))
+    $entryStream = $binaryEntry.Open()
+    try {
+      $sourceStream.CopyTo($entryStream)
+    } finally {
+      $entryStream.Dispose()
+      $sourceStream.Dispose()
+    }
+    if ($UnsafeKind -eq "traversal") {
+      $unsafeEntry = $zip.CreateEntry("$package/../outside.txt")
+    } else {
+      $unsafeEntry = $zip.CreateEntry("$package/link")
+      $unsafeEntry.ExternalAttributes = -1610612736
+    }
+    $unsafeStream = $unsafeEntry.Open()
+    try {
+      $bytes = [Text.Encoding]::UTF8.GetBytes("unsafe")
+      $unsafeStream.Write($bytes, 0, $bytes.Length)
+    } finally {
+      $unsafeStream.Dispose()
+    }
+  } finally {
+    $zip.Dispose()
+    $archiveStream.Dispose()
+  }
+  Write-ChecksumManifest $releaseDir $Version ((Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant())
+}
+
+try {
+  New-Item -ItemType Directory -Path $tempRoot | Out-Null
+  New-FixtureRelease $realVersion $true
+  $installDir = Join-Path $tempRoot "installed"
+  $releaseRoot = (Resolve-Path (Join-Path $tempRoot "releases")).Path
+  $env:CCCC_RELEASE_BASE_URL = ([Uri]$releaseRoot).AbsoluteUri.TrimEnd('/')
+  Remove-Item Env:CCCC_VERSION -ErrorAction SilentlyContinue
+  $versionedInstaller = Join-Path $tempRoot "install.ps1"
+  (Get-Content -LiteralPath (Join-Path $rootDir "scripts\install.ps1") -Raw).Replace("@CCCC_VERSION@", $realVersion) |
+    Set-Content -LiteralPath $versionedInstaller
+  $versionedInstallDir = Join-Path $tempRoot "versioned-installed"
+  & $versionedInstaller -InstallDir $versionedInstallDir -NoModifyPath
+  if ((& (Join-Path $versionedInstallDir "cccc.exe") --version | Out-String).Trim() -ne "cccc $realVersion") {
+    throw "versioned installer did not use its embedded release version"
+  }
+
+  & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir -NoModifyPath
+
+  foreach ($binary in $binaries) {
+    $installed = Join-Path $installDir $binary
+    if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) { throw "missing installed $binary" }
+    if ((Get-FileHash $installed).Hash -ne (Get-FileHash (Join-Path $releaseBinaryDir $binary)).Hash) {
+      throw "wrong contents for $binary"
+    }
+  }
+  & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir -NoModifyPath
+  & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir
+  $updatedUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $matchingPathEntries = @($updatedUserPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries)).Where({
+    $_.TrimEnd('\') -ieq $installDir.TrimEnd('\')
+  })
+  if ($matchingPathEntries.Count -ne 1) { throw "installer did not add exactly one user PATH entry" }
+  if ($updatedUserPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries)[0].TrimEnd('\') -ine $installDir.TrimEnd('\')) {
+    throw "installer did not prepend its user PATH entry"
+  }
+  & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir
+  $updatedUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $matchingPathEntries = @($updatedUserPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries)).Where({
+    $_.TrimEnd('\') -ieq $installDir.TrimEnd('\')
+  })
+  if ($matchingPathEntries.Count -ne 1) { throw "installer duplicated its user PATH entry" }
+
+  $staleParameters = @{
+    RootDir = $rootDir
+    TempRoot = $tempRoot
+    InstallDir = Join-Path $tempRoot "stale-installed"
+    RealVersion = $realVersion
+    RealBinary = Join-Path $releaseBinaryDir "cccc.exe"
+  }
+  Test-InstallerConcurrentSnapshot @staleParameters
+
+  $lockPath = Join-Path $installDir ".cccc-install.lock"
+  $lockStream = [IO.File]::Open($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+  try {
+    $failed = $false
+    try {
+      & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir -NoModifyPath
+    } catch {
+      $failed = $_.Exception.Message -like "*Another installation*"
+    }
+    if (-not $failed) { throw "installer ignored an active transaction lock" }
+  } finally {
+    $lockStream.Dispose()
+    Remove-Item -LiteralPath $lockPath -Force -ErrorAction SilentlyContinue
+  }
+
+  foreach ($invalidInstallDir in @("relative-path", "C:\valid;C:\injected")) {
+    $failed = $false
+    try {
+      & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $invalidInstallDir -NoModifyPath
+    } catch {
+      $failed = $_.Exception.Message -like "*absolute path without semicolons*"
+    }
+    if (-not $failed) { throw "installer accepted invalid InstallDir: $invalidInstallDir" }
+  }
+
+  $unsafeIndex = 0
+  foreach ($unsafeKind in @("traversal", "link")) {
+    $unsafeIndex++
+    $unsafeVersion = "0.0.$($unsafeIndex + 10)-test"
+    New-UnsafeFixtureRelease $unsafeVersion $unsafeKind
+    $failed = $false
+    try {
+      & (Join-Path $rootDir "scripts\install.ps1") -Version $unsafeVersion -InstallDir (Join-Path $tempRoot "unsafe-$unsafeKind") -NoModifyPath
+    } catch {
+      $failed = $_.Exception.Message -like "*Archive contains an unsafe path*"
+    }
+    if (-not $failed) { throw "installer accepted unsafe ZIP entry: $unsafeKind" }
+  }
+
+  $badVersion = "0.0.1-test"
+  New-FixtureRelease $badVersion $false
+  $badInstallDir = Join-Path $tempRoot "bad-installed"
+  $failed = $false
+  try {
+    & (Join-Path $rootDir "scripts\install.ps1") -Version $badVersion -InstallDir $badInstallDir -NoModifyPath
+  } catch {
+    $failed = $_.Exception.Message -like "*Checksum mismatch*"
+  }
+  if (-not $failed) { throw "installer accepted a bad checksum" }
+  if (Test-Path -LiteralPath (Join-Path $badInstallDir "cccc.exe")) { throw "bad download was installed" }
+
+  $hashesBefore = @{}
+  foreach ($binary in $binaries) {
+    $hashesBefore[$binary] = (Get-FileHash (Join-Path $installDir $binary)).Hash
+  }
+  $mismatchVersion = "9.9.9"
+  New-FixtureRelease $mismatchVersion $true
+  $failed = $false
+  try {
+    & (Join-Path $rootDir "scripts\install.ps1") -Version $mismatchVersion -InstallDir $installDir -NoModifyPath
+  } catch {
+    $failed = $_.Exception.Message -like "*Installed version mismatch*"
+  }
+  if (-not $failed) { throw "installer accepted a mismatched binary version" }
+  foreach ($binary in $binaries) {
+    if ((Get-FileHash (Join-Path $installDir $binary)).Hash -ne $hashesBefore[$binary]) {
+      throw "rollback did not restore $binary"
+    }
+  }
+
+  $slowSource = Join-Path $tempRoot "slow-version.rs"
+  $slowBinary = Join-Path $tempRoot "slow-version.exe"
+  Set-Content -LiteralPath $slowSource -Encoding utf8 -Value @'
+use std::{env, thread, time::Duration};
+fn main() {
+    if env::args().any(|arg| arg == "--version") {
+        println!("cccc 9.9.8");
+        thread::sleep(Duration::from_secs(5));
+    }
+}
+'@
+  & rustc $slowSource -O -o $slowBinary
+  if ($LASTEXITCODE -ne 0) { throw "failed to build locked rollback fixture" }
+  $lockedVersion = "9.9.9"
+  New-FixtureRelease $lockedVersion $true $slowBinary
+  $oldHash = (Get-FileHash (Join-Path $installDir "cccc.exe")).Hash
+  $childOut = Join-Path $tempRoot "locked-rollback.out"
+  $childErr = Join-Path $tempRoot "locked-rollback.err"
+  $hostExecutable = (Get-Process -Id $PID).Path
+  $childArguments = @(
+    "-NoProfile", "-File", (Join-Path $rootDir "scripts\install.ps1"),
+    "-Version", $lockedVersion, "-InstallDir", $installDir, "-NoModifyPath"
+  )
+  $child = Start-Process -FilePath $hostExecutable -PassThru -NoNewWindow -ArgumentList $childArguments -RedirectStandardOutput $childOut -RedirectStandardError $childErr
+  $heldBinary = $null
+  $deadline = [DateTime]::UtcNow.AddSeconds(15)
+  while (-not $child.HasExited -and [DateTime]::UtcNow -lt $deadline -and $null -eq $heldBinary) {
+    try {
+      $currentHash = (Get-FileHash (Join-Path $installDir "cccc.exe") -ErrorAction Stop).Hash
+      if ($currentHash -ne $oldHash) {
+        $heldBinary = [IO.File]::Open(
+          (Join-Path $installDir "cccc.exe"),
+          [IO.FileMode]::Open,
+          [IO.FileAccess]::Read,
+          [IO.FileShare]::Read
+        )
+      }
+    } catch {
+      Start-Sleep -Milliseconds 10
+    }
+  }
+  if ($null -eq $heldBinary) {
+    $child.Kill()
+    throw "failed to acquire the replacement binary lock"
+  }
+  $child.WaitForExit()
+  $backupDir = Join-Path $installDir (".cccc-backup-" + $child.Id)
+  $backupBinary = Join-Path $backupDir "cccc.exe"
+  if ($child.ExitCode -eq 0) { throw "locked rollback fixture unexpectedly succeeded" }
+  if (-not (Test-Path -LiteralPath $backupBinary -PathType Leaf)) { throw "rollback deleted its only old binary backup" }
+  if ((Get-FileHash $backupBinary).Hash -ne $oldHash) { throw "retained rollback backup has the wrong bytes" }
+  $diagnostic = Get-Content -LiteralPath $childErr -Raw
+  if ($diagnostic -notlike "*Rollback failed to restore*" -or
+      $diagnostic -notlike "*Previous binary backup retained at $backupDir*") {
+    throw "rollback did not report its retained backup"
+  }
+  $probe = [IO.File]::Open(
+    (Join-Path $installDir ".cccc-install.lock"),
+    [IO.FileMode]::OpenOrCreate,
+    [IO.FileAccess]::ReadWrite,
+    [IO.FileShare]::None
+  )
+  $probe.Dispose()
+  Remove-Item -LiteralPath (Join-Path $installDir ".cccc-install.lock") -Force -ErrorAction SilentlyContinue
+  $heldBinary.Dispose()
+  Remove-Item -LiteralPath (Join-Path $installDir "cccc.exe") -Force
+  Move-Item -LiteralPath $backupBinary -Destination (Join-Path $installDir "cccc.exe")
+  Remove-Item -LiteralPath $backupDir -Recurse -Force
+
+  Write-Host "OK: Windows installer"
+} finally {
+  [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
+  $env:Path = $originalProcessPath
+  Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
+}

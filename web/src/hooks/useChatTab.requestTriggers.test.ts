@@ -2,12 +2,27 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import * as api from "../services/api";
+import { shouldBlockLocalCrossGroupAttachments } from "../utils/chatSend";
+import {
+  buildComposerSendRecipientTokens,
+  shouldRestoreComposerAfterFailedSend,
+} from "./chat/chatComposerState";
+import { dispatchPreparedMessage } from "./chat/chatMessageSend";
+
+vi.mock("../services/api", () => ({
+  sendMessage: vi.fn(),
+  replyMessage: vi.fn(),
+  sendCrossGroupMessage: vi.fn(),
+}));
 
 const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "useChatTab.ts"), "utf8");
-const compactSource = source.replace(/\s+/g, " ");
 
 describe("useChatTab request triggers", () => {
+  beforeEach(() => vi.clearAllMocks());
+
   it("does not refresh slash commands from chat ledger event changes", () => {
     expect(source).not.toContain("latestFormalChatEventKey");
     expect(source).not.toMatch(/latestFormalChatEventKey[\s\S]*refreshSlashCommands/);
@@ -37,11 +52,41 @@ describe("useChatTab request triggers", () => {
     expect(source).not.toContain("destGroupId: latestSelectedGroupId");
   });
 
-  it("keeps cross-group sends aligned with the composer recipient snapshot", () => {
-    expect(source).toContain("const crossToTokensSnapshot = buildComposerSendRecipientTokens({");
-    expect(compactSource).toContain("const targetTo = Array.isArray(target.recipientTokens)");
-    expect(compactSource).toContain('target.isRemote ? ["@foreman"]');
-    expect(source).not.toContain('const to = isCrossGroup ? ["@foreman"] : toTokensSnapshot;');
+  it("keeps cross-group sends aligned with the composer recipient snapshot", async () => {
+    const crossTo = buildComposerSendRecipientTokens({
+      toText: "remote-agent, local-only",
+      isCrossGroup: true,
+      validRecipientSet: new Set(["remote-agent", "local-only"]),
+      crossGroupValidRecipientSet: new Set(["remote-agent"]),
+    });
+    vi.mocked(api.sendCrossGroupMessage).mockResolvedValue({ ok: true, result: {} });
+
+    await dispatchPreparedMessage({
+      selectedGroupId: "g_local",
+      text: "hello",
+      localTo: ["local-only"],
+      crossTo,
+      files: [],
+      priority: "normal",
+      replyRequired: false,
+      localId: "local_1",
+      refs: [],
+      replyTarget: null,
+      remoteReplyGroupId: "",
+      remoteReplyTo: [],
+      sendPlanTargets: [{ groupId: "g_remote", isCrossGroup: true, source: "selected_group" }],
+      sendsCrossGroup: true,
+    });
+
+    expect(api.sendCrossGroupMessage).toHaveBeenCalledWith(
+      "g_local",
+      "g_remote",
+      "hello",
+      ["remote-agent"],
+      "normal",
+      false,
+      undefined,
+    );
   });
 
   it("treats remote group chips as cross-group for slash command guards", () => {
@@ -50,21 +95,86 @@ describe("useChatTab request triggers", () => {
     expect(source).not.toContain("sendGroupId: dstGroup,\n    }))");
   });
 
-  it("does not restore the full composer after a partial multi-target cross-group send", () => {
-    expect(source).toContain("let successfulSendCount = 0;");
-    expect(source).toMatch(
-      /resp = await api\.sendCrossGroupMessage[\s\S]*if \(!resp\.ok\) break;[\s\S]*successfulSendCount \+= 1;/,
-    );
-    expect(source).toContain("const shouldRestoreComposer = successfulSendCount === 0;");
-    expect(source).toContain("if (shouldRestoreComposer) restoreComposerState();");
+  it("does not restore the full composer after a partial multi-target cross-group send", async () => {
+    vi.mocked(api.sendCrossGroupMessage)
+      .mockResolvedValueOnce({ ok: true, result: {} })
+      .mockResolvedValueOnce({ ok: false, error: { code: "failed", message: "failed" } });
+    const result = await dispatchPreparedMessage({
+      selectedGroupId: "g_local",
+      text: "hello",
+      localTo: [],
+      crossTo: ["@foreman"],
+      files: [],
+      priority: "normal",
+      replyRequired: false,
+      localId: "local_1",
+      refs: [],
+      replyTarget: null,
+      remoteReplyGroupId: "",
+      remoteReplyTo: [],
+      sendPlanTargets: ["g_one", "g_two"].map((groupId) => ({
+        groupId,
+        isCrossGroup: true,
+        source: "selected_group" as const,
+      })),
+      sendsCrossGroup: true,
+    });
+
+    expect(result.successfulSendCount).toBe(1);
+    expect(result.response.ok).toBe(false);
+    expect(shouldRestoreComposerAfterFailedSend(result.successfulSendCount)).toBe(false);
+    expect(shouldRestoreComposerAfterFailedSend(0)).toBe(true);
   });
 
-  it("allows attachment sends to remote group chips while blocking local cross-group attachments", () => {
-    expect(source).toContain("shouldBlockLocalCrossGroupAttachments({");
-    expect(source).toContain("Local cross-group send does not support attachments yet.");
-    expect(source).toContain(
-      "composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined",
+  it("allows attachment sends to remote group chips while blocking local cross-group attachments", async () => {
+    const file = new File(["payload"], "payload.txt", { type: "text/plain" });
+    expect(
+      shouldBlockLocalCrossGroupAttachments({
+        attachmentCount: 1,
+        targets: [{ isCrossGroup: true, isRemote: false }],
+      }),
+    ).toBe(true);
+    expect(
+      shouldBlockLocalCrossGroupAttachments({
+        attachmentCount: 1,
+        targets: [{ isCrossGroup: true, isRemote: true }],
+      }),
+    ).toBe(false);
+    vi.mocked(api.sendCrossGroupMessage).mockResolvedValue({ ok: true, result: {} });
+
+    await dispatchPreparedMessage({
+      selectedGroupId: "g_local",
+      text: "hello",
+      localTo: [],
+      crossTo: [],
+      files: [file],
+      priority: "normal",
+      replyRequired: false,
+      localId: "local_1",
+      refs: [],
+      replyTarget: null,
+      remoteReplyGroupId: "",
+      remoteReplyTo: [],
+      sendPlanTargets: [
+        {
+          groupId: "g_remote",
+          isCrossGroup: true,
+          isRemote: true,
+          source: "remote_chip",
+          recipientTokens: ["@foreman"],
+        },
+      ],
+      sendsCrossGroup: true,
+    });
+
+    expect(api.sendCrossGroupMessage).toHaveBeenCalledWith(
+      "g_local",
+      "g_remote",
+      "hello",
+      ["@foreman"],
+      "normal",
+      false,
+      [file],
     );
-    expect(source).not.toContain("Cross-group send does not support attachments yet.");
   });
 });

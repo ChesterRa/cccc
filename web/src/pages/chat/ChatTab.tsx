@@ -12,15 +12,8 @@ import {
   type MutableRefObject,
   type RefObject,
 } from "react";
-import { BookmarkIcon, CompassIcon, InfoIcon } from "../../components/Icons";
-import {
-  Actor,
-  HeadlessPreviewSession,
-  LedgerEvent,
-  PresentationMessageRef,
-  StreamingActivity,
-  TaskMessageRef,
-} from "../../types";
+import { BookmarkIcon, InfoIcon } from "../../components/Icons";
+import { Actor, LedgerEvent, PresentationMessageRef, TaskMessageRef } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
 import { ChatComposer } from "./ChatComposer";
@@ -46,8 +39,7 @@ import {
   dismissChatGptAppPermissionHint,
   readChatGptAppPermissionHintDismissed,
 } from "../../utils/chatGptAppPermissionHint";
-import type { StreamingReplySession } from "../../stores/chatStreamingSessions";
-import { buildLiveWorkCards } from "./liveWorkCards";
+import { useRuntimeDockWorkCards } from "./useRuntimeDockWorkCards";
 import { getGroupRouteDisplayName, type ComposerMentionKind } from "./chatMentionSuggestions";
 
 const PresentationRail = lazy(() =>
@@ -65,12 +57,6 @@ const SetupChecklist = lazy(() =>
 );
 
 const EMPTY_PRESENTATION_ATTENTION: Record<string, boolean> = {};
-const EMPTY_LIVE_WORK_TEXT: Record<string, string> = {};
-const EMPTY_LIVE_WORK_ACTIVITIES: Record<string, StreamingActivity[]> = {};
-const EMPTY_LIVE_WORK_SESSIONS: Record<string, StreamingReplySession> = {};
-const EMPTY_LIVE_WORK_PREVIEW_SESSIONS: Record<string, HeadlessPreviewSession[]> = {};
-const EMPTY_LATEST_LIVE_WORK_PREVIEW: Record<string, HeadlessPreviewSession> = {};
-
 function ChatLazyFallback({ className }: { className?: string }) {
   return <div className={classNames("min-h-0", className)} />;
 }
@@ -124,6 +110,7 @@ export interface ChatTabProps {
   selectedGroupId: string;
   selectedGroupRunning: boolean;
   selectedGroupActorsHydrating: boolean;
+  selectedGroupActorStatusProvisional: boolean;
   groupLabelById: Record<string, string>;
   actors: Actor[];
   runtimeActors: Actor[];
@@ -170,6 +157,7 @@ export function ChatTab({
   selectedGroupId,
   selectedGroupRunning,
   selectedGroupActorsHydrating,
+  selectedGroupActorStatusProvisional,
   groupLabelById,
   actors,
   runtimeActors,
@@ -210,6 +198,7 @@ export function ChatTab({
     chatInitialScrollTargetId,
     chatInitialScrollAnchorId,
     chatInitialScrollAnchorOffsetPx,
+    chatInitialScrollOffsetPx,
     chatHighlightEventId,
     isLoadingHistory,
     hasMoreHistory,
@@ -344,15 +333,6 @@ export function ChatTab({
       ? state.presentationAttention[selectedGroupId] || EMPTY_PRESENTATION_ATTENTION
       : EMPTY_PRESENTATION_ATTENTION,
   );
-  const previewSessionsByActorId =
-    liveWorkBucket?.previewSessionsByActorId ?? EMPTY_LIVE_WORK_PREVIEW_SESSIONS;
-  const latestActorPreviewByActorId =
-    liveWorkBucket?.latestActorPreviewByActorId ?? EMPTY_LATEST_LIVE_WORK_PREVIEW;
-  const latestActorTextByActorId = liveWorkBucket?.latestActorTextByActorId || EMPTY_LIVE_WORK_TEXT;
-  const latestActorActivitiesByActorId =
-    liveWorkBucket?.latestActorActivitiesByActorId || EMPTY_LIVE_WORK_ACTIVITIES;
-  const replySessionsByPendingEventId =
-    liveWorkBucket?.replySessionsByPendingEventId || EMPTY_LIVE_WORK_SESSIONS;
   const webModelDeliveryStatusByEventId = useMemo(
     () =>
       buildWebModelDeliveryStatusByEventId([
@@ -390,27 +370,12 @@ export function ChatTab({
   const listIsLoadingHistory = isLoadingHistory || isHydratingEmptyState;
   const listHasMoreHistory = hasMoreHistory || isHydratingEmptyState;
   const hasPresentationAttention = Object.keys(presentationAttention).length > 0;
-  const liveWorkCards = useMemo(
-    () =>
-      buildLiveWorkCards({
-        actors: runtimeActors,
-        events: liveWorkEvents,
-        latestActorPreviewByActorId,
-        previewSessionsByActorId,
-        latestActorTextByActorId,
-        latestActorActivitiesByActorId,
-        replySessionsByPendingEventId,
-      }),
-    [
-      runtimeActors,
-      liveWorkEvents,
-      latestActorPreviewByActorId,
-      previewSessionsByActorId,
-      latestActorActivitiesByActorId,
-      latestActorTextByActorId,
-      replySessionsByPendingEventId,
-    ],
-  );
+  const liveWorkCards = useRuntimeDockWorkCards({
+    groupId: selectedGroupId,
+    actors: runtimeActors,
+    events: liveWorkEvents,
+    bucket: liveWorkBucket,
+  });
 
   const preferredPresentationSurface =
     !isSmallScreen && presentationDisplayMode === "split" ? "split" : "modal";
@@ -726,37 +691,20 @@ export function ChatTab({
 
         {/* Compact setup card */}
         {!readOnly && showSetupCard && chatMessages.length > 0 && (
-          <div className="px-4 pt-4 pb-2">
-            <div
-              className={classNames(
-                "rounded-2xl border p-4 sm:p-5",
-                isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70",
-              )}
-              role="region"
-              aria-label={t("setupChecklist")}
-            >
-              <div
-                className={classNames(
-                  "text-sm font-semibold",
-                  isDark ? "text-slate-200" : "text-gray-800",
-                )}
-              >
-                {t("nextSteps")}
-              </div>
-              <Suspense fallback={<ChatLazyFallback />}>
-                <SetupChecklist
-                  isDark={isDark}
-                  selectedGroupId={selectedGroupId}
-                  busy={busy}
-                  needsScope={needsScope}
-                  needsActors={needsActors}
-                  needsStart={needsStart}
-                  onAddAgent={addAgent}
-                  onStartGroup={onStartGroup}
-                  variant="compact"
-                />
-              </Suspense>
-            </div>
+          <div className="px-4 pt-3 pb-2">
+            <Suspense fallback={<ChatLazyFallback />}>
+              <SetupChecklist
+                isDark={isDark}
+                selectedGroupId={selectedGroupId}
+                busy={busy}
+                needsScope={needsScope}
+                needsActors={needsActors}
+                needsStart={needsStart}
+                onAddAgent={addAgent}
+                onStartGroup={onStartGroup}
+                variant="compact"
+              />
+            </Suspense>
           </div>
         )}
       </header>
@@ -915,31 +863,17 @@ export function ChatTab({
                         isDark ? "text-slate-200" : "text-gray-800",
                       )}
                     >
-                      <div className="mb-4 flex justify-center" aria-hidden="true">
-                        <CompassIcon
-                          size={32}
-                          className={isDark ? "text-white" : "text-[rgb(35,36,37)]"}
-                        />
-                      </div>
-                      <div
-                        className={classNames(
-                          "text-sm font-semibold",
-                          isDark ? "text-slate-200" : "text-gray-800",
-                        )}
-                      >
-                        {t("nextSteps")}
-                      </div>
                       {readOnly ? (
                         <div
                           className={classNames(
-                            "mt-3 text-sm",
+                            "text-sm",
                             isDark ? "text-slate-400" : "text-gray-600",
                           )}
                         >
                           {t("noMessagesYet")}
                         </div>
                       ) : (
-                        <Suspense fallback={<ChatLazyFallback className="mt-4" />}>
+                        <Suspense fallback={<ChatLazyFallback />}>
                           <SetupChecklist
                             isDark={isDark}
                             selectedGroupId={selectedGroupId}
@@ -971,6 +905,7 @@ export function ChatTab({
                   initialScrollTargetId={chatInitialScrollTargetId}
                   initialScrollAnchorId={chatInitialScrollAnchorId}
                   initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
+                  initialScrollOffsetPx={chatInitialScrollOffsetPx}
                   highlightEventId={chatHighlightEventId}
                   scrollRef={scrollRef}
                   topInsetPx={mobileMessageTopInsetPx}
@@ -1004,8 +939,7 @@ export function ChatTab({
                     isDark={isDark}
                     isSmallScreen={isSmallScreen}
                     readOnly={readOnly}
-                    selectedGroupRunning={selectedGroupRunning}
-                    selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+                    actorStatusProvisional={selectedGroupActorStatusProvisional}
                     onAddAgent={!readOnly ? addAgent : undefined}
                     onOpenRuntimeActor={onOpenRuntimeActor}
                   />

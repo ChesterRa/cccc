@@ -10,6 +10,7 @@ import {
   isDelegationSourceOutbound,
   isDelegationResultText,
 } from "./messageBubbleDelegation";
+import { canOpenSourceMessageLocally, shouldShowInConversation } from "../hooks/chat/chatTabBasics";
 
 const RAW_REQUEST = [
   "你好，我是来自「g_src」的 agent-a。用户让我来联系你。",
@@ -154,31 +155,48 @@ describe("MessageBubble delegation display wiring", () => {
       join(dirname(fileURLToPath(import.meta.url)), "../pages/chat/ChatTab.tsx"),
       "utf8",
     );
-    const tabSource = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../hooks/useChatTab.ts"),
-      "utf8",
-    );
-
     expect(bubbleSource).toContain("onClick={() => onOpenSource?.(srcGroupId, srcEventId)}");
     expect(bubbleSource).toContain("disabled={!onOpenSource}");
     expect(listSource).toContain("onOpenSource={onOpenSource}");
     expect(chatTabSource).toContain("onOpenSource={openSourceMessage}");
-    expect(tabSource).toContain("function canOpenSourceMessageLocally");
-    expect(tabSource).toContain("return !group.group_bridge_remote");
-    expect(tabSource).toContain("openSourceMessage");
+    expect(
+      canOpenSourceMessageLocally(
+        [
+          { group_id: "g_local", title: "Local" },
+          { group_id: "g_remote", title: "Remote", group_bridge_remote: true },
+        ],
+        "g_local",
+      ),
+    ).toBe(true);
+    expect(
+      canOpenSourceMessageLocally(
+        [{ group_id: "g_remote", title: "Remote", group_bridge_remote: true }],
+        "g_remote",
+      ),
+    ).toBe(false);
   });
 
-  it("conversation list filters source outbound delegation audit events", async () => {
-    const { readFileSync } = await import("node:fs");
-    const { dirname, join } = await import("node:path");
-    const { fileURLToPath } = await import("node:url");
-    const source = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "../hooks/useChatTab.ts"),
-      "utf8",
-    );
-    expect(source).toContain("shouldShowInConversation");
-    expect(source).toContain("filter(shouldShowInConversation)");
-    expect(source).toContain("isDelegationSourceOutboundEvent(event.data)");
+  it("conversation list filters source outbound delegation audit events", () => {
+    expect(
+      shouldShowInConversation({
+        id: "ev_outbound",
+        ts: "2026-07-15T00:00:00Z",
+        kind: "chat.message",
+        group_id: "g_src",
+        by: "user",
+        data: { text: RAW_REQUEST, dst_group_id: "g_dst", dst_to: ["target"] },
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowInConversation({
+        id: "ev_inbound",
+        ts: "2026-07-15T00:00:00Z",
+        kind: "chat.message",
+        group_id: "g_dst",
+        by: "user",
+        data: { text: RAW_REQUEST, src_group_id: "g_src", src_event_id: "ev_src" },
+      }),
+    ).toBe(true);
   });
 });
 

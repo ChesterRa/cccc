@@ -8,7 +8,13 @@ from typing import Any, Dict, Optional
 
 from ...contracts.v1.group_bridge import RemoteSendPayload
 from ...contracts.v1.message import ChatMessageData
-from ...kernel.group_bridge.pairing import list_trusts
+from ...kernel.group_bridge.credentials import (
+    lookup_pairing_remote_send_credential,
+)
+from ...kernel.group_bridge.pairing import (
+    active_trust_for_remote_send_credential,
+    list_trusts,
+)
 from ...kernel.actors import resolve_recipient_tokens
 from ...kernel.group import load_group
 from ...kernel.inbox import iter_events_reverse
@@ -18,6 +24,35 @@ from ..messaging.post_commit import run_group_chat_post_commit
 from .peer_address_sync import sync_group_bridge_peer_multiaddrs
 from .remote_dispatch import retry_remote_send_for_peer
 from .remote_attachments import store_remote_attachment_payloads
+
+
+def receive_authenticated_remote_send(
+    token: str,
+    payload: Dict[str, Any],
+    *,
+    home: Optional[Path] = None,
+) -> Optional[Dict[str, Any]]:
+    credential = lookup_pairing_remote_send_credential(token, home=home)
+    trust = active_trust_for_remote_send_credential(
+        credential or {}, home=home
+    )
+    if not isinstance(trust, dict):
+        return None
+    source_group_id = str(
+        payload.get("source_group_id")
+        or payload.get("src_group_id")
+        or ""
+    ).strip()
+    if source_group_id != str(trust.get("remote_group_id") or "").strip():
+        return None
+    return receive_remote_send(
+        target_group_id=str(trust.get("group_id") or ""),
+        src_group_id=source_group_id,
+        remote_peer_id=str(trust.get("remote_peer_id") or ""),
+        payload=payload,
+        idempotency_key=str(payload.get("idempotency_key") or ""),
+        home=home,
+    )
 
 
 def receive_address_announce(

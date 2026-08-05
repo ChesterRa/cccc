@@ -755,6 +755,58 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_disabled_voice_secretary_allows_only_direct_composer_recording_lease(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+
+            rejected, _ = self._call(
+                "assistant_voice_recording_lease",
+                {
+                    "group_id": group_id,
+                    "action": "acquire",
+                    "owner_id": "owner-disabled",
+                    "capture_mode": "prompt",
+                    "recognition_backend": "assistant_service_local_asr",
+                },
+            )
+            self.assertFalse(rejected.ok)
+            self.assertEqual(getattr(rejected.error, "code", ""), "assistant_disabled")
+
+            acquired, _ = self._call(
+                "assistant_voice_recording_lease",
+                {
+                    "group_id": group_id,
+                    "action": "acquire",
+                    "owner_id": "owner-disabled",
+                    "capture_mode": "prompt",
+                    "recognition_backend": "assistant_service_local_asr",
+                    "dispatch_target": "composer",
+                },
+            )
+            self.assertTrue(acquired.ok, getattr(acquired, "error", None))
+            lease_id = str((acquired.result or {}).get("lease_id") or "")
+            lease = (acquired.result or {}).get("lease") or {}
+            self.assertTrue(lease_id)
+            self.assertEqual(lease.get("dispatch_target"), "composer")
+
+            heartbeat, _ = self._call(
+                "assistant_voice_recording_lease",
+                {
+                    "group_id": group_id,
+                    "action": "heartbeat",
+                    "owner_id": "owner-disabled",
+                    "lease_id": lease_id,
+                    "capture_mode": "prompt",
+                    "recognition_backend": "assistant_service_local_asr",
+                    "dispatch_target": "composer",
+                },
+            )
+            self.assertTrue(heartbeat.ok, getattr(heartbeat, "error", None))
+            self.assertTrue(bool((heartbeat.result or {}).get("acquired")))
+        finally:
+            cleanup()
+
     def test_voice_recording_same_owner_reacquire_preserves_lease_id(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -1400,6 +1452,29 @@ class TestAssistantOps(unittest.TestCase):
                 os.environ["CCCC_VOICE_SECRETARY_ASR_COMMAND"] = old_command
             else:
                 os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
+            cleanup()
+
+    def test_voice_service_transcribe_rejects_unmanaged_audio_path(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            outside = Path(home) / "outside.audio"
+            outside.write_bytes(b"audio")
+
+            transcribe, _ = self._call(
+                "assistant_voice_transcribe",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "audio_path": str(outside),
+                    "mime_type": "application/octet-stream",
+                },
+            )
+
+            self.assertFalse(transcribe.ok)
+            self.assertEqual(transcribe.error.code, "assistant_voice_transcribe_failed")
+            self.assertIn("managed upload directory", transcribe.error.message)
+        finally:
             cleanup()
 
     def test_voice_service_transcribe_uses_first_party_service_process(self) -> None:

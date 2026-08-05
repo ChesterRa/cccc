@@ -23,6 +23,28 @@ export type RuntimeDockTickerCache = {
   retiredSignatures: Map<string, string>;
 };
 
+export function areRuntimeDockTickerEntriesEqual(
+  left: RuntimeDockTickerEntry[],
+  right: RuntimeDockTickerEntry[],
+): boolean {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  return left.every((entry, index) => {
+    const candidate = right[index];
+    return (
+      candidate !== undefined &&
+      entry.id === candidate.id &&
+      entry.kind === candidate.kind &&
+      entry.actorId === candidate.actorId &&
+      entry.actorLabel === candidate.actorLabel &&
+      entry.text === candidate.text &&
+      entry.updatedAt === candidate.updatedAt &&
+      entry.sourceId === candidate.sourceId &&
+      entry.completed === candidate.completed
+    );
+  });
+}
+
 const TICKER_HOLD_AFTER_DISPLAY_MS = 5000;
 const TICKER_CACHE_LIMIT = 96;
 const TICKER_RENDER_LIMIT = 24;

@@ -1,241 +1,48 @@
 // SSE connection management for the ledger stream.
 import { useEffect, useRef } from "react";
 import { useGroupStore, useUIStore, useModalStore } from "../stores";
-import {
-  getOutboxEntry,
-  releaseTransferredPreviewUrls,
-  transferOutboxPreviewUrls,
-  useChatOutboxStore,
-} from "../stores/chatOutboxStore";
 import { mergeStreamingActivity } from "../stores/chatStreamingSessions";
 import { beginContextRequest, isLatestContextRequest } from "../stores/groupStoreCore";
 import * as api from "../services/api";
 import type { FetchContextOptions } from "../services/api";
-import type {
-  Actor,
-  ChatMessageData,
-  HeadlessStreamEvent,
-  GroupContext,
-  GroupRuntimeStatus,
-  StreamingActivity,
-} from "../types";
+import type { HeadlessStreamEvent, GroupContext, LedgerEvent, StreamingActivity } from "../types";
 import { runReconnectCatchup, scheduleContextSummaryCatchup } from "./sseCatchup";
 import {
-  isContextSyncEvent,
-  isChatReadEvent,
-  isChatAckEvent,
-  isChatMessageEvent,
-  isActorActivityEvent,
-  extractChatReadData,
-  extractChatAckData,
-  initializeReadStatus,
-  initializeAckStatus,
-  initializeObligationStatus,
-  shouldIncrementUnread,
-  getActorRefreshMode,
-  isPresentationPublishEvent,
-  isPresentationClearEvent,
-  hasRenderableChatMessageContent,
-  // Re-export for consumers
   getRecipientActorIdsForEvent,
   getAckRecipientIdsForEvent,
 } from "../utils/ledgerEventHandlers";
-import { getPresentationMessageRefs, getPresentationRefStatus } from "../utils/presentationRefs";
-import { mergeLedgerEvents } from "../utils/mergeLedgerEvents";
 import { replayHeadlessSnapshotEvents } from "../utils/headlessSnapshotReplay";
 import { isHeadlessActorRunner } from "../utils/headlessRuntimeSupport";
 import { createSseConnectionRegistry } from "./sseConnectionRegistry";
-import i18n from "../i18n";
+import {
+  computeGroupRuntimeFromActorActivityUpdate,
+  getRuntimeStatusFallbackForGroup,
+  type ActorActivityUpdate,
+} from "./sse/runtimeStatus";
+import {
+  formatHeadlessErrorMessage,
+  headlessActorKey,
+  translateActorLabel,
+} from "./sse/headlessEventUtils";
+import { processLedgerEvent } from "./sse/ledgerEventProcessor";
+import { reconcileLedgerTail } from "./sse/reconcileLedgerTail";
+import { getGroupStreamsHiddenDisconnectDelayMs, shouldStartGroupStreams } from "./sse/visibility";
+import type { UseSSEOptions } from "./sse/types";
 
-// Re-export for backward compatibility
+export {
+  computeGroupRuntimeFromActorActivityUpdate,
+  computeGroupRuntimeFromActorActivityUpdates,
+  getRuntimeStatusFallbackForGroup,
+} from "./sse/runtimeStatus";
+export {
+  GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS,
+  getGroupStreamsHiddenDisconnectDelayMs,
+  shouldStartGroupStreams,
+} from "./sse/visibility";
+
 export { getRecipientActorIdsForEvent, getAckRecipientIdsForEvent };
 
-const MAX_RECONCILED_EVENTS = 800;
-const RECONNECT_LEDGER_TAIL_LIMIT = 60;
-export const GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS = 90_000;
-
-function translateActorLabel(key: string, defaultValue: string): string {
-  return String(i18n.t(`actors:${key}`, { defaultValue }));
-}
-
-export function shouldStartGroupStreams(documentHidden: boolean): boolean {
-  return !documentHidden;
-}
-
-export function getGroupStreamsHiddenDisconnectDelayMs(documentHidden: boolean): number | null {
-  return documentHidden ? GROUP_STREAMS_HIDDEN_DISCONNECT_GRACE_MS : null;
-}
-
-function mergeCanonicalAttachmentsWithOptimisticPreview(
-  ev: Record<string, unknown>,
-  groupId: string,
-): { event: Record<string, unknown>; transferredPreviewUrls: string[] } {
-  if (String(ev.kind || "").trim() !== "chat.message" || String(ev.by || "").trim() !== "user") {
-    return { event: ev, transferredPreviewUrls: [] };
-  }
-  const data = ev.data && typeof ev.data === "object" ? (ev.data as Record<string, unknown>) : null;
-  const clientId = data && typeof data.client_id === "string" ? data.client_id.trim() : "";
-  if (!clientId) {
-    return { event: ev, transferredPreviewUrls: [] };
-  }
-
-  const outboxEntry = getOutboxEntry(groupId, clientId);
-  const optimisticData =
-    outboxEntry?.event?.data && typeof outboxEntry.event.data === "object"
-      ? (outboxEntry.event.data as { attachments?: unknown[] })
-      : null;
-  const optimisticAttachments = Array.isArray(optimisticData?.attachments)
-    ? optimisticData.attachments
-    : [];
-  const canonicalAttachments = Array.isArray(data?.attachments) ? data.attachments : [];
-  if (optimisticAttachments.length <= 0 || canonicalAttachments.length <= 0) {
-    return { event: ev, transferredPreviewUrls: [] };
-  }
-
-  const mergedAttachments = canonicalAttachments.map((attachment, index) => {
-    if (!attachment || typeof attachment !== "object") return attachment;
-    const optimistic = optimisticAttachments[index];
-    if (!optimistic || typeof optimistic !== "object") return attachment;
-    const previewUrl =
-      typeof (optimistic as { local_preview_url?: unknown }).local_preview_url === "string"
-        ? String((optimistic as { local_preview_url?: string }).local_preview_url || "").trim()
-        : "";
-    if (!previewUrl.startsWith("blob:")) return attachment;
-    return { ...attachment, local_preview_url: previewUrl };
-  });
-
-  const transferredPreviewUrls = transferOutboxPreviewUrls(groupId, clientId);
-  return {
-    event: { ...ev, data: { ...data, attachments: mergedAttachments } },
-    transferredPreviewUrls,
-  };
-}
-
-interface UseSSEOptions {
-  activeTabRef: React.MutableRefObject<string>;
-  chatAtBottomRef: React.MutableRefObject<boolean>;
-  actorsRef: React.MutableRefObject<Actor[]>;
-}
-
-function headlessActorKey(groupId: string, actorId: string): string {
-  return `${String(groupId || "").trim()}:${String(actorId || "").trim()}`;
-}
-
-export function getRuntimeStatusFallbackForGroup(
-  state: ReturnType<typeof useGroupStore.getState>,
-  groupId: string,
-): GroupRuntimeStatus | null {
-  const gid = String(groupId || "").trim();
-  if (!gid) return null;
-  if (String(state.groupDoc?.group_id || "").trim() === gid) {
-    return state.groupDoc?.runtime_status || null;
-  }
-  return (
-    state.groups.find((group) => String(group.group_id || "").trim() === gid)?.runtime_status ||
-    null
-  );
-}
-
-type ActorActivityUpdate = {
-  id: string;
-  idle_seconds?: number | null;
-  running: boolean;
-  effective_working_state?: string;
-  effective_working_reason?: string;
-  effective_working_updated_at?: string | null;
-  effective_active_task_id?: string | null;
-  runtime_session_status?: string | null;
-  runtime_session_resume_eligible?: boolean | null;
-  runtime_session_last_resume_error?: string | null;
-};
-
-export function computeGroupRuntimeFromActorActivityUpdate(
-  actors: Actor[],
-  update: ActorActivityUpdate,
-  fallback?: GroupRuntimeStatus | null,
-): GroupRuntimeStatus {
-  return computeGroupRuntimeFromActorActivityUpdates(actors, [update], fallback);
-}
-
-function deriveActivityLifecycleState(
-  runningActors: Actor[],
-  fallback?: GroupRuntimeStatus | null,
-): string {
-  const fallbackLifecycle = String(fallback?.lifecycle_state || "active");
-  if (runningActors.length === 0) {
-    // Nothing running: preserve the prior lifecycle (stopped/paused/active/idle).
-    return fallbackLifecycle;
-  }
-  // Actors are running, so the group cannot be "stopped" — re-deriving below avoids
-  // a contradictory runtime_running:true + lifecycle_state:"stopped" projection that
-  // would otherwise stick (e.g. a stopped group waking via an activity event) until a
-  // full refresh. "paused" is a deliberate hold that can coexist with live actors, so
-  // it stays sticky.
-  if (fallbackLifecycle === "paused") {
-    return "paused";
-  }
-  return runningActors.some((actor) => {
-    const state = String(actor.effective_working_state || "")
-      .trim()
-      .toLowerCase();
-    return state === "working" || state === "waiting" || state === "stuck";
-  })
-    ? "active"
-    : "idle";
-}
-
-export function computeGroupRuntimeFromActorActivityUpdates(
-  actors: Actor[],
-  updates: ActorActivityUpdate[],
-  fallback?: GroupRuntimeStatus | null,
-): GroupRuntimeStatus {
-  const actorById = new Map<string, Actor>();
-  for (const actor of Array.isArray(actors) ? actors : []) {
-    const actorId = String(actor?.id || "").trim();
-    if (!actorId) continue;
-    actorById.set(actorId, actor);
-  }
-
-  for (const update of Array.isArray(updates) ? updates : []) {
-    const updatedActorId = String(update.id || "").trim();
-    if (!updatedActorId) continue;
-    actorById.set(updatedActorId, {
-      ...(actorById.get(updatedActorId) || { id: updatedActorId }),
-      ...update,
-      id: updatedActorId,
-    });
-  }
-
-  const projectedActors = Array.from(actorById.values());
-  const runningActors = projectedActors.filter((actor) => !!actor.running);
-
-  return {
-    lifecycle_state: deriveActivityLifecycleState(runningActors, fallback),
-    runtime_running: runningActors.length > 0,
-    running_actor_count: runningActors.length,
-    has_running_foreman: runningActors.some(
-      (actor) =>
-        String(actor.role || "")
-          .trim()
-          .toLowerCase() === "foreman",
-    ),
-  };
-}
-
-function formatHeadlessErrorMessage(error: unknown): string {
-  if (typeof error === "string") return error.trim();
-  if (!error || typeof error !== "object") return "";
-  const obj = error as { message?: unknown; code?: unknown; type?: unknown; status?: unknown };
-  const message = String(obj.message || "").trim();
-  const code = String(obj.code || obj.type || obj.status || "").trim();
-  if (message && code && !message.includes(code)) return `${code}: ${message}`;
-  return message || code;
-}
-
 export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptions) {
-  // Use individual selectors to avoid subscribing to the entire store.
-  // Without selectors, every state change (e.g. appendEvent) would trigger
-  // a re-render cascade through App.tsx → all children.
   const selectedGroupId = useGroupStore((s) => s.selectedGroupId);
   const appendEvent = useGroupStore((s) => s.appendEvent);
   const appendHeadlessEvent = useGroupStore((s) => s.appendHeadlessEvent);
@@ -272,8 +79,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const sseRegistryRef = useRef(createSseConnectionRegistry<EventSource>());
   const contextRefreshTimerRef = useRef<number | null>(null);
   const selectedGroupIdRef = useRef<string>("");
-  const reconnectDelayRef = useRef<number>(1000);
-  const reconnectTimerRef = useRef<number | null>(null);
   const headlessReconnectDelayRef = useRef<number>(1000);
   const headlessReconnectTimerRef = useRef<number | null>(null);
   const hiddenDisconnectTimerRef = useRef<number | null>(null);
@@ -316,18 +121,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     selectedGroupIdRef.current = selectedGroupId;
   }, [selectedGroupId]);
 
-  function getNotifyTargetActorId(ev: unknown): string {
-    if (ev === null || typeof ev !== "object") return "";
-    const kind = String((ev as { kind?: unknown }).kind || "").trim();
-    if (kind !== "system.notify") return "";
-    const data = (ev as { data?: unknown }).data;
-    if (!data || typeof data !== "object") return "";
-    const targetActorId = String(
-      (data as { target_actor_id?: unknown }).target_actor_id || "",
-    ).trim();
-    return targetActorId && targetActorId !== "user" ? targetActorId : "";
-  }
-
   async function fetchContext(groupId: string, opts?: FetchContextOptions) {
     if (opts?.fresh && contextRefreshTimerRef.current) {
       window.clearTimeout(contextRefreshTimerRef.current);
@@ -349,36 +142,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
   }
 
-  async function reconcileLedgerTail(groupId: string) {
-    const resp = await api.fetchLedgerTail(groupId, RECONNECT_LEDGER_TAIL_LIMIT, {
-      includeStatuses: false,
-    });
-    if (!resp.ok || selectedGroupIdRef.current !== groupId) return;
-
-    const store = useGroupStore.getState();
-    const bucket = store.chatByGroup[groupId];
-    const currentEvents = Array.isArray(bucket?.events) ? bucket.events : [];
-    const fetchedEvents = Array.isArray(resp.result.events) ? resp.result.events : [];
-    const nextEvents = mergeLedgerEvents(currentEvents, fetchedEvents, MAX_RECONCILED_EVENTS);
-
-    store.setEvents(nextEvents, groupId);
-    store.setHasMoreHistory(!!resp.result.has_more, groupId);
-    const eventIds = nextEvents
-      .filter((event) => event.kind === "chat.message")
-      .map((event) => String(event.id || "").trim())
-      .filter((eventId) => eventId);
-    if (eventIds.length > 0) {
-      const statusesResp = await api.fetchLedgerStatuses(groupId, eventIds);
-      if (statusesResp.ok && selectedGroupIdRef.current === groupId) {
-        store.mergeEventStatuses(statusesResp.result.statuses || {}, groupId);
-      }
-    }
-  }
-
   async function resyncAfterReconnect(groupId: string) {
     await runReconnectCatchup(groupId, {
       invalidateContextRead: api.invalidateContextRead,
-      reconcileLedgerTail,
+      reconcileLedgerTail: (gid) =>
+        reconcileLedgerTail(gid, () => selectedGroupIdRef.current === gid),
       refreshActors,
       fetchContextSummary: fetchContext,
     });
@@ -989,7 +757,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
     const replay = options?.replay !== false;
     const params = new URLSearchParams();
-    if (!replay) params.set("replay", "0");
+    if (!replay) params.set("replay", "false");
     const headlessPath = `/api/v1/groups/${encodeURIComponent(groupId)}/headless/stream${params.toString() ? `?${params.toString()}` : ""}`;
     const headlessEs = new EventSource(api.withAuthToken(headlessPath));
     const headlessToken = sseRegistryRef.current.set("headless", groupId, headlessEs);
@@ -1045,10 +813,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     if (shouldStartGroupStreams(document.hidden)) {
       clearHiddenGroupStreamDisconnectTimer();
     }
-    if (reconnectTimerRef.current) {
-      window.clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
     if (headlessReconnectTimerRef.current) {
       window.clearTimeout(headlessReconnectTimerRef.current);
       headlessReconnectTimerRef.current = null;
@@ -1072,7 +836,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
     es.onopen = () => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
-      reconnectDelayRef.current = 1000;
       setSSEStatus("connected");
       hasConnectedOnceRef.current = true;
 
@@ -1086,221 +849,44 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
     es.onerror = () => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
-      closeLedgerStream();
       setSSEStatus("disconnected");
-
-      const delay = reconnectDelayRef.current;
-      reconnectTimerRef.current = window.setTimeout(() => {
-        reconnectTimerRef.current = null;
-        if (selectedGroupIdRef.current === groupId) {
-          connectStream(groupId);
-        }
-      }, delay);
-
-      reconnectDelayRef.current = Math.min(delay * 2, 30000);
+      // Keep this EventSource alive: native reconnect carries Last-Event-ID,
+      // allowing the Rust stream to replay only the missed ledger events.
     };
 
     es.addEventListener("ledger", (e) => {
       if (!sseRegistryRef.current.isCurrent(ledgerToken)) return;
       const msg = e as MessageEvent;
       try {
-        const ev = JSON.parse(String(msg.data || "{}"));
-
-        // Context sync - debounced refresh
-        if (isContextSyncEvent(ev)) {
-          contextRefreshTimerRef.current = scheduleContextSummaryCatchup(groupId, {
-            invalidateContextRead: api.invalidateContextRead,
-            existingTimer: contextRefreshTimerRef.current,
-            clearTimer: window.clearTimeout,
-            setTimer: (cb, delayMs) => window.setTimeout(cb, delayMs),
-            fetchContextSummary: (gid, opts) => {
-              void fetchContext(gid, opts);
-            },
-          });
-          return;
-        }
-
-        // Actor activity - lightweight idle_seconds update (no full refresh)
-        if (isActorActivityEvent(ev)) {
-          const actors = ev.data?.actors;
-          if (Array.isArray(actors) && actors.length > 0) {
-            const storeState = useGroupStore.getState();
-            updateActorActivity(actors);
-            updateGroupRuntimeState(
-              groupId,
-              computeGroupRuntimeFromActorActivityUpdates(
-                actorsRef.current,
-                actors,
-                getRuntimeStatusFallbackForGroup(storeState, groupId),
-              ),
-            );
-          }
-          return;
-        }
-
-        if (isPresentationPublishEvent(ev)) {
-          void refreshPresentation(groupId);
-
-          const slotId = String(ev.data?.slot_id || "").trim();
-          if (slotId) {
-            markPresentationSlotAttention(groupId, slotId);
-          }
-          return;
-        }
-
-        if (isPresentationClearEvent(ev)) {
-          void refreshPresentation(groupId);
-          const clearedSlots = Array.isArray(ev.data?.cleared_slots) ? ev.data.cleared_slots : [];
-          for (const slot of clearedSlots) {
-            const slotId = String(slot || "").trim();
-            if (slotId) {
-              clearPresentationSlotAttention(groupId, slotId);
-            }
-          }
-          return;
-        }
-
-        // Chat read status update
-        if (isChatReadEvent(ev)) {
-          const data = extractChatReadData(ev);
-          if (data) {
-            updateReadStatus(data.eventId, data.actorId, groupId);
-          }
-          if (getActorRefreshMode(ev) === "unread") {
-            void refreshActors(groupId, { includeUnread: true });
-          }
-          return;
-        }
-
-        // Chat ack status update
-        if (isChatAckEvent(ev)) {
-          const data = extractChatAckData(ev);
-          if (data) {
-            updateAckStatus(data.eventId, data.actorId, groupId);
-          }
-          return;
-        }
-
-        const reconciled = mergeCanonicalAttachmentsWithOptimisticPreview(
-          ev as Record<string, unknown>,
-          groupId,
-        );
-        const nextEvent = reconciled.event;
-
-        // Initialize read/ack status for new messages
-        initializeReadStatus(nextEvent, actorsRef.current);
-        initializeAckStatus(nextEvent, actorsRef.current);
-        initializeObligationStatus(nextEvent, actorsRef.current);
-
-        appendEvent(nextEvent, groupId);
-        if (isChatMessageEvent(nextEvent)) {
-          const msgData =
-            nextEvent.data && typeof nextEvent.data === "object"
-              ? (nextEvent.data as { stream_id?: unknown })
-              : null;
-          const streamId =
-            msgData && typeof msgData.stream_id === "string" ? msgData.stream_id.trim() : "";
-          if (streamId) {
-            removeStreamingEvent(streamId, groupId);
-          }
-        }
-
-        // Reconcile outbox: when a user's chat.message arrives via SSE,
-        // remove only the exact optimistic entry that produced this canonical event.
-        if (
-          isChatMessageEvent(nextEvent) &&
-          String(nextEvent.by || "") === "user" &&
-          hasRenderableChatMessageContent(nextEvent)
-        ) {
-          const msgData =
-            nextEvent.data && typeof nextEvent.data === "object"
-              ? (nextEvent.data as { client_id?: unknown })
-              : null;
-          const clientId =
-            msgData && typeof msgData.client_id === "string" ? msgData.client_id.trim() : "";
-          const canonicalEventId = String(nextEvent.id || "").trim();
-          if (clientId) {
-            if (canonicalEventId) {
-              promoteStreamingEventsByPrefix(`local:${clientId}:`, canonicalEventId, groupId);
-            }
-            useChatOutboxStore.getState().remove(groupId, clientId);
-            releaseTransferredPreviewUrls(reconciled.transferredPreviewUrls);
-          }
-        }
-
-        // Reply to an earlier message updates its obligation status in-place.
-        if (isChatMessageEvent(nextEvent)) {
-          const msgData =
-            nextEvent.data && typeof nextEvent.data === "object"
-              ? (nextEvent.data as { reply_to?: unknown })
-              : null;
-          const replyTo =
-            msgData && typeof msgData.reply_to === "string"
-              ? String(msgData.reply_to || "").trim()
-              : "";
-          const replyBy = String(nextEvent.by || "").trim();
-          if (replyTo && replyBy) {
-            updateReplyStatus(replyTo, replyBy, groupId);
-          }
-        }
-
-        // When a renderable canonical reply arrives from a non-user actor,
-        // clear any resolved queued-only streaming placeholders for that actor.
-        // For headless actors this is handled by headless.turn.completed; this path
-        // covers all other runtimes (claude, grok, etc.).
-        if (isChatMessageEvent(nextEvent) && hasRenderableChatMessageContent(nextEvent)) {
-          const actorId = String(nextEvent.by || "").trim();
-          if (actorId && actorId !== "user") {
-            clearEmptyStreamingEventsForActor(actorId, groupId);
-          }
-        }
-
-        if (isChatMessageEvent(nextEvent) && String(nextEvent.by || "").trim() !== "user") {
-          const msgData =
-            nextEvent.data && typeof nextEvent.data === "object"
-              ? (nextEvent.data as ChatMessageData)
-              : null;
-          const presentationRefs = getPresentationMessageRefs(msgData?.refs);
-          const needsAttention =
-            String(msgData?.priority || "normal").trim() === "attention" ||
-            !!msgData?.reply_required;
-          for (const ref of presentationRefs) {
-            if (needsAttention || getPresentationRefStatus(ref, msgData, ev) === "needs_user") {
-              const slotId = String(ref.slot_id || "").trim();
-              if (slotId) {
-                markPresentationSlotAttention(groupId, slotId);
-              }
-            }
-          }
-        }
-
-        if (isChatMessageEvent(nextEvent)) {
-          const recipients = getRecipientActorIdsForEvent(nextEvent, actorsRef.current);
-          if (recipients.length > 0) {
-            incrementActorUnread(recipients);
-          }
-        }
-
-        // Update unread count
-        if (
-          shouldIncrementUnread(nextEvent, activeTabRef.current === "chat", chatAtBottomRef.current)
-        ) {
-          incrementChatUnread(groupId);
-        }
-
-        const notifyTargetActorId = getNotifyTargetActorId(nextEvent);
-        const actorRefreshMode = getActorRefreshMode(nextEvent);
-        if (notifyTargetActorId) {
-          // Fast local bump for responsiveness. system.notify is still an
-          // authoritative unread-resync point, so the daemon unread projection
-          // remains the final truth after this speculative increment.
-          incrementActorUnread([notifyTargetActorId]);
-        }
-        if (actorRefreshMode === "unread") {
-          void refreshActors(groupId, { includeUnread: true });
-        } else if (actorRefreshMode === "readonly") {
-          void refreshActors(groupId, { includeUnread: false });
-        }
+        processLedgerEvent(groupId, JSON.parse(String(msg.data || "{}")) as LedgerEvent, {
+          actors: actorsRef.current,
+          activeTab: activeTabRef.current,
+          chatAtBottom: chatAtBottomRef.current,
+          onContextSync: () => {
+            contextRefreshTimerRef.current = scheduleContextSummaryCatchup(groupId, {
+              invalidateContextRead: api.invalidateContextRead,
+              existingTimer: contextRefreshTimerRef.current,
+              clearTimer: window.clearTimeout,
+              setTimer: (callback, delayMs) => window.setTimeout(callback, delayMs),
+              fetchContextSummary: (gid, options) => void fetchContext(gid, options),
+            });
+          },
+          appendEvent,
+          updateReadStatus,
+          updateAckStatus,
+          updateReplyStatus,
+          incrementActorUnread,
+          updateActorActivity,
+          updateGroupRuntimeState,
+          promoteStreamingEventsByPrefix,
+          removeStreamingEvent,
+          clearEmptyStreamingEventsForActor,
+          refreshActors,
+          refreshPresentation,
+          incrementChatUnread,
+          markPresentationSlotAttention,
+          clearPresentationSlotAttention,
+        });
       } catch {
         /* ignore parse errors */
       }
@@ -1320,10 +906,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
   function disconnectGroupStreams(options?: { resetConnected?: boolean }) {
     clearHiddenGroupStreamDisconnectTimer();
-    if (reconnectTimerRef.current) {
-      window.clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
     if (headlessReconnectTimerRef.current) {
       window.clearTimeout(headlessReconnectTimerRef.current);
       headlessReconnectTimerRef.current = null;
@@ -1350,7 +932,6 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       window.clearTimeout(contextRefreshTimerRef.current);
       contextRefreshTimerRef.current = null;
     }
-    reconnectDelayRef.current = 1000;
     headlessReconnectDelayRef.current = 1000;
     if (options?.resetConnected !== false) {
       hasConnectedOnceRef.current = false;

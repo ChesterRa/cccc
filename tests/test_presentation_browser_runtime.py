@@ -78,6 +78,39 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
         line = buf.split(b"\n", 1)[0]
         return json.loads(line.decode("utf-8", errors="replace"))
 
+    def _read_message_type(self, sock: socket.socket, message_type: str, timeout: float = 5.0) -> dict:
+        sock.settimeout(timeout)
+        deadline = time.time() + timeout
+        buf = b""
+        while time.time() < deadline:
+            chunk = sock.recv(65536)
+            if not chunk:
+                raise RuntimeError("socket closed before expected message")
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                message = json.loads(line.decode("utf-8", errors="replace"))
+                if message.get("t") == message_type:
+                    return message
+        raise TimeoutError(f"did not receive {message_type}")
+
+    def _assert_no_message_type(self, sock: socket.socket, message_type: str, duration: float = 0.25) -> None:
+        deadline = time.time() + duration
+        buf = b""
+        while time.time() < deadline:
+            sock.settimeout(max(0.01, deadline - time.time()))
+            try:
+                chunk = sock.recv(65536)
+            except socket.timeout:
+                return
+            if not chunk:
+                return
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                message = json.loads(line.decode("utf-8", errors="replace"))
+                self.assertNotEqual(message.get("t"), message_type)
+
     def test_runtime_attach_streams_frames_and_relays_commands(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -233,11 +266,90 @@ class TestPresentationBrowserRuntime(unittest.TestCase):
 
                     self.assertIn(("click", (1, 2, "left")), fake_runtime.actions)
                     submit_command.assert_not_called()
+                    self._assert_no_message_type(right, "command_result")
                 finally:
                     try:
                         right.close()
                     except Exception:
                         pass
+                runtime.close_browser_surface_session(group_id="g_demo", slot_id="slot-1")
+        finally:
+            try:
+                from cccc.daemon.group.presentation_browser_runtime import close_all_browser_surface_sessions
+
+                close_all_browser_surface_sessions()
+            except Exception:
+                pass
+            cleanup()
+
+    def test_refresh_command_with_id_receives_success_result(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.group import presentation_browser_runtime as runtime
+            from cccc.daemon.browser import projected_browser_runtime as browser_runtime
+
+            fake_runtime = _FakeRuntime()
+            with patch.object(browser_runtime, "launch_projected_browser_runtime", return_value=fake_runtime):
+                runtime.open_browser_surface_session(
+                    group_id="g_demo",
+                    slot_id="slot-1",
+                    url="http://127.0.0.1:3000",
+                    width=1280,
+                    height=800,
+                )
+                left, right = socket.socketpair()
+                try:
+                    self.assertTrue(runtime.attach_browser_surface_socket(group_id="g_demo", slot_id="slot-1", sock=left))
+                    self._read_message_type(right, "state")
+                    right.sendall(b'{"t":"refresh","id":"refresh-1"}\n')
+
+                    result = self._read_message_type(right, "command_result")
+
+                    self.assertEqual(result, {"t": "command_result", "id": "refresh-1", "ok": True})
+                    self.assertIn(("refresh", True), fake_runtime.actions)
+                finally:
+                    right.close()
+                runtime.close_browser_surface_session(group_id="g_demo", slot_id="slot-1")
+        finally:
+            try:
+                from cccc.daemon.group.presentation_browser_runtime import close_all_browser_surface_sessions
+
+                close_all_browser_surface_sessions()
+            except Exception:
+                pass
+            cleanup()
+
+    def test_refresh_command_with_id_receives_failure_result(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.group import presentation_browser_runtime as runtime
+            from cccc.daemon.browser import projected_browser_runtime as browser_runtime
+
+            fake_runtime = _FakeRuntime()
+            with (
+                patch.object(browser_runtime, "launch_projected_browser_runtime", return_value=fake_runtime),
+                patch.object(fake_runtime, "refresh", side_effect=RuntimeError("refresh failed")),
+            ):
+                runtime.open_browser_surface_session(
+                    group_id="g_demo",
+                    slot_id="slot-1",
+                    url="http://127.0.0.1:3000",
+                    width=1280,
+                    height=800,
+                )
+                left, right = socket.socketpair()
+                try:
+                    self.assertTrue(runtime.attach_browser_surface_socket(group_id="g_demo", slot_id="slot-1", sock=left))
+                    self._read_message_type(right, "state")
+                    right.sendall(b'{"t":"refresh","id":"refresh-2"}\n')
+
+                    result = self._read_message_type(right, "command_result")
+
+                    self.assertEqual(result.get("id"), "refresh-2")
+                    self.assertFalse(result.get("ok"))
+                    self.assertEqual(result.get("message"), "refresh failed")
+                finally:
+                    right.close()
                 runtime.close_browser_surface_session(group_id="g_demo", slot_id="slot-1")
         finally:
             try:

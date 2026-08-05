@@ -371,7 +371,7 @@ export async function checkGroupSpaceProviderHealth(provider: string = "notebook
 
 export async function controlGroupSpaceProviderAuth(args: {
   provider?: string;
-  action: "status" | "start" | "cancel" | "disconnect";
+  action: "status" | "start" | "complete" | "cancel" | "disconnect";
   timeoutSeconds?: number;
   forceReauth?: boolean;
   projected?: boolean;

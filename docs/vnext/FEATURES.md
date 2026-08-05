@@ -20,7 +20,7 @@ cccc reply <event_id> "Reply text"
 
 # MCP
 cccc_message_send(text="Hello", to=["@all"], insight="This direction may still be framed too narrowly.")
-cccc_message_reply(reply_to="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
+cccc_message_send(reply_to="evt_xxx", text="Reply", insight="The original framing may be hiding a better route.")
 ```
 
 ### 1.3 已读机制
@@ -132,7 +132,7 @@ MCP Tools (权威规程 + 执行接口)
 ├── cccc_help：操作指南（规程）
 ├── cccc_project_info：获取 PROJECT.md
 ├── cccc_inbox_list / cccc_inbox_mark_read：收件箱
-└── cccc_message_send / cccc_message_reply：发送/回复
+└── cccc_message_send：发送/回复（`reply_to` 进入回复模式）
 
 Ledger (完整记忆)
 └── 所有历史消息、事件
@@ -152,7 +152,7 @@ Ledger (完整记忆)
 2. 调用 cccc_inbox_list → 获取未读消息
 3. 处理消息 → 执行任务
 4. 调用 cccc_inbox_mark_read → 标记已读
-5. 调用 cccc_message_reply → 回复结果
+5. 调用带 `reply_to` 的 cccc_message_send → 回复结果
 6. 等待下一条消息
 ```
 

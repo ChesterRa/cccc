@@ -39,7 +39,7 @@ export async function fetchTerminalTail(
     strip_ansi: String(stripAnsi),
     compact: String(compact),
   });
-  return apiJson<{ text: string; hint: string }>(
+  return apiJson<{ text: string; hint: string; end_cursor: number }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/terminal/tail?${params.toString()}`,
   );
 }

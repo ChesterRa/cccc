@@ -1,4 +1,4 @@
-name: Build and Publish
+name: Release Python
 
 on:
   push:
@@ -30,6 +30,9 @@ jobs:
           npm ci --prefix web
           npm -C web run check
           npm -C web run build
+          rm -rf src/cccc/ports/web/dist
+          mkdir -p src/cccc/ports/web/dist
+          cp -R web/dist/. src/cccc/ports/web/dist/
           test -f src/cccc/ports/web/dist/index.html
 
       - name: Verify tag matches package version

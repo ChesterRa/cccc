@@ -1,12 +1,16 @@
 import type { LedgerEvent, MessageAttachment } from "../../types";
 import { isImageAttachment } from "../../utils/messageAttachments";
+import {
+  getMessageImageGridHeight,
+  MESSAGE_ATTACHMENT_SECTION_LEADING_PX,
+  MESSAGE_ATTACHMENT_STACK_GAP_PX,
+  MESSAGE_IMAGE_PREVIEW_HEIGHT_PX,
+} from "./imageLayout";
 
 const DEFAULT_MESSAGE_HEIGHT = 72;
 const DEFAULT_STREAMING_HEIGHT = 108;
 const DEFAULT_QUEUED_PLACEHOLDER_HEIGHT = 84;
 const DEFAULT_REPLY_CONTEXT_HEIGHT = 60;
-const DEFAULT_SINGLE_IMAGE_ATTACHMENT_HEIGHT = 224;
-const DEFAULT_GRID_IMAGE_ATTACHMENT_HEIGHT = 188;
 const DEFAULT_FILE_ATTACHMENT_HEIGHT = 40;
 const DEFAULT_CODE_BLOCK_HEIGHT = 80;
 const AVG_CHARS_PER_LINE = 40;
@@ -24,14 +28,14 @@ function getEstimatedAttachmentHeight(attachments: MessageAttachment[]): number 
   const imageCount = attachments.filter((attachment) => isImageAttachment(attachment)).length;
   const fileCount = attachments.length - imageCount;
 
-  let total = 0;
+  let total = attachments.length > 0 ? MESSAGE_ATTACHMENT_SECTION_LEADING_PX : 0;
   if (imageCount === 1) {
-    total += DEFAULT_SINGLE_IMAGE_ATTACHMENT_HEIGHT;
+    total += MESSAGE_IMAGE_PREVIEW_HEIGHT_PX.hero;
   } else if (imageCount > 1) {
-    total += Math.ceil(imageCount / 2) * DEFAULT_GRID_IMAGE_ATTACHMENT_HEIGHT;
+    total += getMessageImageGridHeight(imageCount);
   }
   if (imageCount > 0 && fileCount > 0) {
-    total += 12;
+    total += MESSAGE_ATTACHMENT_STACK_GAP_PX;
   }
   total += fileCount * DEFAULT_FILE_ATTACHMENT_HEIGHT;
   return total;

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 import errno
 import hashlib
 import logging
@@ -34,6 +35,27 @@ Only update shared state if the checkpoint changed shared truth.
 """
 
 LOGGER = logging.getLogger(__name__)
+
+
+class _GroupLoader(yaml.SafeLoader):
+    """Load group documents without coercing ISO timestamps to datetime."""
+
+
+class _GroupDumper(yaml.SafeDumper):
+    """Persist datetime values as stable ISO 8601 strings."""
+
+
+def _represent_datetime(dumper: yaml.SafeDumper, value: datetime) -> yaml.nodes.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:timestamp", value.isoformat())
+
+
+_GroupDumper.add_representer(datetime, _represent_datetime)
+
+
+_GroupLoader.yaml_implicit_resolvers = {
+    key: [resolver for resolver in resolvers if resolver[0] != "tag:yaml.org,2002:timestamp"]
+    for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
 
 _DEFAULT_AUTOMATION_BUILTIN_SNIPPETS = {
     "standup": _DEFAULT_AUTOMATION_STANDUP_SNIPPET,
@@ -200,7 +222,10 @@ class Group:
     def save(self) -> None:
         self.doc.setdefault("v", 1)
         self.doc["updated_at"] = utc_now_iso()
-        atomic_write_text(self.path / "group.yaml", yaml.safe_dump(self.doc, allow_unicode=True, sort_keys=False))
+        atomic_write_text(
+            self.path / "group.yaml",
+            yaml.dump(self.doc, Dumper=_GroupDumper, allow_unicode=True, sort_keys=False),
+        )
 
 
 def load_group(group_id: str) -> Optional[Group]:
@@ -210,7 +235,7 @@ def load_group(group_id: str) -> Optional[Group]:
     if not p.exists():
         return None
     try:
-        doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        doc = yaml.load(p.read_text(encoding="utf-8"), Loader=_GroupLoader) or {}
         if not isinstance(doc, dict):
             return None
         ensure_ledger_layout(gp)
@@ -219,7 +244,13 @@ def load_group(group_id: str) -> Optional[Group]:
         return None
 
 
-def create_group(reg: Registry, *, title: str, topic: str = "") -> Group:
+def create_group(
+    reg: Registry,
+    *,
+    title: str,
+    topic: str = "",
+    publish: bool = True,
+) -> Group:
     home = ensure_home()
     groups_dir = home / "groups"
     groups_dir.mkdir(parents=True, exist_ok=True)
@@ -227,43 +258,61 @@ def create_group(reg: Registry, *, title: str, topic: str = "") -> Group:
     now = utc_now_iso()
     group_id = _random_group_id()
     gp = groups_dir / group_id
-    gp.mkdir(parents=True, exist_ok=True)
-    (gp / "context").mkdir(parents=True, exist_ok=True)
-    (gp / "scopes").mkdir(parents=True, exist_ok=True)
-    (gp / "state").mkdir(parents=True, exist_ok=True)
-    ensure_ledger_layout(gp)
+    try:
+        gp.mkdir(parents=True, exist_ok=True)
+        (gp / "context").mkdir(parents=True, exist_ok=True)
+        (gp / "scopes").mkdir(parents=True, exist_ok=True)
+        (gp / "state").mkdir(parents=True, exist_ok=True)
+        ensure_ledger_layout(gp)
 
-    group_doc: Dict[str, Any] = {
-        "v": 1,
-        "group_id": group_id,
-        "title": title.strip() if title.strip() else "working-group",
-        "topic": topic.strip(),
-        "created_at": now,
-        "updated_at": now,
-        "running": False,
-        "state": "active",  # active / idle / paused
-        "active_scope_key": "",
-        "scopes": [],
-        "actors": [],
-        # Single-layer storage: automation rules/snippets live in group.yaml under CCCC_HOME.
-        "automation": default_new_group_automation_doc(),
-    }
-    atomic_write_text(gp / "group.yaml", yaml.safe_dump(group_doc, allow_unicode=True, sort_keys=False))
+        group_doc: Dict[str, Any] = {
+            "v": 1,
+            "group_id": group_id,
+            "title": title.strip() if title.strip() else "working-group",
+            "topic": topic.strip(),
+            "created_at": now,
+            "updated_at": now,
+            "running": False,
+            "state": "active",  # active / idle / paused
+            "active_scope_key": "",
+            "scopes": [],
+            "actors": [],
+            # Single-layer storage: automation rules/snippets live in group.yaml under CCCC_HOME.
+            "automation": default_new_group_automation_doc(),
+        }
+        atomic_write_text(gp / "group.yaml", yaml.safe_dump(group_doc, allow_unicode=True, sort_keys=False))
 
-    reg.groups[group_id] = {
-        "group_id": group_id,
-        "title": group_doc["title"],
-        "topic": group_doc["topic"],
-        "path": str(gp),
-        "default_scope_key": "",
-        "created_at": now,
-        "updated_at": now,
-    }
-    reg.save()
+        reg.groups[group_id] = {
+            "group_id": group_id,
+            "title": group_doc["title"],
+            "topic": group_doc["topic"],
+            "path": str(gp),
+            "default_scope_key": "",
+            "created_at": now,
+            "updated_at": now,
+        }
+        reg.save()
+    except Exception as original:
+        failures: list[str] = []
+        reg.groups.pop(group_id, None)
+        try:
+            reg.save()
+        except Exception as exc:
+            failures.append(f"registry: {exc}")
+        try:
+            shutil.rmtree(gp)
+        except FileNotFoundError:
+            pass
+        except Exception as exc:
+            failures.append(f"group: {exc}")
+        if failures:
+            raise RuntimeError(f"{original}; rollback_failed: {'; '.join(failures)}") from original
+        raise
 
-    # Publish event for SSE subscribers
-    from .events import publish_event
-    publish_event("group.created", {"group_id": group_id, "title": group_doc["title"]})
+    if publish:
+        from .events import publish_event
+
+        publish_event("group.created", {"group_id": group_id, "title": group_doc["title"]})
 
     return Group(group_id=group_id, path=gp, doc=group_doc)
 
@@ -489,7 +538,7 @@ def detach_scope_from_group(reg: Registry, group: Group, *, scope_key: str) -> G
     return group
 
 
-def delete_group(reg: Registry, *, group_id: str) -> None:
+def delete_group(reg: Registry, *, group_id: str, publish: bool = True) -> None:
     gid = group_id.strip()
     if not gid:
         raise ValueError("missing group_id")
@@ -505,9 +554,10 @@ def delete_group(reg: Registry, *, group_id: str) -> None:
             reg.defaults.pop(k, None)
     reg.save()
 
-    # Publish event for SSE subscribers
-    from .events import publish_event
-    publish_event("group.deleted", {"group_id": gid})
+    if publish:
+        from .events import publish_event
+
+        publish_event("group.deleted", {"group_id": gid})
 
 
 def _delete_group_dir(path: Path) -> None:

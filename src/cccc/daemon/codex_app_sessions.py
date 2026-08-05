@@ -33,6 +33,7 @@ from .runtime_session_ops import (
     record_codex_app_thread_runtime_session,
     runtime_resume_enabled,
 )
+from .runtime_hooks.pty_launch import start_unhooked_pty_actor
 from ..util.fs import atomic_write_json
 from ..util.node_env import with_node_deprecation_warnings_suppressed
 from ..util.process import pid_is_alive, resolve_subprocess_argv, terminate_pid
@@ -931,13 +932,16 @@ class CodexAppSession:
         remote_command = resolve_subprocess_argv(
             _codex_remote_tui_command(self.remote_tui_base_command, self.listen_url, resume_thread_id=resume_thread_id)
         )
-        session = pty_runner.SUPERVISOR.start_actor(
+        session = start_unhooked_pty_actor(
+            supervisor=pty_runner.SUPERVISOR,
+            home=ensure_home(),
             group_id=self.group_id,
             actor_id=self.actor_id,
             cwd=self.cwd,
             command=remote_command,
             env=env,
             runtime="codex",
+            runtime_state_source="app_server",
             max_backlog_bytes=self.max_backlog_bytes,
         )
         self._pty_session = session

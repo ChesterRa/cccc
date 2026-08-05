@@ -10,7 +10,28 @@ Run the impacted fast gate while developing:
 scripts/quality_gate.sh fast
 ```
 
-It runs Ruff error-level rules, whitespace checks, Web checks when Web files changed, Python syntax checks, and impacted Python tests. It does not run the complete test suites.
+It runs Ruff error-level rules and whitespace checks, then selects checks from the changed files:
+
+- Rust source changes run workspace formatting plus lib/bin Clippy and unit tests for the directly changed crates.
+- Changed Rust integration-test files run only their owning test binary. Modules under `tests/suite/` map to the crate's `integration` target.
+- Root Cargo configuration, the lockfile, toolchain configuration, or bundled third-party crate changes use workspace lib/bin checks.
+- Web and Python checks run only when their respective files changed.
+
+Local Cargo checks default to two build jobs to avoid memory pressure from the workspace's large integration-test binaries. Override that bound when the machine has enough memory:
+
+```bash
+CCCC_CARGO_JOBS=4 scripts/quality_gate.sh fast
+```
+
+Inspect the selection without running checks:
+
+```bash
+scripts/pre_commit_checks.sh --dry-run
+```
+
+The impacted gate reports its wall-clock time against a 120-second local feedback budget. Override the reporting threshold with `CCCC_PRECOMMIT_BUDGET_SECONDS`; exceeding it warns but does not hide a successful check. A cold Rust dependency build may exceed the target, while normal warm-cache runs should stay within it.
+
+The fast gate does not replace complete pull-request coverage. CI and `scripts/pre_commit_checks.sh --full` still run every Rust integration target.
 
 Before handing off a broad change, run the full local gate:
 
@@ -59,9 +80,10 @@ Vite+ 0.2.4 / tsgolint 0.24 does not yet replace this project's `tsc` gate. Enab
 | `web` | Vite+ Oxfmt/Oxlint check, independent TypeScript check, all Web tests, and the production bundle |
 | `python-tests` | Source-level Python tests distributed across four deterministic matrix shards |
 | `package` | Compile, build, Twine check, install, wheel resource smoke, and packaged Web bundle contract after quality/Web/Python pass |
+| `rust-platform` | Full Rust workspace and installer validation on macOS |
 | `windows-smoke` | Windows PTY compatibility tests |
 
-The Web job uploads its bundle and the package job consumes that artifact, so packaging tests the same bundle without rebuilding it. The `packaged_web_dist` pytest marker is reserved for assertions that require this artifact; source-only Python runs exclude it, while the package job executes it after downloading the bundle.
+The full Windows Rust workspace job is intentionally retired because it did not complete reliably on hosted runners. Windows keeps focused PTY compatibility coverage in `windows-smoke`; release workflows remain responsible for Windows distribution builds. The Web job uploads its bundle and the package job consumes that artifact, so packaging tests the same bundle without rebuilding it. The `packaged_web_dist` pytest marker is reserved for assertions that require this artifact; source-only Python runs exclude it, while the package job executes it after downloading the bundle.
 
 ## Stable Python Shards
 

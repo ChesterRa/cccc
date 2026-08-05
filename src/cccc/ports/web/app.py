@@ -506,6 +506,7 @@ def create_app() -> FastAPI:
     from .routes.access_tokens import create_routers as create_access_token_routers
     from .routes.group_bridge import create_routers as create_group_bridge_routers
     from .routes.nomcp import create_routers as create_nomcp_routers
+    from .routes.runtime_activity import create_routers as create_runtime_activity_routers
 
     route_ctx = RouteContext(
         home=home,
@@ -527,6 +528,8 @@ def create_app() -> FastAPI:
     for router in create_messaging_routers(route_ctx):
         app.include_router(router)
     for router in create_actor_routers(route_ctx):
+        app.include_router(router)
+    for router in create_runtime_activity_routers(route_ctx):
         app.include_router(router)
     register_im_routes(app, ctx=route_ctx)
     for router in create_access_token_routers(route_ctx):

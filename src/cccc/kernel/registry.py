@@ -44,7 +44,12 @@ class Registry:
     def save(self) -> None:
         self.doc.setdefault("v", 1)
         self.doc["updated_at"] = utc_now_iso()
-        atomic_write_json(self.path, self.doc)
+        expected = dict(self.doc)
+        try:
+            atomic_write_json(self.path, expected)
+        except Exception:
+            if read_json(self.path) != expected:
+                raise
 
 
 def load_registry() -> Registry:

@@ -29,17 +29,26 @@ export function getSenderDisplayName({
   senderActor,
   senderTitle,
   group_bridgeSourceName,
+  groupLabelById = {},
   displayNameMap,
 }: {
   senderId: string;
   senderActor: Actor | null;
   senderTitle?: string;
   group_bridgeSourceName?: string;
+  groupLabelById?: Record<string, string>;
   displayNameMap: Map<string, string>;
 }): string {
   if (!senderId || senderId === "user") return senderId;
   const sourceName = String(group_bridgeSourceName || "").trim();
   if (senderId.startsWith("group_bridge:") && sourceName) return sourceName;
+  const [senderGroupId, senderActorId] = senderId.split("::", 2);
+  const senderGroupLabel = String(groupLabelById[senderGroupId] || "").trim();
+  if (senderGroupLabel && senderActorId) {
+    const senderActorLabel =
+      String(senderTitle || "").trim() || String(senderActor?.title || "").trim() || senderActorId;
+    return `${senderGroupLabel}::${senderActorLabel}`;
+  }
   return (
     String(senderTitle || "").trim() ||
     String(senderActor?.title || "").trim() ||

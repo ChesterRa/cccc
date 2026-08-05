@@ -40,6 +40,7 @@ import {
   actorHasRuntimeResumeFailure,
   actorSupportsNewSession,
   shouldFetchStoppedTerminalTail,
+  shouldReconcileStoppedActorStatus,
 } from "./AgentTab.model";
 import { ActorAvatar } from "./ActorAvatar";
 
@@ -47,6 +48,7 @@ const EMPTY_STREAMING_ACTIVITIES: StreamingActivity[] = [];
 const EMPTY_HEADLESS_PREVIEW_SESSIONS: HeadlessPreviewSession[] = [];
 const EMPTY_HEADLESS_RAW_EVENTS: HeadlessStreamEvent[] = [];
 const STOPPED_TAIL_FETCH_DELAY_MS = 350;
+const STOPPED_ACTOR_STATUS_REFRESH_MS = 3000;
 
 const copyToClipboard = copyTextToClipboard;
 
@@ -88,6 +90,7 @@ interface AgentTabProps {
   agentState: AgentState | null;
   isVisible: boolean;
   readOnly?: boolean;
+  actorStatusProvisional: boolean;
   onQuit: () => void;
   onLaunch: () => void;
   onRelaunch: () => void;
@@ -109,6 +112,7 @@ export function AgentTab({
   agentState,
   isVisible,
   readOnly,
+  actorStatusProvisional,
   onQuit,
   onLaunch,
   onRelaunch,
@@ -123,7 +127,11 @@ export function AgentTab({
 }: AgentTabProps) {
   const { t } = useTranslation("actors");
   // Derived state (must be defined before refs that use them)
-  const { isRunning, workingState } = useActorDisplayState({ groupId, actor });
+  const { isRunning, workingState } = useActorDisplayState({
+    groupId,
+    actor,
+    actorStatusProvisional,
+  });
   const effectiveRunner = getEffectiveActorRunner(actor);
   const isHeadless = effectiveRunner === "headless";
   const isWebModel =
@@ -175,7 +183,6 @@ export function AgentTab({
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
-  // Initialization snapshot; live option effects below keep it current without recreating xterm.
   const terminalOptionsSnapshotRef = useRef({
     isDark,
     canControl,
@@ -265,6 +272,29 @@ export function AgentTab({
     if (!activated || observabilityLoaded) return;
     void loadObservability();
   }, [activated, loadObservability, observabilityLoaded]);
+
+  // A daemon restart can restore an enabled actor after the Web client cached
+  // running=false. While that actor is visible, reconcile against the daemon
+  // until the authoritative running state arrives; otherwise the terminal
+  // never connects and the stale stopped state becomes self-sustaining.
+  useEffect(() => {
+    if (
+      !onStatusChange ||
+      !shouldReconcileStoppedActorStatus({
+        activated,
+        isVisible,
+        isRunning,
+        isActorEnabled: actor.enabled !== false,
+        isActorBusy: isBusy,
+      })
+    ) {
+      return;
+    }
+
+    onStatusChange();
+    const timer = window.setInterval(onStatusChange, STOPPED_ACTOR_STATUS_REFRESH_MS);
+    return () => window.clearInterval(timer);
+  }, [activated, actor.enabled, isBusy, isRunning, isVisible, onStatusChange]);
 
   const rtInfo =
     actor.runtime && RUNTIME_INFO[actor.runtime] ? RUNTIME_INFO[actor.runtime] : RUNTIME_INFO.codex;

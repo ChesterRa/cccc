@@ -26,7 +26,10 @@ from ....kernel.context import ContextStorage
 from ....kernel.inbox import get_indexed_unread_counts
 from ....kernel.query_projections import get_actor_list_projection
 from ....kernel.runtime_state_source import actor_uses_codex_app_server_state
+from ....kernel.runtime_hooks.projection import runtime_hook_working_projection
+from ....daemon.runtime_hooks.input_observer import current_session_capability
 from ....kernel.working_state import DEFAULT_PTY_TERMINAL_SIGNAL_TAIL_BYTES, derive_effective_working_state
+from ....paths import ensure_home
 from ....runners import headless as headless_runner
 from ....runners import pty as pty_runner
 from ....util.fs import read_json
@@ -293,6 +296,19 @@ def _read_actor_list_local(group_id: str, *, include_unread: bool) -> Dict[str, 
             pty_terminal_text=pty_terminal_text,
             agent_state=agent_state_by_id.get(aid),
             headless_state=headless_state,
+            runtime_hook_projection=(
+                runtime_hook_working_projection(
+                    ensure_home(),
+                    running=running,
+                    effective_runner=effective_runner,
+                    runtime=runtime,
+                    group_id=gid,
+                    actor_id=aid,
+                    session_capability=current_session_capability(
+                        pty_runner.SUPERVISOR, gid, aid
+                    ),
+                )
+            ),
         )
         actor.update(working_state)
         if runtime.lower() == "web_model":

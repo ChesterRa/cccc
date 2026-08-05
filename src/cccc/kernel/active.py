@@ -12,6 +12,14 @@ def active_path() -> Path:
     return ensure_home() / "active.json"
 
 
+def _write_committed(path: Path, document: Dict[str, Any]) -> None:
+    try:
+        atomic_write_json(path, document)
+    except Exception:
+        if read_json(path) != document:
+            raise
+
+
 def load_active() -> Dict[str, Any]:
     p = active_path()
     raw = read_json(p)
@@ -22,12 +30,12 @@ def load_active() -> Dict[str, Any]:
         "updated_at": str(doc.get("updated_at") or utc_now_iso()),
     }
     if doc != normalized:
-        atomic_write_json(p, normalized)
+        _write_committed(p, normalized)
     return normalized
 
 
 def set_active_group_id(group_id: str) -> Dict[str, Any]:
     p = active_path()
     doc = {"v": 1, "active_group_id": group_id.strip(), "updated_at": utc_now_iso()}
-    atomic_write_json(p, doc)
+    _write_committed(p, doc)
     return doc

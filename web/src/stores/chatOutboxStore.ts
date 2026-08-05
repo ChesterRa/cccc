@@ -141,7 +141,7 @@ export function transferOutboxPreviewUrls(groupId: string, localId: string): str
 
 export function releaseTransferredPreviewUrls(urls: string[], delayMs = 60000): void {
   if (urls.length <= 0) return;
-  window.setTimeout(() => {
+  globalThis.setTimeout(() => {
     revokeObjectUrls(urls);
   }, delayMs);
 }

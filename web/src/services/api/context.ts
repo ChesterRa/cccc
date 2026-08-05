@@ -673,6 +673,7 @@ export async function replyMessage(
   replyRequired = false,
   clientId = "",
   refs?: MessageRef[],
+  quoteText = "",
 ) {
   if (files && files.length > 0) {
     const form = new FormData();
@@ -680,6 +681,7 @@ export async function replyMessage(
     form.append("text", text);
     form.append("to_json", JSON.stringify(to));
     form.append("reply_to", replyTo);
+    if (quoteText) form.append("quote_text", quoteText);
     form.append("priority", priority);
     form.append("reply_required", replyRequired ? "true" : "false");
     if (clientId) form.append("client_id", clientId);
@@ -694,6 +696,7 @@ export async function replyMessage(
       by: "user",
       to,
       reply_to: replyTo,
+      quote_text: quoteText,
       priority,
       reply_required: replyRequired,
       client_id: clientId,

@@ -90,7 +90,7 @@ export function CreateGroupModal({
       panelClassName="w-full h-full sm:h-auto sm:max-w-lg sm:mt-16 sm:max-h-[calc(100vh-8rem)]"
       modalRef={modalRef}
       footerActions={
-        <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+        <div className="flex flex-col-reverse gap-3 pb-2 sm:flex-row sm:justify-end">
           <Button
             type="button"
             variant="secondary"

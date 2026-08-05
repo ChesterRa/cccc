@@ -44,6 +44,8 @@ from ...kernel.actors import get_effective_role, list_actors
 from ...kernel.group import load_group
 from ...kernel.query_projections import get_actor_list_projection
 from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
+from ...kernel.runtime_hooks.projection import runtime_hook_working_projection
+from ..runtime_hooks.input_observer import current_session_capability
 from ...kernel.ledger import append_event
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
@@ -58,6 +60,7 @@ from ...kernel.prompt_files import (
     write_group_prompt_file,
 )
 from ...kernel.working_state import derive_effective_working_state
+from ...paths import ensure_home
 from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_json, read_json
 
@@ -323,6 +326,19 @@ def _actor_runtime_state_to_dict(
         pty_terminal_text=pty_terminal_text,
         agent_state=agent_state_by_id.get(actor_id),
         headless_state=headless_state,
+        runtime_hook_projection=(
+            runtime_hook_working_projection(
+                ensure_home(),
+                running=bool(running),
+                effective_runner=effective_runner,
+                runtime=runtime,
+                group_id=group_id,
+                actor_id=actor_id,
+                session_capability=current_session_capability(
+                    pty_runner.SUPERVISOR, group_id, actor_id
+                ),
+            )
+        ),
     )
     result.update(working_state)
     return result

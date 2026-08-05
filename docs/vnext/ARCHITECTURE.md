@@ -128,12 +128,14 @@ class ChatMessageData:
 
 | Token | 语义 |
 |-------|------|
-| `[]`（空） | 广播 |
+| `[]`（空） | 发送时按群组 `default_send_to` 物化为 `@foreman` 或 `@all`；历史事件按广播兼容 |
 | `user` | 用户本人 |
-| `@all` | 所有 actors |
-| `@peers` | 所有 peer |
+| `@all` | 所有可见协作 actors（不含内部 assistant） |
+| `@peers` | 所有可见 peer（不含 Voice Secretary 等内部 assistant） |
 | `@foreman` | foreman |
 | `<actor_id>` | 指定 actor |
+
+内部 assistant 仅接受显式 actor ID，不参与 `@all`、`@peers` 或 `@foreman` selector。
 
 ## 5. 文件与附件（vNext 方向）
 
@@ -184,7 +186,7 @@ MCP 工具按能力命名空间组织（工具数量会随版本迭代）：
 ### 7.1 cccc.* (协作控制面)
 
 - `cccc_inbox_list` / `cccc_inbox_mark_read`
-- `cccc_message_send` / `cccc_message_reply`
+- `cccc_message_send`（发送与回复；回复时设置 `reply_to`）
 - `cccc_group_info` / `cccc_actor_list`
 - `cccc_actor_add/remove/start/stop/restart`
 - `cccc_runtime_list` / `cccc_project_info`

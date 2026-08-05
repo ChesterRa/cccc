@@ -45,7 +45,7 @@ export function SetupChecklist({
   }
 
   return (
-    <div className={classNames("space-y-2", isCompact ? "mt-3" : "mt-4")}>
+    <div className="space-y-2" role="region" aria-label={t("setupChecklist")}>
       {/* Attach Scope */}
       {needsScope && (
         <div

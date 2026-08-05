@@ -87,6 +87,7 @@ def derive_effective_working_state(
     pty_terminal_override: Optional[Dict[str, Any]] = None,
     agent_state: Optional[Dict[str, Any]] = None,
     headless_state: Optional[Dict[str, Any]] = None,
+    runtime_hook_projection: Optional[Dict[str, Any]] = None,
     pty_stuck_idle_seconds: float = DEFAULT_PTY_STUCK_IDLE_SECONDS,
 ) -> Dict[str, Any]:
     hot = agent_state.get("hot") if isinstance(agent_state, dict) and isinstance(agent_state.get("hot"), dict) else {}
@@ -111,6 +112,9 @@ def derive_effective_working_state(
             "effective_working_updated_at": updated_at or None,
             "effective_active_task_id": active_task_id or None,
         }
+
+    if isinstance(runtime_hook_projection, dict):
+        return dict(runtime_hook_projection)
 
     terminal_override = (
         dict(pty_terminal_override)

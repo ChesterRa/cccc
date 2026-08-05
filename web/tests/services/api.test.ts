@@ -43,6 +43,26 @@ describe("api error normalization", () => {
     vi.stubGlobal("sessionStorage", sessionStorageMock);
   });
 
+  it("accepts Python/Rust success envelopes and rejects malformed 200 payloads", async () => {
+    const { normalizeApiResponse } = await import("../../src/services/api/base");
+    for (const fixture of [
+      { backend: "python", payload: { ok: true, result: { value: 1 } } },
+      { backend: "rust", payload: { ok: true, result: { value: 1 } } },
+    ]) {
+      expect(normalizeApiResponse(fixture.payload), fixture.backend).toEqual(fixture.payload);
+    }
+    for (const payload of [
+      { result: { value: 1 } },
+      { ok: "true", result: { value: 1 } },
+      { ok: true },
+    ]) {
+      expect(normalizeApiResponse(payload)).toEqual({
+        ok: false,
+        error: { code: "PARSE_ERROR", message: "Invalid API response" },
+      });
+    }
+  });
+
   it("keeps regular API errors unchanged", async () => {
     const { formatApiErrorMessage } = await import("../../src/services/api");
 
@@ -849,6 +869,44 @@ describe("api assistant voice model helpers", () => {
     expect(model?.offline_ready).toBe(false);
     expect(model?.offline).toEqual({ engine: "sense_voice" });
   });
+
+  it("preserves native runtime lifecycle capabilities in assistant state", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          ok: true,
+          result: {
+            group_id: "g-demo",
+            assistant: {
+              assistant_id: "voice_secretary",
+              kind: "voice_secretary",
+              enabled: true,
+              lifecycle: "idle",
+            },
+            service_runtime: {
+              runtime_id: "sherpa_onnx_streaming",
+              status: "ready",
+              managed: true,
+              removable: false,
+              implementation: "rust",
+            },
+          },
+        }),
+    });
+
+    const api = await import("../../src/services/api");
+    const resp = await api.fetchAssistant("g-demo", "voice_secretary");
+
+    expect(resp.ok).toBe(true);
+    if (!resp.ok) throw new Error("expected ok response");
+    expect(resp.result.service_runtime).toMatchObject({
+      managed: true,
+      removable: false,
+      implementation: "rust",
+    });
+  });
 });
 
 describe("api.message refs", () => {
@@ -1323,6 +1381,89 @@ describe("api bootstrap read cache", () => {
         String((init as RequestInit | undefined)?.method || "GET").toUpperCase() === "GET",
     );
     expect(groupGets).toHaveLength(2);
+  });
+
+  it("normalizes the compatible nested group create response", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({ ok: true, result: { group: { group_id: "g-compatible" } } }),
+    });
+
+    const api = await import("../../src/services/api");
+    const response = await api.createGroup("Compatible");
+
+    expect(response).toEqual({ ok: true, result: { group_id: "g-compatible" } });
+  });
+
+  it("rejects non-string or conflicting group ids in create responses", async () => {
+    const api = await import("../../src/services/api");
+    for (const result of [
+      { group_id: 42 },
+      { group: { group_id: null } },
+      { group_id: "g_top", group: { group_id: "g_nested" } },
+    ]) {
+      fetchMock.mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        text: async () => JSON.stringify({ ok: true, result }),
+      });
+      await expect(api.createGroup("Invalid")).resolves.toEqual({
+        ok: false,
+        error: { code: "invalid_response", message: "Invalid group create response" },
+      });
+    }
+  });
+
+  it("creates and attaches a group through one backend transaction", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { group_id: "g-attached" } }),
+    });
+
+    const api = await import("../../src/services/api");
+    const response = await api.createGroupWithScope("Attached", "/tmp/project");
+
+    expect(response).toEqual({ ok: true, result: { group_id: "g-attached" } });
+    expect(fetchMock).toHaveBeenCalledWith("/api/v1/groups", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "Attached", topic: "", path: "/tmp/project", by: "user" }),
+    });
+  });
+
+  it("rejects malformed filesystem success payloads instead of showing an empty directory", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { path: "/tmp", entries: [] } }),
+    });
+
+    const api = await import("../../src/services/api");
+    const response = await api.fetchDirContents("/tmp");
+
+    expect(response).toEqual({
+      ok: false,
+      error: { code: "invalid_response", message: "Invalid filesystem list response" },
+    });
+  });
+
+  it("rejects malformed recent directory suggestions", async () => {
+    fetchMock.mockResolvedValue({
+      status: 200,
+      ok: true,
+      text: async () => JSON.stringify({ ok: true, result: { suggestions: [{ path: "/tmp" }] } }),
+    });
+
+    const api = await import("../../src/services/api");
+    const response = await api.fetchDirSuggestions();
+
+    expect(response).toEqual({
+      ok: false,
+      error: { code: "invalid_response", message: "Invalid filesystem recent response" },
+    });
   });
 
   it("invalidates the recent groups response when auth token changes", async () => {

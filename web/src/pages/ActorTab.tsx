@@ -16,7 +16,8 @@ export interface ActorTabProps {
   isSmallScreen: boolean;
   isVisible: boolean;
   readOnly?: boolean;
-  onToggleEnabled: () => void;
+  actorStatusProvisional: boolean;
+  onToggleEnabled: (isRunning: boolean) => void;
   onRelaunch: () => void;
   onNewSession: () => void;
   onEdit: () => void;
@@ -36,6 +37,7 @@ export function ActorTab({
   isSmallScreen,
   isVisible,
   readOnly,
+  actorStatusProvisional,
   onToggleEnabled,
   onRelaunch,
   onNewSession,
@@ -71,8 +73,9 @@ export function ActorTab({
         agentState={agentState}
         isVisible={isVisible}
         readOnly={readOnly}
-        onQuit={onToggleEnabled}
-        onLaunch={onToggleEnabled}
+        actorStatusProvisional={actorStatusProvisional}
+        onQuit={() => onToggleEnabled(true)}
+        onLaunch={() => onToggleEnabled(false)}
         onRelaunch={onRelaunch}
         onNewSession={onNewSession}
         onEdit={onEdit}

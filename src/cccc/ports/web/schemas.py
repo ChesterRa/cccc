@@ -23,6 +23,7 @@ class CreateGroupRequest(BaseModel):
     title: str = Field(default="working-group")
     topic: str = Field(default="")
     by: str = Field(default="user")
+    path: Any = Field(default=None)
 
 
 class AttachRequest(BaseModel):
@@ -264,13 +265,6 @@ class AssistantStatusUpdateRequest(BaseModel):
     by: str = Field(default="user")
 
 
-class AssistantVoiceTranscriptionRequest(BaseModel):
-    audio_base64: str = Field(default="")
-    mime_type: str = Field(default="application/octet-stream")
-    language: str = Field(default="")
-    by: str = Field(default="user")
-
-
 class AssistantVoiceModelInstallRequest(BaseModel):
     model_id: str = Field(default="")
     by: str = Field(default="user")
@@ -300,6 +294,7 @@ class AssistantVoiceRecordingLeaseRequest(BaseModel):
     ttl_seconds: int = Field(default=30)
     capture_mode: str = Field(default="")
     recognition_backend: str = Field(default="")
+    dispatch_target: str = Field(default="")
     by: str = Field(default="user")
 
 

@@ -11,9 +11,7 @@ import { Surface } from "./ui/surface";
 type AuthStatus = "checking" | "authenticated" | "login";
 
 function needsTokenLogin(resp: api.ApiResponse<unknown>): boolean {
-  return (
-    !resp.ok && (resp.error?.code === "unauthorized" || resp.error?.code === "permission_denied")
-  );
+  return !resp.ok && api.isAuthRequiredErrorCode(resp.error?.code);
 }
 
 export function AuthGate({ children }: { children: React.ReactNode }) {

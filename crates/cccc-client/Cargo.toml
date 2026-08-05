@@ -1,0 +1,22 @@
+[package]
+name = "cccc-pair-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "IPC client for the CCCC collaborative agent control plane"
+publish = ["crates-io"]
+
+[dependencies]
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.33", path = "../cccc-contracts" }
+cccc-core = { package = "cccc-pair-core", version = "=0.4.33", path = "../cccc-core" }
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+name = "cccc_client"

@@ -23,7 +23,6 @@ import {
   loadGroupInFlight,
   loadGroupToken,
   loadSelectedGroupId,
-  MAX_UI_EVENTS,
   mergeActorUnreadCounts,
   reuseEqualActors,
   patchGroupRuntimeStatus,
@@ -51,6 +50,7 @@ import type {
   GroupState,
 } from "./groupStoreTypes";
 import { useComposerStore } from "./useComposerStore";
+import { mergeOlderLedgerEvents } from "./groupHistoryMerge";
 
 function splitFetchedActors(actors: Actor[]): { actors: Actor[]; internalRuntimeActors: Actor[] } {
   const visibleActors: Actor[] = [];
@@ -263,6 +263,7 @@ export function createGroupStoreAsyncActions(
           if (current.selectedGroupId === gid) {
             patch.actors = nextActors;
             patch.selectedGroupActorsHydrating = false;
+            patch.selectedGroupActorStatusProvisional = false;
             if (nextGroupDoc) patch.groupDoc = nextGroupDoc;
           }
           if (Object.keys(patch).length > 0) {
@@ -272,14 +273,19 @@ export function createGroupStoreAsyncActions(
       } catch (e) {
         console.error(`Failed to refresh actors for group=${gid}:`, e);
       } finally {
+        const queuedIncludeUnread = refreshActorsQueued.get(gid);
         // Fallback clear: the success branch above only clears the spinner when
         // resp.ok. A failed/throwing refresh of the selected group must not leave
-        // selectedGroupActorsHydrating stuck true (which would disable Send).
+        // selectedGroupActorsHydrating stuck true (which would disable Send). Keep
+        // cached runtime state provisional while a follow-up refresh is queued.
         if (get().selectedGroupId === gid) {
-          set({ selectedGroupActorsHydrating: false });
+          set(
+            queuedIncludeUnread === undefined
+              ? { selectedGroupActorsHydrating: false, selectedGroupActorStatusProvisional: false }
+              : { selectedGroupActorsHydrating: false },
+          );
         }
         refreshActorsInFlight.delete(gid);
-        const queuedIncludeUnread = refreshActorsQueued.get(gid);
         if (queuedIncludeUnread !== undefined) {
           refreshActorsQueued.delete(gid);
           void get().refreshActors(gid, { includeUnread: queuedIncludeUnread });
@@ -400,7 +406,12 @@ export function createGroupStoreAsyncActions(
           hasMoreHistory: chatBucket.hasMoreHistory,
         });
         if (isLatestSelection()) {
-          set({ chatByGroup: nextChatByGroup, selectedGroupActorsHydrating: true, ...primedState });
+          set({
+            chatByGroup: nextChatByGroup,
+            selectedGroupActorsHydrating: true,
+            selectedGroupActorStatusProvisional: true,
+            ...primedState,
+          });
         }
       }
 
@@ -477,7 +488,7 @@ export function createGroupStoreAsyncActions(
           const mergedEvents = mergeLedgerEvents(
             getGroupChatBucket(get().chatByGroup, gid).events,
             filterUiEvents(tail.result.events || []),
-            MAX_UI_EVENTS,
+            Number.MAX_SAFE_INTEGER,
           );
           commitChatPatch({
             events: mergedEvents,
@@ -504,6 +515,8 @@ export function createGroupStoreAsyncActions(
                 ...state.internalRuntimeActorsByGroup,
                 [gid]: split.internalRuntimeActors,
               },
+              selectedGroupActorsHydrating: false,
+              selectedGroupActorStatusProvisional: false,
             }));
           }
         })
@@ -511,18 +524,12 @@ export function createGroupStoreAsyncActions(
           console.error(`Failed to load actors for group=${gid}:`, error);
         })
         .finally(() => {
-          // Readiness flag clearing must NOT inherit the load-token guard used for
-          // data writes. The token guards against a stale load overwriting a newer
-          // group's data; but whether the *currently selected* group's actors are
-          // done loading only depends on still being on that group. Gating this with
-          // the token lets a rapid A->B->A switch (where the re-entrant loadGroup(A)
-          // is swallowed by loadGroupInFlight and the original A load's token is now
-          // stale) leave the spinner stuck true forever, disabling Send.
-          if (get().selectedGroupId === gid) {
+          // Recipient loading and runtime-status freshness are independent. A failed
+          // initial read must not keep cached recipients disabled, but its cached
+          // `running` values stay provisional until the full refresh finishes.
+          if (isLatestSelection()) {
             set({ selectedGroupActorsHydrating: false });
           }
-        })
-        .finally(() => {
           scheduleDeferredUnreadRefresh(gid, () => {
             if (isLatestSelection()) {
               void get().refreshActors(gid, { includeUnread: true });
@@ -674,14 +681,8 @@ export function createGroupStoreAsyncActions(
         if (resp.ok) {
           const olderChatEvents = projectFetchedChatEvents(resp.result.events || []);
           const currentBucket = getGroupChatBucket(get().chatByGroup, gid);
-          const existingIds = new Set(
-            currentBucket.events.map((event) => event.id).filter(Boolean),
-          );
-          const uniqueNew = olderChatEvents.filter(
-            (event) => event.id && !existingIds.has(event.id),
-          );
-          const exhaustedHistory = olderChatEvents.length === 0 || uniqueNew.length === 0;
-          const merged = [...uniqueNew, ...currentBucket.events];
+          const merged = mergeOlderLedgerEvents(currentBucket.events, olderChatEvents);
+          const exhaustedHistory = olderChatEvents.length === 0 || merged.added === 0;
           // Atomic update: merge events + clear isLoadingHistory in a single set()
           // to avoid an intermediate rerender where events changed but isLoadingHistory
           // is still true, which would cause useLayoutEffect to skip scroll compensation
@@ -689,7 +690,7 @@ export function createGroupStoreAsyncActions(
           set(
             (state) =>
               buildChatBucketPatch(state, gid, {
-                events: merged.length > MAX_UI_EVENTS ? merged.slice(0, MAX_UI_EVENTS) : merged,
+                events: merged.events,
                 hasMoreHistory: exhaustedHistory ? false : !!resp.result.has_more,
                 isLoadingHistory: false,
               }) ?? state,

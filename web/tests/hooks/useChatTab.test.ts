@@ -44,6 +44,7 @@ import {
 } from "../../src/hooks/useChatTab";
 import { useComposerStore } from "../../src/stores/useComposerStore";
 import { useGroupStore } from "../../src/stores/useGroupStore";
+import { CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION } from "../../src/stores/useUIStore";
 import {
   formatSendMessageError,
   getGroupSendBlockedMessage,
@@ -1237,7 +1238,12 @@ describe("shouldRestoreDetachedScrollSnapshot", () => {
     const now = 1_700_000_000_000;
     expect(
       shouldRestoreDetachedScrollSnapshot(
-        { mode: "detached", anchorId: "evt-1", updatedAt: now - 1000 },
+        {
+          coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+          mode: "detached",
+          anchorId: "evt-1",
+          updatedAt: now - 1000,
+        },
         now,
       ),
     ).toBe(true);
@@ -1249,6 +1255,7 @@ describe("shouldRestoreDetachedScrollSnapshot", () => {
     expect(
       shouldRestoreDetachedScrollSnapshot(
         {
+          coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
           mode: "detached",
           anchorId: "evt-1",
           updatedAt: now - CHAT_SCROLL_SNAPSHOT_MAX_AGE_MS - 1,
@@ -1316,7 +1323,12 @@ describe("shouldLockChatToBottomForSend", () => {
         currentAtBottom: true,
         showScrollButton: false,
         chatUnreadCount: 0,
-        scrollSnapshot: { mode: "detached", anchorId: "evt-older", updatedAt: now - 1000 },
+        scrollSnapshot: {
+          coordinateVersion: CHAT_SCROLL_SNAPSHOT_COORDINATE_VERSION,
+          mode: "detached",
+          anchorId: "evt-older",
+          updatedAt: now - 1000,
+        },
         now,
       }),
     ).toBe(false);

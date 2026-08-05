@@ -58,6 +58,9 @@ export default function App() {
   const groupContext = useGroupStore((state) => state.groupContext);
   const groupSettings = useGroupStore((state) => state.groupSettings);
   const selectedGroupActorsHydrating = useGroupStore((state) => state.selectedGroupActorsHydrating);
+  const selectedGroupActorStatusProvisional = useGroupStore(
+    (state) => state.selectedGroupActorStatusProvisional,
+  );
   const setSelectedGroupId = useGroupStore((state) => state.setSelectedGroupId);
   const refreshGroups = useGroupStore((state) => state.refreshGroups);
   const refreshActors = useGroupStore((state) => state.refreshActors);
@@ -358,8 +361,8 @@ export default function App() {
     <div
       className="relative min-h-0 w-full overflow-hidden bg-[var(--color-body-bg)] text-[var(--color-text-primary)]"
       style={{
-        height: "calc(100dvh - var(--vk-offset, 0px))",
-        maxHeight: "calc(100dvh - var(--vk-offset, 0px))",
+        height: "var(--app-viewport-height, 100dvh)",
+        maxHeight: "var(--app-viewport-height, 100dvh)",
       }}
     >
       <AppBackground isDark={isDark} />
@@ -388,6 +391,7 @@ export default function App() {
         selectedGroupRunning={selectedGroupRunning}
         selectedGroupRuntimeStatus={selectedGroupRuntimeStatus}
         selectedGroupActorsHydrating={selectedGroupActorsHydrating}
+        selectedGroupActorStatusProvisional={selectedGroupActorStatusProvisional}
         theme={theme}
         textScale={textScale}
         sseStatus={sseStatus}

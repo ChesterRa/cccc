@@ -35,7 +35,7 @@ function shouldIncludeTickerPreview(
 ): boolean {
   if (isLiveWorkCardActive(card)) return true;
   if (card.phase !== "completed" && card.phase !== "failed") return false;
-  return hasTickerTranscript(previewSessions);
+  return hasTickerTranscript(previewSessions) || (card.runtimeActivities?.length || 0) > 0;
 }
 
 function isSubstantiveActivity(activity: StreamingActivity): boolean {
@@ -67,7 +67,20 @@ function getTickerPreviewSessions(
   const previewSessions = Array.isArray(card.previewSessions)
     ? card.previewSessions.filter(Boolean)
     : [];
-  if (previewSessions.length > 0) return previewSessions;
+  if (previewSessions.length > 0) {
+    const latestIndex = previewSessions.length - 1;
+    return previewSessions.map((session, index) =>
+      index === latestIndex
+        ? {
+            ...session,
+            activities: dedupeStreamingActivities([
+              ...(session.activities || []),
+              ...(card.runtimeActivities || []),
+            ]),
+          }
+        : session,
+    );
+  }
 
   const text = normalizeTickerText(card.text);
   const transcriptBlocks = Array.isArray(card.transcriptBlocks)
@@ -160,9 +173,19 @@ function buildActivityEntry(args: {
   if (!isSubstantiveActivity(args.activity)) return null;
   const text = normalizeTickerText(args.activity.summary);
   if (!text) return null;
-  const activityId = String(args.activity.id || args.activity.kind || text || "").trim();
+  const activityKey = [
+    String(args.activity.kind || "activity")
+      .trim()
+      .toLowerCase(),
+    String(args.activity.status || "updated")
+      .trim()
+      .toLowerCase(),
+    String(args.activity.tool_name || args.activity.raw_item_type || text)
+      .trim()
+      .toLowerCase(),
+  ].join(":");
   return {
-    id: ["activity", args.item.actorId, args.sessionKey, activityId].join(":"),
+    id: ["activity", args.item.actorId, args.sessionKey, activityKey].join(":"),
     kind: "activity",
     actorId: args.item.actorId,
     actorLabel: args.item.actorLabel,
@@ -194,7 +217,8 @@ export function buildRuntimeDockTickerEntries(
     if (!card) continue;
     const previewSessions = getTickerPreviewSessions(item, card);
     if (!shouldIncludeTickerPreview(card, previewSessions)) continue;
-    const includeActivities = isLiveWorkCardActive(card);
+    const includeActivities =
+      isLiveWorkCardActive(card) || (card.runtimeActivities?.length || 0) > 0;
     for (const session of previewSessions) {
       const sessionKey = getPreviewSessionKey(
         session,
@@ -212,9 +236,17 @@ export function buildRuntimeDockTickerEntries(
       if (!includeActivities) continue;
       for (const activity of dedupeStreamingActivities(session.activities || [])) {
         const entry = buildActivityEntry({ item, session, activity, sessionKey });
-        if (!entry || seen.has(entry.id)) continue;
-        seen.add(entry.id);
-        entries.push(entry);
+        if (!entry) continue;
+        const existingIndex = entries.findIndex((candidate) => candidate.id === entry.id);
+        if (existingIndex < 0) {
+          seen.add(entry.id);
+          entries.push(entry);
+          continue;
+        }
+        const existing = entries[existingIndex];
+        if (existing && compareTickerEntriesDescending(entry, existing) < 0) {
+          entries[existingIndex] = entry;
+        }
       }
     }
   }

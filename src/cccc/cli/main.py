@@ -12,6 +12,7 @@ from .messaging_cmds import *  # noqa: F401,F403
 from .space_cmds import *  # noqa: F401,F403
 from .im_cmds import *  # noqa: F401,F403
 from .system_cmds import *  # noqa: F401,F403
+from .runtime_hook_cmd import cmd_runtime_hook
 
 
 def _apply_invocation_web_overrides(args: argparse.Namespace) -> tuple[dict[str, Optional[str]], dict[str, str]]:
@@ -58,6 +59,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override Web host for this invocation (default-entry friendly)",
     )
     sub = p.add_subparsers(dest="cmd", required=False)
+
+    p_hook = sub.add_parser("hook", help=argparse.SUPPRESS)
+    p_hook.add_argument(
+        "action", choices=("codex-state", "claude-state"), help=argparse.SUPPRESS
+    )
+    p_hook.set_defaults(func=cmd_runtime_hook)
 
     p_attach = sub.add_parser("attach", help="Attach current path to a working group (auto-create if needed)")
     p_attach.add_argument("path", nargs="?", default=".", help="Path inside a repo/scope (default: .)")

@@ -39,6 +39,8 @@ Group Bridge preserves provenance. Relayed messages arrive with `source_platform
 | **Read** | Inspect remote context, repository files, search results, and read-only git state. Does not wake target actors. |
 | **Full** | Edit remote files and run remote commands through the same local-access surface used by native actors. This is not a sandbox. |
 
+Access levels are cumulative: **Read** and **Full** retain explicit message delivery.
+
 Keep bridges at **Messages** unless the current workflow needs more. Grant **Read** only to groups allowed to inspect the target workspace. Grant **Full** only to groups that may run commands and modify files in that workspace.
 
 ## Setup
@@ -69,9 +71,17 @@ Group Bridge pairing is managed in the Web UI.
 
 After the first bridge setup, restart already-running actor runtimes once if you want them to see newly available remote read/full MCP tools.
 
+### Python/Rust Upgrade Compatibility
+
+The Rust service reads the legacy `group_bridge_identity.yaml`, `group_bridge_pairing.yaml`, `group_bridge_registrations.yaml`, and `group_bridge_credentials.yaml` files from the same CCCC home. Imports are idempotent and leave the legacy files unchanged, so switching branches does not require deleting or recreating bridge data. Existing peer identity is retained when legacy identity data is present.
+
+Pairing and message delivery also support mixed Python/Rust peers. Rust accepts both pairing response shapes used by the two implementations and shares Python's Ed25519 signing identity file. The Rust daemon scans active session trusts, opens the same signed WebSocket used by Python, keeps it alive with heartbeats, and reconnects with bounded exponential backoff. Message delivery prefers this live route and falls back to authenticated HTTP and then the authorized remote MCP route.
+
+An active pairing is authorization, not proof of reachability. A healthy Rust trust reports `session_connected=true`; `session_connected_at`, `session_last_error`, and `session_last_error_at` provide connection diagnostics. The remote endpoint must still be a non-empty HTTP(S) address reachable from the dialing peer.
+
 ## Sending Messages
 
-Once paired, remote groups appear as explicit remote recipients in the Web composer and in MCP group resolution. Prefer sending to the remote foreman:
+Once paired, remote groups appear in the Web composer and in MCP group resolution. When `dst_group_id` is supplied and `to` is omitted, CCCC targets the remote group's unique available foreman. An explicit `to` always overrides that default; delivery fails closed when the target has no unique available foreman:
 
 ```text
 to: @foreman
@@ -85,9 +95,11 @@ For agent-driven messaging, use the normal CCCC message tools. Discover remote t
 cccc_remote_access(action="list")
 ```
 
-Then send a normal message with `dst_group_id` set to the remote group id and `to` set to `["@foreman"]`.
+Then send a normal message with `dst_group_id` set to the remote group id and `to` set to `["@foreman"]`. For retryable workflows, reuse one stable `idempotency_key` so a transport retry does not create a duplicate remote message.
 
 Attachments can be sent through Group Bridge when the target is a trusted remote group. Use attachments for evidence, logs, screenshots, or small artifacts that should be visible in the remote conversation.
+
+Incoming remote messages preserve the source group, source actor, source event, and default return recipient. Reply with the delivered event's `reply_to` as usual; CCCC relays the reply to the originating group and keeps a local reply record. If the remote endpoint only exposes the legacy Group Bridge MCP surface, text delivery automatically falls back to that compatible path.
 
 ## Remote Read and Full Tools
 
@@ -113,6 +125,9 @@ Full tools:
 | `cccc_remote_write_stdin` | Poll, write to, or terminate a remote exec session. |
 
 `cccc_remote_git` also allows mutation actions such as `add` and `commit` when the remote group grants **Full** access.
+`cccc_remote_shell` accepts `timeout_s` from 1 to 600 seconds. Every session returned by
+`cccc_remote_exec_command` is bound to the target group, registration, and active trust;
+only the same authorized bridge may poll, write to, or terminate it.
 
 All remote tools require `remote_group_id`. Use `cccc_remote_access(action="list")` to get the exact id and current permission level before calling them.
 
@@ -135,6 +150,8 @@ Runtime state, credentials, and browser sessions remain local to each CCCC insta
 |---------|-------|
 | Pairing request cannot be submitted | The requester must paste the full JSON pairing invitation, and the issuer endpoint must be reachable from the requester. |
 | Pairing code is invalid or expired | Generate a fresh pairing invitation from the issuer group. Raw codes are mainly for same-instance diagnostics. |
+| Outbound remains `submitted` after approval | Refresh or sync the outbound record. Do not delete legacy YAML files; current Rust builds normalize older pairing responses and retain the existing request. |
+| Pairing is active but `session_connected=false` | Verify that `remote_endpoint` is non-empty and reachable. Inspect `session_last_error`; the daemon retries automatically with exponential backoff. |
 | Remote group does not appear in recipients | Refresh **Settings > Group Bridge**, confirm the trust is active, then refresh the Web UI group list. |
 | Agents cannot see remote read/full tools | Restart already-running actor runtimes after setup and check the capability allowlist. |
 | `bridge_remote_mcp_unavailable` | The bridge exists for messages, but the HTTP(S) remote MCP endpoint or token is not available. Refresh the bridge state and verify the remote endpoint. |

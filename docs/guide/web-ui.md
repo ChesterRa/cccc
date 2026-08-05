@@ -188,6 +188,7 @@ CCCC_WEB_HOST=0.0.0.0 cccc
 ```
 
 This keeps localhost access working while also letting other devices on the same network open `http://YOUR_LAN_IP:8848/ui/`.
+The Rust launcher also honors the binding saved in **Settings > Web Access**, including the legacy Python `settings.yaml` during migration. Explicit `--host` / `--port` flags still take precedence.
 
 If CCCC is running inside WSL2's default NAT networking, this is the exception: `0.0.0.0` only opens the port inside the Linux VM. For true LAN access from other devices, enable WSL mirrored networking or add a Windows `netsh interface portproxy` rule plus matching firewall allow.
 

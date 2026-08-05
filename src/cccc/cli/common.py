@@ -54,8 +54,6 @@ from ..util.conv import coerce_bool
 from ..util.file_lock import LockUnavailableError, acquire_lockfile, release_lockfile
 from ..util.process import (
     resolve_background_python_argv,
-    SOFT_TERMINATE_SIGNAL,
-    best_effort_signal_pid,
     pid_is_alive,
     resolve_subprocess_argv,
     supervised_process_popen_kwargs,
@@ -329,21 +327,8 @@ def _default_runner_kind() -> str:
 def _ensure_daemon_running() -> bool:
     resp = call_daemon({"op": "ping"}, timeout_s=1.0)
     if resp.get("ok"):
-        # If the daemon is from a different version, restart it. This commonly happens
-        # after a package upgrade while an old background daemon is still running,
-        # causing "unknown op" errors in newer Web/UI flows.
-        try:
-            res = resp.get("result") if isinstance(resp.get("result"), dict) else {}
-            daemon_version = str(res.get("version") or "").strip()
-            daemon_pid = int(res.get("pid") or 0)
-        except Exception:
-            daemon_version = ""
-            daemon_pid = 0
-
         def _daemon_supports_required_ops() -> bool:
             try:
-                # Probe a couple of newer ops so we don't get stuck with a stale
-                # background daemon that lacks features (even if version string matches).
                 for probe in (
                     {"op": "observability_get"},
                     {"op": "debug_snapshot", "args": {}},
@@ -358,60 +343,14 @@ def _ensure_daemon_running() -> bool:
             except Exception:
                 return False
 
-        needs_restart = False
-        if daemon_version and daemon_version != __version__:
-            needs_restart = True
-        elif not _daemon_supports_required_ops():
-            needs_restart = True
-
-        if needs_restart:
-            try:
-                shutdown_resp = call_daemon({"op": "shutdown"}, timeout_s=2.0)
-                if not bool(shutdown_resp.get("ok")):
-                    print("warn: daemon restart requested but shutdown RPC failed; trying fallback termination", file=sys.stderr)
-            except Exception as e:
-                print(f"warn: daemon restart requested but shutdown RPC errored: {e}", file=sys.stderr)
-
-            deadline = time.time() + 2.0
-            while time.time() < deadline:
-                if not call_daemon({"op": "ping"}, timeout_s=0.5).get("ok"):
-                    break
-                time.sleep(0.1)
-
-            # Last resort: terminate the stale daemon by pid (best-effort).
-            if call_daemon({"op": "ping"}, timeout_s=0.5).get("ok") and daemon_pid > 0:
-                try:
-                    killed = best_effort_signal_pid(daemon_pid, SOFT_TERMINATE_SIGNAL, include_group=True)
-                    if not killed:
-                        print(f"warn: failed to terminate stale daemon pid={daemon_pid}: signal not delivered", file=sys.stderr)
-                        return True
-                except Exception as e:
-                    print(f"warn: failed to terminate stale daemon pid={daemon_pid}: {e}", file=sys.stderr)
-                    return True
-
-                deadline = time.time() + 2.0
-                while time.time() < deadline:
-                    if not call_daemon({"op": "ping"}, timeout_s=0.5).get("ok"):
-                        break
-                    time.sleep(0.1)
-
-            # If it's still running, don't stomp its socket/pid files.
-            if call_daemon({"op": "ping"}, timeout_s=0.5).get("ok"):
-                return True
-
-            # Cleanup stale socket/pid files so a new daemon can bind.
-            try:
-                home = ensure_home()
-                sock_path = home / "daemon" / "ccccd.sock"
-                addr_path = home / "daemon" / "ccccd.addr.json"
-                pid_path = home / "daemon" / "ccccd.pid"
-                sock_path.unlink(missing_ok=True)
-                addr_path.unlink(missing_ok=True)
-                pid_path.unlink(missing_ok=True)
-            except Exception as e:
-                print(f"warn: failed to cleanup stale daemon state files: {e}", file=sys.stderr)
-        else:
+        if _daemon_supports_required_ops():
             return True
+        print(
+            "warn: running CCCC daemon is incompatible; refusing automatic replacement from a business command. "
+            "Stop and start the daemon explicitly to switch implementations.",
+            file=sys.stderr,
+        )
+        return False
 
     try:
         subprocess.run(

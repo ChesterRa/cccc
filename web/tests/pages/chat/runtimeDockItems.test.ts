@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  areRuntimeDockTickerEntriesEqual,
   createRuntimeDockTickerCache,
   hasRuntimeDockTickerWork,
   pruneRuntimeDockTickerCache,
@@ -15,6 +16,22 @@ import {
 } from "../../../src/pages/chat/runtimeDockItems";
 import { getRuntimeRingTone } from "../../../src/pages/chat/runtimeDockRingTone";
 import type { Actor, HeadlessPreviewBlock, StreamingActivity } from "../../../src/types";
+
+describe("runtime dock ticker projections", () => {
+  it("recognizes unchanged projections so polling can preserve the rendered glass layer", () => {
+    const entry: RuntimeDockTickerEntry = {
+      id: "activity:actor-1",
+      kind: "activity",
+      actorId: "actor-1",
+      actorLabel: "Actor 1",
+      text: "Working",
+      updatedAt: "2025-01-02T12:00:00Z",
+    };
+
+    expect(areRuntimeDockTickerEntriesEqual([entry], [{ ...entry }])).toBe(true);
+    expect(areRuntimeDockTickerEntriesEqual([entry], [{ ...entry, text: "Waiting" }])).toBe(false);
+  });
+});
 
 function makeActivity(args: {
   id: string;

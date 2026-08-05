@@ -120,13 +120,17 @@ Manage actors.
 
 ```bash
 cccc actor list                    # List actors
+cccc actor add <actor_id> --scope /path/to/project
 cccc actor start <actor_id>        # Start actor
 cccc actor stop <actor_id>         # Stop actor
 cccc actor restart <actor_id>      # Restart actor
 cccc actor remove <actor_id>       # Remove actor
-cccc actor update <actor_id> ...   # Update actor settings
+cccc actor update <actor_id> --scope /path/to/project
 cccc actor secrets <actor_id> ...  # Manage runtime-only secrets
 ```
+
+Actor scope arguments are project paths at the CLI boundary. Rust resolves them to the attached
+scope key before persistence, keeping the stored group document compatible with the Python backend.
 
 ## Message Commands
 
@@ -274,6 +278,9 @@ cccc update --check                # Show install detection + planned command
 Notes:
 - The default channel follows the detected install metadata when possible, then falls back to `stable`.
 - Editable and local-path installs are reported but not updated automatically.
+- Rust crates.io builds support `cccc update` and `cccc update --check`; they run
+  `cargo install cccc --force --locked` and therefore require Cargo on `PATH`.
+- `--channel` applies to the Python distribution only.
 
 ## Web Commands
 
@@ -284,7 +291,14 @@ Start only the Web UI (daemon must be running).
 ```bash
 cccc web                           # Start Web UI
 cccc web --port 9000               # Custom port
+cccc web --exhibit                 # Read-only exhibit mode
+cccc web --mode exhibit            # Equivalent explicit mode
 ```
+
+Only one Web process may run for a given `CCCC_HOME`. If another CCCC process
+for that home is active, an interactive launch displays its PID and asks whether
+to stop it before continuing. Non-interactive launches fail instead of stopping
+an existing process implicitly.
 
 ## MCP Commands
 
@@ -301,7 +315,9 @@ cccc mcp                           # Start MCP server (stdio mode)
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CCCC_HOME` | `~/.cccc` | Runtime home directory |
-| `CCCC_WEB_HOST` | `127.0.0.1` | Web UI bind address |
-| `CCCC_WEB_PORT` | `8848` | Web UI port |
+| `CCCC_WEB_HOST` | saved setting, then `127.0.0.1` | Web UI bind address; `--host` overrides both |
+| `CCCC_WEB_PORT` | saved setting, then `8848` | Web UI port; `--port` overrides both |
+| `CCCC_WEB_MODE` | `normal` | Set to `exhibit` for a read-only Web UI |
+| `CCCC_WEB_READONLY` | unset | Truthy value also enables read-only exhibit mode |
 | `CCCC_WEB_READY_TIMEOUT_SECONDS` | `10` | Supervised Web child readiness timeout before CCCC treats startup as failed |
 | `CCCC_LOG_LEVEL` | `INFO` | Log level |

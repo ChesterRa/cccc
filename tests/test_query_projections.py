@@ -8,6 +8,62 @@ from unittest.mock import patch
 
 
 class TestQueryProjections(unittest.TestCase):
+    def test_actor_projection_serializes_rust_yaml_timestamps(self) -> None:
+        from pathlib import Path
+
+        from cccc.daemon.actors.actor_ops import handle_actor_list
+        from cccc.kernel.group import create_group, load_group
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                group = create_group(load_registry(), title="rust-yaml", topic="")
+                (group.path / "group.yaml").write_text(
+                    """\
+v: 1
+group_id: {group_id}
+title: rust-yaml
+topic: ''
+created_at: 2026-07-24T01:02:03.123456Z
+updated_at: 2026-07-24T01:02:03.123456Z
+actors:
+- v: 1
+  id: lead
+  title: Lead
+  command: []
+  env: {{}}
+  enabled: true
+  runner: pty
+  runtime: codex
+  created_at: 2026-07-24T01:02:03.123456Z
+  updated_at: 2026-07-24T01:02:03.123456Z
+""".format(group_id=group.group_id),
+                    encoding="utf-8",
+                )
+
+                loaded = load_group(group.group_id)
+                self.assertIsNotNone(loaded)
+                assert loaded is not None
+                self.assertIsInstance(loaded.doc["created_at"], str)
+                self.assertIsInstance(loaded.doc["actors"][0]["created_at"], str)
+
+                response = handle_actor_list(
+                    {"group_id": group.group_id, "include_unread": False},
+                    effective_runner_kind=lambda _: "pty",
+                )
+
+                self.assertTrue(response.ok, getattr(response, "error", None))
+                actors = (response.result or {}).get("actors", [])
+                self.assertEqual([actor.get("id") for actor in actors], ["lead"])
+                self.assertTrue((Path(td) / "groups" / group.group_id / "state" / "projections" / "actors.json").is_file())
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
     def test_groups_projection_refreshes_after_group_state_change(self) -> None:
         from cccc.daemon.ops.registry_ops import handle_groups
         from cccc.kernel.group import create_group, load_group

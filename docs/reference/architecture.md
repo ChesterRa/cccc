@@ -38,10 +38,38 @@ Default: `CCCC_HOME=~/.cccc`
 └── groups/<group_id>/
     ├── group.yaml               # Metadata
     ├── ledger.jsonl             # Event stream (append-only)
-    ├── context/                 # Context (vision/sketch/tasks)
+    ├── context/                 # Shared Python/Rust coordination store
+    │   ├── context.yaml         # Brief, decisions, handoffs, metadata
+    │   ├── tasks/T*.yaml        # One durable task per file
+    │   ├── agents.yaml          # Per-actor hot/warm context
+    │   └── version_state.json   # ctxv:* optimistic concurrency revisions
     └── state/                   # Runtime state
         └── blobs/               # Large text/attachments (referenced in ledger)
 ```
+
+Python and Rust use the same `context/` files as one authoritative store. Older Rust
+`state/context.json` files are imported once without deleting the source; new context
+writes must never create a second runtime-specific task store.
+
+The replacement Rust daemon also uses the Python control-plane paths and schemas:
+
+| State | Authoritative path |
+|---|---|
+| Global settings | `settings.yaml` |
+| Actor profiles | `state/actor_profiles/profiles.json` |
+| Profile private environment | `state/secrets/actor_profiles/*.json` |
+| Actor private environment | `state/secrets/actors/<group_id>/*.json` |
+| Inbox cursors | `groups/<group_id>/state/read_cursors.json` |
+| Automation runtime state | `groups/<group_id>/state/automation.json` |
+| Capability catalog and bindings | `state/capabilities/catalog.json`, `state/capabilities/state.json` |
+| Capability allowlist overlay | `config/capability-allowlist.user.yaml` |
+| Group Space providers, bindings, and jobs | `state/space/providers.json`, `bindings.json`, `jobs.json` |
+| Group Space credentials | `state/secrets/space_providers/*.json` |
+
+Files from the earlier Rust-only layout are migration inputs, not parallel runtime
+stores. Canonical data wins on conflicts, migration is idempotent, and subsequent
+writes go only to the Python path. Rust/Python interoperability tests exercise both
+write directions, including group-copy packages.
 
 ## Architecture Layers
 
