@@ -361,8 +361,8 @@ export default function App() {
     <div
       className="relative min-h-0 w-full overflow-hidden bg-[var(--color-body-bg)] text-[var(--color-text-primary)]"
       style={{
-        height: "calc(100dvh - var(--vk-offset, 0px))",
-        maxHeight: "calc(100dvh - var(--vk-offset, 0px))",
+        height: "var(--app-viewport-height, 100dvh)",
+        maxHeight: "var(--app-viewport-height, 100dvh)",
       }}
     >
       <AppBackground isDark={isDark} />

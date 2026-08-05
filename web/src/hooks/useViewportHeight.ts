@@ -1,39 +1,33 @@
 // useViewportHeight: Handles the virtual keyboard on mobile.
 //
-// Problem: CSS `100dvh` adjusts for browser chrome but NOT the virtual keyboard.
-// When the keyboard opens on mobile, the bottom of the page (including the composer)
-// gets pushed behind the keyboard, making it invisible.
+// Problem: mobile browsers disagree on whether `100dvh` includes the virtual
+// keyboard. Subtracting the keyboard offset from `100dvh` can therefore shrink
+// the app twice on iOS.
 //
-// Solution: Listen to `window.visualViewport` resize events and set a CSS custom
-// property `--vh-offset` on the document root. The app shell uses this to shrink
-// its height when the keyboard is open.
+// Solution: use the visual viewport height directly when it is available.
 import { useEffect } from "react";
+
+export function getVisualViewportHeight(height: number): string | null {
+  return Number.isFinite(height) && height > 0 ? `${height}px` : null;
+}
 
 export function useViewportHeight() {
   useEffect(() => {
     const vv = window.visualViewport;
     if (!vv) return; // Not supported (desktop browsers, older mobile)
 
-    function onResize() {
+    function syncHeight() {
       if (!vv) return;
-      // The offset is the difference between the layout viewport and the visual viewport.
-      // When the keyboard opens, vv.height shrinks but window.innerHeight stays the same.
-      const offset = window.innerHeight - vv.height;
-      // Only apply if significant (> 100px means keyboard is likely open)
-      if (offset > 100) {
-        document.documentElement.style.setProperty("--vk-offset", `${offset}px`);
-      } else {
-        document.documentElement.style.setProperty("--vk-offset", "0px");
-      }
+      const height = getVisualViewportHeight(vv.height);
+      if (height) document.documentElement.style.setProperty("--app-viewport-height", height);
     }
 
-    vv.addEventListener("resize", onResize);
-    // Initial call
-    onResize();
+    vv.addEventListener("resize", syncHeight);
+    syncHeight();
 
     return () => {
-      vv.removeEventListener("resize", onResize);
-      document.documentElement.style.removeProperty("--vk-offset");
+      vv.removeEventListener("resize", syncHeight);
+      document.documentElement.style.removeProperty("--app-viewport-height");
     };
   }, []);
 }
