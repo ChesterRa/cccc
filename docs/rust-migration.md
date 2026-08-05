@@ -6,10 +6,10 @@ frontend and its external product contracts stable.
 ## Rust package distribution
 
 The installable crates.io package is `cccc`; its executable is also `cccc`.
-The initial registry bootstrap release is installed with:
+Install the native distribution with:
 
 ```bash
-cargo install cccc
+cargo install cccc --locked
 ```
 
 Existing crates.io installations can be upgraded in place:
@@ -19,14 +19,15 @@ cccc update
 cccc update --check
 ```
 
-The Rust updater runs `cargo install cccc --force --locked`. It requires Cargo
-to remain available and stops an older running CCCC daemon only after the new
-binary has installed successfully.
+The public crate version now follows the CCCC product version. Cargo installs
+update with `cargo install cccc --force --locked`. Prebuilt installations use
+the tagged GitHub Rust installer and verify release assets against
+`SHA256SUMS`. An older running daemon is stopped only after replacement succeeds.
 
 Implementation crates are published under the `cccc-pair-*` namespace so the
 public package name stays simple while Rust module imports remain unchanged.
-Normal product releases continue to use the workspace version; the `0.0.x`
-releases only reserve and validate the new crates.io distribution path.
+The former `0.0.x` packages were bootstrap releases for reserving and validating
+the crates.io path; supported releases use the workspace product version.
 
 Rust release packaging runs `scripts/prepare_rust_web_assets.mjs` before Cargo.
 The generated `crates/cccc-web/assets/web-dist/` directory is intentionally
@@ -81,7 +82,16 @@ The Rust MCP server uses the same progressive tool surface as Python.
 `tools/list` is derived from caller role and `capability_state`, includes
 enabled built-in packs and Python-compatible external MCP runtime artifacts,
 and forwards dynamic tool calls through `capability_tool_call`. A shared parity
-test guards the static Python and Rust tool-name catalogs.
+test guards the static Python and Rust tool-name catalogs. Enabling an external
+capability now performs the Python-compatible package preflight and installation
+for npm, PyPI, OCI, command, and remote HTTP MCP records before persisting the
+runtime artifact.
+
+`cccc space auth status|start|cancel|disconnect` uses the local Rust Web API for
+NotebookLM authentication. IM start requests sent directly to the daemon are
+delegated to the Web-owned integration worker, preserving one lifecycle owner.
+`cccc doctor` reports daemon identity/version, PTY support, browser discovery,
+and Linux display helpers so installation failures are visible from the CLI.
 
 Group Bridge compatibility includes daemon-level `remote_send`,
 `remote_delivery_status`, and `group_bridge_receive_remote_send` operations in

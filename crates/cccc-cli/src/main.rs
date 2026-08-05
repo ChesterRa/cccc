@@ -67,7 +67,11 @@ async fn main() -> Result<()> {
             let web_endpoint = web_endpoint(&binding.host, binding.port);
             commands::integrations::im(&client, &home, &web_endpoint, args).await
         }
-        Some(CommandKind::Space(args)) => commands::integrations::space(&client, &home, args).await,
+        Some(CommandKind::Space(args)) => {
+            let binding = web_launch::resolve(&home, cli.host.as_deref(), cli.port)?;
+            let web_endpoint = web_endpoint(&binding.host, binding.port);
+            commands::integrations::space(&client, &home, &web_endpoint, args).await
+        }
         Some(CommandKind::Send(args)) => commands::messaging::send(&client, &home, args).await,
         Some(CommandKind::TrackedSend(args)) => {
             commands::messaging::tracked(&client, &home, args).await
@@ -80,7 +84,7 @@ async fn main() -> Result<()> {
         Some(CommandKind::Daemon { action }) => daemon(action, home, &client).await,
         Some(CommandKind::Runtime { action }) => runtime(&client, action).await,
         Some(CommandKind::Status) => status(&client).await,
-        Some(CommandKind::Doctor) => commands::doctor::run(&home),
+        Some(CommandKind::Doctor) => commands::doctor::run(&home, PRODUCT_VERSION).await,
         Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
         Some(CommandKind::Update(args)) => {
             let installed = commands::update::run(args, PRODUCT_VERSION, CRATE_VERSION)?;

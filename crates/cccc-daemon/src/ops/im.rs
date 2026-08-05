@@ -1,6 +1,7 @@
 use cccc_contracts::{DaemonRequest, utc_now};
+use cccc_core::access_tokens::AccessTokenStore;
 use cccc_core::integration_state;
-use cccc_core::{GroupStore, HomeLayout};
+use cccc_core::{GroupStore, HomeLayout, settings};
 use serde_json::{Map, Value, json};
 use std::io;
 
@@ -78,22 +79,17 @@ fn running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpResul
         return Err(OpError::new("invalid_state", "IM bridge is not configured"));
     }
     if running {
-        update(home, &group_id, |state| {
-            state.insert("enabled".into(), Value::Bool(true));
-            state.insert("running".into(), Value::Bool(false));
-            state.insert("pid".into(), Value::Null);
-            state.insert("adapter_available".into(), Value::Bool(false));
-            state.insert(
-                "last_error".into(),
-                json!("Rust network adapter is unavailable"),
-            );
-            state.insert("updated_at".into(), json!(utc_now()));
-            Ok(())
-        })?;
-        return Err(OpError::new(
-            "adapter_unavailable",
-            "Rust network adapter is unavailable for the configured IM platform",
-        ));
+        return delegate_start(home, &group_id).inspect_err(|error| {
+            let _ = update(home, &group_id, |state| {
+                state.insert("enabled".into(), Value::Bool(true));
+                state.insert("running".into(), Value::Bool(false));
+                state.insert("pid".into(), Value::Null);
+                state.insert("adapter_available".into(), Value::Bool(false));
+                state.insert("last_error".into(), json!(error.message));
+                state.insert("updated_at".into(), json!(utc_now()));
+                Ok(())
+            });
+        });
     }
     update(home, &group_id, |state| {
         state.insert("enabled".into(), Value::Bool(false));
@@ -104,6 +100,77 @@ fn running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpResul
         Ok(())
     })?;
     object(status_payload(&group_id, &load(home, &group_id)?))
+}
+
+fn delegate_start(home: &HomeLayout, group_id: &str) -> OpResult {
+    let global = settings::load(home).map_err(OpError::io)?;
+    let host = global
+        .remote_access
+        .get("web_host")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("127.0.0.1");
+    let host = if matches!(host, "0.0.0.0" | "::") {
+        "127.0.0.1"
+    } else {
+        host
+    };
+    let port = global
+        .remote_access
+        .get("web_port")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(8848);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(OpError::invalid)?;
+    let mut request = client
+        .post(format!("http://{}:{port}/api/im/start", url_host(host)))
+        .json(&json!({"group_id":group_id}));
+    if let Some(token) = AccessTokenStore::new(home.clone())
+        .map_err(OpError::io)?
+        .list()
+        .map_err(OpError::io)?
+        .into_iter()
+        .find(|token| token.is_admin)
+    {
+        request = request.bearer_auth(token.token);
+    }
+    let response = request.send().map_err(|error| {
+        OpError::new(
+            "adapter_unavailable",
+            format!("Rust IM network workers require the Web service; run `cccc` ({error})"),
+        )
+    })?;
+    let status = response.status();
+    let body = response.json::<Value>().map_err(|error| {
+        OpError::new(
+            "adapter_unavailable",
+            format!("Rust Web returned an invalid IM response: {error}"),
+        )
+    })?;
+    if !status.is_success() || body.get("ok").and_then(Value::as_bool) != Some(true) {
+        let message = body
+            .pointer("/error/message")
+            .and_then(Value::as_str)
+            .unwrap_or("Rust Web rejected the IM start request");
+        return Err(OpError::new("adapter_unavailable", message));
+    }
+    body.get("result")
+        .and_then(Value::as_object)
+        .cloned()
+        .ok_or_else(|| OpError::new("adapter_unavailable", "Rust Web returned no IM result"))
+}
+
+fn url_host(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]")
+    } else {
+        host.to_owned()
+    }
 }
 
 fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(), OpError> {
@@ -237,4 +304,56 @@ fn array<'a>(state: &'a mut Map<String, Value>, key: &str) -> &'a mut Vec<Value>
         *value = json!([]);
     }
     value.as_array_mut().expect("array initialized")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{delegate_start, url_host};
+    use cccc_core::{HomeLayout, settings};
+    use serde_json::json;
+    use std::io::{Read, Write};
+
+    #[test]
+    fn web_url_brackets_ipv6_hosts() {
+        assert_eq!(url_host("::1"), "[::1]");
+        assert_eq!(url_host("[::1]"), "[::1]");
+        assert_eq!(url_host("127.0.0.1"), "127.0.0.1");
+    }
+
+    #[test]
+    fn daemon_im_start_delegates_to_the_web_owned_worker() {
+        let temp = tempfile::tempdir().expect("temp");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        let port = listener.local_addr().expect("address").port();
+        let mut global = settings::load(&home).expect("settings");
+        global.remote_access = json!({"web_host":"127.0.0.1","web_port":port})
+            .as_object()
+            .cloned()
+            .expect("remote access");
+        settings::save(&home, &global).expect("save settings");
+
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0_u8; 4096];
+            let read = stream.read(&mut request).expect("read request");
+            let request = String::from_utf8_lossy(&request[..read]);
+            assert!(request.starts_with("POST /api/im/start HTTP/1.1"));
+            assert!(request.contains("\"group_id\":\"g_test\""));
+            let body = r#"{"ok":true,"result":{"group_id":"g_test","running":true,"adapter_available":true}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("write response");
+        });
+
+        let result = delegate_start(&home, "g_test").expect("delegated start");
+        assert_eq!(result["running"], true);
+        assert_eq!(result["adapter_available"], true);
+        server.join().expect("server");
+    }
 }

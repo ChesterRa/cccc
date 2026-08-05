@@ -194,7 +194,7 @@ async fn web_call(
     let message = body
         .pointer("/error/message")
         .and_then(Value::as_str)
-        .unwrap_or("CCCC Web rejected the IM operation");
+        .unwrap_or("CCCC Web rejected the operation");
     anyhow::bail!("{message} ({status})")
 }
 
@@ -202,7 +202,20 @@ fn uses_query(method: &Method, path: &str) -> bool {
     *method == Method::GET || matches!(path, "/api/im/revoke" | "/api/im/verbose")
 }
 
-pub async fn space(client: &DaemonClient, home: &HomeLayout, args: SpaceArgs) -> Result<()> {
+pub async fn space(
+    client: &DaemonClient,
+    home: &HomeLayout,
+    endpoint: &str,
+    args: SpaceArgs,
+) -> Result<()> {
+    if let SpaceAction::Auth { action, provider } = &args.action {
+        let (method, path, value) = space_auth_request(action, provider)?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&web_call(home, endpoint, method, &path, value).await?)?,
+        );
+        return Ok(());
+    }
     let (op, value) = match args.action {
         SpaceAction::Status { group_id, provider } => (
             "group_space_status",
@@ -276,10 +289,7 @@ pub async fn space(client: &DaemonClient, home: &HomeLayout, args: SpaceArgs) ->
             "group_space_jobs",
             json!({"group_id":group(home,group_id)?,"lane":lane,"action":action,"job_id":job_id,"provider":provider}),
         ),
-        SpaceAction::Auth { action, provider } => (
-            "group_space_provider_auth",
-            json!({"provider":provider,"action":action}),
-        ),
+        SpaceAction::Auth { .. } => unreachable!("provider auth handled through Web"),
         SpaceAction::Credential { action } => match action {
             SpaceCredentialAction::Status { provider } => (
                 "group_space_provider_credential_status",
@@ -316,6 +326,33 @@ pub async fn space(client: &DaemonClient, home: &HomeLayout, args: SpaceArgs) ->
     print(call(client, op, value).await?)
 }
 
+fn space_auth_request(action: &str, provider: &str) -> Result<(Method, String, Value)> {
+    if provider.is_empty()
+        || !provider
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        anyhow::bail!("provider must contain only letters, numbers, '_' or '-'");
+    }
+    let action = action.trim().to_ascii_lowercase();
+    if !matches!(
+        action.as_str(),
+        "status" | "start" | "cancel" | "disconnect"
+    ) {
+        anyhow::bail!("unsupported provider auth action: {action}");
+    }
+    let method = if action == "status" {
+        Method::GET
+    } else {
+        Method::POST
+    };
+    Ok((
+        method,
+        format!("/api/v1/space/providers/{provider}/auth"),
+        json!({"action":action}),
+    ))
+}
+
 fn group_value(home: &HomeLayout, group_id: Option<String>) -> Result<Value> {
     Ok(json!({"group_id":group(home,group_id)?}))
 }
@@ -338,5 +375,15 @@ mod tests {
         assert!(uses_query(&Method::GET, "/api/im/status"));
         assert!(uses_query(&Method::POST, "/api/im/revoke"));
         assert!(!uses_query(&Method::POST, "/api/im/start"));
+    }
+
+    #[test]
+    fn space_auth_uses_the_real_web_lifecycle_route() {
+        let (method, path, body) = space_auth_request("start", "notebooklm").expect("request");
+        assert_eq!(method, Method::POST);
+        assert_eq!(path, "/api/v1/space/providers/notebooklm/auth");
+        assert_eq!(body["action"], "start");
+        assert!(space_auth_request("start", "../escape").is_err());
+        assert!(space_auth_request("unknown", "notebooklm").is_err());
     }
 }

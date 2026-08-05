@@ -70,6 +70,9 @@ CCCC 只需一条 `pip install`，零外部依赖 — 不需要数据库、不�
 # 稳定通道（PyPI）
 pip install -U cccc-pair
 
+# Rust 原生发行版（crates.io）
+cargo install cccc --locked
+
 # RC 通道（TestPyPI）
 pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
@@ -77,7 +80,8 @@ pip install -U --pre \
   cccc-pair
 ```
 
-> **环境要求**: Python 3.11+，macOS / Linux / Windows
+> **环境要求**：默认发行版需要 Python 3.11+；从 crates.io 源码安装需要
+> Rust 1.88+。不要让两个不同来源的 `cccc` 同时出现在 `PATH` 中。
 
 ### 升级
 
@@ -86,6 +90,8 @@ cccc update
 ```
 
 如需先查看检测到的安装类型和将要执行的命令，可使用 `cccc update --check`。
+Rust 的 Cargo 安装会从 crates.io 升级；预编译安装会使用对应版本且经过
+SHA256 校验的 GitHub Rust Release。
 
 ### 启动
 
@@ -472,6 +478,15 @@ pip install -U --pre \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
+
+### Rust（原生版）
+
+```bash
+cargo install cccc --locked
+```
+
+Python 与 Rust 发行版共享 `CCCC_HOME`，但不能同时运行两个 daemon。两者都会
+安装名为 `cccc` 的命令，请确保 `PATH` 中优先使用当前选择的发行版。
 
 ### 从源码安装
 

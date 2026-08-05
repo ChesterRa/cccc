@@ -199,6 +199,29 @@ impl CapabilityStore {
             })
     }
 
+    pub fn catalog_record(&self, id: &str) -> io::Result<Option<Value>> {
+        self.migrate_legacy()?;
+        let path = self.catalog_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let raw: Value = read_json(&path)?;
+        Ok(match raw.get("records") {
+            Some(Value::Object(records)) => records.get(id).cloned(),
+            Some(Value::Array(records)) => records
+                .iter()
+                .find(|record| {
+                    record
+                        .get("capability_id")
+                        .or_else(|| record.get("id"))
+                        .and_then(Value::as_str)
+                        == Some(id)
+                })
+                .cloned(),
+            _ => None,
+        })
+    }
+
     pub fn set_enabled_for(
         &self,
         id: &str,

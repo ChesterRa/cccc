@@ -18,8 +18,9 @@ done
 test "$(wc -l < "$TMP_ROOT/SHA256SUMS" | tr -d ' ')" -eq 4
 grep -Fq "DEFAULT_VERSION=\"$VERSION\"" "$TMP_ROOT/install.sh"
 grep -Fq "defaultVersion = \"$VERSION\"" "$TMP_ROOT/install.ps1"
-grep -Fq 'RELEASE_TAG_PREFIX="rust-v"' "$TMP_ROOT/install.sh"
-grep -Fq 'releaseTagPrefix = "rust-v"' "$TMP_ROOT/install.ps1"
+grep -Fq 'CCCC_RELEASE_TAG_PREFIX:-rust-v' "$TMP_ROOT/install.sh"
+grep -Fq 'CCCC_RELEASE_TAG_PREFIX' "$TMP_ROOT/install.ps1"
+grep -Fq '"rust-v"' "$TMP_ROOT/install.ps1"
 
 printf 'unexpected\n' > "$TMP_ROOT/cccc-v${VERSION}-aarch64-unknown-linux-gnu.tar.gz"
 if "$ROOT_DIR/scripts/package_release_assets.sh" "$TMP_ROOT" "$VERSION"; then

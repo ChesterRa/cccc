@@ -38,7 +38,7 @@ pub struct SetupArgs {
 
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
-    /// Show the crates.io update command without running it.
+    /// Show the detected update source and latest version without changing the installation.
     #[arg(long)]
     pub check: bool,
 }

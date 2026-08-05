@@ -70,6 +70,9 @@ CCCC は `pip install` 一つで導入完了、外部依存ゼロ — データ�
 # 安定チャネル（PyPI）
 pip install -U cccc-pair
 
+# Rust ネイティブ配布（crates.io）
+cargo install cccc --locked
+
 # RC チャネル（TestPyPI）
 pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
@@ -77,7 +80,8 @@ pip install -U --pre \
   cccc-pair
 ```
 
-> **要件**: Python 3.11+、macOS / Linux / Windows
+> **要件**: デフォルト配布は Python 3.11+、crates.io からのソースインストールは
+> Rust 1.88+。異なる配布元の `cccc` を同時に `PATH` へ置かないでください。
 
 ### アップグレード
 
@@ -86,6 +90,8 @@ cccc update
 ```
 
 インストール種別と実行予定のコマンドを事前確認するには `cccc update --check` を使用してください。
+Cargo インストールは crates.io、プリビルド版は SHA256 検証付きの対応する
+GitHub Rust Release から更新されます。
 
 ### 起動
 
@@ -472,6 +478,16 @@ pip install -U --pre \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
+
+### Rust（ネイティブ版）
+
+```bash
+cargo install cccc --locked
+```
+
+Python と Rust の配布は `CCCC_HOME` を共有しますが、2 つの daemon を同時に
+実行してはいけません。どちらも `cccc` コマンドを提供するため、選択した配布だけを
+`PATH` の先頭に置いてください。
 
 ### ソースから
 

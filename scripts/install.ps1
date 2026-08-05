@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $defaultVersion = "@CCCC_VERSION@"
-$releaseTagPrefix = "@CCCC_RELEASE_TAG_PREFIX@"
+$releaseTagPrefix = if ($env:CCCC_RELEASE_TAG_PREFIX) { $env:CCCC_RELEASE_TAG_PREFIX } else { "@CCCC_RELEASE_TAG_PREFIX@" }
 if ($releaseTagPrefix.StartsWith("@")) {
   $releaseTagPrefix = "v"
 }

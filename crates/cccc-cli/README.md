@@ -6,7 +6,7 @@ delivery tracking, runtime state, a Web UI, and MCP access.
 ## Install
 
 ```bash
-cargo install cccc
+cargo install cccc --locked
 ```
 
 Upgrade an existing crates.io installation with:
@@ -15,10 +15,11 @@ Upgrade an existing crates.io installation with:
 cccc update
 ```
 
-Use `cccc update --check` to print the current product/crate versions and the
-exact Cargo command without changing the installation. The update requires
-`cargo` on `PATH`; after a successful install, CCCC stops any older running
-daemon so the next command starts the updated binary.
+Use `cccc update --check` to print the current and latest package versions plus
+the selected update source without changing the installation. Cargo installs
+update through crates.io. Prebuilt installs use the tagged GitHub Rust installer
+and verify release assets with `SHA256SUMS`. After replacement succeeds, CCCC
+stops any older daemon so the next command starts the updated binary.
 
 CCCC requires Rust 1.88 or newer to install from source. After installation,
 start the local daemon and Web UI with:

@@ -9,6 +9,7 @@ mod allowlist;
 mod effective_state;
 mod external_runtime;
 mod overview;
+mod package_install;
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -42,10 +43,23 @@ fn search(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 fn enable(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let id = required_arg(request, "capability_id")?;
-    let state = CapabilityStore::new(home.clone())
+    let enabled = bool_arg(request, "enabled", true);
+    let store = CapabilityStore::new(home.clone());
+    let installation = if enabled {
+        store
+            .catalog_record(&id)
+            .map_err(OpError::io)?
+            .as_ref()
+            .map(|record| package_install::ensure_installed(home, &id, record))
+            .transpose()?
+            .flatten()
+    } else {
+        None
+    };
+    let state = store
         .set_enabled_for(
             &id,
-            bool_arg(request, "enabled", true),
+            enabled,
             &required_arg(request, "group_id")?,
             &string_arg(request, "actor_id").unwrap_or_default(),
             &string_arg(request, "scope").unwrap_or_else(|| "group".into()),
@@ -56,7 +70,7 @@ fn enable(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .unwrap_or(3600),
         )
         .map_err(OpError::invalid)?;
-    object(json!({"capability_id": id, "state": state}))
+    object(json!({"capability_id": id, "state": state, "installation":installation}))
 }
 fn visibility(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let id = required_arg(request, "capability_id")?;

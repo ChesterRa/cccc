@@ -1,7 +1,7 @@
 [package]
 name = "cccc"
 default-run = "cccc"
-version = "0.0.5"
+version = "0.4.33"
 edition.workspace = true
 resolver = "3"
 license.workspace = true
@@ -25,6 +25,7 @@ cccc-web = { package = "cccc-pair-web", version = "=0.4.33-compat.2", path = "..
 clap.workspace = true
 fs2.workspace = true
 reqwest.workspace = true
+semver.workspace = true
 serde_json.workspace = true
 shell-words.workspace = true
 tokio.workspace = true

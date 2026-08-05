@@ -71,6 +71,9 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 # Stable channel (PyPI)
 pip install -U cccc-pair
 
+# Native Rust distribution (crates.io)
+cargo install cccc --locked
+
 # RC channel (TestPyPI)
 pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
@@ -78,7 +81,8 @@ pip install -U --pre \
   cccc-pair
 ```
 
-> **Requirements**: Python 3.11+, macOS / Linux / Windows
+> **Requirements**: Python 3.11+ for the default distribution, or Rust 1.88+
+> for a crates.io source install. Do not keep both `cccc` executables on `PATH`.
 
 ### Upgrade
 
@@ -87,8 +91,9 @@ cccc update
 ```
 
 Use `cccc update --check` to inspect the command that would run. Python installs
-report their detected package source/channel; Rust crates.io installs report both
-the product and crate versions and require Cargo to perform the update.
+report their detected package source/channel. Rust installs report the product
+and package versions; Cargo installs update through crates.io, while prebuilt
+installs use the matching checksummed GitHub Rust release.
 
 ### Launch
 
@@ -476,6 +481,16 @@ pip install -U --pre \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
+
+### Rust (native)
+
+```bash
+cargo install cccc --locked
+```
+
+The Python and Rust distributions share `CCCC_HOME`, but their daemons must not
+run concurrently. Both install a command named `cccc`; keep only the selected
+distribution first on `PATH`.
 
 ### From source
 

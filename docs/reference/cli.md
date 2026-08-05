@@ -278,8 +278,9 @@ cccc update --check                # Show install detection + planned command
 Notes:
 - The default channel follows the detected install metadata when possible, then falls back to `stable`.
 - Editable and local-path installs are reported but not updated automatically.
-- Rust crates.io builds support `cccc update` and `cccc update --check`; they run
-  `cargo install cccc --force --locked` and therefore require Cargo on `PATH`.
+- Rust builds support `cccc update` and `cccc update --check`. Cargo installs run
+  `cargo install cccc --force --locked`; prebuilt installs use the matching
+  tagged GitHub Rust release and verify its `SHA256SUMS` before replacement.
 - `--channel` applies to the Python distribution only.
 
 ## Web Commands
