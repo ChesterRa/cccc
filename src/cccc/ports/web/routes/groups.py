@@ -1474,10 +1474,21 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return {"ok": True, "result": {"upload_id": upload_id, "deleted": True}}
 
     @global_router.get("/events/stream", dependencies=[Depends(require_user)])
-    async def global_events_stream() -> StreamingResponse:
+    async def global_events_stream(request: Request) -> StreamingResponse:
         """SSE stream for global events (group created/deleted, etc.)."""
         from ..streams import sse_global_events_tail, create_sse_response
-        return create_sse_response(sse_global_events_tail(ctx.home))
+
+        principal = require_user(request)
+        allowed_group_ids: frozenset[str] | None = None
+        if websocket_tokens_active() and not bool(getattr(principal, "is_admin", False)):
+            allowed_group_ids = frozenset(
+                str(item or "").strip()
+                for item in (getattr(principal, "allowed_groups", ()) or ())
+                if str(item or "").strip()
+            )
+        return create_sse_response(
+            sse_global_events_tail(ctx.home, allowed_group_ids=allowed_group_ids)
+        )
 
     # ------------------------------------------------------------------ #
     # Group-scoped routes

@@ -386,7 +386,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     if available_count == 0:
         print("No agent runtimes detected.")
         print(
-            "First-class supported runtimes: claude, codex, copilot, cursor, devin, kiro, kilo, "
+            "First-class supported runtimes: claude, cline, codex, copilot, cursor, devin, kiro, kilo, "
             "antigravity, droid, amp, auggie, grok, hermes, kimi, opencode"
         )
         print("Manual fallback: custom (bring your own command and MCP wiring)")
@@ -433,12 +433,13 @@ def cmd_setup(args: argparse.Namespace) -> int:
     project_path = Path(args.path or ".").resolve()
 
     # Supported runtimes
-    # - claude/codex/copilot/devin/kiro/droid/amp/auggie/grok/hermes/kimi: MCP setup can be automated via their CLIs
+    # - claude/cline/codex/copilot/devin/kiro/droid/amp/auggie/grok/hermes/kimi: MCP setup can be automated via their CLIs
     # - opencode: MCP setup is injected into the actor process through OPENCODE_CONFIG_CONTENT
     # - antigravity/cursor/kilo: MCP setup is prompt-assisted inside the runtime agent; CCCC does not edit their config
     # - custom: user-provided runtime; MCP setup is manual (generic guidance only)
     SUPPORTED_RUNTIMES = [
         "claude",
+        "cline",
         "codex",
         "copilot",
         "cursor",

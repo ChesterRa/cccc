@@ -32,10 +32,10 @@ pub async fn call(
         }
         "cccc_bootstrap" => return bootstrap(client, arguments).await,
         "cccc_project_info" => return project_info(client, arguments).await,
-        "cccc_runtime_list" => json!({"runtimes": [
-            "claude","codex","copilot","cursor","devin","kiro","kilo","antigravity",
-            "droid","amp","auggie","grok","hermes","kimi","opencode","web_model","custom"
-        ]}),
+        "cccc_runtime_list" => json!({"runtimes": cccc_runtime::detect_runtimes()
+            .into_iter()
+            .map(|runtime| runtime.name)
+            .collect::<Vec<_>>() }),
         name if is_repo_tool(name) => {
             let result = crate::local_tools::call(home, client, name, arguments).await?;
             return Ok(if message_operation {

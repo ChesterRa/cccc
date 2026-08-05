@@ -16,6 +16,7 @@ from .ledger_index import (
     lookup_chat_ack_actor_ids,
     lookup_chat_reply_actor_ids,
     lookup_event_by_id,
+    lookup_event_positions,
     lookup_event_with_chat_ack_indexed,
     lookup_events_by_ids,
     search_event_ids_indexed,
@@ -27,7 +28,7 @@ from .ledger_state_snapshot import can_replay_from_basis, current_ledger_basis, 
 # Message kind filter
 MessageKindFilter = Literal["all", "chat", "notify"]
 
-_UNREAD_INDEX_SCHEMA = 1
+_UNREAD_INDEX_SCHEMA = 2
 _FULL_EVENT_ID_RE = re.compile(r"^[0-9a-fA-F]{32}$")
 
 
@@ -166,8 +167,12 @@ def _load_unread_index(group: Group) -> Dict[str, Any]:
         actors_rev = max(0, int(raw.get("actors_rev") or 0))
     except Exception:
         actors_rev = 0
+    try:
+        schema = max(0, int(raw.get("schema") or 0))
+    except Exception:
+        schema = 0
     return {
-        "schema": int(raw.get("schema", _UNREAD_INDEX_SCHEMA) or _UNREAD_INDEX_SCHEMA),
+        "schema": schema,
         "actors_rev": actors_rev,
         "cursor_sig": str(raw.get("cursor_sig") or ""),
         "ledger_basis": ledger_basis,
@@ -262,6 +267,11 @@ def _seed_unread_index_from_snapshot(
     unread_index = state.get("unread_index") if isinstance(state.get("unread_index"), dict) else {}
     if not unread_index:
         return None
+    try:
+        if int(unread_index.get("schema") or 0) != _UNREAD_INDEX_SCHEMA:
+            return None
+    except Exception:
+        return None
     if int(unread_index.get("actors_rev") or 0) != actors_rev:
         return None
     if str(unread_index.get("cursor_sig") or "") != cursor_sig:
@@ -289,12 +299,6 @@ def _apply_unread_delta(
     next_counts = {aid: max(0, int(counts.get(aid, 0))) for aid in counts}
     actor_ids = [str(actor.get("id") or "").strip() for actor in actors if str(actor.get("id") or "").strip()]
     actor_roles = {aid: get_effective_role(group, aid) for aid in actor_ids}
-    cursors = load_cursors(group)
-    actor_cursor_dts: Dict[str, Optional[Any]] = {}
-    for aid in actor_ids:
-        cur = cursors.get(aid)
-        cursor_ts = str(cur.get("ts") or "") if isinstance(cur, dict) else ""
-        actor_cursor_dts[aid] = parse_utc_iso(cursor_ts) if cursor_ts else None
 
     if kind_filter == "chat":
         allowed_kinds = {"chat.message"}
@@ -303,18 +307,15 @@ def _apply_unread_delta(
     else:
         allowed_kinds = {"chat.message", "system.notify"}
 
+    # `events` is the suffix after the persisted ledger basis. Its append order is
+    # authoritative even if two timestamps collide or the wall clock moves backwards.
     for ev in events:
         ev_kind = str(ev.get("kind") or "")
         if ev_kind not in allowed_kinds:
             continue
         ev_by = str(ev.get("by") or "").strip()
-        ev_ts = str(ev.get("ts") or "")
-        ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
         for aid in actor_ids:
             if ev_kind == "chat.message" and ev_by == aid:
-                continue
-            cursor_dt = actor_cursor_dts.get(aid)
-            if cursor_dt is not None and ev_dt is not None and ev_dt <= cursor_dt:
                 continue
             if not is_message_for_actor(group, actor_id=aid, event=ev, role=actor_roles.get(aid)):
                 continue
@@ -345,14 +346,16 @@ def get_indexed_unread_counts(
     snapshot_basis = snapshot.get("ledger_basis") if isinstance(snapshot.get("ledger_basis"), dict) else {}
 
     if (
-        int(snapshot.get("actors_rev") or 0) == actors_rev
+        int(snapshot.get("schema") or 0) == _UNREAD_INDEX_SCHEMA
+        and int(snapshot.get("actors_rev") or 0) == actors_rev
         and str(snapshot.get("cursor_sig") or "") == cursor_sig
         and snapshot_basis == ledger_basis
     ):
         return {aid: max(0, int(snapshot_counts.get(aid, 0))) for aid in actor_ids}
 
     if (
-        int(snapshot.get("actors_rev") or 0) == actors_rev
+        int(snapshot.get("schema") or 0) == _UNREAD_INDEX_SCHEMA
+        and int(snapshot.get("actors_rev") or 0) == actors_rev
         and str(snapshot.get("cursor_sig") or "") == cursor_sig
         and can_replay_from_basis(snapshot_basis, ledger_basis)
     ):
@@ -435,20 +438,132 @@ def get_cursor(group: Group, actor_id: str) -> Tuple[str, str]:
     return "", ""
 
 
+def _cursor_boundaries(
+    group: Group,
+    actor_ids: List[str],
+    *,
+    cursors: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Tuple[str, Optional[Any]]]:
+    cursor_doc = cursors if isinstance(cursors, dict) else load_cursors(group)
+    cursor_ids: Dict[str, str] = {}
+    for actor_id in actor_ids:
+        cursor = cursor_doc.get(actor_id)
+        cursor_ids[actor_id] = str(cursor.get("event_id") or "").strip() if isinstance(cursor, dict) else ""
+
+    wanted_ids = list(dict.fromkeys(event_id for event_id in cursor_ids.values() if event_id))
+    found_ids: set[str] = set()
+    if wanted_ids:
+        try:
+            found_ids = {
+                event_id
+                for event_id, position in zip(
+                    wanted_ids,
+                    lookup_event_positions(group.ledger_path, wanted_ids),
+                )
+                if position is not None
+            }
+        except Exception:
+            found_ids = set()
+
+    out: Dict[str, Tuple[str, Optional[Any]]] = {}
+    for actor_id in actor_ids:
+        cursor = cursor_doc.get(actor_id)
+        cursor_ts = str(cursor.get("ts") or "") if isinstance(cursor, dict) else ""
+        cursor_id = cursor_ids.get(actor_id, "")
+        out[actor_id] = (
+            cursor_id if cursor_id in found_ids else "",
+            parse_utc_iso(cursor_ts) if cursor_ts else None,
+        )
+    return out
+
+
+def _ledger_positions(group: Group, event_ids: Iterable[str]) -> Dict[str, Tuple[int, int]]:
+    wanted_ids = list(
+        dict.fromkeys(
+            str(event_id or "").strip()
+            for event_id in event_ids
+            if str(event_id or "").strip()
+        )
+    )
+    if not wanted_ids:
+        return {}
+    try:
+        positions = lookup_event_positions(group.ledger_path, wanted_ids)
+    except Exception:
+        return {}
+    return {
+        event_id: position
+        for event_id, position in zip(wanted_ids, positions)
+        if position is not None
+    }
+
+
+def _cursor_record_covers_event(
+    cursor: Any,
+    event: Dict[str, Any],
+    *,
+    positions: Dict[str, Tuple[int, int]],
+) -> bool:
+    cursor_event_id = str(cursor.get("event_id") or "").strip() if isinstance(cursor, dict) else ""
+    event_id = str(event.get("id") or "").strip()
+    if cursor_event_id and cursor_event_id == event_id:
+        return True
+    cursor_position = positions.get(cursor_event_id)
+    event_position = positions.get(event_id)
+    if cursor_position is not None and event_position is not None:
+        return cursor_position >= event_position
+
+    cursor_ts = str(cursor.get("ts") or "") if isinstance(cursor, dict) else ""
+    cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
+    event_dt = parse_utc_iso(str(event.get("ts") or ""))
+    return bool(cursor_dt is not None and event_dt is not None and event_dt <= cursor_dt)
+
+
+def _event_after_cursor_boundary(
+    event: Dict[str, Any],
+    *,
+    cursor_event_id: str,
+    cursor_dt: Optional[Any],
+    cursor_seen: bool,
+) -> Tuple[bool, bool]:
+    if cursor_event_id:
+        if cursor_seen:
+            return True, True
+        if str(event.get("id") or "").strip() == cursor_event_id:
+            return False, True
+        return False, False
+    if cursor_dt is not None:
+        event_dt = parse_utc_iso(str(event.get("ts") or ""))
+        if event_dt is not None and event_dt <= cursor_dt:
+            return False, True
+    return True, True
+
+
+def cursor_covers_event(group: Group, *, actor_id: str, event: Dict[str, Any]) -> bool:
+    """Return whether the cursor is at or after an event in append-only ledger order."""
+    cursor_event_id, cursor_ts = get_cursor(group, actor_id)
+    event_id = str(event.get("id") or "").strip()
+    positions = _ledger_positions(group, [cursor_event_id, event_id])
+    return _cursor_record_covers_event(
+        {"event_id": cursor_event_id, "ts": cursor_ts},
+        event,
+        positions=positions,
+    )
+
+
 def set_cursor(group: Group, actor_id: str, *, event_id: str, ts: str) -> Dict[str, Any]:
     """Set an actor's read cursor (monotonic forward-only)."""
     cursors = load_cursors(group)
     cur = cursors.get(actor_id)
 
-    # Ensure the cursor moves forward (never backwards).
     if isinstance(cur, dict):
-        cur_ts = str(cur.get("ts") or "")
-        if cur_ts:
-            cur_dt = parse_utc_iso(cur_ts)
-            new_dt = parse_utc_iso(ts)
-            if cur_dt is not None and new_dt is not None and new_dt < cur_dt:
-                # Do not allow moving backwards.
-                return dict(cur)
+        current_event_id = str(cur.get("event_id") or "").strip()
+        if current_event_id == str(event_id or "").strip() or cursor_covers_event(
+            group,
+            actor_id=actor_id,
+            event={"id": str(event_id or "").strip(), "ts": str(ts or "")},
+        ):
+            return dict(cur)
 
     cursors[str(actor_id)] = {
         "event_id": str(event_id),
@@ -684,6 +799,12 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
 
     acked_by_message = _collect_chat_acks(group, event_ids=target_ids)
     replied_by_message = _collect_chat_replies(group, event_ids=target_ids)
+    cursor_event_ids = [
+        str(cursor.get("event_id") or "").strip()
+        for cursor in cursors.values()
+        if isinstance(cursor, dict) and str(cursor.get("event_id") or "").strip()
+    ]
+    positions = _ledger_positions(group, [*target_ids, *cursor_event_ids])
 
     result: Dict[str, Dict[str, Dict[str, bool]]] = {}
 
@@ -738,9 +859,7 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
         status: Dict[str, Dict[str, bool]] = {}
         for rid in recipients:
             cur = cursors.get(rid)
-            cur_ts = str(cur.get("ts") or "") if isinstance(cur, dict) else ""
-            cur_dt = parse_utc_iso(cur_ts) if cur_ts else None
-            read = bool(cur_dt is not None and cur_dt >= ev_dt)
+            read = _cursor_record_covers_event(cur, ev, positions=positions)
 
             replied = rid in replied_set
             acked = replied or (rid in acked_set)
@@ -850,8 +969,8 @@ def unread_messages(group: Group, *, actor_id: str, limit: int = 50, kind_filter
             - "chat": chat.message only
             - "notify": system.notify only
     """
-    _, cursor_ts = get_cursor(group, actor_id)
-    cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
+    cursor_event_id, cursor_dt = _cursor_boundaries(group, [actor_id])[actor_id]
+    cursor_seen = not bool(cursor_event_id)
 
     # Determine which kinds to include.
     if kind_filter == "chat":
@@ -864,7 +983,15 @@ def unread_messages(group: Group, *, actor_id: str, limit: int = 50, kind_filter
     out: List[Dict[str, Any]] = []
     for ev in iter_events(group.ledger_path):
         ev_kind = str(ev.get("kind") or "")
-        if ev_kind not in allowed_kinds:
+        if ev_kind not in allowed_kinds and str(ev.get("id") or "").strip() != cursor_event_id:
+            continue
+        after_cursor, cursor_seen = _event_after_cursor_boundary(
+            ev,
+            cursor_event_id=cursor_event_id,
+            cursor_dt=cursor_dt,
+            cursor_seen=cursor_seen,
+        )
+        if not after_cursor or ev_kind not in allowed_kinds:
             continue
         # Exclude messages sent by the actor itself.
         if ev_kind == "chat.message" and str(ev.get("by") or "") == actor_id:
@@ -872,11 +999,6 @@ def unread_messages(group: Group, *, actor_id: str, limit: int = 50, kind_filter
         # Check delivery/visibility rules.
         if not is_message_for_actor(group, actor_id=actor_id, event=ev):
             continue
-        # Check read cursor.
-        if cursor_dt is not None:
-            ev_dt = parse_utc_iso(str(ev.get("ts") or ""))
-            if ev_dt is not None and ev_dt <= cursor_dt:
-                continue
         out.append(ev)
         if limit > 0 and len(out) >= limit:
             break
@@ -891,8 +1013,8 @@ def unread_count(group: Group, *, actor_id: str, kind_filter: MessageKindFilter 
         actor_id: Actor id
         kind_filter: Same semantics as unread_messages()
     """
-    _, cursor_ts = get_cursor(group, actor_id)
-    cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
+    cursor_event_id, cursor_dt = _cursor_boundaries(group, [actor_id])[actor_id]
+    cursor_seen = not bool(cursor_event_id)
 
     # Determine which kinds to include.
     if kind_filter == "chat":
@@ -905,16 +1027,20 @@ def unread_count(group: Group, *, actor_id: str, kind_filter: MessageKindFilter 
     count = 0
     for ev in iter_events(group.ledger_path):
         ev_kind = str(ev.get("kind") or "")
-        if ev_kind not in allowed_kinds:
+        if ev_kind not in allowed_kinds and str(ev.get("id") or "").strip() != cursor_event_id:
+            continue
+        after_cursor, cursor_seen = _event_after_cursor_boundary(
+            ev,
+            cursor_event_id=cursor_event_id,
+            cursor_dt=cursor_dt,
+            cursor_seen=cursor_seen,
+        )
+        if not after_cursor or ev_kind not in allowed_kinds:
             continue
         if ev_kind == "chat.message" and str(ev.get("by") or "") == actor_id:
             continue
         if not is_message_for_actor(group, actor_id=actor_id, event=ev):
             continue
-        if cursor_dt is not None:
-            ev_dt = parse_utc_iso(str(ev.get("ts") or ""))
-            if ev_dt is not None and ev_dt <= cursor_dt:
-                continue
         count += 1
     return count
 
@@ -943,14 +1069,9 @@ def batch_unread_counts(
 
     # Load all cursors at once
     cursors = load_cursors(group)
-    actor_cursor_dts: Dict[str, Optional[Any]] = {}
-    for aid in actor_ids:
-        cur = cursors.get(aid)
-        if isinstance(cur, dict):
-            cursor_ts = str(cur.get("ts") or "")
-            actor_cursor_dts[aid] = parse_utc_iso(cursor_ts) if cursor_ts else None
-        else:
-            actor_cursor_dts[aid] = None
+    cursor_boundaries = _cursor_boundaries(group, actor_ids, cursors=cursors)
+    cursor_seen = {aid: not bool(cursor_boundaries[aid][0]) for aid in actor_ids}
+    cursor_anchor_ids = {boundary[0] for boundary in cursor_boundaries.values() if boundary[0]}
 
     # Determine which kinds to include
     if kind_filter == "chat":
@@ -969,24 +1090,28 @@ def batch_unread_counts(
     # Single pass through the ledger
     for ev in iter_events(group.ledger_path):
         ev_kind = str(ev.get("kind") or "")
-        if ev_kind not in allowed_kinds:
+        event_id = str(ev.get("id") or "").strip()
+        if ev_kind not in allowed_kinds and event_id not in cursor_anchor_ids:
             continue
 
         ev_by = str(ev.get("by") or "")
-        ev_ts = str(ev.get("ts") or "")
-        ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
 
         # Check each actor
         for aid in actor_ids:
+            cursor_event_id, cursor_dt = cursor_boundaries[aid]
+            after_cursor, cursor_seen[aid] = _event_after_cursor_boundary(
+                ev,
+                cursor_event_id=cursor_event_id,
+                cursor_dt=cursor_dt,
+                cursor_seen=cursor_seen[aid],
+            )
+            if not after_cursor or ev_kind not in allowed_kinds:
+                continue
             # Exclude messages sent by the actor itself
             if ev_kind == "chat.message" and ev_by == aid:
                 continue
             # Check delivery/visibility rules (pass pre-computed role)
             if not is_message_for_actor(group, actor_id=aid, event=ev, role=actor_roles[aid]):
-                continue
-            # Check read cursor
-            cursor_dt = actor_cursor_dts[aid]
-            if cursor_dt is not None and ev_dt is not None and ev_dt <= cursor_dt:
                 continue
             counts[aid] += 1
 
@@ -1005,8 +1130,8 @@ def latest_unread_event(
     only up to the latest currently-unread message, without requiring clients
     to enumerate every event_id.
     """
-    _, cursor_ts = get_cursor(group, actor_id)
-    cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
+    cursor_event_id, cursor_dt = _cursor_boundaries(group, [actor_id])[actor_id]
+    cursor_seen = not bool(cursor_event_id)
 
     if kind_filter == "chat":
         allowed_kinds = {"chat.message"}
@@ -1018,16 +1143,20 @@ def latest_unread_event(
     last: Optional[Dict[str, Any]] = None
     for ev in iter_events(group.ledger_path):
         ev_kind = str(ev.get("kind") or "")
-        if ev_kind not in allowed_kinds:
+        if ev_kind not in allowed_kinds and str(ev.get("id") or "").strip() != cursor_event_id:
+            continue
+        after_cursor, cursor_seen = _event_after_cursor_boundary(
+            ev,
+            cursor_event_id=cursor_event_id,
+            cursor_dt=cursor_dt,
+            cursor_seen=cursor_seen,
+        )
+        if not after_cursor or ev_kind not in allowed_kinds:
             continue
         if ev_kind == "chat.message" and str(ev.get("by") or "") == actor_id:
             continue
         if not is_message_for_actor(group, actor_id=actor_id, event=ev):
             continue
-        if cursor_dt is not None:
-            ev_dt = parse_utc_iso(str(ev.get("ts") or ""))
-            if ev_dt is not None and ev_dt <= cursor_dt:
-                continue
         last = ev
     return last
 
@@ -1141,36 +1270,7 @@ def get_read_status(group: Group, event_id: str) -> Dict[str, bool]:
     if str(ev.get("kind") or "") != "chat.message":
         return {}
 
-    ev_ts = str(ev.get("ts") or "")
-    ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
-    if ev_dt is None:
-        return {}
-
-    cursors = load_cursors(group)
-    result: Dict[str, bool] = {}
-
-    by = str(ev.get("by") or "").strip()
-
-    for actor in list_actors(group):
-        if not isinstance(actor, dict):
-            continue
-        actor_id = str(actor.get("id") or "").strip()
-        if not actor_id or actor_id == "user" or actor_id == by:
-            continue
-        created_ts = str(actor.get("created_at") or "").strip()
-        created_dt = parse_utc_iso(created_ts) if created_ts else None
-        if created_dt is not None and created_dt > ev_dt:
-            # Actor did not exist yet at the time of this message.
-            continue
-        if not is_message_for_actor(group, actor_id=actor_id, event=ev):
-            continue
-
-        cur = cursors.get(actor_id)
-        cur_ts = str(cur.get("ts") or "") if isinstance(cur, dict) else ""
-        cur_dt = parse_utc_iso(cur_ts) if cur_ts else None
-        result[actor_id] = bool(cur_dt is not None and cur_dt >= ev_dt)
-
-    return result
+    return get_read_status_batch(group, [ev]).get(str(ev.get("id") or ""), {})
 
 
 def get_read_status_batch(
@@ -1192,6 +1292,17 @@ def get_read_status_batch(
     # Load shared data once
     cursors = load_cursors(group)
     actors = list_actors(group)
+    event_ids = [
+        str(event.get("id") or "").strip()
+        for event in events
+        if str(event.get("id") or "").strip()
+    ]
+    cursor_event_ids = [
+        str(cursor.get("event_id") or "").strip()
+        for cursor in cursors.values()
+        if isinstance(cursor, dict) and str(cursor.get("event_id") or "").strip()
+    ]
+    positions = _ledger_positions(group, [*event_ids, *cursor_event_ids])
 
     result: Dict[str, Dict[str, bool]] = {}
 
@@ -1226,9 +1337,7 @@ def get_read_status_batch(
                 continue
 
             cur = cursors.get(actor_id)
-            cur_ts = str(cur.get("ts") or "") if isinstance(cur, dict) else ""
-            cur_dt = parse_utc_iso(cur_ts) if cur_ts else None
-            status[actor_id] = bool(cur_dt is not None and cur_dt >= ev_dt)
+            status[actor_id] = _cursor_record_covers_event(cur, ev, positions=positions)
 
         result[event_id] = status
 

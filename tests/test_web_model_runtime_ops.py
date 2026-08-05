@@ -160,6 +160,101 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_delivered_turn_commits_through_ledger_tail_when_timestamp_regresses(self) -> None:
+        from cccc.contracts.v1.event import Event as ContractEvent
+        from cccc.daemon.actors.web_model_runtime_ops import commit_web_model_delivered_turn
+        from cccc.kernel.inbox import get_cursor, unread_messages
+        from cccc.kernel.ledger import append_event
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            timestamps = iter(["2099-01-01T00:00:01Z", "2099-01-01T00:00:00Z"])
+
+            def fixed_event(**kwargs):
+                return ContractEvent(ts=next(timestamps), **kwargs)
+
+            with patch("cccc.kernel.ledger.Event", side_effect=fixed_event):
+                first = append_event(
+                    group.ledger_path,
+                    kind="chat.message",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by="user",
+                    data={"text": "first", "to": ["peer1"]},
+                )
+                second = append_event(
+                    group.ledger_path,
+                    kind="chat.message",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by="user",
+                    data={"text": "later append with older timestamp", "to": ["peer1"]},
+                )
+
+            result = commit_web_model_delivered_turn(
+                group,
+                actor_id="peer1",
+                turn={"event_ids": [first["id"], second["id"]], "latest_event_id": second["id"]},
+                by="peer1",
+            )
+
+            self.assertTrue(result.get("ok"), result)
+            self.assertEqual((result.get("cursor") or {}).get("event_id"), second["id"])
+            self.assertEqual(get_cursor(group, "peer1")[0], second["id"])
+            self.assertEqual(unread_messages(group, actor_id="peer1"), [])
+        finally:
+            cleanup()
+
+    def test_complete_turn_commits_through_ledger_tail_when_timestamp_regresses(self) -> None:
+        from cccc.contracts.v1.event import Event as ContractEvent
+        from cccc.kernel.inbox import get_cursor, unread_messages
+        from cccc.kernel.ledger import append_event
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            timestamps = iter(["2099-01-01T00:00:01Z", "2099-01-01T00:00:00Z"])
+
+            def fixed_event(**kwargs):
+                return ContractEvent(ts=next(timestamps), **kwargs)
+
+            with patch("cccc.kernel.ledger.Event", side_effect=fixed_event):
+                first = append_event(
+                    group.ledger_path,
+                    kind="chat.message",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by="user",
+                    data={"text": "first", "to": ["peer1"]},
+                )
+                second = append_event(
+                    group.ledger_path,
+                    kind="chat.message",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by="user",
+                    data={"text": "later append with older timestamp", "to": ["peer1"]},
+                )
+
+            complete, _ = self._call(
+                "web_model_runtime_complete_turn",
+                {
+                    "group_id": group.group_id,
+                    "actor_id": "peer1",
+                    "by": "peer1",
+                    "event_ids": [first["id"], second["id"]],
+                    "status": "done",
+                },
+            )
+
+            self.assertTrue(complete.ok, getattr(complete, "error", None))
+            self.assertEqual(((complete.result or {}).get("cursor") or {}).get("event_id"), second["id"])
+            self.assertEqual(get_cursor(group, "peer1")[0], second["id"])
+            self.assertEqual(unread_messages(group, actor_id="peer1"), [])
+        finally:
+            cleanup()
+
     def test_actor_list_reports_web_model_messages_queued_after_active_turn(self) -> None:
         from cccc.kernel.ledger import append_event
 

@@ -16,6 +16,13 @@ def _release_workflow() -> dict:
     return yaml.load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
 
 
+def _rust_release_workflow() -> dict:
+    return yaml.load(
+        (ROOT / ".github/workflows/release-rust.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+
 def _runs(job: dict) -> str:
     return "\n".join(step.get("run", "") for step in job.get("steps", []))
 
@@ -170,3 +177,30 @@ def test_release_builds_on_314_and_smokes_the_wheel_on_the_311_floor() -> None:
     platform_rows = jobs["verify-platform-smoke"]["strategy"]["matrix"]["include"]
     assert any(row["os"] == "ubuntu-latest" and row["python_version"] == "3.11" for row in platform_rows)
     assert all(row["python_version"] == "3.14" for row in platform_rows if row["os"] != "ubuntu-latest")
+
+
+def test_manual_release_dispatch_is_a_dry_run_and_one_tag_drives_both_distributions() -> None:
+    python_release = _release_workflow()
+    rust_release = _rust_release_workflow()
+
+    assert python_release["jobs"]["publish"]["if"] == "github.event_name == 'push'"
+    assert rust_release["jobs"]["publish"]["if"] == "github.event_name == 'push'"
+    assert python_release["on"]["push"]["tags"] == ["v*"]
+    assert rust_release["on"]["push"]["tags"] == ["v*"]
+
+    rust_publish_runs = _runs(rust_release["jobs"]["publish"])
+    assert "scripts/publish_rust_crates.sh --publish" in rust_publish_runs
+    shared_tag_check = 'python scripts/check_release_versions.py --tag "$GITHUB_REF_NAME"'
+    assert shared_tag_check in _runs(rust_release["jobs"]["build"])
+    assert any(
+        step.get("uses", "").startswith("actions/setup-python")
+        for step in rust_release["jobs"]["publish"]["steps"]
+    )
+
+    python_tag_check = next(
+        step
+        for step in python_release["jobs"]["verify-linux"]["steps"]
+        if step.get("name") == "Verify tag matches package version"
+    )
+    assert python_tag_check["if"] == "github.event_name == 'push'"
+    assert python_tag_check["run"] == shared_tag_check

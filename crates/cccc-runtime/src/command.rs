@@ -19,6 +19,7 @@ pub fn default_command(runtime: ActorRuntime) -> Vec<String> {
         ActorRuntime::Antigravity => "agy --dangerously-skip-permissions",
         ActorRuntime::Auggie => "auggie",
         ActorRuntime::Claude => "claude --dangerously-skip-permissions",
+        ActorRuntime::Cline => "cline --tui --auto-approve true",
         ActorRuntime::Codex => {
             "codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search"
         }
@@ -41,6 +42,7 @@ pub fn default_command(runtime: ActorRuntime) -> Vec<String> {
 pub fn detect_runtimes() -> Vec<RuntimeProbe> {
     serde_json::from_value::<Vec<ActorRuntime>>(serde_json::json!([
         "claude",
+        "cline",
         "codex",
         "copilot",
         "cursor",
@@ -84,6 +86,7 @@ const fn runtime_name(runtime: ActorRuntime) -> &'static str {
         ActorRuntime::Antigravity => "antigravity",
         ActorRuntime::Auggie => "auggie",
         ActorRuntime::Claude => "claude",
+        ActorRuntime::Cline => "cline",
         ActorRuntime::Codex => "codex",
         ActorRuntime::Copilot => "copilot",
         ActorRuntime::Cursor => "cursor",
@@ -106,6 +109,7 @@ const fn display_name(runtime: ActorRuntime) -> &'static str {
         ActorRuntime::Antigravity => "Antigravity",
         ActorRuntime::Auggie => "Auggie",
         ActorRuntime::Claude => "Claude Code",
+        ActorRuntime::Cline => "Cline CLI",
         ActorRuntime::Codex => "Codex CLI",
         ActorRuntime::Copilot => "GitHub Copilot",
         ActorRuntime::Cursor => "Cursor Agent",
@@ -148,7 +152,8 @@ fn find_executable(command: &str) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::detect_runtimes;
+    use super::{default_command, detect_runtimes};
+    use cccc_contracts::ActorRuntime;
 
     #[test]
     fn runtime_discovery_returns_frontend_contract() {
@@ -160,5 +165,15 @@ mod tests {
         assert_eq!(custom.display_name, "Custom");
         assert!(custom.available);
         assert!(runtimes.iter().any(|runtime| runtime.name == "codex"));
+        let cline = runtimes
+            .iter()
+            .find(|runtime| runtime.name == "cline")
+            .expect("cline runtime");
+        assert_eq!(cline.display_name, "Cline CLI");
+        assert_eq!(cline.recommended_command, "cline --tui --auto-approve true");
+        assert_eq!(
+            default_command(ActorRuntime::Cline),
+            ["cline", "--tui", "--auto-approve", "true"]
+        );
     }
 }

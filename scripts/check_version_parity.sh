@@ -10,9 +10,43 @@ if [[ -z "$python_version" || -z "$rust_version" ]]; then
   exit 1
 fi
 
-if [[ "$python_version" != "$rust_version" ]]; then
-  echo "CCCC version mismatch: Python=$python_version Rust=$rust_version" >&2
+if command -v python >/dev/null 2>&1; then
+  version_python=python
+elif command -v python3 >/dev/null 2>&1; then
+  version_python=python3
+else
+  echo "python is required to validate CCCC release versions" >&2
   exit 1
 fi
+"$version_python" "$ROOT_DIR/scripts/check_release_versions.py" \
+  --python-version "$python_version" \
+  --rust-version "$rust_version" >/dev/null
+
+for manifest in "$ROOT_DIR"/crates/cccc-*/Cargo.toml; do
+  crate_name="$(sed -n 's/^name = "\([^"]*\)"/\1/p' "$manifest" | head -1)"
+  if ! sed -n '/^\[package\]$/,/^\[/p' "$manifest" | grep -qx 'version.workspace = true'; then
+    echo "CCCC version mismatch: ${crate_name:-$manifest} must inherit workspace.package.version" >&2
+    exit 1
+  fi
+
+  lock_version="$(sed -n "/^name = \"$crate_name\"$/,/^\[\[package\]\]$/s/^version = \"\([^\"]*\)\"/\1/p" "$ROOT_DIR/Cargo.lock" | head -1)"
+  if [[ "$lock_version" != "$rust_version" ]]; then
+    echo "CCCC lockfile version mismatch: ${crate_name:-$manifest}=$lock_version, expected $rust_version" >&2
+    exit 1
+  fi
+
+  while IFS= read -r dependency_version; do
+    if [[ "$dependency_version" != "=$rust_version" ]]; then
+      echo "CCCC dependency version mismatch in $manifest: expected =$rust_version, found $dependency_version" >&2
+      exit 1
+    fi
+  done < <(sed -n 's/.*package = "cccc-pair-[^"]*".*version = "\([^"]*\)".*/\1/p' "$manifest")
+done
+
+command -v cargo >/dev/null 2>&1 || {
+  echo "cargo is required to validate Cargo.lock version parity" >&2
+  exit 1
+}
+cargo metadata --locked --format-version 1 --no-deps >/dev/null
 
 echo "CCCC version parity: $rust_version"

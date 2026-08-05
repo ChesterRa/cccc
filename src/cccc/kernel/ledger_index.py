@@ -755,6 +755,33 @@ def lookup_events_by_ids(ledger_path: Path, event_ids: list[str]) -> list[Option
     return [found.get(event_id) if event_id else None for event_id in wanted_ids]
 
 
+def lookup_event_positions(ledger_path: Path, event_ids: list[str]) -> list[Optional[tuple[int, int]]]:
+    """Resolve event ids to append-order positions without reparsing event bodies."""
+
+    wanted_ids = [str(event_id or "").strip() for event_id in event_ids]
+    if not wanted_ids:
+        return []
+
+    unique_ids = [event_id for event_id in dict.fromkeys(wanted_ids) if event_id]
+    if not unique_ids:
+        return [None for _ in wanted_ids]
+
+    placeholders = ", ".join("?" for _ in unique_ids)
+    rows = _query_ledger_index(
+        ledger_path,
+        lambda conn: conn.execute(
+            f"SELECT event_id, source_seq, line_no FROM events WHERE event_id IN ({placeholders})",
+            tuple(unique_ids),
+        ).fetchall(),
+    )
+    found = {
+        str(row[0] or "").strip(): (int(row[1] or 0), int(row[2] or 0))
+        for row in rows
+        if str(row[0] or "").strip()
+    }
+    return [found.get(event_id) if event_id else None for event_id in wanted_ids]
+
+
 def _chunks(items: list[str], size: int = 500) -> list[list[str]]:
     chunk_size = max(1, int(size or 500))
     return [items[idx : idx + chunk_size] for idx in range(0, len(items), chunk_size)]

@@ -88,6 +88,85 @@ class TestMcpInstall(unittest.TestCase):
                 ["cccc", "runtime", "hermes", "prepare", "--yes"],
             )
 
+    def test_build_mcp_add_command_cline_uses_noninteractive_stdio_setup(self) -> None:
+        with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+            self.assertEqual(
+                build_mcp_add_command("cline"),
+                ["cline", "mcp", "add", "cccc", "--yes", "--", "/abs/cccc", "mcp"],
+            )
+
+    def test_is_mcp_installed_cline_reads_nested_transport_config(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            settings_path = Path(td) / "cline_mcp_settings.json"
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "cccc": {
+                                "transport": {
+                                    "type": "stdio",
+                                    "command": "/abs/cccc",
+                                    "args": ["mcp"],
+                                }
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env = {"CLINE_MCP_SETTINGS_PATH": str(settings_path)}
+            with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+                self.assertTrue(is_mcp_installed("cline", env=env))
+
+    def test_is_mcp_installed_cline_rejects_stale_nested_transport_config(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cline_dir = Path(td) / "cline-home"
+            settings_path = cline_dir / "data" / "settings" / "cline_mcp_settings.json"
+            settings_path.parent.mkdir(parents=True)
+            settings_path.write_text(
+                json.dumps(
+                    {
+                        "mcpServers": {
+                            "cccc": {
+                                "transport": {
+                                    "type": "stdio",
+                                    "command": "/old/cccc",
+                                    "args": ["mcp"],
+                                }
+                            }
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+            env = {"CLINE_DIR": str(cline_dir)}
+            with patch.dict(
+                os.environ,
+                {"CLINE_MCP_SETTINGS_PATH": "", "CLINE_DATA_DIR": "", "CLINE_DIR": ""},
+                clear=False,
+            ), patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
+                self.assertFalse(is_mcp_installed("cline", env=env))
+
+    def test_ensure_mcp_installed_cline_repairs_stale_config_by_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install._runtime_mcp_state", side_effect=["stale", "ready"]), patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["/abs/cccc", "mcp"],
+            ), patch("cccc.daemon.mcp_install.resolve_subprocess_argv", side_effect=lambda argv: list(argv)):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ok = ensure_mcp_installed("cline", cwd, auto_mcp_runtimes=("cline",))
+
+            self.assertTrue(ok)
+            mock_run.assert_called_once_with(
+                ["cline", "mcp", "add", "cccc", "--yes", "--", "/abs/cccc", "mcp"],
+                capture_output=True,
+                text=True,
+                cwd=str(cwd),
+                timeout=30,
+            )
+
     def test_build_mcp_add_command_grok_uses_command_args_and_unbuffered_env(self) -> None:
         with patch("cccc.daemon.mcp_install.get_cccc_mcp_stdio_command", return_value=["/abs/cccc", "mcp"]):
             self.assertEqual(

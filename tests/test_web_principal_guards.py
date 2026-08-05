@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -83,6 +84,54 @@ class TestWebPrincipalGuards(unittest.TestCase):
             groups = ((resp.json().get("result") or {}).get("groups") or [])
             ids = sorted(str(item.get("group_id") or item.get("id") or "") for item in groups if isinstance(item, dict))
             self.assertEqual(ids, [gid1])
+        finally:
+            cleanup()
+
+    def test_scoped_query_token_global_stream_filters_other_groups(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            allowed_group = "g_allowed"
+            denied_group = "g_denied"
+            token = str(
+                create_access_token(
+                    "user-a",
+                    allowed_groups=[allowed_group],
+                    is_admin=False,
+                ).get("token")
+                or ""
+            )
+
+            async def fake_global_tail(*_args, **_kwargs):
+                yield b": connected\n\n"
+                for group_id, marker in (
+                    (denied_group, "DENIED_GROUP_TITLE"),
+                    (allowed_group, "ALLOWED_GROUP_TITLE"),
+                ):
+                    payload = json.dumps(
+                        {
+                            "v": 1,
+                            "id": f"ev_{group_id}",
+                            "ts": "2026-08-05T00:00:00Z",
+                            "kind": "group.updated",
+                            "data": {"group_id": group_id, "title": marker},
+                        }
+                    )
+                    yield f"event: event\ndata: {payload}\n\n".encode()
+
+            with patch(
+                "cccc.ports.web.streams.sse_jsonl_tail_shared",
+                new=fake_global_tail,
+            ):
+                client = self._create_client()
+                resp = client.get(f"/api/v1/events/stream?token={token}")
+
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn(allowed_group, resp.text)
+            self.assertNotIn("ALLOWED_GROUP_TITLE", resp.text)
+            self.assertNotIn(denied_group, resp.text)
+            self.assertNotIn("DENIED_GROUP_TITLE", resp.text)
         finally:
             cleanup()
 

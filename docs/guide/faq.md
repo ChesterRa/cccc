@@ -84,6 +84,7 @@ fails browser startup when Xvfb is missing instead of silently falling back to t
 ### Which AI agents are supported?
 
 - Claude Code (`claude`)
+- Cline CLI (`cline`)
 - Codex CLI (`codex`)
 - GitHub Copilot CLI (`copilot`)
 - Cursor CLI (`cursor-agent`)

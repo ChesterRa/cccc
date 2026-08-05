@@ -1016,6 +1016,11 @@ class AutomationManager:
         all_events, chat_events = self._load_nudge_candidate_events(group)
 
         obligation_map = get_obligation_status_batch(group, chat_events)
+        event_positions = {
+            str(event.get("id") or "").strip(): index
+            for index, event in enumerate(all_events)
+            if str(event.get("id") or "").strip()
+        }
 
         resume_dt: Optional[datetime] = None
         to_nudge: List[Tuple[str, str, str, List[str], bool]] = []
@@ -1040,8 +1045,9 @@ class AutomationManager:
                     if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
                         continue
 
-                _, cursor_ts = get_cursor(group, aid)
+                cursor_event_id, cursor_ts = get_cursor(group, aid)
                 cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
+                cursor_position = event_positions.get(cursor_event_id)
 
                 pending_reply_required: List[Tuple[str, str]] = []
                 pending_attention_ack: List[Tuple[str, str]] = []
@@ -1053,7 +1059,7 @@ class AutomationManager:
                 item_lines: List[str] = []
                 escalate = False
 
-                for ev in all_events:
+                for event_position, ev in enumerate(all_events):
                     kind = str(ev.get("kind") or "")
                     if kind == "chat.message" and str(ev.get("by") or "") == aid:
                         continue
@@ -1071,7 +1077,12 @@ class AutomationManager:
                     if resume_dt is not None and base_dt < resume_dt:
                         base_dt = resume_dt
 
-                    if not oldest_unread_ts and (cursor_dt is None or ev_dt > cursor_dt):
+                    after_cursor = (
+                        event_position > cursor_position
+                        if cursor_position is not None
+                        else cursor_dt is None or ev_dt > cursor_dt
+                    )
+                    if not oldest_unread_ts and after_cursor:
                         oldest_unread_ts = ev_ts
 
                     if kind != "chat.message":

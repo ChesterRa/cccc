@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from pathlib import Path
@@ -83,11 +84,49 @@ async def sse_ledger_tail(path: Path) -> AsyncIterator[bytes]:
         yield item
 
 
-async def sse_global_events_tail(home: Path | None = None) -> AsyncIterator[bytes]:
+def _global_event_metadata(item: bytes) -> tuple[bytes, str] | None:
+    for line in item.splitlines():
+        if not line.startswith(b"data: "):
+            continue
+        try:
+            event = json.loads(line[6:].decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        if not isinstance(event, dict):
+            return None
+        direct = str(event.get("group_id") or "").strip()
+        if not direct:
+            data = event.get("data")
+            if isinstance(data, dict):
+                direct = str(data.get("group_id") or "").strip()
+        metadata = {
+            "v": event.get("v", 1),
+            "id": str(event.get("id") or ""),
+            "ts": str(event.get("ts") or ""),
+            "kind": str(event.get("kind") or ""),
+            "group_id": direct,
+        }
+        encoded = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+        return f"event: event\ndata: {encoded}\n\n".encode("utf-8"), direct
+    return None
+
+
+async def sse_global_events_tail(
+    home: Path | None = None,
+    *,
+    allowed_group_ids: frozenset[str] | None = None,
+) -> AsyncIterator[bytes]:
     from ...kernel.events import global_events_path
 
     path = global_events_path(home)
     async for item in sse_jsonl_tail_shared(path, event_name="event", heartbeat_s=30.0):
+        if item.startswith(b"event: event\n"):
+            metadata = _global_event_metadata(item)
+            if metadata is None:
+                continue
+            item, group_id = metadata
+            if allowed_group_ids is not None and group_id not in allowed_group_ids:
+                continue
         yield item
 
 

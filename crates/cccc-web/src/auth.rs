@@ -184,6 +184,7 @@ fn requires_admin(method: &Method, path: &str) -> bool {
         || path == "/api/v1/debug/tail_logs"
         || path == "/api/v1/debug/clear_logs"
         || path.starts_with("/api/v1/capabilities/allowlist")
+        || path == "/api/v1/capabilities/block"
         || (path == "/api/v1/groups" && *method == Method::POST)
         || (*method == Method::DELETE && group_from_path(path).is_some())
         || path.ends_with("/reset")
@@ -251,6 +252,7 @@ mod tests {
             (Method::POST, "/api/v1/debug/clear_logs"),
             (Method::GET, "/api/v1/capabilities/allowlist"),
             (Method::POST, "/api/v1/capabilities/allowlist/validate"),
+            (Method::POST, "/api/v1/capabilities/block"),
         ] {
             assert!(requires_admin(&method, path), "{method} {path}");
         }

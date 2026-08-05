@@ -36,59 +36,8 @@ jobs:
           test -f src/cccc/ports/web/dist/index.html
 
       - name: Verify tag matches package version
-        run: |
-          python - <<'PY'
-          import os
-          import re
-
-          def _read_pyproject_version(path: str = "pyproject.toml") -> str:
-            in_project = False
-            with open(path, "r", encoding="utf-8") as f:
-              for raw in f:
-                line = raw.strip()
-                if not line or line.startswith("#"):
-                  continue
-                if line.startswith("[") and line.endswith("]"):
-                  in_project = (line == "[project]")
-                  continue
-                if in_project:
-                  m = re.match(r"^version\s*=\s*['\"]([^'\"]+)['\"]\s*(?:#.*)?$", line)
-                  if m:
-                    return m.group(1)
-            return ""
-
-          tag = os.environ.get("GITHUB_REF_NAME", "")
-          if not tag.startswith("v"):
-            raise SystemExit(f"expected tag like v0.4.0 or v0.4.0-rc1, got: {tag!r}")
-
-          tag_body = tag[1:]
-          expected = None
-
-          m = re.fullmatch(r"(\d+\.\d+\.\d+)", tag_body)
-          if m:
-            expected = m.group(1)
-
-          if expected is None:
-            m = re.fullmatch(r"(\d+\.\d+\.\d+)-(alpha|beta|rc)(\d+)", tag_body)
-            if m:
-              base, phase, num = m.group(1), m.group(2), m.group(3)
-              phase_map = {"alpha": "a", "beta": "b", "rc": "rc"}
-              expected = f"{base}{phase_map[phase]}{num}"
-
-          if expected is None:
-            m = re.fullmatch(r"(\d+\.\d+\.\d+)(a|b|rc)(\d+)", tag_body)
-            if m:
-              expected = f"{m.group(1)}{m.group(2)}{m.group(3)}"
-
-          if expected is None:
-            raise SystemExit(f"unsupported tag format: {tag!r}")
-
-          version = _read_pyproject_version()
-          if version != expected:
-            raise SystemExit(f"tag/version mismatch: tag={tag!r} -> expected {expected!r}, pyproject.toml has {version!r}")
-
-          print(f"OK: tag {tag!r} matches pyproject.toml version {version!r}")
-          PY
+        if: github.event_name == 'push'
+        run: python scripts/check_release_versions.py --tag "$GITHUB_REF_NAME"
 
       - name: Install build deps
         run: |
@@ -242,6 +191,7 @@ jobs:
           PY
 
   publish:
+    if: github.event_name == 'push'
     needs:
       - verify-linux
       - verify-platform-smoke

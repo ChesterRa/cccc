@@ -29,6 +29,7 @@ class TestSystemCmdsSetup(unittest.TestCase):
             Path(".").resolve(),
             auto_mcp_runtimes=(
                 "claude",
+                "cline",
                 "codex",
                 "copilot",
                 "devin",

@@ -508,6 +508,7 @@ dependencies = [
  "clap",
  "fs2",
  "futures-util",
+ "mime_guess",
  "nix",
  "regex",
  "reqwest 0.12.28",
@@ -595,7 +596,7 @@ dependencies = [
 
 [[package]]
 name = "cccc-pair-web"
-version = "0.4.33-compat.2"
+version = "0.4.33"
 dependencies = [
  "aes",
  "anyhow",

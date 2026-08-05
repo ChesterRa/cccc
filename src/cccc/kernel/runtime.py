@@ -56,6 +56,12 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "claude mcp add -s user {name} -- {cmd}",
     },
+    "cline": {
+        "display_name": "Cline CLI",
+        "command": "cline",
+        "capabilities": "MCP; MCP setup: auto; PTY TUI",
+        "mcp_add_pattern": "cline mcp add {name} --yes -- {cmd}",
+    },
     "codex": {
         "display_name": "Codex CLI",
         "command": "codex",
@@ -139,6 +145,7 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
 # First-class supported runtimes (CCCC manages startup defaults + MCP wiring)
 PRIMARY_RUNTIMES = [
     "claude",
+    "cline",
     "codex",
     "copilot",
     "cursor",
@@ -343,6 +350,7 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         "antigravity": ["agy", "--dangerously-skip-permissions"],
         "auggie": ["auggie"],
         "claude": ["claude", "--dangerously-skip-permissions"],
+        "cline": ["cline", "--tui", "--auto-approve", "true"],
         # Codex spawns MCP servers as subprocesses; ensure it inherits actor env (CCCC_GROUP_ID/CCCC_ACTOR_ID)
         # so MCP tools can resolve "self" context reliably.
         "codex": ["codex", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "--search"],

@@ -21,6 +21,7 @@ pub(super) fn is_global_write(request: &DaemonRequest) -> bool {
                 | "capability_import"
                 | "capability_uninstall"
                 | "capability_install"
+                | "capability_install_target"
                 | "capability_source_delete"
                 | "capability_allowlist_update"
                 | "capability_allowlist_reset"

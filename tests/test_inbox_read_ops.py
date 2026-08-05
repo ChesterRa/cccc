@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class TestInboxReadOps(unittest.TestCase):
@@ -201,6 +202,105 @@ class TestInboxReadOps(unittest.TestCase):
             self.assertFalse(is_message_for_actor(group, actor_id="internal-helper", event=all_event))
             self.assertFalse(is_message_for_actor(group, actor_id="internal-helper", event=broadcast_event))
             self.assertTrue(is_message_for_actor(group, actor_id="internal-helper", event=direct_event))
+        finally:
+            cleanup()
+
+    def test_read_cursor_follows_ledger_order_when_timestamps_collide_or_regress(self) -> None:
+        from cccc.contracts.v1.event import Event as ContractEvent
+        from cccc.kernel.actors import add_actor, list_actors
+        from cccc.kernel.group import create_group
+        from cccc.kernel.inbox import (
+            batch_unread_counts,
+            get_cursor,
+            get_indexed_unread_counts,
+            get_obligation_status_batch,
+            get_read_status,
+            get_read_status_batch,
+            latest_unread_event,
+            set_cursor,
+            unread_count,
+            unread_messages,
+        )
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="cursor-ledger-order", topic="")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="headless")  # type: ignore[arg-type]
+            timestamps = iter(
+                [
+                    "2099-01-01T00:00:01Z",
+                    "2099-01-01T00:00:01Z",
+                    "2099-01-01T00:00:00Z",
+                ]
+            )
+
+            def fixed_event(**kwargs):
+                return ContractEvent(ts=next(timestamps), **kwargs)
+
+            with patch("cccc.kernel.ledger.Event", side_effect=fixed_event):
+                events = [
+                    append_event(
+                        group.ledger_path,
+                        kind="chat.message",
+                        group_id=group.group_id,
+                        scope_key="",
+                        by="user",
+                        data={
+                            "text": text,
+                            "to": ["peer1"],
+                            "priority": "attention" if text == "clock moved backwards" else "normal",
+                        },
+                    )
+                    for text in ("first", "same timestamp", "clock moved backwards")
+                ]
+
+            set_cursor(group, "peer1", event_id=events[0]["id"], ts=events[0]["ts"])
+            self.assertEqual(
+                [event["id"] for event in unread_messages(group, actor_id="peer1")],
+                [events[1]["id"], events[2]["id"]],
+            )
+            self.assertEqual(unread_count(group, actor_id="peer1"), 2)
+            self.assertEqual(batch_unread_counts(group, actor_ids=["peer1"]), {"peer1": 2})
+            self.assertEqual((latest_unread_event(group, actor_id="peer1") or {}).get("id"), events[2]["id"])
+            self.assertEqual(get_read_status(group, events[1]["id"]).get("peer1"), False)
+            self.assertEqual(get_read_status_batch(group, events[1:])[events[2]["id"]].get("peer1"), False)
+            obligation = get_obligation_status_batch(group, [events[2]])[events[2]["id"]]["peer1"]
+            self.assertEqual(obligation.get("read"), False)
+            self.assertEqual(obligation.get("acked"), False)
+
+            with patch(
+                "cccc.kernel.inbox.iter_events",
+                side_effect=AssertionError("cursor advance must use the ledger index"),
+            ):
+                set_cursor(group, "peer1", event_id=events[2]["id"], ts=events[2]["ts"])
+            self.assertEqual(get_cursor(group, "peer1")[0], events[2]["id"])
+            self.assertEqual(unread_messages(group, actor_id="peer1"), [])
+            self.assertEqual(get_indexed_unread_counts(group, actors=list_actors(group)).get("peer1"), 0)
+
+            with patch(
+                "cccc.kernel.ledger.Event",
+                side_effect=lambda **kwargs: ContractEvent(ts="2098-12-31T23:59:59Z", **kwargs),
+            ):
+                later_in_ledger = append_event(
+                    group.ledger_path,
+                    kind="chat.message",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by="user",
+                    data={"text": "later append after another clock regression", "to": ["peer1"]},
+                )
+            self.assertEqual(get_indexed_unread_counts(group, actors=list_actors(group)).get("peer1"), 1)
+            self.assertEqual(
+                [event["id"] for event in unread_messages(group, actor_id="peer1")],
+                [later_in_ledger["id"]],
+            )
+            self.assertEqual(get_read_status(group, later_in_ledger["id"]).get("peer1"), False)
+            self.assertEqual(
+                get_read_status_batch(group, [later_in_ledger])[later_in_ledger["id"]].get("peer1"),
+                False,
+            )
         finally:
             cleanup()
 

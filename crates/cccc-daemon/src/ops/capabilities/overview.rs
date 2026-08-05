@@ -22,9 +22,11 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let offset = usize_arg(request, "offset", 0, usize::MAX);
     let limit = usize_arg(request, "limit", 400, 2_000);
     let catalog = store.catalog().map_err(OpError::io)?;
+    let removed = store.removed_for_group(&group_id).map_err(OpError::io)?;
 
     let mut rows = catalog
         .iter()
+        .filter(|capability| !removed.contains(&capability.id))
         .cloned()
         .map(|capability| {
             let blocked = effective.blocked.contains(&capability.id);

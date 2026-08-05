@@ -6104,12 +6104,13 @@ class TestCapabilityOps(unittest.TestCase):
             )
             self.assertTrue(uninstall_resp.ok, getattr(uninstall_resp, "error", None))
             uninstall_result = uninstall_resp.result if isinstance(uninstall_resp.result, dict) else {}
-            self.assertTrue(bool(uninstall_result.get("removed_record")))
+            self.assertFalse(bool(uninstall_result.get("removed_record")))
+            self.assertTrue(bool(uninstall_result.get("removed_group_marker")))
             self.assertGreaterEqual(int(uninstall_result.get("removed_actor_autoload") or 0), 1)
 
             _, catalog_after = ops._load_catalog_doc()
             rows_after = catalog_after.get("records") if isinstance(catalog_after.get("records"), dict) else {}
-            self.assertNotIn(capability_id, rows_after)
+            self.assertIn(capability_id, rows_after)
 
             actor_list, _ = self._call("actor_list", {"group_id": gid, "by": "user"})
             self.assertTrue(actor_list.ok, getattr(actor_list, "error", None))
@@ -6122,7 +6123,7 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_capability_uninstall_self_proposed_skill_removes_record_and_references(self) -> None:
+    def test_capability_uninstall_self_proposed_skill_is_group_scoped(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
         _, cleanup = self._with_home()
@@ -6225,15 +6226,16 @@ class TestCapabilityOps(unittest.TestCase):
             )
             self.assertTrue(uninstall_resp.ok, getattr(uninstall_resp, "error", None))
             uninstall_result = uninstall_resp.result if isinstance(uninstall_resp.result, dict) else {}
-            self.assertTrue(bool(uninstall_result.get("removed_record")))
+            self.assertFalse(bool(uninstall_result.get("removed_record")))
             self.assertGreaterEqual(int(uninstall_result.get("removed_bindings") or 0), 1)
-            self.assertGreaterEqual(int(uninstall_result.get("removed_blocked") or 0), 1)
+            self.assertEqual(int(uninstall_result.get("removed_blocked") or 0), 0)
+            self.assertTrue(bool(uninstall_result.get("removed_group_marker")))
             self.assertGreaterEqual(int(uninstall_result.get("removed_actor_autoload") or 0), 1)
-            self.assertGreaterEqual(int(uninstall_result.get("removed_profile_autoload") or 0), 1)
+            self.assertEqual(int(uninstall_result.get("removed_profile_autoload") or 0), 0)
 
             _, catalog_doc = ops._load_catalog_doc()
             rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
-            self.assertNotIn(capability_id, rows)
+            self.assertIn(capability_id, rows)
 
             _, runtime_after = ops._load_runtime_doc()
             recent_after = runtime_after.get("recent_success") if isinstance(runtime_after.get("recent_success"), dict) else {}
@@ -6241,9 +6243,12 @@ class TestCapabilityOps(unittest.TestCase):
 
             _, state_doc_after = ops._load_state_doc()
             global_blocked = state_doc_after.get("global_blocked") if isinstance(state_doc_after.get("global_blocked"), dict) else {}
-            self.assertNotIn(capability_id, global_blocked)
+            self.assertIn(capability_id, global_blocked)
 
-            overview_resp, _ = self._call("capability_overview", {"limit": 200, "include_indexed": True})
+            overview_resp, _ = self._call(
+                "capability_overview",
+                {"group_id": gid, "limit": 200, "include_indexed": True},
+            )
             self.assertTrue(overview_resp.ok, getattr(overview_resp, "error", None))
             overview = overview_resp.result if isinstance(overview_resp.result, dict) else {}
             overview_items = overview.get("items") if isinstance(overview.get("items"), list) else []
@@ -6251,7 +6256,7 @@ class TestCapabilityOps(unittest.TestCase):
             self.assertNotIn(capability_id, overview_ids)
             blocked_overview = overview.get("blocked_capabilities") if isinstance(overview.get("blocked_capabilities"), list) else []
             blocked_overview_ids = {str(item.get("capability_id") or "") for item in blocked_overview if isinstance(item, dict)}
-            self.assertNotIn(capability_id, blocked_overview_ids)
+            self.assertIn(capability_id, blocked_overview_ids)
 
             actor_list, _ = self._call("actor_list", {"group_id": gid, "by": "user"})
             self.assertTrue(actor_list.ok, getattr(actor_list, "error", None))
@@ -6268,7 +6273,7 @@ class TestCapabilityOps(unittest.TestCase):
             profile_after = (profile_get.result or {}).get("profile") if isinstance(profile_get.result, dict) else {}
             defaults = profile_after.get("capability_defaults") if isinstance(profile_after, dict) else {}
             profile_autoload = defaults.get("autoload_capabilities") if isinstance(defaults, dict) else []
-            self.assertNotIn(capability_id, profile_autoload)
+            self.assertIn(capability_id, profile_autoload)
             self.assertIn("pack:space", profile_autoload)
 
             state_resp, _ = self._call(

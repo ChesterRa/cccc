@@ -34,7 +34,7 @@ from ...contracts.v1 import SystemNotifyData
 from ...kernel.actors import find_actor, list_actors
 from ...kernel.delivery_policy import auto_mark_on_delivery_from_doc
 from ...kernel.group import Group, get_group_state, load_group, set_group_state
-from ...kernel.inbox import get_cursor, is_message_for_actor, set_cursor
+from ...kernel.inbox import cursor_covers_event, get_cursor, is_message_for_actor, set_cursor
 from ...kernel.ledger import append_event
 from ...kernel.runtime import (
     build_prompt_assisted_mcp_setup_prompt,
@@ -44,7 +44,7 @@ from ...kernel.system_prompt import render_system_prompt
 from ...runners import pty as pty_runner
 from ...runners import headless as headless_runner
 from ...util.fs import atomic_write_text, read_json
-from ...util.time import parse_utc_iso, utc_now_iso
+from ...util.time import utc_now_iso
 from .inbound_rendering import ActorInboundEnvelope, render_actor_inbound_message
 
 
@@ -1131,12 +1131,11 @@ def maybe_auto_mark_delivered_event(
         cursor = set_cursor(group, aid, event_id=delivered_event_id, ts=delivered_ts)
         cursor_event_id = str(cursor.get("event_id") or "")
         cursor_ts = str(cursor.get("ts") or "")
-        delivered_dt = parse_utc_iso(delivered_ts)
-        cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
-        if delivered_dt is not None and cursor_dt is not None:
-            covers_event = cursor_dt >= delivered_dt
-        else:
-            covers_event = cursor_event_id == delivered_event_id and cursor_ts == delivered_ts
+        covers_event = cursor_covers_event(
+            group,
+            actor_id=aid,
+            event={"id": delivered_event_id, "ts": delivered_ts},
+        )
         if (
             cursor_event_id == delivered_event_id
             and cursor_ts == delivered_ts

@@ -129,7 +129,10 @@ const TOOLS: &[(&str, &str)] = &[
         "Import a custom capability capsule.",
     ),
     ("cccc_capability_block", "Block or unblock a capability."),
-    ("cccc_capability_uninstall", "Remove a custom capability."),
+    (
+        "cccc_capability_uninstall",
+        "Uninstall a capability from the target group without deleting its global catalog record.",
+    ),
     (
         "cccc_runtime_wait_next_turn",
         "Wait for a structured headless actor turn.",

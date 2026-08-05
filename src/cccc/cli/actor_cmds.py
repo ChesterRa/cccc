@@ -126,6 +126,7 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
             "antigravity",
             "auggie",
             "claude",
+            "cline",
             "codex",
             "copilot",
             "cursor",

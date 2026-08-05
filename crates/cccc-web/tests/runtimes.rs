@@ -32,4 +32,9 @@ async fn runtime_endpoint_returns_frontend_availability_contract() {
             && runtime["display_name"] == "Custom"
             && runtime["available"] == true
     }));
+    assert!(runtimes.iter().any(|runtime| {
+        runtime["name"] == "cline"
+            && runtime["display_name"] == "Cline CLI"
+            && runtime["recommended_command"] == "cline --tui --auto-approve true"
+    }));
 }

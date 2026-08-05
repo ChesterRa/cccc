@@ -201,11 +201,12 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC orchestrates agents across 16 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
+CCCC orchestrates agents across 17 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
 
 | Runtime | Integration | Entrypoint / Surface |
 |---------|-------------|----------------------|
 | Claude Code | Auto MCP setup | `claude` |
+| Cline CLI | Auto MCP setup | `cline` |
 | Codex CLI | Auto MCP setup | `codex` |
 | GitHub Copilot CLI | Auto MCP setup | `copilot` |
 | Cursor CLI | Prompt-assisted MCP setup | `cursor-agent` |
@@ -227,6 +228,7 @@ These are stable runtime entrypoints or surfaces. CCCC applies runtime-specific 
 
 ```bash
 cccc setup --runtime claude       # auto-configures MCP for this runtime
+cccc setup --runtime cline        # configures Cline CLI MCP for its PTY TUI
 cccc setup --runtime cursor       # shows the prompt-assisted MCP setup contract
 cccc setup --runtime kilo         # shows the prompt-assisted MCP setup contract
 cccc setup --runtime antigravity  # shows the prompt-assisted MCP setup contract

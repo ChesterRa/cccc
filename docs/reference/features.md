@@ -312,6 +312,7 @@ Recommended options:
 | amp | `amp` | Amp |
 | auggie | `auggie` | Auggie (Augment CLI) |
 | claude | `claude` | Claude Code |
+| cline | `cline` | Cline CLI PTY TUI |
 | codex | `codex` | Codex CLI |
 | copilot | `copilot` | GitHub Copilot CLI |
 | cursor | `cursor-agent` | Cursor CLI |
@@ -335,6 +336,7 @@ CCCC first-class runtime support is the named runtimes above. `custom` remains t
 
 ```bash
 cccc setup --runtime claude   # Configure MCP (auto)
+cccc setup --runtime cline
 cccc setup --runtime codex
 cccc setup --runtime droid
 cccc setup --runtime amp

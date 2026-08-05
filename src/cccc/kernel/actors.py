@@ -318,6 +318,7 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
     if item is None:
         raise ValueError(f"actor not found: {actor_id.strip()}")
 
+    previous_runtime_key = str(item.get("runtime") or "").strip().lower()
     current_internal_kind = str(item.get("internal_kind") or "").strip()
     patch_runtime_key = str(patch.get("runtime") or "").strip().lower()
     effective_runtime_key = str(patch.get("runtime") or item.get("runtime") or "").strip().lower()
@@ -405,6 +406,7 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             "antigravity",
             "auggie",
             "claude",
+            "cline",
             "codex",
             "copilot",
             "cursor",
@@ -422,6 +424,13 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             item["runtime"] = runtime
         else:
             raise ValueError("invalid runtime")
+        runtime_key = str(item.get("runtime") or "").strip().lower()
+        if (
+            "command" not in patch
+            and runtime_key != previous_runtime_key
+            and runtime_key not in {"custom", "web_model"}
+        ):
+            item["command"] = get_runtime_command_with_flags(runtime_key)
         if str(item.get("runtime") or "").strip() == "web_model":
             item["runner"] = "headless"
             item["command"] = []

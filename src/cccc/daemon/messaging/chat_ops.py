@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import hashlib
 import json
+import mimetypes
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -22,6 +23,7 @@ from ...kernel.chat_idempotency import find_existing_reply_result
 from ...kernel.inbox import find_event_with_chat_ack, is_message_for_actor
 from ...kernel.context import ContextStorage
 from ...kernel.ledger import append_event, read_last_lines
+from ...kernel.blobs import store_blob_bytes
 from ...kernel.messaging import (
     default_reply_recipients,
     enabled_recipient_actor_ids,
@@ -1065,6 +1067,100 @@ def handle_reply(
     return diag.finish_response(DaemonResponse(ok=True, result=result))
 
 
+def handle_send_files(
+    args: Dict[str, Any],
+    *,
+    coerce_bool: Callable[[Any], bool],
+    normalize_attachments: Callable[[Any, Any], list[dict[str, Any]]],
+    effective_runner_kind: Callable[[str], str],
+    auto_wake_recipients: Callable[[Any, list[str], str], list[str]],
+    automation_on_resume: Callable[[Any], None],
+    automation_on_new_message: Callable[[Any], None],
+    clear_pending_system_notifies: Callable[[str, set[str]], None],
+    diagnostics_enabled: Callable[[], bool] | None = None,
+) -> DaemonResponse:
+    """Upload active-scope files and send them through the normal chat path."""
+
+    group_id = str(args.get("group_id") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    raw_paths = args.get("paths")
+    if not isinstance(raw_paths, list) or not raw_paths:
+        return _error("invalid_paths", "paths must be a non-empty list")
+    if args.get("attachments") is not None:
+        return _error(
+            "invalid_attachments",
+            "send_files owns attachments; do not provide attachment records",
+        )
+
+    scope_key = str(group.doc.get("active_scope_key") or "").strip()
+    scopes = group.doc.get("scopes")
+    scope_url = ""
+    if isinstance(scopes, list):
+        for scope in scopes:
+            if not isinstance(scope, dict):
+                continue
+            if str(scope.get("scope_key") or "").strip() == scope_key:
+                scope_url = str(scope.get("url") or "").strip()
+                break
+    if not scope_key or not scope_url:
+        return _error("missing_scope", "group has no active scope")
+
+    root = Path(scope_url).expanduser().resolve()
+    sources: list[tuple[Path, bytes]] = []
+    for raw_path in raw_paths:
+        value = str(raw_path or "").strip()
+        if not value:
+            return _error("invalid_path", "file path must not be empty")
+        candidate = Path(value).expanduser()
+        source = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+        try:
+            source.relative_to(root)
+        except ValueError:
+            return _error(
+                "invalid_path",
+                "file path must be under the group's active scope root",
+                details={"path": str(source)},
+            )
+        if not source.is_file():
+            return _error("not_found", f"file not found: {source}")
+        try:
+            sources.append((source, source.read_bytes()))
+        except OSError as exc:
+            return _error("read_failed", str(exc), details={"path": str(source)})
+
+    attachments = [
+        store_blob_bytes(
+            group,
+            data=data,
+            filename=source.name,
+            mime_type=mimetypes.guess_type(source.name)[0] or "application/octet-stream",
+        )
+        for source, data in sources
+    ]
+    send_args = dict(args)
+    send_args.pop("paths", None)
+    send_args["attachments"] = attachments
+    send_args["path"] = str(root)
+    if not str(send_args.get("text") or "").strip():
+        names = ", ".join(str(item.get("title") or "file") for item in attachments)
+        send_args["text"] = f"[files] {names}"
+    return handle_send(
+        send_args,
+        coerce_bool=coerce_bool,
+        normalize_attachments=normalize_attachments,
+        effective_runner_kind=effective_runner_kind,
+        auto_wake_recipients=auto_wake_recipients,
+        automation_on_resume=automation_on_resume,
+        automation_on_new_message=automation_on_new_message,
+        clear_pending_system_notifies=clear_pending_system_notifies,
+        diagnostics_enabled=diagnostics_enabled,
+    )
+
+
 def handle_stream_emit(args: Dict[str, Any]) -> DaemonResponse:
     """Handle chat.stream events (start/update/end)."""
     group_id = str(args.get("group_id") or "").strip()
@@ -1139,6 +1235,18 @@ def try_handle_chat_op(
         return handle_stream_emit(args)
     if op == "send":
         return handle_send(
+            args,
+            coerce_bool=coerce_bool,
+            normalize_attachments=normalize_attachments,
+            effective_runner_kind=effective_runner_kind,
+            auto_wake_recipients=auto_wake_recipients,
+            automation_on_resume=automation_on_resume,
+            automation_on_new_message=automation_on_new_message,
+            clear_pending_system_notifies=clear_pending_system_notifies,
+            diagnostics_enabled=diagnostics_enabled,
+        )
+    if op == "send_files":
+        return handle_send_files(
             args,
             coerce_bool=coerce_bool,
             normalize_attachments=normalize_attachments,

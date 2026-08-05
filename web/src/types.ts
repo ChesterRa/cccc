@@ -1441,6 +1441,7 @@ export type PresentationWorkspaceListing = {
 // Runtime configuration
 export const SUPPORTED_RUNTIMES = [
   "claude",
+  "cline",
   "codex",
   "copilot",
   "cursor",
@@ -1465,6 +1466,7 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   amp: { label: "Amp", desc: "" },
   auggie: { label: "Auggie (Augment)", desc: "" },
   claude: { label: "Claude Code", desc: "" },
+  cline: { label: "Cline CLI", desc: "Uses Cline CLI MCP setup with the PTY TUI" },
   codex: { label: "Codex CLI", desc: "" },
   copilot: { label: "GitHub Copilot CLI", desc: "Uses Copilot CLI MCP setup with the PTY runner" },
   cursor: {
@@ -1540,6 +1542,16 @@ export const RUNTIME_COLORS: Record<
     textLight: "text-orange-700",
     borderLight: "border-orange-300",
     dotLight: "bg-orange-500",
+  },
+  cline: {
+    bg: "bg-gray-900/40",
+    text: "text-gray-200",
+    border: "border-gray-500/60",
+    dot: "bg-gray-300",
+    bgLight: "bg-gray-100",
+    textLight: "text-gray-800",
+    borderLight: "border-gray-300",
+    dotLight: "bg-gray-600",
   },
   codex: {
     bg: "bg-emerald-900/30",

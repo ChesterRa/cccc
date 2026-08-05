@@ -2,7 +2,7 @@ name: Release Rust
 
 on:
   push:
-    tags: ["rust-v*"]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -29,6 +29,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
       - uses: actions/setup-node@v4
         with:
           node-version: "20.19.5"
@@ -46,9 +49,7 @@ jobs:
       - name: Verify tag version
         if: github.event_name == 'push'
         shell: bash
-        run: |
-          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-          test "${GITHUB_REF_NAME}" = "rust-v${version}"
+        run: python scripts/check_release_versions.py --tag "$GITHUB_REF_NAME"
       - name: Build Web UI
         shell: bash
         run: |
@@ -147,14 +148,33 @@ jobs:
         run: ./scripts/tests/verify_release_windows.ps1 -ArtifactDir artifacts -Target "${{ matrix.target }}"
 
   publish:
+    if: github.event_name == 'push'
     needs: [prepare, verify]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.5"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - uses: actions/download-artifact@v4
         with:
           name: cccc-release-candidate
           path: artifacts
+      - name: Prepare publishable Rust Web assets
+        shell: bash
+        run: node scripts/prepare_rust_web_assets.mjs --install-deps
+      - name: Publish Rust crates in dependency order
+        shell: bash
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: scripts/publish_rust_crates.sh --publish
       - name: Resolve release type
         shell: bash
         run: |
@@ -162,7 +182,6 @@ jobs:
           prerelease="$(scripts/release_prerelease.sh "$version")"
           echo "RELEASE_PRERELEASE=$prerelease" >> "$GITHUB_ENV"
       - uses: softprops/action-gh-release@v2
-        if: github.event_name == 'push'
         with:
           files: artifacts/*
           generate_release_notes: true

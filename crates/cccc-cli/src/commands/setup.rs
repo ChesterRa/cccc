@@ -8,6 +8,7 @@ use crate::args::SetupArgs;
 
 const SUPPORTED: &[&str] = &[
     "claude",
+    "cline",
     "codex",
     "copilot",
     "cursor",
@@ -180,6 +181,7 @@ fn add_command(runtime: &str, executable: &Path) -> Result<Vec<String>> {
         "claude" => vec![
             "claude", "mcp", "add", "-s", "user", "cccc", "--", &cccc, "mcp",
         ],
+        "cline" => vec!["cline", "mcp", "add", "cccc", "--yes", "--", &cccc, "mcp"],
         "codex" => vec!["codex", "mcp", "add", "cccc", "--", &cccc, "mcp"],
         "copilot" => vec!["copilot", "mcp", "add", "cccc", "--", &cccc, "mcp"],
         "devin" => vec![
@@ -280,5 +282,22 @@ mod tests {
         .expect("manual setup");
         assert_eq!(value["status"], "requires_action");
         assert_eq!(value["mode"], "manual");
+    }
+
+    #[test]
+    fn builds_noninteractive_cline_command_with_compiled_binary() {
+        assert_eq!(
+            add_command("cline", Path::new("/opt/cccc")).expect("command"),
+            [
+                "cline",
+                "mcp",
+                "add",
+                "cccc",
+                "--yes",
+                "--",
+                "/opt/cccc",
+                "mcp"
+            ]
+        );
     }
 }

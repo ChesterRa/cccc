@@ -2007,46 +2007,23 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
             )
 
         removed_record = False
-        remove_generated_record = False
-        with _CATALOG_LOCK:
-            catalog_path, catalog_doc = _pkg()._load_catalog_doc()
-            rows = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
-            rec = rows.get(capability_id) if isinstance(rows.get(capability_id), dict) else None
-            remove_generated_record = bool(isinstance(rec, dict) and _is_self_proposed_skill_record(rec))
-            if remove_generated_record:
-                rows.pop(capability_id, None)
-                catalog_doc["records"] = rows
-                _pkg()._refresh_source_record_counts(catalog_doc)
-                _pkg()._save_catalog_doc(catalog_path, catalog_doc)
-                removed_record = True
-
         removed_bindings = 0
         removed_blocked = 0
         removed_group_marker = False
         has_remaining_binding = False
         with _STATE_LOCK:
             state_path, state_doc = _load_state_doc()
-            if remove_generated_record:
-                removed_bindings = _remove_capability_bindings_all_groups(
-                    state_doc,
-                    capability_id=capability_id,
-                )
-                removed_blocked = _remove_blocked_capability_all_scopes(
-                    state_doc,
-                    capability_id=capability_id,
-                )
-            else:
-                removed_bindings = _remove_capability_bindings(
-                    state_doc,
-                    group_id=group_id,
-                    capability_id=capability_id,
-                )
-                removed_group_marker = _pkg()._set_removed_capability(
-                    state_doc,
-                    group_id=group_id,
-                    capability_id=capability_id,
-                    removed=True,
-                )
+            removed_bindings = _remove_capability_bindings(
+                state_doc,
+                group_id=group_id,
+                capability_id=capability_id,
+            )
+            removed_group_marker = _pkg()._set_removed_capability(
+                state_doc,
+                group_id=group_id,
+                capability_id=capability_id,
+                removed=True,
+            )
             has_remaining_binding = _has_any_binding_for_capability(state_doc, capability_id=capability_id)
             if removed_bindings > 0 or removed_blocked > 0 or removed_group_marker:
                 _save_state_doc(state_path, state_doc)
@@ -2057,17 +2034,11 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
         cleanup_skipped_reason = ""
         with _RUNTIME_LOCK:
             runtime_path, runtime_doc = _load_runtime_doc()
-            if remove_generated_record:
-                removed_runtime_bindings = _remove_runtime_capability_bindings_all_groups(
-                    runtime_doc,
-                    capability_id=capability_id,
-                )
-            else:
-                removed_runtime_bindings = _remove_runtime_group_capability_bindings(
-                    runtime_doc,
-                    group_id=group_id,
-                    capability_id=capability_id,
-                )
+            removed_runtime_bindings = _remove_runtime_group_capability_bindings(
+                runtime_doc,
+                group_id=group_id,
+                capability_id=capability_id,
+            )
             runtime_changed = bool(removed_runtime_bindings > 0)
             if has_remaining_binding:
                 cleanup_skipped_reason = "cleanup_skipped_capability_still_bound"
@@ -2091,16 +2062,8 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
             if runtime_changed:
                 _save_runtime_doc(runtime_path, runtime_doc)
 
-        removed_actor_autoload = (
-            _remove_actor_autoload_references_all_groups(capability_id)
-            if remove_generated_record
-            else _remove_actor_autoload_references(group, capability_id)
-        )
-        removed_profile_autoload = (
-            _remove_profile_autoload_references(capability_id)
-            if remove_generated_record
-            else 0
-        )
+        removed_actor_autoload = _remove_actor_autoload_references(group, capability_id)
+        removed_profile_autoload = 0
 
         refresh_required = bool(
             removed_record

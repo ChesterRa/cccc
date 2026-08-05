@@ -1,12 +1,22 @@
 import os
 import tempfile
 import time
+from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def _stop_global_actor_runtimes_between_tests():
+def _isolate_cccc_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    test_home = (tmp_path / "cccc-home").resolve()
+    test_home.mkdir()
+    assert test_home != (Path.home() / ".cccc").resolve()
+    monkeypatch.setenv("CCCC_HOME", str(test_home))
+    return test_home
+
+
+@pytest.fixture(autouse=True)
+def _stop_global_actor_runtimes_between_tests(_isolate_cccc_home: Path):
     try:
         yield
     finally:

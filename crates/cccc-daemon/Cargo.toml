@@ -20,6 +20,7 @@ chrono.workspace = true
 clap.workspace = true
 fs2.workspace = true
 futures-util.workspace = true
+mime_guess.workspace = true
 nix.workspace = true
 regex.workspace = true
 reqwest.workspace = true

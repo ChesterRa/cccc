@@ -1,7 +1,13 @@
-# Rust Backend Migration
+# Rust Backend and Distribution
 
-The `rust` branch replaces the Python backend while keeping the React/TypeScript
-frontend and its external product contracts stable.
+CCCC ships its Python-compatible package and native Rust distribution from the
+same `main` branch, product version, and `vX.Y.Z` release tag. Both implementations
+keep the React/TypeScript frontend and external product contracts stable.
+
+Prereleases use one canonical product identity and tag such as `v0.4.34-rc1`.
+The Python manifest represents that identity as PEP 440 `0.4.34rc1`, while the
+Cargo workspace uses SemVer `0.4.34-rc1`; release validation normalizes those
+ecosystem-specific spellings before comparing them.
 
 ## Rust package distribution
 
@@ -19,9 +25,9 @@ cccc update
 cccc update --check
 ```
 
-The public crate version now follows the CCCC product version. Cargo installs
+The public crate version follows the CCCC product version. Cargo installs
 update with `cargo install cccc --force --locked`. Prebuilt installations use
-the tagged GitHub Rust installer and verify release assets against
+the same tagged GitHub release as the Python package and verify assets against
 `SHA256SUMS`. An older running daemon is stopped only after replacement succeeds.
 
 Implementation crates are published under the `cccc-pair-*` namespace so the
@@ -63,8 +69,9 @@ and `agent`) into the current versioned event contract. Other unrecognized or
 malformed historical lines are reported with their source location and skipped,
 so one legacy record cannot make an entire group unavailable.
 
-Switching Git branches selects the implementation. Stop the active daemon before
-switching; Python and Rust daemons must not write the shared home concurrently.
+The installed `cccc` executable selects the implementation. Stop the active daemon
+before switching installations; Python and Rust daemons must not write the shared
+home concurrently.
 
 ## Dependency boundaries
 
@@ -157,3 +164,14 @@ Daemon shutdown stops every local runtime session before releasing the shared
 lock. The combined `cccc` process also closes Web after daemon loss. Rust daemon
 reuse requires matching implementation, package version, and compatibility ID;
 legacy or stale daemons are replaced through graceful shutdown.
+
+## Native release gate
+
+A native release is publishable only when all of these remain true:
+
+- Rust owns its CLI, daemon, kernel, MCP, Web API, runners, and integrations.
+- The existing Web UI builds unchanged against the Rust HTTP/WebSocket surface.
+- Linux, macOS, and Windows release candidates build and pass platform smoke tests.
+- Python, Cargo, the lockfile, and the Git tag resolve to one release identity.
+- The native binary runs without a Python backend dependency.
+- Existing `~/.cccc` data remains available after switching implementations.

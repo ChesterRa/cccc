@@ -146,6 +146,15 @@ mod tests {
             )),
             Access::GlobalWrite
         ));
+        for op in ["capability_install", "capability_install_target"] {
+            assert!(
+                matches!(
+                    access(&request(op, json!({"group_id":"g_one"}))),
+                    Access::GlobalWrite
+                ),
+                "{op} mutates the global capability catalog"
+            );
+        }
     }
 
     #[test]

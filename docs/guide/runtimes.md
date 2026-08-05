@@ -9,6 +9,7 @@ Use `cccc runtime list --all` to see the full supported list on your machine, an
 | Runtime | Runtime id | Entrypoint / surface | MCP setup |
 |---------|------------|----------------------|-----------|
 | Claude Code | `claude` | `claude` | Auto |
+| Cline CLI | `cline` | `cline` | Auto |
 | Codex CLI | `codex` | `codex` | Auto |
 | GitHub Copilot CLI | `copilot` | `copilot` | Auto |
 | Cursor CLI | `cursor` | `cursor-agent` | Prompt-assisted |
@@ -34,6 +35,7 @@ CCCC applies runtime-specific launch defaults for actors it starts. These defaul
 | Runtime id | Default command | Permission / autonomy behavior |
 |------------|-----------------|--------------------------------|
 | `claude` | `claude --dangerously-skip-permissions` | Skips Claude Code permission prompts. |
+| `cline` | `cline --tui --auto-approve true` | Opens Cline's interactive TUI and enables tool auto-approval. |
 | `codex` | `codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search` | Bypasses Codex approvals/sandbox and preserves actor environment inheritance for MCP subprocesses. |
 | `copilot` | `copilot --allow-all` | Allows Copilot CLI tool execution without per-action approval. |
 | `cursor` | `cursor-agent --yolo --approve-mcps` | Uses Cursor YOLO mode and approves MCP usage. |
@@ -57,6 +59,7 @@ Most CLI runtimes can be prepared with `cccc setup --runtime <id>`:
 
 ```bash
 cccc setup --runtime claude
+cccc setup --runtime cline
 cccc setup --runtime codex
 cccc setup --runtime copilot
 cccc setup --runtime devin
@@ -91,7 +94,9 @@ Actors normally run in one of two modes:
 - **PTY**: the runtime runs in an embedded terminal. This is the broadest compatibility mode.
 - **Headless**: CCCC manages structured runtime I/O without a terminal. This gives tighter delivery and streaming control where supported.
 
-Claude Code and Codex CLI support both PTY and headless operation. Most other CLI runtimes use PTY. ChatGPT Web Model is fixed to browser delivery plus a remote MCP connector.
+Claude Code and Codex CLI support both PTY and headless operation. Most other CLI runtimes, including Cline, use PTY. ChatGPT Web Model is fixed to browser delivery plus a remote MCP connector.
+
+Cline is currently integrated as a fresh-start PTY runtime. CCCC does not persist or reuse Cline's `--id` session identifier, so stopping and starting a Cline actor opens a new Cline TUI session.
 
 ### Codex and Claude PTY Hook State
 
@@ -150,5 +155,18 @@ Common checks:
 | Custom actor will not start | Ensure `--command` is set; CCCC cannot infer a command for `custom`. |
 | Existing actor does not pick up setup changes | Restart the actor after setup or profile changes. |
 | ChatGPT Web Model cannot call CCCC | Confirm the public HTTPS MCP URL, ChatGPT connector setup, and bound conversation. |
+
+### Cline installation
+
+Cline's npm package loads a platform-specific optional package. If `cline --version` reports that the platform package is missing, verify that npm is using the official registry, then reinstall with optional dependencies enabled:
+
+```bash
+npm config set registry https://registry.npmjs.org/
+npm install -g cline --include=optional
+cline --version
+cccc setup --runtime cline
+```
+
+CCCC uses Cline's own noninteractive `mcp add` command and verifies the resulting `cline_mcp_settings.json`; it does not hand-edit Cline's configuration.
 
 The Web UI also exposes runtime detection and actor configuration from the add/edit actor dialogs.

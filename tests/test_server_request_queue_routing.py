@@ -12,15 +12,22 @@ class TestServerRequestQueueRouting(unittest.TestCase):
         read_queue = object()
         message_lanes = object()
         slow_queue = object()
-        req = SimpleNamespace(op="reply", args={"group_id": "g1"})
+        for op in ("reply", "send_files"):
+            with self.subTest(op=op):
+                req = SimpleNamespace(op=op, args={"group_id": "g1"})
 
-        with patch("cccc.daemon.server.load_group", return_value=object()), patch(
-            "cccc.daemon.server.get_group_state", return_value="active"
-        ):
-            selected = _request_queue_for(req, read_queue=read_queue, message_lanes=message_lanes, slow_queue=slow_queue)
+                with patch("cccc.daemon.server.load_group", return_value=object()), patch(
+                    "cccc.daemon.server.get_group_state", return_value="active"
+                ):
+                    selected = _request_queue_for(
+                        req,
+                        read_queue=read_queue,
+                        message_lanes=message_lanes,
+                        slow_queue=slow_queue,
+                    )
 
-        self.assertIs(selected, message_lanes)
-        self.assertEqual(req.args.get("__group_state_at_accept"), "active")
+                self.assertIs(selected, message_lanes)
+                self.assertEqual(req.args.get("__group_state_at_accept"), "active")
 
     def test_message_ops_use_message_lanes_even_when_group_idle(self) -> None:
         from cccc.daemon.server import _request_queue_for

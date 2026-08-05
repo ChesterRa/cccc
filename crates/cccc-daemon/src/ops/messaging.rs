@@ -1,6 +1,8 @@
 use cccc_contracts::{DaemonRequest, Event, GroupState};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
 use crate::ops::{actor_delivery, messaging_inbox};
@@ -15,6 +17,7 @@ mod tracked_send;
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "send" | "message_send" => send(home, request, "chat.message"),
+        "send_files" => send_files(home, request),
         "send_cross_group" => send_cross_group(home, request),
         "send_cross_group_remote_record" => send_cross_group_remote_record(home, request),
         "tracked_send" => tracked_send::handle(home, request),
@@ -36,6 +39,121 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "notify_ack" => messaging_inbox::ack(home, request, "system.notify_ack"),
         _ => return None,
     })
+}
+
+fn send_files(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group = load(home, request)?;
+    let paths = request
+        .args
+        .get("paths")
+        .and_then(Value::as_array)
+        .filter(|paths| !paths.is_empty())
+        .ok_or_else(|| OpError::new("invalid_paths", "paths must be a non-empty array"))?;
+    if request
+        .args
+        .get("attachments")
+        .is_some_and(|attachments| !attachments.is_null())
+    {
+        return Err(OpError::new(
+            "invalid_attachments",
+            "send_files owns attachments; do not provide attachment records",
+        ));
+    }
+
+    let scope = group
+        .scopes
+        .iter()
+        .find(|scope| scope.scope_key == group.active_scope_key && !scope.url.trim().is_empty())
+        .ok_or_else(|| OpError::new("missing_scope", "group has no active scope"))?;
+    let root = fs::canonicalize(Path::new(&scope.url))
+        .map_err(|error| OpError::new("missing_scope", error.to_string()))?;
+
+    let mut sources: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(paths.len());
+    for raw_path in paths {
+        let raw = raw_path
+            .as_str()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| OpError::new("invalid_path", "file path must be a non-empty string"))?;
+        let candidate = Path::new(raw);
+        let candidate = if candidate.is_absolute() {
+            candidate.to_path_buf()
+        } else {
+            root.join(candidate)
+        };
+        let source = fs::canonicalize(&candidate).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                OpError::new(
+                    "not_found",
+                    format!("file not found: {}", candidate.display()),
+                )
+            } else {
+                OpError::new("read_failed", error.to_string())
+            }
+        })?;
+        if !source.starts_with(&root) {
+            return Err(OpError::new(
+                "invalid_path",
+                "file path must be under the group's active scope root",
+            ));
+        }
+        if !source.is_file() {
+            return Err(OpError::new(
+                "not_found",
+                format!("file not found: {}", source.display()),
+            ));
+        }
+        let data =
+            fs::read(&source).map_err(|error| OpError::new("read_failed", error.to_string()))?;
+        sources.push((source, data));
+    }
+
+    let mut attachments = Vec::with_capacity(sources.len());
+    let mut titles = Vec::with_capacity(sources.len());
+    for (source, data) in sources {
+        let title = source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("file")
+            .to_owned();
+        let mime_type = mime_guess::from_path(&source)
+            .first_or_octet_stream()
+            .essence_str()
+            .to_owned();
+        let kind = if mime_type.starts_with("image/") {
+            "image"
+        } else {
+            "file"
+        };
+        let blob = cccc_core::blobs::store(home, &group.group_id, &data).map_err(OpError::io)?;
+        attachments.push(json!({
+            "kind":kind,
+            "path":blob.path,
+            "title":title,
+            "mime_type":mime_type,
+            "bytes":blob.bytes,
+            "sha256":blob.sha256,
+        }));
+        titles.push(title);
+    }
+
+    let mut forwarded = request.clone();
+    forwarded.args.remove("paths");
+    forwarded
+        .args
+        .insert("attachments".into(), Value::Array(attachments));
+    forwarded.args.insert(
+        "path".into(),
+        Value::String(root.to_string_lossy().into_owned()),
+    );
+    if string_arg(&forwarded, "text").is_none_or(|text| text.trim().is_empty()) {
+        forwarded.args.insert(
+            "text".into(),
+            Value::String(format!("[files] {}", titles.join(", "))),
+        );
+    }
+    send(home, &forwarded, "chat.message")
 }
 
 fn send_cross_group_remote_record(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

@@ -1221,10 +1221,10 @@ Args:
 
 #### `capability_uninstall`
 
-Revoke capability bindings for the target group, remove current-group actor autoload references, and remove runtime cache
-when no other group/actor bindings remain. Imported/self-proposed records are removed globally together
-with all actor/profile autoload references. Built-in and external catalog records remain installed when
-another group still references them.
+Revoke capability bindings for the target group, mark the capability removed from that group's catalog view,
+remove current-group actor autoload references, and remove runtime cache when no other group/actor bindings
+remain. The catalog record, block policy, other groups, and profile defaults are preserved. Use
+`capability_source_delete` for an explicit global deletion of records owned by a removable import source.
 
 Args:
 ```ts
@@ -1248,14 +1248,48 @@ Result:
   removed_record: boolean
   removed_bindings: number
   removed_blocked?: number
+  removed_group_marker: boolean
   removed_installation: boolean
   removed_runtime_bindings?: number
+  removed_recent_success?: boolean
   removed_actor_autoload: number
   removed_profile_autoload: number
   cleanup_skipped_reason?: "cleanup_skipped_capability_still_bound"
   refresh_required: boolean
   refresh_mode?: "relist_or_reconnect"
   wait?: "relist_or_reconnect"
+}
+```
+
+#### `capability_source_delete`
+
+Explicitly delete every catalog record owned by a removable import source and clean its bindings,
+runtime state, actor autoload references, and profile defaults across all groups. Built-in and curated
+sources are protected. Only the user or a group foreman may perform this global operation.
+
+Args:
+```ts
+{
+  group_id: string
+  source_id: "manual_import" | "agent_self_proposed" | "github_import" | "url_import" | "local_import"
+  reason?: string
+  by?: string
+  actor_id?: string
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  actor_id: string
+  source_id: string
+  removed_records: number
+  removed_capability_ids: string[]
+  removed_runtime_bindings: number
+  removed_installations: number
+  removed_actor_autoload: number
+  removed_profile_autoload: number
 }
 ```
 
@@ -2659,6 +2693,37 @@ Result:
 { event: CCCSEventV1 } // kind="chat.message"
 ```
 
+#### `send_files`
+
+Store one or more files from the group's active scope in the group blob store,
+then append one `chat.message` carrying those files as attachments. This is the
+daemon-owned upload boundary for SDK clients; callers MUST NOT write directly
+to `state/blobs/` or manufacture attachment records.
+
+Args:
+```ts
+{
+  group_id: string
+  paths: string[]               // absolute, or relative to the active scope root
+  text?: string                 // defaults to a compact file notice
+  by?: string
+  to?: string[]
+  priority?: "normal" | "attention"
+  reply_required?: boolean
+  insight?: string
+  client_id?: string
+}
+```
+
+Every resolved path MUST be a regular file beneath the group's active scope.
+All paths are validated and read before any message is appended. The resulting
+event uses the normal `send` recipient, permission, wake, and delivery rules.
+
+Result:
+```ts
+{ event: CCCSEventV1 } // kind="chat.message", data.attachments contains stored blobs
+```
+
 #### `reply`
 
 Append a `chat.message` with `reply_to` and `quote_text`.
@@ -2778,6 +2843,10 @@ Result:
 #### `inbox_list`
 
 Return unread `chat.message` and/or `system.notify` events for an actor based on its read cursor.
+When a cursor contains a resolvable `event_id`, cursor advancement, unread membership,
+read status, and obligation status MUST use ledger append order. The cursor `ts` is
+informational and a compatibility fallback only; equal or regressed timestamps MUST
+NOT change event coverage.
 
 Args:
 ```ts

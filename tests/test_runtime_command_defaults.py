@@ -19,11 +19,25 @@ class TestRuntimeCommandDefaults(unittest.TestCase):
         self.assertEqual(get_runtime_command_with_flags("hermes"), ["hermes", "--tui", "--yolo"])
         self.assertEqual(get_runtime_command_with_flags("opencode"), ["opencode", "--auto"])
         self.assertEqual(get_runtime_command_with_flags("grok"), ["grok", "--always-approve"])
+        self.assertEqual(get_runtime_command_with_flags("cline"), ["cline", "--tui", "--auto-approve", "true"])
+
+    def test_cline_is_a_first_class_auto_mcp_runtime(self) -> None:
+        from cccc.contracts.v1.actor import Actor
+        from cccc.daemon.server import AUTO_MCP_RUNTIMES, SUPPORTED_RUNTIMES
+        from cccc.kernel.runtime import PRIMARY_RUNTIMES
+
+        actor = Actor(id="cline-1", runtime="cline")
+
+        self.assertEqual(actor.runtime, "cline")
+        self.assertIn("cline", PRIMARY_RUNTIMES)
+        self.assertIn("cline", SUPPORTED_RUNTIMES)
+        self.assertIn("cline", AUTO_MCP_RUNTIMES)
 
     def test_update_actor_accepts_cursor_runtime(self) -> None:
         from cccc.kernel.actors import add_actor, update_actor
         from cccc.kernel.group import create_group
         from cccc.kernel.registry import load_registry
+        from cccc.kernel.runtime import get_runtime_command_with_flags
 
         with tempfile.TemporaryDirectory() as td:
             old_home = os.environ.get("CCCC_HOME")
@@ -35,6 +49,34 @@ class TestRuntimeCommandDefaults(unittest.TestCase):
                 actor = update_actor(group, "peer1", {"runtime": "cursor"})
 
                 self.assertEqual(actor.get("runtime"), "cursor")
+                self.assertEqual(actor.get("command"), get_runtime_command_with_flags("cursor"))
+            finally:
+                if old_home is None:
+                    os.environ.pop("CCCC_HOME", None)
+                else:
+                    os.environ["CCCC_HOME"] = old_home
+
+    def test_update_actor_runtime_switch_preserves_explicit_command(self) -> None:
+        from cccc.kernel.actors import add_actor, update_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        with tempfile.TemporaryDirectory() as td:
+            old_home = os.environ.get("CCCC_HOME")
+            try:
+                os.environ["CCCC_HOME"] = td
+                group = create_group(load_registry(), title="runtime-command-update")
+                add_actor(group, actor_id="peer1", runtime="grok")
+                command = ["codex", "--model", "gpt-5.3-codex"]
+
+                actor = update_actor(
+                    group,
+                    "peer1",
+                    {"runtime": "codex", "command": command},
+                )
+
+                self.assertEqual(actor.get("runtime"), "codex")
+                self.assertEqual(actor.get("command"), command)
             finally:
                 if old_home is None:
                     os.environ.pop("CCCC_HOME", None)

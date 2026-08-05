@@ -297,6 +297,7 @@ SUPPORTED_RUNTIMES = (
     "antigravity",
     "auggie",
     "claude",
+    "cline",
     "codex",
     "copilot",
     "cursor",
@@ -314,6 +315,7 @@ SUPPORTED_RUNTIMES = (
 
 AUTO_MCP_RUNTIMES = (
     "claude",
+    "cline",
     "codex",
     "copilot",
     "devin",

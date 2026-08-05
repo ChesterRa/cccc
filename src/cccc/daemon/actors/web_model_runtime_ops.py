@@ -9,9 +9,10 @@ from typing import Any, Dict, List, Optional
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import find_actor
 from ...kernel.group import load_group
-from ...kernel.inbox import find_event, get_cursor, has_chat_ack, is_message_for_actor, set_cursor, unread_messages
+from ...kernel.inbox import cursor_covers_event, find_event, get_cursor, has_chat_ack, is_message_for_actor, set_cursor, unread_messages
+from ...kernel.ledger_index import lookup_event_positions
 from ...kernel.ledger import append_event
-from ...util.time import parse_utc_iso, utc_now_iso
+from ...util.time import utc_now_iso
 from ..messaging.actor_turn_rendering import render_actor_event_batch_for_delivery
 from ..runner_state_ops import update_headless_state, web_model_actor_running
 
@@ -245,30 +246,22 @@ def _valid_turn_events(group: Any, *, actor_id: str, event_ids: List[str]) -> tu
     return events, None
 
 
-def _latest_event_by_ts(events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    latest: Optional[Dict[str, Any]] = None
-    latest_dt: Any = None
-    for event in events:
-        dt = parse_utc_iso(str(event.get("ts") or ""))
-        if latest is None:
-            latest = event
-            latest_dt = dt
-            continue
-        if dt is not None and latest_dt is not None:
-            if dt >= latest_dt:
-                latest = event
-                latest_dt = dt
-        else:
-            latest = event
-            latest_dt = dt
-    return latest
-
-
-def _cursor_covers_event(group: Any, *, actor_id: str, event: Dict[str, Any]) -> bool:
-    _, cursor_ts = get_cursor(group, actor_id)
-    cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
-    event_dt = parse_utc_iso(str(event.get("ts") or ""))
-    return bool(cursor_dt is not None and event_dt is not None and event_dt <= cursor_dt)
+def _latest_event_by_ledger_order(group: Any, events: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    event_ids = [str(event.get("id") or "").strip() for event in events]
+    if not event_ids or any(not event_id for event_id in event_ids):
+        return None
+    try:
+        positions = lookup_event_positions(group.ledger_path, event_ids)
+    except Exception:
+        return None
+    ranked = [
+        (position, event)
+        for position, event in zip(positions, events)
+        if position is not None
+    ]
+    if len(ranked) != len(events):
+        return None
+    return max(ranked, key=lambda item: item[0])[1]
 
 
 def _validate_unread_prefix_complete(group: Any, *, actor_id: str, event_ids: List[str], latest_event_id: str) -> Optional[DaemonResponse]:
@@ -349,13 +342,17 @@ def commit_web_model_delivered_turn(
     cursor = {"event_id": get_cursor(group, actor_id)[0], "ts": get_cursor(group, actor_id)[1]}
     read_event: Optional[Dict[str, Any]] = None
     ack_events: List[Dict[str, Any]] = []
-    latest = _latest_event_by_ts(events)
+    latest = _latest_event_by_ledger_order(group, events)
     if latest is None:
-        return {"ok": False, "error": "missing_latest_event", "message": "turn has no valid latest event"}
+        return {
+            "ok": False,
+            "error": "ledger_position_unavailable",
+            "message": "turn events could not be resolved in ledger order",
+        }
 
     latest_event_id = str(latest.get("id") or "").strip()
     latest_ts = str(latest.get("ts") or "").strip()
-    if _cursor_covers_event(group, actor_id=actor_id, event=latest):
+    if cursor_covers_event(group, actor_id=actor_id, event=latest):
         return {
             "ok": True,
             "cursor_committed": True,
@@ -438,33 +435,37 @@ def handle_web_model_runtime_complete_turn(args: Dict[str, Any]) -> DaemonRespon
     read_event: Optional[Dict[str, Any]] = None
     ack_events: List[Dict[str, Any]] = []
     cursor_committed = False
+    committed_latest_event_id = ""
     if status in {"done", "partial"}:
-        latest = _latest_event_by_ts(events)
-        if latest is not None:
-            latest_event_id = str(latest.get("id") or "").strip()
-            latest_ts = str(latest.get("ts") or "").strip()
-            if _cursor_covers_event(group, actor_id=actor_id, event=latest):
-                cursor_committed = True
-            else:
-                prefix_err = _validate_unread_prefix_complete(
-                    group,
-                    actor_id=actor_id,
-                    event_ids=[str(event.get("id") or "") for event in events],
-                    latest_event_id=latest_event_id,
-                )
-                if prefix_err is not None:
-                    return prefix_err
-                cursor = set_cursor(group, actor_id, event_id=latest_event_id, ts=latest_ts)
-                read_event = append_event(
-                    group.ledger_path,
-                    kind="chat.read",
-                    group_id=group.group_id,
-                    scope_key="",
-                    by=by,
-                    data={"actor_id": actor_id, "event_id": latest_event_id},
-                )
-                ack_events = _append_attention_acks(group, actor_id=actor_id, by=by, events=events)
-            cursor_committed = True
+        latest = _latest_event_by_ledger_order(group, events)
+        if latest is None:
+            return _error(
+                "ledger_position_unavailable",
+                "turn events could not be resolved in ledger order",
+            )
+        latest_event_id = str(latest.get("id") or "").strip()
+        committed_latest_event_id = latest_event_id
+        latest_ts = str(latest.get("ts") or "").strip()
+        if not cursor_covers_event(group, actor_id=actor_id, event=latest):
+            prefix_err = _validate_unread_prefix_complete(
+                group,
+                actor_id=actor_id,
+                event_ids=[str(event.get("id") or "") for event in events],
+                latest_event_id=latest_event_id,
+            )
+            if prefix_err is not None:
+                return prefix_err
+            cursor = set_cursor(group, actor_id, event_id=latest_event_id, ts=latest_ts)
+            read_event = append_event(
+                group.ledger_path,
+                kind="chat.read",
+                group_id=group.group_id,
+                scope_key="",
+                by=by,
+                data={"actor_id": actor_id, "event_id": latest_event_id},
+            )
+            ack_events = _append_attention_acks(group, actor_id=actor_id, by=by, events=events)
+        cursor_committed = True
 
     followup_delivery_scheduled = False
     if cursor_committed and status in {"done", "partial"}:
@@ -479,7 +480,7 @@ def handle_web_model_runtime_complete_turn(args: Dict[str, Any]) -> DaemonRespon
                 followup_delivery_scheduled = schedule_web_model_browser_delivery(
                     group_id=group_id,
                     actor_id=actor_id,
-                    trigger_event_id=str(events[-1].get("id") or "") if events else "",
+                    trigger_event_id=committed_latest_event_id,
                 )
         except Exception:
             followup_delivery_scheduled = False

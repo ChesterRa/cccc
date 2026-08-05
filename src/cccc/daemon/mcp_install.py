@@ -221,6 +221,23 @@ def _json_mcp_entry_matches_expected(entry: Any, expected_cmd: list[str]) -> boo
     )
 
 
+def _cline_mcp_entry_matches_expected(entry: Any, expected_cmd: list[str]) -> bool:
+    if not isinstance(entry, dict) or coerce_bool(entry.get("disabled"), default=False):
+        return False
+    transport = entry.get("transport")
+    if not isinstance(transport, dict):
+        # Older Cline settings used the common top-level command/args shape.
+        return _json_mcp_entry_matches_expected(entry, expected_cmd)
+    if str(transport.get("type") or "stdio").strip().lower() != "stdio":
+        return False
+    return _entry_command_matches_expected(
+        transport.get("command", ""),
+        transport.get("args", []),
+        expected_cmd,
+        strict=sys.platform.startswith("win"),
+    )
+
+
 def _entry_has_env_keys(entry: Any, keys: tuple[str, ...]) -> bool:
     if not isinstance(entry, dict) or not keys:
         return False
@@ -282,6 +299,26 @@ def _home_dir(env: Dict[str, str] | None) -> Path:
     if raw:
         return Path(raw).expanduser()
     return Path.home()
+
+
+def _cline_mcp_settings_path(env: Dict[str, str] | None) -> Path:
+    def _value(key: str) -> str:
+        if isinstance(env, dict):
+            raw = str(env.get(key) or "").strip()
+            if raw:
+                return raw
+        return str(os.environ.get(key) or "").strip()
+
+    settings_path = _value("CLINE_MCP_SETTINGS_PATH")
+    if settings_path:
+        return Path(settings_path).expanduser()
+    data_dir = _value("CLINE_DATA_DIR")
+    if data_dir:
+        return Path(data_dir).expanduser() / "settings" / "cline_mcp_settings.json"
+    cline_dir = _value("CLINE_DIR")
+    if cline_dir:
+        return Path(cline_dir).expanduser() / "data" / "settings" / "cline_mcp_settings.json"
+    return _home_dir(env) / ".cline" / "data" / "settings" / "cline_mcp_settings.json"
 
 
 def _cccc_home_dir(env: Dict[str, str] | None) -> Path | None:
@@ -425,6 +462,8 @@ def build_mcp_add_command(runtime: str) -> list[str] | None:
     cccc_cmd = _runtime_expected_cccc_command(runtime)
     if runtime == "claude":
         return ["claude", "mcp", "add", "-s", "user", "cccc", "--", *cccc_cmd]
+    if runtime == "cline":
+        return ["cline", "mcp", "add", "cccc", "--yes", "--", *cccc_cmd]
     if runtime == "codex":
         return ["codex", "mcp", "add", "cccc", "--", *cccc_cmd]
     if runtime == "copilot":
@@ -715,6 +754,16 @@ def _runtime_mcp_state(runtime: str, *, cwd: Path | None = None, env: Dict[str, 
 
     if runtime == "claude":
         return str(_claude_mcp_state_details(expected_cmd, cwd=cwd, env=env).get("state") or "missing")
+
+    if runtime == "cline":
+        doc = read_json(_cline_mcp_settings_path(env))
+        servers = doc.get("mcpServers") if isinstance(doc, dict) else None
+        if not isinstance(servers, dict):
+            return "missing"
+        entry = servers.get("cccc")
+        if entry is None:
+            return "missing"
+        return "ready" if _cline_mcp_entry_matches_expected(entry, expected_cmd) else "stale"
 
     if runtime == "codex":
         result = _run_cli(["codex", "mcp", "get", "cccc"], timeout=10, env=env, drop_env_keys=_CODEX_CONTEXT_ENV_KEYS)

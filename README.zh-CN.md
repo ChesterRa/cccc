@@ -10,7 +10,7 @@
 ### 像群聊一样指挥你的编码智能体
 
 **已读回执、送达追踪、远端协作组桥接、手机远程运维 ——
-Claude Code、Codex、ChatGPT Web 等 16 种运行时，在同一个持久协作组里。**
+Claude Code、Codex、ChatGPT Web 等 17 种运行时，在同一个持久协作组里。**
 
 让多个 coding agent 跨运行时、跨机器、跨可信协作组作为一支**持久化、可协调的团队**运行 — 而不是一堆各自为政的终端窗口。
 
@@ -57,7 +57,7 @@ CCCC 只需一条 `pip install`，零外部依赖 — 不需要数据库、不�
 | **唯一事实源** | append-only ledger（`ledger.jsonl`）记录所有消息和事件 — 可回放、可审计、永不丢失 |
 | **可靠的消息语义** | 已读游标、attention ACK、reply-required 义务追踪 — 谁看到了什么一清二楚 |
 | **统一控制面** | Web UI、CLI、MCP 工具、IM 桥接全部对接同一 daemon — 不存在状态分裂 |
-| **多运行时编排** | Claude Code、Codex CLI、GitHub Copilot CLI、Cursor CLI、Devin CLI、Kiro CLI、Kilo Code CLI、Antigravity CLI、Grok Build、OpenCode、ChatGPT Web 等 16 种一线运行时可混用，此外还支持 `custom` 运行时兜底 |
+| **多运行时编排** | Claude Code、Cline CLI、Codex CLI、GitHub Copilot CLI、Cursor CLI、Devin CLI、Kiro CLI、Kilo Code CLI、Antigravity CLI、Grok Build、OpenCode、ChatGPT Web 等 17 种一线运行时可混用，此外还支持 `custom` 运行时兜底 |
 | **Group Bridge** | 连接跨机器或跨团队的可信远端协作组，从显式消息开始，并可按需授予 read/full 本地访问权限 |
 | **角色化协调** | Foreman + Peer 角色模型，权限边界清晰，收件人路由精确（`@all`、`@peers`、`@foreman`） |
 | **本地优先的运行时状态** | 运行时数据保存在 `CCCC_HOME` 而不是代码仓库里，同时仍可通过 Web Access 与 IM 做远程运维 |
@@ -199,11 +199,12 @@ graph TB
 
 ## 支持的运行时
 
-CCCC 跨 16 种一线运行时编排 agent，除此之外还支持 `custom` 运行时兜底。同一协作组内，每个 actor 可使用不同的运行时。
+CCCC 跨 17 种一线运行时编排 agent，除此之外还支持 `custom` 运行时兜底。同一协作组内，每个 actor 可使用不同的运行时。
 
 | 运行时 | 接入方式 | 入口 / 表面 |
 |---------|----------|-------------|
 | Claude Code | 自动 MCP 配置 | `claude` |
+| Cline CLI | 自动 MCP 配置 | `cline` |
 | Codex CLI | 自动 MCP 配置 | `codex` |
 | GitHub Copilot CLI | 自动 MCP 配置 | `copilot` |
 | Cursor CLI | 提示词辅助 MCP 配置 | `cursor-agent` |
@@ -225,6 +226,7 @@ CCCC 跨 16 种一线运行时编排 agent，除此之外还支持 `custom` 运�
 
 ```bash
 cccc setup --runtime claude       # 自动配置该运行时的 MCP
+cccc setup --runtime cline        # 为 Cline PTY TUI 自动配置 MCP
 cccc setup --runtime cursor       # 显示提示词辅助 MCP 配置协议
 cccc setup --runtime kilo         # 显示提示词辅助 MCP 配置协议
 cccc setup --runtime antigravity  # 显示提示词辅助 MCP 配置协议

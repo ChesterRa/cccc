@@ -1,6 +1,6 @@
 [package]
 name = "cccc-pair-web"
-version = "0.4.33-compat.2"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true

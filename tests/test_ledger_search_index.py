@@ -572,8 +572,27 @@ class TestLedgerSearchIndex(unittest.TestCase):
             self.assertTrue(rotation.get("rotated"))
             compressed = compress_sealed_segments(group.path, keep_recent=0, force=True)
             self.assertEqual(int(compressed.get("count") or 0), 1)
+            active_event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data=ChatMessageData(text="active tail", to=["user"]).model_dump(),
+            )
 
             ledger_index.catch_up_ledger_index(group.ledger_path)
+            positions = ledger_index.lookup_event_positions(
+                group.ledger_path,
+                [event_ids[3], event_ids[17], str(active_event.get("id") or ""), "missing"],
+            )
+            self.assertIsNotNone(positions[0])
+            self.assertIsNotNone(positions[1])
+            self.assertIsNotNone(positions[2])
+            assert positions[0] is not None and positions[1] is not None and positions[2] is not None
+            self.assertLess(positions[0], positions[1])
+            self.assertLess(positions[1], positions[2])
+            self.assertIsNone(positions[3])
             wanted = [event_ids[3], event_ids[17], event_ids[7], event_ids[29]]
             with patch.object(ledger_index, "iter_source_lines", wraps=ledger_index.iter_source_lines) as iter_source_lines:
                 events = ledger_index.lookup_events_by_ids(group.ledger_path, wanted)

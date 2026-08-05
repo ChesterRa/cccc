@@ -36,7 +36,7 @@ try {
     throw "archive must contain exactly one executable: cccc.exe"
   }
 
-  $releaseDir = Join-Path $tempRoot "releases\download\rust-v$version"
+  $releaseDir = Join-Path $tempRoot "releases\download\v$version"
   New-Item -ItemType Directory -Path $releaseDir | Out-Null
   Copy-Item -Path (Join-Path $artifactDir "*") -Destination $releaseDir
   $releaseBaseUrl = ([Uri]::new((Resolve-Path (Join-Path $tempRoot "releases")).Path)).AbsoluteUri.TrimEnd("/")

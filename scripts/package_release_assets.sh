@@ -40,7 +40,7 @@ for installer in install.sh install.ps1; do
   grep -Fq '@CCCC_RELEASE_TAG_PREFIX@' "$source_path"
   sed \
     -e "s/@CCCC_VERSION@/$VERSION/g" \
-    -e 's/@CCCC_RELEASE_TAG_PREFIX@/rust-v/g' \
+    -e 's/@CCCC_RELEASE_TAG_PREFIX@/v/g' \
     "$source_path" > "$ASSET_DIR/$installer"
   if grep -Eq '@CCCC_(VERSION|RELEASE_TAG_PREFIX)@' "$ASSET_DIR/$installer"; then
     echo "failed to render $installer release metadata" >&2
@@ -49,4 +49,4 @@ for installer in install.sh install.ps1; do
 done
 chmod 755 "$ASSET_DIR/install.sh"
 
-echo "OK: prepared four archives, SHA256SUMS, and versioned installers for rust-v$VERSION"
+echo "OK: prepared four archives, SHA256SUMS, and versioned installers for v$VERSION"

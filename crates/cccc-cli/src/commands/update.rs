@@ -34,12 +34,11 @@ impl UpdatePlan {
 }
 
 /// Update the Rust distribution. Returns `true` when a replacement was installed.
-pub fn run(args: UpdateArgs, product_version: &str, crate_version: &str) -> Result<bool> {
+pub fn run(args: UpdateArgs, current_version: &str) -> Result<bool> {
     let executable = std::env::current_exe().context("could not locate the running CCCC binary")?;
     let cargo_install = is_cargo_install(&executable);
     let latest = latest_crate_version();
-    println!("Current CCCC product version: {product_version}");
-    println!("Current crates.io package version: {crate_version}");
+    println!("Current CCCC version: {current_version}");
     match &latest {
         Ok(version) => println!("Latest crates.io package version: {version}"),
         Err(error) => eprintln!("Could not check the latest crates.io version: {error}"),
@@ -62,7 +61,7 @@ pub fn run(args: UpdateArgs, product_version: &str, crate_version: &str) -> Resu
         return Ok(false);
     }
     let latest = latest.context("could not resolve the Rust release version")?;
-    match compare_versions(&latest, crate_version)? {
+    match compare_versions(&latest, current_version)? {
         Ordering::Less => {
             println!("CCCC Rust is newer than the latest crates.io release; no update applied.");
             return Ok(false);
@@ -111,7 +110,7 @@ fn install_release(executable: &Path, version: &str) -> Result<()> {
         .context("CCCC executable has no absolute parent directory")?;
     let extension = if cfg!(windows) { "ps1" } else { "sh" };
     let url = format!(
-        "https://raw.githubusercontent.com/ChesterRa/cccc/rust-v{version}/scripts/install.{extension}"
+        "https://raw.githubusercontent.com/ChesterRa/cccc/v{version}/scripts/install.{extension}"
     );
     let response = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
@@ -141,7 +140,7 @@ fn install_release(executable: &Path, version: &str) -> Result<()> {
     };
     let status = command
         .env("CCCC_VERSION", version)
-        .env("CCCC_RELEASE_TAG_PREFIX", "rust-v")
+        .env("CCCC_RELEASE_TAG_PREFIX", "v")
         .env("CCCC_INSTALL_DIR", install_dir)
         .env("CCCC_NO_MODIFY_PATH", "1")
         .status()

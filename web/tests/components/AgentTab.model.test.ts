@@ -11,6 +11,7 @@ describe("AgentTab stopped terminal tail model", () => {
     for (const runtime of ["claude", "codex", "grok"]) {
       expect(actorSupportsNewSession(runtime)).toBe(true);
     }
+    expect(actorSupportsNewSession("cline")).toBe(false);
     expect(actorSupportsNewSession("opencode")).toBe(false);
   });
 

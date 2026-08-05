@@ -58,6 +58,73 @@ class TestChatOps(unittest.TestCase):
             )
         )
 
+    def test_send_files_uploads_active_scope_files_atomically(self) -> None:
+        _, cleanup = self._with_home()
+        scope_ctx = tempfile.TemporaryDirectory()
+        scope = Path(scope_ctx.__enter__())
+        try:
+            create, _ = self._call(
+                "group_create", {"title": "file-send", "topic": "", "by": "user"}
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "")
+            attach, _ = self._call(
+                "attach", {"group_id": group_id, "path": str(scope), "by": "user"}
+            )
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+            image_path = scope / "frame.png"
+            note_path = scope / "brief.txt"
+            image_path.write_bytes(b"\x89PNG\r\n\x1a\nfixture")
+            note_path.write_text("reader brief", encoding="utf-8")
+
+            sent, _ = self._call(
+                "send_files",
+                {
+                    "group_id": group_id,
+                    "paths": [str(image_path), "brief.txt"],
+                    "text": "inspect both",
+                    "by": "user",
+                    "to": ["user"],
+                },
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            event = (sent.result or {}).get("event") or {}
+            attachments = (event.get("data") or {}).get("attachments") or []
+            self.assertEqual([item.get("kind") for item in attachments], ["image", "file"])
+            self.assertEqual([item.get("title") for item in attachments], ["frame.png", "brief.txt"])
+            self.assertTrue(all(str(item.get("path") or "").startswith("state/blobs/") for item in attachments))
+        finally:
+            scope_ctx.__exit__(None, None, None)
+            cleanup()
+
+    def test_send_files_rejects_path_outside_active_scope_before_send(self) -> None:
+        _, cleanup = self._with_home()
+        scope_ctx = tempfile.TemporaryDirectory()
+        outside_ctx = tempfile.TemporaryDirectory()
+        scope = Path(scope_ctx.__enter__())
+        outside = Path(outside_ctx.__enter__()) / "outside.txt"
+        outside.write_text("not attached", encoding="utf-8")
+        try:
+            create, _ = self._call(
+                "group_create", {"title": "file-send-scope", "topic": "", "by": "user"}
+            )
+            group_id = str((create.result or {}).get("group_id") or "")
+            attach, _ = self._call(
+                "attach", {"group_id": group_id, "path": str(scope), "by": "user"}
+            )
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            sent, _ = self._call(
+                "send_files",
+                {"group_id": group_id, "paths": [str(outside)], "to": ["user"]},
+            )
+            self.assertFalse(sent.ok)
+            self.assertEqual(getattr(sent.error, "code", ""), "invalid_path")
+        finally:
+            outside_ctx.__exit__(None, None, None)
+            scope_ctx.__exit__(None, None, None)
+            cleanup()
+
     def test_wake_group_on_human_message_skips_execution_time_idle_when_accept_was_active(self) -> None:
         from cccc.daemon.messaging.chat_ops import _wake_group_on_human_message
 

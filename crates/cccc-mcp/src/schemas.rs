@@ -304,14 +304,51 @@ pub fn input(name: &str) -> Value {
             ),
             &["record"],
         ),
-        "cccc_capability_enable"
-        | "cccc_capability_use"
-        | "cccc_capability_block"
-        | "cccc_capability_uninstall" => object(
-            json!({
-                "group_id":{"type":"string"},"capability_id":{"type":"string"},"enabled":{"type":"boolean"},
-                "action":{"type":"string"},"args":{"type":"object"}
-            }),
+        "cccc_capability_enable" => object(
+            merge(
+                common(),
+                json!({
+                    "capability_id":{"type":"string"},
+                    "scope":{"type":"string","enum":["session","actor","group"],"default":"session"},
+                    "enabled":{"type":"boolean","default":true},
+                    "cleanup":{"type":"boolean","default":false},
+                    "reason":{"type":"string"},
+                    "ttl_seconds":{"type":"integer","minimum":60,"maximum":86400,"default":3600}
+                }),
+            ),
+            &["capability_id"],
+        ),
+        "cccc_capability_block" => object(
+            merge(
+                common(),
+                json!({
+                    "capability_id":{"type":"string"},
+                    "scope":{"type":"string","enum":["group","global"],"default":"group"},
+                    "blocked":{"type":"boolean","default":true},
+                    "reason":{"type":"string"},
+                    "ttl_seconds":{"type":"integer","minimum":0,"maximum":2592000,"default":0}
+                }),
+            ),
+            &["capability_id"],
+        ),
+        "cccc_capability_uninstall" => object(
+            merge(
+                common(),
+                json!({"capability_id":{"type":"string"},"reason":{"type":"string"}}),
+            ),
+            &["capability_id"],
+        ),
+        "cccc_capability_use" => object(
+            merge(
+                common(),
+                json!({
+                    "capability_id":{"type":"string"},"tool_name":{"type":"string"},
+                    "tool_arguments":{"type":"object"},
+                    "scope":{"type":"string","enum":["session","actor","group"],"default":"session"},
+                    "ttl_seconds":{"type":"integer","minimum":60,"maximum":86400,"default":3600},
+                    "reason":{"type":"string"}
+                }),
+            ),
             &[],
         ),
         "cccc_runtime_complete_turn" => object(
@@ -463,6 +500,31 @@ mod tests {
             schema["required"]
                 .as_array()
                 .is_some_and(|required| !required.iter().any(|item| item == "event_ids"))
+        );
+    }
+
+    #[test]
+    fn capability_mutation_schemas_expose_scope_and_identity_contracts() {
+        let enable = input("cccc_capability_enable");
+        assert_eq!(enable["properties"]["scope"]["default"], "session");
+        assert_eq!(enable["properties"]["by"]["type"], "string");
+        assert_eq!(enable["properties"]["actor_id"]["type"], "string");
+        assert!(
+            enable["required"]
+                .as_array()
+                .is_some_and(|required| { required.iter().any(|item| item == "capability_id") })
+        );
+
+        let block = input("cccc_capability_block");
+        assert_eq!(block["properties"]["scope"]["default"], "group");
+        assert_eq!(block["properties"]["blocked"]["default"], true);
+
+        let uninstall = input("cccc_capability_uninstall");
+        assert_eq!(uninstall["properties"]["by"]["type"], "string");
+        assert!(
+            uninstall["required"]
+                .as_array()
+                .is_some_and(|required| { required.iter().any(|item| item == "capability_id") })
         );
     }
 

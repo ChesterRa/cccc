@@ -10,7 +10,7 @@
 ### コーディングエージェントをグループチャットのように指揮する
 
 **既読・送達トラッキング・リモートグループブリッジ・スマホ運用 —
-Claude Code、Codex、ChatGPT Web など 16 のランタイムをひとつの永続グループで。**
+Claude Code、Codex、ChatGPT Web など 17 のランタイムをひとつの永続グループで。**
 
 複数のコーディングエージェントを、ランタイム・マシン・信頼済み working group をまたぐ**永続的で協調されたチーム**として運用 — バラバラのターミナルセッションではなく。
 
@@ -57,7 +57,7 @@ CCCC は `pip install` 一つで導入完了、外部依存ゼロ — データ�
 | **唯一の事実源** | append-only ledger（`ledger.jsonl`）が全メッセージ・イベントを記録 — 再生可能、監査可能、喪失なし |
 | **信頼性のあるメッセージング** | 既読カーソル、attention ACK、reply-required 義務追跡 — 誰が何を確認したか明確 |
 | **統一コントロールプレーン** | Web UI、CLI、MCP ツール、IM ブリッジがすべて 1 つの daemon に接続 — 状態の分断なし |
-| **マルチランタイム編成** | Claude Code、Codex CLI、GitHub Copilot CLI、Cursor CLI、Devin CLI、Kiro CLI、Kilo Code CLI、Antigravity CLI、Grok Build、OpenCode、ChatGPT Web など 16 種の主要ランタイムを混在利用でき、さらに `custom` も扱える |
+| **マルチランタイム編成** | Claude Code、Cline CLI、Codex CLI、GitHub Copilot CLI、Cursor CLI、Devin CLI、Kiro CLI、Kilo Code CLI、Antigravity CLI、Grok Build、OpenCode、ChatGPT Web など 17 種の主要ランタイムを混在利用でき、さらに `custom` も扱える |
 | **Group Bridge** | マシンやチームをまたぐ信頼済みリモートグループを接続し、明示的メッセージから始めて read/full のローカルアクセスを必要時だけ付与 |
 | **ロールベース協調** | Foreman + Peer ロールモデル、権限境界と宛先ルーティング（`@all`、`@peers`、`@foreman`） |
 | **ローカルファーストなランタイム状態** | ランタイムデータはリポジトリではなく `CCCC_HOME` に保持しつつ、Web Access と IM ブリッジで遠隔運用も可能 |
@@ -199,11 +199,12 @@ graph TB
 
 ## サポートランタイム
 
-CCCC は 16 種の主要ランタイムでエージェントを編成し、残りは `custom` で扱えます。同一グループ内で各 actor が異なるランタイムを使用可能です。
+CCCC は 17 種の主要ランタイムでエージェントを編成し、残りは `custom` で扱えます。同一グループ内で各 actor が異なるランタイムを使用可能です。
 
 | ランタイム | 連携方式 | 入口 / サーフェス |
 |-----------|----------|-------------------|
 | Claude Code | MCP 自動設定 | `claude` |
+| Cline CLI | MCP 自動設定 | `cline` |
 | Codex CLI | MCP 自動設定 | `codex` |
 | GitHub Copilot CLI | MCP 自動設定 | `copilot` |
 | Cursor CLI | プロンプト支援 MCP 設定 | `cursor-agent` |
@@ -225,6 +226,7 @@ CCCC は 16 種の主要ランタイムでエージェントを編成し、残�
 
 ```bash
 cccc setup --runtime claude       # ランタイムの MCP を自動設定
+cccc setup --runtime cline        # Cline PTY TUI の MCP を自動設定
 cccc setup --runtime cursor       # プロンプト支援 MCP 設定コントラクトを表示
 cccc setup --runtime kilo         # プロンプト支援 MCP 設定コントラクトを表示
 cccc setup --runtime antigravity  # プロンプト支援 MCP 設定コントラクトを表示

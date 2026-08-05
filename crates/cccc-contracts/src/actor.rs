@@ -42,6 +42,7 @@ pub enum ActorRuntime {
     Antigravity,
     Auggie,
     Claude,
+    Cline,
     #[default]
     Codex,
     Copilot,
@@ -154,4 +155,19 @@ const fn enabled() -> bool {
 }
 fn global_scope() -> String {
     "global".into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ActorRuntime;
+
+    #[test]
+    fn cline_runtime_round_trips_through_the_shared_contract() {
+        let runtime: ActorRuntime = serde_json::from_str(r#""cline""#).expect("deserialize");
+        assert_eq!(runtime, ActorRuntime::Cline);
+        assert_eq!(
+            serde_json::to_string(&runtime).expect("serialize"),
+            r#""cline""#
+        );
+    }
 }

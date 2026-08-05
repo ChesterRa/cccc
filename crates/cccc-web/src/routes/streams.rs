@@ -1,9 +1,10 @@
 use axum::Router;
-use axum::extract::{Path, State};
+use axum::extract::{Extension, Path, State};
 use axum::http::{HeaderMap, HeaderName};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::routing::get;
 use futures_util::Stream;
+use serde::Serialize;
 use std::collections::{HashSet, VecDeque};
 use std::convert::Infallible;
 use std::time::Duration;
@@ -11,6 +12,7 @@ use tokio::sync::broadcast;
 
 use crate::AppState;
 use crate::api::ApiError;
+use crate::auth::Principal;
 
 const GLOBAL_EVENT_NAME: &str = "event";
 const GROUP_LEDGER_EVENT_NAME: &str = "ledger";
@@ -29,6 +31,29 @@ fn sse_event(name: &'static str, event: cccc_contracts::Event) -> Event {
         .unwrap_or_default()
 }
 
+#[derive(Serialize)]
+struct GlobalEvent<'a> {
+    v: u8,
+    id: &'a str,
+    ts: &'a str,
+    kind: &'a str,
+    group_id: &'a str,
+}
+
+fn global_sse_event(event: &cccc_contracts::Event) -> Event {
+    Event::default()
+        .event(GLOBAL_EVENT_NAME)
+        .id(&event.id)
+        .json_data(GlobalEvent {
+            v: event.v,
+            id: &event.id,
+            ts: &event.ts,
+            kind: &event.kind,
+            group_id: &event.group_id,
+        })
+        .unwrap_or_default()
+}
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/v1/events/stream", get(global_events))
@@ -37,6 +62,7 @@ pub fn routes() -> Router<AppState> {
 
 async fn global_events(
     State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     let mut receiver = state.ledger_events.subscribe_global();
     let shutdown_guard = state.shutdown.clone();
@@ -50,11 +76,14 @@ async fn global_events(
                 received = receiver.recv() => received,
             };
             match received {
-                Ok(event) => yield Ok(sse_event(GLOBAL_EVENT_NAME, event)),
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                Ok(event) if principal.allows(&event.group_id) => {
+                    yield Ok(global_sse_event(&event));
+                }
+                Ok(_) => continue,
+                Err(broadcast::error::RecvError::Lagged(_)) => {
                     yield Ok(stream_error(
                         "global_stream_lagged",
-                        format!("global event stream skipped {skipped} events"),
+                        "global event stream lagged; refresh required".into(),
                     ));
                 }
                 Err(broadcast::error::RecvError::Closed) => break,

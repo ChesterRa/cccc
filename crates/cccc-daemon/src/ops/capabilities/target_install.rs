@@ -1,6 +1,6 @@
 use cccc_contracts::{DaemonRequest, utc_now};
+use cccc_core::HomeLayout;
 use cccc_core::capabilities::CapabilityStore;
-use cccc_core::{GroupStore, HomeLayout};
 use reqwest::blocking::Client;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -9,28 +9,23 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use uuid::Uuid;
 
-use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
+use crate::dispatch::{OpError, OpResult, object, string_arg};
 
 use super::package_install;
 
 const MAX_GITHUB_SKILLS: usize = 64;
 
 pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    GroupStore::new(home.clone())
-        .map_err(OpError::io)?
-        .load(&group_id)
-        .map_err(OpError::not_found)?;
+    let access = super::authorize_scope_mutation(home, request, "actor")?;
+    let group_id = access.actor.group_id;
+    let actor_id = access.actor.actor_id;
+    let scope = access.scope;
     let target = string_arg(request, "target")
         .or_else(|| string_arg(request, "source_uri"))
         .or_else(|| string_arg(request, "capability_id"))
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
         .ok_or_else(|| OpError::new("missing_install_target", "missing install target"))?;
-    let actor_id = string_arg(request, "actor_id")
-        .or_else(|| string_arg(request, "by"))
-        .unwrap_or_else(|| "user".into());
-    let scope = string_arg(request, "scope").unwrap_or_else(|| "actor".into());
     let ttl_seconds = request
         .args
         .get("ttl_seconds")

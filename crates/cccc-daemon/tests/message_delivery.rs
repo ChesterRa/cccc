@@ -174,6 +174,110 @@ fn empty_recipients_follow_the_group_default_policy() {
 }
 
 #[test]
+fn send_files_uses_the_active_scope_and_normal_send_contract() {
+    use cccc_contracts::GroupState;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = temp.path().join("scope");
+    let outside = temp.path().join("outside.txt");
+    std::fs::create_dir_all(&scope).expect("scope");
+    std::fs::write(scope.join("frame.png"), b"\x89PNG\r\n\x1a\nfixture").expect("image");
+    std::fs::write(scope.join("brief.txt"), b"reader brief").expect("brief");
+    std::fs::write(&outside, b"outside").expect("outside");
+
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"send-files","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":scope,"by":"user"}),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"worker","by":"user"}),
+    );
+    let store = GroupStore::new(home.clone()).expect("store");
+    store
+        .mutate(group_id, |group| {
+            group.state = GroupState::Idle;
+            Ok(())
+        })
+        .expect("idle");
+
+    let sent = call(
+        &home,
+        "send_files",
+        json!({
+            "group_id":group_id,
+            "by":"user",
+            "to":["worker"],
+            "paths":[scope.join("frame.png"), "brief.txt"]
+        }),
+    );
+    let event = &sent.result["event"];
+    assert_eq!(event["kind"], "chat.message");
+    assert_eq!(event["data"]["text"], "[files] frame.png, brief.txt");
+    assert_eq!(event["data"]["to"], json!(["worker"]));
+    assert_eq!(
+        event["data"]["scope_key"],
+        store.load(group_id).expect("group").active_scope_key
+    );
+    let attachments = event["data"]["attachments"]
+        .as_array()
+        .expect("attachments");
+    assert_eq!(attachments.len(), 2);
+    assert_eq!(attachments[0]["kind"], "image");
+    assert_eq!(attachments[0]["title"], "frame.png");
+    assert_eq!(attachments[0]["mime_type"], "image/png");
+    assert_eq!(attachments[1]["kind"], "file");
+    assert_eq!(attachments[1]["title"], "brief.txt");
+    for attachment in attachments {
+        let blob = cccc_core::blobs::resolve(
+            &home,
+            group_id,
+            attachment["path"].as_str().expect("blob path"),
+        )
+        .expect("blob");
+        assert!(blob.is_file());
+        assert_eq!(
+            std::fs::metadata(blob).expect("metadata").len(),
+            attachment["bytes"].as_u64().expect("bytes")
+        );
+    }
+    assert_eq!(
+        store.load(group_id).expect("group").state,
+        GroupState::Active
+    );
+
+    let before = ledger::read_all(&store.ledger_path(group_id).expect("ledger"))
+        .expect("events")
+        .len();
+    let rejected = call_raw(
+        &home,
+        "send_files",
+        json!({"group_id":group_id,"by":"user","to":["worker"],"paths":[outside]}),
+    );
+    assert_eq!(
+        rejected.error.as_ref().map(|error| error.code.as_str()),
+        Some("invalid_path")
+    );
+    assert_eq!(
+        ledger::read_all(&store.ledger_path(group_id).expect("ledger"))
+            .expect("events")
+            .len(),
+        before
+    );
+}
+
+#[test]
 fn slash_skill_dispatch_persists_hidden_control_contract_and_replays_by_client_id() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
@@ -194,10 +298,14 @@ fn slash_skill_dispatch_persists_hidden_control_contract_and_replays_by_client_i
     call(
         &home,
         "capability_import",
-        json!({"capability":{
-            "id":"skill:test:using-superpowers",
+        json!({
+            "group_id":group_id,
+            "by":"user",
+            "record":{
+            "capability_id":"skill:test:using-superpowers",
             "kind":"skill",
-            "name":"using-superpowers"
+            "name":"using-superpowers",
+            "capsule_text":"Use the superpowers workflow for this task."
         }}),
     );
 

@@ -227,3 +227,9 @@ Then authenticate once to bootstrap the session cookie:
 - Open `http://YOUR_HOST:8848/?token=<access-token>` (or `.../ui/?token=...`) using an Access Token created in Web Access.
 
 After that, you can use the Web UI normally without `?token=...`.
+
+The query token is only a session-bootstrap transport; it does not widen the
+token's permissions. A token scoped to selected Groups receives global stream
+metadata only for those Groups, and the global stream never carries message
+content. Full event content remains on the per-Group stream and is subject to
+the same scope check. Administrative capability changes require an Admin token.

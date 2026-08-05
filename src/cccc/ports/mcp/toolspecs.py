@@ -907,8 +907,9 @@ MCP_TOOLS = [
     {
         "name": "cccc_capability_uninstall",
         "description": (
-            "Foreman/admin governance tool to uninstall a capability from local use: revoke bindings/runtime cache and remove actor/profile autoload references. "
-            "For source_id=agent_self_proposed skills, also remove the generated local catalog record. External registry records are not deleted."
+            "Foreman/admin governance tool to uninstall a capability from the target group: revoke that group's bindings/runtime cache, "
+            "hide it from that group's catalog view, and remove current-group actor autoload references. "
+            "Catalog records, other groups, block policy, and profile defaults are preserved; global deletion uses capability_source_delete."
         ),
         "inputSchema": _obj(
             {

@@ -48,6 +48,7 @@ pub fn daemon_call(
         "cccc_capability_install" => "capability_install_target",
         "cccc_capability_use" => {
             alias(&mut args, "id", "capability_id");
+            alias(&mut args, "tool_arguments", "arguments");
             "capability_tool_call"
         }
         "cccc_capability_import" => "capability_import",

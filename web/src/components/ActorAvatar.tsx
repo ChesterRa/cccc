@@ -54,9 +54,11 @@ export const ActorAvatar = memo(function ActorAvatar({
   const logoClassName =
     runtimeKey === "grok"
       ? "h-[68%] w-[68%] object-contain"
-      : runtimeKey === "copilot"
-        ? "h-[88%] w-[88%] object-contain"
-        : "h-full w-full object-contain";
+      : runtimeKey === "cline"
+        ? "h-[72%] w-[72%] object-contain"
+        : runtimeKey === "copilot"
+          ? "h-[88%] w-[88%] object-contain"
+          : "h-full w-full object-contain";
 
   const logoSrc = useMemo(() => {
     if (isUser || usesInlineClaudeLogo) return null;

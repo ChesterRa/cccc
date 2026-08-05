@@ -227,3 +227,106 @@ fn safety_mode(effective: &Value) -> &'static str {
         "conservative"
     }
 }
+
+pub(super) fn effective_policy_level(
+    home: &HomeLayout,
+    capability_id: &str,
+    kind: &str,
+    source_id: &str,
+    actor_role: &str,
+) -> Result<String, OpError> {
+    let effective = snapshot(home)?["effective"].clone();
+    let mut level = effective
+        .pointer(&format!(
+            "/defaults/source_level/{}",
+            escape_pointer(source_id)
+        ))
+        .and_then(Value::as_str)
+        .map(normalize_level)
+        .unwrap_or_else(|| {
+            if source_id.is_empty() {
+                "mounted".into()
+            } else {
+                "indexed".into()
+            }
+        });
+
+    if kind == "skill" {
+        for row in effective
+            .pointer("/skills/source_overrides")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if row.get("source_id").and_then(Value::as_str) == Some(source_id)
+                && let Some(value) = row.get("level").and_then(Value::as_str)
+            {
+                level = normalize_level(value);
+            }
+        }
+    }
+
+    for row in effective
+        .get("mcp_overrides")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if row.get("capability_id").and_then(Value::as_str) == Some(capability_id)
+            && let Some(value) = row.get("level").and_then(Value::as_str)
+        {
+            level = normalize_level(value);
+        }
+    }
+
+    if kind == "skill"
+        && let Some(skills) = effective.get("skills").and_then(Value::as_object)
+    {
+        for rows in skills.values().filter_map(Value::as_array) {
+            for row in rows {
+                if row.get("capability_id").and_then(Value::as_str) != Some(capability_id) {
+                    continue;
+                }
+                if let Some(value) = row.get("level").and_then(Value::as_str) {
+                    level = normalize_level(value);
+                }
+                if row
+                    .get("pinned_roles")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .any(|value| value.as_str() == Some(actor_role))
+                {
+                    level = "pinned".into();
+                }
+            }
+        }
+    }
+
+    if !actor_role.is_empty()
+        && effective
+            .pointer(&format!(
+                "/role_defaults/{}/pinned",
+                escape_pointer(actor_role)
+            ))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|value| value.as_str() == Some(capability_id))
+    {
+        level = "pinned".into();
+    }
+    Ok(level)
+}
+
+fn normalize_level(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "enabled" | "mounted" => "mounted".into(),
+        "pinned" => "pinned".into(),
+        _ => "indexed".into(),
+    }
+}
+
+fn escape_pointer(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
+}

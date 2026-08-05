@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -173,6 +174,75 @@ class TestUnreadIndex(unittest.TestCase):
             with patch("cccc.kernel.inbox.batch_unread_counts", side_effect=AssertionError("ledger snapshot should seed unread state")):
                 restored = self._actor_list(group_id, include_unread=True)
             self.assertEqual(int(restored[0].get("unread_count") or 0), 1)
+        finally:
+            cleanup()
+
+    def test_actor_list_include_unread_rebuilds_schema_one_index(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+
+            group_id = self._create_group()
+            self._add_actor(group_id, "peer1", "Peer 1")
+            sent, _ = self._call(
+                "send",
+                {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "schema migration"},
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+
+            baseline = self._actor_list(group_id, include_unread=True)
+            self.assertEqual(int(baseline[0].get("unread_count") or 0), 1)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            unread_index_path = group.path / "state" / "unread_index.json"
+            stale = json.loads(unread_index_path.read_text(encoding="utf-8"))
+            stale["schema"] = 1
+            stale["counts"] = {"peer1": 0}
+            unread_index_path.write_text(json.dumps(stale), encoding="utf-8")
+
+            rebuilt = self._actor_list(group_id, include_unread=True)
+
+            self.assertEqual(int(rebuilt[0].get("unread_count") or 0), 1)
+            current = json.loads(unread_index_path.read_text(encoding="utf-8"))
+            self.assertEqual(current.get("schema"), 2)
+        finally:
+            cleanup()
+
+    def test_actor_list_include_unread_rejects_schema_one_snapshot_seed(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+
+            group_id = self._create_group()
+            self._add_actor(group_id, "peer1", "Peer 1")
+            sent, _ = self._call(
+                "send",
+                {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "snapshot migration"},
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            self.assertEqual(int(self._actor_list(group_id, include_unread=True)[0].get("unread_count") or 0), 1)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            unread_index_path = group.path / "state" / "unread_index.json"
+            stale = json.loads(unread_index_path.read_text(encoding="utf-8"))
+            stale["schema"] = 1
+            stale["counts"] = {"peer1": 0}
+            unread_index_path.write_text(json.dumps(stale), encoding="utf-8")
+            compact, _ = self._call(
+                "ledger_compact",
+                {"group_id": group_id, "by": "user", "reason": "schema-one-snapshot", "force": True},
+            )
+            self.assertTrue(compact.ok, getattr(compact, "error", None))
+            unread_index_path.unlink(missing_ok=True)
+
+            rebuilt = self._actor_list(group_id, include_unread=True)
+
+            self.assertEqual(int(rebuilt[0].get("unread_count") or 0), 1)
+            current = json.loads(unread_index_path.read_text(encoding="utf-8"))
+            self.assertEqual(current.get("schema"), 2)
         finally:
             cleanup()
 

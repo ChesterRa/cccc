@@ -13,8 +13,7 @@ use clap::Parser;
 use commands::common::{call, print};
 use serde_json::json;
 
-const PRODUCT_VERSION: &str = env!("CCCC_PRODUCT_VERSION");
-const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -87,7 +86,7 @@ async fn main() -> Result<()> {
         Some(CommandKind::Doctor) => commands::doctor::run(&home, PRODUCT_VERSION).await,
         Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
         Some(CommandKind::Update(args)) => {
-            let installed = commands::update::run(args, PRODUCT_VERSION, CRATE_VERSION)?;
+            let installed = commands::update::run(args, PRODUCT_VERSION)?;
             if installed {
                 stop_daemon_after_update(&client, &home).await?;
             }

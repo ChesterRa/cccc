@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use crate::HomeLayout;
@@ -217,13 +217,7 @@ impl CapabilityStore {
     pub fn remove_bindings_for_group(&self, id: &str, group_id: &str) -> io::Result<usize> {
         self.mutate_state(|raw| {
             let mut removed = 0;
-            for key in [
-                "group_enabled",
-                "actor_enabled",
-                "session_enabled",
-                "group_blocked",
-                "actor_hidden",
-            ] {
+            for key in ["group_enabled", "actor_enabled", "session_enabled"] {
                 if let Some(groups) = raw.get_mut(key).and_then(Value::as_object_mut)
                     && let Some(group) = groups.get_mut(group_id)
                 {
@@ -244,7 +238,46 @@ impl CapabilityStore {
         if !path.exists() {
             return Ok(false);
         }
-        Ok(contains_id(&read_json::<Value>(&path)?, id))
+        let raw = read_json::<Value>(&path)?;
+        Ok(["group_enabled", "actor_enabled", "session_enabled"]
+            .iter()
+            .filter_map(|key| raw.get(*key))
+            .any(|value| contains_id(value, id)))
+    }
+
+    pub fn removed_for_group(&self, group_id: &str) -> io::Result<BTreeSet<String>> {
+        let path = self.path();
+        if group_id.is_empty() || !path.exists() {
+            return Ok(BTreeSet::new());
+        }
+        let raw = read_json::<Value>(&path)?;
+        Ok(raw
+            .pointer(&format!("/group_removed/{}", escape_pointer(group_id)))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect())
+    }
+
+    pub fn set_removed_for_group(
+        &self,
+        id: &str,
+        group_id: &str,
+        removed: bool,
+    ) -> io::Result<bool> {
+        if group_id.is_empty() {
+            return Err(io::Error::other("group_id is required"));
+        }
+        self.mutate_state(|raw| {
+            let groups = object_field(raw, "group_removed");
+            let items = groups.entry(group_id).or_insert_with(|| json!([]));
+            let was_present = array_contains_id(items, id);
+            set_array_member(items, id, removed);
+            remove_empty_entry(groups, group_id);
+            Ok(was_present != removed)
+        })
     }
 
     pub fn is_enabled_for(
@@ -359,6 +392,13 @@ impl CapabilityStore {
             return Err(io::Error::other("group_id is required"));
         }
         self.mutate_state(|raw| {
+            if enabled {
+                let groups = object_field(raw, "group_removed");
+                if let Some(items) = groups.get_mut(group_id) {
+                    set_array_member(items, id, false);
+                    remove_empty_entry(groups, group_id);
+                }
+            }
             match scope {
                 "group" => {
                     let groups = object_field(raw, "group_enabled");
@@ -616,6 +656,12 @@ fn set_array_member(value: &mut Value, id: &str, present: bool) {
     }
 }
 
+fn array_contains_id(value: &Value, id: &str) -> bool {
+    value
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(id)))
+}
+
 fn remove_empty_entry(map: &mut Map<String, Value>, key: &str) {
     if map.get(key).is_some_and(|value| {
         value.as_array().is_some_and(Vec::is_empty) || value.as_object().is_some_and(Map::is_empty)
@@ -782,14 +828,39 @@ mod tests {
         store
             .set_enabled_for("skill:test", true, "g_two", "actor", "actor", 3600)
             .expect("second binding");
+        store
+            .set_hidden_for("skill:test", true, "g_one", "actor")
+            .expect("hidden preference");
+        store
+            .set_blocked_for("skill:test", true, "g_one", "reason", "user", 0)
+            .expect("group block");
         assert_eq!(
             store
                 .remove_bindings_for_group("skill:test", "g_one")
                 .expect("remove"),
             1
         );
+        assert!(
+            store
+                .is_hidden_for("skill:test", "g_one", "actor")
+                .expect("hidden preserved")
+        );
+        assert!(
+            store
+                .set_removed_for_group("skill:test", "g_one", true)
+                .expect("removed marker")
+        );
         assert!(store.has_bindings("skill:test").expect("remaining"));
-        assert!(store.remove_all_bindings("skill:test").expect("remove all") > 0);
+        assert_eq!(
+            store
+                .remove_bindings_for_group("skill:test", "g_two")
+                .expect("remove other group"),
+            1
+        );
         assert!(!store.has_bindings("skill:test").expect("empty"));
+        assert_eq!(
+            store.removed_for_group("g_one").expect("removed ids"),
+            BTreeSet::from(["skill:test".to_owned()])
+        );
     }
 }
