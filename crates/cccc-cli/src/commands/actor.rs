@@ -94,17 +94,30 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: ActorArgs) -> R
             set,
             unset,
             clear,
+            keys,
+            restart,
+            by,
         } => {
             let group_id = group(home, group_id)?;
-            if set.is_empty() && unset.is_empty() && !clear {
+            if keys || (set.is_empty() && unset.is_empty() && !clear) {
                 call(
                     client,
                     "actor_env_private_keys",
-                    json!({"group_id":group_id,"actor_id":actor_id}),
+                    json!({"group_id":group_id,"actor_id":actor_id,"by":by}),
                 )
                 .await?
             } else {
-                call(client, "actor_env_private_update", json!({"group_id":group_id,"actor_id":actor_id,"set":env(set)?,"unset":unset,"clear":clear})).await?
+                let updated = call(client, "actor_env_private_update", json!({"group_id":group_id,"actor_id":actor_id,"set":env(set)?,"unset":unset,"clear":clear,"by":&by})).await?;
+                if restart && updated.ok {
+                    call(
+                        client,
+                        "actor_restart",
+                        json!({"group_id":group_id,"actor_id":actor_id,"by":by}),
+                    )
+                    .await?
+                } else {
+                    updated
+                }
             }
         }
     };

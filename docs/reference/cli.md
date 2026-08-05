@@ -143,6 +143,7 @@ cccc send "Hello"                  # No --to: default recipient policy applies (
 cccc send "Hello" --to @foreman    # Send to foreman
 cccc send "Hello" --to peer-1      # Send to specific actor
 cccc send "Announcement" --to @all # Explicit broadcast
+cccc send "Review this scope" --path src/api
 ```
 
 ### `cccc tracked-send`
@@ -156,12 +157,15 @@ cccc tracked-send "Please implement this and reply with validation evidence." \
   --outcome "Feature is implemented and validation evidence is reported"
 ```
 
+The Rust CLI also forwards `--checklist`, `--assignee`, `--waiting-on`, `--handoff-to`,
+`--notes`, `--priority`, `--no-reply-required`, and `--idempotency-key` to the daemon.
+
 ### `cccc reply`
 
 Reply to a message.
 
 ```bash
-cccc reply <event_id> "Reply text"
+cccc reply <event_id> "Reply text" --to peer-1 --priority attention --reply-required
 ```
 
 ### `cccc inbox`
@@ -171,6 +175,7 @@ View inbox.
 ```bash
 cccc inbox --actor-id <id>         # View actor unread messages
 cccc inbox --actor-id <id> --mark-read
+cccc inbox --actor-id <id> --kind-filter notify
 ```
 
 ### `cccc tail`
@@ -253,6 +258,7 @@ Notes:
 Configure MCP for an agent runtime.
 
 ```bash
+cccc setup                         # Configure every supported runtime; unavailable CLIs are reported
 cccc setup --runtime claude        # Auto-configure for Claude Code
 cccc setup --runtime codex         # Auto-configure for Codex
 cccc setup --runtime copilot       # Auto-configure for GitHub Copilot CLI
@@ -263,6 +269,10 @@ cccc setup --runtime kimi          # Auto-configure for Kimi CLI
 cccc setup --runtime kilo          # Show prompt-assisted setup contract for Kilo Code CLI
 cccc setup --runtime antigravity   # Show prompt-assisted setup contract for Antigravity CLI
 ```
+
+Without `--runtime`, setup performs one batch pass: installed CLI runtimes are configured,
+prompt-assisted/manual runtimes return their configuration contract, and missing runtimes are
+reported without aborting the remaining setup work.
 
 ### `cccc update`
 

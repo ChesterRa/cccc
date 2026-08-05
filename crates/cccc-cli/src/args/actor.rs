@@ -72,6 +72,12 @@ pub enum ActorAction {
         unset: Vec<String>,
         #[arg(long)]
         clear: bool,
+        #[arg(long)]
+        keys: bool,
+        #[arg(long)]
+        restart: bool,
+        #[arg(long, default_value = "user")]
+        by: String,
     },
 }
 

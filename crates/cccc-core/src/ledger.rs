@@ -890,6 +890,19 @@ mod tests {
     }
 
     #[test]
+    fn follower_returns_an_entire_burst_without_a_tail_window() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let mut follower = LedgerFollower::default();
+        follower.poll(&path).expect("initialize follower");
+        for _ in 0..75 {
+            append(&path, &Event::new("chat.message", "g_test")).expect("append");
+        }
+
+        assert_eq!(follower.poll(&path).expect("burst").len(), 75);
+    }
+
+    #[test]
     fn follower_retries_an_unterminated_partial_tail() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("ledger.jsonl");

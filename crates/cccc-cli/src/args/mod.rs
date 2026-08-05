@@ -182,4 +182,37 @@ mod tests {
             Some(CommandKind::Update(UpdateArgs { check: true }))
         ));
     }
+
+    #[test]
+    fn parses_complete_tracked_send_options() {
+        let cli = Cli::try_parse_from([
+            "cccc",
+            "tracked-send",
+            "implement",
+            "--title",
+            "Task",
+            "--outcome",
+            "done",
+            "--checklist",
+            "code\ntests",
+            "--assignee",
+            "peer",
+            "--waiting-on",
+            "actor",
+            "--handoff-to",
+            "lead",
+            "--notes",
+            "note",
+            "--no-reply-required",
+            "--idempotency-key",
+            "retry-1",
+        ])
+        .expect("tracked send");
+        let Some(CommandKind::TrackedSend(args)) = cli.command else {
+            panic!("wrong command");
+        };
+        assert_eq!(args.title, "Task");
+        assert!(args.no_reply_required);
+        assert_eq!(args.idempotency_key, "retry-1");
+    }
 }

@@ -1,4 +1,4 @@
-use super::wecom_client::WecomClient;
+use super::{outbound_text, wecom_client::WecomClient};
 use cccc_contracts::Event;
 use cccc_core::HomeLayout;
 use serde_json::{Value, json};
@@ -107,11 +107,7 @@ impl WecomOutbound {
         if !user_facing(event) {
             return;
         }
-        let body = event
-            .data
-            .get("text")
-            .and_then(Value::as_str)
-            .map(|text| truncate_message(&format!("**{}**\n\n{text}", event.by)));
+        let body = ordinary_message_payload(event);
         let attachments = event
             .data
             .get("attachments")
@@ -202,13 +198,7 @@ impl WecomOutbound {
                 continue;
             }
             self.throttle(&chat_id).await;
-            if let Err(error) = self
-                .send_body(
-                    &chat_id,
-                    json!({"msgtype":"markdown","markdown":{"content":body}}),
-                )
-                .await
-            {
+            if let Err(error) = self.send_body(&chat_id, body.clone()).await {
                 tracing::warn!(%error, %chat_id, "failed to send WeCom message");
             }
         }
@@ -275,6 +265,11 @@ impl WecomOutbound {
     }
 }
 
+fn ordinary_message_payload(event: &Event) -> Option<Value> {
+    let content = outbound_text(event, true).map(|text| truncate_message(&text))?;
+    Some(json!({"msgtype":"markdown","markdown":{"content":content}}))
+}
+
 fn user_facing(event: &Event) -> bool {
     event
         .data
@@ -319,6 +314,51 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn chat_message(sender_title: Option<&str>, text: &str) -> Event {
+        let mut event = Event::new("chat.message", "group");
+        event.by = "actor-id".into();
+        event.data.insert("to".into(), json!(["user"]));
+        event.data.insert("text".into(), json!(text));
+        if let Some(sender_title) = sender_title {
+            event
+                .data
+                .insert("sender_title".into(), json!(sender_title));
+        }
+        event
+    }
+
+    #[test]
+    fn ordinary_message_payload_prefers_trimmed_sender_title() {
+        let payload = ordinary_message_payload(&chat_message(Some(" Review Bot "), "result"))
+            .expect("chat.message payload");
+
+        assert_eq!(payload["markdown"]["content"], "**Review Bot**\n\nresult");
+    }
+
+    #[test]
+    fn ordinary_message_payload_falls_back_to_actor_id() {
+        for sender_title in [None, Some(" \t\n ")] {
+            let payload = ordinary_message_payload(&chat_message(sender_title, "result"))
+                .expect("chat.message payload");
+
+            assert_eq!(payload["markdown"]["content"], "**actor-id**\n\nresult");
+        }
+    }
+
+    #[test]
+    fn ordinary_message_payload_truncates_after_sender_wrapping() {
+        let payload =
+            ordinary_message_payload(&chat_message(Some("Review Bot"), &"你".repeat(1_000)))
+                .expect("chat.message payload");
+        let content = payload["markdown"]["content"]
+            .as_str()
+            .expect("markdown content");
+
+        assert!(content.starts_with("**Review Bot**\n\n"));
+        assert!(content.ends_with("... (truncated)"));
+        assert!(content.len() <= 2_048);
+    }
 
     #[test]
     fn truncation_preserves_utf8_boundaries_and_limits() {

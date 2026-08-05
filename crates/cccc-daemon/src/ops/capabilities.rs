@@ -10,6 +10,8 @@ mod effective_state;
 mod external_runtime;
 mod overview;
 mod package_install;
+mod target_install;
+mod uninstall;
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -20,13 +22,10 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "capability_block" => block(home, request),
         "capability_state" => state(home, request),
         "capability_import" => import(home, request),
-        "capability_uninstall" => uninstall(home, request),
-        "capability_install" => install(home, request),
+        "capability_uninstall" => uninstall::run(home, request),
+        "capability_install" | "capability_install_target" => target_install::run(home, request),
         "capability_source_delete" => source_delete(home, request),
         "capability_tool_call" => use_capability(home, request),
-        "capability_install_target" => {
-            object(json!({"target": home.root().join("capabilities"), "runtime": "rust"}))
-        }
         "capability_allowlist_get" => allowlist::get(home),
         "capability_allowlist_validate" => allowlist::validate(home, request),
         "capability_allowlist_update" => allowlist::update(home, request),
@@ -45,17 +44,20 @@ fn enable(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let id = required_arg(request, "capability_id")?;
     let enabled = bool_arg(request, "enabled", true);
     let store = CapabilityStore::new(home.clone());
-    let installation = if enabled {
-        store
-            .catalog_record(&id)
-            .map_err(OpError::io)?
-            .as_ref()
-            .map(|record| package_install::ensure_installed(home, &id, record))
-            .transpose()?
-            .flatten()
-    } else {
-        None
-    };
+    if enabled {
+        return target_install::enable(
+            home,
+            &required_arg(request, "group_id")?,
+            &string_arg(request, "actor_id").unwrap_or_default(),
+            &string_arg(request, "scope").unwrap_or_else(|| "group".into()),
+            request
+                .args
+                .get("ttl_seconds")
+                .and_then(Value::as_i64)
+                .unwrap_or(3600),
+            &id,
+        );
+    }
     let state = store
         .set_enabled_for(
             &id,
@@ -70,7 +72,7 @@ fn enable(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .unwrap_or(3600),
         )
         .map_err(OpError::invalid)?;
-    object(json!({"capability_id": id, "state": state, "installation":installation}))
+    object(json!({"capability_id": id, "state": state, "enabled":false}))
 }
 fn visibility(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let id = required_arg(request, "capability_id")?;
@@ -175,40 +177,40 @@ fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn import(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let raw = request
         .args
-        .get("capability")
+        .get("record")
+        .or_else(|| request.args.get("capability"))
         .cloned()
-        .unwrap_or_else(|| Value::Object(request.args.clone()));
-    let capability: Capability = serde_json::from_value(raw).map_err(OpError::invalid)?;
-    let state = CapabilityStore::new(home.clone())
-        .import(capability.clone())
-        .map_err(OpError::invalid)?;
-    object(json!({"capability": capability, "state": state}))
-}
-fn uninstall(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let id = required_arg(request, "capability_id")?;
-    object(
-        json!({"capability_id": id, "removed": CapabilityStore::new(home.clone()).uninstall(&id).map_err(OpError::io)?}),
-    )
-}
-fn install(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let target = required_arg(request, "target")?;
+        .ok_or_else(|| OpError::new("missing_argument", "missing capability record"))?;
     let store = CapabilityStore::new(home.clone());
-    let capability = store.require(&target).map_err(OpError::not_found)?;
-    let state = store
-        .set_enabled_for(
-            &target,
-            true,
+    let capability = store.validate_record(&raw).map_err(OpError::invalid)?;
+    if bool_arg(request, "dry_run", false) {
+        return object(json!({
+            "group_id":string_arg(request,"group_id").unwrap_or_default(),
+            "actor_id":string_arg(request,"actor_id").or_else(||string_arg(request,"by")).unwrap_or_default(),
+            "capability_id":capability.id,"kind":capability.kind,"dry_run":true,
+            "imported":false,"record":raw,
+            "would_enable":bool_arg(request,"enable_after_import",false),
+            "refresh_required":false,"state":"validated"
+        }));
+    }
+    let capability = store.import_record(raw.clone()).map_err(OpError::invalid)?;
+    let enabled = if bool_arg(request, "enable_after_import", false) {
+        Some(target_install::enable(
+            home,
             &required_arg(request, "group_id")?,
-            &string_arg(request, "actor_id").unwrap_or_default(),
-            &string_arg(request, "scope").unwrap_or_else(|| "group".into()),
+            &string_arg(request, "actor_id").unwrap_or_else(|| "user".into()),
+            &string_arg(request, "scope").unwrap_or_else(|| "actor".into()),
             request
                 .args
                 .get("ttl_seconds")
                 .and_then(Value::as_i64)
                 .unwrap_or(3600),
-        )
-        .map_err(OpError::invalid)?;
-    object(json!({"target":target,"capability":capability,"installed":true,"state":state}))
+            &capability.id,
+        )?)
+    } else {
+        None
+    };
+    object(json!({"capability": capability, "record":raw, "enable_result":enabled}))
 }
 fn source_delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let source = required_arg(request, "source_id")?;

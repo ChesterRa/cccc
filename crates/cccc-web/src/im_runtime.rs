@@ -22,6 +22,7 @@ mod feishu;
 mod feishu_inbound;
 mod feishu_outbound;
 mod inbound_attachments;
+mod outbound_message;
 mod processing_reactions;
 mod slack;
 mod slack_inbound;
@@ -42,6 +43,7 @@ mod weixin_outbound;
 mod worker;
 
 use commands::*;
+use outbound_message::outbound_text;
 use state::*;
 use worker::{Stopper, WorkerHandles, no_op_stopper};
 
@@ -570,15 +572,6 @@ async fn deliver_outbound<S, P, F, Fut>(
         .into_iter()
         .collect();
     send(Arc::clone(sender), targets, event).await;
-}
-
-pub(super) fn outbound_text(event: &Event, markdown_bold: bool) -> Option<String> {
-    let text = event.data.get("text").and_then(Value::as_str)?;
-    Some(if markdown_bold {
-        format!("**{}**\n\n{}", event.by, text)
-    } else {
-        format!("{}\n\n{}", event.by, text)
-    })
 }
 
 pub(super) fn is_outbound(event: &Event) -> bool {

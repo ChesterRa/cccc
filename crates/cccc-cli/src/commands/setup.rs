@@ -31,8 +31,31 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
     let config = json!({
         "mcpServers":{"cccc":{"command":executable,"args":["mcp"],"env":{"CCCC_HOME":home.root()}}}
     });
-    if runtime.is_empty() || matches!(runtime, "custom" | "hermes") {
-        println!("{}", serde_json::to_string_pretty(&config)?);
+    if runtime.is_empty() {
+        let mut results = Vec::new();
+        for runtime in SUPPORTED {
+            match setup_one(home, &args, runtime, &executable, &config) {
+                Ok(value) => results.push(value),
+                Err(error) => results.push(json!({
+                    "runtime":runtime,"status":"unavailable","error":error.to_string()
+                })),
+            }
+        }
+        let configured = results
+            .iter()
+            .filter(|value| {
+                matches!(
+                    value["status"].as_str(),
+                    Some("added" | "managed_by_cccc_actor")
+                )
+            })
+            .count();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "mode":"batch","configured":configured,"results":results,"config":config
+            }))?
+        );
         return Ok(());
     }
     if !SUPPORTED.contains(&runtime) {
@@ -41,29 +64,42 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
             SUPPORTED.join(", ")
         );
     }
-    if matches!(runtime, "cursor" | "kilo" | "antigravity") {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "runtime":runtime,
-                "mode":"prompt_assisted",
-                "project_path":absolute(&args.path)?,
-                "config":config,
-                "instruction":"Add or replace the stdio MCP server named cccc with this configuration, then verify it is enabled."
-            }))?
-        );
+    if matches!(runtime, "custom" | "hermes") {
+        println!("{}", serde_json::to_string_pretty(&config)?);
         return Ok(());
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&setup_one(home, &args, runtime, &executable, &config)?)?
+    );
+    Ok(())
+}
+
+fn setup_one(
+    home: &HomeLayout,
+    args: &SetupArgs,
+    runtime: &str,
+    executable: &Path,
+    config: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    if matches!(runtime, "custom" | "hermes") {
+        return Ok(json!({
+            "runtime":runtime,"mode":"manual","status":"requires_action","config":config
+        }));
+    }
+    if matches!(runtime, "cursor" | "kilo" | "antigravity") {
+        return Ok(json!({
+            "runtime":runtime,"mode":"prompt_assisted","status":"requires_action",
+            "project_path":absolute(&args.path)?,"config":config,
+            "instruction":"Add or replace the stdio MCP server named cccc with this configuration, then verify it is enabled."
+        }));
     }
     if runtime == "opencode" {
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&json!({
-                "runtime":runtime,"mode":"runtime_env","status":"managed_by_cccc_actor","config":config
-            }))?
-        );
-        return Ok(());
+        return Ok(json!({
+            "runtime":runtime,"mode":"runtime_env","status":"managed_by_cccc_actor","config":config
+        }));
     }
-    let command = add_command(runtime, &executable)?;
+    let command = add_command(runtime, executable)?;
     let cwd = absolute(&args.path)?;
     let mut output = run_command(&command, &cwd, home)?;
     if !output.status.success()
@@ -87,13 +123,9 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
             failure_detail(&output)
         );
     }
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json!({
-            "runtime":runtime,"mode":"auto","status":"added","command":command,"config":config
-        }))?
-    );
-    Ok(())
+    Ok(json!({
+        "runtime":runtime,"mode":"auto","status":"added","command":command,"config":config
+    }))
 }
 
 fn run_command(command: &[String], cwd: &Path, home: &HomeLayout) -> Result<std::process::Output> {
@@ -228,5 +260,25 @@ mod tests {
             add_command("codex", Path::new("/opt/cccc")).expect("command"),
             ["codex", "mcp", "add", "cccc", "--", "/opt/cccc", "mcp"]
         );
+    }
+
+    #[test]
+    fn manual_runtime_has_explicit_batch_status() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let args = SetupArgs {
+            runtime: None,
+            path: ".".into(),
+        };
+        let value = setup_one(
+            &home,
+            &args,
+            "custom",
+            Path::new("/opt/cccc"),
+            &json!({"mcpServers":{}}),
+        )
+        .expect("manual setup");
+        assert_eq!(value["status"], "requires_action");
+        assert_eq!(value["mode"], "manual");
     }
 }

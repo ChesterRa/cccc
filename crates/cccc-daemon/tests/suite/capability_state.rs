@@ -1,5 +1,6 @@
 // Included by the crate-level integration test harness.
 use cccc_contracts::DaemonRequest;
+use cccc_core::GroupStore;
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
@@ -155,6 +156,115 @@ fn native_updates_override_legacy_capability_flags() {
     assert_eq!(blocked["blocked_capabilities"], json!([]));
 }
 
+#[test]
+fn local_skill_install_and_uninstall_complete_the_lifecycle() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("capability lifecycle", "")
+        .expect("group");
+    let skill_dir = temp.path().join("review");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: review\ndescription: Review changes\n---\nReview carefully.\n",
+    )
+    .expect("skill");
+
+    let installed = call(
+        &home,
+        "capability_install_target",
+        json!({"group_id":group.group_id,"target":skill_dir,"scope":"group","by":"user"}),
+    );
+    assert_eq!(installed["state"], "ready");
+    assert_eq!(
+        installed["installed_capability_ids"][0],
+        "skill:local:review"
+    );
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(home.root().join("state/capabilities/catalog.json")).expect("catalog"),
+    )
+    .expect("catalog JSON");
+    assert_eq!(
+        record["records"]["skill:local:review"]["source_id"],
+        "local_import"
+    );
+
+    let removed = call(
+        &home,
+        "capability_uninstall",
+        json!({"group_id":group.group_id,"capability_id":"skill:local:review","by":"user"}),
+    );
+    assert_eq!(removed["removed_record"], true);
+    assert!(removed["removed_bindings"].as_u64().unwrap_or(0) > 0);
+    let record: Value = serde_json::from_slice(
+        &std::fs::read(home.root().join("state/capabilities/catalog.json")).expect("catalog"),
+    )
+    .expect("catalog JSON");
+    assert!(record["records"].get("skill:local:review").is_none());
+}
+
+#[test]
+fn capability_import_dry_run_and_invalid_install_do_not_persist() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("capability safety", "")
+        .expect("group");
+
+    let dry_run = response(
+        &home,
+        "capability_import",
+        json!({
+            "group_id":group.group_id,"by":"user","dry_run":true,
+            "record":{"capability_id":"skill:test:dry","kind":"skill","name":"dry","capsule_text":"test"}
+        }),
+    );
+    assert!(dry_run.ok, "{:?}", dry_run.error);
+    assert_eq!(dry_run.result["imported"], false);
+    assert!(!home.root().join("state/capabilities/catalog.json").exists());
+
+    let skill_dir = temp.path().join("invalid-scope");
+    std::fs::create_dir_all(&skill_dir).expect("skill dir");
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: invalid-scope\ndescription: Test invalid scope\n---\nTest.\n",
+    )
+    .expect("skill");
+    let install = response(
+        &home,
+        "capability_install_target",
+        json!({"group_id":group.group_id,"target":skill_dir,"scope":"invalid","by":"user"}),
+    );
+    assert!(!install.ok);
+    assert!(!home.root().join("state/capabilities/catalog.json").exists());
+
+    let store = cccc_core::capabilities::CapabilityStore::new(home.clone());
+    store
+        .import_record(json!({
+            "capability_id":"skill:test:existing","kind":"skill","name":"Original"
+        }))
+        .expect("existing record");
+    let overwrite = response(
+        &home,
+        "capability_import",
+        json!({
+            "group_id":group.group_id,"by":"user","dry_run":true,
+            "record":{"capability_id":"skill:test:existing","kind":"skill","name":"Changed"}
+        }),
+    );
+    assert!(overwrite.ok, "{:?}", overwrite.error);
+    assert_eq!(
+        store
+            .catalog_record("skill:test:existing")
+            .expect("catalog")
+            .expect("record")["name"],
+        "Original"
+    );
+}
+
 fn capability(id: &str) -> Value {
     json!({
         "capability_id":id,
@@ -165,16 +275,20 @@ fn capability(id: &str) -> Value {
 }
 
 fn call(home: &HomeLayout, op: &str, args: Value) -> Map<String, Value> {
-    let response = cccc_daemon::handle_request(
+    let response = response(home, op, args);
+    assert!(response.ok, "{op}: {:?}", response.error);
+    response.result
+}
+
+fn response(home: &HomeLayout, op: &str, args: Value) -> cccc_contracts::DaemonResponse {
+    cccc_daemon::handle_request(
         home,
         &DaemonRequest {
             v: 1,
             op: op.into(),
             args: args.as_object().cloned().unwrap_or_default(),
         },
-    );
-    assert!(response.ok, "{op}: {:?}", response.error);
-    response.result
+    )
 }
 
 fn write_json(path: &std::path::Path, value: Value) {

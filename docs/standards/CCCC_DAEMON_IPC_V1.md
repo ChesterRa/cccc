@@ -1200,12 +1200,31 @@ Result:
 }
 ```
 
+#### `capability_install` / `capability_install_target`
+
+Install and enable either an existing capability id or one or more `SKILL.md` records from a local
+path, a direct HTTP(S) URL, or a GitHub repository. GitHub repositories import a root `SKILL.md`
+and files matching `skills/*/SKILL.md` (up to 64 records). Imported records retain their source,
+qualification, capsule, and installation metadata.
+
+Args:
+```ts
+{
+  group_id: string
+  target: string
+  actor_id?: string
+  by?: string
+  scope?: "actor" | "group" | "session"
+  ttl_seconds?: number
+}
+```
+
 #### `capability_uninstall`
 
 Revoke capability bindings for the target group, remove current-group actor autoload references, and remove runtime cache
-when no other group/actor bindings remain. For `source_id=agent_self_proposed` skill records, uninstall also removes the
-generated local catalog record plus all actor/profile autoload references for that capability id. External registry catalog
-records are not deleted.
+when no other group/actor bindings remain. Imported/self-proposed records are removed globally together
+with all actor/profile autoload references. Built-in and external catalog records remain installed when
+another group still references them.
 
 Args:
 ```ts

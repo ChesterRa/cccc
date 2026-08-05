@@ -127,7 +127,38 @@ impl CapabilityStore {
     }
 
     pub fn import(&self, capability: Capability) -> io::Result<CapabilityState> {
-        validate_id(&capability.id)?;
+        let record = json!({
+            "capability_id":capability.id,
+            "kind":capability.kind,
+            "name":capability.name,
+            "description_short":capability.description,
+            "tool_names":capability.tool_names,
+            "tags":capability.tags,
+            "capsule_text":capability.capsule_text,
+            "source_id":if capability.source.is_empty(){"manual_import"}else{&capability.source},
+            "source_uri":capability.source_uri,
+            "qualification_status":"qualified",
+            "enable_supported":true
+        });
+        self.import_record(record)?;
+        self.load()
+    }
+
+    pub fn import_record(&self, mut record: Value) -> io::Result<Capability> {
+        let capability = self.validate_record(&record)?;
+        let record = record
+            .as_object_mut()
+            .ok_or_else(|| io::Error::other("capability record must be an object"))?;
+        record.insert("capability_id".into(), json!(&capability.id));
+        record
+            .entry("source_id")
+            .or_insert_with(|| json!("manual_import"));
+        record
+            .entry("qualification_status")
+            .or_insert_with(|| json!("qualified"));
+        record
+            .entry("enable_supported")
+            .or_insert_with(|| json!(true));
         let path = self.catalog_path();
         with_exclusive_lock(&path.with_extension("json.lock"), || {
             let mut raw = if path.exists() {
@@ -136,30 +167,41 @@ impl CapabilityStore {
                 json!({"v":1,"created_at":utc_now(),"sources":{},"records":{}})
             };
             raw["updated_at"] = json!(utc_now());
-            object_field(&mut raw, "records").insert(
-                capability.id.clone(),
-                json!({
-                    "capability_id":capability.id,
-                    "kind":capability.kind,
-                    "name":capability.name,
-                    "description_short":capability.description,
-                    "tool_names":capability.tool_names,
-                    "tags":capability.tags,
-                    "capsule_text":capability.capsule_text,
-                    "source_id":if capability.source.is_empty(){"manual_import"}else{&capability.source},
-                    "source_uri":capability.source_uri,
-                    "qualification_status":"qualified",
-                    "enable_supported":true
-                }),
-            );
+            object_field(&mut raw, "records")
+                .insert(capability.id.clone(), Value::Object(record.clone()));
             write_json(&path, &raw)
         })?;
-        self.load()
+        Ok(capability)
+    }
+
+    pub fn validate_record(&self, record: &Value) -> io::Result<Capability> {
+        let capability = capability_from_record(record)?;
+        validate_id(&capability.id)?;
+        Ok(capability)
+    }
+
+    pub fn restore_record(&self, id: &str, record: Option<Value>) -> io::Result<()> {
+        match record {
+            Some(mut record) => {
+                record
+                    .as_object_mut()
+                    .ok_or_else(|| io::Error::other("capability record must be an object"))?
+                    .insert("capability_id".into(), json!(id));
+                self.import_record(record).map(|_| ())
+            }
+            None => self.remove_record(id).map(|_| ()),
+        }
     }
 
     pub fn uninstall(&self, id: &str) -> io::Result<bool> {
+        let removed = self.remove_record(id)?;
+        self.remove_all_bindings(id)?;
+        Ok(removed)
+    }
+
+    pub fn remove_record(&self, id: &str) -> io::Result<bool> {
         let path = self.catalog_path();
-        let removed = with_exclusive_lock(&path.with_extension("json.lock"), || {
+        with_exclusive_lock(&path.with_extension("json.lock"), || {
             let mut raw = if path.exists() {
                 read_json::<Value>(&path)?
             } else {
@@ -169,9 +211,90 @@ impl CapabilityStore {
             raw["updated_at"] = json!(utc_now());
             write_json(&path, &raw)?;
             Ok(removed)
-        })?;
-        self.remove_bindings(id)?;
-        Ok(removed)
+        })
+    }
+
+    pub fn remove_bindings_for_group(&self, id: &str, group_id: &str) -> io::Result<usize> {
+        self.mutate_state(|raw| {
+            let mut removed = 0;
+            for key in [
+                "group_enabled",
+                "actor_enabled",
+                "session_enabled",
+                "group_blocked",
+                "actor_hidden",
+            ] {
+                if let Some(groups) = raw.get_mut(key).and_then(Value::as_object_mut)
+                    && let Some(group) = groups.get_mut(group_id)
+                {
+                    removed += remove_id(group, id);
+                    remove_empty_entry(groups, group_id);
+                }
+            }
+            Ok(removed)
+        })
+    }
+
+    pub fn remove_all_bindings(&self, id: &str) -> io::Result<usize> {
+        self.mutate_state(|raw| Ok(remove_id(raw, id)))
+    }
+
+    pub fn has_bindings(&self, id: &str) -> io::Result<bool> {
+        let path = self.path();
+        if !path.exists() {
+            return Ok(false);
+        }
+        Ok(contains_id(&read_json::<Value>(&path)?, id))
+    }
+
+    pub fn is_enabled_for(
+        &self,
+        id: &str,
+        group_id: &str,
+        actor_id: &str,
+        scope: &str,
+    ) -> io::Result<bool> {
+        let path = self.path();
+        if !path.exists() {
+            return Ok(false);
+        }
+        let raw = read_json::<Value>(&path)?;
+        let value = match scope {
+            "group" => raw.pointer(&format!("/group_enabled/{}", escape_pointer(group_id))),
+            "actor" => raw.pointer(&format!(
+                "/actor_enabled/{}/{}",
+                escape_pointer(group_id),
+                escape_pointer(actor_id)
+            )),
+            "session" => raw.pointer(&format!(
+                "/session_enabled/{}/{}",
+                escape_pointer(group_id),
+                escape_pointer(actor_id)
+            )),
+            _ => return Err(io::Error::other("scope must be group, actor, or session")),
+        };
+        Ok(value.and_then(Value::as_array).is_some_and(|items| {
+            items.iter().any(|item| {
+                item.as_str() == Some(id)
+                    || item.get("capability_id").and_then(Value::as_str) == Some(id)
+            })
+        }))
+    }
+
+    pub fn is_hidden_for(&self, id: &str, group_id: &str, actor_id: &str) -> io::Result<bool> {
+        let path = self.path();
+        if !path.exists() {
+            return Ok(false);
+        }
+        let raw = read_json::<Value>(&path)?;
+        Ok(raw
+            .pointer(&format!(
+                "/actor_hidden/{}/{}",
+                escape_pointer(group_id),
+                escape_pointer(actor_id)
+            ))
+            .and_then(Value::as_array)
+            .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(id))))
     }
 
     pub fn delete_source(&self, source: &str) -> io::Result<Vec<String>> {
@@ -371,19 +494,6 @@ impl CapabilityStore {
         })
     }
 
-    fn remove_bindings(&self, id: &str) -> io::Result<()> {
-        self.mutate_state(|raw| {
-            remove_id_from_nested_arrays(raw, id);
-            object_field(raw, "global_blocked").remove(id);
-            if let Some(groups) = raw.get_mut("group_blocked").and_then(Value::as_object_mut) {
-                for group in groups.values_mut().filter_map(Value::as_object_mut) {
-                    group.remove(id);
-                }
-            }
-            Ok(())
-        })
-    }
-
     fn migrate_legacy(&self) -> io::Result<()> {
         let legacy_path = self.home.root().join("capabilities.json");
         let marker = self
@@ -514,16 +624,103 @@ fn remove_empty_entry(map: &mut Map<String, Value>, key: &str) {
     }
 }
 
-fn remove_id_from_nested_arrays(value: &mut Value, id: &str) {
+fn remove_id(value: &mut Value, id: &str) -> usize {
     match value {
-        Value::Array(items) => items.retain(|item| item.as_str() != Some(id)),
-        Value::Object(items) => {
-            for value in items.values_mut() {
-                remove_id_from_nested_arrays(value, id);
-            }
+        Value::Array(items) => {
+            let before = items.len();
+            items.retain(|item| {
+                item.as_str() != Some(id)
+                    && item.get("capability_id").and_then(Value::as_str) != Some(id)
+            });
+            let direct = before - items.len();
+            direct
+                + items
+                    .iter_mut()
+                    .map(|item| remove_id(item, id))
+                    .sum::<usize>()
         }
-        _ => {}
+        Value::Object(items) => {
+            let direct = usize::from(items.remove(id).is_some());
+            direct
+                + items
+                    .values_mut()
+                    .map(|item| remove_id(item, id))
+                    .sum::<usize>()
+        }
+        _ => 0,
     }
+}
+
+fn contains_id(value: &Value, id: &str) -> bool {
+    match value {
+        Value::String(value) => value == id,
+        Value::Array(items) => items.iter().any(|item| contains_id(item, id)),
+        Value::Object(items) => {
+            items.contains_key(id)
+                || items
+                    .get("capability_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| value == id)
+                || items.values().any(|item| contains_id(item, id))
+        }
+        _ => false,
+    }
+}
+
+fn capability_from_record(record: &Value) -> io::Result<Capability> {
+    let id = record
+        .get("capability_id")
+        .or_else(|| record.get("id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| io::Error::other("capability_id is required"))?;
+    let strings = |key: &str| {
+        record
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    Ok(Capability {
+        id: id.to_owned(),
+        kind: record
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        name: record
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or(id)
+            .to_owned(),
+        description: record
+            .get("description_short")
+            .or_else(|| record.get("description"))
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        tool_names: strings("tool_names"),
+        tags: strings("tags"),
+        capsule_text: record
+            .get("capsule_text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+        source: record
+            .get("source_id")
+            .and_then(Value::as_str)
+            .unwrap_or("manual_import")
+            .to_owned(),
+        source_uri: record
+            .get("source_uri")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned(),
+    })
 }
 
 fn validate_id(id: &str) -> io::Result<()> {
@@ -536,5 +733,63 @@ fn validate_id(id: &str) -> io::Result<()> {
         Ok(())
     } else {
         Err(io::Error::other("invalid capability id"))
+    }
+}
+
+fn escape_pointer(value: &str) -> String {
+    value.replace('~', "~0").replace('/', "~1")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn store() -> (tempfile::TempDir, CapabilityStore) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        (temp, CapabilityStore::new(home))
+    }
+
+    #[test]
+    fn import_record_preserves_install_metadata() {
+        let (_temp, store) = store();
+        store
+            .import_record(json!({
+                "capability_id":"mcp:test","kind":"mcp","name":"Test",
+                "description_short":"test capability","source_id":"github_import",
+                "install_mode":"npm","install_spec":{"package":"test-server"},
+                "qualification_status":"qualified","enable_supported":true
+            }))
+            .expect("import");
+        let record = store
+            .catalog_record("mcp:test")
+            .expect("catalog")
+            .expect("record");
+        assert_eq!(record["install_spec"]["package"], "test-server");
+        assert_eq!(record["source_id"], "github_import");
+    }
+
+    #[test]
+    fn group_uninstall_keeps_other_group_bindings() {
+        let (_temp, store) = store();
+        store
+            .import_record(json!({"capability_id":"skill:test","name":"Test"}))
+            .expect("import");
+        store
+            .set_enabled_for("skill:test", true, "g_one", "", "group", 3600)
+            .expect("first binding");
+        store
+            .set_enabled_for("skill:test", true, "g_two", "actor", "actor", 3600)
+            .expect("second binding");
+        assert_eq!(
+            store
+                .remove_bindings_for_group("skill:test", "g_one")
+                .expect("remove"),
+            1
+        );
+        assert!(store.has_bindings("skill:test").expect("remaining"));
+        assert!(store.remove_all_bindings("skill:test").expect("remove all") > 0);
+        assert!(!store.has_bindings("skill:test").expect("empty"));
     }
 }

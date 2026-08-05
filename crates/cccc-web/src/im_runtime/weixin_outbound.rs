@@ -252,13 +252,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sends_text_then_attachment_with_original_filename() {
+    async fn sends_sender_title_then_attachment_with_original_filename() {
         let (_temp, outbound, path) = setup();
         let sender = FakeSender::default();
         let event: Event = serde_json::from_value(serde_json::json!({
             "v":1,"id":"event","ts":"now","kind":"chat.message",
             "group_id":"group","scope_key":"","by":"assistant",
-            "data":{"text":"result","attachments":[{
+            "data":{"text":"result","sender_title":"Helpful Assistant","attachments":[{
                 "path":path,"title":"photo.png","mime_type":"image/png","bytes":5
             }]}
         }))
@@ -271,7 +271,7 @@ mod tests {
         assert_eq!(
             *sender.calls.lock().expect("calls"),
             vec![
-                "text:wx-user:assistant\n\nresult:token:wx-user",
+                "text:wx-user:Helpful Assistant\n\nresult:token:wx-user",
                 "media:wx-user:photo.png:token:wx-user"
             ]
         );

@@ -47,9 +47,11 @@ pub async fn im(
                 app_secret_env,
                 domain,
                 robot_code_env,
+                robot_code,
                 wecom_bot_id,
                 wecom_secret,
                 weixin_account_id,
+                token,
             } = *args;
             (
                 Method::POST,
@@ -58,8 +60,8 @@ pub async fn im(
                     "group_id":group(home,group_id)?,"platform":platform,"token_env":token_env,
                     "bot_token_env":bot_token_env,"app_token_env":app_token_env,
                     "app_key_env":app_key_env,"app_secret_env":app_secret_env,"domain":domain,
-                    "robot_code_env":robot_code_env,"wecom_bot_id":wecom_bot_id,
-                    "wecom_secret":wecom_secret,"weixin_account_id":weixin_account_id
+                    "robot_code_env":robot_code_env,"robot_code":robot_code,"wecom_bot_id":wecom_bot_id,
+                    "wecom_secret":wecom_secret,"weixin_account_id":weixin_account_id,"token":token
                 }),
             )
         }

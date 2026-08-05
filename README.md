@@ -108,7 +108,7 @@ Open **http://127.0.0.1:8848** — by default, CCCC brings up the daemon and the
 ```bash
 cd /path/to/your/repo
 cccc attach .                              # bind this directory as a scope
-cccc setup --runtime claude                # configure MCP for your runtime
+cccc setup                                 # configure all available runtimes (or select one with --runtime)
 cccc actor add foreman --runtime claude    # first actor becomes foreman
 cccc actor add implementer --runtime codex # add a peer
 cccc group start                           # start all actors

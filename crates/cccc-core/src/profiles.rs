@@ -72,6 +72,30 @@ impl ProfileStore {
         Ok(profiles)
     }
 
+    pub fn remove_capability_default(&self, capability_id: &str) -> io::Result<usize> {
+        let mut doc = self.load()?;
+        let mut removed = 0;
+        for profile in doc.profiles.values_mut() {
+            let Some(items) = profile
+                .pointer_mut("/capability_defaults/autoload_capabilities")
+                .and_then(Value::as_array_mut)
+            else {
+                continue;
+            };
+            let before = items.len();
+            items.retain(|item| item.as_str() != Some(capability_id));
+            removed += before - items.len();
+            if before != items.len() {
+                profile["updated_at"] = json!(utc_now());
+                profile["revision"] = json!(profile["revision"].as_u64().unwrap_or(0) + 1);
+            }
+        }
+        if removed > 0 {
+            self.save(&doc)?;
+        }
+        Ok(removed)
+    }
+
     pub fn get(&self, profile_id: &str) -> io::Result<Option<Value>> {
         validate_id(profile_id)?;
         let doc = self.load()?;
@@ -713,5 +737,40 @@ mod tests {
                 ("OBJECT".into(), "{'nested': 'value'}".into()),
             ])
         );
+    }
+
+    #[test]
+    fn capability_default_cleanup_updates_every_profile() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let store = ProfileStore::new(home).expect("store");
+        for id in ["one", "two"] {
+            store
+                .upsert(
+                    json!({
+                        "id":id,"name":id,
+                        "capability_defaults":{"autoload_capabilities":["skill:remove","skill:keep"]}
+                    })
+                    .as_object()
+                    .cloned()
+                    .expect("profile"),
+                    None,
+                )
+                .expect("upsert");
+        }
+
+        assert_eq!(
+            store
+                .remove_capability_default("skill:remove")
+                .expect("cleanup"),
+            2
+        );
+        for id in ["one", "two"] {
+            assert_eq!(
+                store.get(id).expect("get").expect("profile")["capability_defaults"]["autoload_capabilities"],
+                json!(["skill:keep"])
+            );
+        }
     }
 }

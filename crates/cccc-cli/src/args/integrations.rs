@@ -94,11 +94,15 @@ pub struct ImSetArgs {
     #[arg(long)]
     pub robot_code_env: Option<String>,
     #[arg(long)]
+    pub robot_code: Option<String>,
+    #[arg(long)]
     pub wecom_bot_id: Option<String>,
     #[arg(long)]
     pub wecom_secret: Option<String>,
     #[arg(long)]
     pub weixin_account_id: Option<String>,
+    #[arg(long)]
+    pub token: Option<String>,
 }
 
 #[derive(Debug, Args)]

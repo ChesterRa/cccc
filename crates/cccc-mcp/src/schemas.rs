@@ -278,9 +278,34 @@ pub fn input(name: &str) -> Value {
             }),
             &[],
         ),
+        "cccc_capability_install" => object(
+            merge(
+                common(),
+                json!({
+                    "target":{"type":"string","description":"Capability id, local SKILL.md path or directory, direct SKILL.md URL, GitHub URL, or owner/repo slug."},
+                    "scope":{"type":"string","enum":["session","actor","group"],"default":"actor"},
+                    "ttl_seconds":{"type":"integer","minimum":60,"maximum":86400,"default":3600},
+                    "reason":{"type":"string"}
+                }),
+            ),
+            &["target"],
+        ),
+        "cccc_capability_import" => object(
+            merge(
+                common(),
+                json!({
+                    "record":{"type":"object"},"source_uri":{"type":"string"},
+                    "dry_run":{"type":"boolean"},"probe":{"type":"boolean"},
+                    "enable_after_import":{"type":"boolean"},
+                    "scope":{"type":"string","enum":["session","actor","group"]},
+                    "ttl_seconds":{"type":"integer","minimum":60,"maximum":86400},
+                    "reason":{"type":"string"}
+                }),
+            ),
+            &["record"],
+        ),
         "cccc_capability_enable"
         | "cccc_capability_use"
-        | "cccc_capability_import"
         | "cccc_capability_block"
         | "cccc_capability_uninstall" => object(
             json!({
@@ -470,6 +495,18 @@ mod tests {
             schema["required"]
                 .as_array()
                 .is_some_and(|required| required.iter().any(|item| item == "request_id"))
+        );
+    }
+
+    #[test]
+    fn capability_install_schema_exposes_target_lifecycle() {
+        let schema = input("cccc_capability_install");
+        assert_eq!(schema["properties"]["target"]["type"], "string");
+        assert_eq!(schema["properties"]["scope"]["default"], "actor");
+        assert!(
+            schema["required"]
+                .as_array()
+                .is_some_and(|required| required.iter().any(|item| item == "target"))
         );
     }
 }
