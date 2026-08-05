@@ -56,23 +56,31 @@ def test_windows_smoke_keeps_the_product_pty_checks_without_web_migration_setup(
     assert "npm " not in runs
 
 
-def test_rust_job_provisions_python_for_interop_and_serializes_daemon_tests() -> None:
+def test_rust_job_is_python_free_and_serializes_daemon_tests() -> None:
     job = _workflow()["jobs"]["rust"]
     runs = _runs(job)
-    python_setup = next(
-        step
-        for step in job["steps"]
-        if step.get("uses", "").startswith("actions/setup-python")
-    )
+    uses = {step.get("uses", "") for step in job["steps"]}
 
-    assert job["env"]["CCCC_TEST_PYTHON"] == "python"
-    assert python_setup["with"]["python-version"] == "3.14"
-    assert "python -m pip install -e ." in runs
+    assert "env" not in job
+    assert not any(item.startswith("actions/setup-python") for item in uses)
+    assert "python -m" not in runs.lower()
+    assert "pip install" not in runs.lower()
+    assert "scripts/check_version_parity.sh" not in runs
     assert "cargo test --workspace --exclude cccc-pair-daemon --locked" in runs
     assert (
-        "cargo test --package cccc-pair-daemon --locked -- --test-threads=1"
+        "cargo test --package cccc-pair-daemon --locked"
         in runs
     )
+    for legacy_test in (
+        "python_and_rust_share_context_tasks_and_version_state",
+        "python_and_rust_share_identity_and_signed_session_hello",
+        "python_and_rust_processes_share_paths_files_and_locks",
+        "python_and_rust_share_launch_identity_format",
+        "rust_append_waits_for_the_python_ledger_lock",
+        "python_and_rust_share_persisted_control_plane_state",
+        "python_and_rust_accept_each_others_group_copy_packages",
+    ):
+        assert f"--skip {legacy_test}" in runs
 
 
 def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance() -> None:

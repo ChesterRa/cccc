@@ -157,11 +157,3 @@ Daemon shutdown stops every local runtime session before releasing the shared
 lock. The combined `cccc` process also closes Web after daemon loss. Rust daemon
 reuse requires matching implementation, package version, and compatibility ID;
 legacy or stale daemons are replaced through graceful shutdown.
-
-## Migration completion gate
-
-- Rust owns CLI, daemon, kernel, MCP, Web API, runners, and integrations.
-- The existing Web UI builds unchanged against the Rust HTTP/WebSocket surface.
-- Linux, macOS, and Windows builds and platform smoke tests pass.
-- The final runtime and Docker image contain no Python backend.
-- Existing `~/.cccc` data remains available after switching implementations.
