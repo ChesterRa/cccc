@@ -186,35 +186,30 @@ def test_schedule_runs_serial_full_python_suites_at_both_support_endpoints() -> 
     assert " -n " not in runs
 
 
-def test_release_builds_on_314_and_smokes_installed_native_wheels() -> None:
+def test_python_release_stays_universal_and_avoids_rust_builds() -> None:
     jobs = _release_workflow()["jobs"]
 
-    verify_setup = next(
-        step for step in jobs["verify-python"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
+    build_setup = next(
+        step for step in jobs["build"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
     )
     publish_setup = next(
         step for step in jobs["publish"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
     )
-    assert verify_setup["with"]["python-version"] == "3.14"
+    assert set(jobs) == {"build", "publish"}
+    assert build_setup["with"]["python-version"] == "3.14"
     assert publish_setup["with"]["python-version"] == "3.14"
+    assert jobs["publish"]["needs"] == "build"
 
-    assert "universal-floor-smoke" not in jobs
-
-    release_runs = "\n".join(_runs(job) for job in jobs.values())
-    for command in (
-        "python -m pip install --force-reinstall",
-        "cccc rust version",
-        "cccc python version",
-    ):
-        assert command in release_runs
-    assert "cccc python doctor" not in release_runs
-
-    interop_step = next(
-        step
-        for step in jobs["interop"]["steps"]
-        if step.get("name") == "Run Python and Rust persisted-state interoperability tests"
-    )
-    assert interop_step["env"]["CCCC_TEST_PYTHON"] == "python"
+    build_runs = _runs(jobs["build"])
+    release_runs = "\n".join(_runs(job) for job in jobs.values()).lower()
+    assert "python -m build" in build_runs
+    assert "python -m twine check" in build_runs
+    assert "cargo " not in release_runs
+    assert "rustup" not in release_runs
+    assert "auditwheel" not in release_runs
+    assert "delocate" not in release_runs
+    assert "delvewheel" not in release_runs
+    assert "python -m pip install --force-reinstall" not in release_runs
 
 
 def test_windows_rust_binaries_use_the_static_crt() -> None:
@@ -230,32 +225,41 @@ def test_one_tag_publishes_pypi_and_matching_standalone_rust_assets() -> None:
 
     assert release["on"]["push"]["tags"] == ["v*"]
     assert release["jobs"]["publish"]["if"] == "github.event_name == 'push'"
-    assert set(release["jobs"]["collect"]["needs"]) == {
-        "verify-python",
-        "interop",
-        "native-linux-x64",
-        "native-desktop",
-    }
+    assert release["jobs"]["publish"]["needs"] == "build"
     release_runs = "\n".join(_runs(job) for job in release["jobs"].values())
-    assert "manylinux_2_28_x86_64" in release_runs
-    assert "delocate==0.13.0" in release_runs
-    assert "delvewheel==1.13.0" in release_runs
+    assert "manylinux_2_28_x86_64" not in release_runs
+    assert "delocate==0.13.0" not in release_runs
+    assert "delvewheel==1.13.0" not in release_runs
     assert "scripts/publish_rust_crates.sh --publish" not in release_runs
     assert "python -m twine upload" in _runs(release["jobs"]["publish"])
 
     assert rust_candidate["on"]["push"]["tags"] == ["v*"]
     assert "workflow_dispatch" in rust_candidate["on"]
     assert rust_candidate["jobs"]["publish"]["if"] == "github.event_name == 'push'"
-    verify = rust_candidate["jobs"]["verify"]
-    assert verify["needs"] == "prepare"
-    assert {item["target"] for item in verify["strategy"]["matrix"]["include"]} == {
+    assert set(rust_candidate["jobs"]) == {"web", "build", "prepare", "publish"}
+    assert rust_candidate["jobs"]["build"]["needs"] == "web"
+    assert {item["target"] for item in rust_candidate["jobs"]["build"]["strategy"]["matrix"]["include"]} == {
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
         "x86_64-unknown-linux-gnu",
         "x86_64-pc-windows-msvc",
     }
-    verify_runs = _runs(verify)
-    assert "scripts/tests/verify_release_unix.sh" in verify_runs
-    assert "scripts/tests/verify_release_windows.ps1" in verify_runs
-    assert rust_candidate["jobs"]["publish"]["needs"] == "verify"
+    web_runs = _runs(rust_candidate["jobs"]["web"])
+    assert "prepare_rust_web_assets.mjs --install-deps" in web_runs
+    build_uses = {
+        step.get("uses", "") for step in rust_candidate["jobs"]["build"]["steps"]
+    }
+    assert not any(item.startswith("actions/setup-python") for item in build_uses)
+    assert not any(item.startswith("actions/setup-node") for item in build_uses)
+    rust_release_runs = "\n".join(_runs(job) for job in rust_candidate["jobs"].values())
+    assert "Smoke native Rust binary" not in {
+        step.get("name", "")
+        for job in rust_candidate["jobs"].values()
+        for step in job.get("steps", [])
+    }
+    assert "scripts/tests/verify_release_unix.sh" not in rust_release_runs
+    assert "scripts/tests/verify_release_windows.ps1" not in rust_release_runs
+    assert rust_candidate["jobs"]["publish"]["needs"] == "prepare"
     publish_runs = _runs(rust_candidate["jobs"]["publish"])
     assert "scripts/check_release_versions.py --tag" in publish_runs
     assert "gh release create" in publish_runs

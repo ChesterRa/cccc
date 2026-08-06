@@ -1,30 +1,28 @@
 # Releasing CCCC 0.4.x
 
-This repo publishes one stable PyPI product, **`cccc-pair`** (CLI command:
-**`cccc`**), with Python and Rust implementations on one version line. Matching
-tags also attach optional experimental standalone Rust preview archives.
+This repo publishes the maintained Python compatibility package **`cccc-pair`**
+(CLI command: **`cccc`**) and standalone Rust preview binaries on one version
+line.
 
 ## What the release pipeline produces
 
 The GitHub Actions workflow builds and uploads:
 
-- Python source distribution and universal fallback wheel
-- Native wheels for manylinux 2.28 x86-64, Intel/Apple Silicon macOS, and Windows x86-64
+- Python source distribution and portable Python wheel
+- Native Rust archives for Linux x86-64, Intel/Apple Silicon macOS, and Windows x86-64
 - Bundled Web UI assets (built from `web/` and packaged under `cccc/ports/web/dist/`)
 - Embedded MCP server (`cccc mcp`) + protocol reference (`cccc_help`, sourced from `cccc/resources/cccc-help.md`)
 
-Platform jobs build, dependency-repair, install, and smoke the private Rust
-payload. A dedicated interop job verifies shared persisted contracts. The
-workflow collects the complete stable artifact set before one PyPI upload. The
-manual experimental standalone workflow performs verification only; matching
-pushed tags attach the verified preview archives, checksums, and installers to
-GitHub Releases with an explicit experimental notice.
+Normal CI owns implementation and interoperability tests. Python publication does
+not compile Rust. The standalone workflow builds the shared Web UI once, compiles
+each supported native binary once, and attaches the archives, checksums, and
+installers to GitHub Releases. Final native installation smoke checks are manual.
 
 ## Tag ↔ Version conventions
 
-The release workflow is tag-driven (`v*`) and enforces one normalized identity
-across the tag, PEP 440 in `pyproject.toml`, SemVer in `Cargo.toml`, Cargo.lock,
-and each built Rust binary.
+The release workflows are tag-driven (`v*`) and enforce one normalized identity
+across the tag, PEP 440 in `pyproject.toml`, SemVer in `Cargo.toml`, and
+Cargo.lock. The manual native-install check confirms the built binary version.
 
 | Git tag | Upload target | Expected `pyproject.toml` version |
 |--------|----------------|-----------------------------------|
@@ -40,10 +38,18 @@ and each built Rust binary.
    - `python -m compileall -q src/cccc`
    - `python -m build`
    - `python -m twine check dist/*`
-3. Smoke-test the universal wheel locally; platform wheels are release-workflow gates:
+3. Smoke-test the portable Python wheel locally:
    - `python -m pip install --force-reinstall dist/*.whl`
    - `cccc version`
-4. Tag and push:
+4. After GitHub assets are published, manually test a native installation:
+   - macOS/Linux: install into a temporary `CCCC_INSTALL_DIR` with
+     `CCCC_NO_MODIFY_PATH=1`, then run `cccc --version` and
+     `cccc update --check`.
+   - Windows: install into a temporary directory with `install.ps1`, then run
+     `cccc.exe --version` and `cccc.exe update --check`.
+   - Confirm the release contains four archives, `SHA256SUMS`, `install.sh`, and
+     `install.ps1`.
+5. Tag and push:
    - `git tag -a v0.4.0-rcN -m "v0.4.0-rcN"`
    - `git push --tags`
 

@@ -129,7 +129,7 @@ for bash_profile in .profile .bashrc; do
   grep -Fq 'case ":$PATH:" in *":$HOME/.local/bin:"*)' "$TMP_ROOT/home with space/$bash_profile"
 done
 test ! -e "$TMP_ROOT/home with space/.bash_profile"
-grep -Fq 'export PATH="$HOME/.local/bin:$PATH"; hash -r' "$TMP_ROOT/bash-install.out"
+grep -Fq 'Activate in this shell: source ~/.bashrc' "$TMP_ROOT/bash-install.out"
 
 login_profile_before=$(checksum "$TMP_ROOT/home with space/.profile")
 interactive_profile_before=$(checksum "$TMP_ROOT/home with space/.bashrc")
@@ -152,10 +152,11 @@ HOME="$zsh_home" \
 SHELL=/bin/zsh \
 CCCC_VERSION="$version" \
 CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
-sh "$ROOT_DIR/scripts/install.sh"
+sh "$ROOT_DIR/scripts/install.sh" > "$TMP_ROOT/zsh-install.out"
 for zsh_profile in .zprofile .zshrc; do
   test "$(grep -Fc '# CCCC' "$zsh_home/$zsh_profile")" -eq 1
 done
+grep -Fq 'Activate in this shell: source ~/.zshrc' "$TMP_ROOT/zsh-install.out"
 
 missing_version=0.0.3-test
 make_release "$missing_version" valid "$missing_version" cccc

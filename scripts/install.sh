@@ -294,16 +294,19 @@ bash_login_profile() {
   fi
 }
 
+activation_hint=
 if [ "$path_ready" -eq 0 ] && [ "$NO_MODIFY_PATH" != "1" ] && [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
   path_line='case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
   case "${SHELL:-}" in
     */zsh)
       add_path_profile "$HOME/.zprofile"
       add_path_profile "$HOME/.zshrc"
+      activation_hint='source ~/.zshrc'
       ;;
     */bash)
       add_path_profile "$(bash_login_profile)"
       add_path_profile "$HOME/.bashrc"
+      activation_hint='source ~/.bashrc'
       ;;
     *) printf 'Add %s to PATH, then open a new terminal.\n' "$INSTALL_DIR" ;;
   esac
@@ -312,7 +315,9 @@ elif [ "$path_ready" -eq 0 ]; then
 fi
 
 printf 'Installed CCCC v%s in %s\n' "$VERSION" "$INSTALL_DIR"
-if [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
+if [ -n "$activation_hint" ]; then
+  printf 'Activate in this shell: %s\n' "$activation_hint"
+elif [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
   printf 'Activate in this shell: export PATH="$HOME/.local/bin:$PATH"; hash -r\n'
 fi
 printf 'Run: cccc doctor\n'

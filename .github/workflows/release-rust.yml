@@ -9,7 +9,36 @@ permissions:
   contents: read
 
 jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19.5"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Verify shared release identity
+        shell: bash
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            python scripts/check_release_versions.py --tag "${GITHUB_REF_NAME}"
+          else
+            python scripts/check_release_versions.py
+          fi
+      - name: Build Web UI once
+        run: node scripts/prepare_rust_web_assets.mjs --install-deps
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-rust-web-bundle
+          path: web/dist
+          if-no-files-found: error
+
   build:
+    needs: web
     strategy:
       fail-fast: false
       matrix:
@@ -29,45 +58,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.14"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20.19.5"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          name: release-rust-web-bundle
+          path: web/dist
+      - name: Mark shared Web bundle current
+        shell: bash
+        run: touch web/dist/index.html
       - uses: dtolnay/rust-toolchain@1.88.0
         with:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - name: Check Python and Rust version parity
-        shell: bash
-        run: scripts/check_version_parity.sh
-      - name: Build Web UI
-        shell: bash
-        run: |
-          node scripts/prepare_rust_web_assets.mjs --install-deps
-          npm -C web run check
-          npm -C web test
-      - name: Verify packaged Rust Web assets
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        shell: bash
-        run: |
-          cargo package -p cccc-pair-web --allow-dirty --no-verify --list \
-            | grep -q '^assets/web-dist/index.html$'
       - name: Build Rust distribution
         run: cargo build --release --locked --target ${{ matrix.target }} -p cccc --bin cccc
-      - name: Smoke native Rust binary
-        shell: bash
-        run: |
-          binary="target/${{ matrix.target }}/release/cccc"
-          case "${{ matrix.target }}" in
-            *-windows-*) binary="${binary}.exe" ;;
-          esac
-          "$binary" --version
       - name: Resolve package name
         shell: bash
         run: |
@@ -106,13 +111,10 @@ jobs:
           pattern: cccc-*
           path: artifacts
           merge-multiple: true
-      - name: Prepare release candidate
+      - name: Prepare release assets
         shell: bash
         run: |
           version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
-          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
-            python scripts/check_release_versions.py --tag "${GITHUB_REF_NAME}"
-          fi
           scripts/package_release_assets.sh artifacts "$version"
       - uses: actions/upload-artifact@v4
         with:
@@ -120,37 +122,9 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
 
-  verify:
-    needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            verifier: unix
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            verifier: windows
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: cccc-release-candidate
-          path: artifacts
-      - name: Verify Unix release candidate
-        if: matrix.verifier == 'unix'
-        shell: bash
-        run: bash scripts/tests/verify_release_unix.sh artifacts "${{ matrix.target }}"
-      - name: Verify Windows release candidate
-        if: matrix.verifier == 'windows'
-        shell: pwsh
-        run: ./scripts/tests/verify_release_windows.ps1 -ArtifactDir artifacts -Target "${{ matrix.target }}"
-
   publish:
     if: github.event_name == 'push'
-    needs: verify
+    needs: prepare
     runs-on: ubuntu-latest
     permissions:
       contents: write
