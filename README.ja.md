@@ -502,6 +502,8 @@ GitHub Releases からチェックサム検証済みバイナリを取得しま�
 pip install -U cccc-pair
 ```
 
+現在のネイティブインストーラーは `v0.4.34-rc1` リリース候補を固定してインストールします。
+
 ### pip（RC 版、TestPyPI）
 
 ```bash

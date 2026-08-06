@@ -15,13 +15,13 @@ publish = false
 
 [dependencies]
 anyhow.workspace = true
-cccc-client = { package = "cccc-pair-client", version = "=0.4.33", path = "../cccc-client" }
-cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.33", path = "../cccc-contracts" }
-cccc-core = { package = "cccc-pair-core", version = "=0.4.33", path = "../cccc-core" }
-cccc-daemon = { package = "cccc-pair-daemon", version = "=0.4.33", path = "../cccc-daemon" }
-cccc-mcp = { package = "cccc-pair-mcp", version = "=0.4.33", path = "../cccc-mcp" }
-cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.33", path = "../cccc-runtime" }
-cccc-web = { package = "cccc-pair-web", version = "=0.4.33", path = "../cccc-web" }
+cccc-client = { package = "cccc-pair-client", version = "=0.4.34-rc1", path = "../cccc-client" }
+cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.34-rc1", path = "../cccc-contracts" }
+cccc-core = { package = "cccc-pair-core", version = "=0.4.34-rc1", path = "../cccc-core" }
+cccc-daemon = { package = "cccc-pair-daemon", version = "=0.4.34-rc1", path = "../cccc-daemon" }
+cccc-mcp = { package = "cccc-pair-mcp", version = "=0.4.34-rc1", path = "../cccc-mcp" }
+cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.34-rc1", path = "../cccc-runtime" }
+cccc-web = { package = "cccc-pair-web", version = "=0.4.34-rc1", path = "../cccc-web" }
 clap.workspace = true
 fs2.workspace = true
 reqwest.workspace = true

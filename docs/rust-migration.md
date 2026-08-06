@@ -23,10 +23,10 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 irm https://chesterra.github.io/cccc/install.ps1 | iex
 ```
 
-The stable GitHub Pages scripts resolve the latest stable GitHub Release, select
-the current platform archive, validate `SHA256SUMS`, and install into a user-owned
-directory. Explicit prereleases remain opt-in through `CCCC_VERSION`, such as
-`0.4.34-rc1`.
+The GitHub Pages scripts pin the product version represented by the current
+documentation build, select the current platform archive, validate `SHA256SUMS`,
+and install into a user-owned directory. The initial native distribution is
+`0.4.34-rc1`; callers can override the pin through `CCCC_VERSION`.
 
 The Python distribution remains available during migration:
 
@@ -79,8 +79,8 @@ universal wheel and report Rust as unavailable.
 Cargo remains a workspace development tool and the crates stay non-publishable.
 The standalone workflow builds and verifies all four supported archives on manual
 runs. A matching pushed tag additionally publishes those archives, checksums, and
-versioned installers to GitHub Releases; prerelease tags are marked as such so the
-stable installer does not select them implicitly.
+versioned installers to GitHub Releases; prerelease tags are marked as such in
+GitHub Releases.
 
 ## Data compatibility
 

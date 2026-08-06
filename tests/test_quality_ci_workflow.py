@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -251,6 +252,16 @@ def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
     } <= paths
     assert package["scripts"]["prebuild"] == "npm run prepare:installers"
     assert package["scripts"]["prepare:installers"] == "node ../scripts/prepare_docs_installers.mjs"
+
+    subprocess.run(["node", "scripts/prepare_docs_installers.mjs"], cwd=ROOT, check=True)
+    with (ROOT / "Cargo.toml").open("rb") as handle:
+        version = tomllib.load(handle)["workspace"]["package"]["version"]
+    shell_installer = (ROOT / "docs/public/install.sh").read_text(encoding="utf-8")
+    powershell_installer = (ROOT / "docs/public/install.ps1").read_text(encoding="utf-8")
+    assert f'DEFAULT_VERSION="{version}"' in shell_installer
+    assert f'$defaultVersion = "{version}"' in powershell_installer
+    assert "@CCCC_" not in shell_installer
+    assert "@CCCC_" not in powershell_installer
 
 
 def test_rust_workspace_cannot_create_a_second_registry_distribution() -> None:

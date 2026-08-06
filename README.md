@@ -507,6 +507,8 @@ are not required. Run `cccc update` to upgrade through the same installer.
 pip install -U cccc-pair
 ```
 
+The hosted native installer currently pins the `v0.4.34-rc1` release candidate.
+
 ### pip (RC from TestPyPI)
 
 ```bash

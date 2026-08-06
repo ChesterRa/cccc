@@ -6,8 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+## [0.4.34-rc1] — 2026-08-06
+
 ### Added
-- **Stable native installers are available from the documentation site.** macOS/Linux users can pipe `install.sh` to `sh`, Windows users can pipe `install.ps1` to PowerShell, and neither path requires a Rust or Python toolchain. Matching tags publish checksum-verified standalone archives to GitHub Releases, while prereleases remain explicit.
+- **Native installers are available from the documentation site.** macOS/Linux users can pipe `install.sh` to `sh`, Windows users can pipe `install.ps1` to PowerShell, and neither path requires a Rust or Python toolchain. Matching tags publish checksum-verified standalone archives to GitHub Releases; the hosted installer currently pins `v0.4.34-rc1` for release-candidate validation.
 - **One `cccc-pair` installation now contains both CCCC implementations on supported platforms.** Python remains the default, while platform wheels carry a private, version-matched Rust payload behind the stable public `cccc` launcher.
 - **Cline is now a first-class PTY runtime.** Runtime discovery, actor configuration, MCP installation and repair, Web metadata, defaults, diagnostics, documentation, and both Python and Rust tests cover the Cline CLI.
 
