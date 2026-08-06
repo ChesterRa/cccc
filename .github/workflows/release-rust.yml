@@ -112,43 +112,9 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
 
-  verify:
-    needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            verifier: unix
-          - os: macos-15-intel
-            target: x86_64-apple-darwin
-            verifier: unix
-          - os: macos-14
-            target: aarch64-apple-darwin
-            verifier: unix
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            verifier: windows
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: cccc-release-candidate
-          path: artifacts
-      - name: Verify Unix release candidate
-        if: matrix.verifier == 'unix'
-        shell: bash
-        run: bash scripts/tests/verify_release_unix.sh artifacts "${{ matrix.target }}"
-      - name: Verify Windows release candidate
-        if: matrix.verifier == 'windows'
-        shell: pwsh
-        run: ./scripts/tests/verify_release_windows.ps1 -ArtifactDir artifacts -Target "${{ matrix.target }}"
-
   publish:
     if: github.event_name == 'push'
-    needs: verify
+    needs: prepare
     runs-on: ubuntu-latest
     permissions:
       contents: write

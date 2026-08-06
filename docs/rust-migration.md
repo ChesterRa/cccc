@@ -226,7 +226,7 @@ A release is publishable only when all of these remain true:
 
 - Rust owns its CLI, daemon, kernel, MCP, Web API, runners, and integrations.
 - The existing Web UI builds unchanged against the Rust HTTP/WebSocket surface.
-- The universal fallback and all four native wheels build and pass installed-wheel smoke tests.
+- The universal fallback and all four native wheels build and pass package metadata, platform-tag, dependency-repair, and release-set checks. Installed Python/Rust implementation smoke jobs are intentionally retired from the release path to keep publication bounded.
 - Python, Cargo, the lockfile, and the Git tag resolve to one release identity.
 - The native binary runs without a Python backend dependency.
 - The cross-language persisted-state tests pass in their dedicated interop job.

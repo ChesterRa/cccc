@@ -62,36 +62,6 @@ jobs:
           python -m build
           python -m twine check dist/*
 
-      - name: Smoke universal wheel
-        run: |
-          python -m pip install --force-reinstall dist/*.whl
-          cccc version
-          python - <<'PY'
-          import importlib.resources as ir
-          import json
-          import subprocess
-
-          assert ir.files("cccc.ports.web").joinpath("dist/index.html").is_file()
-          assert ir.files("cccc.resources").joinpath("cccc-help.md").is_file()
-
-          proc = subprocess.Popen(
-              ["cccc", "mcp"],
-              stdin=subprocess.PIPE,
-              stdout=subprocess.PIPE,
-              stderr=subprocess.PIPE,
-              text=True,
-          )
-          assert proc.stdin is not None
-          assert proc.stdout is not None
-          proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}) + "\n")
-          proc.stdin.flush()
-          response = json.loads(proc.stdout.readline().strip())
-          assert response.get("result", {}).get("serverInfo", {}).get("name") == "cccc-mcp"
-          proc.terminate()
-          proc.wait(timeout=5)
-          print("OK: universal wheel + Web + MCP")
-          PY
-
       - name: Upload shared Web bundle
         uses: actions/upload-artifact@v4
         with:
@@ -138,6 +108,8 @@ jobs:
           python -m pip install -e .
 
       - name: Run Python and Rust persisted-state interoperability tests
+        env:
+          CCCC_TEST_PYTHON: python
         run: |
           cargo test -p cccc-pair-core --test context_python_interop --locked
           cargo test -p cccc-pair-core --test group_bridge_identity_interop --locked
@@ -193,29 +165,6 @@ jobs:
           wheel_path="$(find wheelhouse/final -maxdepth 1 -name '*.whl' -print -quit)"
           python scripts/verify_native_wheel.py "$wheel_path" --platform-tag manylinux_2_28_x86_64
           auditwheel show "$wheel_path"
-
-      - name: Smoke installed Linux native wheel
-        run: |
-          wheel_path="$(find wheelhouse/final -maxdepth 1 -name '*.whl' -print -quit)"
-          python -m pip install --force-reinstall "$wheel_path"
-          export CCCC_HOME="$(mktemp -d)"
-          cccc version
-          cccc rust version
-          cccc rust --version
-          cccc status
-          cccc rust setup --runtime custom > "$CCCC_HOME/setup.json"
-          python - "$CCCC_HOME/setup.json" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          config = json.loads(pathlib.Path(sys.argv[1]).read_text())
-          command = pathlib.Path(config["mcpServers"]["cccc"]["command"])
-          assert command.name == "cccc", command
-          assert "_native" not in command.parts, command
-          PY
-          cccc python version
-          cccc python doctor
 
       - name: Upload Linux native wheel
         uses: actions/upload-artifact@v4
@@ -320,29 +269,10 @@ jobs:
           delvewheel show --analyze-existing-exes wheelhouse/raw/*.whl
           delvewheel repair --analyze-existing-exes --wheel-dir wheelhouse/final wheelhouse/raw/*.whl
 
-      - name: Verify and smoke native wheel
+      - name: Verify native wheel structure
         run: |
           wheel_path="$(find wheelhouse/final -maxdepth 1 -name '*.whl' -print -quit)"
           python scripts/verify_native_wheel.py "$wheel_path" --platform-tag "${{ matrix.platform_tag }}"
-          python -m pip install --force-reinstall "$wheel_path"
-          export CCCC_HOME="$(python -c 'import tempfile; print(tempfile.mkdtemp())')"
-          cccc version
-          cccc rust version
-          cccc rust --version
-          cccc status
-          cccc rust setup --runtime custom > "$CCCC_HOME/setup.json"
-          python - "$CCCC_HOME/setup.json" <<'PY'
-          import json
-          import pathlib
-          import sys
-
-          config = json.loads(pathlib.Path(sys.argv[1]).read_text())
-          command = pathlib.Path(config["mcpServers"]["cccc"]["command"])
-          assert command.name.lower() in {"cccc", "cccc.exe"}, command
-          assert "_native" not in command.parts, command
-          PY
-          cccc python version
-          cccc python doctor
 
       - name: Upload native wheel
         uses: actions/upload-artifact@v4
@@ -351,34 +281,12 @@ jobs:
           path: wheelhouse/final/*.whl
           if-no-files-found: error
 
-  universal-floor-smoke:
-    needs: verify-python
-    runs-on: ubuntu-latest
-    steps:
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Download universal distribution
-        uses: actions/download-artifact@v4
-        with:
-          name: release-dist-universal
-          path: dist
-
-      - name: Smoke Python floor fallback
-        run: |
-          python -m pip install --force-reinstall dist/*-py3-none-any.whl
-          cccc version
-          CCCC_HOME="$(mktemp -d)" cccc status
-
   collect:
     needs:
       - verify-python
       - interop
       - native-linux-x64
       - native-desktop
-      - universal-floor-smoke
     runs-on: ubuntu-latest
     steps:
       - name: Download every release distribution

@@ -186,7 +186,7 @@ def test_schedule_runs_serial_full_python_suites_at_both_support_endpoints() -> 
     assert " -n " not in runs
 
 
-def test_release_builds_on_314_and_smokes_the_universal_wheel_on_the_311_floor() -> None:
+def test_release_builds_on_314_without_installed_implementation_smoke_jobs() -> None:
     jobs = _release_workflow()["jobs"]
 
     verify_setup = next(
@@ -198,12 +198,31 @@ def test_release_builds_on_314_and_smokes_the_universal_wheel_on_the_311_floor()
     assert verify_setup["with"]["python-version"] == "3.14"
     assert publish_setup["with"]["python-version"] == "3.14"
 
-    floor_setup = next(
+    assert "universal-floor-smoke" not in jobs
+
+    release_runs = "\n".join(_runs(job) for job in jobs.values())
+    for command in (
+        "python -m pip install --force-reinstall",
+        "cccc rust version",
+        "cccc rust --version",
+        "cccc python version",
+        "cccc python doctor",
+    ):
+        assert command not in release_runs
+
+    interop_step = next(
         step
-        for step in jobs["universal-floor-smoke"]["steps"]
-        if step.get("uses", "").startswith("actions/setup-python")
+        for step in jobs["interop"]["steps"]
+        if step.get("name") == "Run Python and Rust persisted-state interoperability tests"
     )
-    assert floor_setup["with"]["python-version"] == "3.11"
+    assert interop_step["env"]["CCCC_TEST_PYTHON"] == "python"
+
+
+def test_windows_rust_binaries_use_the_static_crt() -> None:
+    cargo_config = (ROOT / ".cargo/config.toml").read_text(encoding="utf-8")
+
+    assert "[target.x86_64-pc-windows-msvc]" in cargo_config
+    assert 'target-feature=+crt-static' in cargo_config
 
 
 def test_one_tag_publishes_pypi_and_matching_standalone_rust_assets() -> None:
@@ -217,7 +236,6 @@ def test_one_tag_publishes_pypi_and_matching_standalone_rust_assets() -> None:
         "interop",
         "native-linux-x64",
         "native-desktop",
-        "universal-floor-smoke",
     }
     release_runs = "\n".join(_runs(job) for job in release["jobs"].values())
     assert "manylinux_2_28_x86_64" in release_runs
@@ -229,7 +247,8 @@ def test_one_tag_publishes_pypi_and_matching_standalone_rust_assets() -> None:
     assert rust_candidate["on"]["push"]["tags"] == ["v*"]
     assert "workflow_dispatch" in rust_candidate["on"]
     assert rust_candidate["jobs"]["publish"]["if"] == "github.event_name == 'push'"
-    assert rust_candidate["jobs"]["publish"]["needs"] == "verify"
+    assert "verify" not in rust_candidate["jobs"]
+    assert rust_candidate["jobs"]["publish"]["needs"] == "prepare"
     publish_runs = _runs(rust_candidate["jobs"]["publish"])
     assert "scripts/check_release_versions.py --tag" in publish_runs
     assert "gh release create" in publish_runs

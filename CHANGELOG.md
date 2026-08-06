@@ -14,11 +14,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Cline is now a first-class PTY runtime.** Runtime discovery, actor configuration, MCP installation and repair, Web metadata, defaults, diagnostics, documentation, and both Python and Rust tests cover the Cline CLI.
 
 ### Changed
+- **Release publication no longer runs installed Python/Rust implementation smoke jobs.** Builds retain version, package-structure, platform-tag, repaired-dependency, checksum, test-suite, interoperability, and complete-release-set gates without repeatedly installing dependencies and launching both implementations on every release platform.
 - **Standalone Rust installations now own their update path.** `cccc update` reuses the stable website installer, including daemon shutdown, checksum validation, rollback, and PATH-safe replacement; wheel-private Rust payloads remain owned by the Python product installer.
 - **Implementation selection and updates now have one owner.** `cccc rust` and `cccc python` switch persistently without creating competing commands on `PATH`; `cccc update` replaces the complete pip product, and Rust crates are no longer independently publishable.
 - **The global Web event stream is now a routing signal rather than a content channel.** It carries only event identity, type, time, and Group identity; clients continue to read complete events from the authorized per-Group ledger stream.
 
 ### Fixed
+- **Windows Rust binaries no longer require a separately installed Visual C++ runtime.** The MSVC CRT is linked statically so both the standalone archive and the Rust payload inside the Python wheel start on a clean Windows system; release interop also invokes the Python interpreter provisioned by Actions explicitly.
 - **Rust-delivered reply instructions now consistently use `cccc_message_reply`.** Required and cross-Group reply envelopes no longer contradict the generic MCP reminder by directing actors through `cccc_message_send`.
 - **CI now uses the interpreter provisioned for Python/Rust interop and can prepare Rust Web assets on Windows.** The interop job no longer assumes a repository-local virtual environment, and the release helper launches `npm.cmd` through the Windows shell instead of failing with `spawnSync EINVAL`.
 - **Rust actor startup now repairs stale CCCC MCP wiring before the provider session is created.** The Rust daemon matches Python's automatic-runtime catalog and `ready`/`missing`/`stale` verification flow across Claude, Cline, Copilot, Devin, Kiro, Droid, Amp, Auggie, Grok, Hermes, Kimi, and OpenCode; Codex keeps its stronger actor-scoped launch override. A removed Python launcher or dangling legacy symlink can no longer leave a newly started session without CCCC tools.
