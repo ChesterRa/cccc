@@ -504,7 +504,7 @@ irm https://chesterra.github.io/cccc/install.ps1 | iex
 pip install -U cccc-pair
 ```
 
-当前托管的原生安装器固定安装 `v0.4.34-rc1` 候选版本。
+当前托管的原生安装器固定安装 `v0.4.34-rc2` 候选版本。
 
 ### pip（RC 版，TestPyPI）
 

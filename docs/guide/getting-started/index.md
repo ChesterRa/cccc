@@ -108,16 +108,16 @@ irm https://chesterra.github.io/cccc/install.ps1 | iex
 ```
 
 The installer downloads a checksum-verified GitHub Release binary. It does not
-require a Rust or Python toolchain. During the `v0.4.34-rc1` validation period,
+require a Rust or Python toolchain. During the `v0.4.34-rc2` validation period,
 the hosted installer is pinned to that release candidate. You can also select it
 explicitly with `CCCC_VERSION`:
 
 ```bash
-curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.34-rc1 sh
+curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.34-rc2 sh
 ```
 
 ```powershell
-$env:CCCC_VERSION = "0.4.34-rc1"
+$env:CCCC_VERSION = "0.4.34-rc2"
 irm https://chesterra.github.io/cccc/install.ps1 | iex
 Remove-Item Env:CCCC_VERSION
 ```

@@ -21,24 +21,33 @@ pub(super) async fn goto_dom_content_loaded(page: &Page, url: &str) -> Result<()
     page.evaluate(format!("window.location.assign({encoded_url})"))
         .await
         .context("start browser navigation")?;
-    tokio::time::timeout(NAVIGATION_TIMEOUT, events.next())
-        .await
-        .context("browser navigation timed out waiting for DOMContentLoaded")?
-        .context("browser closed before DOMContentLoaded")?;
+    tokio::time::timeout(NAVIGATION_TIMEOUT, async {
+        loop {
+            events
+                .next()
+                .await
+                .context("browser closed before DOMContentLoaded")?;
+            let state = document_state(page).await?;
+            if state.document_uri.starts_with("chrome-error://") {
+                bail!("Chromium loaded an internal network error page");
+            }
+            if matches!(state.ready_state.as_str(), "interactive" | "complete") {
+                return Ok::<(), anyhow::Error>(());
+            }
+        }
+    })
+    .await
+    .context("browser navigation timed out waiting for DOMContentLoaded")??;
 
-    let state = page
-        .evaluate(
-            "({ document_uri: document.documentURI || '', ready_state: document.readyState || '' })",
-        )
-        .await
-        .context("inspect loaded browser document")?
-        .into_value::<DocumentState>()
-        .context("decode loaded browser document state")?;
-    if state.document_uri.starts_with("chrome-error://") {
-        bail!("Chromium loaded an internal network error page");
-    }
-    if !matches!(state.ready_state.as_str(), "interactive" | "complete") {
-        bail!("browser document did not reach DOMContentLoaded");
-    }
     Ok(())
+}
+
+async fn document_state(page: &Page) -> Result<DocumentState> {
+    page.evaluate(
+        "({ document_uri: document.documentURI || '', ready_state: document.readyState || '' })",
+    )
+    .await
+    .context("inspect loaded browser document")?
+    .into_value::<DocumentState>()
+    .context("decode loaded browser document state")
 }

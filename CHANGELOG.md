@@ -6,10 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
-## [0.4.34-rc1] — 2026-08-06
+## [0.4.34-rc2] — 2026-08-06
 
 ### Added
-- **Native installers are available from the documentation site.** macOS/Linux users can pipe `install.sh` to `sh`, Windows users can pipe `install.ps1` to PowerShell, and neither path requires a Rust or Python toolchain. Matching tags publish checksum-verified standalone archives to GitHub Releases; the hosted installer currently pins `v0.4.34-rc1` for release-candidate validation.
+- **Native installers are available from the documentation site.** macOS/Linux users can pipe `install.sh` to `sh`, Windows users can pipe `install.ps1` to PowerShell, and neither path requires a Rust or Python toolchain. Matching tags publish checksum-verified standalone archives to GitHub Releases; the hosted installer currently pins `v0.4.34-rc2` for release-candidate validation.
 - **One `cccc-pair` installation now contains both CCCC implementations on supported platforms.** Python remains the default, while platform wheels carry a private, version-matched Rust payload behind the stable public `cccc` launcher.
 - **Cline is now a first-class PTY runtime.** Runtime discovery, actor configuration, MCP installation and repair, Web metadata, defaults, diagnostics, documentation, and both Python and Rust tests cover the Cline CLI.
 
@@ -20,6 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **The global Web event stream is now a routing signal rather than a content channel.** It carries only event identity, type, time, and Group identity; clients continue to read complete events from the authorized per-Group ledger stream.
 
 ### Fixed
+- **Browser navigation ignores stale DOMContentLoaded events from the reusable blank page.** Seeded profile startup now waits until the destination document is actually interactive while still returning before stalled subresources finish.
 - **Windows Rust binaries no longer require a separately installed Visual C++ runtime.** The MSVC CRT is linked statically so both the standalone archive and the Rust payload inside the Python wheel start on a clean Windows system; release interop also invokes the Python interpreter provisioned by Actions explicitly.
 - **Rust-delivered reply instructions now consistently use `cccc_message_reply`.** Required and cross-Group reply envelopes no longer contradict the generic MCP reminder by directing actors through `cccc_message_send`.
 - **CI now uses the interpreter provisioned for Python/Rust interop and can prepare Rust Web assets on Windows.** The interop job no longer assumes a repository-local virtual environment, and the release helper launches `npm.cmd` through the Windows shell instead of failing with `spawnSync EINVAL`.

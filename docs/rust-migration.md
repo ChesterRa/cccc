@@ -6,9 +6,9 @@ Both use the same product version, data contracts, and public `cccc` command.
 Supported Python platform wheels also contain a private Rust executable with the
 same product version.
 
-Prereleases use one canonical product identity and tag such as `v0.4.34-rc1`.
-The Python manifest represents that identity as PEP 440 `0.4.34rc1`, while the
-Cargo workspace uses SemVer `0.4.34-rc1`; release validation normalizes those
+Prereleases use one canonical product identity and tag such as `v0.4.34-rc2`.
+The Python manifest represents that identity as PEP 440 `0.4.34rc2`, while the
+Cargo workspace uses SemVer `0.4.34-rc2`; release validation normalizes those
 ecosystem-specific spellings before comparing them.
 
 ## Install and update
@@ -26,7 +26,7 @@ irm https://chesterra.github.io/cccc/install.ps1 | iex
 The GitHub Pages scripts pin the product version represented by the current
 documentation build, select the current platform archive, validate `SHA256SUMS`,
 and install into a user-owned directory. The initial native distribution is
-`0.4.34-rc1`; callers can override the pin through `CCCC_VERSION`.
+`0.4.34-rc2`; callers can override the pin through `CCCC_VERSION`.
 
 The Python distribution remains available during migration:
 
