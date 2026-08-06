@@ -46,6 +46,8 @@ graphify-out
 # Docs: VitePress build artifacts
 /docs/.vitepress/cache/
 /docs/.vitepress/dist/
+/docs/public/install.sh
+/docs/public/install.ps1
 /docs/_archive_local/
 /docs/voice-secretary/**
 

@@ -51,7 +51,8 @@ CCCC_NO_MODIFY_PATH=1 \
 sh "$ARTIFACT_DIR/install.sh"
 
 test -x "$installed"
-test "$(find "$TMP_ROOT/installed" -maxdepth 1 -type f | wc -l | tr -d ' ')" = 1
+test "$(find "$TMP_ROOT/installed" -maxdepth 1 -type f | wc -l | tr -d ' ')" = 2
+grep -Fxq 'standalone-v1' "$TMP_ROOT/installed/.cccc-standalone"
 cmp "$package_dir/cccc" "$installed"
 test "$("$installed" --version)" = "cccc $VERSION"
 

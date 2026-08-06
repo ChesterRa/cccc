@@ -93,6 +93,34 @@ rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
 Version 0.4.x has a completely different command structure from 0.3.x. The old `init`, `run`, `bridge` commands are replaced with `attach`, `daemon`, `mcp`, etc.
 :::
 
+### Native Rust binary (recommended)
+
+macOS or Linux:
+
+```bash
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://chesterra.github.io/cccc/install.ps1 | iex
+```
+
+The installer downloads a checksum-verified GitHub Release binary. It does not
+require a Rust or Python toolchain. To install an explicit prerelease, set
+`CCCC_VERSION` before invoking the downloaded script:
+
+```bash
+curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.34-rc1 sh
+```
+
+```powershell
+$env:CCCC_VERSION = "0.4.34-rc1"
+irm https://chesterra.github.io/cccc/install.ps1 | iex
+Remove-Item Env:CCCC_VERSION
+```
+
 ### From PyPI
 
 ```bash

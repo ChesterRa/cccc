@@ -105,6 +105,9 @@ try {
   if ((& (Join-Path $versionedInstallDir "cccc.exe") --version | Out-String).Trim() -ne "cccc $realVersion") {
     throw "versioned installer did not use its embedded release version"
   }
+  if ((Get-Content -LiteralPath (Join-Path $versionedInstallDir ".cccc-standalone") -Raw).Trim() -ne "standalone-v1") {
+    throw "versioned installer did not write its standalone marker"
+  }
 
   & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir -NoModifyPath
 
@@ -114,6 +117,9 @@ try {
     if ((Get-FileHash $installed).Hash -ne (Get-FileHash (Join-Path $releaseBinaryDir $binary)).Hash) {
       throw "wrong contents for $binary"
     }
+  }
+  if ((Get-Content -LiteralPath (Join-Path $installDir ".cccc-standalone") -Raw).Trim() -ne "standalone-v1") {
+    throw "installer did not write its standalone marker"
   }
   & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir -NoModifyPath
   & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir

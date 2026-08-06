@@ -1,25 +1,51 @@
-# Rust Implementation and Unified Distribution
+# Rust Implementation and Product Distribution
 
-CCCC ships one `cccc-pair` product from PyPI. Python remains the default
-implementation during the migration period. Supported platform wheels also
-contain a private Rust executable with the same product version; users do not
-install a second `cccc` command or manage two entries on `PATH`.
+CCCC now offers a standalone Rust installation for supported platforms while the
+`cccc-pair` Python distribution remains maintained during the migration period.
+Both use the same product version, data contracts, and public `cccc` command.
+Supported Python platform wheels also contain a private Rust executable with the
+same product version.
 
 Prereleases use one canonical product identity and tag such as `v0.4.34-rc1`.
 The Python manifest represents that identity as PEP 440 `0.4.34rc1`, while the
 Cargo workspace uses SemVer `0.4.34-rc1`; release validation normalizes those
 ecosystem-specific spellings before comparing them.
 
-## Install and select an implementation
+## Install and update
 
-Install or upgrade the complete product through one channel:
+Install the standalone Rust binary without a Rust or Python toolchain:
+
+```bash
+# macOS / Linux
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Windows PowerShell
+irm https://chesterra.github.io/cccc/install.ps1 | iex
+```
+
+The stable GitHub Pages scripts resolve the latest stable GitHub Release, select
+the current platform archive, validate `SHA256SUMS`, and install into a user-owned
+directory. Explicit prereleases remain opt-in through `CCCC_VERSION`, such as
+`0.4.34-rc1`.
+
+The Python distribution remains available during migration:
 
 ```bash
 pip install -U cccc-pair
-cccc update
 ```
 
-The public Python launcher owns implementation selection and product updates:
+In either installation, use:
+
+```bash
+cccc update
+cccc update --check
+```
+
+Standalone Rust installations update through the same GitHub Pages installer.
+The Python launcher continues to update its complete pip product, including the
+private Rust payload on supported platforms.
+
+The public Python launcher also owns implementation selection inside a pip install:
 
 ```bash
 cccc status            # selected, running, and available implementations
@@ -50,11 +76,11 @@ switches both ways, and verifies that Rust `setup` records the stable public
 launcher rather than the private payload path. Unsupported platforms receive the
 universal wheel and report Rust as unavailable.
 
-Cargo remains a workspace development tool. The manual standalone-candidate
-workflow may build archives for engineering diagnostics, but tags no longer
-publish crates.io packages or a second end-user distribution. A future website
-installer can replace the Python launcher only after it preserves the same
-selection, update, rollback, and compatibility guarantees.
+Cargo remains a workspace development tool and the crates stay non-publishable.
+The standalone workflow builds and verifies all four supported archives on manual
+runs. A matching pushed tag additionally publishes those archives, checksums, and
+versioned installers to GitHub Releases; prerelease tags are marked as such so the
+stable installer does not select them implicitly.
 
 ## Data compatibility
 

@@ -277,7 +277,8 @@ If the selection file is corrupt, ordinary commands fail visibly; an explicit
 `status`, `version`, and `update` are stable launcher commands. `status` shows
 the selected implementation, the implementation reported by a live daemon, and
 whether the bundled Rust payload is usable. `version` is the shared product
-version. `update` always upgrades the complete pip product.
+version. `update` follows the installer that owns the public executable: the
+website installer for standalone Rust, or pip for the Python distribution.
 
 The legacy `ccccd start|stop|status|run` command remains as a compatibility
 alias, but now passes through the same implementation launcher. New automation
@@ -308,17 +309,21 @@ reported without aborting the remaining setup work.
 
 ### `cccc update`
 
-Upgrade the complete CCCC product in the current Python environment.
+Upgrade CCCC through the detected installation channel.
 
 ```bash
 cccc update                        # Upgrade using the detected channel
+cccc update --check                # Show install detection + planned command
+
+# Python distribution only
 cccc update --channel stable       # Force the stable PyPI channel
 cccc update --channel rc           # Force the TestPyPI RC channel
-cccc update --check                # Show install detection + planned command
 ```
 
 Notes:
 - The default channel follows the detected install metadata when possible, then falls back to `stable`.
+- Standalone Rust installations reuse the stable GitHub Pages installer and
+  preserve their current install directory.
 - Editable and local-path installs are reported but not updated automatically.
 - A platform wheel updates the Python launcher and private Rust payload together.
 - After a successful update, CCCC stops the older Web/daemon pair; the next

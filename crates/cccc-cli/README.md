@@ -6,21 +6,22 @@ delivery tracking, runtime state, a Web UI, and MCP access.
 ## End-user installation
 
 ```bash
-pip install -U cccc-pair
-cccc rust
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 ```
 
-The PyPI platform wheel owns the public `cccc` launcher and bundles this Rust
-binary privately when supported. Upgrade the launcher, Python implementation,
-Rust payload, Web assets, and contracts together with:
+Windows PowerShell uses `irm https://chesterra.github.io/cccc/install.ps1 | iex`.
+These installers download a checksum-verified GitHub Release binary and require
+neither Rust nor Python. Upgrade it through the same channel with:
 
 ```bash
 cccc update
 ```
 
-Use `cccc update --check` to inspect the PyPI channel and command without changing
-the installation. Do not install this crate separately for normal product use;
-that would create a second `cccc` on `PATH` and bypass coordinated updates.
+Use `cccc update --check` to inspect the detected installation and update source.
+The maintained PyPI platform wheel still owns its public Python launcher and
+bundles this binary privately when supported; that private payload remains updated
+as part of the complete pip product. Do not install this crate with Cargo for
+normal product use.
 
 ## Workspace development
 
@@ -37,8 +38,8 @@ Chromium, or Microsoft Edge browser. The core CLI, daemon, MCP server, and Web U
 do not require a browser.
 
 Internal implementation crates use the `cccc-pair-*` namespace and are not
-intended to be installed directly. The manual standalone-candidate workflow is
-for engineering diagnostics; release tags publish the unified PyPI product.
+intended to be installed directly. Manual standalone workflow runs verify release
+candidates; release tags also attach the verified native assets to GitHub Releases.
 
 Project documentation and source: <https://github.com/chesterra/cccc>
 
