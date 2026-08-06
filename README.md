@@ -14,7 +14,7 @@ for Claude Code, Codex, ChatGPT Web, and 13 more runtimes in one durable group.*
 
 Run multiple coding agents as a **persistent, coordinated team** across runtimes, machines, and trusted working groups — not a pile of disconnected terminal sessions.
 
-One `pip install`. Zero infrastructure, production-grade power.
+One install command. No Rust toolchain or infrastructure required.
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=blue)](https://pypi.org/project/cccc-pair/)
 [![Python](https://img.shields.io/pypi/pyversions/cccc-pair)](https://pypi.org/project/cccc-pair/)
@@ -46,11 +46,11 @@ CCCC runs your agents as one durable, coordinated system:
 - **One control plane** — Web UI, CLI, MCP, and IM bridges all operate on the same daemon-owned state.
 - **Multi-runtime by default** — Claude Code, Codex CLI, ChatGPT Web, Grok Build, and the rest of the first-class runtimes can collaborate in one group.
 - **Group Bridge for remote teams** — trusted CCCC groups can exchange explicit messages and, when granted, inspect or work with each other's local resources.
-- **Local-first operations** — one `pip install`, runtime state in `CCCC_HOME`, and remote supervision only when you choose to expose it.
+- **Local-first operations** — one install command, runtime state in `CCCC_HOME`, and remote supervision only when you choose to expose it.
 
 ## What CCCC Does
 
-CCCC is a single `pip install` with zero external dependencies — no database, no message broker, no Docker required. Yet it gives you the pieces fragile multi-agent setups usually lack:
+CCCC installs with one command and needs no database, message broker, or Docker. Yet it gives you the pieces fragile multi-agent setups usually lack:
 
 | Capability | How |
 |---|---|
@@ -68,7 +68,13 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 ### Install
 
 ```bash
-# Stable channel (PyPI)
+# Native Rust binary on macOS or Linux (no Rust or Python toolchain required)
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Windows PowerShell (no Rust or Python toolchain required)
+irm https://chesterra.github.io/cccc/install.ps1 | iex
+
+# Python distribution, maintained during the migration period
 pip install -U cccc-pair
 
 # RC channel (TestPyPI)
@@ -78,9 +84,9 @@ pip install -U --pre \
   cccc-pair
 ```
 
-> **Requirement**: Python 3.11+. Supported platform wheels also contain the
-> matching private Rust implementation; one installation still provides one
-> public `cccc` command.
+> The native installer supports Linux x86-64, Intel/Apple Silicon macOS, and
+> Windows x86-64. The Python distribution requires Python 3.11+ and its supported
+> platform wheels also contain the matching private Rust implementation.
 
 ### Upgrade
 
@@ -88,10 +94,10 @@ pip install -U --pre \
 cccc update
 ```
 
-Use `cccc update --check` to inspect the command that would run. Updates always
-replace the complete `cccc-pair` product from its detected PyPI channel, including
-the matching Rust payload when the platform wheel provides one. A real update
-stops the active Web/daemon pair before replacing installed files.
+Use `cccc update --check` to inspect the detected installation and update source.
+Native installs update from the stable GitHub Pages installer; pip installs update
+the complete `cccc-pair` product from their detected PyPI channel. Both paths stop
+the active Web/daemon pair before replacing installed files.
 
 ### Launch
 
@@ -482,7 +488,20 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 
 ## Installation Options
 
-### pip (stable, recommended)
+### Native Rust binary (recommended)
+
+```bash
+# macOS / Linux
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Windows PowerShell
+irm https://chesterra.github.io/cccc/install.ps1 | iex
+```
+
+This downloads a checksum-verified binary from GitHub Releases. Rust and Python
+are not required. Run `cccc update` to upgrade through the same installer.
+
+### pip (stable Python distribution)
 
 ```bash
 pip install -U cccc-pair

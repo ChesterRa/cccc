@@ -49,8 +49,13 @@ try {
 
   if (-not (Test-Path -LiteralPath $installed -PathType Leaf)) { throw "installer did not install cccc.exe" }
   $installedFiles = @(Get-ChildItem -LiteralPath (Split-Path $installed) -File)
-  if ($installedFiles.Count -ne 1 -or $installedFiles[0].Name -ne "cccc.exe") {
-    throw "installer must install exactly one executable: cccc.exe"
+  $installedNames = @($installedFiles.Name | Sort-Object)
+  if ($installedNames.Count -ne 2 -or
+      (Compare-Object $installedNames @(".cccc-standalone", "cccc.exe"))) {
+    throw "installer must install cccc.exe and its standalone marker"
+  }
+  if ((Get-Content -LiteralPath (Join-Path (Split-Path $installed) ".cccc-standalone") -Raw).Trim() -ne "standalone-v1") {
+    throw "installer wrote an invalid standalone marker"
   }
   if ((Get-FileHash $installed).Hash -ne (Get-FileHash $packageBinary).Hash) {
     throw "installed cccc.exe differs from the release archive"

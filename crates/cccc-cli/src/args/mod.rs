@@ -38,7 +38,7 @@ pub struct SetupArgs {
 
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
-    /// Accepted for compatibility; product updates are owned by the public Python launcher.
+    /// Show the detected installation and update source without changing files.
     #[arg(long)]
     pub check: bool,
 }
@@ -94,7 +94,7 @@ pub enum CommandKind {
     Status,
     Doctor,
     Setup(SetupArgs),
-    /// Update the complete CCCC product through the public launcher.
+    /// Update CCCC through the installer that owns this executable.
     Update(UpdateArgs),
     Version,
     Home,

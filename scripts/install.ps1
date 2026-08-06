@@ -231,6 +231,7 @@ try {
     & (Join-Path $InstallDir "cccc.exe") daemon start *> $null
     if ($LASTEXITCODE -ne 0) { throw "The updated CCCC daemon could not restart" }
   }
+  Set-Content -LiteralPath (Join-Path $InstallDir ".cccc-standalone") -Value "standalone-v1" -Encoding Ascii
   $transactionCommitted = $true
   Remove-Item -LiteralPath $backupDir -Recurse -Force
 

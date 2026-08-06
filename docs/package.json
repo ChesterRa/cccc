@@ -2,7 +2,10 @@
   "name": "cccc-docs",
   "type": "module",
   "scripts": {
+    "prepare:installers": "node ../scripts/prepare_docs_installers.mjs",
+    "predev": "npm run prepare:installers",
     "dev": "vitepress dev --port 5000",
+    "prebuild": "npm run prepare:installers",
     "build": "vitepress build",
     "preview": "vitepress preview"
   },

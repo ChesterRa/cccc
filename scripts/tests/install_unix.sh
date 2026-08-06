@@ -63,6 +63,7 @@ SHELL=/bin/zsh \
 CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
 sh "$TMP_ROOT/versioned-install.sh"
 [[ "$("$TMP_ROOT/versioned-home/.local/bin/cccc" --version)" == "cccc $version" ]]
+grep -Fxq 'standalone-v1' "$TMP_ROOT/versioned-home/.local/bin/.cccc-standalone"
 
 HOME="$TMP_ROOT/home with space" \
 SHELL=/bin/bash \
@@ -71,6 +72,7 @@ CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
 sh "$ROOT_DIR/scripts/install.sh" > "$TMP_ROOT/bash-install.out"
 
 test -x "$TMP_ROOT/home with space/.local/bin/cccc"
+grep -Fxq 'standalone-v1' "$TMP_ROOT/home with space/.local/bin/.cccc-standalone"
 [[ "$("$TMP_ROOT/home with space/.local/bin/cccc" --version)" == "cccc $version" ]]
 for bash_profile in .bash_profile .bashrc; do
   test "$(grep -Fc '# CCCC' "$TMP_ROOT/home with space/$bash_profile")" -eq 1

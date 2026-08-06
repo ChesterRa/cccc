@@ -1,6 +1,8 @@
-name: Build standalone Rust candidates (manual)
+name: Build and publish standalone Rust release
 
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -100,6 +102,9 @@ jobs:
         shell: bash
         run: |
           version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            python scripts/check_release_versions.py --tag "${GITHUB_REF_NAME}"
+          fi
           scripts/package_release_assets.sh artifacts "$version"
       - uses: actions/upload-artifact@v4
         with:
@@ -140,3 +145,35 @@ jobs:
         if: matrix.verifier == 'windows'
         shell: pwsh
         run: ./scripts/tests/verify_release_windows.ps1 -ArtifactDir artifacts -Target "${{ matrix.target }}"
+
+  publish:
+    if: github.event_name == 'push'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cccc-release-candidate
+          path: artifacts
+      - name: Publish GitHub release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python scripts/check_release_versions.py --tag "${GITHUB_REF_NAME}"
+          prerelease=()
+          case "${GITHUB_REF_NAME}" in
+            *-alpha*|*-beta*|*-rc*) prerelease=(--prerelease) ;;
+          esac
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" artifacts/* --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" artifacts/* \
+              --verify-tag \
+              --title "CCCC ${GITHUB_REF_NAME#v}" \
+              --generate-notes \
+              "${prerelease[@]}"
+          fi

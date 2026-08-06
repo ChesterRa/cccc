@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -204,7 +205,7 @@ def test_release_builds_on_314_and_smokes_the_universal_wheel_on_the_311_floor()
     assert floor_setup["with"]["python-version"] == "3.11"
 
 
-def test_one_tag_publishes_one_pypi_product_and_standalone_rust_is_manual_only() -> None:
+def test_one_tag_publishes_pypi_and_matching_standalone_rust_assets() -> None:
     release = _release_workflow()
     rust_candidate = _rust_release_workflow()
 
@@ -224,9 +225,32 @@ def test_one_tag_publishes_one_pypi_product_and_standalone_rust_is_manual_only()
     assert "scripts/publish_rust_crates.sh --publish" not in release_runs
     assert "python -m twine upload" in _runs(release["jobs"]["publish"])
 
-    assert "push" not in rust_candidate["on"]
+    assert rust_candidate["on"]["push"]["tags"] == ["v*"]
     assert "workflow_dispatch" in rust_candidate["on"]
-    assert "publish" not in rust_candidate["jobs"]
+    assert rust_candidate["jobs"]["publish"]["if"] == "github.event_name == 'push'"
+    assert rust_candidate["jobs"]["publish"]["needs"] == "verify"
+    publish_runs = _runs(rust_candidate["jobs"]["publish"])
+    assert "scripts/check_release_versions.py --tag" in publish_runs
+    assert "gh release create" in publish_runs
+    assert "gh release upload" in publish_runs
+    assert "--prerelease" in publish_runs
+
+
+def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
+    docs_workflow = yaml.load(
+        (ROOT / ".github/workflows/docs.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+    paths = set(docs_workflow["on"]["push"]["paths"])
+    package = json.loads((ROOT / "docs/package.json").read_text(encoding="utf-8"))
+
+    assert {
+        "scripts/install.sh",
+        "scripts/install.ps1",
+        "scripts/prepare_docs_installers.mjs",
+    } <= paths
+    assert package["scripts"]["prebuild"] == "npm run prepare:installers"
+    assert package["scripts"]["prepare:installers"] == "node ../scripts/prepare_docs_installers.mjs"
 
 
 def test_rust_workspace_cannot_create_a_second_registry_distribution() -> None:
@@ -239,5 +263,7 @@ def test_rust_workspace_cannot_create_a_second_registry_distribution() -> None:
         assert package.get("publish") is False, manifest
 
     assert not (ROOT / "scripts/publish_rust_crates.sh").exists()
-    rust_main = (ROOT / "crates/cccc-cli/src/main.rs").read_text(encoding="utf-8")
-    assert "the Rust implementation cannot update independently" in rust_main
+    rust_update = (ROOT / "crates/cccc-cli/src/commands/update.rs").read_text(encoding="utf-8")
+    assert "https://chesterra.github.io/cccc/install.sh" in rust_update
+    assert ".cccc-standalone" in rust_update
+    assert "managed by another installation" in rust_update

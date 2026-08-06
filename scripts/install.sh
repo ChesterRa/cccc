@@ -248,6 +248,7 @@ installed_version=$("$INSTALL_DIR/cccc" --version) || fail "installed cccc faile
 if [ "$daemon_was_running" -eq 1 ]; then
   "$INSTALL_DIR/cccc" daemon start >/dev/null || fail "the updated CCCC daemon could not restart"
 fi
+printf 'standalone-v1\n' > "$INSTALL_DIR/.cccc-standalone"
 transaction_committed=1
 rm -rf "$backup_dir"
 

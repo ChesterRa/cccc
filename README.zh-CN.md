@@ -14,7 +14,7 @@ Claude Code、Codex、ChatGPT Web 等 17 种运行时，在同一个持久协作
 
 让多个 coding agent 跨运行时、跨机器、跨可信协作组作为一支**持久化、可协调的团队**运行 — 而不是一堆各自为政的终端窗口。
 
-一条 `pip install`。零基础设施，生产级能力。
+一条安装命令，无需 Rust 工具链或额外基础设施。
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=blue)](https://pypi.org/project/cccc-pair/)
 [![Python](https://img.shields.io/pypi/pyversions/cccc-pair)](https://pypi.org/project/cccc-pair/)
@@ -46,11 +46,11 @@ CCCC 让你的 agent 作为一套持久、可协调的系统运行：
 - **控制面统一** — Web UI、CLI、MCP、IM 桥接全部围绕同一 daemon 运作，不会出现多套状态。
 - **多运行时是默认能力** — Claude Code、Codex CLI、ChatGPT Web、Grok Build 以及其它一线 runtime 可以在同一协作组内协同工作。
 - **Group Bridge 连接远端协作组** — 可信 CCCC group 可以显式互发消息，并在授权后读取或操作彼此的本地资源。
-- **本地优先但可远程值守** — 单条 `pip install` 即可启动，运行时状态放在 `CCCC_HOME`，需要时再通过 Web / IM 远程运维。
+- **本地优先但可远程值守** — 单条安装命令即可启动，运行时状态放在 `CCCC_HOME`，需要时再通过 Web / IM 远程运维。
 
 ## CCCC 能做什么
 
-CCCC 只需一条 `pip install`，零外部依赖 — 不需要数据库、不需要消息队列、不强制 Docker。但它补上了脆弱多智能体方案最缺的那几块能力：
+CCCC 只需一条安装命令，不需要数据库、不需要消息队列、不强制 Docker。它补上了脆弱多智能体方案最缺的那几块能力：
 
 | 能力 | 实现方式 |
 |---|---|
@@ -67,7 +67,13 @@ CCCC 只需一条 `pip install`，零外部依赖 — 不需要数据库、不�
 ### 安装
 
 ```bash
-# 稳定通道（PyPI）
+# macOS / Linux 原生 Rust 二进制（无需 Rust 或 Python 环境）
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Windows PowerShell（无需 Rust 或 Python 环境）
+irm https://chesterra.github.io/cccc/install.ps1 | iex
+
+# 迁移期继续维护的 Python 发行版
 pip install -U cccc-pair
 
 # RC 通道（TestPyPI）
@@ -77,8 +83,9 @@ pip install -U --pre \
   cccc-pair
 ```
 
-> **环境要求**：Python 3.11+。受支持平台的 wheel 会同时包含版本严格匹配的
-> 私有 Rust 实现，但一次安装始终只提供一个公开的 `cccc` 命令。
+> 原生安装支持 Linux x86-64、Intel/Apple Silicon macOS 和 Windows x86-64。
+> Python 发行版要求 Python 3.11+，其受支持平台 wheel 仍会包含版本严格匹配的
+> 私有 Rust 实现。
 
 ### 升级
 
@@ -86,10 +93,9 @@ pip install -U --pre \
 cccc update
 ```
 
-如需先查看检测到的安装类型和将要执行的命令，可使用 `cccc update --check`。
-升级始终从检测到的 PyPI 通道替换完整的 `cccc-pair` 产品；平台 wheel 中的
-Rust 载荷也会随同升级，不再存在第二套用户升级路径。实际升级会先停止当前
-Web/daemon 进程对，再替换已安装文件。
+如需先查看检测到的安装类型和升级来源，可使用 `cccc update --check`。原生安装
+从固定 GitHub Pages 安装器升级；pip 安装则从检测到的 PyPI 通道替换完整的
+`cccc-pair` 产品。两种路径都会先停止当前 Web/daemon 进程对，再替换已安装文件。
 
 ### 启动
 
@@ -479,7 +485,20 @@ CCCC 不替代你的 agent —— 它是让它们成为一个团队的那一层�
 
 ## 安装选项
 
-### pip（稳定版，推荐）
+### 原生 Rust 二进制（推荐）
+
+```bash
+# macOS / Linux
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Windows PowerShell
+irm https://chesterra.github.io/cccc/install.ps1 | iex
+```
+
+安装器会从 GitHub Releases 下载并校验二进制，不要求本机安装 Rust 或 Python。
+后续直接运行 `cccc update` 即可通过同一安装器升级。
+
+### pip（稳定 Python 发行版）
 
 ```bash
 pip install -U cccc-pair

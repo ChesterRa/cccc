@@ -85,9 +85,7 @@ async fn main() -> Result<()> {
         Some(CommandKind::Status) => status(&client).await,
         Some(CommandKind::Doctor) => commands::doctor::run(&home, PRODUCT_VERSION).await,
         Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
-        Some(CommandKind::Update(_)) => bail!(
-            "the Rust implementation cannot update independently; run `cccc update` through the installed cccc-pair launcher"
-        ),
+        Some(CommandKind::Update(args)) => commands::update::run(args),
     }
 }
 

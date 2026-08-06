@@ -3,7 +3,12 @@ name: Deploy Docs
 on:
   push:
     branches: [main]
-    paths: ['docs/**']
+    paths:
+      - 'docs/**'
+      - 'scripts/install.sh'
+      - 'scripts/install.ps1'
+      - 'scripts/prepare_docs_installers.mjs'
+      - '.github/workflows/docs.yml'
   workflow_dispatch:
 
 permissions:

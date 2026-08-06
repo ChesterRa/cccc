@@ -4,7 +4,7 @@ layout: home
 hero:
   name: CCCC
   text: Coordinate coding agents like a group chat
-  tagline: Read receipts, delivery tracking, and phone-side ops across 17 first-class runtimes, including Claude Code, Cline, Codex, and ChatGPT Web — local-first, one pip install
+  tagline: Read receipts, delivery tracking, and phone-side ops across 17 first-class runtimes, including Claude Code, Cline, Codex, and ChatGPT Web — local-first, one install command
   image:
     src: /logo.svg
     alt: CCCC

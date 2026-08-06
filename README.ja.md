@@ -14,7 +14,7 @@ Claude Code、Codex、ChatGPT Web など 17 のランタイムをひとつの永
 
 複数のコーディングエージェントを、ランタイム・マシン・信頼済み working group をまたぐ**永続的で協調されたチーム**として運用 — バラバラのターミナルセッションではなく。
 
-`pip install` ひとつ。ゼロインフラ、プロダクション級のパワー。
+インストールコマンドひとつ。Rust ツールチェーンも追加インフラも不要です。
 
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair?label=PyPI&color=blue)](https://pypi.org/project/cccc-pair/)
 [![Python](https://img.shields.io/pypi/pyversions/cccc-pair)](https://pypi.org/project/cccc-pair/)
@@ -46,11 +46,11 @@ CCCC はエージェント群を、永続的で協調された 1 つのシステ
 - **1 つのコントロールプレーン** — Web UI、CLI、MCP、IM ブリッジがすべて同じ daemon 状態を共有します。
 - **マルチランタイム前提** — Claude Code、Codex CLI、ChatGPT Web、Grok Build などの主要ランタイムを 1 つのグループで混在運用できます。
 - **Group Bridge によるリモート連携** — 信頼済み CCCC group 同士が明示的なメッセージを交換し、許可された場合は相手のローカルリソースを調査・操作できます。
-- **ローカルファースト運用** — `pip install` ひとつで始められ、ランタイム状態は `CCCC_HOME` に置いたまま、必要時だけリモート監視へ広げられます。
+- **ローカルファースト運用** — インストールコマンドひとつで始められ、ランタイム状態は `CCCC_HOME` に置いたまま、必要時だけリモート監視へ広げられます。
 
 ## CCCC の役割
 
-CCCC は `pip install` 一つで導入完了、外部依存ゼロ — データベース不要、メッセージブローカー不要、Docker 必須ではありません。それでいて、壊れやすいマルチエージェント構成に足りない運用基盤を提供します：
+CCCC はコマンド一つで導入でき、データベース、メッセージブローカー、Docker は不要です。それでいて、壊れやすいマルチエージェント構成に足りない運用基盤を提供します：
 
 | 機能 | 実現方法 |
 |---|---|
@@ -67,7 +67,13 @@ CCCC は `pip install` 一つで導入完了、外部依存ゼロ — データ�
 ### インストール
 
 ```bash
-# 安定チャネル（PyPI）
+# macOS / Linux ネイティブ Rust バイナリ（Rust・Python 不要）
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Windows PowerShell（Rust・Python 不要）
+irm https://chesterra.github.io/cccc/install.ps1 | iex
+
+# 移行期間中も保守される Python 配布
 pip install -U cccc-pair
 
 # RC チャネル（TestPyPI）
@@ -77,8 +83,8 @@ pip install -U --pre \
   cccc-pair
 ```
 
-> **要件**: Python 3.11+。対応プラットフォームの wheel には、同じバージョンの
-> private Rust 実装も含まれますが、公開されるコマンドは常に 1 つの `cccc` です。
+> ネイティブ版は Linux x86-64、Intel/Apple Silicon macOS、Windows x86-64 に対応します。
+> Python 配布は Python 3.11+ が必要で、対応 wheel には同じバージョンの private Rust 実装も含まれます。
 
 ### アップグレード
 
@@ -86,10 +92,9 @@ pip install -U --pre \
 cccc update
 ```
 
-インストール種別と実行予定のコマンドを事前確認するには `cccc update --check` を使用してください。
-更新は検出した PyPI チャネルから `cccc-pair` 製品全体を置き換え、対応 wheel の
-Rust payload も同時に更新します。実際の更新ではインストール済みファイルを
-置き換える前に稼働中の Web/daemon ペアを停止します。ユーザー向けの別更新経路はありません。
+インストール種別と更新元を事前確認するには `cccc update --check` を使用してください。
+ネイティブ版は GitHub Pages の固定インストーラー、pip 版は検出した PyPI チャネルから更新します。実際の更新ではインストール済みファイルを
+置き換える前に稼働中の Web/daemon ペアを停止します。
 
 ### 起動
 
@@ -478,7 +483,20 @@ CCCC はエージェントを置き換えるものではなく、それらをチ
 
 ## インストールオプション
 
-### pip（安定版、推奨）
+### ネイティブ Rust バイナリ（推奨）
+
+```bash
+# macOS / Linux
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Windows PowerShell
+irm https://chesterra.github.io/cccc/install.ps1 | iex
+```
+
+GitHub Releases からチェックサム検証済みバイナリを取得します。Rust と Python は不要で、
+以後は `cccc update` で同じ経路から更新できます。
+
+### pip（安定 Python 配布）
 
 ```bash
 pip install -U cccc-pair

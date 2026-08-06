@@ -27,7 +27,13 @@ In short: CCCC does not replace your agents — it is the coordination layer tha
 ### How do I install CCCC?
 
 ```bash
-# From PyPI
+# Native Rust binary on macOS or Linux
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Native Rust binary on Windows PowerShell
+irm https://chesterra.github.io/cccc/install.ps1 | iex
+
+# Python distribution from PyPI
 pip install -U cccc-pair
 
 # From TestPyPI (explicit RC testing)
@@ -61,9 +67,11 @@ Then install the new version. Note that 0.4.x has a completely different command
 
 ### What are the system requirements?
 
-- Python 3.11+
 - macOS, Linux, or Windows
 - At least one supported agent runtime CLI
+
+The native Rust installer does not require Python or Rust. The maintained Python
+distribution requires Python 3.11+.
 
 ### How do I choose the Python or Rust implementation?
 
