@@ -85,27 +85,10 @@ async fn main() -> Result<()> {
         Some(CommandKind::Status) => status(&client).await,
         Some(CommandKind::Doctor) => commands::doctor::run(&home, PRODUCT_VERSION).await,
         Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
-        Some(CommandKind::Update(args)) => {
-            let installed = commands::update::run(args, PRODUCT_VERSION)?;
-            if installed {
-                stop_daemon_after_update(&client, &home).await?;
-            }
-            Ok(())
-        }
+        Some(CommandKind::Update(_)) => bail!(
+            "the Rust implementation cannot update independently; run `cccc update` through the installed cccc-pair launcher"
+        ),
     }
-}
-
-async fn stop_daemon_after_update(client: &DaemonClient, home: &HomeLayout) -> Result<()> {
-    if running_daemon_pid(client).await.is_none() {
-        return Ok(());
-    }
-    let response = call(client, "shutdown", json!({})).await?;
-    if !response.ok {
-        bail!("the update installed, but the previous CCCC daemon could not be stopped");
-    }
-    wait_for_daemon_loss(client, &home.daemon_dir().join("ccccd.addr.json")).await;
-    println!("Stopped the previous CCCC daemon; the next command will start the updated version.");
-    Ok(())
 }
 
 fn web_endpoint(host: &str, port: u16) -> String {

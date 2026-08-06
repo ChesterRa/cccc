@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Wire contracts for the CCCC collaborative agent control plane"
-publish = ["crates-io"]
+publish = false
 
 [dependencies]
 chrono.workspace = true

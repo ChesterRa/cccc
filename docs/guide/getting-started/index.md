@@ -119,10 +119,14 @@ pip install -e .
 ## Verify Installation
 
 ```bash
+cccc status
 cccc doctor
 ```
 
-This checks Python version, available runtimes, and system configuration.
+`status` shows the selected, running, and available product implementations.
+Python is the current default. On a supported platform wheel, use `cccc rust`
+to select the bundled Rust implementation or `cccc python` to switch back.
+`doctor` checks Python, agent runtimes, and system configuration.
 
 ## Next Steps
 

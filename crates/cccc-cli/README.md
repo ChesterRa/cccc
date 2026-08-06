@@ -1,41 +1,44 @@
-# CCCC (Rust)
+# CCCC (Rust implementation)
 
 CCCC coordinates coding agents as a persistent group with shared messages,
 delivery tracking, runtime state, a Web UI, and MCP access.
 
-## Install
+## End-user installation
 
 ```bash
-cargo install cccc --locked
+pip install -U cccc-pair
+cccc rust
 ```
 
-Upgrade an existing crates.io installation with:
+The PyPI platform wheel owns the public `cccc` launcher and bundles this Rust
+binary privately when supported. Upgrade the launcher, Python implementation,
+Rust payload, Web assets, and contracts together with:
 
 ```bash
 cccc update
 ```
 
-Use `cccc update --check` to print the current and latest package versions plus
-the selected update source without changing the installation. Cargo installs
-update through crates.io. Prebuilt installs use the tagged GitHub Rust installer
-and verify release assets with `SHA256SUMS`. After replacement succeeds, CCCC
-stops any older daemon so the next command starts the updated binary.
+Use `cccc update --check` to inspect the PyPI channel and command without changing
+the installation. Do not install this crate separately for normal product use;
+that would create a second `cccc` on `PATH` and bypass coordinated updates.
 
-CCCC requires Rust 1.88 or newer to install from source. After installation,
-start the local daemon and Web UI with:
+## Workspace development
+
+CCCC requires Rust 1.88 or newer. From the repository, run and test this
+implementation directly with:
 
 ```bash
-cccc
+cargo run -p cccc -- --version
+cargo test -p cccc --locked
 ```
-
-Then open <http://127.0.0.1:8848>.
 
 Web Model and NotebookLM browser projection require a locally installed Chrome,
 Chromium, or Microsoft Edge browser. The core CLI, daemon, MCP server, and Web UI
 do not require a browser.
 
-The public command and package are named `cccc`. Internal implementation crates
-use the `cccc-pair-*` namespace and are not intended to be installed directly.
+Internal implementation crates use the `cccc-pair-*` namespace and are not
+intended to be installed directly. The manual standalone-candidate workflow is
+for engineering diagnostics; release tags publish the unified PyPI product.
 
 Project documentation and source: <https://github.com/chesterra/cccc>
 

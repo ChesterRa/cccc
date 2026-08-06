@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Optional
+from typing import Callable, Optional
 
 from .common import *  # noqa: F401,F403
 from .group_cmds import *  # noqa: F401,F403
@@ -308,7 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_lc.set_defaults(func=cmd_ledger_compact)
 
     p_daemon = sub.add_parser("daemon", help="Manage ccccd daemon")
-    p_daemon.add_argument("action", choices=["start", "stop", "status"], help="Action")
+    p_daemon.add_argument("action", choices=["start", "stop", "status", "run"], help="Action")
     p_daemon.set_defaults(func=cmd_daemon)
 
     # IM Bridge commands
@@ -400,7 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup.add_argument("--path", default=".", help="Project path (default: current directory)")
     p_setup.set_defaults(func=cmd_setup)
 
-    p_update = sub.add_parser("update", help="Update CCCC in the current Python environment")
+    p_update = sub.add_parser("update", help="Update the complete installed CCCC product via pip")
     p_update.add_argument(
         "--channel",
         choices=["stable", "rc"],
@@ -579,7 +579,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     return p
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(
+    argv: Optional[list[str]] = None,
+    *,
+    before_product_update: Optional[Callable[[], None]] = None,
+) -> int:
     if argv is None:
         argv = sys.argv[1:]
     parser = build_parser()
@@ -593,6 +597,8 @@ def main(argv: Optional[list[str]] = None) -> int:
                     web_port_override=getattr(args, "web_port", None),
                 )
             )
+        if getattr(args, "func", None) is cmd_update:
+            setattr(args, "_before_product_update", before_product_update)
         return int(args.func(args))
     finally:
         _restore_invocation_web_overrides(previous_env, applied_env)

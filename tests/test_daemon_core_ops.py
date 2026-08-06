@@ -34,6 +34,7 @@ class TestDaemonCoreOps(unittest.TestCase):
             result = ping.result if isinstance(ping.result, dict) else {}
             self.assertIsInstance(result, dict)
             assert isinstance(result, dict)
+            self.assertEqual(result.get("implementation"), "python")
             capabilities = result.get("capabilities") if isinstance(result.get("capabilities"), dict) else {}
             self.assertEqual(bool(capabilities.get("events_stream")), True)
             self.assertEqual(bool(capabilities.get("remote_access")), True)

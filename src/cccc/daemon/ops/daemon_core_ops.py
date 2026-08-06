@@ -30,6 +30,7 @@ def try_handle_daemon_core_op(
                 ok=True,
                 result={
                     "version": version,
+                    "implementation": "python",
                     "pid": pid_provider(),
                     "ts": now_iso(),
                     "ipc_v": 1,

@@ -297,6 +297,12 @@ fn canonicalize(value: &mut Value) {
 }
 
 pub(crate) fn resolve_cccc_executable() -> Option<PathBuf> {
+    if let Some(launcher) = std::env::var_os("CCCC_LAUNCHER_PATH")
+        .map(PathBuf::from)
+        .filter(|path| valid_public_launcher(path))
+    {
+        return Some(launcher);
+    }
     let current = std::env::current_exe().ok()?;
     if executable_stem(&current) == "cccc" {
         return Some(current);
@@ -310,6 +316,10 @@ pub(crate) fn resolve_cccc_executable() -> Option<PathBuf> {
             .map(|dir| dir.join(executable_name()))
             .find(|candidate| candidate.is_file())
     })
+}
+
+fn valid_public_launcher(path: &Path) -> bool {
+    path.is_absolute() && path.is_file() && executable_stem(path) == "cccc"
 }
 
 fn prepend_executable_dir(env: &mut BTreeMap<String, String>, executable: &Path) {
@@ -352,6 +362,7 @@ mod tests {
     use super::{
         append_overrides, begin_hook_launch, configure_with_executable, hook_hash,
         is_direct_codex_command, prepend_executable_dir, record_launch_issue,
+        valid_public_launcher,
     };
     use cccc_core::HomeLayout;
     use std::collections::BTreeMap;
@@ -385,6 +396,25 @@ mod tests {
         );
         assert!(command.iter().any(|item| item.starts_with("hooks.state=")));
         assert!(!command.contains(&"--dangerously-bypass-hook-trust".into()));
+    }
+
+    #[test]
+    fn public_launcher_override_requires_an_absolute_cccc_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let launcher = temp
+            .path()
+            .join(if cfg!(windows) { "cccc.exe" } else { "cccc" });
+        let private = temp.path().join(if cfg!(windows) {
+            "cccc-rust.exe"
+        } else {
+            "cccc-rust"
+        });
+        fs::write(&launcher, b"launcher").expect("write launcher");
+        fs::write(&private, b"private").expect("write private");
+
+        assert!(valid_public_launcher(&launcher));
+        assert!(!valid_public_launcher(&private));
+        assert!(!valid_public_launcher(Path::new("cccc")));
     }
 
     #[test]

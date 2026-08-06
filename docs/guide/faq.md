@@ -65,13 +65,29 @@ Then install the new version. Note that 0.4.x has a completely different command
 - macOS, Linux, or Windows
 - At least one supported agent runtime CLI
 
+### How do I choose the Python or Rust implementation?
+
+```bash
+cccc status
+cccc rust              # persist Rust and launch CCCC
+cccc python            # persist Python and launch CCCC
+cccc rust doctor       # persist Rust, then run one command
+```
+
+Python remains the default. Supported PyPI platform wheels contain Rust
+privately; other platforms receive the universal Python wheel and report Rust as
+unavailable. The selector validates the payload and stops the active Web/daemon
+pair. It never installs a second command or silently falls back.
+
 ### How do I check if CCCC is working?
 
 ```bash
+cccc status
 cccc doctor
 ```
 
-This checks Python version, available runtimes, and daemon status.
+These show implementation availability, Python version, agent runtimes, and
+daemon status.
 
 ### Why does an embedded browser open a physical Chrome window on Linux?
 

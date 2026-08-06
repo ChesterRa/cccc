@@ -38,7 +38,7 @@ pub struct SetupArgs {
 
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
-    /// Show the detected update source and latest version without changing the installation.
+    /// Accepted for compatibility; product updates are owned by the public Python launcher.
     #[arg(long)]
     pub check: bool,
 }
@@ -94,7 +94,7 @@ pub enum CommandKind {
     Status,
     Doctor,
     Setup(SetupArgs),
-    /// Update this Rust installation from crates.io.
+    /// Update the complete CCCC product through the public launcher.
     Update(UpdateArgs),
     Version,
     Home,

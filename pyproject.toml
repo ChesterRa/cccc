@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=70.1", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -51,8 +51,8 @@ Repository = "https://github.com/ChesterRa/cccc"
 Issues = "https://github.com/ChesterRa/cccc/issues"
 
 [project.scripts]
-cccc = "cccc.cli:main"
-ccccd = "cccc.daemon_main:main"
+cccc = "cccc.launcher:main"
+ccccd = "cccc.daemon_launcher:main"
 
 [tool.setuptools]
 include-package-data = true

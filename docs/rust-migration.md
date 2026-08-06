@@ -1,45 +1,60 @@
-# Rust Backend and Distribution
+# Rust Implementation and Unified Distribution
 
-CCCC ships its Python-compatible package and native Rust distribution from the
-same `main` branch, product version, and `vX.Y.Z` release tag. Both implementations
-keep the React/TypeScript frontend and external product contracts stable.
+CCCC ships one `cccc-pair` product from PyPI. Python remains the default
+implementation during the migration period. Supported platform wheels also
+contain a private Rust executable with the same product version; users do not
+install a second `cccc` command or manage two entries on `PATH`.
 
 Prereleases use one canonical product identity and tag such as `v0.4.34-rc1`.
 The Python manifest represents that identity as PEP 440 `0.4.34rc1`, while the
 Cargo workspace uses SemVer `0.4.34-rc1`; release validation normalizes those
 ecosystem-specific spellings before comparing them.
 
-## Rust package distribution
+## Install and select an implementation
 
-The installable crates.io package is `cccc`; its executable is also `cccc`.
-Install the native distribution with:
-
-```bash
-cargo install cccc --locked
-```
-
-Existing crates.io installations can be upgraded in place:
+Install or upgrade the complete product through one channel:
 
 ```bash
+pip install -U cccc-pair
 cccc update
-cccc update --check
 ```
 
-The public crate version follows the CCCC product version. Cargo installs
-update with `cargo install cccc --force --locked`. Prebuilt installations use
-the same tagged GitHub release as the Python package and verify assets against
-`SHA256SUMS`. An older running daemon is stopped only after replacement succeeds.
+The public Python launcher owns implementation selection and product updates:
 
-Implementation crates are published under the `cccc-pair-*` namespace so the
-public package name stays simple while Rust module imports remain unchanged.
-The former `0.0.x` packages were bootstrap releases for reserving and validating
-the crates.io path; supported releases use the workspace product version.
+```bash
+cccc status            # selected, running, and available implementations
+cccc rust              # persist Rust and launch
+cccc python             # persist Python and launch
+cccc rust doctor        # persist Rust, then run one command
+```
 
-Rust release packaging runs `scripts/prepare_rust_web_assets.mjs` before Cargo.
-The generated `crates/cccc-web/assets/web-dist/` directory is intentionally
-ignored by Git, but `cccc-pair-web` explicitly includes it in the crate archive.
-This keeps hashed frontend bundles out of source commits while preserving a
-Node.js-free install from crates.io.
+Selection is stored atomically in `CCCC_HOME/implementation.json`; no file means
+Python, preserving existing installations. Before selecting Rust, the launcher
+requires an executable payload whose normalized SemVer exactly matches the
+installed Python product version. A selector stops the active Web process and
+daemon before persisting the new implementation. Missing, corrupt, or mismatched
+payloads fail explicitly and never fall back silently.
+
+`cccc update` always upgrades `cccc-pair` through pip. This keeps the launcher,
+Python implementation, Rust payload, Web assets, and contracts on one version.
+The launcher stops the active Web/daemon pair before replacement so Windows can
+replace the native executable safely. The private Rust binary cannot overwrite
+its containing wheel independently.
+
+The release publishes one source distribution, one universal Python fallback
+wheel, and native wheels for Linux x86-64, Intel macOS, Apple Silicon macOS, and
+Windows x86-64. Linux is rebuilt at the manylinux 2.28 baseline and repaired with
+`auditwheel`; macOS and Windows dependencies are checked and repaired with
+`delocate` and `delvewheel`. Each platform job installs its completed wheel,
+switches both ways, and verifies that Rust `setup` records the stable public
+launcher rather than the private payload path. Unsupported platforms receive the
+universal wheel and report Rust as unavailable.
+
+Cargo remains a workspace development tool. The manual standalone-candidate
+workflow may build archives for engineering diagnostics, but tags no longer
+publish crates.io packages or a second end-user distribution. A future website
+installer can replace the Python launcher only after it preserves the same
+selection, update, rollback, and compatibility guarantees.
 
 ## Data compatibility
 
@@ -69,9 +84,11 @@ and `agent`) into the current versioned event contract. Other unrecognized or
 malformed historical lines are reported with their source location and skipped,
 so one legacy record cannot make an entire group unavailable.
 
-The installed `cccc` executable selects the implementation. Stop the active daemon
-before switching installations; Python and Rust daemons must not write the shared
-home concurrently.
+The installed `cccc` launcher selects the implementation and owns replacement of
+the active process pair. Python and Rust daemons still must not write the shared
+home concurrently. The legacy `ccccd` executable is retained only as a launcher-
+backed compatibility alias, so it follows the same selection instead of forcing
+the Python daemon.
 
 ## Dependency boundaries
 
@@ -165,13 +182,15 @@ lock. The combined `cccc` process also closes Web after daemon loss. Rust daemon
 reuse requires matching implementation, package version, and compatibility ID;
 legacy or stale daemons are replaced through graceful shutdown.
 
-## Native release gate
+## Unified release gate
 
-A native release is publishable only when all of these remain true:
+A release is publishable only when all of these remain true:
 
 - Rust owns its CLI, daemon, kernel, MCP, Web API, runners, and integrations.
 - The existing Web UI builds unchanged against the Rust HTTP/WebSocket surface.
-- Linux, macOS, and Windows release candidates build and pass platform smoke tests.
+- The universal fallback and all four native wheels build and pass installed-wheel smoke tests.
 - Python, Cargo, the lockfile, and the Git tag resolve to one release identity.
 - The native binary runs without a Python backend dependency.
+- The cross-language persisted-state tests pass in their dedicated interop job.
+- PyPI publication happens once, only after the complete artifact set is collected.
 - Existing `~/.cccc` data remains available after switching implementations.

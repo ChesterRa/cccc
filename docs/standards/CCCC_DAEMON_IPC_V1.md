@@ -333,11 +333,21 @@ Args: none
 
 Result:
 ```ts
-{ version: string; pid: number; ts: string; ipc_v: 1; capabilities: Record<string, unknown> }
+{
+  version: string;
+  implementation: "python" | "rust";
+  pid: number;
+  ts: string;
+  ipc_v: 1;
+  capabilities: Record<string, unknown>;
+  compatibility?: string;
+}
 ```
 
 Notes:
 - SDK-compatible daemons MUST return `ipc_v: 1`; omitting it is interpreted as IPC version `0`.
+- SDK-compatible daemons MUST identify their active implementation as `python` or `rust`.
+- `compatibility`, when present, is an implementation-specific compatibility identity; clients MUST NOT infer compatibility from the implementation name alone.
 - SDK-compatible daemons MUST return a `capabilities` feature map. Python and Rust daemons advertise supported `events_stream` and `remote_access` features here.
 - Clients SHOULD probe operation support independently; a recognized operation may reject empty probe arguments, but MUST NOT return `unknown_op`.
 - Clients MUST use protocol, compatibility, and capability fields instead of exact product-version equality.
@@ -4678,7 +4688,7 @@ Request line:
 
 Response line:
 ```json
-{"v":1,"ok":true,"result":{"version":"0.4.x","pid":12345,"ts":"2026-01-13T12:34:56Z","ipc_v":1,"capabilities":{"events_stream":true,"remote_access":true}},"error":null}
+{"v":1,"ok":true,"result":{"version":"0.4.x","implementation":"python","pid":12345,"ts":"2026-01-13T12:34:56Z","ipc_v":1,"capabilities":{"events_stream":true,"remote_access":true}},"error":null}
 ```
 
 ### 9.2 Error

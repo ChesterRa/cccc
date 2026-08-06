@@ -1,26 +1,27 @@
 # Releasing CCCC 0.4.x
 
-This repo publishes the Python package **`cccc-pair`** (CLI command: **`cccc`**).
-
-## RC19 Program
-
-For `v0.4.0rc19`, release execution is governed by:
-
-- `docs/release/RC19_RELEASE_BOARD.md`
-- `docs/release/RC19_AUDIT_METHOD.md`
-- `docs/release/rc19_file_matrix.csv` (generated)
+This repo publishes one PyPI product, **`cccc-pair`** (CLI command: **`cccc`**),
+with Python and Rust implementations on one version line.
 
 ## What the release pipeline produces
 
 The GitHub Actions workflow builds and uploads:
 
-- Python `sdist` + `wheel`
+- Python source distribution and universal fallback wheel
+- Native wheels for manylinux 2.28 x86-64, Intel/Apple Silicon macOS, and Windows x86-64
 - Bundled Web UI assets (built from `web/` and packaged under `cccc/ports/web/dist/`)
 - Embedded MCP server (`cccc mcp`) + protocol reference (`cccc_help`, sourced from `cccc/resources/cccc-help.md`)
 
+Platform jobs build, dependency-repair, install, and smoke the private Rust
+payload. A dedicated interop job verifies shared persisted contracts. The
+workflow collects the complete artifact set before one PyPI upload. The manual
+standalone Rust workflow does not publish packages.
+
 ## Tag ↔ Version conventions
 
-The release workflow is tag-driven (`v*`) and enforces that the git tag matches `pyproject.toml`’s version (PEP 440).
+The release workflow is tag-driven (`v*`) and enforces one normalized identity
+across the tag, PEP 440 in `pyproject.toml`, SemVer in `Cargo.toml`, Cargo.lock,
+and each built Rust binary.
 
 | Git tag | Upload target | Expected `pyproject.toml` version |
 |--------|----------------|-----------------------------------|
@@ -31,12 +32,12 @@ The release workflow is tag-driven (`v*`) and enforces that the git tag matches 
 
 ## Maintainer checklist (local)
 
-1. Bump `pyproject.toml` version.
+1. Bump `pyproject.toml`, `Cargo.toml`, internal dependency pins, and Cargo.lock together.
 2. Build + verify:
    - `python -m compileall -q src/cccc`
    - `python -m build`
    - `python -m twine check dist/*`
-3. Smoke-test the wheel:
+3. Smoke-test the universal wheel locally; platform wheels are release-workflow gates:
    - `python -m pip install --force-reinstall dist/*.whl`
    - `cccc version`
 4. Tag and push:
@@ -46,7 +47,8 @@ The release workflow is tag-driven (`v*`) and enforces that the git tag matches 
 ## Installing an RC from TestPyPI
 
 ```bash
-python -m pip install --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple \
+python -m pip install --pre \
+  --index-url https://test.pypi.org/simple \
+  --extra-index-url https://pypi.org/simple \
   cccc-pair==0.4.0rcN
 ```

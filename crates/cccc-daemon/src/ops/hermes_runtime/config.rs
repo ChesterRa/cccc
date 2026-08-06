@@ -86,12 +86,8 @@ pub(super) fn hermes_home() -> PathBuf {
 }
 
 pub(super) fn cccc_command() -> Vec<String> {
-    let current = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("cccc"));
-    let executable = if current.file_stem().is_some_and(|name| name == "ccccd") {
-        current.with_file_name("cccc")
-    } else {
-        current
-    };
+    let executable =
+        crate::ops::codex_mcp::resolve_cccc_executable().unwrap_or_else(|| PathBuf::from("cccc"));
     vec![executable.to_string_lossy().into_owned(), "mcp".into()]
 }
 

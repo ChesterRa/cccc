@@ -71,9 +71,6 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 # Stable channel (PyPI)
 pip install -U cccc-pair
 
-# Native Rust distribution (crates.io)
-cargo install cccc --locked
-
 # RC channel (TestPyPI)
 pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
@@ -81,8 +78,9 @@ pip install -U --pre \
   cccc-pair
 ```
 
-> **Requirements**: Python 3.11+ for the default distribution, or Rust 1.88+
-> for a crates.io source install. Do not keep both `cccc` executables on `PATH`.
+> **Requirement**: Python 3.11+. Supported platform wheels also contain the
+> matching private Rust implementation; one installation still provides one
+> public `cccc` command.
 
 ### Upgrade
 
@@ -90,10 +88,10 @@ pip install -U --pre \
 cccc update
 ```
 
-Use `cccc update --check` to inspect the command that would run. Python installs
-report their detected package source/channel. Rust installs report the product
-and package versions; Cargo installs update through crates.io, while prebuilt
-installs use the matching checksummed GitHub Rust release.
+Use `cccc update --check` to inspect the command that would run. Updates always
+replace the complete `cccc-pair` product from its detected PyPI channel, including
+the matching Rust payload when the platform wheel provides one. A real update
+stops the active Web/daemon pair before replacing installed files.
 
 ### Launch
 
@@ -102,6 +100,21 @@ cccc
 ```
 
 Open **http://127.0.0.1:8848** — by default, CCCC brings up the daemon and the local Web UI together.
+
+The Python implementation is the current default. Switch persistently, or switch
+and run a command in one step:
+
+```bash
+cccc status            # selected, running, and available implementations
+cccc rust              # select Rust, then launch CCCC
+cccc python             # select Python, then launch CCCC
+cccc rust doctor        # select Rust, then run doctor
+```
+
+Switching is an explicit lifecycle operation: CCCC validates the target payload,
+stops the active Web/daemon pair, and never silently falls back to the other
+implementation. Agent runtime MCP configurations keep pointing at the stable
+public `cccc` launcher, so they follow later switches automatically.
 
 ### Create a multi-agent group
 
@@ -484,15 +497,11 @@ pip install -U --pre \
   cccc-pair
 ```
 
-### Rust (native)
-
-```bash
-cargo install cccc --locked
-```
-
-The Python and Rust distributions share `CCCC_HOME`, but their daemons must not
-run concurrently. Both install a command named `cccc`; keep only the selected
-distribution first on `PATH`.
+On Linux x86-64, Intel/Apple Silicon macOS, and Windows x86-64, pip selects a
+platform wheel containing the private Rust executable. Other platforms receive
+the universal Python wheel; `cccc status` reports Rust as unavailable instead of
+pretending to switch. Cargo installation is retained for workspace development,
+not as a second supported end-user distribution.
 
 ### From source
 

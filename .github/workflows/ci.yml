@@ -157,7 +157,7 @@ jobs:
 
   package:
     if: github.event_name != 'schedule'
-    needs: [quality, web, python-tests, python-compat]
+    needs: [quality, web, python-tests, python-compat, interop]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -200,6 +200,29 @@ jobs:
 
       - name: Verify packaged Web bundle contract
         run: python -m pytest -q -m packaged_web_dist tests/test_web_manifest_static.py
+
+      - name: Verify native wheel staging stays platform-scoped
+        run: |
+          mkdir -p native-wheel-smoke pure-after-native
+          CCCC_BUILD_RUST_BINARY=/bin/true \
+            CCCC_BUILD_WHEEL_TAG=linux_x86_64 \
+            python -m build --wheel --outdir native-wheel-smoke
+          native_wheel="$(find native-wheel-smoke -maxdepth 1 -name '*.whl' -print -quit)"
+          python scripts/verify_native_wheel.py "$native_wheel" --platform-tag linux_x86_64
+          python -m build --wheel --outdir pure-after-native
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          wheel = next(Path("pure-after-native").glob("*.whl"))
+          assert wheel.name.endswith("-py3-none-any.whl"), wheel
+          with zipfile.ZipFile(wheel) as archive:
+              assert not any(
+                  name.endswith(("cccc-rust", "cccc-rust.exe"))
+                  for name in archive.namelist()
+              )
+          print("OK: native wheel does not contaminate a later universal build")
+          PY
 
   windows-smoke:
     if: github.event_name != 'schedule'
@@ -265,6 +288,46 @@ jobs:
           cargo build --workspace --release --locked
           scripts/tests/install_real_unix.sh target/release/cccc
           target/release/cccc --version
+
+  interop:
+    if: github.event_name != 'schedule'
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: bundled-web
+          path: web/dist
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Python implementation
+        run: |
+          python -m pip install -U pip
+          python -m pip install -e .
+
+      - name: Test shared Python and Rust persisted contracts
+        run: |
+          touch web/dist/index.html
+          cargo test -p cccc-pair-core --test context_python_interop --locked
+          cargo test -p cccc-pair-core --test group_bridge_identity_interop --locked
+          cargo test -p cccc-pair-core --test runtime_hook_interop --locked
+          cargo test -p cccc-pair-core --test runtime_hook_identity_interop --locked
+          cargo test -p cccc-pair-core --test ledger_python_interop --locked
+          cargo test -p cccc-pair-daemon --test python_storage_interop --locked -- --test-threads=1
 
   nightly-serial:
     if: github.event_name == 'schedule'

@@ -7,11 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ## [Unreleased]
 
 ### Added
-- **The native Rust implementation is now a supported CCCC distribution.** Python and Rust share one product version and `vX.Y.Z` release tag, while native archives and the crates.io package remain independently installable and use the same `CCCC_HOME` contracts.
+- **One `cccc-pair` installation now contains both CCCC implementations on supported platforms.** Python remains the default, while platform wheels carry a private, version-matched Rust payload behind the stable public `cccc` launcher.
 - **Cline is now a first-class PTY runtime.** Runtime discovery, actor configuration, MCP installation and repair, Web metadata, defaults, diagnostics, documentation, and both Python and Rust tests cover the Cline CLI.
 
 ### Changed
-- **Rust publication is dependency-ordered and recoverable.** Internal `cccc-pair-*` crates publish before the public `cccc` crate, already-published versions are skipped during a retry, and manually dispatched release workflows verify without uploading. Stable and prerelease tags now resolve through one product identity while preserving the required PEP 440 and SemVer spellings in their respective manifests.
+- **Implementation selection and updates now have one owner.** `cccc rust` and `cccc python` switch persistently without creating competing commands on `PATH`; `cccc update` replaces the complete pip product, and Rust crates are no longer independently publishable.
 - **The global Web event stream is now a routing signal rather than a content channel.** It carries only event identity, type, time, and Group identity; clients continue to read complete events from the authorized per-Group ledger stream.
 
 ### Fixed

@@ -2,6 +2,18 @@
 
 Get started with CCCC using the command line.
 
+## Optional: Select the product implementation
+
+Python is the current default. A supported platform wheel can switch to its
+bundled Rust implementation before the normal workflow:
+
+```bash
+cccc status
+cccc rust       # or: cccc python
+```
+
+The choice persists for later CLI and MCP invocations.
+
 ## Step 1: Navigate to Your Project
 
 ```bash

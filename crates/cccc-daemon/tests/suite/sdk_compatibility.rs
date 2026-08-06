@@ -19,6 +19,7 @@ fn ping_exposes_python_compatible_sdk_contract() {
 
     assert!(response.ok);
     assert_eq!(response.result["ipc_v"], json!(1));
+    assert_eq!(response.result["implementation"], json!("rust"));
     assert_eq!(
         response.result["capabilities"]["events_stream"],
         json!(true)

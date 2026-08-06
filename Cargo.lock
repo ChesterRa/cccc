@@ -440,7 +440,6 @@ dependencies = [
  "clap",
  "fs2",
  "reqwest 0.12.28",
- "semver",
  "serde_json",
  "shell-words",
  "tempfile",

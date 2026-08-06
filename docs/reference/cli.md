@@ -251,6 +251,38 @@ Notes:
   - local `repo/space/` files -> provider sources,
   - provider source/artifact projection -> local `repo/space/` (`.sync/remote-sources` and `artifacts/`).
 
+## Implementation Selection
+
+### `cccc python [command ...]` / `cccc rust [command ...]`
+
+Select the product implementation persistently, then optionally execute a
+command with that implementation.
+
+```bash
+cccc status             # Show selected, running, and available implementations
+cccc rust               # Select Rust and launch daemon + Web
+cccc rust doctor        # Select Rust and run doctor
+cccc python             # Select Python and launch daemon + Web
+cccc python daemon start
+```
+
+The selector must be the first argument. It is intentionally not a one-shot
+override: agent runtimes and later terminal invocations all follow the same
+selection in `CCCC_HOME`. Switching validates the target first and then stops
+the active Web/daemon pair. If Rust is absent or has a different product version,
+the command fails without changing the selection or falling back to Python.
+If the selection file is corrupt, ordinary commands fail visibly; an explicit
+`cccc python` selector replaces it and restores the safe default.
+
+`status`, `version`, and `update` are stable launcher commands. `status` shows
+the selected implementation, the implementation reported by a live daemon, and
+whether the bundled Rust payload is usable. `version` is the shared product
+version. `update` always upgrades the complete pip product.
+
+The legacy `ccccd start|stop|status|run` command remains as a compatibility
+alias, but now passes through the same implementation launcher. New automation
+should prefer `cccc daemon ...`.
+
 ## Setup Commands
 
 ### `cccc setup`
@@ -276,7 +308,7 @@ reported without aborting the remaining setup work.
 
 ### `cccc update`
 
-Upgrade CCCC in the current Python environment.
+Upgrade the complete CCCC product in the current Python environment.
 
 ```bash
 cccc update                        # Upgrade using the detected channel
@@ -288,10 +320,9 @@ cccc update --check                # Show install detection + planned command
 Notes:
 - The default channel follows the detected install metadata when possible, then falls back to `stable`.
 - Editable and local-path installs are reported but not updated automatically.
-- Rust builds support `cccc update` and `cccc update --check`. Cargo installs run
-  `cargo install cccc --force --locked`; prebuilt installs use the matching
-  tagged GitHub Rust release and verify its `SHA256SUMS` before replacement.
-- `--channel` applies to the Python distribution only.
+- A platform wheel updates the Python launcher and private Rust payload together.
+- After a successful update, CCCC stops the older Web/daemon pair; the next
+  command starts the selected implementation from the new product version.
 
 ## Web Commands
 

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use cccc_core::HomeLayout;
 use serde_json::json;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::args::SetupArgs;
@@ -27,7 +27,7 @@ const SUPPORTED: &[&str] = &[
 ];
 
 pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
-    let executable = std::env::current_exe()?;
+    let executable = public_executable()?;
     let runtime = args.runtime.as_deref().map(str::trim).unwrap_or("");
     let config = json!({
         "mcpServers":{"cccc":{"command":executable,"args":["mcp"],"env":{"CCCC_HOME":home.root()}}}
@@ -74,6 +74,24 @@ pub fn run(home: &HomeLayout, args: SetupArgs) -> Result<()> {
         serde_json::to_string_pretty(&setup_one(home, &args, runtime, &executable, &config)?)?
     );
     Ok(())
+}
+
+fn public_executable() -> Result<PathBuf> {
+    let current = std::env::current_exe()?;
+    Ok(select_public_executable(
+        current,
+        std::env::var_os("CCCC_LAUNCHER_PATH").map(PathBuf::from),
+    ))
+}
+
+fn select_public_executable(current: PathBuf, launcher: Option<PathBuf>) -> PathBuf {
+    launcher
+        .filter(|path| {
+            path.is_absolute()
+                && path.is_file()
+                && path.file_stem().is_some_and(|name| name == "cccc")
+        })
+        .unwrap_or(current)
 }
 
 fn setup_one(
@@ -255,6 +273,29 @@ fn display(command: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn public_launcher_override_must_be_an_existing_absolute_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let current = temp.path().join("cccc-rust");
+        let launcher = temp.path().join("cccc");
+        std::fs::write(&launcher, b"launcher").expect("write launcher");
+
+        assert_eq!(
+            select_public_executable(current.clone(), Some(launcher.clone())),
+            launcher
+        );
+        assert_eq!(
+            select_public_executable(current.clone(), Some(PathBuf::from("cccc"))),
+            current
+        );
+        let other = temp.path().join("other");
+        std::fs::write(&other, b"other").expect("write other");
+        assert_eq!(
+            select_public_executable(current.clone(), Some(other)),
+            current
+        );
+    }
 
     #[test]
     fn builds_codex_command_with_compiled_binary() {

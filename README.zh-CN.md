@@ -70,9 +70,6 @@ CCCC 只需一条 `pip install`，零外部依赖 — 不需要数据库、不�
 # 稳定通道（PyPI）
 pip install -U cccc-pair
 
-# Rust 原生发行版（crates.io）
-cargo install cccc --locked
-
 # RC 通道（TestPyPI）
 pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
@@ -80,8 +77,8 @@ pip install -U --pre \
   cccc-pair
 ```
 
-> **环境要求**：默认发行版需要 Python 3.11+；从 crates.io 源码安装需要
-> Rust 1.88+。不要让两个不同来源的 `cccc` 同时出现在 `PATH` 中。
+> **环境要求**：Python 3.11+。受支持平台的 wheel 会同时包含版本严格匹配的
+> 私有 Rust 实现，但一次安装始终只提供一个公开的 `cccc` 命令。
 
 ### 升级
 
@@ -90,8 +87,9 @@ cccc update
 ```
 
 如需先查看检测到的安装类型和将要执行的命令，可使用 `cccc update --check`。
-Rust 的 Cargo 安装会从 crates.io 升级；预编译安装会使用对应版本且经过
-SHA256 校验的 GitHub Rust Release。
+升级始终从检测到的 PyPI 通道替换完整的 `cccc-pair` 产品；平台 wheel 中的
+Rust 载荷也会随同升级，不再存在第二套用户升级路径。实际升级会先停止当前
+Web/daemon 进程对，再替换已安装文件。
 
 ### 启动
 
@@ -100,6 +98,19 @@ cccc
 ```
 
 打开 **http://127.0.0.1:8848** — 默认会一起拉起 daemon 和本地 Web UI。
+
+当前默认实现仍是 Python。可以持久切换，也可以在切换后立即执行命令：
+
+```bash
+cccc status            # 查看已选、正在运行和可用的实现
+cccc rust              # 选择 Rust，然后启动 CCCC
+cccc python             # 选择 Python，然后启动 CCCC
+cccc rust doctor        # 选择 Rust，然后执行 doctor
+```
+
+切换属于显式生命周期操作：CCCC 会先校验目标载荷，再停止当前 Web/daemon，
+且绝不会悄悄回退到另一实现。各 agent runtime 的 MCP 配置始终指向公开的
+`cccc` 启动器，因此之后切换实现时无需逐个重配。
 
 ### 建立多智能体协作组
 
@@ -481,14 +492,10 @@ pip install -U --pre \
   cccc-pair
 ```
 
-### Rust（原生版）
-
-```bash
-cargo install cccc --locked
-```
-
-Python 与 Rust 发行版共享 `CCCC_HOME`，但不能同时运行两个 daemon。两者都会
-安装名为 `cccc` 的命令，请确保 `PATH` 中优先使用当前选择的发行版。
+在 Linux x86-64、Intel/Apple Silicon macOS 和 Windows x86-64 上，pip 会选择
+带私有 Rust 可执行文件的平台 wheel。其他平台使用通用 Python wheel；
+`cccc status` 会明确显示 Rust 不可用，而不会假装切换成功。Cargo 安装仅保留
+给工作区开发使用，不再作为第二套受支持的终端用户发行版。
 
 ### 从源码安装
 

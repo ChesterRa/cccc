@@ -81,15 +81,16 @@ Vite+ 0.2.4 / tsgolint 0.24 does not yet replace this project's `tsc` gate. Enab
 | `python-tests` | Source-level Python tests distributed across four deterministic matrix shards |
 | `package` | Compile, build, Twine check, install, wheel resource smoke, and packaged Web bundle contract after quality/Web/Python pass |
 | `rust` | Python-free Rust workspace, installer, and release-asset validation on Ubuntu |
+| `interop` | Focused Python/Rust persisted-state and lock compatibility tests |
 | `windows-smoke` | Windows PTY compatibility tests |
 
 The Rust pull-request job is self-contained: it does not install or execute the
-Python backend. Seven legacy cross-language integration tests that still launch
-`src/cccc` are explicitly excluded from that job while their compatibility data
-is converted into checked-in fixtures. All other Rust targets are still compiled,
-linted, and tested.
+Python backend. Cross-language tests that launch `src/cccc` stay excluded from
+that job so its boundary remains honest, but run in the separate mandatory
+`interop` job instead. All other Rust targets are still compiled, linted, and
+tested.
 
-The full Windows Rust workspace job is intentionally retired because it did not complete reliably on hosted runners. Windows keeps focused PTY compatibility coverage in `windows-smoke`; the release workflow remains responsible for Linux, Intel/Apple Silicon macOS, and Windows native distribution builds and platform verification. The Web job uploads its bundle and the package job consumes that artifact, so packaging tests the same bundle without rebuilding it. The `packaged_web_dist` pytest marker is reserved for assertions that require this artifact; source-only Python runs exclude it, while the package job executes it after downloading the bundle.
+The full Windows Rust workspace job is intentionally retired because it did not complete reliably on hosted runners. Windows keeps focused PTY compatibility coverage in `windows-smoke`; the unified release workflow builds and installs Linux, Intel/Apple Silicon macOS, and Windows native wheels before one PyPI publication. The Web job uploads its bundle and the package job consumes that artifact, so packaging tests the same bundle without rebuilding it. The `packaged_web_dist` pytest marker is reserved for assertions that require this artifact; source-only Python runs exclude it, while the package job executes it after downloading the bundle.
 
 ## Stable Python Shards
 

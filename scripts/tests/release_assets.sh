@@ -37,13 +37,6 @@ if "$ROOT_DIR/scripts/package_release_assets.sh" "$TMP_ROOT" "$VERSION"; then
   exit 1
 fi
 
-test "$("$ROOT_DIR/scripts/release_prerelease.sh" 0.5.0)" = false
-test "$("$ROOT_DIR/scripts/release_prerelease.sh" 0.5.0+build-1)" = false
-test "$("$ROOT_DIR/scripts/release_prerelease.sh" 0.5.0-preview.1)" = true
-test "$("$ROOT_DIR/scripts/release_prerelease.sh" 0.5.0-preview.1+build-1)" = true
-grep -Fq 'scripts/release_prerelease.sh "$version"' "$ROOT_DIR/.github/workflows/release-rust.yml"
-grep -Fq 'prerelease: ${{ env.RELEASE_PRERELEASE }}' "$ROOT_DIR/.github/workflows/release-rust.yml"
-
 for versions in \
   "0.5.0 0.5.0 v0.5.0" \
   "0.5.0a1 0.5.0-alpha1 v0.5.0-alpha1" \
@@ -69,20 +62,5 @@ for versions in \
     exit 1
   fi
 done
-
-"$ROOT_DIR/scripts/publish_rust_crates.sh" --plan > "$TMP_ROOT/publish-plan"
-WORKSPACE_VERSION="$(sed -n 's/^version = "\([^"]*\)"/\1/p' "$ROOT_DIR/Cargo.toml" | head -1)"
-cat > "$TMP_ROOT/expected-publish-plan" <<EOF
-cccc-pair-contracts@$WORKSPACE_VERSION
-cccc-pair-notebooklm@$WORKSPACE_VERSION
-cccc-pair-runtime@$WORKSPACE_VERSION
-cccc-pair-core@$WORKSPACE_VERSION
-cccc-pair-client@$WORKSPACE_VERSION
-cccc-pair-daemon@$WORKSPACE_VERSION
-cccc-pair-mcp@$WORKSPACE_VERSION
-cccc-pair-web@$WORKSPACE_VERSION
-cccc@$WORKSPACE_VERSION
-EOF
-diff -u "$TMP_ROOT/expected-publish-plan" "$TMP_ROOT/publish-plan"
 
 echo "OK: release assets"

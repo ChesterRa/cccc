@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Native daemon and control-plane operations for CCCC"
-publish = ["crates-io"]
+publish = false
 
 [dependencies]
 anyhow.workspace = true

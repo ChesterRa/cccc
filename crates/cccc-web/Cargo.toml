@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Web API, UI server, and integration adapters for CCCC"
-publish = ["crates-io"]
+publish = false
 include = [
   "assets/web-dist/**",
   "build.rs",

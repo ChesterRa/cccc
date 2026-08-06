@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Persistence and domain kernel for CCCC collaborative agents"
-publish = ["crates-io"]
+publish = false
 
 [dependencies]
 aws-lc-rs.workspace = true

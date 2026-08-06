@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Model Context Protocol server for CCCC collaborative agents"
-publish = ["crates-io"]
+publish = false
 
 [dependencies]
 anyhow.workspace = true

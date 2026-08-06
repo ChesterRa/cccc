@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 
 import yaml
@@ -30,10 +31,10 @@ def _runs(job: dict) -> str:
 def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
     jobs = _workflow()["jobs"]
 
-    assert {"quality", "web", "python-tests", "python-compat", "package", "windows-smoke", "nightly-serial"} <= set(
+    assert {"quality", "web", "python-tests", "python-compat", "package", "windows-smoke", "interop", "nightly-serial"} <= set(
         jobs
     )
-    assert set(jobs["package"]["needs"]) == {"quality", "web", "python-tests", "python-compat"}
+    assert set(jobs["package"]["needs"]) == {"quality", "web", "python-tests", "python-compat", "interop"}
     assert "ruff check" in _runs(jobs["quality"])
     assert "npm -C web test" in _runs(jobs["web"])
     assert "npm -C web run build" in _runs(jobs["web"])
@@ -145,6 +146,27 @@ def test_package_job_owns_the_built_web_bundle_contract() -> None:
 
     assert any(step.get("uses", "").startswith("actions/download-artifact") for step in package["steps"])
     assert "-m packaged_web_dist tests/test_web_manifest_static.py" in runs
+    assert "scripts/verify_native_wheel.py" in runs
+    assert "pure-after-native" in runs
+
+
+def test_interop_job_runs_the_cross_language_tests_skipped_by_the_python_free_rust_job() -> None:
+    interop = _workflow()["jobs"]["interop"]
+    runs = _runs(interop)
+    uses = {step.get("uses", "") for step in interop["steps"]}
+
+    assert interop["needs"] == "web"
+    assert any(item.startswith("actions/setup-python") for item in uses)
+    assert any(item.startswith("dtolnay/rust-toolchain") for item in uses)
+    for test_binary in (
+        "context_python_interop",
+        "group_bridge_identity_interop",
+        "runtime_hook_interop",
+        "runtime_hook_identity_interop",
+        "ledger_python_interop",
+        "python_storage_interop",
+    ):
+        assert test_binary in runs
 
 
 def test_schedule_runs_serial_full_python_suites_at_both_support_endpoints() -> None:
@@ -162,11 +184,11 @@ def test_schedule_runs_serial_full_python_suites_at_both_support_endpoints() -> 
     assert " -n " not in runs
 
 
-def test_release_builds_on_314_and_smokes_the_wheel_on_the_311_floor() -> None:
+def test_release_builds_on_314_and_smokes_the_universal_wheel_on_the_311_floor() -> None:
     jobs = _release_workflow()["jobs"]
 
     verify_setup = next(
-        step for step in jobs["verify-linux"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
+        step for step in jobs["verify-python"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
     )
     publish_setup = next(
         step for step in jobs["publish"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
@@ -174,33 +196,48 @@ def test_release_builds_on_314_and_smokes_the_wheel_on_the_311_floor() -> None:
     assert verify_setup["with"]["python-version"] == "3.14"
     assert publish_setup["with"]["python-version"] == "3.14"
 
-    platform_rows = jobs["verify-platform-smoke"]["strategy"]["matrix"]["include"]
-    assert any(row["os"] == "ubuntu-latest" and row["python_version"] == "3.11" for row in platform_rows)
-    assert all(row["python_version"] == "3.14" for row in platform_rows if row["os"] != "ubuntu-latest")
-
-
-def test_manual_release_dispatch_is_a_dry_run_and_one_tag_drives_both_distributions() -> None:
-    python_release = _release_workflow()
-    rust_release = _rust_release_workflow()
-
-    assert python_release["jobs"]["publish"]["if"] == "github.event_name == 'push'"
-    assert rust_release["jobs"]["publish"]["if"] == "github.event_name == 'push'"
-    assert python_release["on"]["push"]["tags"] == ["v*"]
-    assert rust_release["on"]["push"]["tags"] == ["v*"]
-
-    rust_publish_runs = _runs(rust_release["jobs"]["publish"])
-    assert "scripts/publish_rust_crates.sh --publish" in rust_publish_runs
-    shared_tag_check = 'python scripts/check_release_versions.py --tag "$GITHUB_REF_NAME"'
-    assert shared_tag_check in _runs(rust_release["jobs"]["build"])
-    assert any(
-        step.get("uses", "").startswith("actions/setup-python")
-        for step in rust_release["jobs"]["publish"]["steps"]
-    )
-
-    python_tag_check = next(
+    floor_setup = next(
         step
-        for step in python_release["jobs"]["verify-linux"]["steps"]
-        if step.get("name") == "Verify tag matches package version"
+        for step in jobs["universal-floor-smoke"]["steps"]
+        if step.get("uses", "").startswith("actions/setup-python")
     )
-    assert python_tag_check["if"] == "github.event_name == 'push'"
-    assert python_tag_check["run"] == shared_tag_check
+    assert floor_setup["with"]["python-version"] == "3.11"
+
+
+def test_one_tag_publishes_one_pypi_product_and_standalone_rust_is_manual_only() -> None:
+    release = _release_workflow()
+    rust_candidate = _rust_release_workflow()
+
+    assert release["on"]["push"]["tags"] == ["v*"]
+    assert release["jobs"]["publish"]["if"] == "github.event_name == 'push'"
+    assert set(release["jobs"]["collect"]["needs"]) == {
+        "verify-python",
+        "interop",
+        "native-linux-x64",
+        "native-desktop",
+        "universal-floor-smoke",
+    }
+    release_runs = "\n".join(_runs(job) for job in release["jobs"].values())
+    assert "manylinux_2_28_x86_64" in release_runs
+    assert "delocate==0.13.0" in release_runs
+    assert "delvewheel==1.13.0" in release_runs
+    assert "scripts/publish_rust_crates.sh --publish" not in release_runs
+    assert "python -m twine upload" in _runs(release["jobs"]["publish"])
+
+    assert "push" not in rust_candidate["on"]
+    assert "workflow_dispatch" in rust_candidate["on"]
+    assert "publish" not in rust_candidate["jobs"]
+
+
+def test_rust_workspace_cannot_create_a_second_registry_distribution() -> None:
+    manifests = sorted((ROOT / "crates").glob("cccc-*/Cargo.toml"))
+
+    assert manifests
+    for manifest in manifests:
+        with manifest.open("rb") as handle:
+            package = tomllib.load(handle)["package"]
+        assert package.get("publish") is False, manifest
+
+    assert not (ROOT / "scripts/publish_rust_crates.sh").exists()
+    rust_main = (ROOT / "crates/cccc-cli/src/main.rs").read_text(encoding="utf-8")
+    assert "the Rust implementation cannot update independently" in rust_main

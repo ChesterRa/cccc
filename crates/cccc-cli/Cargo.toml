@@ -11,7 +11,7 @@ description = "Collaborative multi-agent control plane and CLI"
 readme = "README.md"
 keywords = ["ai", "agents", "collaboration", "mcp", "automation"]
 categories = ["command-line-utilities", "development-tools"]
-publish = ["crates-io"]
+publish = false
 
 [dependencies]
 anyhow.workspace = true
@@ -25,7 +25,6 @@ cccc-web = { package = "cccc-pair-web", version = "=0.4.33", path = "../cccc-web
 clap.workspace = true
 fs2.workspace = true
 reqwest.workspace = true
-semver.workspace = true
 serde_json.workspace = true
 shell-words.workspace = true
 tokio.workspace = true

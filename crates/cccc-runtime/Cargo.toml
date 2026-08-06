@@ -6,7 +6,7 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 description = "Process and terminal runtime management for CCCC"
-publish = ["crates-io"]
+publish = false
 
 [dependencies]
 cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.33", path = "../cccc-contracts" }

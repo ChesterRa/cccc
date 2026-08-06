@@ -70,9 +70,6 @@ CCCC は `pip install` 一つで導入完了、外部依存ゼロ — データ�
 # 安定チャネル（PyPI）
 pip install -U cccc-pair
 
-# Rust ネイティブ配布（crates.io）
-cargo install cccc --locked
-
 # RC チャネル（TestPyPI）
 pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
@@ -80,8 +77,8 @@ pip install -U --pre \
   cccc-pair
 ```
 
-> **要件**: デフォルト配布は Python 3.11+、crates.io からのソースインストールは
-> Rust 1.88+。異なる配布元の `cccc` を同時に `PATH` へ置かないでください。
+> **要件**: Python 3.11+。対応プラットフォームの wheel には、同じバージョンの
+> private Rust 実装も含まれますが、公開されるコマンドは常に 1 つの `cccc` です。
 
 ### アップグレード
 
@@ -90,8 +87,9 @@ cccc update
 ```
 
 インストール種別と実行予定のコマンドを事前確認するには `cccc update --check` を使用してください。
-Cargo インストールは crates.io、プリビルド版は SHA256 検証付きの対応する
-GitHub Rust Release から更新されます。
+更新は検出した PyPI チャネルから `cccc-pair` 製品全体を置き換え、対応 wheel の
+Rust payload も同時に更新します。実際の更新ではインストール済みファイルを
+置き換える前に稼働中の Web/daemon ペアを停止します。ユーザー向けの別更新経路はありません。
 
 ### 起動
 
@@ -100,6 +98,20 @@ cccc
 ```
 
 **http://127.0.0.1:8848** を開く — デフォルトで daemon とローカル Web UI が一緒に起動します。
+
+現在のデフォルト実装は Python です。永続的に切り替えるか、切り替えとコマンド実行を
+1 ステップで行えます。
+
+```bash
+cccc status            # 選択中・実行中・利用可能な実装を表示
+cccc rust              # Rust を選択して CCCC を起動
+cccc python             # Python を選択して CCCC を起動
+cccc rust doctor        # Rust を選択して doctor を実行
+```
+
+切り替えは明示的なライフサイクル操作です。CCCC は対象 payload を検証してから現在の
+Web/daemon を停止し、別実装へ暗黙にフォールバックしません。Agent runtime の MCP 設定は
+安定した公開 `cccc` launcher を参照するため、後の切り替えでも再設定は不要です。
 
 ### マルチエージェントグループの作成
 
@@ -481,15 +493,10 @@ pip install -U --pre \
   cccc-pair
 ```
 
-### Rust（ネイティブ版）
-
-```bash
-cargo install cccc --locked
-```
-
-Python と Rust の配布は `CCCC_HOME` を共有しますが、2 つの daemon を同時に
-実行してはいけません。どちらも `cccc` コマンドを提供するため、選択した配布だけを
-`PATH` の先頭に置いてください。
+Linux x86-64、Intel/Apple Silicon macOS、Windows x86-64 では、pip が private Rust
+実行ファイル入りの platform wheel を選びます。それ以外では universal Python wheel を使い、
+`cccc status` が Rust を利用不可と明示します。Cargo インストールは workspace 開発用にのみ
+残し、2 つ目のサポート対象エンドユーザー配布にはしません。
 
 ### ソースから
 
