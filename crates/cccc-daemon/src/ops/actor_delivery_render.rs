@@ -285,9 +285,10 @@ mod tests {
             .cloned()
             .expect("object");
 
+        let rendered = render_batch(&[event]).expect("rendered");
         assert_eq!(
-            render_batch(&[event]).expect("rendered"),
-            format!("[cccc] user → codex-1: 你好\n\n{}", mcp_reply_reminder())
+            rendered,
+            "[cccc] user → codex-1: 你好\n\n[cccc] Use cccc_message_reply for replies; use cccc_message_send for new messages. Terminal output is not delivered. Verify reply_to/to; avoid routine @all. Use cccc_help if unsure."
         );
     }
 

@@ -236,14 +236,15 @@ try {
 
   $pathEntries = @($env:Path.Split(';', [StringSplitOptions]::RemoveEmptyEntries))
   $pathReady = $pathEntries.Where({ $_.TrimEnd('\') -ieq $InstallDir.TrimEnd('\') }).Count -gt 0
-  if (-not $pathReady -and -not $NoModifyPath) {
+  if (-not $NoModifyPath) {
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
     $userEntries = if ($userPath) { @($userPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries)) } else { @() }
-    if (-not $userEntries.Where({ $_.TrimEnd('\') -ieq $InstallDir.TrimEnd('\') })) {
-      [Environment]::SetEnvironmentVariable("Path", ((@($InstallDir) + $userEntries) -join ';'), "User")
-    }
-    $env:Path = "$InstallDir;$env:Path"
-    Write-Host "Added $InstallDir to the user PATH. Open a new terminal if this shell cannot find cccc."
+    $userEntries = @($userEntries.Where({ $_.TrimEnd('\') -ine $InstallDir.TrimEnd('\') }))
+    [Environment]::SetEnvironmentVariable("Path", ((@($InstallDir) + $userEntries) -join ';'), "User")
+
+    $processEntries = @($pathEntries.Where({ $_.TrimEnd('\') -ine $InstallDir.TrimEnd('\') }))
+    $env:Path = (@($InstallDir) + $processEntries) -join ';'
+    Write-Host "Added $InstallDir to the front of the user and current PowerShell PATH."
   } elseif (-not $pathReady) {
     Write-Host "Add $InstallDir to PATH, then open a new terminal."
   }

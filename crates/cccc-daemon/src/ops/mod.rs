@@ -56,6 +56,7 @@ mod runtime_session;
 mod runtime_state;
 mod settings;
 mod terminal;
+mod terminal_history_source;
 mod terminal_text;
 mod working_state;
 #[cfg(test)]

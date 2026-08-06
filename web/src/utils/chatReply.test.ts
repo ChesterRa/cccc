@@ -4,6 +4,22 @@ import { buildReplyComposerState } from "./chatReply";
 import type { LedgerEvent } from "../types";
 
 describe("buildReplyComposerState", () => {
+  it("replies to canonical recipients from a Rust cross-group source event", () => {
+    const event: LedgerEvent = {
+      id: "evt_source",
+      kind: "chat.message",
+      by: "user",
+      data: { text: "hello remote", to: ["@foreman"], dst_group_id: "g_remote" },
+    };
+
+    const state = buildReplyComposerState(event, "g_local", [], {
+      default_send_to: "broadcast",
+    } as never);
+
+    expect(state?.destGroupId).toBe("g_remote");
+    expect(state?.toText).toBe("@foreman");
+  });
+
   it("does not prefill local recipients when replying to group_bridge messages", () => {
     const event: LedgerEvent = {
       id: "evt_local",

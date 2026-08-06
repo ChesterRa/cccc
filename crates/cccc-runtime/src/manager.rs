@@ -1,44 +1,30 @@
 use crate::RuntimeError;
 use crate::cancellation::wait_interruptibly;
-use crate::output::HistoryPage;
+use crate::registry::{Key, discard_completed, lookup, remember_history, sessions, with_session};
 use crate::session::{LaunchSpec, Session, SessionStatus};
-use std::collections::HashMap;
+use crate::transcript_archive::HistoryConfig;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-type Key = (String, String);
-
-type SharedSession = Arc<Mutex<Session>>;
-
-fn sessions() -> &'static RwLock<HashMap<Key, SharedSession>> {
-    static SESSIONS: OnceLock<RwLock<HashMap<Key, SharedSession>>> = OnceLock::new();
-    SESSIONS.get_or_init(|| RwLock::new(HashMap::new()))
-}
-
-fn lookup(group_id: &str, actor_id: &str) -> Result<SharedSession, RuntimeError> {
-    sessions()
-        .read()
-        .map_err(|_| RuntimeError::Poisoned)?
-        .get(&(group_id.to_owned(), actor_id.to_owned()))
-        .cloned()
-        .ok_or_else(|| RuntimeError::NotFound(group_id.into(), actor_id.into()))
-}
-
-fn with_session<T>(
-    group_id: &str,
-    actor_id: &str,
-    operation: impl FnOnce(&mut Session) -> Result<T, RuntimeError>,
-) -> Result<T, RuntimeError> {
-    let session = lookup(group_id, actor_id)?;
-    let mut session = session.lock().map_err(|_| RuntimeError::Poisoned)?;
-    operation(&mut session)
-}
-
 pub fn start(spec: LaunchSpec) -> Result<SessionStatus, RuntimeError> {
+    start_inner(spec, None)
+}
+
+pub fn start_with_history(
+    spec: LaunchSpec,
+    history: HistoryConfig,
+) -> Result<SessionStatus, RuntimeError> {
+    start_inner(spec, Some(history))
+}
+
+fn start_inner(
+    spec: LaunchSpec,
+    history: Option<HistoryConfig>,
+) -> Result<SessionStatus, RuntimeError> {
     let key = (spec.group_id.clone(), spec.actor_id.clone());
     remove_exited_before_start(&key)?;
-    let mut session = Session::start(spec)?;
+    let mut session = Session::start_with_history(spec, history)?;
     let status = session.status();
     let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
     if registry.contains_key(&key) {
@@ -46,6 +32,7 @@ pub fn start(spec: LaunchSpec) -> Result<SessionStatus, RuntimeError> {
         session.stop()?;
         return Err(RuntimeError::AlreadyRunning(key.0, key.1));
     }
+    discard_completed(&key)?;
     registry.insert(key, Arc::new(Mutex::new(session)));
     Ok(status)
 }
@@ -66,12 +53,18 @@ fn remove_exited_before_start(key: &Key) -> Result<(), RuntimeError> {
     if running {
         return Err(RuntimeError::AlreadyRunning(key.0.clone(), key.1.clone()));
     }
+    let history = {
+        let mut session = existing.lock().map_err(|_| RuntimeError::Poisoned)?;
+        session.finish_output()?;
+        session.history_handle()
+    };
     let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
     if registry
         .get(key)
         .is_some_and(|registered| Arc::ptr_eq(registered, &existing))
     {
         registry.remove(key);
+        remember_history(key.clone(), history)?;
     }
     Ok(())
 }
@@ -88,7 +81,11 @@ pub fn stop(group_id: &str, actor_id: &str) -> Result<SessionStatus, RuntimeErro
         .remove(&key)
         .ok_or_else(|| RuntimeError::NotFound(group_id.into(), actor_id.into()))?;
     let mut session = session.lock().map_err(|_| RuntimeError::Poisoned)?;
-    session.stop()
+    let status = session.stop()?;
+    let history = session.history_handle();
+    drop(session);
+    remember_history(key, history)?;
+    Ok(status)
 }
 
 pub fn stop_if_started_at(
@@ -105,6 +102,7 @@ pub fn stop_if_started_at(
         return Ok(None);
     }
     let status = session.stop()?;
+    let history = session.history_handle();
     drop(session);
     let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
     if registry
@@ -112,6 +110,7 @@ pub fn stop_if_started_at(
         .is_some_and(|registered| Arc::ptr_eq(registered, &current))
     {
         registry.remove(&key);
+        remember_history(key, history)?;
     }
     Ok(Some(status))
 }
@@ -123,8 +122,12 @@ pub fn stop_all() -> Result<Vec<SessionStatus>, RuntimeError> {
     };
     let mut stopped = Vec::with_capacity(drained.len());
     let mut first_error = None;
-    for (_, session) in drained {
-        let result = session.lock().map_err(|_| RuntimeError::Poisoned)?.stop();
+    for (key, session) in drained {
+        let mut session = session.lock().map_err(|_| RuntimeError::Poisoned)?;
+        let result = session.stop();
+        let history = session.history_handle();
+        drop(session);
+        remember_history(key, history)?;
         match result {
             Ok(status) => stopped.push(status),
             Err(error) if first_error.is_none() => first_error = Some(error),
@@ -225,45 +228,6 @@ pub fn resize(group_id: &str, actor_id: &str, cols: u16, rows: u16) -> Result<()
     with_session(group_id, actor_id, |session| session.resize(cols, rows))
 }
 
-pub fn history(
-    group_id: &str,
-    actor_id: &str,
-    before: Option<u64>,
-    limit: usize,
-) -> Result<HistoryPage, RuntimeError> {
-    with_session(group_id, actor_id, |session| session.history(before, limit))
-}
-
-pub fn retained_history(group_id: &str, actor_id: &str) -> Result<HistoryPage, RuntimeError> {
-    let output = with_session(group_id, actor_id, |session| Ok(session.output_handle()))?;
-    let page = output
-        .lock()
-        .map_err(|_| RuntimeError::Poisoned)?
-        .retained_page();
-    Ok(page)
-}
-
-pub fn history_since(
-    group_id: &str,
-    actor_id: &str,
-    after: u64,
-    limit: usize,
-) -> Result<HistoryPage, RuntimeError> {
-    with_session(group_id, actor_id, |session| {
-        session.history_since(after, limit)
-    })
-}
-
-pub fn clear(group_id: &str, actor_id: &str) -> Result<(), RuntimeError> {
-    with_session(group_id, actor_id, |session| session.clear())
-}
-
-pub fn bracketed_paste_enabled(group_id: &str, actor_id: &str) -> Result<bool, RuntimeError> {
-    with_session(group_id, actor_id, |session| {
-        session.bracketed_paste_enabled()
-    })
-}
-
 pub fn reap() -> Result<Vec<SessionStatus>, RuntimeError> {
     let snapshot = sessions()
         .read()
@@ -273,21 +237,26 @@ pub fn reap() -> Result<Vec<SessionStatus>, RuntimeError> {
         .collect::<Vec<_>>();
     let mut exited = Vec::new();
     let mut remove = Vec::new();
-    for (key, session) in snapshot {
-        let status = session.lock().map_err(|_| RuntimeError::Poisoned)?.status();
+    for (key, shared) in snapshot {
+        let mut session = shared.lock().map_err(|_| RuntimeError::Poisoned)?;
+        let status = session.status();
         if !status.running {
+            session.finish_output()?;
+            let history = session.history_handle();
+            drop(session);
             exited.push(status);
-            remove.push((key, session));
+            remove.push((key, shared, history));
         }
     }
     if !remove.is_empty() {
         let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
-        for (key, session) in remove {
+        for (key, session, history) in remove {
             if registry
                 .get(&key)
                 .is_some_and(|registered| Arc::ptr_eq(registered, &session))
             {
                 registry.remove(&key);
+                remember_history(key, history)?;
             }
         }
     }
@@ -295,227 +264,5 @@ pub fn reap() -> Result<Vec<SessionStatus>, RuntimeError> {
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-    use super::{
-        history, start, status, stop, stop_all, stop_if_started_at, submit_interruptible,
-        submit_sequence_interruptible,
-    };
-    use crate::LaunchSpec;
-    use cccc_contracts::RunnerKind;
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-    use std::time::Duration;
-
-    fn test_guard() -> MutexGuard<'static, ()> {
-        static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        TEST_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("test lock")
-    }
-
-    #[test]
-    fn captures_process_output() {
-        let _guard = test_guard();
-        let temp = tempfile::tempdir().expect("tempdir");
-        start(LaunchSpec {
-            group_id: "g_test".into(),
-            actor_id: "peer1".into(),
-            runner: RunnerKind::Headless,
-            command: vec![
-                "sh".into(),
-                "-c".into(),
-                "printf runtime-ready; sleep 1".into(),
-            ],
-            cwd: temp.path().into(),
-            env: BTreeMap::new(),
-            cols: 80,
-            rows: 24,
-        })
-        .expect("start");
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        assert!(
-            history("g_test", "peer1", None, 1024)
-                .expect("history")
-                .data
-                .contains("runtime-ready")
-        );
-        assert!(status("g_test", "peer1").expect("status").running);
-        stop("g_test", "peer1").expect("stop");
-    }
-
-    #[test]
-    fn stop_all_terminates_every_runtime() {
-        let _guard = test_guard();
-        let temp = tempfile::tempdir().expect("tempdir");
-        for actor_id in ["peer1", "peer2"] {
-            start(LaunchSpec {
-                group_id: "g_stop_all".into(),
-                actor_id: actor_id.into(),
-                runner: RunnerKind::Headless,
-                command: vec!["sh".into(), "-c".into(), "sleep 30".into()],
-                cwd: temp.path().into(),
-                env: BTreeMap::new(),
-                cols: 80,
-                rows: 24,
-            })
-            .expect("start");
-        }
-        assert_eq!(stop_all().expect("stop all").len(), 2);
-        assert!(status("g_stop_all", "peer1").is_err());
-        assert!(status("g_stop_all", "peer2").is_err());
-    }
-
-    #[test]
-    fn conditional_stop_preserves_a_different_session() {
-        let _guard = test_guard();
-        let temp = tempfile::tempdir().expect("tempdir");
-        start(LaunchSpec {
-            group_id: "g_conditional_stop".into(),
-            actor_id: "peer1".into(),
-            runner: RunnerKind::Headless,
-            command: vec!["sh".into(), "-c".into(), "sleep 30".into()],
-            cwd: temp.path().into(),
-            env: BTreeMap::new(),
-            cols: 80,
-            rows: 24,
-        })
-        .expect("start");
-
-        assert!(
-            stop_if_started_at("g_conditional_stop", "peer1", "stale-session")
-                .expect("conditional stop")
-                .is_none()
-        );
-        assert!(
-            status("g_conditional_stop", "peer1")
-                .expect("status")
-                .running
-        );
-        stop("g_conditional_stop", "peer1").expect("cleanup");
-    }
-
-    #[test]
-    fn restarts_a_naturally_exited_session_without_reap() {
-        let _guard = test_guard();
-        let temp = tempfile::tempdir().expect("tempdir");
-        let spec = |command: &str| LaunchSpec {
-            group_id: "g_restart_exited".into(),
-            actor_id: "peer1".into(),
-            runner: RunnerKind::Headless,
-            command: vec!["sh".into(), "-c".into(), command.into()],
-            cwd: temp.path().into(),
-            env: BTreeMap::new(),
-            cols: 80,
-            rows: 24,
-        };
-        start(spec("exit 0")).expect("first start");
-        for _ in 0..100 {
-            if !status("g_restart_exited", "peer1").expect("status").running {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert!(
-            !status("g_restart_exited", "peer1")
-                .expect("exited status")
-                .running
-        );
-
-        start(spec("sleep 30")).expect("restart without reap");
-        stop("g_restart_exited", "peer1").expect("cleanup");
-    }
-
-    #[test]
-    fn submit_delay_stops_promptly_when_cancelled() {
-        let _guard = test_guard();
-        let temp = tempfile::tempdir().expect("tempdir");
-        start(LaunchSpec {
-            group_id: "g_cancel_submit".into(),
-            actor_id: "peer1".into(),
-            runner: RunnerKind::Headless,
-            command: vec!["sh".into(), "-c".into(), "sleep 30".into()],
-            cwd: temp.path().into(),
-            env: BTreeMap::new(),
-            cols: 80,
-            rows: 24,
-        })
-        .expect("start");
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let worker_cancelled = Arc::clone(&cancelled);
-        let started = std::time::Instant::now();
-        let worker = std::thread::spawn(move || {
-            submit_interruptible(
-                "g_cancel_submit",
-                "peer1",
-                b"echo delayed",
-                b"\r",
-                Duration::from_secs(5),
-                &worker_cancelled,
-            )
-            .expect("submit")
-        });
-        std::thread::sleep(Duration::from_millis(50));
-        cancelled.store(true, Ordering::Release);
-
-        assert!(!worker.join().expect("join submit"));
-        assert!(started.elapsed() < Duration::from_millis(500));
-        stop("g_cancel_submit", "peer1").expect("cleanup");
-    }
-
-    #[test]
-    fn submit_sequence_writes_each_key_in_order() {
-        let _guard = test_guard();
-        let temp = tempfile::tempdir().expect("tempdir");
-        start(LaunchSpec {
-            group_id: "g_submit_sequence".into(),
-            actor_id: "peer1".into(),
-            runner: RunnerKind::Headless,
-            command: vec![
-                "sh".into(),
-                "-c".into(),
-                "stty raw -echo; dd bs=1 count=3 2>/dev/null | od -An -t x1".into(),
-            ],
-            cwd: temp.path().into(),
-            env: BTreeMap::new(),
-            cols: 80,
-            rows: 24,
-        })
-        .expect("start");
-
-        assert!(
-            submit_sequence_interruptible(
-                "g_submit_sequence",
-                "peer1",
-                b"x",
-                &[b"\r", b"\r"],
-                Duration::ZERO,
-                Duration::ZERO,
-                &AtomicBool::new(false),
-            )
-            .expect("submit sequence")
-        );
-        for _ in 0..100 {
-            if !status("g_submit_sequence", "peer1")
-                .expect("status")
-                .running
-            {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        let output = history("g_submit_sequence", "peer1", None, 1024)
-            .expect("history")
-            .data;
-        let output_tokens = output.split_ascii_whitespace().collect::<Vec<_>>();
-        assert!(
-            output_tokens
-                .windows(3)
-                .any(|tokens| tokens == ["78", "0a", "0a"]),
-            "unexpected output: {output:?}"
-        );
-        stop("g_submit_sequence", "peer1").expect("cleanup");
-    }
-}
+#[path = "manager_tests.rs"]
+mod tests;

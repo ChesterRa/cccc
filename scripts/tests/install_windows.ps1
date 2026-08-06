@@ -125,6 +125,13 @@ try {
   if ($updatedUserPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries)[0].TrimEnd('\') -ine $installDir.TrimEnd('\')) {
     throw "installer did not prepend its user PATH entry"
   }
+  $processPathEntries = @($env:Path.Split(';', [StringSplitOptions]::RemoveEmptyEntries))
+  if ($processPathEntries[0].TrimEnd('\') -ine $installDir.TrimEnd('\')) {
+    throw "installer did not prepend its current-process PATH entry"
+  }
+  if ($processPathEntries.Where({ $_.TrimEnd('\') -ieq $installDir.TrimEnd('\') }).Count -ne 1) {
+    throw "installer duplicated its current-process PATH entry"
+  }
   & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir
   $updatedUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
   $matchingPathEntries = @($updatedUserPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries)).Where({

@@ -17,6 +17,7 @@ import {
   isSessionConnectionInfoInput,
   normalizeGroupBridgeAccessLevel,
   normalizeIssuerEndpoint,
+  pairingOutboundLabel,
   projectIncomingRequests,
   projectRecentOutbounds,
   projectPairingOverview,
@@ -333,6 +334,39 @@ describe("groupBridgePairingModel", () => {
       "pout_failed",
       "pout_rejected",
     ]);
+  });
+
+  it("shows the issuer group title for failed pairing requests", () => {
+    expect(
+      pairingOutboundLabel({
+        outbound_id: "pout_failed",
+        issuer_group_title: "wechat-agent",
+        issuer_group_id: "g_remote",
+        issuer_peer_id: "peer_remote",
+        issuer_endpoint: "https://issuer.example",
+        status: "failed",
+      } as GroupBridgePairingOutbound),
+    ).toBe("wechat-agent");
+  });
+
+  it("falls back through stable pairing identifiers", () => {
+    const outbound = {
+      outbound_id: "pout_fallback",
+      issuer_group_title: " ",
+      issuer_group_id: "",
+      issuer_peer_id: "peer_remote",
+      issuer_endpoint: "https://issuer.example",
+      status: "failed",
+    } as GroupBridgePairingOutbound;
+
+    expect(pairingOutboundLabel({ ...outbound, issuer_group_id: "g_remote" })).toBe("g_remote");
+    expect(pairingOutboundLabel(outbound)).toBe("peer_remote");
+    expect(pairingOutboundLabel({ ...outbound, issuer_peer_id: "" })).toBe(
+      "https://issuer.example",
+    );
+    expect(pairingOutboundLabel({ ...outbound, issuer_peer_id: "", issuer_endpoint: "" })).toBe(
+      "pout_fallback",
+    );
   });
 
   it("continues polling remote status for submitted and pending outbound requests", () => {

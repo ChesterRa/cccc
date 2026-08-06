@@ -16,6 +16,7 @@ import {
 import { formatFullTime, formatMessageTimestamp } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getReplyEventId } from "../utils/chatReply";
+import { projectCrossGroupRecipients } from "../utils/crossGroupRecipients";
 import { isGroupBridgeInboundMessage } from "../utils/groupBridgeMessages";
 import { getPresentationMessageRefs, getPresentationRefChipLabel } from "../utils/presentationRefs";
 import {
@@ -265,7 +266,7 @@ function MessageBubbleBody({
           {hasDestination
             ? (() => {
                 const dstLabel = String(groupLabelById?.[dstGroupId] || "").trim() || dstGroupId;
-                const dstToLabel = dstTo.length > 0 ? dstTo.join(", ") : "@all";
+                const dstToLabel = dstTo.join(", ");
                 // A delegation relay request is an agent contacting the
                 // target group on the user's behalf — show "Relayed to"
                 // so it never reads like a user direct cross-send.
@@ -550,10 +551,8 @@ export const MessageBubble = memo(
     const dstGroupId =
       typeof msgData?.dst_group_id === "string" ? String(msgData.dst_group_id || "").trim() : "";
     const dstTo = useMemo(() => {
-      const raw = msgData?.dst_to;
-      if (!Array.isArray(raw)) return [];
-      return raw.map((t) => String(t || "").trim()).filter((t) => t);
-    }, [msgData?.dst_to]);
+      return projectCrossGroupRecipients(msgData);
+    }, [msgData]);
     const hasDestination = !!dstGroupId;
     const rawAttachments: MessageAttachment[] = Array.isArray(msgData?.attachments)
       ? msgData.attachments

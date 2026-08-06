@@ -178,6 +178,20 @@ export function projectRecentOutbounds(
     .slice(0, Math.max(0, limit));
 }
 
+export function pairingOutboundLabel(outbound: GroupBridgePairingOutbound): string {
+  return (
+    [
+      outbound.issuer_group_title,
+      outbound.issuer_group_id,
+      outbound.issuer_peer_id,
+      outbound.issuer_endpoint,
+      outbound.outbound_id,
+    ]
+      .map((value) => String(value || "").trim())
+      .find(Boolean) || ""
+  );
+}
+
 export function projectSyncableOutbounds(
   outbounds: GroupBridgePairingOutbound[] | undefined | null,
 ): GroupBridgePairingOutbound[] {

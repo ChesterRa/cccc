@@ -1,5 +1,6 @@
 import type { Actor, ChatMessageData, GroupSettings, LedgerEvent, ReplyTarget } from "../types";
 import { isGroupBridgeInboundMessage } from "./groupBridgeMessages";
+import { projectCrossGroupRecipients } from "./crossGroupRecipients";
 
 type ReplyComposerState = { destGroupId: string; toText: string; replyTarget: ReplyTarget };
 
@@ -55,17 +56,13 @@ export function buildReplyComposerState(
     : [];
   const remoteDstGroupId =
     typeof data?.dst_group_id === "string" ? String(data.dst_group_id || "").trim() : "";
-  const remoteDstTo = Array.isArray(data?.dst_to)
-    ? data.dst_to.map((token: string) => String(token || "").trim()).filter(Boolean)
-    : [];
+  const remoteDstTo = remoteDstGroupId ? projectCrossGroupRecipients(data) : [];
   const remoteReplyToEventId =
     (typeof data?.dst_event_id === "string" ? String(data.dst_event_id || "").trim() : "") ||
     (typeof data?.remote_event_id === "string" ? String(data.remote_event_id || "").trim() : "");
   const policy = groupSettings?.default_send_to || "foreman";
   const defaultTo = remoteDstGroupId
-    ? remoteDstTo.length > 0
-      ? remoteDstTo
-      : ["@foreman"]
+    ? remoteDstTo
     : isGroupBridgeMessage
       ? []
       : authorIsActor

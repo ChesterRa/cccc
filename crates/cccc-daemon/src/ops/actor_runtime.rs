@@ -12,6 +12,7 @@ mod hook_launch_tests;
 mod persistence;
 mod reconcile;
 mod resume_verification;
+pub(crate) mod terminal_history;
 pub use persistence::persist_lifecycle;
 pub use reconcile::{reap_exited, reconcile_exited};
 

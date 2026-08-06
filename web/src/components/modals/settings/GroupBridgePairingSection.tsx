@@ -21,6 +21,7 @@ import {
   isSessionConnectionInfoInput,
   normalizeGroupBridgeAccessLevel,
   normalizeIssuerEndpoint,
+  pairingOutboundLabel,
   parseConnectionInfoInput,
   projectIncomingRequests,
   projectPairingOverview,
@@ -786,10 +787,7 @@ export function GroupBridgePairingSection({
               >
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium text-[var(--color-text-primary)]">
-                    {outbound.issuer_peer_id ||
-                      outbound.issuer_group_id ||
-                      outbound.issuer_endpoint ||
-                      outbound.outbound_id}
+                    {pairingOutboundLabel(outbound)}
                   </div>
                   <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[var(--color-text-muted)]">
                     <span className="rounded-full bg-sky-100 px-2 py-0.5 font-medium text-sky-800 dark:bg-sky-500/15 dark:text-sky-200">

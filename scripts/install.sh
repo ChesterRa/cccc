@@ -257,25 +257,34 @@ case ":${PATH:-}:" in
   *) path_ready=0 ;;
 esac
 
-if [ "$path_ready" -eq 0 ] && [ "$NO_MODIFY_PATH" != "1" ] && [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
-  case "${SHELL:-}" in
-    */zsh) profile="$HOME/.zprofile" ;;
-    */bash) profile="$HOME/.bashrc" ;;
-    *) profile='' ;;
-  esac
-  if [ -n "$profile" ]; then
-    path_line='export PATH="$HOME/.local/bin:$PATH"'
-    touch "$profile"
-    if ! grep -Fqx "$path_line" "$profile"; then
-      printf '\n# CCCC\n%s\n' "$path_line" >> "$profile"
-    fi
-    printf 'Added %s to PATH in %s. Open a new terminal to use CCCC.\n' "$INSTALL_DIR" "$profile"
-  else
-    printf 'Add %s to PATH, then open a new terminal.\n' "$INSTALL_DIR"
+add_path_profile() {
+  profile_path=$1
+  touch "$profile_path"
+  if ! grep -Fqx "$path_line" "$profile_path"; then
+    printf '\n# CCCC\n%s\n' "$path_line" >> "$profile_path"
   fi
+  printf 'Added %s to PATH in %s.\n' "$INSTALL_DIR" "$profile_path"
+}
+
+if [ "$path_ready" -eq 0 ] && [ "$NO_MODIFY_PATH" != "1" ] && [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
+  path_line='case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
+  case "${SHELL:-}" in
+    */zsh)
+      add_path_profile "$HOME/.zprofile"
+      add_path_profile "$HOME/.zshrc"
+      ;;
+    */bash)
+      add_path_profile "$HOME/.bash_profile"
+      add_path_profile "$HOME/.bashrc"
+      ;;
+    *) printf 'Add %s to PATH, then open a new terminal.\n' "$INSTALL_DIR" ;;
+  esac
 elif [ "$path_ready" -eq 0 ]; then
   printf 'Add %s to PATH, then open a new terminal.\n' "$INSTALL_DIR"
 fi
 
 printf 'Installed CCCC v%s in %s\n' "$VERSION" "$INSTALL_DIR"
+if [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
+  printf 'Activate in this shell: export PATH="$HOME/.local/bin:$PATH"; hash -r\n'
+fi
 printf 'Run: cccc doctor\n'

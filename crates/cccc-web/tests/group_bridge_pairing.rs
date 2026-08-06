@@ -17,6 +17,48 @@ struct StatusQuery {
 }
 
 #[tokio::test]
+async fn connection_info_keeps_submitted_public_origin_in_final_payload() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("store")
+        .create("issuer", "")
+        .expect("group");
+    std::fs::write(
+        home.root().join("settings.yaml"),
+        "remote_access:\n  web_host: 0.0.0.0\n  web_port: 80\n  web_public_url: http://fallback.example\n",
+    )
+    .expect("settings");
+    let app = cccc_web::app(home);
+    let created = call(
+        &app,
+        "/api/group-bridge/pairing/invites",
+        json!({"group_id":group.group_id}),
+    )
+    .await;
+    let invite_id = created["result"]["invite"]["invite_id"]
+        .as_str()
+        .expect("invite id");
+
+    let connection_info = call(
+        &app,
+        "/api/group-bridge/pairing/connection-info",
+        json!({
+            "group_id":group.group_id,
+            "invite_id":invite_id,
+            "issuer_endpoint":"https://cccc.tae.vera-mesh.com/pairing?source=ui#invite",
+            "issuer_group_title":"Issuer"
+        }),
+    )
+    .await;
+
+    assert_eq!(
+        connection_info["result"]["payload"]["issuer_endpoint"],
+        "https://cccc.tae.vera-mesh.com"
+    );
+}
+
+#[tokio::test]
 async fn python_shaped_remote_pairing_response_becomes_active_without_claim_route() {
     let issuer = Router::new()
         .route(

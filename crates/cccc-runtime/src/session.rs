@@ -1,10 +1,13 @@
 use crate::RuntimeError;
-use crate::output::{HistoryPage, OutputBuffer};
+use crate::output::HistoryPage;
+use crate::output_reader::OutputReader;
+use crate::session_history::SessionHistory;
+use crate::transcript_archive::HistoryConfig;
 use cccc_contracts::{RunnerKind, utc_now};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -37,11 +40,15 @@ pub struct Session {
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
     input_gate: Arc<Mutex<()>>,
-    output: Arc<Mutex<OutputBuffer>>,
+    history: SessionHistory,
+    reader: Option<OutputReader>,
 }
 
 impl Session {
-    pub fn start(spec: LaunchSpec) -> Result<Self, RuntimeError> {
+    pub(crate) fn start_with_history(
+        spec: LaunchSpec,
+        history_config: Option<HistoryConfig>,
+    ) -> Result<Self, RuntimeError> {
         let (program, args) = spec
             .command
             .split_first()
@@ -69,7 +76,7 @@ impl Session {
             .spawn_command(command)
             .map_err(|error| std::io::Error::other(error.to_string()))?;
         let pid = child.process_id();
-        let mut reader = pair
+        let reader = pair
             .master
             .try_clone_reader()
             .map_err(|error| std::io::Error::other(error.to_string()))?;
@@ -77,11 +84,12 @@ impl Session {
             .master
             .take_writer()
             .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let output = Arc::new(Mutex::new(OutputBuffer::default()));
-        let target = Arc::clone(&output);
-        std::thread::Builder::new()
-            .name(format!("cccc-runtime:{}:{}", spec.group_id, spec.actor_id))
-            .spawn(move || copy_output(&mut reader, &target))?;
+        let history = SessionHistory::new(history_config)?;
+        let reader = OutputReader::start(
+            format!("cccc-runtime:{}:{}", spec.group_id, spec.actor_id),
+            reader,
+            history.clone(),
+        )?;
         Ok(Self {
             status: SessionStatus {
                 group_id: spec.group_id,
@@ -96,7 +104,8 @@ impl Session {
             child,
             writer,
             input_gate: Arc::new(Mutex::new(())),
-            output,
+            history,
+            reader: Some(reader),
         })
     }
 
@@ -122,6 +131,7 @@ impl Session {
             self.status.running = false;
             self.status.exit_code = Some(exit.exit_code());
         }
+        self.finish_output()?;
         Ok(self.status.clone())
     }
 
@@ -147,36 +157,30 @@ impl Session {
     }
 
     pub fn history(&self, before: Option<u64>, limit: usize) -> Result<HistoryPage, RuntimeError> {
-        self.output
-            .lock()
-            .map_err(|_| RuntimeError::Poisoned)
-            .map(|output| output.page(before, limit))
+        self.history.page(before, limit)
     }
 
-    pub(crate) fn output_handle(&self) -> Arc<Mutex<OutputBuffer>> {
-        Arc::clone(&self.output)
+    pub(crate) fn history_handle(&self) -> SessionHistory {
+        self.history.clone()
     }
 
     pub fn history_since(&self, after: u64, limit: usize) -> Result<HistoryPage, RuntimeError> {
-        self.output
-            .lock()
-            .map_err(|_| RuntimeError::Poisoned)
-            .map(|output| output.page_since(after, limit))
+        self.history.page_since(after, limit)
     }
 
     pub fn clear(&self) -> Result<(), RuntimeError> {
-        self.output
-            .lock()
-            .map_err(|_| RuntimeError::Poisoned)?
-            .clear();
-        Ok(())
+        self.history.clear()
     }
 
     pub fn bracketed_paste_enabled(&self) -> Result<bool, RuntimeError> {
-        self.output
-            .lock()
-            .map_err(|_| RuntimeError::Poisoned)
-            .map(|output| output.bracketed_paste_enabled())
+        self.history.bracketed_paste_enabled()
+    }
+
+    pub(crate) fn finish_output(&mut self) -> Result<(), RuntimeError> {
+        if let Some(reader) = self.reader.take() {
+            reader.finish()?;
+        }
+        self.history.flush()
     }
 }
 
@@ -187,19 +191,7 @@ impl Drop for Session {
             let _ = self.child.wait();
             self.status.running = false;
         }
-    }
-}
-
-fn copy_output(reader: &mut dyn Read, output: &Arc<Mutex<OutputBuffer>>) {
-    let mut buffer = [0_u8; 8192];
-    while let Ok(count) = reader.read(&mut buffer) {
-        if count == 0 {
-            break;
-        }
-        let Ok(mut target) = output.lock() else {
-            break;
-        };
-        target.push(&buffer[..count]);
+        let _ = self.finish_output();
     }
 }
 

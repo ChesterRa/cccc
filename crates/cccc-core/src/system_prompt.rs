@@ -7,7 +7,9 @@ use crate::{GroupDoc, GroupStore, HomeLayout};
 
 mod voice_secretary;
 
-pub const MESSAGE_DELIVERY_GUIDANCE: &str = "Use cccc_message_send for messages and replies; set reply_to when replying. Terminal output is not visible to the user. Avoid unnecessary broadcasts.";
+pub const VISIBLE_REPLY_GUIDANCE: &str =
+    "Use cccc_message_reply for replies; use cccc_message_send for new messages.";
+pub const MESSAGE_DELIVERY_GUIDANCE: &str = "Use cccc_message_reply for replies; use cccc_message_send for new messages. Terminal output is not delivered. Verify reply_to/to; avoid routine @all. Use cccc_help if unsure.";
 
 #[must_use]
 pub fn render(group: &GroupDoc, actor: &Actor) -> String {
@@ -114,7 +116,10 @@ fn render_with_body(group: &GroupDoc, actor: &Actor, body: &str) -> String {
         String::new(),
         "---".into(),
         "CCCC Protocol:".into(),
-        format!("- {MESSAGE_DELIVERY_GUIDANCE}"),
+        format!("- {VISIBLE_REPLY_GUIDANCE}"),
+        "- Before sending, verify `reply_to` and `to`; make the audience explicit when it differs."
+            .into(),
+        "- Terminal output is not delivered.".into(),
     ]);
     if enabled.len() > 1 {
         lines.push(
@@ -199,10 +204,11 @@ mod tests {
         assert!(prompt.contains("You are peer1"));
         assert!(prompt.contains(&group.group_id));
         assert!(prompt.contains("use MCP tool `cccc_bootstrap`"));
-        assert!(prompt.contains("Use cccc_message_send"));
-        assert!(prompt.contains("set reply_to when replying"));
-        assert!(prompt.contains("Terminal output is not visible to the user"));
-        assert!(!prompt.contains("@all"));
+        assert!(prompt.contains(
+            "Use cccc_message_reply for replies; use cccc_message_send for new messages."
+        ));
+        assert!(prompt.contains("verify `reply_to` and `to`"));
+        assert!(prompt.contains("Terminal output is not delivered."));
         assert!(!prompt.contains("Current Context Snapshot"));
     }
 

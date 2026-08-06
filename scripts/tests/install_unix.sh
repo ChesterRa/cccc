@@ -6,9 +6,15 @@ TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/cccc-install-test.XXXXXX")"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 case "$(uname -s):$(uname -m)" in
-  Linux:x86_64|Linux:amd64) target=x86_64-unknown-linux-gnu ;;
-  Darwin:x86_64|Darwin:amd64) target=x86_64-apple-darwin ;;
-  Darwin:arm64|Darwin:aarch64) target=aarch64-apple-darwin ;;
+  Linux:x86_64|Linux:amd64)
+    target=x86_64-unknown-linux-gnu
+    ;;
+  Darwin:x86_64|Darwin:amd64)
+    target=x86_64-apple-darwin
+    ;;
+  Darwin:arm64|Darwin:aarch64)
+    target=aarch64-apple-darwin
+    ;;
   *) echo "unsupported test platform" >&2; exit 1 ;;
 esac
 
@@ -62,13 +68,18 @@ HOME="$TMP_ROOT/home with space" \
 SHELL=/bin/bash \
 CCCC_VERSION="$version" \
 CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
-sh "$ROOT_DIR/scripts/install.sh"
+sh "$ROOT_DIR/scripts/install.sh" > "$TMP_ROOT/bash-install.out"
 
 test -x "$TMP_ROOT/home with space/.local/bin/cccc"
 [[ "$("$TMP_ROOT/home with space/.local/bin/cccc" --version)" == "cccc $version" ]]
-test "$(grep -Fc '# CCCC' "$TMP_ROOT/home with space/.bashrc")" -eq 1
+for bash_profile in .bash_profile .bashrc; do
+  test "$(grep -Fc '# CCCC' "$TMP_ROOT/home with space/$bash_profile")" -eq 1
+  grep -Fq 'case ":$PATH:" in *":$HOME/.local/bin:"*)' "$TMP_ROOT/home with space/$bash_profile"
+done
+grep -Fq 'export PATH="$HOME/.local/bin:$PATH"; hash -r' "$TMP_ROOT/bash-install.out"
 
-profile_before=$(checksum "$TMP_ROOT/home with space/.bashrc")
+login_profile_before=$(checksum "$TMP_ROOT/home with space/.bash_profile")
+interactive_profile_before=$(checksum "$TMP_ROOT/home with space/.bashrc")
 rollback_version=0.0.2-test
 make_release "$rollback_version" valid 9.9.9
 if HOME="$TMP_ROOT/home with space" \
@@ -80,7 +91,8 @@ if HOME="$TMP_ROOT/home with space" \
   exit 1
 fi
 [[ "$("$TMP_ROOT/home with space/.local/bin/cccc" --version)" == "cccc $version" ]]
-[[ "$(checksum "$TMP_ROOT/home with space/.bashrc")" == "$profile_before" ]]
+[[ "$(checksum "$TMP_ROOT/home with space/.bash_profile")" == "$login_profile_before" ]]
+[[ "$(checksum "$TMP_ROOT/home with space/.bashrc")" == "$interactive_profile_before" ]]
 
 zsh_home="$TMP_ROOT/zsh-home"
 HOME="$zsh_home" \
@@ -88,7 +100,9 @@ SHELL=/bin/zsh \
 CCCC_VERSION="$version" \
 CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
 sh "$ROOT_DIR/scripts/install.sh"
-test "$(grep -Fc '# CCCC' "$zsh_home/.zprofile")" -eq 1
+for zsh_profile in .zprofile .zshrc; do
+  test "$(grep -Fc '# CCCC' "$zsh_home/$zsh_profile")" -eq 1
+done
 
 missing_version=0.0.3-test
 make_release "$missing_version" valid "$missing_version" cccc
@@ -272,7 +286,9 @@ SHELL=/bin/bash \
 CCCC_VERSION="$version" \
 CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
 sh "$ROOT_DIR/scripts/install.sh"
-test "$(grep -Fc '# CCCC' "$TMP_ROOT/home with space/.bashrc")" -eq 1
+for bash_profile in .bash_profile .bashrc; do
+  test "$(grep -Fc '# CCCC' "$TMP_ROOT/home with space/$bash_profile")" -eq 1
+done
 
 bad_version=0.0.1-test
 make_release "$bad_version" "$(printf '0%.0s' {1..64})"

@@ -1,16 +1,28 @@
 mod cancellation;
 mod command;
+mod history_access;
 mod manager;
 mod output;
+mod output_reader;
+mod registry;
 mod session;
+mod session_history;
+mod transcript_archive;
+mod transcript_files;
+mod transcript_reader;
 
 pub use command::{default_command, detect_runtimes};
-pub use manager::{
-    bracketed_paste_enabled, clear, history, history_since, reap, resize, retained_history, start,
-    status, stop, stop_all, stop_if_started_at, submit, submit_interruptible,
-    submit_sequence_interruptible, write,
+pub use history_access::{
+    bracketed_paste_enabled, clear, history, history_since, retained_history,
 };
+pub use manager::{
+    reap, resize, start, start_with_history, status, stop, stop_all, stop_if_started_at, submit,
+    submit_interruptible, submit_sequence_interruptible, write,
+};
+pub use output::HistoryPage;
 pub use session::{LaunchSpec, SessionStatus};
+pub use transcript_archive::HistoryConfig;
+pub use transcript_reader::{read_latest_page, read_latest_since};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RuntimeError {

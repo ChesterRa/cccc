@@ -6,10 +6,12 @@ use chrono::{Duration, Utc};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io;
-use std::net::Ipv4Addr;
 use uuid::Uuid;
 
 use super::group_bridge::{ensure_access, required};
+use super::group_bridge_pairing_endpoint::{
+    normalize_endpoint, preferred_issuer_endpoint, requester_endpoint,
+};
 use super::group_bridge_store::{BridgeStore, items, items_mut, short_id};
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
@@ -684,107 +686,6 @@ fn pairing_code() -> String {
     let raw = Uuid::new_v4().simple().to_string().to_ascii_uppercase();
     format!("{}-{}", &raw[..4], &raw[4..8])
 }
-fn normalize_endpoint(raw: &str) -> Result<String, ApiError> {
-    let url = reqwest::Url::parse(raw)
-        .map_err(|_| ApiError::bad("issuer_endpoint must be an http(s) URL"))?;
-    if !matches!(url.scheme(), "http" | "https")
-        || url.host_str().is_none()
-        || !url.username().is_empty()
-        || url.password().is_some()
-    {
-        return Err(ApiError::bad("invalid issuer_endpoint"));
-    }
-    Ok(format!(
-        "{}://{}{}",
-        url.scheme(),
-        url.host_str().unwrap_or(""),
-        url.port().map_or(String::new(), |port| format!(":{port}"))
-    ))
-}
-
-fn preferred_issuer_endpoint(
-    home: &cccc_core::HomeLayout,
-    submitted: &str,
-    lan_ip: Option<Ipv4Addr>,
-) -> Result<String, ApiError> {
-    let submitted = normalize_endpoint(submitted)?;
-    let settings = cccc_core::settings::load(home).map_err(io_error)?;
-    let config = &settings.remote_access;
-
-    let public_url = requester_endpoint(home);
-    if !public_url.is_empty() {
-        return normalize_endpoint(&public_url);
-    }
-
-    let host = config
-        .get("web_host")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .or_else(|| nonempty_env("CCCC_WEB_HOST"))
-        .unwrap_or_else(|| "127.0.0.1".to_owned());
-    let advertised_host = match host.as_str() {
-        "0.0.0.0" | "::" | "[::]" => lan_ip.map(|ip| ip.to_string()),
-        "127.0.0.1" | "localhost" | "::1" | "[::1]" => None,
-        _ => Some(host),
-    };
-    let Some(advertised_host) = advertised_host else {
-        return Ok(submitted);
-    };
-
-    let submitted_url = reqwest::Url::parse(&submitted)
-        .map_err(|_| ApiError::bad("issuer_endpoint must be an http(s) URL"))?;
-    let port = config
-        .get("web_port")
-        .and_then(Value::as_u64)
-        .and_then(|value| u16::try_from(value).ok())
-        .filter(|value| *value > 0)
-        .or_else(|| nonempty_env("CCCC_WEB_PORT").and_then(|value| value.parse::<u16>().ok()))
-        .unwrap_or(8848);
-    normalize_endpoint(&format!(
-        "{}://{}:{port}",
-        submitted_url.scheme(),
-        bracket_ipv6(&advertised_host)
-    ))
-}
-
-fn nonempty_env(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty())
-}
-
-fn bracket_ipv6(host: &str) -> String {
-    if host.contains(':') && !(host.starts_with('[') && host.ends_with(']')) {
-        format!("[{host}]")
-    } else {
-        host.to_owned()
-    }
-}
-
-fn requester_endpoint(home: &cccc_core::HomeLayout) -> String {
-    cccc_core::settings::load(home)
-        .ok()
-        .and_then(|settings| {
-            settings
-                .remote_access
-                .get("web_public_url")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned)
-        })
-        .or_else(|| {
-            std::env::var("CCCC_WEB_PUBLIC_URL")
-                .ok()
-                .map(|value| value.trim().to_owned())
-                .filter(|value| !value.is_empty())
-        })
-        .unwrap_or_default()
-}
-
 async fn post_remote(endpoint: &str, path: &str, body: &Value) -> (Value, String) {
     let client = match reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -868,79 +769,5 @@ mod tests {
             assert!(public["remote_request"]["remote_send_token"].is_null());
             assert!(public["remote_request"]["request"]["remote_send_token"].is_null());
         }
-    }
-
-    #[test]
-    fn requester_advertises_configured_public_web_endpoint() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
-        home.initialize().expect("initialize");
-        std::fs::write(
-            home.root().join("settings.yaml"),
-            "remote_access:\n  web_public_url: https://requester.example\n",
-        )
-        .expect("settings");
-        assert_eq!(requester_endpoint(&home), "https://requester.example");
-    }
-
-    #[test]
-    fn pairing_invite_prefers_lan_ip_for_wildcard_binding() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
-        home.initialize().expect("initialize");
-        std::fs::write(
-            home.root().join("settings.yaml"),
-            "remote_access:\n  web_host: 0.0.0.0\n  web_port: 9000\n",
-        )
-        .expect("settings");
-
-        assert_eq!(
-            preferred_issuer_endpoint(
-                &home,
-                "http://localhost:5555",
-                Some(Ipv4Addr::new(192, 168, 1, 20)),
-            )
-            .expect("endpoint"),
-            "http://192.168.1.20:9000"
-        );
-    }
-
-    #[test]
-    fn pairing_invite_keeps_submitted_endpoint_for_loopback_binding() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
-        home.initialize().expect("initialize");
-
-        assert_eq!(
-            preferred_issuer_endpoint(
-                &home,
-                "http://localhost:5555",
-                Some(Ipv4Addr::new(192, 168, 1, 20)),
-            )
-            .expect("endpoint"),
-            "http://localhost:5555"
-        );
-    }
-
-    #[test]
-    fn pairing_invite_prefers_configured_public_url() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
-        home.initialize().expect("initialize");
-        std::fs::write(
-            home.root().join("settings.yaml"),
-            "remote_access:\n  web_host: 0.0.0.0\n  web_port: 9000\n  web_public_url: https://cccc.example/ui\n",
-        )
-        .expect("settings");
-
-        assert_eq!(
-            preferred_issuer_endpoint(
-                &home,
-                "http://localhost:5555",
-                Some(Ipv4Addr::new(192, 168, 1, 20)),
-            )
-            .expect("endpoint"),
-            "https://cccc.example"
-        );
     }
 }

@@ -85,7 +85,7 @@ fn launch_serialized(
                     "failed to clear stale runtime hook identity"
                 );
             }
-            return spawn(group, actor, cwd, command, launch_env);
+            return spawn(home, group, actor, cwd, command, launch_env);
         }
     };
 
@@ -118,7 +118,7 @@ fn launch_serialized(
         launch_env = original_env;
     }
 
-    match spawn(group, actor, cwd, command, launch_env) {
+    match spawn(home, group, actor, cwd, command, launch_env) {
         Ok(status) => {
             if let Some(setup) = setup {
                 if let Err(error) =
@@ -152,21 +152,27 @@ fn launch_serialized(
 }
 
 fn spawn(
+    home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,
     cwd: &Path,
     command: Vec<String>,
     env: BTreeMap<String, String>,
 ) -> Result<SessionStatus, OpError> {
-    cccc_runtime::start(LaunchSpec {
-        group_id: group.group_id.clone(),
-        actor_id: actor.id.clone(),
-        runner: actor.runner,
-        command,
-        cwd: cwd.to_path_buf(),
-        env,
-        cols: 120,
-        rows: 40,
-    })
+    let history =
+        super::terminal_history::config(home, &group.group_id, &actor.id).map_err(OpError::io)?;
+    cccc_runtime::start_with_history(
+        LaunchSpec {
+            group_id: group.group_id.clone(),
+            actor_id: actor.id.clone(),
+            runner: actor.runner,
+            command,
+            cwd: cwd.to_path_buf(),
+            env,
+            cols: 120,
+            rows: 40,
+        },
+        history,
+    )
     .map_err(super::runtime_error)
 }
