@@ -86,7 +86,7 @@ fn protocol_lines(event: &Event) -> Vec<String> {
         .unwrap_or(false)
     {
         lines.push(format!(
-            "[cccc] REPLY REQUIRED (event_id={}): reply via cccc_message_send with reply_to.",
+            "[cccc] REPLY REQUIRED (event_id={}): reply via cccc_message_reply.",
             event.id
         ));
     }
@@ -100,7 +100,7 @@ fn protocol_lines(event: &Event) -> Vec<String> {
     let remote_reply_to = strings(event, "remote_reply_to");
     if !remote_reply_to.is_empty() {
         lines.push(format!(
-            "[cccc] REMOTE REPLY DEFAULT: omit to in cccc_message_send with reply_to to reply to remote {}.",
+            "[cccc] REMOTE REPLY DEFAULT: omit to in cccc_message_reply to reply to remote {}.",
             remote_reply_to.join(", ")
         ));
     }
@@ -246,12 +246,34 @@ mod tests {
         .expect("object");
         let rendered = render_batch(&[event]).expect("render");
         assert!(rendered.contains("IMPORTANT (event_id=event-123)"));
-        assert!(rendered.contains("REPLY REQUIRED (event_id=event-123)"));
+        assert!(
+            rendered.contains("REPLY REQUIRED (event_id=event-123): reply via cccc_message_reply.")
+        );
         assert!(rendered.contains("task_ref: Fix send"));
         assert!(rendered.contains("cccc_file(action=\"read\", group_id=\"g_test\""));
         assert!(rendered.contains("screen.png (42 bytes) [state/blobs/abc]"));
         assert!(rendered.contains(cccc_core::peer_insight::PEER_PERSPECTIVE_AGENT_LABEL));
         assert!(rendered.contains("dependency boundary matters"));
+    }
+
+    #[test]
+    fn renders_remote_reply_default_with_reply_tool() {
+        let mut event = Event::new("chat.message", "g_test");
+        event.by = "remote-peer".into();
+        event.data = json!({
+            "to":["lead"],
+            "text":"remote message",
+            "remote_reply_to":["group-a/actor-1", "group-b/actor-2"]
+        })
+        .as_object()
+        .cloned()
+        .expect("event data");
+
+        let rendered = render_batch(&[event]).expect("rendered");
+        assert!(rendered.contains(
+            "REMOTE REPLY DEFAULT: omit to in cccc_message_reply to reply to remote group-a/actor-1, group-b/actor-2."
+        ));
+        assert!(!rendered.contains("omit to in cccc_message_send"));
     }
 
     #[test]

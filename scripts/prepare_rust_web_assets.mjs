@@ -10,7 +10,11 @@ const rustAssets = join(root, "crates", "cccc-web", "assets", "web-dist");
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 
 function run(command, args) {
-  const result = spawnSync(command, args, { cwd: root, stdio: "inherit" });
+  const result = spawnSync(command, args, {
+    cwd: root,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+  });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 }

@@ -51,6 +51,7 @@ mod remote_access;
 mod runtime_completion;
 mod runtime_hook_input;
 mod runtime_hook_session;
+mod runtime_mcp;
 pub(crate) mod runtime_restore;
 mod runtime_session;
 mod runtime_state;
