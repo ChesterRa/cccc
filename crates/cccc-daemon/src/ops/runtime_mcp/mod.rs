@@ -30,6 +30,11 @@ pub(super) fn prepare(
     if !cccc_core::runtime_mcp::is_auto_managed(runtime) {
         return Ok(());
     }
+    // Codex receives its actor-scoped MCP entry later in the launch pipeline.
+    // Do not require a discoverable public launcher for custom Codex commands.
+    if runtime == ActorRuntime::Codex {
+        return Ok(());
+    }
     let executable = super::codex_mcp::resolve_cccc_executable().ok_or_else(|| {
         OpError::new(
             "runtime_mcp_executable_missing",
@@ -42,8 +47,7 @@ pub(super) fn prepare(
     );
 
     match runtime {
-        // Codex receives an actor-scoped MCP entry in its launch command.
-        ActorRuntime::Codex => Ok(()),
+        ActorRuntime::Codex => unreachable!("Codex returns before persistent MCP setup"),
         ActorRuntime::Opencode => inject_opencode(env, &executable),
         ActorRuntime::Hermes => {
             let _guard = setup_lock().lock().map_err(|_| {
