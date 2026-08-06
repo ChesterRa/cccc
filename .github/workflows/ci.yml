@@ -293,6 +293,8 @@ jobs:
     if: github.event_name != 'schedule'
     needs: web
     runs-on: ubuntu-latest
+    env:
+      CCCC_TEST_PYTHON: python
     steps:
       - name: Checkout
         uses: actions/checkout@v4

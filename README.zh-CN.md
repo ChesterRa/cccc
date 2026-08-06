@@ -245,6 +245,8 @@ cccc runtime list --all           # 列出所有可用运行时
 cccc doctor                       # 检查环境和运行时可用性
 ```
 
+Rust daemon 在创建自动管理的 PTY actor 会话前，会检查对应 runtime 的 `cccc` MCP 是否仍指向当前公共入口；缺失或可安全替换的旧配置会自动修复并再次验证。Codex 保留 actor 级启动配置，因此从 Python 切换到 Rust、旧入口被删除或符号链接失效时，新会话不会继续锁定无效工具列表。项目级等非用户作用域冲突不会被静默覆盖，而会返回可操作的错误。
+
 Actor 可以以 **PTY**（嵌入式终端）或 **headless**（无终端的结构化 I/O）模式运行。Claude Code 和 Codex CLI 支持两种模式；headless 模式下 daemon 对投递和流式传输具有更精细的控制。
 
 每个支持运行时的 setup 命令、runner mode 指引和排障方式，见[支持的运行时指南](https://chesterra.github.io/cccc/guide/runtimes)。

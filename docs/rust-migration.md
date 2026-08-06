@@ -152,6 +152,18 @@ Startup body when present, matching the Python override behavior.
 Each delivered chat batch also ends with Python's MCP reply reminder; batched
 messages receive one reminder for the whole batch rather than one per message.
 
+Before starting an automatically managed PTY actor, Rust now applies Python's
+runtime MCP readiness contract. CLI-backed and configuration-backed runtimes
+are classified as `ready`, `missing`, or `stale`; missing or safely replaceable
+entries are installed, then verified before the provider process is created.
+This covers Claude, Cline, Copilot, Devin, Kiro, Droid, Amp, Auggie, Grok,
+Hermes, Kimi, and OpenCode. Codex continues to receive its actor-scoped command
+line override, while OpenCode receives an inline launch configuration.
+More-specific stale entries
+that CCCC does not own are reported rather than overwritten. This prevents an
+old Python launcher path or dangling symlink from freezing a newly created
+provider session without CCCC tools.
+
 `runner=headless` never creates a PTY. Codex and Claude use daemon-managed local
 provider sessions: Codex app-server JSON-RPC and Claude bidirectional
 stream-json. Their messages are pushed through bounded actor delivery workers,

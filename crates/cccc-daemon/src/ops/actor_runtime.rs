@@ -78,6 +78,13 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
     let mut env = actor.env.clone();
     env.extend(actor_profile_runtime::profile_secrets(home, &actor)?);
     env.extend(actor_secrets::values(home, &group.group_id, &actor.id)?);
+    env.insert(
+        "CCCC_HOME".into(),
+        home.root().to_string_lossy().into_owned(),
+    );
+    env.insert("CCCC_GROUP_ID".into(), group.group_id.clone());
+    env.insert("CCCC_ACTOR_ID".into(), actor.id.clone());
+    super::runtime_mcp::prepare(home, actor.runtime, &cwd, &mut env)?;
     let prepared = match (actor.runtime, actor.runner) {
         (ActorRuntime::Codex, cccc_contracts::RunnerKind::Pty) => {
             runtime_session::prepare_codex_command(

@@ -2,6 +2,7 @@ use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
 use cccc_core::fs::with_exclusive_lock;
 use serde_json::json;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -29,6 +30,87 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "runtime_hermes_mcp_test" => mcp_test(home, request),
         _ => return None,
     })
+}
+
+pub(super) fn ensure_for_actor(
+    home: &HomeLayout,
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+) -> Result<(), OpError> {
+    let profile = env
+        .get("HERMES_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(hermes_home);
+    let config_path = profile.join("config.yaml");
+    let command = cccc_command();
+    if inspect_mcp(&load_config(&config_path), &command)["status"] == "ready" {
+        return Ok(());
+    }
+    let hermes = find_executable_in_env("hermes", env)
+        .or_else(|| find_executable("hermes"))
+        .ok_or_else(|| {
+            OpError::new(
+                "runtime_mcp_cli_missing",
+                "Hermes CLI is not installed or not in PATH",
+            )
+        })?;
+    let mut argv = vec![
+        "mcp".into(),
+        "add".into(),
+        SERVER.into(),
+        "--command".into(),
+        command[0].clone(),
+    ];
+    if command.len() > 1 {
+        argv.push("--args".into());
+        argv.extend(command[1..].iter().cloned());
+    }
+    argv.push("--env".into());
+    argv.extend([
+        format!("CCCC_HOME={}", home.root().display()),
+        "CCCC_GROUP_ID=${CCCC_GROUP_ID}".into(),
+        "CCCC_ACTOR_ID=${CCCC_ACTOR_ID}".into(),
+    ]);
+    let values = env
+        .iter()
+        .map(|(key, value)| (key.as_str(), value.clone()))
+        .collect::<Vec<_>>();
+    let result = run(
+        &hermes,
+        &argv,
+        Some(cwd),
+        Some("Y\n"),
+        &values,
+        Duration::from_secs(120),
+    )
+    .map_err(OpError::io)?;
+    if result["returncode"] != 0 {
+        return Err(OpError::new(
+            "runtime_mcp_setup_failed",
+            result["stderr"]
+                .as_str()
+                .unwrap_or("Hermes MCP setup failed"),
+        ));
+    }
+    normalize_placeholders(&config_path).map_err(OpError::io)?;
+    if inspect_mcp(&load_config(&config_path), &command)["status"] != "ready" {
+        return Err(OpError::new(
+            "runtime_mcp_verification_failed",
+            "Hermes MCP setup completed but the CCCC entry is still stale",
+        ));
+    }
+    Ok(())
+}
+
+fn find_executable_in_env(name: &str, env: &BTreeMap<String, String>) -> Option<PathBuf> {
+    env.get("PATH")
+        .map(std::ffi::OsString::from)
+        .as_deref()
+        .map(std::env::split_paths)
+        .into_iter()
+        .flatten()
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
 }
 
 fn status(home: &HomeLayout) -> OpResult {

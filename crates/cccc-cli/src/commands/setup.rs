@@ -178,83 +178,13 @@ fn failure_detail(output: &std::process::Output) -> String {
 }
 
 fn remove_command(runtime: &str) -> Option<Vec<String>> {
-    let parts: &[&str] = match runtime {
-        "claude" => &["claude", "mcp", "remove", "cccc", "-s", "user"],
-        "codex" => &["codex", "mcp", "remove", "cccc"],
-        "copilot" => &["copilot", "mcp", "remove", "cccc"],
-        "devin" => &["devin", "mcp", "remove", "-s", "user", "cccc"],
-        "droid" => &["droid", "mcp", "remove", "cccc"],
-        "amp" => &["amp", "mcp", "remove", "cccc"],
-        "auggie" => &["auggie", "mcp", "remove", "cccc"],
-        "grok" => &["grok", "mcp", "remove", "cccc"],
-        "kimi" => &["kimi", "mcp", "remove", "cccc"],
-        _ => return None,
-    };
-    Some(parts.iter().map(|part| (*part).to_owned()).collect())
+    cccc_core::runtime_mcp::from_name(runtime).and_then(cccc_core::runtime_mcp::remove_command)
 }
 
 fn add_command(runtime: &str, executable: &Path) -> Result<Vec<String>> {
-    let cccc = executable.to_string_lossy().into_owned();
-    let command = match runtime {
-        "claude" => vec![
-            "claude", "mcp", "add", "-s", "user", "cccc", "--", &cccc, "mcp",
-        ],
-        "cline" => vec!["cline", "mcp", "add", "cccc", "--yes", "--", &cccc, "mcp"],
-        "codex" => vec!["codex", "mcp", "add", "cccc", "--", &cccc, "mcp"],
-        "copilot" => vec!["copilot", "mcp", "add", "cccc", "--", &cccc, "mcp"],
-        "devin" => vec![
-            "devin", "mcp", "add", "-s", "user", "cccc", "--", &cccc, "mcp",
-        ],
-        "droid" => vec![
-            "droid", "mcp", "add", "--type", "stdio", "cccc", &cccc, "mcp",
-        ],
-        "amp" => vec!["amp", "mcp", "add", "cccc", &cccc, "mcp"],
-        "auggie" => vec!["auggie", "mcp", "add", "cccc", "--", &cccc, "mcp"],
-        "kimi" => vec![
-            "kimi",
-            "mcp",
-            "add",
-            "--transport",
-            "stdio",
-            "cccc",
-            "--",
-            &cccc,
-            "mcp",
-        ],
-        "kiro" => {
-            return Ok(vec![
-                "kiro-cli".into(),
-                "mcp".into(),
-                "add".into(),
-                "--name".into(),
-                "cccc".into(),
-                "--scope".into(),
-                "global".into(),
-                "--command".into(),
-                cccc,
-                "--args=mcp".into(),
-                "--force".into(),
-            ]);
-        }
-        "grok" => {
-            return Ok(vec![
-                "grok".into(),
-                "mcp".into(),
-                "add".into(),
-                "cccc".into(),
-                "--command".into(),
-                cccc,
-                "--args".into(),
-                "mcp".into(),
-            ]);
-        }
-        _ => {
-            return Err(anyhow::anyhow!(
-                "runtime {runtime} requires manual MCP setup"
-            ));
-        }
-    };
-    Ok(command.into_iter().map(str::to_owned).collect())
+    cccc_core::runtime_mcp::from_name(runtime)
+        .and_then(|runtime| cccc_core::runtime_mcp::add_command(runtime, executable))
+        .ok_or_else(|| anyhow::anyhow!("runtime {runtime} requires manual MCP setup"))
 }
 
 fn absolute(path: &str) -> Result<std::path::PathBuf> {
