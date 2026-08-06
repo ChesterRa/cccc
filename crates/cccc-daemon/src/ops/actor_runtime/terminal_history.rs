@@ -21,6 +21,14 @@ pub(super) fn config(
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(DEFAULT_TRANSCRIPT_BYTES)
         .clamp(MIN_TRANSCRIPT_BYTES, MAX_TRANSCRIPT_BYTES);
+    let persist = settings
+        .observability
+        .get("terminal_transcript")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|value| {
+            value.get("enabled").and_then(serde_json::Value::as_bool) == Some(true)
+                && value.get("persist").and_then(serde_json::Value::as_bool) == Some(true)
+        });
     let actor_dir = GroupStore::new(home.clone())?
         .state_dir(group_id)?
         .join("terminal")
@@ -30,6 +38,7 @@ pub(super) fn config(
         path: actor_dir.join(format!("{session_id}.pty")),
         max_bytes,
         hot_bytes: HOT_BUFFER_BYTES.min(max_bytes),
+        persist,
     })
 }
 
@@ -66,6 +75,7 @@ mod tests {
 
         assert_eq!(config.max_bytes, 2 * 1024 * 1024);
         assert_eq!(config.hot_bytes, HOT_BUFFER_BYTES);
+        assert!(!config.persist);
         assert!(config.path.starts_with(
             actor_dir(&home, &group.group_id, "peer-1").expect("valid actor history directory"),
         ));
@@ -91,5 +101,23 @@ mod tests {
         let config = config(&home, &group.group_id, "peer-1").expect("config");
 
         assert_eq!(config.max_bytes, 200 * 1024 * 1024);
+    }
+
+    #[test]
+    fn persistence_requires_both_enabled_and_persist() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("history-persist", "").expect("group");
+        let mut settings = settings::load(&home).expect("settings");
+        settings.observability.insert(
+            "terminal_transcript".into(),
+            serde_json::json!({"enabled": true, "persist": true}),
+        );
+        settings::save(&home, &settings).expect("save");
+
+        let config = config(&home, &group.group_id, "peer-1").expect("config");
+
+        assert!(config.persist);
     }
 }

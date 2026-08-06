@@ -7,6 +7,7 @@ struct SessionHistoryState {
     output: OutputBuffer,
     archive: Option<TranscriptArchive>,
     archive_writable: bool,
+    accepting_output: bool,
 }
 
 #[derive(Clone)]
@@ -15,23 +16,56 @@ pub(crate) struct SessionHistory {
 }
 
 impl SessionHistory {
+    #[cfg(test)]
     pub(crate) fn new(config: Option<HistoryConfig>) -> Result<Self, RuntimeError> {
+        Self::new_at(config, 0)
+    }
+
+    pub(crate) fn new_at(
+        config: Option<HistoryConfig>,
+        cursor_floor: u64,
+    ) -> Result<Self, RuntimeError> {
         let capacity = config
             .as_ref()
             .map_or(crate::output::DEFAULT_CAPACITY, |value| value.hot_bytes);
-        let archive = config.map(TranscriptArchive::create).transpose()?;
-        let cursor = archive.as_ref().map_or(0, TranscriptArchive::end_cursor);
+        let archive = match config.filter(|value| value.persist) {
+            Some(config) => match TranscriptArchive::create_at(config, cursor_floor) {
+                Ok(archive) => Some(archive),
+                Err(error) => {
+                    eprintln!(
+                        "CCCC terminal transcript archive unavailable; using memory only: {error}"
+                    );
+                    None
+                }
+            },
+            None => None,
+        };
+        let cursor = archive
+            .as_ref()
+            .map_or(cursor_floor, TranscriptArchive::end_cursor);
+        let archive_writable = archive.is_some();
         Ok(Self {
             state: Arc::new(Mutex::new(SessionHistoryState {
                 output: OutputBuffer::with_capacity_at(capacity, cursor),
                 archive,
-                archive_writable: true,
+                archive_writable,
+                accepting_output: true,
             })),
         })
     }
 
+    pub(crate) fn end_cursor(&self) -> Result<u64, RuntimeError> {
+        self.state
+            .lock()
+            .map_err(|_| RuntimeError::Poisoned)
+            .map(|state| state.output.end_cursor())
+    }
+
     pub(crate) fn push(&self, data: &[u8]) -> Result<(), RuntimeError> {
         let mut state = self.state.lock().map_err(|_| RuntimeError::Poisoned)?;
+        if !state.accepting_output {
+            return Ok(());
+        }
         state.output.push(data);
         if !state.archive_writable {
             return Ok(());
@@ -86,7 +120,7 @@ impl SessionHistory {
             None => Ok(()),
         };
         if result.is_ok() {
-            state.archive_writable = true;
+            state.archive_writable = state.archive.is_some();
         }
         result
     }
@@ -104,6 +138,13 @@ impl SessionHistory {
             state.archive_writable = false;
         }
         result
+    }
+
+    pub(crate) fn seal_output(&self) -> Result<(), RuntimeError> {
+        self.state
+            .lock()
+            .map_err(|_| RuntimeError::Poisoned)
+            .map(|mut state| state.accepting_output = false)
     }
 
     pub(crate) fn bracketed_paste_enabled(&self) -> Result<bool, RuntimeError> {
@@ -124,6 +165,7 @@ mod tests {
             path: root.join("session.pty"),
             max_bytes: 1024,
             hot_bytes: 1024,
+            persist: true,
         }
     }
 
@@ -154,5 +196,53 @@ mod tests {
             history.page(None, 1024).expect("fallback page").data,
             "first second"
         );
+    }
+
+    #[test]
+    fn persistence_can_be_disabled_without_losing_hot_history() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path().join("memory-only");
+        let mut history_config = config(&root);
+        history_config.persist = false;
+        let history = SessionHistory::new(Some(history_config)).expect("history");
+
+        history.push(b"memory only").expect("push");
+
+        assert_eq!(
+            history.page(None, 1024).expect("history page").data,
+            "memory only"
+        );
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn archive_creation_failure_does_not_block_in_memory_history() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let blocker = temp.path().join("not-a-directory");
+        std::fs::write(&blocker, b"file").expect("blocker");
+        let history = SessionHistory::new(Some(config(&blocker))).expect("memory fallback");
+
+        history.push(b"still available").expect("push");
+
+        assert_eq!(
+            history.retained_page().expect("hot history").data,
+            "still available"
+        );
+    }
+
+    #[test]
+    fn archive_creation_fallback_keeps_the_replacement_cursor() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let blocker = temp.path().join("not-a-directory");
+        std::fs::write(&blocker, b"file").expect("blocker");
+        let history = SessionHistory::new_at(Some(config(&blocker)), 42)
+            .expect("memory fallback with cursor");
+
+        history.push(b"replacement").expect("push");
+
+        let page = history.page_since(42, 1024).expect("replacement page");
+        assert_eq!(page.data, "replacement");
+        assert_eq!(page.start_cursor, 42);
+        assert!(!page.cursor_expired);
     }
 }

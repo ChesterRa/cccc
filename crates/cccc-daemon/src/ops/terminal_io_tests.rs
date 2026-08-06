@@ -1,6 +1,8 @@
-use super::{render_tail, snapshot, tail, tail_render_options, trailing_chars, write};
-use cccc_contracts::{DaemonRequest, RunnerKind};
-use cccc_core::HomeLayout;
+use super::{
+    authorize_transcript, render_tail, snapshot, tail, tail_render_options, trailing_chars, write,
+};
+use cccc_contracts::{Actor, DaemonRequest, RunnerKind};
+use cccc_core::{GroupStore, HomeLayout};
 use cccc_runtime::LaunchSpec;
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
@@ -187,4 +189,78 @@ fn terminal_snapshot_returns_a_rendered_screen_at_the_raw_end_cursor() {
     );
     assert_eq!(result["end_cursor"].as_u64(), Some(raw.end_cursor));
     let _ = cccc_runtime::stop(&group_id, actor_id);
+}
+
+#[test]
+fn peer_cannot_read_another_actors_terminal_with_default_visibility() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("terminal access", "").expect("group");
+    cccc_core::actors::add(&mut group, Actor::new("lead")).expect("lead");
+    cccc_core::actors::add(&mut group, Actor::new("peer")).expect("peer");
+    store.save(&group).expect("save group");
+    cccc_runtime::start(LaunchSpec {
+        group_id: group.group_id.clone(),
+        actor_id: "lead".into(),
+        runner: RunnerKind::Pty,
+        command: vec!["sh".into(), "-c".into(), "printf private; sleep 2".into()],
+        cwd: temp.path().into(),
+        env: BTreeMap::new(),
+        cols: 80,
+        rows: 24,
+    })
+    .expect("start");
+
+    let request = DaemonRequest {
+        v: 1,
+        op: "terminal_tail".into(),
+        args: json!({
+            "group_id":group.group_id,"actor_id":"lead","by":"peer","strip_ansi":false
+        })
+        .as_object()
+        .cloned()
+        .expect("args"),
+    };
+    let error = tail(&home, &request).expect_err("peer transcript access must be denied");
+
+    assert_eq!(error.code, "permission_denied");
+    let _ = cccc_runtime::stop(&group.group_id, "lead");
+}
+
+#[test]
+fn transcript_visibility_allows_self_foreman_and_explicit_all() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("terminal policy", "").expect("group");
+    cccc_core::actors::add(&mut group, Actor::new("lead")).expect("lead");
+    cccc_core::actors::add(&mut group, Actor::new("peer")).expect("peer");
+    store.save(&group).expect("save group");
+    let group_id = group.group_id.clone();
+    let request = |by: &str| DaemonRequest {
+        v: 1,
+        op: "terminal_tail".into(),
+        args: json!({"group_id":group_id.clone(),"actor_id":"peer","by":by})
+            .as_object()
+            .cloned()
+            .expect("args"),
+    };
+
+    assert!(authorize_transcript(&home, &request("peer"), &group_id, "peer").is_ok());
+    assert!(authorize_transcript(&home, &request("lead"), &group_id, "peer").is_ok());
+
+    group.extra.insert(
+        "settings".into(),
+        json!({"terminal_transcript_visibility":"all"}),
+    );
+    store.save(&group).expect("save all visibility");
+    let peer_reads_lead = DaemonRequest {
+        args: json!({"group_id":group_id.clone(),"actor_id":"lead","by":"peer"})
+            .as_object()
+            .cloned()
+            .expect("args"),
+        ..request("peer")
+    };
+    assert!(authorize_transcript(&home, &peer_reads_lead, &group_id, "lead").is_ok());
 }

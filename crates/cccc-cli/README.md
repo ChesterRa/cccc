@@ -3,7 +3,20 @@
 CCCC coordinates coding agents as a persistent group with shared messages,
 delivery tracking, runtime state, a Web UI, and MCP access.
 
-## End-user installation
+## Recommended end-user installation
+
+Install the complete CCCC product from PyPI:
+
+```bash
+python -m pip install -U cccc-pair
+```
+
+Supported platform wheels bundle this Rust executable privately behind the
+public Python launcher, so users can switch with `cccc rust` while retaining the
+Python default and fallback. Do not install this crate with Cargo for normal
+product use.
+
+## Experimental standalone Rust preview
 
 ```bash
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
@@ -11,17 +24,18 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
 Windows PowerShell uses `irm https://chesterra.github.io/cccc/install.ps1 | iex`.
 These installers download a checksum-verified GitHub Release binary and require
-neither Rust nor Python. Upgrade it through the same channel with:
+neither Rust nor Python. This Rust-only channel has no Python fallback or
+implementation switching and is not the recommended replacement for the pip
+product. Upgrade it through the same channel with:
 
 ```bash
 cccc update
 ```
 
 Use `cccc update --check` to inspect the detected installation and update source.
-The maintained PyPI platform wheel still owns its public Python launcher and
-bundles this binary privately when supported; that private payload remains updated
-as part of the complete pip product. Do not install this crate with Cargo for
-normal product use.
+The installer refuses to overwrite an existing public `cccc` command without its
+standalone ownership marker. The private wheel payload remains updated only as
+part of the complete pip product.
 
 ## Workspace development
 
@@ -39,7 +53,8 @@ do not require a browser.
 
 Internal implementation crates use the `cccc-pair-*` namespace and are not
 intended to be installed directly. Manual standalone workflow runs verify release
-candidates; release tags also attach the verified native assets to GitHub Releases.
+candidates; release tags also attach the verified experimental preview assets to
+GitHub Releases.
 
 Project documentation and source: <https://github.com/chesterra/cccc>
 

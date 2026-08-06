@@ -74,6 +74,21 @@ async fn open_completes_after_dom_content_loaded_without_waiting_for_subresource
     .expect("open browser");
 
     assert_eq!(state["state"], "ready");
+    let page = manager
+        .sessions
+        .lock()
+        .await
+        .get("dom-content-loaded")
+        .expect("browser session")
+        .page
+        .clone();
+    let heading: String = page
+        .evaluate("document.querySelector('h1')?.textContent || ''")
+        .await
+        .expect("evaluate destination document")
+        .into_value()
+        .expect("heading text");
+    assert_eq!(heading, "DOMContentLoaded");
     assert!(manager.close("dom-content-loaded").await.expect("close"));
     server.abort();
 }

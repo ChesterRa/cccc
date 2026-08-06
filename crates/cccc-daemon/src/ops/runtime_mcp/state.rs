@@ -364,6 +364,9 @@ fn decode_debug(value: &str) -> String {
 fn home_dir(env: &BTreeMap<String, String>) -> PathBuf {
     env.get("HOME")
         .or_else(|| env.get("USERPROFILE"))
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
@@ -371,28 +374,33 @@ fn home_dir(env: &BTreeMap<String, String>) -> PathBuf {
 }
 
 fn cline_settings(env: &BTreeMap<String, String>) -> PathBuf {
-    if let Some(path) = env.get("CLINE_MCP_SETTINGS_PATH") {
-        return PathBuf::from(path);
+    if let Some(path) = configured_path(env, "CLINE_MCP_SETTINGS_PATH") {
+        return path;
     }
-    if let Some(path) = env.get("CLINE_DATA_DIR") {
-        return PathBuf::from(path).join("settings/cline_mcp_settings.json");
+    if let Some(path) = configured_path(env, "CLINE_DATA_DIR") {
+        return path.join("settings/cline_mcp_settings.json");
     }
-    if let Some(path) = env.get("CLINE_DIR") {
-        return PathBuf::from(path).join("data/settings/cline_mcp_settings.json");
+    if let Some(path) = configured_path(env, "CLINE_DIR") {
+        return path.join("data/settings/cline_mcp_settings.json");
     }
     home_dir(env).join(".cline/data/settings/cline_mcp_settings.json")
 }
 
 fn kiro_home(env: &BTreeMap<String, String>) -> PathBuf {
-    env.get("KIRO_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir(env).join(".kiro"))
+    configured_path(env, "KIRO_HOME").unwrap_or_else(|| home_dir(env).join(".kiro"))
 }
 
 fn kimi_home(env: &BTreeMap<String, String>) -> PathBuf {
-    env.get("KIMI_SHARE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home_dir(env).join(".kimi"))
+    configured_path(env, "KIMI_SHARE_DIR").unwrap_or_else(|| home_dir(env).join(".kimi"))
+}
+
+fn configured_path(env: &BTreeMap<String, String>, key: &str) -> Option<PathBuf> {
+    match env.get(key) {
+        Some(value) => (!value.trim().is_empty()).then(|| PathBuf::from(value.trim())),
+        None => std::env::var_os(key)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from),
+    }
 }
 
 #[cfg(test)]

@@ -46,7 +46,7 @@ pub(super) fn ensure_for_actor(
     if inspect_mcp(&load_config(&config_path), &command)["status"] == "ready" {
         return Ok(());
     }
-    let hermes = find_executable_in_env("hermes", env)
+    let hermes = find_executable_in_env("hermes", env, cwd)
         .or_else(|| find_executable("hermes"))
         .ok_or_else(|| {
             OpError::new(
@@ -102,15 +102,17 @@ pub(super) fn ensure_for_actor(
     Ok(())
 }
 
-fn find_executable_in_env(name: &str, env: &BTreeMap<String, String>) -> Option<PathBuf> {
-    env.get("PATH")
-        .map(std::ffi::OsString::from)
-        .as_deref()
-        .map(std::env::split_paths)
-        .into_iter()
-        .flatten()
-        .map(|directory| directory.join(name))
-        .find(|candidate| candidate.is_file())
+fn find_executable_in_env(
+    name: &str,
+    env: &BTreeMap<String, String>,
+    cwd: &Path,
+) -> Option<PathBuf> {
+    let inherited_path = std::env::var_os("PATH");
+    let search_path = env
+        .get("PATH")
+        .map(std::ffi::OsStr::new)
+        .or(inherited_path.as_deref());
+    cccc_core::runtime_mcp::find_program_in(name, search_path, cwd)
 }
 
 fn status(home: &HomeLayout) -> OpResult {

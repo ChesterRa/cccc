@@ -166,6 +166,26 @@ jobs:
           python scripts/verify_native_wheel.py "$wheel_path" --platform-tag manylinux_2_28_x86_64
           auditwheel show "$wheel_path"
 
+      - name: Smoke installed Linux native wheel
+        run: |
+          wheel_path="$(find wheelhouse/final -maxdepth 1 -name '*.whl' -print -quit)"
+          python -m pip install --force-reinstall "$wheel_path"
+          export CCCC_HOME="$(python -c 'import tempfile; print(tempfile.mkdtemp())')"
+          cccc version
+          cccc rust version
+          cccc python version
+          cccc rust setup --runtime custom > "$CCCC_HOME/setup.json"
+          python - "$CCCC_HOME/setup.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          config = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          command = pathlib.Path(config["mcpServers"]["cccc"]["command"])
+          assert command.name == "cccc", command
+          assert "_native" not in command.parts, command
+          PY
+
       - name: Upload Linux native wheel
         uses: actions/upload-artifact@v4
         with:
@@ -273,6 +293,26 @@ jobs:
         run: |
           wheel_path="$(find wheelhouse/final -maxdepth 1 -name '*.whl' -print -quit)"
           python scripts/verify_native_wheel.py "$wheel_path" --platform-tag "${{ matrix.platform_tag }}"
+
+      - name: Smoke installed native wheel
+        run: |
+          wheel_path="$(find wheelhouse/final -maxdepth 1 -name '*.whl' -print -quit)"
+          python -m pip install --force-reinstall "$wheel_path"
+          export CCCC_HOME="$(python -c 'import tempfile; print(tempfile.mkdtemp())')"
+          cccc version
+          cccc rust version
+          cccc python version
+          cccc rust setup --runtime custom > "$CCCC_HOME/setup.json"
+          python - "$CCCC_HOME/setup.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          config = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          command = pathlib.Path(config["mcpServers"]["cccc"]["command"])
+          assert command.name.lower() in {"cccc", "cccc.exe"}, command
+          assert "_native" not in command.parts, command
+          PY
 
       - name: Upload native wheel
         uses: actions/upload-artifact@v4

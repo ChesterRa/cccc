@@ -190,6 +190,12 @@ fn send_cross_group_remote_record(home: &HomeLayout, request: &DaemonRequest) ->
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     super::messaging_recipients::normalize_remote_chat_data(&mut data)?;
+    let destination_recipients = data
+        .get("to")
+        .cloned()
+        .unwrap_or_else(|| json!([cccc_core::actors::CROSS_GROUP_FOREMAN_RECIPIENT]));
+    data.insert("to".into(), json!(["user"]));
+    data.insert("dst_to".into(), destination_recipients);
     data.insert("dst_group_id".into(), json!(destination_id));
     data.insert("transport".into(), json!("group_bridge_session"));
     let event = append(home, &source.group_id, "chat.message", &by, data)?;
@@ -260,6 +266,9 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if existing_source.is_some() {
         // The accepted source event is authoritative on a relay retry.
         delivery_data.remove("require_peer_insight");
+        if let Some(destination_recipients) = delivery_data.remove("dst_to") {
+            delivery_data.insert("to".into(), destination_recipients);
+        }
     }
     delivery_data.remove("transport");
     delivery_data.remove("dst_group_id");
@@ -275,6 +284,9 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         existing
     } else {
         let mut source_data = delivery_data.clone();
+        let destination_recipients = source_data.get("to").cloned().unwrap_or_else(|| json!([]));
+        source_data.insert("to".into(), json!(["user"]));
+        source_data.insert("dst_to".into(), destination_recipients);
         source_data.insert("dst_group_id".into(), json!(destination.group_id));
         source_data.insert("transport".into(), json!("local"));
         append(home, &source.group_id, "chat.message", &by, source_data)?

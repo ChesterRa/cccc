@@ -67,24 +67,20 @@ CCCC はコマンド一つで導入でき、データベース、メッセージ
 ### インストール
 
 ```bash
-# macOS / Linux ネイティブ Rust バイナリ（Rust・Python 不要）
-curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
-
-# Windows PowerShell（Rust・Python 不要）
-irm https://chesterra.github.io/cccc/install.ps1 | iex
-
-# 移行期間中も保守される Python 配布
-pip install -U cccc-pair
+# 安定した製品ディストリビューション（推奨、Python 3.11+）
+python -m pip install -U cccc-pair
 
 # RC チャネル（TestPyPI）
-pip install -U --pre \
+python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
 
-> ネイティブ版は Linux x86-64、Intel/Apple Silicon macOS、Windows x86-64 に対応します。
-> Python 配布は Python 3.11+ が必要で、対応 wheel には同じバージョンの private Rust 実装も含まれます。
+> PyPI パッケージが、現在の安定した推奨 CCCC ディストリビューションです。
+> Linux x86-64、Intel/Apple Silicon macOS、Windows x86-64 の platform wheel
+> には、Python と同じバージョンの private Rust 実装が含まれます。Python なしの
+> Rust-only 配備を試す場合に限り、下記の実験的スタンドアロン版を利用できます。
 
 ### アップグレード
 
@@ -93,8 +89,9 @@ cccc update
 ```
 
 インストール種別と更新元を事前確認するには `cccc update --check` を使用してください。
-ネイティブ版は GitHub Pages の固定インストーラー、pip 版は検出した PyPI チャネルから更新します。実際の更新ではインストール済みファイルを
-置き換える前に稼働中の Web/daemon ペアを停止します。
+推奨の pip 版は、検出した PyPI チャネルから `cccc-pair` 製品全体を更新します。
+実験的スタンドアロン版は GitHub Pages インストーラーから更新します。どちらも
+ファイルを置き換える前に稼働中の Web/daemon ペアを停止します。
 
 ### 起動
 
@@ -104,8 +101,8 @@ cccc
 
 **http://127.0.0.1:8848** を開く — デフォルトで daemon とローカル Web UI が一緒に起動します。
 
-現在のデフォルト実装は Python です。永続的に切り替えるか、切り替えとコマンド実行を
-1 ステップで行えます。
+推奨の pip ディストリビューションでは、現在のデフォルト実装は Python です。
+永続的に切り替えるか、切り替えとコマンド実行を 1 ステップで行えます。
 
 ```bash
 cccc status            # 選択中・実行中・利用可能な実装を表示
@@ -117,6 +114,9 @@ cccc rust doctor        # Rust を選択して doctor を実行
 切り替えは明示的なライフサイクル操作です。CCCC は対象 payload を検証してから現在の
 Web/daemon を停止し、別実装へ暗黙にフォールバックしません。Agent runtime の MCP 設定は
 安定した公開 `cccc` launcher を参照するため、後の切り替えでも再設定は不要です。
+
+実験的スタンドアロン版には Rust だけが含まれるため、`cccc python` と実装切り替えは
+利用できません。
 
 ### マルチエージェントグループの作成
 
@@ -483,7 +483,18 @@ CCCC はエージェントを置き換えるものではなく、それらをチ
 
 ## インストールオプション
 
-### ネイティブ Rust バイナリ（推奨）
+### pip（安定版・推奨）
+
+```bash
+python -m pip install -U cccc-pair
+```
+
+これは完全にサポートされる製品ディストリビューションです。Linux x86-64、
+Intel/Apple Silicon macOS、Windows x86-64 では、Python 実装と同じバージョンの
+private Rust 実行ファイルを含む platform wheel が選択されます。それ以外では
+universal Python wheel を使い、`cccc status` が Rust を利用不可と明示します。
+
+### 実験的スタンドアロン Rust プレビュー
 
 ```bash
 # macOS / Linux
@@ -493,30 +504,26 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 irm https://chesterra.github.io/cccc/install.ps1 | iex
 ```
 
-GitHub Releases からチェックサム検証済みバイナリを取得します。Rust と Python は不要で、
-以後は `cccc update` で同じ経路から更新できます。
-
-### pip（安定 Python 配布）
-
-```bash
-pip install -U cccc-pair
-```
+このオプションは、Python なしの Rust-only 配備を評価する場合に限って利用してください。
+GitHub Releases からチェックサム検証済みバイナリを取得し、同じインストーラーで
+`cccc update` できますが、Python fallback と実装切り替えはありません。現時点では
+pip 製品の推奨代替ではありません。インストーラーは自身が所有しない既存の `cccc`
+コマンドを上書きしないため、意図的にアンインストールするか、別の
+`CCCC_INSTALL_DIR` を指定してください。
 
 現在のネイティブインストーラーは `v0.4.34-rc2` リリース候補を固定してインストールします。
 
 ### pip（RC 版、TestPyPI）
 
 ```bash
-pip install -U --pre \
+python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
 
-Linux x86-64、Intel/Apple Silicon macOS、Windows x86-64 では、pip が private Rust
-実行ファイル入りの platform wheel を選びます。それ以外では universal Python wheel を使い、
-`cccc status` が Rust を利用不可と明示します。Cargo インストールは workspace 開発用にのみ
-残し、2 つ目のサポート対象エンドユーザー配布にはしません。
+Cargo インストールは workspace 開発用にのみ残し、サポート対象のエンドユーザー
+配布にはしません。
 
 ### ソースから
 

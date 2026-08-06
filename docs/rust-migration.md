@@ -1,10 +1,15 @@
 # Rust Implementation and Product Distribution
 
-CCCC now offers a standalone Rust installation for supported platforms while the
-`cccc-pair` Python distribution remains maintained during the migration period.
-Both use the same product version, data contracts, and public `cccc` command.
-Supported Python platform wheels also contain a private Rust executable with the
-same product version.
+The stable CCCC product distribution remains `cccc-pair` on PyPI. It keeps Python
+as the initial default and, on supported platforms, bundles a private Rust
+executable with the same product version behind the public `cccc` launcher. This
+lets users evaluate and gradually adopt Rust without giving up Python fallback or
+creating a second command on `PATH`.
+
+The repository also publishes an experimental standalone Rust preview for
+supported platforms. It shares the product version, data contracts, and public
+command, but contains no Python fallback or implementation selector and is not
+yet the recommended replacement for the complete pip product.
 
 Prereleases use one canonical product identity and tag such as `v0.4.34-rc2`.
 The Python manifest represents that identity as PEP 440 `0.4.34rc2`, while the
@@ -13,7 +18,17 @@ ecosystem-specific spellings before comparing them.
 
 ## Install and update
 
-Install the standalone Rust binary without a Rust or Python toolchain:
+Install the stable product distribution from PyPI:
+
+```bash
+python -m pip install -U cccc-pair
+```
+
+Supported platform wheels include both implementations. Other platforms receive
+the universal Python wheel and report Rust as unavailable.
+
+To explicitly evaluate the experimental standalone Rust preview without a Rust
+or Python toolchain:
 
 ```bash
 # macOS / Linux
@@ -25,27 +40,25 @@ irm https://chesterra.github.io/cccc/install.ps1 | iex
 
 The GitHub Pages scripts pin the product version represented by the current
 documentation build, select the current platform archive, validate `SHA256SUMS`,
-and install into a user-owned directory. The initial native distribution is
-`0.4.34-rc2`; callers can override the pin through `CCCC_VERSION`.
+and install into a user-owned directory. They refuse to overwrite a public
+`cccc` executable not carrying the standalone ownership marker; uninstall that
+command deliberately, choose another
+`CCCC_INSTALL_DIR`, or set `CCCC_ALLOW_REPLACE_EXISTING=1` only when replacement
+is intentional. The initial experimental preview is `0.4.34-rc2`; callers can
+override the documentation pin through `CCCC_VERSION`.
 
-The Python distribution remains available during migration:
-
-```bash
-pip install -U cccc-pair
-```
-
-In either installation, use:
+In either distribution, use:
 
 ```bash
 cccc update
 cccc update --check
 ```
 
-Standalone Rust installations update through the same GitHub Pages installer.
-The Python launcher continues to update its complete pip product, including the
-private Rust payload on supported platforms.
+Standalone Rust previews update through the same GitHub Pages installer. Pip
+installations update the complete `cccc-pair` product, including the private Rust
+payload on supported platforms.
 
-The public Python launcher also owns implementation selection inside a pip install:
+The public Python launcher owns implementation selection inside a pip install:
 
 ```bash
 cccc status            # selected, running, and available implementations
@@ -61,11 +74,13 @@ installed Python product version. A selector stops the active Web process and
 daemon before persisting the new implementation. Missing, corrupt, or mismatched
 payloads fail explicitly and never fall back silently.
 
-`cccc update` always upgrades `cccc-pair` through pip. This keeps the launcher,
-Python implementation, Rust payload, Web assets, and contracts on one version.
-The launcher stops the active Web/daemon pair before replacement so Windows can
-replace the native executable safely. The private Rust binary cannot overwrite
-its containing wheel independently.
+Inside a pip installation, `cccc update` always upgrades `cccc-pair` through pip.
+This keeps the launcher, Python implementation, Rust payload, Web assets, and
+contracts on one version. The launcher stops the active Web/daemon pair before
+replacement so Windows can replace the native executable safely. The private
+Rust binary cannot overwrite its containing wheel independently. The standalone
+preview contains Rust only, so `cccc python` and implementation switching are
+intentionally unavailable there.
 
 The release publishes one source distribution, one universal Python fallback
 wheel, and native wheels for Linux x86-64, Intel macOS, Apple Silicon macOS, and
@@ -77,10 +92,11 @@ launcher rather than the private payload path. Unsupported platforms receive the
 universal wheel and report Rust as unavailable.
 
 Cargo remains a workspace development tool and the crates stay non-publishable.
-The standalone workflow builds and verifies all four supported archives on manual
-runs. A matching pushed tag additionally publishes those archives, checksums, and
-versioned installers to GitHub Releases; prerelease tags are marked as such in
-GitHub Releases.
+The experimental standalone workflow builds and verifies all four supported
+archives on manual runs. A matching pushed tag additionally publishes those
+preview archives, checksums, and versioned installers to GitHub Releases with an
+explicit experimental notice; prerelease tags are marked as such in GitHub
+Releases.
 
 ## Data compatibility
 

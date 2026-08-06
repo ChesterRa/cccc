@@ -46,6 +46,10 @@ impl OutputBuffer {
         }
     }
 
+    pub(crate) const fn end_cursor(&self) -> u64 {
+        self.end
+    }
+
     pub fn push(&mut self, data: &[u8]) {
         if data.is_empty() {
             return;

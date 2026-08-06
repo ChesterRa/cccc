@@ -27,17 +27,11 @@ In short: CCCC does not replace your agents — it is the coordination layer tha
 ### How do I install CCCC?
 
 ```bash
-# Native Rust binary on macOS or Linux
-curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
-
-# Native Rust binary on Windows PowerShell
-irm https://chesterra.github.io/cccc/install.ps1 | iex
-
-# Python distribution from PyPI
-pip install -U cccc-pair
+# Stable product distribution from PyPI (recommended)
+python -m pip install -U cccc-pair
 
 # From TestPyPI (explicit RC testing)
-pip install -U --pre \
+python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple \
   --extra-index-url https://pypi.org/simple \
   cccc-pair
@@ -47,6 +41,20 @@ git clone https://github.com/ChesterRa/cccc
 cd cccc
 pip install -e .
 ```
+
+Supported PyPI platform wheels include both implementations. An experimental
+Rust-only standalone preview is also available for deployment testing:
+
+```bash
+# macOS / Linux
+curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
+
+# Windows PowerShell
+irm https://chesterra.github.io/cccc/install.ps1 | iex
+```
+
+The preview has no Python fallback or implementation switching and is not the
+recommended replacement for the pip product.
 
 ### How do I upgrade from an older version (0.3.x)?
 
@@ -67,11 +75,11 @@ Then install the new version. Note that 0.4.x has a completely different command
 
 ### What are the system requirements?
 
-- macOS, Linux, or Windows
+- Python 3.11+ on macOS, Linux, or Windows for the recommended PyPI distribution
 - At least one supported agent runtime CLI
 
-The native Rust installer does not require Python or Rust. The maintained Python
-distribution requires Python 3.11+.
+The experimental standalone Rust preview does not require Python or a Rust
+toolchain, but supports fewer platforms and contains only the Rust implementation.
 
 ### How do I choose the Python or Rust implementation?
 
@@ -82,10 +90,12 @@ cccc python            # persist Python and launch CCCC
 cccc rust doctor       # persist Rust, then run one command
 ```
 
-Python remains the default. Supported PyPI platform wheels contain Rust
-privately; other platforms receive the universal Python wheel and report Rust as
-unavailable. The selector validates the payload and stops the active Web/daemon
-pair. It never installs a second command or silently falls back.
+These selectors belong to the recommended pip distribution. Python remains the
+default. Supported PyPI platform wheels contain Rust privately; other platforms
+receive the universal Python wheel and report Rust as unavailable. The selector
+validates the payload and stops the active Web/daemon pair. It never installs a
+second command or silently falls back. The standalone preview contains Rust only
+and therefore does not expose implementation switching.
 
 ### How do I check if CCCC is working?
 

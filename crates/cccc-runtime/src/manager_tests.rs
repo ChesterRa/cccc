@@ -1,8 +1,8 @@
 use super::{
-    start, status, stop, stop_all, stop_if_started_at, submit_interruptible,
+    start, start_with_history, status, stop, stop_all, stop_if_started_at, submit_interruptible,
     submit_sequence_interruptible,
 };
-use crate::{LaunchSpec, history};
+use crate::{HistoryConfig, LaunchSpec, history, history_since};
 use cccc_contracts::RunnerKind;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -133,6 +133,117 @@ fn stop_is_bounded_when_a_background_child_keeps_the_pty_open() {
 
     result.expect("stop");
     assert!(elapsed < Duration::from_secs(1), "stop took {elapsed:?}");
+}
+
+#[test]
+fn stopped_reader_cannot_append_after_the_next_session_starts() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let actor_dir = temp.path().join("terminal");
+    let history = |name: &str| HistoryConfig {
+        path: actor_dir.join(format!("{name}.pty")),
+        max_bytes: 1024 * 1024,
+        hot_bytes: 1024,
+        persist: true,
+    };
+    start_with_history(
+        spec(
+            &temp,
+            "g_reader_boundary",
+            "peer1",
+            "trap '' HUP; (sleep 1; printf late-old) & printf early-old",
+        ),
+        history("old"),
+    )
+    .expect("first");
+    for _ in 0..100 {
+        if !status("g_reader_boundary", "peer1")
+            .expect("status")
+            .running
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    stop("g_reader_boundary", "peer1").expect("stop first");
+
+    start_with_history(
+        spec(
+            &temp,
+            "g_reader_boundary",
+            "peer1",
+            "printf new-session; sleep 2",
+        ),
+        history("new"),
+    )
+    .expect("second");
+    std::thread::sleep(Duration::from_millis(1_200));
+
+    let old = std::fs::read(actor_dir.join("old.pty")).expect("old transcript");
+    assert!(!String::from_utf8_lossy(&old).contains("late-old"));
+    let page = crate::read_latest_page(&actor_dir, None, 1024).expect("history");
+    assert_eq!(page.data, "early-oldnew-session");
+    stop("g_reader_boundary", "peer1").expect("cleanup");
+}
+
+#[test]
+fn memory_only_replacement_continues_the_actor_cursor() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let history_config = |name: &str| HistoryConfig {
+        path: temp.path().join(format!("{name}.pty")),
+        max_bytes: 1024 * 1024,
+        hot_bytes: 1024,
+        persist: false,
+    };
+    start_with_history(
+        spec(
+            &temp,
+            "g_memory_cursor",
+            "peer1",
+            "printf old-session; sleep 30",
+        ),
+        history_config("old"),
+    )
+    .expect("first session");
+    for _ in 0..100 {
+        if history("g_memory_cursor", "peer1", None, 1024)
+            .is_ok_and(|page| page.data.contains("old-session"))
+        {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    stop("g_memory_cursor", "peer1").expect("stop first session");
+    let old_end = history("g_memory_cursor", "peer1", None, 1024)
+        .expect("completed history")
+        .end_cursor;
+
+    start_with_history(
+        spec(
+            &temp,
+            "g_memory_cursor",
+            "peer1",
+            "printf replacement-session; sleep 30",
+        ),
+        history_config("replacement"),
+    )
+    .expect("replacement session");
+    let mut replacement = None;
+    for _ in 0..100 {
+        let page =
+            history_since("g_memory_cursor", "peer1", old_end, 1024).expect("replacement history");
+        if page.data.contains("replacement-session") {
+            replacement = Some(page);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let replacement = replacement.expect("replacement output");
+    assert_eq!(replacement.start_cursor, old_end);
+    assert!(!replacement.cursor_expired);
+    stop("g_memory_cursor", "peer1").expect("cleanup");
 }
 
 #[test]

@@ -139,7 +139,7 @@ Use a mixed group when different agents are good at different roles:
 
 Each actor can have its own runtime, command override, private environment, and runner mode. Runtime state stays in `CCCC_HOME`, not in your repository.
 
-PTY terminal output uses bounded memory plus a durable per-actor transcript. See [Terminal history](terminal-history.md) for retention, cursor, restart, and security behavior.
+PTY terminal output always uses bounded memory and can optionally persist a bounded per-actor transcript. See [Terminal history](terminal-history.md) for opt-in persistence, retention, cursor, restart, and security behavior.
 
 ## Verification and Troubleshooting
 

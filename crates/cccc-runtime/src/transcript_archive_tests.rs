@@ -6,6 +6,7 @@ fn config(root: &std::path::Path, name: &str, max_bytes: usize) -> HistoryConfig
         path: root.join(format!("{name}.pty")),
         max_bytes,
         hot_bytes: 8,
+        persist: true,
     }
 }
 

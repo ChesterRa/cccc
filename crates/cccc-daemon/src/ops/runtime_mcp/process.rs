@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ffi::OsStr;
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -20,6 +21,12 @@ pub(super) fn run(
     let (program, args) = command
         .split_first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty MCP command"))?;
+    let inherited_path = std::env::var_os("PATH");
+    let search_path = env
+        .get("PATH")
+        .map(OsStr::new)
+        .or(inherited_path.as_deref());
+    let program = cccc_core::runtime_mcp::resolve_program_in(program, search_path, cwd);
     let mut process = Command::new(program);
     process
         .args(args)
@@ -96,7 +103,19 @@ fn terminate_process_group(child: &mut std::process::Child) {
     let _ = child.kill();
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn terminate_process_group(child: &mut std::process::Child) {
+    let pid = child.id().to_string();
+    let _ = Command::new("taskkill")
+        .args(["/PID", pid.as_str(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    let _ = child.kill();
+}
+
+#[cfg(all(not(unix), not(windows)))]
 fn terminate_process_group(child: &mut std::process::Child) {
     let _ = child.kill();
 }
@@ -104,6 +123,32 @@ fn terminate_process_group(child: &mut std::process::Child) {
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_relative_path_entries_from_the_child_working_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let bin = temp.path().join("bin");
+        std::fs::create_dir(&bin).expect("bin");
+        let executable = bin.join("runtime-mcp-fixture");
+        std::fs::write(&executable, b"#!/bin/sh\nprintf child-cwd\n").expect("fixture");
+        let mut permissions = executable.metadata().expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions).expect("permissions");
+        let env = BTreeMap::from([("PATH".into(), "bin".into())]);
+
+        let output = run(
+            &["runtime-mcp-fixture".into()],
+            temp.path(),
+            &env,
+            Duration::from_secs(2),
+        )
+        .expect("run fixture");
+
+        assert_eq!(output.code, 0);
+        assert_eq!(output.stdout, "child-cwd");
+    }
 
     #[test]
     fn timeout_terminates_descendants() {

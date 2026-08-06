@@ -20,6 +20,8 @@ fn cross_group_default_targets_the_unique_available_foreman() {
     );
 
     assert!(sent.ok, "{:?}", sent.error);
+    assert_eq!(sent.result["src_event"]["data"]["to"], json!(["user"]));
+    assert_eq!(sent.result["src_event"]["data"]["dst_to"], json!(["lead"]));
     assert_eq!(sent.result["dst_event"]["data"]["to"], json!(["lead"]));
 }
 
@@ -42,6 +44,8 @@ fn explicit_cross_group_recipient_overrides_the_default() {
     );
 
     assert!(sent.ok, "{:?}", sent.error);
+    assert_eq!(sent.result["src_event"]["data"]["to"], json!(["user"]));
+    assert_eq!(sent.result["src_event"]["data"]["dst_to"], json!(["peer"]));
     assert_eq!(sent.result["dst_event"]["data"]["to"], json!(["peer"]));
 }
 

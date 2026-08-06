@@ -13,6 +13,7 @@ const UNIX_INSTALLER_URL: &str = "https://chesterra.github.io/cccc/install.sh";
 #[cfg(windows)]
 const WINDOWS_INSTALLER_URL: &str = "https://chesterra.github.io/cccc/install.ps1";
 const INSTALL_MARKER: &str = ".cccc-standalone";
+const INSTALL_MARKER_VERSION: &str = "standalone-v1";
 
 pub fn run(args: UpdateArgs) -> Result<()> {
     let executable = std::env::current_exe().context("could not resolve the CCCC executable")?;
@@ -32,7 +33,9 @@ fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
     let install_dir = executable
         .parent()
         .context("CCCC executable has no parent directory")?;
-    if !install_dir.join(INSTALL_MARKER).is_file() {
+    let owned_by_standalone_installer = std::fs::read_to_string(install_dir.join(INSTALL_MARKER))
+        .is_ok_and(|value| value.trim() == INSTALL_MARKER_VERSION);
+    if !owned_by_standalone_installer {
         bail!(
             "this Rust executable is managed by another installation; update it through that installer"
         );
@@ -101,7 +104,14 @@ mod tests {
         std::fs::write(&executable, b"binary").expect("binary");
         assert!(standalone_install_dir(&executable).is_err());
 
-        std::fs::write(temp.path().join(INSTALL_MARKER), b"standalone-v1\n").expect("marker");
+        std::fs::write(temp.path().join(INSTALL_MARKER), b"foreign-v1\n").expect("foreign marker");
+        assert!(standalone_install_dir(&executable).is_err());
+
+        std::fs::write(
+            temp.path().join(INSTALL_MARKER),
+            format!("{INSTALL_MARKER_VERSION}\n"),
+        )
+        .expect("marker");
         assert_eq!(
             standalone_install_dir(&executable).expect("standalone install"),
             temp.path()

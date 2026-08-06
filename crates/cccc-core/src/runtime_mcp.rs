@@ -1,5 +1,6 @@
 use cccc_contracts::ActorRuntime;
-use std::path::Path;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 
 #[must_use]
 pub const fn is_auto_managed(runtime: ActorRuntime) -> bool {
@@ -53,6 +54,74 @@ pub fn from_name(value: &str) -> Option<ActorRuntime> {
 #[must_use]
 pub fn expected_command(executable: &Path) -> Vec<String> {
     vec![executable.to_string_lossy().into_owned(), "mcp".into()]
+}
+
+#[must_use]
+pub fn find_program(program: &str, search_path: Option<&OsStr>) -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    find_program_in(program, search_path, &cwd)
+}
+
+#[must_use]
+pub fn find_program_in(program: &str, search_path: Option<&OsStr>, cwd: &Path) -> Option<PathBuf> {
+    let cwd = if cwd.is_absolute() {
+        cwd.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(cwd)
+    };
+    let requested = Path::new(program);
+    if requested.is_absolute() {
+        return executable_candidate(requested);
+    }
+    if requested.components().count() > 1 {
+        return executable_candidate(&cwd.join(requested));
+    }
+    search_path
+        .map(std::env::split_paths)
+        .into_iter()
+        .flatten()
+        .find_map(|directory| {
+            let directory = if directory.is_absolute() {
+                directory
+            } else {
+                cwd.join(directory)
+            };
+            executable_candidate(&directory.join(requested))
+        })
+}
+
+#[must_use]
+pub fn resolve_program(program: &str, search_path: Option<&OsStr>) -> PathBuf {
+    find_program(program, search_path).unwrap_or_else(|| PathBuf::from(program))
+}
+
+#[must_use]
+pub fn resolve_program_in(program: &str, search_path: Option<&OsStr>, cwd: &Path) -> PathBuf {
+    find_program_in(program, search_path, cwd).unwrap_or_else(|| PathBuf::from(program))
+}
+
+fn executable_candidate(path: &Path) -> Option<PathBuf> {
+    #[cfg(windows)]
+    if path.extension().is_none() {
+        for extension in ["com", "exe", "bat", "cmd"] {
+            let candidate = path.with_extension(extension);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    if !path.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        if path.metadata().ok()?.permissions().mode() & 0o111 == 0 {
+            return None;
+        }
+    }
+    Some(path.to_path_buf())
 }
 
 #[must_use]
@@ -169,6 +238,87 @@ mod tests {
             command
                 .windows(2)
                 .any(|parts| parts == ["--env", "PYTHONUNBUFFERED=1"])
+        );
+    }
+
+    #[test]
+    fn resolves_a_runtime_command_from_an_explicit_search_path() {
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let filename = if cfg!(windows) {
+            "runtime.cmd"
+        } else {
+            "runtime"
+        };
+        let executable = temp.path().join(filename);
+        std::fs::write(&executable, b"runtime").expect("fixture");
+        #[cfg(unix)]
+        {
+            let mut permissions = executable.metadata().expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&executable, permissions).expect("permissions");
+        }
+        let search_path = std::env::join_paths([temp.path()]).expect("search path");
+
+        assert_eq!(
+            find_program("runtime", Some(&search_path)),
+            Some(executable)
+        );
+    }
+
+    #[test]
+    fn resolves_a_relative_search_path_from_the_child_working_directory() {
+        #[cfg(unix)]
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let child_cwd = temp.path().join("actor");
+        let relative_bin = child_cwd.join("bin");
+        std::fs::create_dir_all(&relative_bin).expect("relative bin");
+        let filename = if cfg!(windows) {
+            "runtime.cmd"
+        } else {
+            "runtime"
+        };
+        let executable = relative_bin.join(filename);
+        std::fs::write(&executable, b"runtime").expect("fixture");
+        #[cfg(unix)]
+        {
+            let mut permissions = executable.metadata().expect("metadata").permissions();
+            permissions.set_mode(0o755);
+            std::fs::set_permissions(&executable, permissions).expect("permissions");
+        }
+        let search_path = std::env::join_paths([Path::new("bin")]).expect("search path");
+
+        assert_eq!(
+            find_program_in("runtime", Some(&search_path), &child_cwd),
+            Some(executable)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_a_non_executable_file_earlier_on_the_search_path() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let blocked_dir = temp.path().join("blocked");
+        let executable_dir = temp.path().join("executable");
+        std::fs::create_dir_all(&blocked_dir).expect("blocked directory");
+        std::fs::create_dir_all(&executable_dir).expect("executable directory");
+        std::fs::write(blocked_dir.join("runtime"), b"not executable").expect("blocked file");
+        let executable = executable_dir.join("runtime");
+        std::fs::write(&executable, b"#!/bin/sh\n").expect("executable file");
+        let mut permissions = executable.metadata().expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions).expect("permissions");
+        let search_path = std::env::join_paths([blocked_dir, executable_dir]).expect("search path");
+
+        assert_eq!(
+            find_program("runtime", Some(&search_path)),
+            Some(executable)
         );
     }
 }

@@ -93,7 +93,24 @@ rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
 Version 0.4.x has a completely different command structure from 0.3.x. The old `init`, `run`, `bridge` commands are replaced with `attach`, `daemon`, `mcp`, etc.
 :::
 
-### Native Rust binary (recommended)
+### From PyPI (recommended)
+
+```bash
+python -m pip install -U cccc-pair
+```
+
+PyPI is the stable CCCC product distribution. Supported platform wheels contain
+both the Python implementation and a private, version-matched Rust executable;
+Python remains the initial default and `cccc rust` opts into the bundled engine.
+Other platforms receive the universal Python wheel.
+
+### Experimental standalone Rust preview
+
+::: warning Rust-only preview
+Use this optional channel only to evaluate deployment without Python. It has no
+Python fallback or implementation switching and is not yet the recommended
+replacement for the complete pip product.
+:::
 
 macOS or Linux:
 
@@ -108,9 +125,11 @@ irm https://chesterra.github.io/cccc/install.ps1 | iex
 ```
 
 The installer downloads a checksum-verified GitHub Release binary. It does not
-require a Rust or Python toolchain. During the `v0.4.34-rc2` validation period,
-the hosted installer is pinned to that release candidate. You can also select it
-explicitly with `CCCC_VERSION`:
+require a Rust or Python toolchain and refuses to overwrite an existing `cccc`
+command it does not own. Uninstall that command deliberately or choose another
+`CCCC_INSTALL_DIR` first. During the `v0.4.34-rc2` validation period, the hosted
+installer is pinned to that release candidate. You can also select it explicitly
+with `CCCC_VERSION`:
 
 ```bash
 curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.34-rc2 sh
@@ -122,16 +141,10 @@ irm https://chesterra.github.io/cccc/install.ps1 | iex
 Remove-Item Env:CCCC_VERSION
 ```
 
-### From PyPI
-
-```bash
-pip install -U cccc-pair
-```
-
 ### From TestPyPI (for explicit RC testing)
 
 ```bash
-pip install -U --pre \
+python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple \
   --extra-index-url https://pypi.org/simple \
   cccc-pair

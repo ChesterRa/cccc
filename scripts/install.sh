@@ -8,7 +8,10 @@ RELEASE_BASE_URL="${CCCC_RELEASE_BASE_URL:-https://github.com/$REPOSITORY/releas
 VERSION="${CCCC_VERSION:-}"
 INSTALL_DIR="${CCCC_INSTALL_DIR:-$HOME/.local/bin}"
 NO_MODIFY_PATH="${CCCC_NO_MODIFY_PATH:-0}"
+ALLOW_REPLACE_EXISTING="${CCCC_ALLOW_REPLACE_EXISTING:-0}"
 BINARIES="cccc"
+INSTALL_MARKER=".cccc-standalone"
+INSTALL_MARKER_VERSION="standalone-v1"
 
 case "$RELEASE_TAG_PREFIX" in
   @*) RELEASE_TAG_PREFIX=v ;;
@@ -215,6 +218,20 @@ if ! mkdir "$install_lock" 2>/dev/null; then
 fi
 lock_acquired=1
 printf '%s\n' "$$" > "$install_lock/pid"
+existing_cli="$INSTALL_DIR/cccc"
+marker_owned=0
+marker_path="$INSTALL_DIR/$INSTALL_MARKER"
+if [ -f "$marker_path" ]; then
+  marker_value=
+  if marker_value=$(cat "$marker_path" 2>/dev/null) &&
+    [ "$marker_value" = "$INSTALL_MARKER_VERSION" ]; then
+    marker_owned=1
+  fi
+fi
+if { [ -e "$existing_cli" ] || [ -L "$existing_cli" ]; } &&
+  [ "$marker_owned" -ne 1 ] && [ "$ALLOW_REPLACE_EXISTING" != "1" ]; then
+  fail "existing $existing_cli is managed by another installation; refusing to replace it. Remove it, choose a different CCCC_INSTALL_DIR, or set CCCC_ALLOW_REPLACE_EXISTING=1 to replace it deliberately"
+fi
 for binary in $BINARIES; do
   if [ -e "$INSTALL_DIR/$binary" ]; then
     printf '%s\n' "$binary" >> "$originals"
@@ -248,7 +265,7 @@ installed_version=$("$INSTALL_DIR/cccc" --version) || fail "installed cccc faile
 if [ "$daemon_was_running" -eq 1 ]; then
   "$INSTALL_DIR/cccc" daemon start >/dev/null || fail "the updated CCCC daemon could not restart"
 fi
-printf 'standalone-v1\n' > "$INSTALL_DIR/.cccc-standalone"
+printf '%s\n' "$INSTALL_MARKER_VERSION" > "$INSTALL_DIR/$INSTALL_MARKER"
 transaction_committed=1
 rm -rf "$backup_dir"
 
@@ -267,6 +284,16 @@ add_path_profile() {
   printf 'Added %s to PATH in %s.\n' "$INSTALL_DIR" "$profile_path"
 }
 
+bash_login_profile() {
+  if [ -e "$HOME/.bash_profile" ]; then
+    printf '%s\n' "$HOME/.bash_profile"
+  elif [ -e "$HOME/.bash_login" ]; then
+    printf '%s\n' "$HOME/.bash_login"
+  else
+    printf '%s\n' "$HOME/.profile"
+  fi
+}
+
 if [ "$path_ready" -eq 0 ] && [ "$NO_MODIFY_PATH" != "1" ] && [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
   path_line='case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
   case "${SHELL:-}" in
@@ -275,7 +302,7 @@ if [ "$path_ready" -eq 0 ] && [ "$NO_MODIFY_PATH" != "1" ] && [ "$INSTALL_DIR" =
       add_path_profile "$HOME/.zshrc"
       ;;
     */bash)
-      add_path_profile "$HOME/.bash_profile"
+      add_path_profile "$(bash_login_profile)"
       add_path_profile "$HOME/.bashrc"
       ;;
     *) printf 'Add %s to PATH, then open a new terminal.\n' "$INSTALL_DIR" ;;

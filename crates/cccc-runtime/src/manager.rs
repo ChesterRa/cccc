@@ -1,6 +1,8 @@
 use crate::RuntimeError;
 use crate::cancellation::wait_interruptibly;
-use crate::registry::{Key, discard_completed, lookup, remember_history, sessions, with_session};
+use crate::registry::{
+    Key, completed_history, discard_completed, lookup, remember_history, sessions, with_session,
+};
 use crate::session::{LaunchSpec, Session, SessionStatus};
 use crate::transcript_archive::HistoryConfig;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,7 +26,11 @@ fn start_inner(
 ) -> Result<SessionStatus, RuntimeError> {
     let key = (spec.group_id.clone(), spec.actor_id.clone());
     remove_exited_before_start(&key)?;
-    let mut session = Session::start_with_history(spec, history)?;
+    let history_cursor_floor = match completed_history(&key.0, &key.1)? {
+        Some(history) => history.end_cursor()?,
+        None => 0,
+    };
+    let mut session = Session::start_with_history(spec, history, history_cursor_floor)?;
     let status = session.status();
     let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
     if registry.contains_key(&key) {

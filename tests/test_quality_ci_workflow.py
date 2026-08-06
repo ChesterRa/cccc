@@ -186,7 +186,7 @@ def test_schedule_runs_serial_full_python_suites_at_both_support_endpoints() -> 
     assert " -n " not in runs
 
 
-def test_release_builds_on_314_without_installed_implementation_smoke_jobs() -> None:
+def test_release_builds_on_314_and_smokes_installed_native_wheels() -> None:
     jobs = _release_workflow()["jobs"]
 
     verify_setup = next(
@@ -204,11 +204,10 @@ def test_release_builds_on_314_without_installed_implementation_smoke_jobs() -> 
     for command in (
         "python -m pip install --force-reinstall",
         "cccc rust version",
-        "cccc rust --version",
         "cccc python version",
-        "cccc python doctor",
     ):
-        assert command not in release_runs
+        assert command in release_runs
+    assert "cccc python doctor" not in release_runs
 
     interop_step = next(
         step
@@ -247,13 +246,23 @@ def test_one_tag_publishes_pypi_and_matching_standalone_rust_assets() -> None:
     assert rust_candidate["on"]["push"]["tags"] == ["v*"]
     assert "workflow_dispatch" in rust_candidate["on"]
     assert rust_candidate["jobs"]["publish"]["if"] == "github.event_name == 'push'"
-    assert "verify" not in rust_candidate["jobs"]
-    assert rust_candidate["jobs"]["publish"]["needs"] == "prepare"
+    verify = rust_candidate["jobs"]["verify"]
+    assert verify["needs"] == "prepare"
+    assert {item["target"] for item in verify["strategy"]["matrix"]["include"]} == {
+        "x86_64-unknown-linux-gnu",
+        "x86_64-pc-windows-msvc",
+    }
+    verify_runs = _runs(verify)
+    assert "scripts/tests/verify_release_unix.sh" in verify_runs
+    assert "scripts/tests/verify_release_windows.ps1" in verify_runs
+    assert rust_candidate["jobs"]["publish"]["needs"] == "verify"
     publish_runs = _runs(rust_candidate["jobs"]["publish"])
     assert "scripts/check_release_versions.py --tag" in publish_runs
     assert "gh release create" in publish_runs
     assert "gh release upload" in publish_runs
     assert "--prerelease" in publish_runs
+    assert "experimental standalone Rust preview" in publish_runs
+    assert "recommended stable distribution remains cccc-pair from PyPI" in publish_runs
 
 
 def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:

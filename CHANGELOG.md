@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ## [Unreleased]
 
+### Changed
+- **Distribution guidance now keeps PyPI as the stable, recommended product path.** The standalone Rust binary is presented consistently as an experimental Rust-only preview without Python fallback or implementation switching, including its GitHub Release metadata.
+
+### Fixed
+- **Experimental standalone installers no longer overwrite a public command owned by another installation.** Unix and Windows require the exact standalone ownership marker unless replacement is explicitly requested, and the Rust self-updater validates the same marker contents.
+- **Rust terminal history now keeps privacy and lifecycle boundaries intact.** Cross-actor reads obey each Group's transcript visibility, durable capture remains opt-in like Python, archive failures fall back to bounded memory without blocking actor startup, and a late reader from an old PTY session cannot overlap or hide the replacement session.
+- **Cross-Group source messages again use the canonical origin-side audience and destination metadata.** Source ledger events target the local user and carry resolved remote recipients in `dst_to`, while destination events retain their normal `to` audience and legacy Web projections remain readable.
+- **Installer and runtime setup path discovery is safer across shells and platforms.** Bash installation reuses the login profile Bash would already read instead of creating a shadowing `.bash_profile`; Rust MCP preflight honors inherited runtime config directories, resolves relative `PATH` entries from the actor working directory, supports Windows command shims, and terminates timed-out Windows command trees.
+
 ## [0.4.34-rc2] — 2026-08-06
 
 ### Added
@@ -14,7 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **Cline is now a first-class PTY runtime.** Runtime discovery, actor configuration, MCP installation and repair, Web metadata, defaults, diagnostics, documentation, and both Python and Rust tests cover the Cline CLI.
 
 ### Changed
-- **Release publication no longer runs installed Python/Rust implementation smoke jobs.** Builds retain version, package-structure, platform-tag, repaired-dependency, checksum, test-suite, interoperability, and complete-release-set gates without repeatedly installing dependencies and launching both implementations on every release platform.
+- **Release publication keeps targeted final-artifact smoke coverage without a duplicate floor job.** Native wheels are installed and switched on their build platforms, standalone binaries execute on each native host, and final installer candidates run on Linux and Windows alongside the existing structure, checksum, test-suite, interoperability, and complete-release-set gates.
 - **Standalone Rust installations now own their update path.** `cccc update` reuses the stable website installer, including daemon shutdown, checksum validation, rollback, and PATH-safe replacement; wheel-private Rust payloads remain owned by the Python product installer.
 - **Implementation selection and updates now have one owner.** `cccc rust` and `cccc python` switch persistently without creating competing commands on `PATH`; `cccc update` replaces the complete pip product, and Rust crates are no longer independently publishable.
 - **The global Web event stream is now a routing signal rather than a content channel.** It carries only event identity, type, time, and Group identity; clients continue to read complete events from the authorized per-Group ledger stream.

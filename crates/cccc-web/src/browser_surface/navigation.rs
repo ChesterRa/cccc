@@ -5,11 +5,13 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 
 const NAVIGATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+const PREVIOUS_DOCUMENT_MARKER: &str = "__cccc_browser_surface_navigation_pending_v1";
 
 #[derive(Deserialize)]
 struct DocumentState {
     document_uri: String,
     ready_state: String,
+    previous_document: bool,
 }
 
 pub(super) async fn goto_dom_content_loaded(page: &Page, url: &str) -> Result<()> {
@@ -18,9 +20,12 @@ pub(super) async fn goto_dom_content_loaded(page: &Page, url: &str) -> Result<()
         .await
         .context("listen for DOMContentLoaded")?;
     let encoded_url = serde_json::to_string(url)?;
-    page.evaluate(format!("window.location.assign({encoded_url})"))
-        .await
-        .context("start browser navigation")?;
+    let encoded_marker = serde_json::to_string(PREVIOUS_DOCUMENT_MARKER)?;
+    page.evaluate(format!(
+        "globalThis[{encoded_marker}] = true; window.location.assign({encoded_url})"
+    ))
+    .await
+    .context("start browser navigation")?;
     tokio::time::timeout(NAVIGATION_TIMEOUT, async {
         loop {
             events
@@ -28,6 +33,9 @@ pub(super) async fn goto_dom_content_loaded(page: &Page, url: &str) -> Result<()
                 .await
                 .context("browser closed before DOMContentLoaded")?;
             let state = document_state(page).await?;
+            if state.previous_document {
+                continue;
+            }
             if state.document_uri.starts_with("chrome-error://") {
                 bail!("Chromium loaded an internal network error page");
             }
@@ -43,9 +51,10 @@ pub(super) async fn goto_dom_content_loaded(page: &Page, url: &str) -> Result<()
 }
 
 async fn document_state(page: &Page) -> Result<DocumentState> {
-    page.evaluate(
-        "({ document_uri: document.documentURI || '', ready_state: document.readyState || '' })",
-    )
+    let marker = serde_json::to_string(PREVIOUS_DOCUMENT_MARKER)?;
+    page.evaluate(format!(
+        "({{ document_uri: document.documentURI || '', ready_state: document.readyState || '', previous_document: globalThis[{marker}] === true }})"
+    ))
     .await
     .context("inspect loaded browser document")?
     .into_value::<DocumentState>()

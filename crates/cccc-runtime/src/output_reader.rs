@@ -29,10 +29,13 @@ impl OutputReader {
         })
     }
 
-    pub(crate) fn finish(mut self) -> Result<(), RuntimeError> {
+    pub(crate) fn finish(mut self) -> Result<bool, RuntimeError> {
         match self.finished.recv_timeout(OUTPUT_DRAIN_TIMEOUT) {
-            Ok(()) | Err(RecvTimeoutError::Disconnected) => self.join(),
-            Err(RecvTimeoutError::Timeout) => Ok(()),
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => {
+                self.join()?;
+                Ok(true)
+            }
+            Err(RecvTimeoutError::Timeout) => Ok(false),
         }
     }
 
@@ -133,6 +136,7 @@ mod tests {
             path: root.join("session.pty"),
             max_bytes: 1024,
             hot_bytes: 1024,
+            persist: true,
         }))
         .expect("history");
         std::fs::remove_dir_all(&root).expect("remove archive directory");

@@ -9,6 +9,8 @@ struct TranscriptSegment {
     path: PathBuf,
     start: u64,
     end: u64,
+    is_latest: bool,
+    modified: Option<std::time::SystemTime>,
 }
 
 pub fn read_latest_page(
@@ -81,14 +83,39 @@ fn segments(actor_dir: &Path) -> Result<Vec<TranscriptSegment>, RuntimeError> {
             continue;
         }
         match transcript_bounds(&path) {
-            Ok((start, end)) => segments.push(TranscriptSegment { path, start, end }),
+            Ok((start, end)) => segments.push(TranscriptSegment {
+                modified: path.metadata().and_then(|value| value.modified()).ok(),
+                is_latest: path == latest,
+                path,
+                start,
+                end,
+            }),
             Err(error) if path == latest => return Err(error.into()),
             Err(_) => {}
         }
     }
     segments.sort_by(|left, right| {
-        (left.start, left.end, &left.path).cmp(&(right.start, right.end, &right.path))
+        (left.start, left.is_latest, left.modified, &left.path).cmp(&(
+            right.start,
+            right.is_latest,
+            right.modified,
+            &right.path,
+        ))
     });
+    let mut distinct = Vec::<TranscriptSegment>::with_capacity(segments.len());
+    for segment in segments {
+        if let Some(previous) = distinct.last_mut()
+            && previous.start == segment.start
+        {
+            *previous = segment;
+            continue;
+        }
+        distinct.push(segment);
+    }
+    let mut segments = distinct;
+    for index in 0..segments.len().saturating_sub(1) {
+        segments[index].end = segments[index].end.min(segments[index + 1].start);
+    }
     if segments.is_empty() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,

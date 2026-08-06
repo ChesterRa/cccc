@@ -3,6 +3,8 @@
 use cccc_contracts::RunnerKind;
 use cccc_runtime::{HistoryConfig, LaunchSpec};
 use std::collections::BTreeMap;
+use std::io::Write;
+use std::path::Path;
 use std::time::Duration;
 
 fn launch(temp: &tempfile::TempDir, group_id: &str, actor_id: &str) -> HistoryConfig {
@@ -10,6 +12,7 @@ fn launch(temp: &tempfile::TempDir, group_id: &str, actor_id: &str) -> HistoryCo
         path: temp.path().join("terminal").join("session.pty"),
         max_bytes: 1024 * 1024,
         hot_bytes: 32,
+        persist: true,
     };
     cccc_runtime::start_with_history(
         LaunchSpec {
@@ -71,6 +74,7 @@ fn hot_snapshot_is_bounded_while_disk_history_keeps_the_full_limit() {
         path: temp.path().join("terminal").join("hot.pty"),
         max_bytes: 1024 * 1024,
         hot_bytes: 16,
+        persist: true,
     };
     cccc_runtime::start_with_history(
         LaunchSpec {
@@ -125,6 +129,7 @@ fn restarted_actor_keeps_prior_history_and_continuous_cursors() {
                 path: actor_dir.join(format!("{name}.pty")),
                 max_bytes: 1024 * 1024,
                 hot_bytes: 1024,
+                persist: true,
             },
         )
         .expect("start")
@@ -152,4 +157,27 @@ fn restarted_actor_keeps_prior_history_and_continuous_cursors() {
     assert_eq!(hot.start_cursor, 5);
     assert_eq!(hot.end_cursor, 12);
     cccc_runtime::stop(&group_id, actor_id).expect("stop second");
+}
+
+#[test]
+fn a_new_session_boundary_wins_over_late_output_from_the_previous_session() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let actor_dir = temp.path().join("terminal");
+    std::fs::create_dir_all(&actor_dir).expect("actor dir");
+    write_transcript(&actor_dir.join("old.pty"), 0, b"early-oldlate-old");
+    write_transcript(&actor_dir.join("new.pty"), 9, b"new-session");
+    std::fs::write(actor_dir.join("latest"), b"new.pty").expect("latest");
+
+    let page = cccc_runtime::read_latest_page(&actor_dir, None, 1024).expect("history");
+
+    assert_eq!(page.data, "early-oldnew-session");
+    assert_eq!(page.start_cursor, 0);
+    assert_eq!(page.end_cursor, 20);
+}
+
+fn write_transcript(path: &Path, start: u64, data: &[u8]) {
+    let mut file = std::fs::File::create(path).expect("transcript");
+    file.write_all(b"CCCCPTY1").expect("magic");
+    file.write_all(&start.to_le_bytes()).expect("cursor");
+    file.write_all(data).expect("data");
 }

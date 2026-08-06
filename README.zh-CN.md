@@ -67,25 +67,20 @@ CCCC 只需一条安装命令，不需要数据库、不需要消息队列、不
 ### 安装
 
 ```bash
-# macOS / Linux 原生 Rust 二进制（无需 Rust 或 Python 环境）
-curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
-
-# Windows PowerShell（无需 Rust 或 Python 环境）
-irm https://chesterra.github.io/cccc/install.ps1 | iex
-
-# 迁移期继续维护的 Python 发行版
-pip install -U cccc-pair
+# 稳定的完整产品发行版（推荐；要求 Python 3.11+）
+python -m pip install -U cccc-pair
 
 # RC 通道（TestPyPI）
-pip install -U --pre \
+python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
 
-> 原生安装支持 Linux x86-64、Intel/Apple Silicon macOS 和 Windows x86-64。
-> Python 发行版要求 Python 3.11+，其受支持平台 wheel 仍会包含版本严格匹配的
-> 私有 Rust 实现。
+> PyPI 包是当前稳定且推荐的 CCCC 发行方式。在 Linux x86-64、Intel/Apple
+> Silicon macOS 和 Windows x86-64 上，对应平台 wheel 会同时包含 Python 与
+> 版本严格匹配的 Rust 实现。如果要专门测试无 Python 的 Rust-only 部署，可选用
+> 下文的[实验性独立 Rust 预览版](#实验性独立-rust-预览版)。
 
 ### 升级
 
@@ -93,9 +88,9 @@ pip install -U --pre \
 cccc update
 ```
 
-如需先查看检测到的安装类型和升级来源，可使用 `cccc update --check`。原生安装
-从固定 GitHub Pages 安装器升级；pip 安装则从检测到的 PyPI 通道替换完整的
-`cccc-pair` 产品。两种路径都会先停止当前 Web/daemon 进程对，再替换已安装文件。
+如需先查看检测到的安装类型和升级来源，可使用 `cccc update --check`。推荐的 pip
+安装会从检测到的 PyPI 通道更新完整的 `cccc-pair` 产品；实验性独立安装则通过
+GitHub Pages 安装器更新。两种路径都会先停止当前 Web/daemon 进程对，再替换文件。
 
 ### 启动
 
@@ -105,7 +100,8 @@ cccc
 
 打开 **http://127.0.0.1:8848** — 默认会一起拉起 daemon 和本地 Web UI。
 
-当前默认实现仍是 Python。可以持久切换，也可以在切换后立即执行命令：
+在推荐的 pip 发行版中，当前默认实现仍是 Python。可以持久切换，也可以在切换后
+立即执行命令：
 
 ```bash
 cccc status            # 查看已选、正在运行和可用的实现
@@ -117,6 +113,8 @@ cccc rust doctor        # 选择 Rust，然后执行 doctor
 切换属于显式生命周期操作：CCCC 会先校验目标载荷，再停止当前 Web/daemon，
 且绝不会悄悄回退到另一实现。各 agent runtime 的 MCP 配置始终指向公开的
 `cccc` 启动器，因此之后切换实现时无需逐个重配。
+
+实验性独立发行版只包含 Rust，因此其中不会提供 `cccc python` 或实现切换。
 
 ### 建立多智能体协作组
 
@@ -485,7 +483,18 @@ CCCC 不替代你的 agent —— 它是让它们成为一个团队的那一层�
 
 ## 安装选项
 
-### 原生 Rust 二进制（推荐）
+### pip（稳定、推荐）
+
+```bash
+python -m pip install -U cccc-pair
+```
+
+这是完整且受支持的产品发行版。在 Linux x86-64、Intel/Apple Silicon macOS 和
+Windows x86-64 上，pip 会选择同时包含 Python 实现和版本严格匹配的私有 Rust
+可执行文件的平台 wheel。其他平台使用通用 Python wheel；`cccc status` 会明确
+显示 Rust 不可用，而不会假装切换成功。
+
+### 实验性独立 Rust 预览版
 
 ```bash
 # macOS / Linux
@@ -495,30 +504,23 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 irm https://chesterra.github.io/cccc/install.ps1 | iex
 ```
 
-安装器会从 GitHub Releases 下载并校验二进制，不要求本机安装 Rust 或 Python。
-后续直接运行 `cccc update` 即可通过同一安装器升级。
-
-### pip（稳定 Python 发行版）
-
-```bash
-pip install -U cccc-pair
-```
+这个可选通道只适合评估无 Python 的 Rust-only 部署。它会从 GitHub Releases
+下载并校验二进制，也可通过同一安装器执行 `cccc update`，但不具备 Python
+回退或实现切换能力，目前不作为 pip 产品的推荐替代品。安装器不会覆盖不属于它的
+现有 `cccc` 命令；请先有意卸载原命令，或改用其它 `CCCC_INSTALL_DIR`。
 
 当前托管的原生安装器固定安装 `v0.4.34-rc2` 候选版本。
 
 ### pip（RC 版，TestPyPI）
 
 ```bash
-pip install -U --pre \
+python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
 
-在 Linux x86-64、Intel/Apple Silicon macOS 和 Windows x86-64 上，pip 会选择
-带私有 Rust 可执行文件的平台 wheel。其他平台使用通用 Python wheel；
-`cccc status` 会明确显示 Rust 不可用，而不会假装切换成功。Cargo 安装仅保留
-给工作区开发使用，不再作为第二套受支持的终端用户发行版。
+Cargo 安装仅保留给工作区开发使用，不作为受支持的终端用户发行方式。
 
 ### 从源码安装
 

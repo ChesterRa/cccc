@@ -68,25 +68,21 @@ CCCC installs with one command and needs no database, message broker, or Docker.
 ### Install
 
 ```bash
-# Native Rust binary on macOS or Linux (no Rust or Python toolchain required)
-curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
-
-# Windows PowerShell (no Rust or Python toolchain required)
-irm https://chesterra.github.io/cccc/install.ps1 | iex
-
-# Python distribution, maintained during the migration period
-pip install -U cccc-pair
+# Stable product distribution (recommended; Python 3.11+)
+python -m pip install -U cccc-pair
 
 # RC channel (TestPyPI)
-pip install -U --pre \
+python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
 
-> The native installer supports Linux x86-64, Intel/Apple Silicon macOS, and
-> Windows x86-64. The Python distribution requires Python 3.11+ and its supported
-> platform wheels also contain the matching private Rust implementation.
+> The PyPI package is the stable, recommended CCCC distribution. On Linux x86-64,
+> Intel/Apple Silicon macOS, and Windows x86-64, its platform wheel includes the
+> version-matched Rust implementation alongside Python. An optional
+> [experimental standalone Rust preview](#experimental-standalone-rust-preview)
+> is available for Rust-only deployment testing.
 
 ### Upgrade
 
@@ -95,9 +91,9 @@ cccc update
 ```
 
 Use `cccc update --check` to inspect the detected installation and update source.
-Native installs update from the stable GitHub Pages installer; pip installs update
-the complete `cccc-pair` product from their detected PyPI channel. Both paths stop
-the active Web/daemon pair before replacing installed files.
+The recommended pip install updates the complete `cccc-pair` product from its
+detected PyPI channel. Experimental standalone installs update through the GitHub
+Pages installer. Both paths stop the active Web/daemon pair before replacing files.
 
 ### Launch
 
@@ -107,8 +103,8 @@ cccc
 
 Open **http://127.0.0.1:8848** — by default, CCCC brings up the daemon and the local Web UI together.
 
-The Python implementation is the current default. Switch persistently, or switch
-and run a command in one step:
+In the recommended pip distribution, Python is the current default. Switch
+persistently, or switch and run a command in one step:
 
 ```bash
 cccc status            # selected, running, and available implementations
@@ -121,6 +117,9 @@ Switching is an explicit lifecycle operation: CCCC validates the target payload,
 stops the active Web/daemon pair, and never silently falls back to the other
 implementation. Agent runtime MCP configurations keep pointing at the stable
 public `cccc` launcher, so they follow later switches automatically.
+
+The experimental standalone distribution contains Rust only, so `cccc python`
+and implementation switching are intentionally unavailable there.
 
 ### Create a multi-agent group
 
@@ -488,7 +487,19 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 
 ## Installation Options
 
-### Native Rust binary (recommended)
+### pip (stable, recommended)
+
+```bash
+python -m pip install -U cccc-pair
+```
+
+This is the complete supported product distribution. On Linux x86-64,
+Intel/Apple Silicon macOS, and Windows x86-64, pip selects a platform wheel that
+contains both the Python implementation and a private, version-matched Rust
+executable. Other platforms receive the universal Python wheel; `cccc status`
+reports Rust as unavailable instead of pretending to switch.
+
+### Experimental standalone Rust preview
 
 ```bash
 # macOS / Linux
@@ -498,31 +509,26 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 irm https://chesterra.github.io/cccc/install.ps1 | iex
 ```
 
-This downloads a checksum-verified binary from GitHub Releases. Rust and Python
-are not required. Run `cccc update` to upgrade through the same installer.
-
-### pip (stable Python distribution)
-
-```bash
-pip install -U cccc-pair
-```
+Use this optional channel only when evaluating a Rust-only deployment without
+Python. It downloads a checksum-verified binary from GitHub Releases and updates
+through the same installer, but it has no Python fallback or implementation
+switching and is not yet the recommended replacement for the pip product. The
+installer refuses to overwrite an existing `cccc` command that it does not own;
+uninstall that command deliberately or choose another `CCCC_INSTALL_DIR` first.
 
 The hosted native installer currently pins the `v0.4.34-rc2` release candidate.
 
 ### pip (RC from TestPyPI)
 
 ```bash
-pip install -U --pre \
+python -m pip install -U --pre \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
   cccc-pair
 ```
 
-On Linux x86-64, Intel/Apple Silicon macOS, and Windows x86-64, pip selects a
-platform wheel containing the private Rust executable. Other platforms receive
-the universal Python wheel; `cccc status` reports Rust as unavailable instead of
-pretending to switch. Cargo installation is retained for workspace development,
-not as a second supported end-user distribution.
+Cargo installation is retained for workspace development, not as a supported
+end-user distribution.
 
 ### From source
 

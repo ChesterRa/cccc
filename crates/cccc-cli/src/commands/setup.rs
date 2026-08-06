@@ -148,7 +148,9 @@ fn setup_one(
 }
 
 fn run_command(command: &[String], cwd: &Path, home: &HomeLayout) -> Result<std::process::Output> {
-    Command::new(&command[0])
+    let inherited_path = std::env::var_os("PATH");
+    let program = cccc_core::runtime_mcp::resolve_program(&command[0], inherited_path.as_deref());
+    Command::new(program)
         .args(&command[1..])
         .current_dir(cwd)
         .env("CCCC_HOME", home.root())

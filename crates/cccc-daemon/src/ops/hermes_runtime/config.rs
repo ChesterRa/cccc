@@ -92,10 +92,8 @@ pub(super) fn cccc_command() -> Vec<String> {
 }
 
 pub(super) fn find_executable(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
+    let path = std::env::var_os("PATH");
+    cccc_core::runtime_mcp::find_program(name, path.as_deref())
 }
 
 #[cfg(test)]

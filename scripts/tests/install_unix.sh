@@ -57,6 +57,54 @@ make_release() {
 
 version=0.0.0-test
 make_release "$version"
+
+foreign_install="$TMP_ROOT/foreign-installed"
+mkdir -p "$foreign_install"
+cat > "$foreign_install/cccc" <<'EOF'
+#!/usr/bin/env sh
+exit 1
+EOF
+chmod 755 "$foreign_install/cccc"
+printf 'foreign-v1\n' > "$foreign_install/.cccc-standalone"
+foreign_hash=$(checksum "$foreign_install/cccc")
+if HOME="$TMP_ROOT/foreign-home" \
+  CCCC_VERSION="$version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$foreign_install" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh" 2> "$TMP_ROOT/foreign-error"; then
+  echo "installer replaced a command owned by another installation" >&2
+  exit 1
+fi
+grep -Fq 'managed by another installation; refusing to replace it' "$TMP_ROOT/foreign-error"
+[[ "$(checksum "$foreign_install/cccc")" == "$foreign_hash" ]]
+grep -Fxq 'foreign-v1' "$foreign_install/.cccc-standalone"
+
+printf 'foreign-v1\nstandalone-v1\n' > "$foreign_install/.cccc-standalone"
+malformed_marker_hash=$(checksum "$foreign_install/.cccc-standalone")
+if HOME="$TMP_ROOT/foreign-home" \
+  CCCC_VERSION="$version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$foreign_install" \
+  CCCC_NO_MODIFY_PATH=1 \
+  sh "$ROOT_DIR/scripts/install.sh" 2> "$TMP_ROOT/malformed-marker-error"; then
+  echo "installer accepted a malformed standalone ownership marker" >&2
+  exit 1
+fi
+grep -Fq 'managed by another installation; refusing to replace it' "$TMP_ROOT/malformed-marker-error"
+[[ "$(checksum "$foreign_install/cccc")" == "$foreign_hash" ]]
+[[ "$(checksum "$foreign_install/.cccc-standalone")" == "$malformed_marker_hash" ]]
+
+HOME="$TMP_ROOT/foreign-home" \
+CCCC_VERSION="$version" \
+CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+CCCC_INSTALL_DIR="$foreign_install" \
+CCCC_NO_MODIFY_PATH=1 \
+CCCC_ALLOW_REPLACE_EXISTING=1 \
+sh "$ROOT_DIR/scripts/install.sh"
+[[ "$("$foreign_install/cccc" --version)" == "cccc $version" ]]
+grep -Fxq 'standalone-v1' "$foreign_install/.cccc-standalone"
+
 sed "s/@CCCC_VERSION@/$version/g" "$ROOT_DIR/scripts/install.sh" > "$TMP_ROOT/versioned-install.sh"
 HOME="$TMP_ROOT/versioned-home" \
 SHELL=/bin/zsh \
@@ -65,6 +113,8 @@ sh "$TMP_ROOT/versioned-install.sh"
 [[ "$("$TMP_ROOT/versioned-home/.local/bin/cccc" --version)" == "cccc $version" ]]
 grep -Fxq 'standalone-v1' "$TMP_ROOT/versioned-home/.local/bin/.cccc-standalone"
 
+mkdir -p "$TMP_ROOT/home with space"
+printf '# existing login profile\n' > "$TMP_ROOT/home with space/.profile"
 HOME="$TMP_ROOT/home with space" \
 SHELL=/bin/bash \
 CCCC_VERSION="$version" \
@@ -74,13 +124,14 @@ sh "$ROOT_DIR/scripts/install.sh" > "$TMP_ROOT/bash-install.out"
 test -x "$TMP_ROOT/home with space/.local/bin/cccc"
 grep -Fxq 'standalone-v1' "$TMP_ROOT/home with space/.local/bin/.cccc-standalone"
 [[ "$("$TMP_ROOT/home with space/.local/bin/cccc" --version)" == "cccc $version" ]]
-for bash_profile in .bash_profile .bashrc; do
+for bash_profile in .profile .bashrc; do
   test "$(grep -Fc '# CCCC' "$TMP_ROOT/home with space/$bash_profile")" -eq 1
   grep -Fq 'case ":$PATH:" in *":$HOME/.local/bin:"*)' "$TMP_ROOT/home with space/$bash_profile"
 done
+test ! -e "$TMP_ROOT/home with space/.bash_profile"
 grep -Fq 'export PATH="$HOME/.local/bin:$PATH"; hash -r' "$TMP_ROOT/bash-install.out"
 
-login_profile_before=$(checksum "$TMP_ROOT/home with space/.bash_profile")
+login_profile_before=$(checksum "$TMP_ROOT/home with space/.profile")
 interactive_profile_before=$(checksum "$TMP_ROOT/home with space/.bashrc")
 rollback_version=0.0.2-test
 make_release "$rollback_version" valid 9.9.9
@@ -93,7 +144,7 @@ if HOME="$TMP_ROOT/home with space" \
   exit 1
 fi
 [[ "$("$TMP_ROOT/home with space/.local/bin/cccc" --version)" == "cccc $version" ]]
-[[ "$(checksum "$TMP_ROOT/home with space/.bash_profile")" == "$login_profile_before" ]]
+[[ "$(checksum "$TMP_ROOT/home with space/.profile")" == "$login_profile_before" ]]
 [[ "$(checksum "$TMP_ROOT/home with space/.bashrc")" == "$interactive_profile_before" ]]
 
 zsh_home="$TMP_ROOT/zsh-home"
@@ -161,6 +212,7 @@ make_release "$lock_version"
 lock_install="$TMP_ROOT/lock-installed"
 mkdir -p "$lock_install/.cccc-install.lock"
 printf 'old binary\n' > "$lock_install/cccc"
+printf 'standalone-v1\n' > "$lock_install/.cccc-standalone"
 lock_hash=$(checksum "$lock_install/cccc")
 if HOME="$TMP_ROOT/lock-home" \
   CCCC_VERSION="$lock_version" \
@@ -252,6 +304,7 @@ fi
 exit 1
 EOF
 chmod 755 "$restart_install/cccc"
+printf 'standalone-v1\n' > "$restart_install/.cccc-standalone"
 restart_hash=$(checksum "$restart_install/cccc")
 if HOME="$TMP_ROOT/restart-home" \
   CCCC_VERSION="$restart_version" \
@@ -288,7 +341,7 @@ SHELL=/bin/bash \
 CCCC_VERSION="$version" \
 CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
 sh "$ROOT_DIR/scripts/install.sh"
-for bash_profile in .bash_profile .bashrc; do
+for bash_profile in .profile .bashrc; do
   test "$(grep -Fc '# CCCC' "$TMP_ROOT/home with space/$bash_profile")" -eq 1
 done
 

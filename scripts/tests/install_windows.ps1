@@ -100,6 +100,27 @@ try {
   $versionedInstaller = Join-Path $tempRoot "install.ps1"
   (Get-Content -LiteralPath (Join-Path $rootDir "scripts\install.ps1") -Raw).Replace("@CCCC_VERSION@", $realVersion) |
     Set-Content -LiteralPath $versionedInstaller
+
+  $foreignInstallDir = Join-Path $tempRoot "foreign-installed"
+  New-Item -ItemType Directory -Force -Path $foreignInstallDir | Out-Null
+  $foreignCli = Join-Path $foreignInstallDir "cccc.exe"
+  Set-Content -LiteralPath $foreignCli -Value "foreign binary" -Encoding Ascii
+  Set-Content -LiteralPath (Join-Path $foreignInstallDir ".cccc-standalone") -Value "foreign-v1" -Encoding Ascii
+  $foreignHash = (Get-FileHash -LiteralPath $foreignCli).Hash
+  $failed = $false
+  try {
+    & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $foreignInstallDir -NoModifyPath
+  } catch {
+    $failed = $_.Exception.Message -like "*managed by another installation; refusing to replace it*"
+  }
+  if (-not $failed) { throw "installer replaced a command owned by another installation" }
+  if ((Get-FileHash -LiteralPath $foreignCli).Hash -ne $foreignHash) {
+    throw "installer modified a command owned by another installation"
+  }
+  if ((Get-Content -LiteralPath (Join-Path $foreignInstallDir ".cccc-standalone") -Raw).Trim() -ne "foreign-v1") {
+    throw "installer replaced a foreign ownership marker"
+  }
+
   $versionedInstallDir = Join-Path $tempRoot "versioned-installed"
   & $versionedInstaller -InstallDir $versionedInstallDir -NoModifyPath
   if ((& (Join-Path $versionedInstallDir "cccc.exe") --version | Out-String).Trim() -ne "cccc $realVersion") {

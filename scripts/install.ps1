@@ -20,6 +20,9 @@ $releaseBaseUrl = if ($env:CCCC_RELEASE_BASE_URL) {
   "https://github.com/$repository/releases"
 }
 $NoModifyPath = $NoModifyPath -or $env:CCCC_NO_MODIFY_PATH -eq "1"
+$allowReplaceExisting = $env:CCCC_ALLOW_REPLACE_EXISTING -eq "1"
+$installMarker = ".cccc-standalone"
+$installMarkerVersion = "standalone-v1"
 if (-not $InstallDir) {
   $InstallDir = Join-Path $env:LOCALAPPDATA "CCCC\bin"
 }
@@ -192,6 +195,22 @@ try {
     throw "Another installation is using $InstallDir (lock: $lockPath)"
   }
 
+  $existingCli = Join-Path $InstallDir "cccc.exe"
+  $markerPath = Join-Path $InstallDir $installMarker
+  $ownedByStandaloneInstaller = $false
+  if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
+    try {
+      $ownedByStandaloneInstaller =
+        (Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop).Trim() -eq $installMarkerVersion
+    } catch {
+      $ownedByStandaloneInstaller = $false
+    }
+  }
+  if ((Test-Path -LiteralPath $existingCli) -and
+      -not $ownedByStandaloneInstaller -and -not $allowReplaceExisting) {
+    throw "Existing $existingCli is managed by another installation; refusing to replace it. Remove it, choose a different CCCC_INSTALL_DIR, or set CCCC_ALLOW_REPLACE_EXISTING=1 to replace it deliberately"
+  }
+
   foreach ($binary in $binaries) {
     if (Test-Path -LiteralPath (Join-Path $InstallDir $binary)) {
       $originals += $binary
@@ -231,7 +250,7 @@ try {
     & (Join-Path $InstallDir "cccc.exe") daemon start *> $null
     if ($LASTEXITCODE -ne 0) { throw "The updated CCCC daemon could not restart" }
   }
-  Set-Content -LiteralPath (Join-Path $InstallDir ".cccc-standalone") -Value "standalone-v1" -Encoding Ascii
+  Set-Content -LiteralPath $markerPath -Value $installMarkerVersion -Encoding Ascii
   $transactionCommitted = $true
   Remove-Item -LiteralPath $backupDir -Recurse -Force
 

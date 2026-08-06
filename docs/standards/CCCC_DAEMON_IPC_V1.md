@@ -3366,6 +3366,25 @@ Result:
 `since=end_cursor`; the stream must replay output produced after the snapshot so the transition is
 gap-free.
 
+#### `terminal_snapshot`
+
+Return a bounded ANSI screen snapshot and the exact raw cursor boundary used to render it. This is
+the native Web terminal's attach-time operation; callers still use `terminal_since` for subsequent
+raw output.
+
+Args:
+```ts
+{ group_id: string; actor_id: string; by?: string; limit_bytes?: number }
+```
+
+Result:
+```ts
+{ data: string; start_cursor: number; end_cursor: number }
+```
+
+The implementation MUST apply the same group transcript visibility policy as `terminal_tail` and
+`terminal_history`.
+
 #### `terminal_history`
 
 Args:

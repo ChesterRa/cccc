@@ -48,6 +48,7 @@ impl Session {
     pub(crate) fn start_with_history(
         spec: LaunchSpec,
         history_config: Option<HistoryConfig>,
+        history_cursor_floor: u64,
     ) -> Result<Self, RuntimeError> {
         let (program, args) = spec
             .command
@@ -84,7 +85,7 @@ impl Session {
             .master
             .take_writer()
             .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let history = SessionHistory::new(history_config)?;
+        let history = SessionHistory::new_at(history_config, history_cursor_floor)?;
         let reader = OutputReader::start(
             format!("cccc-runtime:{}:{}", spec.group_id, spec.actor_id),
             reader,
@@ -178,7 +179,9 @@ impl Session {
 
     pub(crate) fn finish_output(&mut self) -> Result<(), RuntimeError> {
         if let Some(reader) = self.reader.take() {
-            reader.finish()?;
+            if !reader.finish()? {
+                self.history.seal_output()?;
+            }
         }
         self.history.flush()
     }

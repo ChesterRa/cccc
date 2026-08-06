@@ -1,7 +1,8 @@
 # Releasing CCCC 0.4.x
 
-This repo publishes the **`cccc-pair`** Python distribution and standalone Rust
-archives (CLI command: **`cccc`**) on one version line.
+This repo publishes one stable PyPI product, **`cccc-pair`** (CLI command:
+**`cccc`**), with Python and Rust implementations on one version line. Matching
+tags also attach optional experimental standalone Rust preview archives.
 
 ## What the release pipeline produces
 
@@ -14,9 +15,10 @@ The GitHub Actions workflow builds and uploads:
 
 Platform jobs build, dependency-repair, install, and smoke the private Rust
 payload. A dedicated interop job verifies shared persisted contracts. The
-workflow collects the complete artifact set before one PyPI upload. The manual
-standalone Rust workflow performs verification only; matching pushed tags attach
-the verified archives, checksums, and installers to GitHub Releases.
+workflow collects the complete stable artifact set before one PyPI upload. The
+manual experimental standalone workflow performs verification only; matching
+pushed tags attach the verified preview archives, checksums, and installers to
+GitHub Releases with an explicit experimental notice.
 
 ## Tag ↔ Version conventions
 

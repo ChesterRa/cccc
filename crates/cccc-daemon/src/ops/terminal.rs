@@ -1,5 +1,5 @@
-use cccc_contracts::DaemonRequest;
-use cccc_core::HomeLayout;
+use cccc_contracts::{ActorRole, DaemonRequest};
+use cccc_core::{GroupDoc, GroupStore, HomeLayout};
 use serde_json::{Value, json};
 
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
@@ -14,7 +14,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "terminal_since" => since(home, request),
         "terminal_write" => write(home, request),
         "terminal_resize" => resize(request),
-        "terminal_clear" => clear(request),
+        "terminal_clear" => clear(home, request),
         _ => return None,
     })
 }
@@ -34,6 +34,7 @@ fn status(request: &DaemonRequest) -> OpResult {
 
 fn tail(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group_id, actor_id) = ids(request)?;
+    authorize_transcript(home, request, &group_id, &actor_id)?;
     let max_chars = integer(request, "max_chars", 8_000).clamp(1, 2_000_000);
     let page = super::terminal_history_source::retained(
         home,
@@ -44,11 +45,19 @@ fn tail(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     .map_err(runtime_error)?;
     let (strip_ansi, compact) = tail_render_options(request);
     let text = render_tail(&page.data, max_chars, strip_ansi, compact);
-    object(json!({"text": text, "hint": "", "end_cursor": page.end_cursor}))
+    object(json!({
+        "group_id": group_id,
+        "actor_id": actor_id,
+        "warning": "Terminal transcript may include sensitive stdout/stderr.",
+        "text": text,
+        "hint": "",
+        "end_cursor": page.end_cursor,
+    }))
 }
 
 fn snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group_id, actor_id) = ids(request)?;
+    authorize_transcript(home, request, &group_id, &actor_id)?;
     let limit = integer(request, "limit_bytes", 512 * 1024).clamp(1, 2_000_000);
     let page = super::terminal_history_source::retained(home, &group_id, &actor_id, limit)
         .map_err(runtime_error)?;
@@ -86,6 +95,7 @@ fn trailing_chars(text: &str, max_chars: usize) -> String {
 
 fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group_id, actor_id) = ids(request)?;
+    authorize_transcript(home, request, &group_id, &actor_id)?;
     let before = request.args.get("before").and_then(|value| match value {
         Value::Number(number) => number.as_u64(),
         Value::String(text) => text.parse().ok(),
@@ -101,6 +111,9 @@ fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         page.data.clone()
     };
     object(json!({
+        "group_id": group_id,
+        "actor_id": actor_id,
+        "warning": "Terminal transcript may include sensitive stdout/stderr.",
         "text": text,
         "hint": "",
         "start_cursor": page.start_cursor,
@@ -113,6 +126,7 @@ fn history(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 fn since(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group_id, actor_id) = ids(request)?;
+    authorize_transcript(home, request, &group_id, &actor_id)?;
     let after = request
         .args
         .get("after")
@@ -147,10 +161,81 @@ fn resize(request: &DaemonRequest) -> OpResult {
     object(json!({"resized": true, "cols": cols, "rows": rows}))
 }
 
-fn clear(request: &DaemonRequest) -> OpResult {
+fn clear(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group_id, actor_id) = ids(request)?;
+    authorize_transcript(home, request, &group_id, &actor_id)?;
     cccc_runtime::clear(&group_id, &actor_id).map_err(runtime_error)?;
-    object(json!({"cleared": true}))
+    object(json!({"group_id": group_id, "actor_id": actor_id, "cleared": true}))
+}
+
+fn authorize_transcript(
+    home: &HomeLayout,
+    request: &DaemonRequest,
+    group_id: &str,
+    target_actor_id: &str,
+) -> Result<(), OpError> {
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    if by.is_empty() || by == "user" {
+        return Ok(());
+    }
+    let group = GroupStore::new(home.clone())
+        .map_err(OpError::io)?
+        .load(group_id)
+        .map_err(OpError::not_found)?;
+    if cccc_core::actors::find(&group, target_actor_id).is_none() {
+        return Err(OpError::new(
+            "actor_not_found",
+            format!("actor not found: {target_actor_id}"),
+        ));
+    }
+    if by == target_actor_id {
+        return Ok(());
+    }
+    let visibility = transcript_visibility(&group);
+    if cccc_core::actors::find(&group, &by).is_some()
+        && (visibility == "all"
+            || (visibility == "foreman"
+                && cccc_core::actors::effective_role(&group, &by) == Some(ActorRole::Foreman)))
+    {
+        return Ok(());
+    }
+    let mut error = OpError::new(
+        "permission_denied",
+        "terminal transcript is restricted by group settings",
+    );
+    error.details.insert("visibility".into(), json!(visibility));
+    error.details.insert("by".into(), json!(by));
+    error
+        .details
+        .insert("target_actor_id".into(), json!(target_actor_id));
+    Err(error)
+}
+
+fn transcript_visibility(group: &GroupDoc) -> &str {
+    let configured = group
+        .extra
+        .get("settings")
+        .and_then(Value::as_object)
+        .and_then(|settings| {
+            settings.get("terminal_transcript_visibility").or_else(|| {
+                settings
+                    .get("terminal_transcript")
+                    .and_then(Value::as_object)
+                    .and_then(|value| value.get("visibility"))
+            })
+        })
+        .or_else(|| {
+            group
+                .extra
+                .get("terminal_transcript")
+                .and_then(Value::as_object)
+                .and_then(|value| value.get("visibility"))
+        })
+        .and_then(Value::as_str);
+    match configured {
+        Some(value @ ("off" | "foreman" | "all")) => value,
+        _ => "foreman",
+    }
 }
 
 fn integer(request: &DaemonRequest, name: &str, default: usize) -> usize {

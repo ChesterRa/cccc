@@ -16,6 +16,7 @@ pub struct HistoryConfig {
     pub path: PathBuf,
     pub max_bytes: usize,
     pub hot_bytes: usize,
+    pub persist: bool,
 }
 
 pub(crate) struct TranscriptArchive {
@@ -27,13 +28,21 @@ pub(crate) struct TranscriptArchive {
 }
 
 impl TranscriptArchive {
+    #[cfg(test)]
     pub(crate) fn create(config: HistoryConfig) -> Result<Self, RuntimeError> {
+        Self::create_at(config, 0)
+    }
+
+    pub(crate) fn create_at(
+        config: HistoryConfig,
+        cursor_floor: u64,
+    ) -> Result<Self, RuntimeError> {
         let parent = config
             .path
             .parent()
             .ok_or_else(|| std::io::Error::other("terminal transcript path has no parent"))?;
         fs::create_dir_all(parent)?;
-        let cursor = latest_end(parent)?;
+        let cursor = latest_end(parent)?.max(cursor_floor);
         let mut file = secure_create(&config.path)?;
         write_header(&mut file, cursor)?;
         publish_latest(parent, &config.path)?;

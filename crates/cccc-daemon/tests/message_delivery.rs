@@ -701,6 +701,24 @@ fn remote_cross_group_record_validates_insight_before_source_write() {
             .len(),
         before
     );
+
+    let accepted = call(
+        &home,
+        "send_cross_group_remote_record",
+        json!({
+            "group_id":source_id,"dst_group_id":"remote-group","by":"user",
+            "to":["reviewer"],"text":"review this","require_peer_insight":true,
+            "insight":"The remote reviewer owns the requested decision."
+        }),
+    );
+    assert_eq!(
+        accepted.result["source_event"]["data"]["to"],
+        json!(["user"])
+    );
+    assert_eq!(
+        accepted.result["source_event"]["data"]["dst_to"],
+        json!(["reviewer"])
+    );
 }
 
 #[test]

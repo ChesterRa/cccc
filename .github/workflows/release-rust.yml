@@ -1,4 +1,4 @@
-name: Build and publish standalone Rust release
+name: Build and publish experimental standalone Rust preview
 
 on:
   push:
@@ -60,6 +60,14 @@ jobs:
             | grep -q '^assets/web-dist/index.html$'
       - name: Build Rust distribution
         run: cargo build --release --locked --target ${{ matrix.target }} -p cccc --bin cccc
+      - name: Smoke native Rust binary
+        shell: bash
+        run: |
+          binary="target/${{ matrix.target }}/release/cccc"
+          case "${{ matrix.target }}" in
+            *-windows-*) binary="${binary}.exe" ;;
+          esac
+          "$binary" --version
       - name: Resolve package name
         shell: bash
         run: |
@@ -112,9 +120,37 @@ jobs:
           path: artifacts/*
           if-no-files-found: error
 
+  verify:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            verifier: unix
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            verifier: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: cccc-release-candidate
+          path: artifacts
+      - name: Verify Unix release candidate
+        if: matrix.verifier == 'unix'
+        shell: bash
+        run: bash scripts/tests/verify_release_unix.sh artifacts "${{ matrix.target }}"
+      - name: Verify Windows release candidate
+        if: matrix.verifier == 'windows'
+        shell: pwsh
+        run: ./scripts/tests/verify_release_windows.ps1 -ArtifactDir artifacts -Target "${{ matrix.target }}"
+
   publish:
     if: github.event_name == 'push'
-    needs: prepare
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -139,7 +175,8 @@ jobs:
           else
             gh release create "${GITHUB_REF_NAME}" artifacts/* \
               --verify-tag \
-              --title "CCCC ${GITHUB_REF_NAME#v}" \
+              --title "CCCC ${GITHUB_REF_NAME#v} (experimental standalone Rust preview)" \
+              --notes "Experimental Rust-only preview. The recommended stable distribution remains cccc-pair from PyPI; this build has no Python fallback or implementation switching." \
               --generate-notes \
               "${prerelease[@]}"
           fi
