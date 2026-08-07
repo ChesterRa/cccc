@@ -92,7 +92,7 @@ async fn serve_tcp(
             },
         }
     }
-    let _ = crate::runtime_start_gate::prevent(&paths.home);
+    begin_runtime_shutdown(&paths.home);
     automation.finish().await;
     connections.finish().await;
     Ok(())
@@ -138,7 +138,7 @@ async fn serve_platform_default(
             },
         }
     }
-    let _ = crate::runtime_start_gate::prevent(&paths.home);
+    begin_runtime_shutdown(&paths.home);
     automation.finish().await;
     connections.finish().await;
     Ok(())
@@ -207,4 +207,9 @@ async fn shutdown_signal() -> Result<()> {
 
 fn use_tcp() -> bool {
     cfg!(not(unix)) || std::env::var("CCCC_DAEMON_TRANSPORT").is_ok_and(|value| value == "tcp")
+}
+
+fn begin_runtime_shutdown(home: &HomeLayout) {
+    let _ = crate::runtime_start_gate::prevent(home);
+    crate::ops::actor_runtime::cancel_resume_verifications();
 }

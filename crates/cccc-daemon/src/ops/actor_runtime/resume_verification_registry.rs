@@ -53,6 +53,26 @@ pub(super) fn cancel(group_id: &str, actor_id: &str) {
         .remove(&(group_id.to_owned(), actor_id.to_owned()));
 }
 
+pub(super) fn cancel_if_current(group_id: &str, actor_id: &str, started_at: &str) {
+    let mut active = active()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let key = (group_id.to_owned(), actor_id.to_owned());
+    if active
+        .get(&key)
+        .is_some_and(|current| current == started_at)
+    {
+        active.remove(&key);
+    }
+}
+
+pub(super) fn cancel_all() {
+    active()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clear();
+}
+
 pub(super) fn is_current(group_id: &str, actor_id: &str, started_at: &str) -> bool {
     active()
         .lock()

@@ -1,7 +1,8 @@
 use super::{
-    start, start_with_history, status, stop, stop_all, stop_if_started_at, submit_interruptible,
-    submit_sequence_interruptible,
+    commit_reaped, start, start_with_history, status, stop, stop_all, stop_if_started_at,
+    submit_interruptible, submit_sequence_interruptible,
 };
+use crate::registry::lookup;
 use crate::{HistoryConfig, LaunchSpec, history, history_since};
 use cccc_contracts::RunnerKind;
 use std::collections::BTreeMap;
@@ -96,6 +97,44 @@ fn restarts_a_naturally_exited_session_without_reap() {
     assert!(!status("g_restart_exited", "peer1").expect("status").running);
     start(spec(&temp, "g_restart_exited", "peer1", "sleep 30")).expect("restart");
     stop("g_restart_exited", "peer1").expect("cleanup");
+}
+
+#[test]
+fn reap_does_not_report_a_session_replaced_after_its_snapshot() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group_id = "g_reap_replaced";
+    let actor_id = "peer1";
+    start(spec(&temp, group_id, actor_id, "exit 0")).expect("first");
+    for _ in 0..100 {
+        if !status(group_id, actor_id).expect("status").running {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let previous = lookup(group_id, actor_id).expect("previous session");
+    let (previous_status, previous_history) = {
+        let mut session = previous.lock().expect("previous lock");
+        session.finish_output().expect("finish previous output");
+        (session.status(), session.history_handle())
+    };
+
+    start(spec(&temp, group_id, actor_id, "sleep 30")).expect("replacement");
+    let exited = commit_reaped(vec![(
+        (group_id.into(), actor_id.into()),
+        previous,
+        previous_history,
+        previous_status,
+    )])
+    .expect("commit reap snapshot");
+
+    assert!(exited.is_empty());
+    assert!(
+        status(group_id, actor_id)
+            .expect("replacement status")
+            .running
+    );
+    stop(group_id, actor_id).expect("cleanup");
 }
 
 #[test]

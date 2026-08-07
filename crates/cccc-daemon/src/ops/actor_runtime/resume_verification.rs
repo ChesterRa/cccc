@@ -18,6 +18,23 @@ pub(super) fn cancel(group_id: &str, actor_id: &str) {
     registry::cancel(group_id, actor_id);
 }
 
+pub(super) fn cancel_if_current(group_id: &str, actor_id: &str, started_at: &str) {
+    registry::cancel_if_current(group_id, actor_id, started_at);
+}
+
+pub(super) fn cancel_all() {
+    registry::cancel_all();
+}
+
+pub(super) fn is_monitoring(status: &SessionStatus) -> bool {
+    registry::is_current(&status.group_id, &status.actor_id, &status.started_at)
+}
+
+#[cfg(test)]
+pub(super) fn register_for_test(status: &SessionStatus) -> impl Drop {
+    registry::Registration::new(&status.group_id, &status.actor_id, &status.started_at)
+}
+
 #[derive(Clone, Copy)]
 struct VerificationTiming {
     capture_delay: Duration,
@@ -82,6 +99,9 @@ fn schedule_with_timing(
             let deadline = started + timing.monitor_duration.max(timing.capture_delay);
             let mut capture_scheduled = false;
             let error = loop {
+                if !registry::is_current(&group.group_id, &actor.id, &resumed_status.started_at) {
+                    return;
+                }
                 let current = match cccc_runtime::status(&group.group_id, &actor.id) {
                     Ok(current) => current,
                     Err(cccc_runtime::RuntimeError::NotFound(_, _)) => {
@@ -134,6 +154,10 @@ fn schedule_with_timing(
                 &group.group_id,
                 &actor.id,
                 || {
+                    let start_permit = match crate::runtime_start_gate::permit(&home) {
+                        Ok(permit) => permit,
+                        Err(_) => return None,
+                    };
                     if !registry::is_current(&group.group_id, &actor.id, &resumed_status.started_at)
                     {
                         return None;
@@ -200,7 +224,8 @@ fn schedule_with_timing(
                     } else {
                         base_command.clone()
                     };
-                    Some(hook_launch::launch_serialized(
+                    Some(hook_launch::launch_serialized_with_permit(
+                        &start_permit,
                         &home,
                         &group,
                         &actor,

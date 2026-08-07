@@ -109,22 +109,24 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
             resumed_session_id: None,
         },
     };
-    let status = hook_launch::launch(home, group, &actor, &cwd, &env, prepared.command)?;
-
-    if prepared.resumed_session_id.is_some() {
-        resume_verification::schedule(
-            home.clone(),
-            group.clone(),
-            actor.clone(),
-            cwd,
-            env,
-            base_command,
-            status.clone(),
-        );
-    } else {
-        schedule_capture(home, group, &actor, cwd, base_command, &status);
-    }
-    Ok(status)
+    super::runtime_hook_session::with_launch_lock(&group.group_id, &actor.id, || {
+        let status =
+            hook_launch::launch_serialized(home, group, &actor, &cwd, &env, prepared.command)?;
+        if prepared.resumed_session_id.is_some() {
+            resume_verification::schedule(
+                home.clone(),
+                group.clone(),
+                actor.clone(),
+                cwd,
+                env,
+                base_command,
+                status.clone(),
+            );
+        } else {
+            schedule_capture(home, group, &actor, cwd, base_command, &status);
+        }
+        Ok(status)
+    })
 }
 
 fn schedule_capture(
@@ -150,7 +152,7 @@ fn schedule_capture(
     }
 }
 
-fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {
+pub(super) fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {
     super::runtime_hook_session::with_launch_lock(&group.group_id, actor_id, || {
         resume_verification::cancel(&group.group_id, actor_id);
         match cccc_runtime::stop(&group.group_id, actor_id) {
@@ -160,6 +162,32 @@ fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpErr
                 Ok(Some(status))
             }
             Err(cccc_runtime::RuntimeError::NotFound(_, _)) => Ok(None),
+            Err(error) => Err(runtime_error(error)),
+        }
+    })
+}
+
+pub(super) fn stop_if_started_at(
+    group: &GroupDoc,
+    status: &SessionStatus,
+) -> Result<Option<SessionStatus>, OpError> {
+    super::runtime_hook_session::with_launch_lock(&group.group_id, &status.actor_id, || {
+        resume_verification::cancel_if_current(
+            &group.group_id,
+            &status.actor_id,
+            &status.started_at,
+        );
+        match cccc_runtime::stop_if_started_at(
+            &group.group_id,
+            &status.actor_id,
+            &status.started_at,
+        ) {
+            Ok(Some(stopped)) => {
+                super::runtime_hook_session::revoke(&group.group_id, &status.actor_id);
+                super::runtime_hook_input::reset(&group.group_id, &status.actor_id);
+                Ok(Some(stopped))
+            }
+            Ok(None) => Ok(None),
             Err(error) => Err(runtime_error(error)),
         }
     })
@@ -182,13 +210,22 @@ pub fn start_group(home: &HomeLayout, group: &GroupDoc) -> Result<Vec<SessionSta
             Ok(None) => {}
             Err(error) => {
                 for status in &started {
-                    let _ = cccc_runtime::stop(&status.group_id, &status.actor_id);
+                    let _ = stop(group, &status.actor_id);
                 }
                 return Err(error);
             }
         }
     }
     Ok(started)
+}
+
+pub(crate) fn cancel_resume_verifications() {
+    resume_verification::cancel_all();
+}
+
+pub(crate) fn stop_all() -> Result<Vec<SessionStatus>, cccc_runtime::RuntimeError> {
+    cancel_resume_verifications();
+    cccc_runtime::stop_all()
 }
 
 pub fn stop_group(group: &GroupDoc) -> Result<Vec<SessionStatus>, OpError> {

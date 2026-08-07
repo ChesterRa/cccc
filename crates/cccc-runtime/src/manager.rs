@@ -4,10 +4,13 @@ use crate::registry::{
     Key, completed_history, discard_completed, lookup, remember_history, sessions, with_session,
 };
 use crate::session::{LaunchSpec, Session, SessionStatus};
+use crate::session_history::SessionHistory;
 use crate::transcript_archive::HistoryConfig;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+type ReapCandidate = (Key, Arc<Mutex<Session>>, SessionHistory, SessionStatus);
 
 pub fn start(spec: LaunchSpec) -> Result<SessionStatus, RuntimeError> {
     start_inner(spec, None)
@@ -241,7 +244,6 @@ pub fn reap() -> Result<Vec<SessionStatus>, RuntimeError> {
         .iter()
         .map(|(key, session)| (key.clone(), Arc::clone(session)))
         .collect::<Vec<_>>();
-    let mut exited = Vec::new();
     let mut remove = Vec::new();
     for (key, shared) in snapshot {
         let mut session = shared.lock().map_err(|_| RuntimeError::Poisoned)?;
@@ -250,20 +252,23 @@ pub fn reap() -> Result<Vec<SessionStatus>, RuntimeError> {
             session.finish_output()?;
             let history = session.history_handle();
             drop(session);
-            exited.push(status);
-            remove.push((key, shared, history));
+            remove.push((key, shared, history, status));
         }
     }
-    if !remove.is_empty() {
-        let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
-        for (key, session, history) in remove {
-            if registry
-                .get(&key)
-                .is_some_and(|registered| Arc::ptr_eq(registered, &session))
-            {
-                registry.remove(&key);
-                remember_history(key, history)?;
-            }
+    commit_reaped(remove)
+}
+
+fn commit_reaped(remove: Vec<ReapCandidate>) -> Result<Vec<SessionStatus>, RuntimeError> {
+    let mut exited = Vec::new();
+    let mut registry = sessions().write().map_err(|_| RuntimeError::Poisoned)?;
+    for (key, session, history, status) in remove {
+        if registry
+            .get(&key)
+            .is_some_and(|registered| Arc::ptr_eq(registered, &session))
+        {
+            registry.remove(&key);
+            remember_history(key, history)?;
+            exited.push(status);
         }
     }
     Ok(exited)

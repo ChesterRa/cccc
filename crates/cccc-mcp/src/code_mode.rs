@@ -1,3 +1,5 @@
+mod buffering;
+
 use cccc_client::DaemonClient;
 use cccc_contracts::ActorRuntime;
 use cccc_core::{GroupStore, HomeLayout};
@@ -9,9 +11,14 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::{Duration, Instant};
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::{Mutex, mpsc};
+
+use buffering::{
+    BoundedLine, EVENT_QUEUE_CAPACITY, MAX_EVENT_BYTES, OutputBuffer, content_text,
+    read_bounded_line,
+};
 
 const DEFAULT_YIELD_TIME_MS: u64 = 10_000;
 const DEFAULT_MAX_OUTPUT_TOKENS: usize = 10_000;
@@ -20,6 +27,7 @@ const MAX_OUTPUT_TOKENS: usize = 50_000;
 const MAX_SOURCE_CHARS: usize = 500_000;
 const MAX_CELLS: usize = 16;
 const CELL_TTL: Duration = Duration::from_secs(30 * 60);
+const PROCESS_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(1);
 const NODE_RUNTIME: &str = include_str!("../../../src/cccc/resources/code_mode_runtime.js");
 const METADATA: &str = include_str!("../../../src/cccc/resources/code_mode_metadata.json");
 
@@ -32,14 +40,18 @@ struct Owner {
 
 struct CodeCell {
     owner: Owner,
-    child: Child,
-    stdin: ChildStdin,
-    events: mpsc::UnboundedReceiver<Value>,
+    process: Mutex<Child>,
+    io: Mutex<CellIo>,
     started_at: Instant,
-    last_used_at: Instant,
+    last_used_at: StdMutex<Instant>,
 }
 
-type SharedCell = Arc<Mutex<CodeCell>>;
+struct CellIo {
+    stdin: ChildStdin,
+    events: mpsc::Receiver<Value>,
+}
+
+type SharedCell = Arc<CodeCell>;
 type CellMap = HashMap<String, SharedCell>;
 
 pub async fn start(
@@ -79,6 +91,7 @@ pub async fn start(
     let nested_tools = nested_tools(home, client).await;
     let (cell_id, cell) = spawn_cell(root, owner, source, nested_tools, yield_time_ms).await?;
     cells().lock().await.insert(cell_id.clone(), cell.clone());
+    schedule_expiration(cell_id.clone());
     drain(
         home,
         client,
@@ -104,15 +117,20 @@ pub async fn wait(
         .filter(|value| !value.is_empty())
         .ok_or("missing_cell_id: cell_id is required")?
         .to_owned();
-    let Some(cell) = cells().lock().await.get(&cell_id).cloned() else {
-        return Ok(missing_response(&cell_id));
-    };
-    {
-        let cell_guard = cell.lock().await;
-        if cell_guard.owner != owner {
+    let cell = {
+        let active = cells().lock().await;
+        let Some(cell) = active.get(&cell_id).cloned() else {
+            return Ok(missing_response(&cell_id));
+        };
+        if cell.owner != owner {
             return Ok(missing_response(&cell_id));
         }
-    }
+        *cell
+            .last_used_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
+        cell
+    };
     let max_output_tokens = integer_arg(
         args.get("max_tokens")
             .or_else(|| args.get("max_output_tokens")),
@@ -126,14 +144,12 @@ pub async fn wait(
         .unwrap_or(false)
     {
         cells().lock().await.remove(&cell_id);
-        let mut cell_guard = cell.lock().await;
-        let _ = cell_guard.child.start_kill();
+        terminate_cell(&cell).await;
         return Ok(format_response(
             "terminated",
             &cell_id,
-            Vec::new(),
-            cell_guard.started_at,
-            max_output_tokens,
+            OutputBuffer::new(max_output_tokens),
+            cell.started_at,
             "",
         ));
     }
@@ -373,7 +389,7 @@ async fn spawn_cell(
         .stderr
         .take()
         .ok_or("code_mode_start_failed: Node.js stderr is unavailable")?;
-    let (sender, receiver) = mpsc::unbounded_channel();
+    let (sender, receiver) = mpsc::channel(EVENT_QUEUE_CAPACITY);
     tokio::spawn(read_stream(stdout, sender.clone(), false));
     tokio::spawn(read_stream(stderr, sender, true));
 
@@ -401,38 +417,51 @@ async fn spawn_cell(
     let now = Instant::now();
     Ok((
         cell_id,
-        Arc::new(Mutex::new(CodeCell {
+        Arc::new(CodeCell {
             owner,
-            child,
-            stdin,
-            events: receiver,
+            process: Mutex::new(child),
+            io: Mutex::new(CellIo {
+                stdin,
+                events: receiver,
+            }),
             started_at: now,
-            last_used_at: now,
-        })),
+            last_used_at: StdMutex::new(now),
+        }),
     ))
 }
 
-async fn read_stream<R>(stream: R, sender: mpsc::UnboundedSender<Value>, stderr: bool)
+async fn read_stream<R>(stream: R, sender: mpsc::Sender<Value>, stderr: bool)
 where
     R: AsyncRead + Unpin,
 {
-    let mut lines = BufReader::new(stream).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        let event = if stderr {
-            json!({"type":"stderr","text":line})
-        } else {
-            serde_json::from_str(line).unwrap_or_else(|_| json!({"type":"stderr","text":line}))
+    let mut reader = BufReader::new(stream);
+    loop {
+        let event = match read_bounded_line(&mut reader).await {
+            Ok(Some(BoundedLine::Data(line))) => {
+                let line = String::from_utf8_lossy(&line);
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if stderr {
+                    json!({"type":"stderr","text":line})
+                } else {
+                    serde_json::from_str(line)
+                        .unwrap_or_else(|_| json!({"type":"stderr","text":line}))
+                }
+            }
+            Ok(Some(BoundedLine::TooLong)) => json!({
+                "type":"output_truncated",
+                "message":format!("code-mode runtime event exceeded {MAX_EVENT_BYTES} bytes"),
+            }),
+            Ok(None) | Err(_) => break,
         };
-        if sender.send(event).is_err() {
+        if sender.send(event).await.is_err() {
             return;
         }
     }
     if !stderr {
-        let _ = sender.send(json!({"type":"runtime_eof"}));
+        let _ = sender.send(json!({"type":"runtime_eof"})).await;
     }
 }
 
@@ -458,30 +487,31 @@ async fn drain(
     max_output_tokens: usize,
 ) -> Result<Value, String> {
     let deadline = Instant::now() + Duration::from_millis(yield_time_ms);
-    let mut items = Vec::new();
-    let mut cell_guard = cell.lock().await;
-    cell_guard.last_used_at = Instant::now();
+    let mut output = OutputBuffer::new(max_output_tokens);
+    *cell
+        .last_used_at
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Instant::now();
+    let mut cell_io = cell.io.lock().await;
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             return Ok(format_response(
                 "running",
                 cell_id,
-                items,
-                cell_guard.started_at,
-                max_output_tokens,
+                output,
+                cell.started_at,
                 "",
             ));
         }
-        let event = match tokio::time::timeout(remaining, cell_guard.events.recv()).await {
+        let event = match tokio::time::timeout(remaining, cell_io.events.recv()).await {
             Ok(Some(event)) => event,
             Ok(None) => {
                 cells().lock().await.remove(cell_id);
                 return Ok(failed_response(
                     cell_id,
-                    items,
-                    cell_guard.started_at,
-                    max_output_tokens,
+                    output,
+                    cell.started_at,
                     "exec runtime ended unexpectedly",
                 ));
             }
@@ -489,9 +519,8 @@ async fn drain(
                 return Ok(format_response(
                     "running",
                     cell_id,
-                    items,
-                    cell_guard.started_at,
-                    max_output_tokens,
+                    output,
+                    cell.started_at,
                     "",
                 ));
             }
@@ -504,7 +533,7 @@ async fn drain(
             "started" => {}
             "content" => {
                 if let Some(item) = event.get("item").filter(|item| item.is_object()) {
-                    items.push(item.clone());
+                    output.push(item.clone());
                 }
             }
             "tool_call" => {
@@ -517,7 +546,7 @@ async fn drain(
                     continue;
                 }
                 let response =
-                    call_nested(home, client, &cell_guard.owner, name, event.get("input")).await;
+                    call_nested(home, client, &cell.owner, name, event.get("input")).await;
                 let payload = match response {
                     Ok(result) => {
                         json!({"type":"tool_response","id":event_id,"ok":true,"result":result})
@@ -526,22 +555,21 @@ async fn drain(
                         json!({"type":"tool_response","id":event_id,"ok":false,"error":error})
                     }
                 };
-                send_command(&mut cell_guard.stdin, &payload).await?;
+                send_command(&mut cell_io.stdin, &payload).await?;
             }
             "yield" => {
-                update_stored_values(&cell_guard.owner, event.get("stored_values"))?;
+                update_stored_values(&cell.owner, event.get("stored_values"))?;
                 return Ok(format_response(
                     "running",
                     cell_id,
-                    items,
-                    cell_guard.started_at,
-                    max_output_tokens,
+                    output,
+                    cell.started_at,
                     "",
                 ));
             }
             "result" => {
                 cells().lock().await.remove(cell_id);
-                update_stored_values(&cell_guard.owner, event.get("stored_values"))?;
+                update_stored_values(&cell.owner, event.get("stored_values"))?;
                 let error_text = event
                     .get("error_text")
                     .and_then(Value::as_str)
@@ -550,31 +578,29 @@ async fn drain(
                     return Ok(format_response(
                         "completed",
                         cell_id,
-                        items,
-                        cell_guard.started_at,
-                        max_output_tokens,
+                        output,
+                        cell.started_at,
                         "",
                     ));
                 }
                 return Ok(failed_response(
                     cell_id,
-                    items,
-                    cell_guard.started_at,
-                    max_output_tokens,
+                    output,
+                    cell.started_at,
                     error_text,
                 ));
             }
-            "stderr" => items.push(json!({
+            "stderr" => output.push(json!({
                 "type":"text",
                 "text":event.get("text").and_then(Value::as_str).unwrap_or_default(),
             })),
+            "output_truncated" => output.mark_truncated(),
             "runtime_eof" => {
                 cells().lock().await.remove(cell_id);
                 return Ok(failed_response(
                     cell_id,
-                    items,
-                    cell_guard.started_at,
-                    max_output_tokens,
+                    output,
+                    cell.started_at,
                     "exec runtime ended unexpectedly",
                 ));
             }
@@ -608,31 +634,22 @@ async fn call_nested(
 
 fn failed_response(
     cell_id: &str,
-    mut items: Vec<Value>,
+    mut output: OutputBuffer,
     started_at: Instant,
-    max_output_tokens: usize,
     error_text: &str,
 ) -> Value {
-    items.push(json!({"type":"text","text":format!("Script error:\n{error_text}")}));
-    format_response(
-        "failed",
-        cell_id,
-        items,
-        started_at,
-        max_output_tokens,
-        error_text,
-    )
+    output.push(json!({"type":"text","text":format!("Script error:\n{error_text}")}));
+    format_response("failed", cell_id, output, started_at, error_text)
 }
 
 fn format_response(
     status: &str,
     cell_id: &str,
-    items: Vec<Value>,
+    output: OutputBuffer,
     started_at: Instant,
-    max_output_tokens: usize,
     error_text: &str,
 ) -> Value {
-    let (trimmed, output_truncated) = truncate_output(items, max_output_tokens);
+    let (trimmed, output_truncated) = output.into_parts();
     let output = trimmed
         .iter()
         .map(content_text)
@@ -683,40 +700,6 @@ fn missing_response(cell_id: &str) -> Value {
     })
 }
 
-fn truncate_output(items: Vec<Value>, max_output_tokens: usize) -> (Vec<Value>, bool) {
-    let mut remaining = max_output_tokens.saturating_mul(4).max(1);
-    let mut output = Vec::new();
-    let mut truncated = false;
-    for item in items {
-        let text = content_text(&item);
-        let length = text.chars().count();
-        if length > remaining {
-            let prefix = text.chars().take(remaining).collect::<String>();
-            output.push(json!({"type":"text","text":format!("{prefix}\n[truncated]")}));
-            truncated = true;
-            break;
-        }
-        output.push(item);
-        remaining = remaining.saturating_sub(length);
-        if remaining == 0 {
-            truncated = true;
-            break;
-        }
-    }
-    (output, truncated)
-}
-
-fn content_text(item: &Value) -> String {
-    if item.get("type").and_then(Value::as_str).unwrap_or("text") == "text" {
-        item.get("text")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned()
-    } else {
-        serde_json::to_string(item).unwrap_or_else(|_| item.to_string())
-    }
-}
-
 fn stored_values(owner: &Owner) -> Result<Map<String, Value>, String> {
     STORED_VALUES
         .get_or_init(|| StdMutex::new(HashMap::new()))
@@ -747,11 +730,14 @@ async fn prune_cells() {
     let mut stale = Vec::new();
     let mut ages = Vec::new();
     for (cell_id, cell) in &snapshot {
-        let cell_guard = cell.lock().await;
-        if cell_guard.last_used_at.elapsed() > CELL_TTL {
+        let last_used_at = *cell
+            .last_used_at
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if last_used_at.elapsed() > CELL_TTL {
             stale.push(cell_id.clone());
         }
-        ages.push((cell_id.clone(), cell_guard.last_used_at));
+        ages.push((cell_id.clone(), last_used_at));
     }
     if snapshot.len().saturating_sub(stale.len()) >= MAX_CELLS
         && let Some((oldest, _)) = ages
@@ -771,9 +757,77 @@ async fn prune_cells() {
             .filter_map(|cell_id| active.remove(cell_id))
             .collect::<Vec<_>>()
     };
+    terminate_cells(removed).await;
+}
+
+fn schedule_expiration(cell_id: String) {
+    tokio::spawn(expire_cell_after(cell_id, CELL_TTL));
+}
+
+async fn expire_cell_after(cell_id: String, ttl: Duration) {
+    let mut remaining = ttl;
+    loop {
+        tokio::time::sleep(remaining).await;
+        let (removed, next_delay) = {
+            let mut active = cells().lock().await;
+            let Some(cell) = active.get(&cell_id).cloned() else {
+                return;
+            };
+            let elapsed = cell
+                .last_used_at
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .elapsed();
+            let next_delay = ttl.saturating_sub(elapsed);
+            if next_delay.is_zero() {
+                (active.remove(&cell_id), Duration::ZERO)
+            } else {
+                (None, next_delay)
+            }
+        };
+        if let Some(cell) = removed {
+            terminate_cell(&cell).await;
+            return;
+        }
+        remaining = next_delay;
+    }
+}
+
+async fn terminate_cells(removed: Vec<SharedCell>) {
+    let mut tasks = tokio::task::JoinSet::new();
     for cell in removed {
-        let mut cell_guard = cell.lock().await;
-        let _ = cell_guard.child.start_kill();
+        tasks.spawn(async move {
+            terminate_cell(&cell).await;
+        });
+    }
+    while tasks.join_next().await.is_some() {}
+}
+
+async fn terminate_cell(cell: &SharedCell) {
+    let mut child = cell.process.lock().await;
+    let _ = child.start_kill();
+    let _ = tokio::time::timeout(PROCESS_SHUTDOWN_TIMEOUT, child.wait()).await;
+}
+
+pub(crate) async fn shutdown(home: &HomeLayout) {
+    let removed = {
+        let mut active = cells().lock().await;
+        let cell_ids = active
+            .iter()
+            .filter(|(_, cell)| cell.owner.home == home.root())
+            .map(|(cell_id, _)| cell_id.clone())
+            .collect::<Vec<_>>();
+        cell_ids
+            .into_iter()
+            .filter_map(|cell_id| active.remove(&cell_id))
+            .collect::<Vec<_>>()
+    };
+    terminate_cells(removed).await;
+    if let Some(values) = STORED_VALUES.get() {
+        values
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|owner, _| owner.home != home.root());
     }
 }
 
@@ -786,84 +840,4 @@ static NEXT_CELL_ID: AtomicU64 = AtomicU64::new(1);
 static STORED_VALUES: OnceLock<StdMutex<HashMap<Owner, Map<String, Value>>>> = OnceLock::new();
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        Owner, cells, drain, normalize_identifier, parse_exec_pragma, reject_unsupported_source,
-        spawn_cell,
-    };
-    use cccc_client::DaemonClient;
-    use cccc_core::HomeLayout;
-
-    #[test]
-    fn pragma_and_source_guards_match_public_contract() {
-        let (source, pragma) = parse_exec_pragma(
-            "// @exec: {\"yield-time_ms\": 25, \"max_output_tokens\": 99}\ntext('ok')",
-        )
-        .expect("pragma");
-        assert_eq!(source, "text('ok')");
-        assert_eq!(pragma["yield-time_ms"], 25);
-        assert!(reject_unsupported_source("const important = 1").is_ok());
-        assert!(reject_unsupported_source("require('node:fs')").is_err());
-        assert!(reject_unsupported_source("import('node:fs')").is_err());
-    }
-
-    #[test]
-    fn nested_tool_names_are_safe_javascript_identifiers() {
-        assert_eq!(normalize_identifier("cccc_repo"), "cccc_repo");
-        assert_eq!(normalize_identifier("1 odd-tool"), "odd_tool");
-    }
-
-    #[tokio::test]
-    async fn shared_runtime_is_sandboxed_and_persists_actor_store() {
-        if tokio::process::Command::new("node")
-            .arg("--version")
-            .output()
-            .await
-            .is_err()
-        {
-            return;
-        }
-        let temp = tempfile::tempdir().expect("temp dir");
-        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        let client = DaemonClient::new(home.clone());
-        let owner = Owner {
-            home: home.root().to_path_buf(),
-            group_id: "g_test".into(),
-            actor_id: "peer1".into(),
-        };
-        let (first_id, first) = spawn_cell(
-            temp.path(),
-            owner.clone(),
-            r#"text([typeof process, typeof require, typeof fetch].join(",")); store("answer", {value: 42});"#,
-            Vec::new(),
-            5_000,
-        )
-        .await
-        .expect("first cell");
-        cells().lock().await.insert(first_id.clone(), first.clone());
-        let first_result = drain(&home, &client, &first_id, first, 5_000, 10_000)
-            .await
-            .expect("first result");
-        assert_eq!(first_result["status"], "completed");
-        assert_eq!(first_result["output"], "undefined,undefined,undefined");
-
-        let (second_id, second) = spawn_cell(
-            temp.path(),
-            owner,
-            r#"text(JSON.stringify(load("answer")));"#,
-            Vec::new(),
-            5_000,
-        )
-        .await
-        .expect("second cell");
-        cells()
-            .lock()
-            .await
-            .insert(second_id.clone(), second.clone());
-        let second_result = drain(&home, &client, &second_id, second, 5_000, 10_000)
-            .await
-            .expect("second result");
-        assert_eq!(second_result["status"], "completed");
-        assert_eq!(second_result["output"], r#"{"value":42}"#);
-    }
-}
+mod tests;

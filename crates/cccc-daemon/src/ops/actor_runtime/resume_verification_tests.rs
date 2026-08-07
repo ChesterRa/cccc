@@ -140,6 +140,47 @@ fn explicit_stop_cancels_fresh_fallback() {
 }
 
 #[test]
+fn conditional_rollback_cancels_fresh_fallback() {
+    let fixture = Fixture::new("resume rollback");
+    let resumed_status = fixture.start_resumed(
+        "sleep 0.15; printf 'ERROR: No saved session found with ID stale\\n'; sleep 5",
+    );
+    fixture.schedule(resumed_status.clone());
+
+    super::super::stop_if_started_at(&fixture.group, &resumed_status)
+        .expect("conditional rollback");
+    std::thread::sleep(Duration::from_millis(400));
+
+    assert!(matches!(
+        cccc_runtime::status(&fixture.group.group_id, &fixture.actor.id),
+        Err(cccc_runtime::RuntimeError::NotFound(_, _))
+    ));
+    let stored: serde_json::Value =
+        cccc_core::fs::read_json(&fixture.session_dir.join("peer1.json")).expect("stored metadata");
+    assert_eq!(stored["status"], "usable");
+    assert_eq!(stored["failure_count"], 0);
+}
+
+#[test]
+fn daemon_shutdown_gate_does_not_invalidate_resume_metadata() {
+    let fixture = Fixture::new("resume shutdown");
+    let resumed_status = fixture.start_resumed(
+        "sleep 0.15; printf 'ERROR: No saved session found with ID stale\\n'; sleep 5",
+    );
+    fixture.schedule(resumed_status);
+
+    crate::runtime_start_gate::prevent(&fixture.home).expect("prevent starts");
+    std::thread::sleep(Duration::from_millis(400));
+
+    let stored: serde_json::Value =
+        cccc_core::fs::read_json(&fixture.session_dir.join("peer1.json")).expect("stored metadata");
+    assert_eq!(stored["status"], "usable");
+    assert_eq!(stored["failure_count"], 0);
+    crate::runtime_start_gate::allow(&fixture.home).expect("restore starts");
+    cccc_runtime::stop(&fixture.group.group_id, &fixture.actor.id).expect("cleanup runtime");
+}
+
+#[test]
 fn resume_failure_ignores_a_previous_session_archive() {
     let fixture = Fixture::new("resume archive boundary");
     let actor_dir = fixture._temp.path().join("transcripts");

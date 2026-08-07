@@ -19,6 +19,12 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 pub async fn run_stdio(home: HomeLayout) -> Result<()> {
+    let result = run_stdio_loop(&home).await;
+    code_mode::shutdown(&home).await;
+    result
+}
+
+async fn run_stdio_loop(home: &HomeLayout) -> Result<()> {
     let client = DaemonClient::new(home.clone());
     let mut input = BufReader::new(tokio::io::stdin()).lines();
     let mut output = tokio::io::stdout();
@@ -36,10 +42,14 @@ pub async fn run_stdio(home: HomeLayout) -> Result<()> {
         if request.get("id").is_none() {
             continue;
         }
-        let response = handle(&home, &client, &request).await;
+        let response = handle(home, &client, &request).await;
         write_response(&mut output, &response).await?;
     }
     Ok(())
+}
+
+pub async fn shutdown(home: &HomeLayout) {
+    code_mode::shutdown(home).await;
 }
 
 pub async fn handle_request(home: &HomeLayout, request: &Value) -> Value {

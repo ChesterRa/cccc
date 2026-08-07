@@ -37,7 +37,7 @@ impl DaemonLifecycle {
         let _ = crate::runtime_start_gate::prevent(&self.paths.home);
         crate::ops::actor_delivery::shutdown_all();
         crate::ops::local_headless::stop_all();
-        let result = cccc_runtime::stop_all();
+        let result = crate::ops::actor_runtime::stop_all();
         cleanup_stale(&self.paths);
         self.lock.take();
         result

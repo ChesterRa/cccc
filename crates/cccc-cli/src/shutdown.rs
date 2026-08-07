@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::time::Duration;
 
-const FORCE_EXIT_TIMEOUT: Duration = Duration::from_secs(2);
+const FORCE_EXIT_TIMEOUT: Duration = Duration::from_secs(15);
 const INTERRUPTED_EXIT_CODE: i32 = 130;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,7 +28,10 @@ pub(crate) async fn watch_for_interrupt() {
             eprintln!("Second interrupt received; forcing CCCC to stop immediately");
         }
         ForceExitReason::Deadline => {
-            eprintln!("CCCC did not stop within 2 seconds; forcing exit");
+            eprintln!(
+                "CCCC did not stop within {} seconds; forcing exit",
+                FORCE_EXIT_TIMEOUT.as_secs()
+            );
         }
     }
     std::process::exit(INTERRUPTED_EXIT_CODE);

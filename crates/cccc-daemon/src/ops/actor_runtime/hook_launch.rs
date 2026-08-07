@@ -7,6 +7,7 @@ use std::path::Path;
 use crate::dispatch::OpError;
 use crate::ops::{codex_mcp, runtime_hook_session};
 
+#[cfg(test)]
 pub(super) fn launch(
     home: &HomeLayout,
     group: &GroupDoc,
@@ -26,15 +27,27 @@ pub(super) fn launch_serialized(
     actor: &Actor,
     cwd: &Path,
     env: &BTreeMap<String, String>,
-    mut command: Vec<String>,
+    command: Vec<String>,
 ) -> Result<SessionStatus, OpError> {
     if let Ok(status) = cccc_runtime::status(&group.group_id, &actor.id)
         && status.running
     {
         return Ok(status);
     }
-    let _start_permit = crate::runtime_start_gate::permit(home)
+    let start_permit = crate::runtime_start_gate::permit(home)
         .map_err(|message| OpError::new("runtime_shutting_down", message))?;
+    launch_serialized_with_permit(&start_permit, home, group, actor, cwd, env, command)
+}
+
+pub(super) fn launch_serialized_with_permit(
+    _start_permit: &crate::runtime_start_gate::StartPermit,
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor: &Actor,
+    cwd: &Path,
+    env: &BTreeMap<String, String>,
+    mut command: Vec<String>,
+) -> Result<SessionStatus, OpError> {
     let original_command = command.clone();
     let mut launch_env = env.clone();
     let original_env = launch_env.clone();

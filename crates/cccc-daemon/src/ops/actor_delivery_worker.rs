@@ -189,7 +189,7 @@ fn ensure_running(
         && let Err(error) =
             actor_runtime::persist_lifecycle(home, group, &actor.id, true, Some(&status))
     {
-        let _ = cccc_runtime::stop_if_started_at(&group.group_id, &actor.id, &status.started_at);
+        let _ = actor_runtime::stop_if_started_at(group, &status);
         tracing::warn!(
             group_id = %group.group_id,
             actor_id = %actor.id,

@@ -174,6 +174,7 @@ async fn launch(
             Err(error) => break Err(error),
         }
     };
+    cccc_mcp::shutdown(&home).await;
     finish_embedded_daemon(&client, embedded_daemon.take()).await;
     shutdown_watchdog.abort();
     result
