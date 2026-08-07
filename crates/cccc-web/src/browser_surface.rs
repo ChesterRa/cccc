@@ -30,6 +30,10 @@ use tokio::task::JoinHandle;
 
 const BROWSER_EXIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
+pub(crate) fn system_browser_path() -> Option<PathBuf> {
+    system_browser::find_system_browser().map(|(path, _)| path)
+}
+
 #[derive(Default)]
 pub struct BrowserSurfaces {
     pub(super) sessions: Mutex<HashMap<String, Session>>,

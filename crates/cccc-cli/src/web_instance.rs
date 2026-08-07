@@ -129,4 +129,21 @@ mod tests {
                 .expect("default no")
         );
     }
+
+    #[test]
+    fn reclaims_an_unlocked_stale_pid_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize home");
+        std::fs::write(lock_path(&home), "10740\n").expect("write stale pid");
+
+        let claim = try_claim(&home).expect("reclaim stale lock");
+        assert!(matches!(claim, Claim::Acquired(_)));
+        assert_eq!(
+            std::fs::read_to_string(lock_path(&home))
+                .expect("read current pid")
+                .trim(),
+            std::process::id().to_string()
+        );
+    }
 }

@@ -346,7 +346,7 @@ fn main() {
 '@
   & rustc $slowSource -O -o $slowBinary
   if ($LASTEXITCODE -ne 0) { throw "failed to build locked rollback fixture" }
-  $lockedVersion = "9.9.7"
+  $lockedVersion = "9.9.6"
   New-FixtureRelease $lockedVersion $true $slowBinary
   $oldHash = (Get-FileHash (Join-Path $installDir "cccc.exe")).Hash
   $childOut = Join-Path $tempRoot "locked-rollback.out"

@@ -118,6 +118,15 @@ cccc doctor
 These show implementation availability, Python version, agent runtimes, and
 daemon status.
 
+### Does a leftover `cccc-web.lock` mean CCCC is still running?
+
+No. The operating-system file lock is authoritative; the file may retain the
+last owner's PID after a crash. `cccc` automatically reclaims an unlocked file,
+replaces the PID, and starts its embedded daemon when the Web process starts.
+Manual lock deletion or a separate `cccc daemon start` is not required. If CCCC
+reports that another instance is running, that process still holds the real file
+lock and should be stopped normally.
+
 ### Why does an embedded browser open a physical Chrome window on Linux?
 
 Projected browsers require `Xvfb` to stay off the host desktop. Install `xvfb` (and optionally

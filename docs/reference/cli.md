@@ -21,7 +21,9 @@ Check your environment and diagnose issues.
 cccc doctor             # Full environment check
 ```
 
-On Linux, the report includes projected-browser readiness: system Chrome/Edge, required `Xvfb`
+Browser readiness uses the same executable discovery as the Web runtime, including the standard
+Chrome, Edge, and Chromium installation directories on macOS and Windows. On Linux, the report
+includes projected-browser readiness: system Chrome/Edge, required `Xvfb`
 isolation, and the optional `x11vnc` VNC viewer. A missing `x11vnc` does not prevent browser
 isolation; CCCC falls back to its CDP screencast viewer.
 

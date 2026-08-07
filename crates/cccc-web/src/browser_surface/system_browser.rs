@@ -265,7 +265,7 @@ fn window_position(background: bool) -> &'static str {
     }
 }
 
-fn find_system_browser() -> Option<(PathBuf, &'static str)> {
+pub(super) fn find_system_browser() -> Option<(PathBuf, &'static str)> {
     fixed_browser_candidates()
         .into_iter()
         .find(|(path, _)| path.is_file())
@@ -320,20 +320,29 @@ fn fixed_browser_candidates() -> Vec<(PathBuf, &'static str)> {
         ];
     }
     if cfg!(target_os = "windows") {
-        return ["ProgramFiles", "ProgramFiles(x86)"]
-            .into_iter()
-            .filter_map(std::env::var_os)
-            .flat_map(|root| {
-                let root = PathBuf::from(root);
-                [
-                    (root.join("Google/Chrome/Application/chrome.exe"), "chrome"),
-                    (root.join("Microsoft/Edge/Application/msedge.exe"), "msedge"),
-                    (root.join("Chromium/Application/chrome.exe"), "chromium"),
-                ]
-            })
-            .collect();
+        return windows_fixed_browser_candidates(
+            ["ProgramFiles", "ProgramFiles(x86)"]
+                .into_iter()
+                .filter_map(std::env::var_os)
+                .map(PathBuf::from),
+        );
     }
     Vec::new()
+}
+
+fn windows_fixed_browser_candidates(
+    roots: impl IntoIterator<Item = PathBuf>,
+) -> Vec<(PathBuf, &'static str)> {
+    roots
+        .into_iter()
+        .flat_map(|root| {
+            [
+                (root.join("Google/Chrome/Application/chrome.exe"), "chrome"),
+                (root.join("Microsoft/Edge/Application/msedge.exe"), "msedge"),
+                (root.join("Chromium/Application/chrome.exe"), "chromium"),
+            ]
+        })
+        .collect()
 }
 
 struct VirtualDisplay {
@@ -457,6 +466,17 @@ mod tests {
 
         assert!(chrome < edge);
         assert!(edge < chromium);
+    }
+
+    #[test]
+    fn windows_fixed_candidates_include_edge_under_program_files_x86() {
+        let root = PathBuf::from(r"C:\Program Files (x86)");
+        assert!(
+            windows_fixed_browser_candidates([root.clone()])
+                .iter()
+                .any(|(path, channel)| *channel == "msedge"
+                    && path == &root.join("Microsoft/Edge/Application/msedge.exe"))
+        );
     }
 
     #[cfg(target_os = "macos")]

@@ -30,6 +30,11 @@ use tower_http::trace::TraceLayer;
 
 pub use readonly::WebMode;
 
+/// Return the system browser executable used by projected browser sessions.
+pub fn system_browser_path() -> Option<std::path::PathBuf> {
+    browser_surface::system_browser_path()
+}
+
 const GRACEFUL_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 const COMPONENT_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(500);
 
