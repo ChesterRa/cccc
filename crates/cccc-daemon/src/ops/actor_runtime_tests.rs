@@ -50,6 +50,7 @@ fn restores_enabled_actors_for_persisted_running_groups() {
             });
             group.active_scope_key = "s_project".into();
             let mut actor = Actor::new("peer1");
+            actor.default_scope_key = "s_detached".into();
             actor.runtime = ActorRuntime::Custom;
             actor.runner = RunnerKind::Pty;
             actor.command = vec!["sh".into(), "-c".into(), "sleep 5".into()];
@@ -62,6 +63,10 @@ fn restores_enabled_actors_for_persisted_running_groups() {
 
     assert!(runtime_restore::restore_running(&home).is_ok());
     assert!(actor_runtime::status(&group_id, "peer1").is_some_and(|status| status.running));
+    assert_eq!(
+        store.load(&group_id).expect("restored group").actors[0].default_scope_key,
+        "s_project"
+    );
     cccc_runtime::stop(&group_id, "peer1").expect("stop");
 }
 

@@ -3,8 +3,30 @@ use cccc_core::{GroupDoc, HomeLayout};
 use cccc_runtime::SessionStatus;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use super::{hook_launch, runtime_session, schedule_capture};
+
+const CAPTURE_DELAY: Duration = Duration::from_secs(2);
+const FAILURE_MONITOR_DURATION: Duration = Duration::from_secs(20);
+const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+#[derive(Clone, Copy)]
+struct VerificationTiming {
+    capture_delay: Duration,
+    monitor_duration: Duration,
+    poll_interval: Duration,
+}
+
+impl Default for VerificationTiming {
+    fn default() -> Self {
+        Self {
+            capture_delay: CAPTURE_DELAY,
+            monitor_duration: FAILURE_MONITOR_DURATION,
+            poll_interval: POLL_INTERVAL,
+        }
+    }
+}
 
 pub(super) fn schedule(
     home: HomeLayout,
@@ -15,43 +37,125 @@ pub(super) fn schedule(
     base_command: Vec<String>,
     resumed_status: SessionStatus,
 ) {
+    schedule_with_timing(
+        home,
+        group,
+        actor,
+        cwd,
+        env,
+        base_command,
+        resumed_status,
+        VerificationTiming::default(),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn schedule_with_timing(
+    home: HomeLayout,
+    group: GroupDoc,
+    actor: Actor,
+    cwd: PathBuf,
+    env: BTreeMap<String, String>,
+    base_command: Vec<String>,
+    resumed_status: SessionStatus,
+    timing: VerificationTiming,
+) {
     let _ = std::thread::Builder::new()
         .name(format!(
             "cccc-resume-verify:{}:{}",
             group.group_id, actor.id
         ))
         .spawn(move || {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            let mut error = None;
-            while std::time::Instant::now() < deadline {
-                let Ok(current) = cccc_runtime::status(&group.group_id, &actor.id) else {
-                    return;
+            let started = Instant::now();
+            let capture_at = started + timing.capture_delay;
+            let deadline = started + timing.monitor_duration.max(timing.capture_delay);
+            let mut capture_scheduled = false;
+            let error = loop {
+                let current = match cccc_runtime::status(&group.group_id, &actor.id) {
+                    Ok(current) => current,
+                    Err(cccc_runtime::RuntimeError::NotFound(_, _)) => {
+                        break Some("provider resume process disappeared early".to_owned());
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            group_id = %group.group_id,
+                            actor_id = %actor.id,
+                            %error,
+                            "failed to inspect resumed actor"
+                        );
+                        return;
+                    }
                 };
                 if current.started_at != resumed_status.started_at {
                     return;
                 }
                 if !current.running {
-                    error = Some("provider resume process exited early".to_owned());
-                    break;
+                    break Some("provider resume process exited early".to_owned());
                 }
                 if let Some(message) = runtime_session::resume_failure(&group.group_id, &actor.id) {
-                    error = Some(message);
-                    break;
+                    break Some(message);
                 }
-                std::thread::sleep(std::time::Duration::from_millis(50));
-            }
+                let now = Instant::now();
+                if !capture_scheduled && now >= capture_at {
+                    schedule_capture(
+                        &home,
+                        &group,
+                        &actor,
+                        cwd.clone(),
+                        base_command.clone(),
+                        &resumed_status,
+                    );
+                    capture_scheduled = true;
+                }
+                if now >= deadline {
+                    break None;
+                }
+                std::thread::sleep(timing.poll_interval);
+            };
 
             let Some(error) = error else {
-                schedule_capture(&home, &group, &actor, cwd, base_command, &resumed_status);
+                if !capture_scheduled {
+                    schedule_capture(&home, &group, &actor, cwd, base_command, &resumed_status);
+                }
                 return;
             };
-            let stopped = cccc_runtime::stop_if_started_at(
+            if crate::runtime_start_gate::permit(&home).is_err() {
+                return;
+            }
+            let stopped = match cccc_runtime::stop_if_started_at(
                 &group.group_id,
                 &actor.id,
                 &resumed_status.started_at,
-            );
-            if !matches!(stopped, Ok(Some(_))) {
-                return;
+            ) {
+                Ok(stopped) => stopped,
+                Err(stop_error) => {
+                    tracing::warn!(
+                        group_id = %group.group_id,
+                        actor_id = %actor.id,
+                        %stop_error,
+                        "failed to stop rejected resumed actor"
+                    );
+                    return;
+                }
+            };
+            if stopped.is_none() {
+                match cccc_runtime::status(&group.group_id, &actor.id) {
+                    Ok(current)
+                        if current.running || current.started_at != resumed_status.started_at =>
+                    {
+                        return;
+                    }
+                    Ok(_) | Err(cccc_runtime::RuntimeError::NotFound(_, _)) => {}
+                    Err(status_error) => {
+                        tracing::warn!(
+                            group_id = %group.group_id,
+                            actor_id = %actor.id,
+                            %status_error,
+                            "failed to verify rejected resumed actor ownership"
+                        );
+                        return;
+                    }
+                }
             }
             super::super::runtime_hook_session::revoke(&group.group_id, &actor.id);
             if let Err(persist_error) =
@@ -89,3 +193,7 @@ pub(super) fn schedule(
             }
         });
 }
+
+#[cfg(all(test, unix))]
+#[path = "resume_verification_tests.rs"]
+mod tests;

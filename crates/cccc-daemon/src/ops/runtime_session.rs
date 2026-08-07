@@ -36,7 +36,6 @@ pub fn prepare_codex_command(
     actor_id: &str,
     cwd: &Path,
     base_command: &[String],
-    allow_thread_migration: bool,
 ) -> PreparedCommand {
     let fresh = || PreparedCommand {
         command: base_command.to_vec(),
@@ -62,17 +61,23 @@ pub fn prepare_codex_command(
 
     let provider_session_id = string(&document, "provider_session_id");
     let provider_thread_id = string(&document, "provider_thread_id");
-    let session_id = if valid_session_id(&provider_session_id)
-        && string(&document, "command_fingerprint") == command_fingerprint(base_command)
-    {
-        provider_session_id
-    } else if allow_thread_migration && valid_session_id(&provider_thread_id) {
-        // Python's Codex app-server stored a thread id with an app-server
-        // command fingerprint. Codex CLI accepts that UUID through `resume`.
-        provider_thread_id
-    } else {
+    if provider_session_id.is_empty() && !provider_thread_id.is_empty() {
+        if let Err(error) = mark_resume_failed(
+            home,
+            group_id,
+            actor_id,
+            "saved app-server thread cannot be resumed by Codex CLI; starting a fresh session",
+        ) {
+            tracing::warn!(%error, %group_id, %actor_id, "failed to invalidate app-server resume metadata");
+        }
         return fresh();
-    };
+    }
+    if !valid_session_id(&provider_session_id)
+        || string(&document, "command_fingerprint") != command_fingerprint(base_command)
+    {
+        return fresh();
+    }
+    let session_id = provider_session_id;
 
     let now = utc_now();
     document.insert("last_resume_attempt_at".into(), json!(now));
@@ -119,9 +124,14 @@ pub fn schedule_codex_session_capture(
 
 pub fn resume_failure(group_id: &str, actor_id: &str) -> Option<String> {
     let history = cccc_runtime::history(group_id, actor_id, None, 64_000).ok()?;
-    let plain = strip_ansi(&history.data).to_ascii_lowercase();
+    resume_failure_marker(&history.data).map(str::to_owned)
+}
+
+fn resume_failure_marker(text: &str) -> Option<&'static str> {
+    let plain = strip_ansi(text).to_ascii_lowercase();
     [
         "no conversation found",
+        "no saved session found",
         "conversation not found",
         "session not found",
         "thread not found",
@@ -132,7 +142,7 @@ pub fn resume_failure(group_id: &str, actor_id: &str) -> Option<String> {
     ]
     .iter()
     .find(|marker| plain.contains(**marker))
-    .map(|marker| (*marker).to_owned())
+    .copied()
 }
 
 pub fn mark_resume_failed(
@@ -450,7 +460,7 @@ mod tests {
         ]);
         write(&home, &group_id, "peer1", &document).expect("write");
 
-        let prepared = prepare_codex_command(&home, &group_id, "peer1", &cwd, &base, false);
+        let prepared = prepare_codex_command(&home, &group_id, "peer1", &cwd, &base);
 
         assert_eq!(prepared.resumed_session_id.as_deref(), Some(session_id));
         assert_eq!(
@@ -460,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn migrates_python_app_server_thread_without_reusing_its_fingerprint() {
+    fn starts_fresh_for_python_app_server_thread_metadata() {
         let (_temp, home, group_id, cwd) = fixture();
         let thread_id = "019f4055-4231-77b0-b559-8de345f57f5e";
         let base = command();
@@ -479,9 +489,18 @@ mod tests {
         ]);
         write(&home, &group_id, "foreman", &document).expect("write");
 
-        let prepared = prepare_codex_command(&home, &group_id, "foreman", &cwd, &base, true);
+        let prepared = prepare_codex_command(&home, &group_id, "foreman", &cwd, &base);
 
-        assert_eq!(prepared.resumed_session_id.as_deref(), Some(thread_id));
+        assert!(prepared.resumed_session_id.is_none());
+        assert_eq!(prepared.command, base);
+        let stored = read(&home, &group_id, "foreman").expect("stored metadata");
+        assert_eq!(stored["status"], "resume_failed");
+        assert_eq!(stored["resume_eligible"], false);
+        assert!(
+            stored["last_resume_error"]
+                .as_str()
+                .is_some_and(|error| error.contains("app-server thread"))
+        );
     }
 
     #[test]
@@ -505,7 +524,7 @@ mod tests {
         ]);
         write(&home, &group_id, "peer1", &document).expect("write");
 
-        let prepared = prepare_codex_command(&home, &group_id, "peer1", &cwd, &base, false);
+        let prepared = prepare_codex_command(&home, &group_id, "peer1", &cwd, &base);
 
         assert!(prepared.resumed_session_id.is_none());
         assert_eq!(prepared.command, base);
@@ -517,6 +536,16 @@ mod tests {
         assert_eq!(
             parse_codex_session_id(text).as_deref(),
             Some("019eece8-8c6d-7811-a700-26593825ae2d")
+        );
+    }
+
+    #[test]
+    fn detects_codex_no_saved_session_resume_failure() {
+        assert_eq!(
+            resume_failure_marker(
+                "ERROR: No saved session found with ID 019eece8-8c6d-7811-a700-26593825ae2d"
+            ),
+            Some("no saved session found")
         );
     }
 

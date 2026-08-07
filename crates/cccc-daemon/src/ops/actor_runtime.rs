@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, ActorRuntime, RunnerKind, RuntimeStateSource};
+use cccc_contracts::{Actor, ActorRuntime, RunnerKind};
 use cccc_core::{GroupDoc, GroupStore, HomeLayout};
 use cccc_runtime::SessionStatus;
 use std::path::PathBuf;
@@ -93,7 +93,6 @@ fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> Result<SessionSt
                 &actor.id,
                 &cwd,
                 &base_command,
-                actor.runtime_state_source == RuntimeStateSource::AppServer,
             )
         }
         (ActorRuntime::Grok, cccc_contracts::RunnerKind::Pty) => {

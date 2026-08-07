@@ -17,6 +17,8 @@ pub fn resolve_attached_scope<'a>(group: &'a GroupDoc, reference: &str) -> Optio
 }
 
 pub fn normalize_actor_scope_keys(group: &mut GroupDoc) -> usize {
+    let active_scope_key =
+        resolve_attached_scope(group, &group.active_scope_key).map(|scope| scope.scope_key.clone());
     let replacements = group
         .actors
         .iter()
@@ -26,8 +28,10 @@ pub fn normalize_actor_scope_keys(group: &mut GroupDoc) -> usize {
             if reference.is_empty() {
                 return None;
             }
-            let scope = resolve_attached_scope(group, reference)?;
-            (scope.scope_key != reference).then(|| (index, scope.scope_key.clone()))
+            let scope_key = resolve_attached_scope(group, reference)
+                .map(|scope| scope.scope_key.clone())
+                .or_else(|| active_scope_key.clone())?;
+            (scope_key != reference).then_some((index, scope_key))
         })
         .collect::<Vec<_>>();
     for (index, scope_key) in &replacements {
@@ -122,6 +126,11 @@ fn detach_with(
                     .map(|scope| scope.scope_key.clone())
                     .unwrap_or_default();
             }
+            for actor in &mut group.actors {
+                if actor.default_scope_key == scope_key {
+                    actor.default_scope_key.clone_from(&group.active_scope_key);
+                }
+            }
             Ok(group.clone())
         },
         update_registry,
@@ -196,6 +205,67 @@ mod tests {
         assert_eq!(normalize_actor_scope_keys(&mut group), 1);
         assert_eq!(group.actors[0].default_scope_key, "s_project");
         assert_eq!(normalize_actor_scope_keys(&mut group), 0);
+    }
+
+    #[test]
+    fn stale_actor_scope_keys_fall_back_to_the_active_scope() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope_path = temp.path().join("project");
+        std::fs::create_dir(&scope_path).expect("project");
+        let mut group =
+            GroupStore::new(HomeLayout::from_path(temp.path().join("home")).expect("home"))
+                .expect("store")
+                .create("scope repair", "")
+                .expect("group");
+        group.scopes.push(Scope {
+            scope_key: "s_active".into(),
+            url: scope_path.to_string_lossy().into_owned(),
+            label: "project".into(),
+            git_remote: String::new(),
+        });
+        group.active_scope_key = "s_active".into();
+        let mut actor = cccc_contracts::Actor::new("peer");
+        actor.default_scope_key = "s_detached".into();
+        group.actors.push(actor);
+
+        assert_eq!(normalize_actor_scope_keys(&mut group), 1);
+        assert_eq!(group.actors[0].default_scope_key, "s_active");
+    }
+
+    #[test]
+    fn detach_reassigns_actor_scope_to_the_remaining_active_scope() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("scope detach", "").expect("group");
+        store
+            .mutate(&group.group_id, |group| {
+                group.scopes = vec![
+                    Scope {
+                        scope_key: "s_old".into(),
+                        url: temp.path().join("old").to_string_lossy().into_owned(),
+                        label: "old".into(),
+                        git_remote: String::new(),
+                    },
+                    Scope {
+                        scope_key: "s_next".into(),
+                        url: temp.path().join("next").to_string_lossy().into_owned(),
+                        label: "next".into(),
+                        git_remote: String::new(),
+                    },
+                ];
+                group.active_scope_key = "s_old".into();
+                let mut actor = cccc_contracts::Actor::new("peer");
+                actor.default_scope_key = "s_old".into();
+                group.actors.push(actor);
+                Ok(())
+            })
+            .expect("configure group");
+
+        let detached = detach_with(&store, &group.group_id, "s_old", |_| Ok(())).expect("detach");
+
+        assert_eq!(detached.active_scope_key, "s_next");
+        assert_eq!(detached.actors[0].default_scope_key, "s_next");
     }
 
     #[test]
