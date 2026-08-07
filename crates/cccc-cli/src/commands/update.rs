@@ -6,7 +6,7 @@ use std::process::Stdio;
 
 use anyhow::{Context, Result, bail};
 
-use crate::args::UpdateArgs;
+use crate::args::{ReleaseChannelArg, UpdateArgs};
 
 #[cfg(not(windows))]
 const UNIX_INSTALLER_URL: &str = "https://chesterra.github.io/cccc/install.sh";
@@ -15,18 +15,98 @@ const WINDOWS_INSTALLER_URL: &str = "https://chesterra.github.io/cccc/install.ps
 const INSTALL_MARKER: &str = ".cccc-standalone";
 const INSTALL_MARKER_VERSION: &str = "standalone-v1";
 
-pub fn run(args: UpdateArgs) -> Result<()> {
+pub async fn run(args: UpdateArgs) -> Result<()> {
     let executable = std::env::current_exe().context("could not resolve the CCCC executable")?;
     let install_dir = standalone_install_dir(&executable)?;
+    let channel = effective_channel(args.channel);
 
     if args.check {
         println!("Current version: {}", crate::PRODUCT_VERSION);
         println!("Install directory: {}", install_dir.display());
+        println!("Release channel: {}", channel_name(channel));
         println!("Installer: {}", installer_url());
         return Ok(());
     }
 
-    run_installer(&install_dir)
+    let version = latest_channel_version(channel).await?;
+    run_installer(&install_dir, Some(&version))
+}
+
+fn effective_channel(requested: Option<ReleaseChannelArg>) -> ReleaseChannelArg {
+    requested.unwrap_or_else(|| {
+        if crate::PRODUCT_VERSION.contains('-') {
+            ReleaseChannelArg::Rc
+        } else {
+            ReleaseChannelArg::Stable
+        }
+    })
+}
+
+const fn channel_name(channel: ReleaseChannelArg) -> &'static str {
+    match channel {
+        ReleaseChannelArg::Stable => "stable",
+        ReleaseChannelArg::Rc => "rc",
+    }
+}
+
+async fn latest_channel_version(channel: ReleaseChannelArg) -> Result<String> {
+    let repository =
+        std::env::var("CCCC_GITHUB_REPOSITORY").unwrap_or_else(|_| "ChesterRa/cccc".into());
+    if repository.split('/').count() != 2
+        || repository.bytes().any(|byte| {
+            !(byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'/'))
+        })
+    {
+        bail!("CCCC_GITHUB_REPOSITORY must use the owner/repository form");
+    }
+    let releases = reqwest::Client::new()
+        .get(format!(
+            "https://api.github.com/repos/{repository}/releases?per_page=30"
+        ))
+        .header(reqwest::header::USER_AGENT, "cccc-standalone-updater")
+        .send()
+        .await
+        .context("could not query GitHub releases for the RC channel")?
+        .error_for_status()
+        .context("GitHub rejected the RC release query")?
+        .json::<Vec<serde_json::Value>>()
+        .await
+        .context("GitHub returned an invalid releases response")?;
+    releases
+        .iter()
+        .find_map(|release| release_version(release, channel))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no published CCCC {} release was found",
+                channel_name(channel)
+            )
+        })
+}
+
+fn release_version(release: &serde_json::Value, channel: ReleaseChannelArg) -> Option<String> {
+    let prerelease = release["prerelease"].as_bool()?;
+    if release["draft"].as_bool() == Some(true) || prerelease != (channel == ReleaseChannelArg::Rc)
+    {
+        return None;
+    }
+    let version = release["tag_name"].as_str()?.strip_prefix('v')?;
+    (valid_release_version(version)
+        && match channel {
+            ReleaseChannelArg::Stable => !version.contains('-'),
+            ReleaseChannelArg::Rc => version.contains('-'),
+        })
+    .then(|| version.to_owned())
+}
+
+fn valid_release_version(version: &str) -> bool {
+    let core = version.split_once('-').map_or(version, |(core, _)| core);
+    core.split('.').count() == 3
+        && core
+            .split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+        && version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'+'))
 }
 
 fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
@@ -44,12 +124,17 @@ fn standalone_install_dir(executable: &Path) -> Result<PathBuf> {
 }
 
 #[cfg(not(windows))]
-fn run_installer(install_dir: &Path) -> Result<()> {
-    let status = Command::new("sh")
+fn run_installer(install_dir: &Path, version: Option<&str>) -> Result<()> {
+    let mut command = Command::new("sh");
+    command
         .arg("-c")
         .arg("curl -fsSL \"$CCCC_INSTALLER_URL\" | sh")
         .env("CCCC_INSTALLER_URL", UNIX_INSTALLER_URL)
-        .env("CCCC_INSTALL_DIR", install_dir)
+        .env("CCCC_INSTALL_DIR", install_dir);
+    if let Some(version) = version {
+        command.env("CCCC_VERSION", version);
+    }
+    let status = command
         .status()
         .context("could not start the CCCC installer")?;
     if !status.success() {
@@ -59,8 +144,9 @@ fn run_installer(install_dir: &Path) -> Result<()> {
 }
 
 #[cfg(windows)]
-fn run_installer(install_dir: &Path) -> Result<()> {
-    let child = Command::new("powershell.exe")
+fn run_installer(install_dir: &Path, version: Option<&str>) -> Result<()> {
+    let mut command = Command::new("powershell.exe");
+    command
         .args([
             "-NoLogo",
             "-NoProfile",
@@ -74,7 +160,11 @@ fn run_installer(install_dir: &Path) -> Result<()> {
         .env("CCCC_INSTALL_DIR", install_dir)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    if let Some(version) = version {
+        command.env("CCCC_VERSION", version);
+    }
+    let child = command
         .spawn()
         .context("could not start the CCCC updater")?;
     println!("Started CCCC updater (process {}).", child.id());
@@ -115,6 +205,49 @@ mod tests {
         assert_eq!(
             standalone_install_dir(&executable).expect("standalone install"),
             temp.path()
+        );
+    }
+
+    #[test]
+    fn update_channel_defaults_to_the_installed_release_family() {
+        assert_eq!(
+            effective_channel(None),
+            if crate::PRODUCT_VERSION.contains('-') {
+                ReleaseChannelArg::Rc
+            } else {
+                ReleaseChannelArg::Stable
+            }
+        );
+        assert_eq!(
+            effective_channel(Some(ReleaseChannelArg::Stable)),
+            ReleaseChannelArg::Stable
+        );
+    }
+
+    #[test]
+    fn validates_release_versions_before_passing_them_to_the_installer() {
+        assert!(valid_release_version("0.4.34-rc2"));
+        assert!(valid_release_version("1.2.3"));
+        assert!(!valid_release_version("latest"));
+        assert!(!valid_release_version("1.2.3/../../escape"));
+    }
+
+    #[test]
+    fn release_selection_keeps_stable_and_prerelease_channels_separate() {
+        let stable = serde_json::json!({
+            "tag_name":"v1.2.3","prerelease":false,"draft":false
+        });
+        let rc = serde_json::json!({
+            "tag_name":"v1.3.0-rc2","prerelease":true,"draft":false
+        });
+        assert_eq!(
+            release_version(&stable, ReleaseChannelArg::Stable).as_deref(),
+            Some("1.2.3")
+        );
+        assert!(release_version(&stable, ReleaseChannelArg::Rc).is_none());
+        assert_eq!(
+            release_version(&rc, ReleaseChannelArg::Rc).as_deref(),
+            Some("1.3.0-rc2")
         );
     }
 }

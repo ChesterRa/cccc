@@ -26,6 +26,8 @@ mod presentation_ops;
 mod profile_access;
 #[path = "suite/registry_reconcile.rs"]
 mod registry_reconcile;
+#[path = "suite/reme_parity.rs"]
+mod reme_parity;
 #[path = "suite/runtime_completion.rs"]
 mod runtime_completion;
 #[path = "suite/runtime_completion_replay.rs"]

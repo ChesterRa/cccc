@@ -42,11 +42,13 @@ Cargo.lock. The manual native-install check confirms the built binary version.
    - `python -m pip install --force-reinstall dist/*.whl`
    - `cccc version`
 4. After GitHub assets are published, manually test a native installation:
-   - macOS/Linux: install into a temporary `CCCC_INSTALL_DIR` with
-     `CCCC_NO_MODIFY_PATH=1`, then run `cccc --version` and
-     `cccc update --check`.
-   - Windows: install into a temporary directory with `install.ps1`, then run
-     `cccc.exe --version` and `cccc.exe update --check`.
+   - macOS/Linux: download the complete asset set and run
+     `scripts/tests/verify_release_unix.sh <artifact-dir> <target>`.
+   - Windows: download the complete asset set and run
+     `scripts/tests/verify_release_windows.ps1 -ArtifactDir <artifact-dir> -Target x86_64-pc-windows-msvc`.
+   - The verifiers install into temporary directories and exercise version,
+     offline status, daemon lifecycle, and MCP startup; Unix also runs a real
+     nested-tool `cccc_code_exec` cell.
    - Confirm the release contains four archives, `SHA256SUMS`, `install.sh`, and
      `install.ps1`.
 5. Tag and push:

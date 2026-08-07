@@ -283,6 +283,15 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
         "invalid_args"
     );
 
+    let memory_layout = call(
+        &home,
+        "memory_reme_layout_get",
+        json!({"group_id":group_id}),
+    );
+    assert!(memory_layout.result["memory_root"].is_string());
+    assert!(memory_layout.result["today_daily_file"].is_string());
+    assert_eq!(memory_layout.result["backend"]["name"], "local");
+
     let missing_date = raw_call(
         &home,
         "memory_reme_write",
@@ -314,6 +323,13 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
     );
     assert!(index.result["indexed_files"].as_u64().unwrap_or(0) >= 2);
     assert!(index.result["indexed_chunks"].as_u64().unwrap_or(0) >= 1);
+    assert!(
+        index.result["watched_paths"]
+            .as_array()
+            .is_some_and(|paths| paths
+                .iter()
+                .all(|path| path.as_str().is_some_and(|path| path.ends_with(".md"))))
+    );
 }
 
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {

@@ -95,7 +95,21 @@ fn layout(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             string_arg(request, "date").as_deref(),
         )
         .map_err(OpError::io)?;
-    object(json!({"layout": layout}))
+    let group_label = layout
+        .today_file
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.split_once("__"))
+        .map(|(_, label)| label)
+        .unwrap_or("group");
+    object(json!({
+        "group_label":group_label,
+        "memory_root":layout.root,
+        "memory_file":layout.memory_file,
+        "daily_dir":layout.daily_dir,
+        "today_daily_file":layout.today_file,
+        "backend":{"name":"local","vector_enabled":false,"fts_enabled":true},
+    }))
 }
 
 fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -125,7 +139,8 @@ fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .count()
         })
         .sum::<usize>();
+    let watched_paths = files.clone();
     object(
-        json!({"indexed_files":files.len(),"indexed_chunks":chunks,"watched_paths":[layout.memory_file,layout.daily_dir],"last_sync_at":cccc_contracts::utc_now()}),
+        json!({"indexed_files":files.len(),"indexed_chunks":chunks,"watched_paths":watched_paths,"last_sync_at":cccc_contracts::utc_now()}),
     )
 }

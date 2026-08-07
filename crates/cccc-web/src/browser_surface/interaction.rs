@@ -9,6 +9,7 @@ use chromiumoxide::cdp::browser_protocol::input::{
 use chromiumoxide::layout::Point;
 use serde_json::{Value, json};
 use std::collections::HashSet;
+use std::future::Future;
 
 use super::BrowserSurfaces;
 use super::navigation::goto_dom_content_loaded;
@@ -148,16 +149,20 @@ pub async fn serve_socket(
     loop {
         tokio::select! {
             _ = shutdown.recv() => {
-                let _ = socket.send(Message::Close(None)).await;
+                close_for_shutdown(&mut socket).await;
                 break;
             }
-            _ = interval.tick() => match surfaces.frame(key).await {
-                Ok(frame) => {
+            _ = interval.tick() => match until_shutdown(&mut shutdown, surfaces.frame(key)).await {
+                None => {
+                    close_for_shutdown(&mut socket).await;
+                    break;
+                }
+                Some(Ok(frame)) => {
                     if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
                         break;
                     }
                 }
-                Err(error) => {
+                Some(Err(error)) => {
                     let message = error.to_string();
                     let _ = socket.send(Message::Text(
                         json!({"t":"state","active":false,"state":"failed","message":message,"error":{"code":"browser_surface_unavailable","message":message}}).to_string().into(),
@@ -171,7 +176,14 @@ pub async fn serve_socket(
                 let Message::Text(text) = message else { continue };
                 let Ok(command) = serde_json::from_str::<Value>(&text) else { continue };
                 let command_id = command.get("id").and_then(Value::as_str).unwrap_or("");
-                match surfaces.command(key, &command).await {
+                let Some(result) = until_shutdown(
+                    &mut shutdown,
+                    surfaces.command(key, &command),
+                ).await else {
+                    close_for_shutdown(&mut socket).await;
+                    break;
+                };
+                match result {
                     Ok(()) if !command_id.is_empty() => {
                         let _ = socket.send(Message::Text(
                             json!({"t":"command_result","id":command_id,"ok":true}).to_string().into(),
@@ -192,6 +204,20 @@ pub async fn serve_socket(
             }
         }
     }
+}
+
+async fn until_shutdown<T>(
+    shutdown: &mut tokio::sync::broadcast::Receiver<()>,
+    operation: impl Future<Output = T>,
+) -> Option<T> {
+    tokio::select! {
+        _ = shutdown.recv() => None,
+        result = operation => Some(result),
+    }
+}
+
+async fn close_for_shutdown(socket: &mut WebSocket) {
+    let _ = socket.send(Message::Close(None)).await;
 }
 
 fn should_override_viewport(
@@ -243,7 +269,8 @@ async fn press_key(page: &Page, key: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::should_override_viewport;
+    use super::{should_override_viewport, until_shutdown};
+    use std::future::pending;
 
     #[test]
     fn visible_system_browser_keeps_its_native_viewport_stable() {
@@ -254,5 +281,17 @@ mod tests {
     fn headless_browser_only_resizes_when_dimensions_change() {
         assert!(!should_override_viewport(false, (800, 600), (800, 600)));
         assert!(should_override_viewport(false, (800, 600), (1024, 768)));
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_a_stalled_browser_operation() {
+        let (shutdown, mut receiver) = tokio::sync::broadcast::channel(1);
+        shutdown.send(()).expect("shutdown receiver");
+
+        assert!(
+            until_shutdown(&mut receiver, pending::<()>())
+                .await
+                .is_none()
+        );
     }
 }

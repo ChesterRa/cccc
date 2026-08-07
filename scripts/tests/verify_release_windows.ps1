@@ -66,6 +66,17 @@ try {
   }
 
   $env:CCCC_HOME = $ccccHome
+  $offlineStatus = (& $installed status | Out-String)
+  if ($LASTEXITCODE -ne 0 -or -not $offlineStatus.Contains("Selected:    rust") -or
+      -not $offlineStatus.Contains("Daemon:      stopped")) {
+    throw "offline Rust status smoke failed"
+  }
+  $mcpInput = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
+  $mcpOutput = ($mcpInput | & $installed mcp | Out-String)
+  if ($LASTEXITCODE -ne 0 -or -not $mcpOutput.Contains('"name":"cccc-mcp"')) {
+    throw "Rust MCP initialize smoke failed"
+  }
+
   & $installed daemon start
   if ($LASTEXITCODE -ne 0) { throw "daemon start failed" }
   & $installed daemon status

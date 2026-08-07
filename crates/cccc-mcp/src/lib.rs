@@ -1,4 +1,5 @@
 mod actions;
+mod code_mode;
 mod local_sessions;
 mod local_tools;
 mod mapping;
@@ -6,7 +7,6 @@ mod remote_messages;
 mod remote_tools;
 mod repo;
 mod router;
-mod schemas;
 mod tools;
 
 #[cfg(test)]
@@ -79,12 +79,13 @@ async fn handle(home: &HomeLayout, client: &DaemonClient, request: &Value) -> Va
     }
 }
 
-async fn visible_tools(home: &HomeLayout, client: &DaemonClient) -> Vec<Value> {
-    let catalog = tools::catalog();
+pub(crate) async fn visible_tools(home: &HomeLayout, client: &DaemonClient) -> Vec<Value> {
+    let mut catalog = tools::catalog();
     if std::env::var("CCCC_MCP_TOOL_PROFILE")
         .ok()
         .is_some_and(|value| value.trim().eq_ignore_ascii_case("full"))
     {
+        hide_disabled_code_mode_tools(&mut catalog);
         return catalog;
     }
     let group_id = std::env::var("CCCC_GROUP_ID")
@@ -130,6 +131,7 @@ async fn visible_tools(home: &HomeLayout, client: &DaemonClient) -> Vec<Value> {
                 .is_some_and(|name| visible.contains(name))
         })
         .collect::<Vec<_>>();
+    hide_disabled_code_mode_tools(&mut output);
     for tool in response
         .result
         .get("dynamic_tools")
@@ -145,6 +147,18 @@ async fn visible_tools(home: &HomeLayout, client: &DaemonClient) -> Vec<Value> {
         }
     }
     output
+}
+
+fn hide_disabled_code_mode_tools(tools: &mut Vec<Value>) {
+    if code_mode::enabled() {
+        return;
+    }
+    tools.retain(|tool| {
+        !matches!(
+            tool["name"].as_str(),
+            Some("cccc_code_exec" | "cccc_code_wait")
+        )
+    });
 }
 
 fn core_tools(catalog: Vec<Value>) -> Vec<Value> {

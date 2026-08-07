@@ -68,4 +68,6 @@ while [ -e "$address" ] && [ "$SECONDS" -lt "$deadline" ]; do
 done
 test ! -e "$address"
 
+bash "$ROOT_DIR/scripts/tests/smoke_rust_replacement.sh" "$installed"
+
 echo "OK: verified $package release archive and installed self-launch"

@@ -6,16 +6,22 @@ use reqwest::Method;
 use serde_json::{Value, json};
 
 use crate::args::{
-    ImAction, ImArgs, ImSetArgs, PromptArgs, SpaceAction, SpaceArgs, SpaceCredentialAction,
+    ImAction, ImArgs, ImSetArgs, PromptArgs, SpaceAction, SpaceArgs, SpaceAuthAction,
+    SpaceCredentialAction, SpaceJobsAction,
 };
 use crate::commands::common::{call, group, print};
 
 pub async fn prompt(client: &DaemonClient, home: &HomeLayout, args: PromptArgs) -> Result<()> {
+    let actor_id = match (args.actor_id, args.legacy_actor_id) {
+        (Some(actor_id), None) | (None, Some(actor_id)) if !actor_id.trim().is_empty() => actor_id,
+        (Some(_), Some(_)) => anyhow::bail!("pass actor id once, preferably with --actor-id"),
+        _ => anyhow::bail!("--actor-id is required"),
+    };
     print(
         call(
             client,
             "actor_prompt",
-            json!({"group_id":group(home,args.group_id)?,"actor_id":args.actor_id}),
+            json!({"group_id":group(home,args.group_id)?,"actor_id":actor_id}),
         )
         .await?,
     )
@@ -210,8 +216,8 @@ pub async fn space(
     endpoint: &str,
     args: SpaceArgs,
 ) -> Result<()> {
-    if let SpaceAction::Auth { action, provider } = &args.action {
-        let (method, path, value) = space_auth_request(action, provider)?;
+    if let SpaceAction::Auth { action } = &args.action {
+        let (method, path, value) = space_auth_request(action)?;
         println!(
             "{}",
             serde_json::to_string_pretty(&web_call(home, endpoint, method, &path, value).await?)?,
@@ -228,26 +234,29 @@ pub async fn space(
             group_id,
             lane,
             provider,
+            by,
         } => (
             "group_space_bind",
-            json!({"group_id":group(home,group_id)?,"provider":provider,"lane":lane,"remote_space_id":remote_space_id,"action":"bind"}),
+            json!({"group_id":group(home,group_id)?,"provider":provider,"lane":lane,"remote_space_id":remote_space_id,"action":"bind","by":by}),
         ),
         SpaceAction::Unbind {
             group_id,
             lane,
             provider,
+            by,
         } => (
             "group_space_bind",
-            json!({"group_id":group(home,group_id)?,"provider":provider,"lane":lane,"action":"unbind"}),
+            json!({"group_id":group(home,group_id)?,"provider":provider,"lane":lane,"remote_space_id":"","action":"unbind","by":by}),
         ),
         SpaceAction::Sync {
             group_id,
             lane,
             provider,
             force,
+            by,
         } => (
             "group_space_sync",
-            json!({"group_id":group(home,group_id)?,"provider":provider,"lane":lane,"force":force}),
+            json!({"group_id":group(home,group_id)?,"provider":provider,"lane":lane,"action":"run","force":force,"by":by}),
         ),
         SpaceAction::Ingest {
             group_id,
@@ -256,9 +265,10 @@ pub async fn space(
             payload,
             idempotency_key,
             provider,
+            by,
         } => (
             "group_space_ingest",
-            json!({"group_id":group(home,group_id)?,"lane":lane,"kind":kind,"payload":json_object(&payload,"payload")?,"idempotency_key":idempotency_key,"provider":provider}),
+            json!({"group_id":group(home,group_id)?,"lane":lane,"kind":kind,"payload":json_object(&payload,"payload")?,"idempotency_key":idempotency_key,"provider":provider,"by":by}),
         ),
         SpaceAction::Query {
             query,
@@ -281,26 +291,49 @@ pub async fn space(
             "group_space_sources",
             json!({"group_id":group(home,group_id)?,"lane":lane,"action":action,"source_id":source_id,"new_title":new_title,"provider":provider}),
         ),
-        SpaceAction::Jobs {
-            group_id,
-            lane,
-            action,
-            job_id,
-            provider,
-        } => (
-            "group_space_jobs",
-            json!({"group_id":group(home,group_id)?,"lane":lane,"action":action,"job_id":job_id,"provider":provider}),
-        ),
+        SpaceAction::Jobs { action } => match action {
+            SpaceJobsAction::List {
+                group_id,
+                lane,
+                provider,
+                state,
+                limit,
+            } => (
+                "group_space_jobs",
+                json!({"group_id":group(home,group_id)?,"lane":lane,"action":"list","state":state,"limit":limit,"provider":provider}),
+            ),
+            SpaceJobsAction::Retry {
+                job_id,
+                group_id,
+                lane,
+                provider,
+                by,
+            } => (
+                "group_space_jobs",
+                json!({"group_id":group(home,group_id)?,"lane":lane,"action":"retry","job_id":job_id,"provider":provider,"by":by}),
+            ),
+            SpaceJobsAction::Cancel {
+                job_id,
+                group_id,
+                lane,
+                provider,
+                by,
+            } => (
+                "group_space_jobs",
+                json!({"group_id":group(home,group_id)?,"lane":lane,"action":"cancel","job_id":job_id,"provider":provider,"by":by}),
+            ),
+        },
         SpaceAction::Auth { .. } => unreachable!("provider auth handled through Web"),
         SpaceAction::Credential { action } => match action {
-            SpaceCredentialAction::Status { provider } => (
+            SpaceCredentialAction::Status { provider, by } => (
                 "group_space_provider_credential_status",
-                json!({"provider":provider,"by":"user"}),
+                json!({"provider":provider,"by":by}),
             ),
             SpaceCredentialAction::Set {
                 provider,
                 auth_json,
                 auth_json_file,
+                by,
             } => {
                 let raw = match (auth_json, auth_json_file) {
                     (Some(value), None) => value,
@@ -312,23 +345,34 @@ pub async fn space(
                 let normalized = serde_json::to_string(&json_object(&raw, "auth_json")?)?;
                 (
                     "group_space_provider_credential_update",
-                    json!({"provider":provider,"by":"user","auth_json":normalized}),
+                    json!({"provider":provider,"by":by,"auth_json":normalized,"clear":false}),
                 )
             }
-            SpaceCredentialAction::Clear { provider } => (
+            SpaceCredentialAction::Clear { provider, by } => (
                 "group_space_provider_credential_update",
-                json!({"provider":provider,"by":"user","clear":true}),
+                json!({"provider":provider,"by":by,"auth_json":"","clear":true}),
             ),
         },
-        SpaceAction::Health { provider } => (
+        SpaceAction::Health { provider, by } => (
             "group_space_provider_health_check",
-            json!({"provider":provider,"by":"user"}),
+            json!({"provider":provider,"by":by}),
         ),
     };
     print(call(client, op, value).await?)
 }
 
-fn space_auth_request(action: &str, provider: &str) -> Result<(Method, String, Value)> {
+fn space_auth_request(action: &SpaceAuthAction) -> Result<(Method, String, Value)> {
+    let (action_name, provider, by, timeout_seconds, force_reauth) = match action {
+        SpaceAuthAction::Status { provider, by } => ("status", provider, by, None, false),
+        SpaceAuthAction::Start {
+            provider,
+            by,
+            timeout_seconds,
+            force_reauth,
+        } => ("start", provider, by, Some(*timeout_seconds), *force_reauth),
+        SpaceAuthAction::Cancel { provider, by } => ("cancel", provider, by, None, false),
+        SpaceAuthAction::Disconnect { provider, by } => ("disconnect", provider, by, None, false),
+    };
     if provider.is_empty()
         || !provider
             .bytes()
@@ -336,14 +380,7 @@ fn space_auth_request(action: &str, provider: &str) -> Result<(Method, String, V
     {
         anyhow::bail!("provider must contain only letters, numbers, '_' or '-'");
     }
-    let action = action.trim().to_ascii_lowercase();
-    if !matches!(
-        action.as_str(),
-        "status" | "start" | "cancel" | "disconnect"
-    ) {
-        anyhow::bail!("unsupported provider auth action: {action}");
-    }
-    let method = if action == "status" {
+    let method = if action_name == "status" {
         Method::GET
     } else {
         Method::POST
@@ -351,7 +388,7 @@ fn space_auth_request(action: &str, provider: &str) -> Result<(Method, String, V
     Ok((
         method,
         format!("/api/v1/space/providers/{provider}/auth"),
-        json!({"action":action}),
+        json!({"action":action_name,"by":by,"timeout_seconds":timeout_seconds,"force_reauth":force_reauth}),
     ))
 }
 
@@ -381,11 +418,23 @@ mod tests {
 
     #[test]
     fn space_auth_uses_the_real_web_lifecycle_route() {
-        let (method, path, body) = space_auth_request("start", "notebooklm").expect("request");
+        let action = SpaceAuthAction::Start {
+            provider: "notebooklm".into(),
+            by: "operator".into(),
+            timeout_seconds: 120,
+            force_reauth: true,
+        };
+        let (method, path, body) = space_auth_request(&action).expect("request");
         assert_eq!(method, Method::POST);
         assert_eq!(path, "/api/v1/space/providers/notebooklm/auth");
         assert_eq!(body["action"], "start");
-        assert!(space_auth_request("start", "../escape").is_err());
-        assert!(space_auth_request("unknown", "notebooklm").is_err());
+        assert_eq!(body["by"], "operator");
+        assert_eq!(body["timeout_seconds"], 120);
+        assert_eq!(body["force_reauth"], true);
+        let invalid = SpaceAuthAction::Status {
+            provider: "../escape".into(),
+            by: "user".into(),
+        };
+        assert!(space_auth_request(&invalid).is_err());
     }
 }

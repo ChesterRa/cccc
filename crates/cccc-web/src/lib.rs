@@ -7,6 +7,7 @@ mod network;
 mod notebooklm_auth;
 mod readonly;
 mod routes;
+mod shutdown;
 mod web_banner;
 
 use anyhow::Result;
@@ -412,16 +413,7 @@ where
     {
         tracing::warn!("Web component shutdown timed out; cancelling remaining IM workers");
     }
-    match browser_surfaces.shutdown_all().await {
-        Ok(closed) => {
-            if closed > 0 {
-                tracing::info!(closed, "closed browser surfaces during Web shutdown");
-            }
-        }
-        Err(error) => {
-            tracing::warn!(%error, "failed to close browser surfaces during Web shutdown")
-        }
-    }
+    shutdown::browser_surfaces(&browser_surfaces).await;
     server_result?;
     if restart.as_ref().is_some_and(|handle| handle.requested()) {
         match restart_behavior {

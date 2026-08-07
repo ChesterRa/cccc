@@ -288,6 +288,7 @@ jobs:
           cargo build --workspace --release --locked
           scripts/tests/install_real_unix.sh target/release/cccc
           target/release/cccc --version
+          bash scripts/tests/smoke_rust_replacement.sh target/release/cccc
 
   interop:
     if: github.event_name != 'schedule'

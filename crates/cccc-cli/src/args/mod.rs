@@ -6,7 +6,8 @@ mod messaging;
 pub use actor::{ActorAction, ActorArgs, ActorTarget};
 pub use group::{GroupAction, GroupArgs};
 pub use integrations::{
-    ImAction, ImArgs, ImSetArgs, PromptArgs, SpaceAction, SpaceArgs, SpaceCredentialAction,
+    ImAction, ImArgs, ImSetArgs, PromptArgs, SpaceAction, SpaceArgs, SpaceAuthAction,
+    SpaceCredentialAction, SpaceJobsAction,
 };
 pub use messaging::{
     InboxArgs, LedgerAction, LedgerArgs, ReadArgs, ReplyArgs, SendArgs, TailArgs, TrackedSendArgs,
@@ -26,6 +27,12 @@ pub struct WebArgs {
     pub mode: Option<WebModeArg>,
     #[arg(long, conflicts_with = "mode")]
     pub exhibit: bool,
+    /// Accepted for Python CLI compatibility; the standalone server is not a source reloader.
+    #[arg(long)]
+    pub reload: bool,
+    /// Accepted for Python CLI compatibility.
+    #[arg(long, default_value = "info")]
+    pub log_level: String,
 }
 
 #[derive(Debug, Args)]
@@ -38,9 +45,23 @@ pub struct SetupArgs {
 
 #[derive(Debug, Args)]
 pub struct UpdateArgs {
+    #[arg(long, value_enum)]
+    pub channel: Option<ReleaseChannelArg>,
     /// Show the detected installation and update source without changing files.
     #[arg(long)]
     pub check: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ReleaseChannelArg {
+    Stable,
+    Rc,
+}
+
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    #[arg(long)]
+    pub all: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -92,7 +113,7 @@ pub enum CommandKind {
         action: RuntimeAction,
     },
     Status,
-    Doctor,
+    Doctor(DoctorArgs),
     Setup(SetupArgs),
     /// Update CCCC through the installer that owns this executable.
     Update(UpdateArgs),
@@ -123,7 +144,10 @@ pub enum DaemonAction {
 
 #[derive(Debug, Subcommand)]
 pub enum RuntimeAction {
-    List,
+    List {
+        #[arg(long)]
+        all: bool,
+    },
     Hermes {
         #[command(subcommand)]
         action: HermesAction,
@@ -179,7 +203,77 @@ mod tests {
         let cli = Cli::try_parse_from(["cccc", "update", "--check"]).expect("update check");
         assert!(matches!(
             cli.command,
-            Some(CommandKind::Update(UpdateArgs { check: true }))
+            Some(CommandKind::Update(UpdateArgs {
+                check: true,
+                channel: None,
+            }))
+        ));
+    }
+
+    #[test]
+    fn parses_python_compatible_prompt_tail_and_runtime_flags() {
+        let cli = Cli::try_parse_from(["cccc", "prompt", "--actor-id", "peer"]).expect("prompt");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Prompt(PromptArgs {
+                actor_id: Some(ref actor_id),
+                ..
+            })) if actor_id == "peer"
+        ));
+
+        let cli = Cli::try_parse_from(["cccc", "tail", "--lines", "12"]).expect("tail");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Tail(TailArgs { limit: 12, .. }))
+        ));
+
+        let cli = Cli::try_parse_from(["cccc", "runtime", "list", "--all"]).expect("runtime list");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Runtime {
+                action: RuntimeAction::List { all: true }
+            })
+        ));
+    }
+
+    #[test]
+    fn parses_python_compatible_space_subcommands() {
+        let cli = Cli::try_parse_from([
+            "cccc", "space", "jobs", "list", "--lane", "work", "--state", "failed", "--limit", "25",
+        ])
+        .expect("space jobs list");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Space(SpaceArgs {
+                action: SpaceAction::Jobs {
+                    action: SpaceJobsAction::List { limit: 25, .. }
+                }
+            }))
+        ));
+
+        let cli = Cli::try_parse_from([
+            "cccc",
+            "space",
+            "auth",
+            "start",
+            "--timeout-seconds",
+            "120",
+            "--force-reauth",
+            "--by",
+            "operator",
+        ])
+        .expect("space auth start");
+        assert!(matches!(
+            cli.command,
+            Some(CommandKind::Space(SpaceArgs {
+                action: SpaceAction::Auth {
+                    action: SpaceAuthAction::Start {
+                        timeout_seconds: 120,
+                        force_reauth: true,
+                        ..
+                    }
+                }
+            }))
         ));
     }
 

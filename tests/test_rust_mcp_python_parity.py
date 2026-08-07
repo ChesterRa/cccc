@@ -1,27 +1,30 @@
 from __future__ import annotations
 
-import re
+import json
 import unittest
 from pathlib import Path
 
 from cccc.ports.mcp.toolspecs import MCP_TOOLS
 
 
-RUST_ONLY_TOOLS: set[str] = set()
-
-
 class TestRustMcpPythonParity(unittest.TestCase):
-    def test_static_tool_catalog_names_match(self) -> None:
+    def test_python_and_rust_use_the_same_language_neutral_contract(self) -> None:
         root = Path(__file__).resolve().parents[1]
+        contract_path = root / "src/cccc/resources/mcp_tools.json"
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
         rust = (root / "crates/cccc-mcp/src/tools.rs").read_text(encoding="utf-8")
-        rust_names = set(re.findall(r'\(\s*"(cccc_[a-z0-9_]+)"\s*,', rust))
-        python_names = {
-            str(tool.get("name") or "")
-            for tool in MCP_TOOLS
-            if isinstance(tool, dict) and str(tool.get("name") or "")
-        }
-        self.assertSetEqual(rust_names - RUST_ONLY_TOOLS, python_names)
-        self.assertTrue(RUST_ONLY_TOOLS <= rust_names)
+
+        self.assertEqual(MCP_TOOLS, contract)
+        self.assertIn('include_str!("../../../src/cccc/resources/mcp_tools.json")', rust)
+        self.assertFalse((root / "crates/cccc-mcp/src/schemas.rs").exists())
+
+    def test_full_contract_has_unique_complete_entries(self) -> None:
+        names = [str(tool.get("name") or "") for tool in MCP_TOOLS]
+        self.assertEqual(len(names), 59)
+        self.assertEqual(len(set(names)), len(names))
+        for tool in MCP_TOOLS:
+            self.assertEqual(set(tool) - {"annotations"}, {"name", "description", "inputSchema"})
+            self.assertEqual(tool["inputSchema"].get("type"), "object")
 
 
 if __name__ == "__main__":

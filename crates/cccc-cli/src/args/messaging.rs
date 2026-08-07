@@ -68,7 +68,7 @@ pub struct ReplyArgs {
 pub struct TailArgs {
     #[arg(long = "group")]
     pub group_id: Option<String>,
-    #[arg(short = 'n', long, default_value_t = 50)]
+    #[arg(short = 'n', long = "lines", alias = "limit", default_value_t = 50)]
     pub limit: u64,
     #[arg(short = 'f', long)]
     pub follow: bool,

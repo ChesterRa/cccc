@@ -1,15 +1,12 @@
 # Rust Implementation and Product Distribution
 
-The stable CCCC product distribution remains `cccc-pair` on PyPI. It keeps Python
-as the initial default and, on supported platforms, bundles a private Rust
-executable with the same product version behind the public `cccc` launcher. This
-lets users evaluate and gradually adopt Rust without giving up Python fallback or
-creating a second command on `PATH`.
-
-The repository also publishes an experimental standalone Rust preview for
-supported platforms. It shares the product version, data contracts, and public
-command, but contains no Python fallback or implementation selector and is not
-yet the recommended replacement for the complete pip product.
+The maintained Python compatibility distribution remains `cccc-pair` on PyPI.
+The repository separately publishes an experimental standalone Rust preview for
+supported platforms. Both share the product version, data contracts, and public
+command, while the standalone artifact contains no Python fallback or
+implementation selector. Replacement readiness is enforced by source-level
+parity tests plus binary and manual installed-artifact smoke checks; promotion
+from preview remains a release decision, not an implementation fallback.
 
 Prereleases use one canonical product identity and tag such as `v0.4.34-rc2`.
 The Python manifest represents that identity as PEP 440 `0.4.34rc2`, while the
@@ -24,8 +21,8 @@ Install the stable product distribution from PyPI:
 python -m pip install -U cccc-pair
 ```
 
-Supported platform wheels include both implementations. Other platforms receive
-the universal Python wheel and report Rust as unavailable.
+PyPI publishes a portable Python wheel and source distribution. The current
+Python package does not bundle a private Rust executable.
 
 To explicitly evaluate the experimental standalone Rust preview without a Rust
 or Python toolchain:
@@ -47,49 +44,24 @@ command deliberately, choose another
 is intentional. The initial experimental preview is `0.4.34-rc2`; callers can
 override the documentation pin through `CCCC_VERSION`.
 
-In either distribution, use:
+In either distribution, inspect or apply updates with:
 
 ```bash
 cccc update
 cccc update --check
 ```
 
-Standalone Rust previews update through the same GitHub Pages installer. Pip
-installations update the complete `cccc-pair` product, including the private Rust
-payload on supported platforms.
+Standalone Rust previews update through the GitHub Pages installer and support
+`--channel stable|rc`; the updater resolves and pins a concrete release version
+before invoking the installer. Pip installations update `cccc-pair` through pip.
+Legacy Python installations that already contain a private Rust payload retain
+their implementation-selector compatibility, but the portable wheel does not
+create that payload. The standalone preview is always Rust-only.
 
-The public Python launcher owns implementation selection inside a pip install:
-
-```bash
-cccc status            # selected, running, and available implementations
-cccc rust              # persist Rust and launch
-cccc python             # persist Python and launch
-cccc rust doctor        # persist Rust, then run one command
-```
-
-Selection is stored atomically in `CCCC_HOME/implementation.json`; no file means
-Python, preserving existing installations. Before selecting Rust, the launcher
-requires an executable payload whose normalized SemVer exactly matches the
-installed Python product version. A selector stops the active Web process and
-daemon before persisting the new implementation. Missing, corrupt, or mismatched
-payloads fail explicitly and never fall back silently.
-
-Inside a pip installation, `cccc update` always upgrades `cccc-pair` through pip.
-This keeps the launcher, Python implementation, Rust payload, Web assets, and
-contracts on one version. The launcher stops the active Web/daemon pair before
-replacement so Windows can replace the native executable safely. The private
-Rust binary cannot overwrite its containing wheel independently. The standalone
-preview contains Rust only, so `cccc python` and implementation switching are
-intentionally unavailable there.
-
-The release publishes one source distribution, one universal Python fallback
-wheel, and native wheels for Linux x86-64, Intel macOS, Apple Silicon macOS, and
-Windows x86-64. Linux is rebuilt at the manylinux 2.28 baseline and repaired with
-`auditwheel`; macOS and Windows dependencies are checked and repaired with
-`delocate` and `delvewheel`. Each platform job installs its completed wheel,
-switches both ways, and verifies that Rust `setup` records the stable public
-launcher rather than the private payload path. Unsupported platforms receive the
-universal wheel and report Rust as unavailable.
+The Python release publishes one source distribution and one portable wheel.
+The standalone workflow builds native archives for Linux x86-64, Intel macOS,
+Apple Silicon macOS, and Windows x86-64, reusing one Web bundle. Final native
+installation smoke checks are manual rather than separate release jobs.
 
 Cargo remains a workspace development tool and the crates stay non-publishable.
 The experimental standalone workflow builds and verifies all four supported
@@ -126,11 +98,10 @@ and `agent`) into the current versioned event contract. Other unrecognized or
 malformed historical lines are reported with their source location and skipped,
 so one legacy record cannot make an entire group unavailable.
 
-The installed `cccc` launcher selects the implementation and owns replacement of
-the active process pair. Python and Rust daemons still must not write the shared
-home concurrently. The legacy `ccccd` executable is retained only as a launcher-
-backed compatibility alias, so it follows the same selection instead of forcing
-the Python daemon.
+Python and Rust daemons must not write the shared home concurrently. Legacy
+bundled installations retain their selector metadata, while a standalone
+installation always launches Rust. The legacy `ccccd` executable remains only a
+launcher-backed compatibility alias.
 
 ## Dependency boundaries
 
@@ -151,13 +122,32 @@ and forwards dynamic tool calls through `capability_tool_call`. A shared parity
 test guards the static Python and Rust tool-name catalogs. Enabling an external
 capability now performs the Python-compatible package preflight and installation
 for npm, PyPI, OCI, command, and remote HTTP MCP records before persisting the
-runtime artifact.
+runtime artifact. Static tools and their complete input schemas now come from one
+packaged JSON contract consumed by both implementations. `cccc_code_exec` and
+`cccc_code_wait` use the same isolated JavaScript runtime, actor ownership,
+yield/wait/terminate lifecycle, output bounds, and per-actor cell store. Node.js
+must be available on the host when code mode is used; it is an execution-engine
+dependency, not a Python backend dependency.
+
+ReMe operations now preserve the Python context-compaction boundary (including
+split turns), structured memory metadata, daily-flush signal budgets, semantic
+deduplication, source filtering, search controls, idempotency, supersession, and
+the single daily shadow write for durable memory entries.
 
 `cccc space auth status|start|cancel|disconnect` uses the local Rust Web API for
 NotebookLM authentication. IM start requests sent directly to the daemon are
 delegated to the Web-owned integration worker, preserving one lifecycle owner.
 `cccc doctor` reports daemon identity/version, PTY support, browser discovery,
 and Linux display helpers so installation failures are visible from the CLI.
+Linux Web Model projection requires Xvfb and fails with an actionable error when
+it is absent; it no longer silently changes behavior by falling back to a
+headless browser.
+
+The Rust CLI accepts the Python public spellings for `prompt --actor-id`,
+`tail --lines`, `doctor --all`, `runtime list --all`, `update --channel`, and the
+`space jobs` / `space auth` subcommand trees. Standalone `cccc status` succeeds
+while the daemon is stopped and identifies the Rust-only installation instead of
+turning an expected offline state into a command failure.
 
 Group Bridge compatibility includes daemon-level `remote_send`,
 `remote_delivery_status`, and `group_bridge_receive_remote_send` operations in
@@ -242,9 +232,22 @@ A release is publishable only when all of these remain true:
 
 - Rust owns its CLI, daemon, kernel, MCP, Web API, runners, and integrations.
 - The existing Web UI builds unchanged against the Rust HTTP/WebSocket surface.
-- The universal fallback and all four native wheels build and pass package metadata, platform-tag, dependency-repair, and release-set checks. Installed Python/Rust implementation smoke jobs are intentionally retired from the release path to keep publication bounded.
+- The portable Python wheel and source distribution pass package metadata and
+  install checks; all four standalone native archives and their checksum set are
+  complete.
+- CI runs offline status, daemon lifecycle, MCP initialization, and a real
+  `cccc_code_exec` cell against the built Rust binary. Manual final-installer
+  verification repeats the complete Unix flow; Windows verifies installed
+  offline status, MCP startup, daemon lifecycle, and executable release after
+  shutdown.
 - Python, Cargo, the lockfile, and the Git tag resolve to one release identity.
 - The native binary runs without a Python backend dependency.
 - The cross-language persisted-state tests pass in their dedicated interop job.
-- PyPI publication happens once, only after the complete artifact set is collected.
+- PyPI publication happens once after the portable Python artifacts pass their
+  gates; standalone native assets are published by their dedicated workflow.
 - Existing `~/.cccc` data remains available after switching implementations.
+
+Credentialed live-provider canaries (NotebookLM/Google browser auth and external
+IM vendors) remain environment-owned release checks: source and installed-binary
+gates cannot synthesize those third-party accounts. Their absence is reported as
+a live-validation blocker, never treated as proof that the provider path passed.

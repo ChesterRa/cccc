@@ -55,6 +55,10 @@ Both approaches require:
 - Or a ChatGPT account with remote MCP connector support for the ChatGPT Web Model runtime
 - Or a custom runtime command if you wire MCP manually
 
+The MCP JavaScript code mode (`cccc_code_exec` / `cccc_code_wait`) additionally
+requires Node.js on the CCCC host. The standalone Rust build does not invoke a
+Python backend.
+
 The ChatGPT Web Model also needs a system Google Chrome or Microsoft Edge browser. On native Linux,
 install `Xvfb` so CCCC can keep projected browser windows off the host desktop; `x11vnc` is optional
 and enables the VNC viewer instead of the built-in CDP screencast fallback:

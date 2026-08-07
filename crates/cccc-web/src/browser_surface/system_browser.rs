@@ -23,7 +23,6 @@ pub(super) struct SystemBrowserLaunch {
     width: u32,
     height: u32,
     display: Option<VirtualDisplay>,
-    headless: bool,
     #[cfg(target_os = "macos")]
     managed_profile: Option<PathBuf>,
 }
@@ -37,7 +36,6 @@ impl SystemBrowserLaunch {
         })?;
         let cdp_port = reserve_cdp_port()?;
         let display = VirtualDisplay::start(width, height).await?;
-        let headless = cfg!(target_os = "linux") && display.is_none();
         Ok(Self {
             executable,
             channel,
@@ -46,7 +44,6 @@ impl SystemBrowserLaunch {
             width,
             height,
             display,
-            headless,
             #[cfg(target_os = "macos")]
             managed_profile: None,
         })
@@ -62,11 +59,7 @@ impl SystemBrowserLaunch {
             .window_size(self.width, self.height)
             .arg(window_position(self.background))
             .arg("--force-device-scale-factor=1");
-        config = if self.headless {
-            config.new_headless_mode()
-        } else {
-            config.with_head()
-        };
+        config = config.with_head();
         if let Some(display) = &self.display {
             config = config
                 .env("DISPLAY", display.name())
@@ -179,13 +172,7 @@ impl SystemBrowserLaunch {
     }
 
     pub(super) fn strategy(&self) -> String {
-        let suffix = if self.display.is_some() {
-            "_xvfb"
-        } else if self.headless {
-            "_headless"
-        } else {
-            ""
-        };
+        let suffix = if self.display.is_some() { "_xvfb" } else { "" };
         format!("system_browser_cdp:{}{suffix}", self.channel)
     }
 
@@ -196,7 +183,7 @@ impl SystemBrowserLaunch {
             "browser_binary":self.executable,
             "channel":self.channel,
             "profile_dir":profile,
-            "visibility":if self.headless{"headless"}else if self.background||self.display.is_some(){"background"}else{"visible"},
+            "visibility":if self.background||self.display.is_some(){"background"}else{"visible"},
             "display":self.display.as_ref().map_or("", VirtualDisplay::name),
             "display_owned":self.display.is_some(),
             "display_owner":self.display.as_ref().map_or("", |_| "cccc_xvfb")
@@ -367,8 +354,9 @@ impl VirtualDisplay {
         use tokio::process::Command;
 
         let Some(binary) = find_executable("Xvfb") else {
-            tracing::info!("Xvfb is unavailable; using headless CDP browser projection");
-            return Ok(None);
+            bail!(
+                "Xvfb is required for projected browser authentication on Linux; install the xvfb package and retry"
+            );
         };
         let mut child = Command::new(binary)
             .args(xvfb_args(width, height))
@@ -492,7 +480,6 @@ mod tests {
             width: 1366,
             height: 900,
             display: None,
-            headless: false,
             #[cfg(target_os = "macos")]
             managed_profile: None,
         };
@@ -517,27 +504,6 @@ mod tests {
     fn background_browser_stays_outside_the_host_desktop() {
         assert_eq!(window_position(true), "--window-position=-32000,-32000");
         assert_eq!(window_position(false), "--window-position=0,0");
-    }
-
-    #[test]
-    fn headless_fallback_keeps_cdp_projection_available_without_a_display() {
-        let launch = SystemBrowserLaunch {
-            executable: PathBuf::from("/usr/bin/chromium"),
-            channel: "chromium",
-            cdp_port: 9222,
-            background: false,
-            width: 1366,
-            height: 900,
-            display: None,
-            headless: true,
-            #[cfg(target_os = "macos")]
-            managed_profile: None,
-        };
-        let metadata = launch.metadata(42, Path::new("/tmp/profile"));
-
-        assert_eq!(launch.strategy(), "system_browser_cdp:chromium_headless");
-        assert_eq!(metadata["visibility"], "headless");
-        assert_eq!(metadata["display_owned"], false);
     }
 
     #[cfg(target_os = "macos")]
@@ -573,7 +539,6 @@ mod tests {
             width: 1366,
             height: 900,
             display: None,
-            headless: false,
             managed_profile: None,
         };
         let args = launch.browser_args(Path::new("/tmp/profile"), Vec::new());
