@@ -29,6 +29,7 @@ cccc-mcp = { package = "cccc-pair-mcp", version = "=0.4.34-rc2", path = "../cccc
 cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.34-rc2", path = "../cccc-runtime" }
 chromiumoxide.workspace = true
 chrono.workspace = true
+crc32fast.workspace = true
 cbc.workspace = true
 dingtalk-stream.workspace = true
 ed25519-dalek.workspace = true

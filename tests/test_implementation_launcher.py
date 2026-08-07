@@ -103,6 +103,15 @@ class TestLauncher(unittest.TestCase):
         switch.assert_called_once_with("rust")
         dispatch.assert_called_once_with("rust", ["doctor"])
 
+    def test_bare_launch_follows_persisted_implementation(self) -> None:
+        import cccc.launcher as launcher
+
+        with patch.object(launcher, "load_selected_implementation", return_value="rust"), patch.object(
+            launcher, "_dispatch", return_value=0
+        ) as dispatch:
+            self.assertEqual(launcher.main([]), 0)
+        dispatch.assert_called_once_with("rust", [])
+
     def test_version_is_product_stable_and_does_not_load_an_engine(self) -> None:
         import cccc.launcher as launcher
 

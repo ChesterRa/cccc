@@ -4,8 +4,9 @@ Get started with CCCC using the command line.
 
 ## Optional: Select the product implementation
 
-Python is the current default. A supported platform wheel can switch to its
-bundled Rust implementation before the normal workflow:
+Python is the initial default while no implementation choice has been saved. A
+supported platform wheel can switch to its bundled Rust implementation before
+the normal workflow:
 
 ```bash
 cccc status

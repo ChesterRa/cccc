@@ -1,14 +1,23 @@
 use axum::extract::ws::WebSocketUpgrade;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use cccc_core::space_credentials;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::io;
 
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, call, object, success};
+
+#[derive(Debug, Default, Deserialize)]
+struct ViewerQuery {
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    viewer_mode: String,
+}
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -117,6 +126,7 @@ async fn auth_control(
 async fn auth_ws(
     State(state): State<AppState>,
     Path(provider): Path<String>,
+    Query(query): Query<ViewerQuery>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
     validate_provider(&provider)?;
@@ -131,14 +141,27 @@ async fn auth_ws(
             .await;
         }));
     }
+    let vnc = query.mode.trim().eq_ignore_ascii_case("vnc");
+    let viewer_mode = query.viewer_mode;
     Ok(ws.on_upgrade(move |socket| async move {
-        crate::browser_surface::serve_socket(
-            socket,
-            &state.browser_surfaces,
-            &key,
-            state.shutdown.subscribe(),
-        )
-        .await;
+        if vnc {
+            crate::browser_surface::serve_vnc_socket(
+                socket,
+                &state.browser_surfaces,
+                &key,
+                state.shutdown.subscribe(),
+            )
+            .await;
+        } else {
+            crate::browser_surface::serve_socket(
+                socket,
+                &state.browser_surfaces,
+                &key,
+                &viewer_mode,
+                state.shutdown.subscribe(),
+            )
+            .await;
+        }
     }))
 }
 

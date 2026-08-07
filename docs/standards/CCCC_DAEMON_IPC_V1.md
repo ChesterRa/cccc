@@ -3747,6 +3747,11 @@ Result:
       access_token_present?: boolean
       access_token_source?: "store" | "none" | string
       access_token_count?: number
+      admin_access_token_present?: boolean
+      admin_access_token_count?: number
+      remote_listener_auth_required?: boolean
+      remote_listener_auth_requirement_satisfied?: boolean
+      allow_unauthenticated_listener_override?: boolean
       web_host?: string
       web_host_source?: "settings" | "env" | "default" | string
       web_port?: number
@@ -3766,6 +3771,8 @@ Result:
       web_public_url?: string | null
       access_token_configured?: boolean
       access_token_count?: number
+      admin_access_token_configured?: boolean
+      admin_access_token_count?: number
       access_token_source?: "store" | "none" | string
       [k: string]: unknown
     }
@@ -3796,6 +3803,8 @@ Result:
 { remote_access: Record<string, unknown> }
 ```
 
+A non-local Web binding or a configured public URL requires at least one administrator Access Token before it can be started or applied. Group-scoped tokens do not satisfy this recovery/control-plane requirement. Localhost-only configuration remains available without a token. Implementations MAY expose `CCCC_WEB_ALLOW_UNAUTHENTICATED=1` as an explicit unsafe listener override for deployments that already enforce a trusted network boundary.
+
 #### `remote_access_start`
 
 Start remote access according to configured provider/mode.
@@ -3809,6 +3818,9 @@ Result:
 ```ts
 { remote_access: Record<string, unknown> }
 ```
+
+Errors:
+- `remote_access_admin_token_required` – remote exposure has no administrator Access Token and the explicit unsafe listener override is not enabled.
 
 #### `remote_access_stop`
 
@@ -4487,6 +4499,82 @@ Streaming mode:
 - The operation SHOULD fail with `browser_vnc_unavailable` when the browser surface is not backed by a local VNC projection.
 
 ### 8.19 ChatGPT Web Model Browser Surface (Optional)
+
+#### `web_model_delivery_preferences_get`
+
+Read the durable browser-delivery preference for one Web Model actor.
+
+Args:
+```ts
+{ group_id: string; actor_id: string }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  actor_id: string
+  preference: {
+    mode: "standard" | "image_compat"
+    updated_at: string
+    updated_by: string
+  }
+}
+```
+
+Missing or invalid stored state MUST resolve to `standard` without mutating the group. The preference is scoped to `(group_id, actor_id)` and MUST survive browser-target changes, daemon restarts, and Python/Rust implementation switches.
+
+#### `web_model_delivery_preferences_update`
+
+Update the durable browser-delivery preference for one Web Model actor.
+
+Args:
+```ts
+{
+  group_id: string
+  actor_id: string
+  mode: "standard" | "image_compat"
+  by: "user"
+}
+```
+
+Result has the same shape as `web_model_delivery_preferences_get`. The operation is user-only and MUST reject other modes. A runtime turn snapshots the effective mode in `turn.delivery.web_model_mode`; a preference change therefore applies to the next accepted delivery, not a delivery already in flight.
+
+`image_compat` is an experimental ChatGPT transport workaround. The browser adapter MUST attach exactly one CCCC-owned blank PNG before invoking Send, MUST NOT use the OS clipboard, and MUST leave the cursor uncommitted if attachment fails before a submit action. The mode does not select or change the ChatGPT model.
+
+#### `web_model_runtime_recover_turn`
+
+Rebuild a previously committed Web Model turn without changing runtime state or the actor cursor. This is used only to inspect and safely migrate legacy browser-delivery state.
+
+Args:
+```ts
+{ group_id: string; actor_id: string; event_ids: string[] }
+```
+
+Result:
+```ts
+{
+  status: "recovered"
+  turn: {
+    turn_id: string
+    group_id: string
+    actor_id: string
+    event_ids: string[] // canonical ledger order
+    latest_event_id: string
+    latest_ts: string
+    messages: Event[]
+    coalesced_text: string
+    system_prompt: string
+    delivery: {
+      mode: "recovery_no_cursor_mutation"
+      cursor_committed: true
+      web_model_mode: "standard" | "image_compat"
+    }
+  }
+}
+```
+
+Every event MUST exist, be addressed to the actor, have a supported turn kind, and already be covered by that actor's cursor. The operation MUST NOT roll the cursor back, change active runtime state, or create a completion receipt.
 
 #### `web_model_browser_attach`
 

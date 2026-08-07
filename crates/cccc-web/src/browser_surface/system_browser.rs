@@ -5,9 +5,22 @@ use chromiumoxide::BrowserConfig;
 use chromiumoxide::browser::BrowserConfigBuilder;
 use chromiumoxide::{Browser, Handler};
 use serde_json::{Value, json};
+#[cfg(target_os = "linux")]
+use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::time::{Duration, Instant};
+
+#[cfg(target_os = "linux")]
+const XVFB_FIRST_DISPLAY: u16 = 99;
+#[cfg(target_os = "linux")]
+const XVFB_LAST_DISPLAY: u16 = 199;
+#[cfg(target_os = "linux")]
+const XVFB_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+#[cfg(target_os = "linux")]
+const VNC_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
 
 #[cfg(target_os = "macos")]
 use super::profile_owner::{browser_pid_from_singleton, terminate_browser_for_profile};
@@ -23,6 +36,9 @@ pub(super) struct SystemBrowserLaunch {
     width: u32,
     height: u32,
     display: Option<VirtualDisplay>,
+    #[cfg(target_os = "linux")]
+    vnc: Option<ProjectedVncServer>,
+    vnc_error: String,
     #[cfg(target_os = "macos")]
     managed_profile: Option<PathBuf>,
 }
@@ -36,6 +52,13 @@ impl SystemBrowserLaunch {
         })?;
         let cdp_port = reserve_cdp_port()?;
         let display = VirtualDisplay::start(width, height).await?;
+        #[cfg(target_os = "linux")]
+        let (vnc, vnc_error) = match &display {
+            Some(display) => ProjectedVncServer::start(display.name()).await,
+            None => (None, "missing_display".to_owned()),
+        };
+        #[cfg(not(target_os = "linux"))]
+        let vnc_error = "unsupported_platform".to_owned();
         Ok(Self {
             executable,
             channel,
@@ -44,6 +67,9 @@ impl SystemBrowserLaunch {
             width,
             height,
             display,
+            #[cfg(target_os = "linux")]
+            vnc,
+            vnc_error,
             #[cfg(target_os = "macos")]
             managed_profile: None,
         })
@@ -190,12 +216,45 @@ impl SystemBrowserLaunch {
         })
     }
 
+    pub(super) fn viewer(&self) -> Value {
+        #[cfg(target_os = "linux")]
+        if let Some(vnc) = &self.vnc {
+            return json!({
+                "kind":"vnc",
+                "vnc":{
+                    "available":true,
+                    "display":vnc.display,
+                    "port":vnc.port,
+                    "pid":vnc.pid(),
+                    "started_at":vnc.started_at
+                }
+            });
+        }
+        json!({
+            "kind":"screencast",
+            "vnc":{"available":false,"error":self.vnc_error}
+        })
+    }
+
+    pub(super) fn vnc_port(&self) -> Option<u16> {
+        #[cfg(target_os = "linux")]
+        {
+            return self.vnc.as_ref().map(|vnc| vnc.port);
+        }
+        #[cfg(not(target_os = "linux"))]
+        None
+    }
+
     pub(super) async fn stop(&mut self) {
         #[cfg(target_os = "macos")]
         if let Some(profile) = self.managed_profile.take()
             && let Err(error) = terminate_browser_for_profile(&profile).await
         {
             tracing::warn!(%error, "failed to stop managed system browser process");
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(vnc) = &mut self.vnc {
+            vnc.stop().await;
         }
         if let Some(display) = &mut self.display {
             display.stop().await;
@@ -359,43 +418,21 @@ impl VirtualDisplay {
 
     #[cfg(target_os = "linux")]
     async fn start(width: u32, height: u32) -> Result<Option<Self>> {
-        use tokio::io::{AsyncBufReadExt, BufReader};
-        use tokio::process::Command;
-
         let Some(binary) = find_executable("Xvfb") else {
             bail!(
                 "Xvfb is required for projected browser authentication on Linux; install the xvfb package and retry"
             );
         };
-        let mut child = Command::new(binary)
-            .args(xvfb_args(width, height))
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .context("start Xvfb for projected browser authentication")?;
-        let stdout = child
-            .stdout
-            .take()
-            .context("Xvfb did not expose a display descriptor")?;
-        let mut line = String::new();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            BufReader::new(stdout).read_line(&mut line),
-        )
-        .await
-        .context("Xvfb display startup timed out")??;
-        if child.try_wait()?.is_some() {
-            bail!("Xvfb exited before a display became ready");
+
+        for number in XVFB_FIRST_DISPLAY..=XVFB_LAST_DISPLAY {
+            if xvfb_display_in_use(number) {
+                continue;
+            }
+            if let Some(display) = start_xvfb_candidate(&binary, number, width, height).await? {
+                return Ok(Some(display));
+            }
         }
-        let number = line.trim().trim_start_matches(':');
-        if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
-            bail!("Xvfb did not report a usable display");
-        }
-        Ok(Some(Self {
-            child,
-            name: format!(":{number}"),
-        }))
+        bail!("no free Xvfb display is available in :{XVFB_FIRST_DISPLAY}-:{XVFB_LAST_DISPLAY}")
     }
 
     fn name(&self) -> &str {
@@ -404,20 +441,135 @@ impl VirtualDisplay {
 
     async fn stop(&mut self) {
         #[cfg(target_os = "linux")]
-        {
-            if self.child.try_wait().ok().flatten().is_some() {
-                return;
-            }
-            let _ = self.child.start_kill();
-            let _ =
-                tokio::time::timeout(std::time::Duration::from_secs(3), self.child.wait()).await;
-        }
+        stop_process_child(&mut self.child).await;
     }
 }
 
-#[cfg(any(target_os = "linux", test))]
-fn xvfb_args(width: u32, height: u32) -> Vec<String> {
+#[cfg(target_os = "linux")]
+struct ProjectedVncServer {
+    child: tokio::process::Child,
+    display: String,
+    port: u16,
+    started_at: String,
+}
+
+#[cfg(target_os = "linux")]
+impl ProjectedVncServer {
+    async fn start(display: &str) -> (Option<Self>, String) {
+        if !vnc_viewer_enabled() {
+            return (None, "disabled".to_owned());
+        }
+        let Some(binary) = find_executable("x11vnc") else {
+            return (None, "x11vnc_not_found".to_owned());
+        };
+        match start_x11vnc(&binary, display).await {
+            Ok(server) => (Some(server), String::new()),
+            Err(error) => (None, x11vnc_start_error(&error.to_string())),
+        }
+    }
+
+    fn pid(&self) -> u32 {
+        self.child.id().unwrap_or_default()
+    }
+
+    async fn stop(&mut self) {
+        stop_process_child(&mut self.child).await;
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn vnc_viewer_enabled() -> bool {
+    !matches!(
+        std::env::var("CCCC_PROJECTED_BROWSER_VNC")
+            .unwrap_or_else(|_| "1".to_owned())
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "0" | "false" | "no" | "off" | "disabled"
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn x11vnc_args(display: &str, port: u16) -> Vec<String> {
     vec![
+        "-display".into(),
+        display.into(),
+        "-localhost".into(),
+        "-nopw".into(),
+        "-shared".into(),
+        "-forever".into(),
+        "-rfbport".into(),
+        port.to_string(),
+        "-quiet".into(),
+    ]
+}
+
+#[cfg(target_os = "linux")]
+async fn start_x11vnc(binary: &Path, display: &str) -> Result<ProjectedVncServer> {
+    use tokio::process::Command;
+
+    let port = reserve_cdp_port()?;
+    let mut stderr_log = tempfile::tempfile().context("create x11vnc diagnostic buffer")?;
+    let stderr_target = stderr_log
+        .try_clone()
+        .context("clone x11vnc diagnostic buffer")?;
+    let mut child = Command::new(binary)
+        .args(x11vnc_args(display, port))
+        .env("DISPLAY", display)
+        .env("XDG_SESSION_TYPE", "x11")
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("WAYLAND_SOCKET")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::from(stderr_target))
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("start x11vnc for display {display}"))?;
+    let deadline = std::time::Instant::now() + VNC_START_TIMEOUT;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            let detail = read_process_stderr(&mut stderr_log);
+            bail!("x11vnc exited before becoming ready ({status}); {detail}");
+        }
+        if tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
+            .await
+            .is_ok()
+        {
+            return Ok(ProjectedVncServer {
+                child,
+                display: display.to_owned(),
+                port,
+                started_at: cccc_contracts::utc_now(),
+            });
+        }
+        if std::time::Instant::now() >= deadline {
+            stop_process_child(&mut child).await;
+            let detail = read_process_stderr(&mut stderr_log);
+            bail!("x11vnc endpoint did not become ready; {detail}");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn x11vnc_start_error(detail: &str) -> String {
+    let compact = detail.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = compact.to_ascii_lowercase();
+    if lower.contains("wayland") {
+        return "x11vnc_wayland_env_detected: x11vnc saw a Wayland session instead of the Xvfb display".to_owned();
+    }
+    if lower.contains("endpoint did not become ready") {
+        return format!(
+            "x11vnc_startup_timeout: {}",
+            compact.chars().take(220).collect::<String>()
+        );
+    }
+    compact.chars().take(300).collect()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn xvfb_args(number: u16, width: u32, height: u32) -> Vec<String> {
+    vec![
+        format!(":{number}"),
         "-displayfd".into(),
         "1".into(),
         "-screen".into(),
@@ -426,6 +578,129 @@ fn xvfb_args(width: u32, height: u32) -> Vec<String> {
         "-nolisten".into(),
         "tcp".into(),
     ]
+}
+
+#[cfg(target_os = "linux")]
+async fn start_xvfb_candidate(
+    binary: &Path,
+    number: u16,
+    width: u32,
+    height: u32,
+) -> Result<Option<VirtualDisplay>> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
+
+    let mut stderr_log = tempfile::tempfile().context("create Xvfb diagnostic buffer")?;
+    let stderr_target = stderr_log
+        .try_clone()
+        .context("clone Xvfb diagnostic buffer")?;
+    let mut child = Command::new(binary)
+        .args(xvfb_args(number, width, height))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::from(stderr_target))
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("start Xvfb display :{number}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .context("Xvfb did not expose a display descriptor")?;
+    let mut reader = BufReader::new(stdout);
+    let mut line = String::new();
+    let result = tokio::time::timeout(XVFB_START_TIMEOUT, reader.read_line(&mut line)).await;
+
+    if let Ok(Ok(read)) = result
+        && read > 0
+        && child.try_wait()?.is_none()
+    {
+        let reported = line.trim().trim_start_matches(':');
+        if reported == number.to_string() {
+            return Ok(Some(VirtualDisplay {
+                child,
+                name: format!(":{number}"),
+            }));
+        }
+    }
+
+    drop(reader);
+    let timed_out = result.is_err();
+    let read_error = match result {
+        Ok(Err(error)) => Some(error),
+        _ => None,
+    };
+    let status = child.try_wait()?;
+    stop_process_child(&mut child).await;
+    let detail = read_process_stderr(&mut stderr_log);
+    if xvfb_display_in_use(number) || xvfb_display_conflict(&detail) {
+        return Ok(None);
+    }
+    let detail = if detail.is_empty() {
+        String::new()
+    } else {
+        format!("; {detail}")
+    };
+    if timed_out {
+        bail!("Xvfb display :{number} startup timed out{detail}");
+    }
+    if let Some(error) = read_error {
+        bail!("read Xvfb display :{number} descriptor: {error}{detail}");
+    }
+    if let Some(status) = status {
+        bail!("Xvfb display :{number} exited before becoming ready ({status}){detail}");
+    }
+    bail!("Xvfb display :{number} did not report a usable display{detail}")
+}
+
+#[cfg(target_os = "linux")]
+async fn stop_process_child(child: &mut tokio::process::Child) {
+    if child.try_wait().ok().flatten().is_some() {
+        return;
+    }
+    let _ = child.start_kill();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await;
+}
+
+#[cfg(target_os = "linux")]
+fn read_process_stderr(file: &mut File) -> String {
+    const MAX_BYTES: u64 = 4096;
+    let length = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
+    let _ = file.seek(SeekFrom::Start(length.saturating_sub(MAX_BYTES)));
+    let mut bytes = Vec::new();
+    let _ = file.read_to_end(&mut bytes);
+    String::from_utf8_lossy(&bytes)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(800)
+        .collect()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn xvfb_display_in_use_at(temp_root: &Path, number: u16) -> bool {
+    temp_root.join(format!(".X{number}-lock")).exists()
+        || temp_root
+            .join(".X11-unix")
+            .join(format!("X{number}"))
+            .exists()
+}
+
+#[cfg(target_os = "linux")]
+fn xvfb_display_in_use(number: u16) -> bool {
+    xvfb_display_in_use_at(Path::new("/tmp"), number)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn xvfb_display_conflict(detail: &str) -> bool {
+    let detail = detail.to_ascii_lowercase();
+    [
+        "server already active",
+        "server already running",
+        "failed to bind listener",
+        "cannot establish any listening sockets",
+    ]
+    .iter()
+    .any(|needle| detail.contains(needle))
 }
 
 #[cfg(target_os = "linux")]
@@ -442,10 +717,115 @@ mod tests {
 
     #[test]
     fn xvfb_keeps_local_unix_transport_enabled() {
-        let args = xvfb_args(800, 600);
+        let args = xvfb_args(99, 800, 600);
+        assert_eq!(args.first().map(String::as_str), Some(":99"));
+        assert!(args.windows(2).any(|pair| pair == ["-displayfd", "1"]));
         assert!(args.windows(2).any(|pair| pair == ["-nolisten", "tcp"]));
         assert!(!args.iter().any(|arg| arg == "unix"));
         assert!(args.iter().any(|arg| arg == "1024x768x24"));
+    }
+
+    #[test]
+    fn xvfb_detects_a_wsl_style_socket_without_a_legacy_lock() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join(".X11-unix")).expect("socket directory");
+        std::fs::write(temp.path().join(".X11-unix/X0"), "socket fixture").expect("socket fixture");
+
+        assert!(xvfb_display_in_use_at(temp.path(), 0));
+        assert!(!xvfb_display_in_use_at(temp.path(), 99));
+    }
+
+    #[test]
+    fn xvfb_recognizes_display_collision_diagnostics() {
+        assert!(xvfb_display_conflict(
+            "_XSERVTransSocketCreateListener: failed to bind listener"
+        ));
+        assert!(!xvfb_display_conflict("could not load a required font"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn x11vnc_is_bound_to_the_owned_display_and_loopback() {
+        let args = x11vnc_args(":99", 5901);
+        assert!(args.windows(2).any(|pair| pair == ["-display", ":99"]));
+        assert!(args.windows(2).any(|pair| pair == ["-rfbport", "5901"]));
+        assert!(args.iter().any(|arg| arg == "-localhost"));
+        assert!(args.iter().any(|arg| arg == "-forever"));
+        assert!(args.iter().any(|arg| arg == "-shared"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn x11vnc_projects_a_cccc_owned_xvfb_display() {
+        let (Some(xvfb), Some(x11vnc)) = (find_executable("Xvfb"), find_executable("x11vnc"))
+        else {
+            return;
+        };
+        assert!(xvfb.is_file());
+        let mut display = VirtualDisplay::start(1024, 768)
+            .await
+            .expect("Xvfb start")
+            .expect("virtual display");
+        let mut vnc = start_x11vnc(&x11vnc, display.name())
+            .await
+            .expect("x11vnc start");
+
+        assert_ne!(vnc.pid(), 0);
+        assert!(
+            tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, vnc.port))
+                .await
+                .is_ok()
+        );
+
+        vnc.stop().await;
+        display.stop().await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn concurrent_xvfb_sessions_choose_distinct_high_displays() {
+        if find_executable("Xvfb").is_none() {
+            return;
+        }
+        let (first, second) = tokio::join!(
+            VirtualDisplay::start(1024, 768),
+            VirtualDisplay::start(1024, 768)
+        );
+        let mut first = first.expect("first Xvfb start").expect("first display");
+        let mut second = second.expect("second Xvfb start").expect("second display");
+        assert_ne!(first.name(), second.name());
+        for display in [first.name(), second.name()] {
+            let number = display
+                .trim_start_matches(':')
+                .parse::<u16>()
+                .expect("number");
+            assert!(number >= XVFB_FIRST_DISPLAY);
+        }
+        first.stop().await;
+        second.stop().await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn xvfb_start_failure_preserves_bounded_stderr() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let fake = temp.path().join("Xvfb");
+        std::fs::write(
+            &fake,
+            "#!/bin/sh\necho synthetic-xvfb-failure >&2\nexit 23\n",
+        )
+        .expect("fake Xvfb");
+        let mut permissions = std::fs::metadata(&fake).expect("metadata").permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake, permissions).expect("permissions");
+
+        let error = match start_xvfb_candidate(&fake, 299, 1024, 768).await {
+            Err(error) => error,
+            Ok(_) => panic!("fake Xvfb should fail"),
+        };
+        assert!(error.to_string().contains("synthetic-xvfb-failure"));
     }
 
     #[test]
@@ -500,6 +880,9 @@ mod tests {
             width: 1366,
             height: 900,
             display: None,
+            #[cfg(target_os = "linux")]
+            vnc: None,
+            vnc_error: "unsupported_platform".to_owned(),
             #[cfg(target_os = "macos")]
             managed_profile: None,
         };
@@ -559,6 +942,9 @@ mod tests {
             width: 1366,
             height: 900,
             display: None,
+            #[cfg(target_os = "linux")]
+            vnc: None,
+            vnc_error: "unsupported_platform".to_owned(),
             managed_profile: None,
         };
         let args = launch.browser_args(Path::new("/tmp/profile"), Vec::new());

@@ -1,4 +1,5 @@
 import base64
+import os
 import socket
 import time
 import unittest
@@ -6,7 +7,7 @@ from unittest.mock import patch
 
 
 class _FakeProc:
-    def __init__(self, line: str = "123\n") -> None:
+    def __init__(self, line: str = "99\n") -> None:
         self.stdout = _FakeStdout(line)
         self.returncode = None
         self.terminated = False
@@ -748,10 +749,14 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
             runtime.subprocess,
             "Popen",
             return_value=xvfb_proc,
-        ), patch.object(
+        ) as popen, patch.object(
             runtime.selectors,
             "DefaultSelector",
             return_value=_FakeSelector(),
+        ), patch.object(
+            runtime,
+            "_xvfb_display_in_use",
+            return_value=False,
         ), patch.object(
             runtime.sys,
             "platform",
@@ -768,7 +773,12 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
 
         launch_kwargs = fake_cm.playwright.chromium.launch_calls[0]
         self.assertFalse(bool(launch_kwargs.get("headless")))
-        self.assertEqual(str((launch_kwargs.get("env") or {}).get("DISPLAY") or ""), ":123")
+        self.assertEqual(str((launch_kwargs.get("env") or {}).get("DISPLAY") or ""), ":99")
+        xvfb_command = list(popen.call_args.args[0])
+        self.assertEqual(xvfb_command[1], ":99")
+        self.assertIn("-displayfd", xvfb_command)
+        self.assertIn("tcp", xvfb_command)
+        self.assertNotIn("unix", xvfb_command)
         self.assertIn("--app=https://example.com", list(launch_kwargs.get("args") or []))
         self.assertIn("--window-position=0,0", list(launch_kwargs.get("args") or []))
         self.assertIn("xvfb", str(getattr(launched, "strategy", "") or ""))
@@ -806,6 +816,10 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
             "DefaultSelector",
             return_value=_FakeSelector(),
         ), patch.object(
+            runtime,
+            "_xvfb_display_in_use",
+            return_value=False,
+        ), patch.object(
             runtime.sys,
             "platform",
             "linux",
@@ -824,7 +838,7 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
             )
 
         launch_kwargs = fake_cm.playwright.chromium.launch_calls[0]
-        self.assertEqual(str((launch_kwargs.get("env") or {}).get("DISPLAY") or ""), ":123")
+        self.assertEqual(str((launch_kwargs.get("env") or {}).get("DISPLAY") or ""), ":99")
         self.assertNotIn("WAYLAND_DISPLAY", launch_kwargs.get("env") or {})
         self.assertEqual(str((launch_kwargs.get("env") or {}).get("XDG_SESSION_TYPE") or ""), "x11")
         self.assertIn("--ozone-platform=x11", list(launch_kwargs.get("args") or []))
@@ -832,6 +846,58 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         self.assertEqual((getattr(launched, "metadata", {}) or {}).get("display_owned"), True)
         launched.close()
         self.assertTrue(xvfb_proc.terminated or xvfb_proc.killed)
+
+    def test_xvfb_detects_wsl_socket_without_legacy_lock(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        with runtime.tempfile.TemporaryDirectory() as td:
+            temp_root = runtime.Path(td)
+            (temp_root / ".X11-unix").mkdir()
+            (temp_root / ".X11-unix" / "X0").write_text("socket fixture", encoding="utf-8")
+
+            self.assertTrue(runtime._xvfb_display_in_use(0, temp_root=temp_root))
+            self.assertFalse(runtime._xvfb_display_in_use(99, temp_root=temp_root))
+
+    def test_xvfb_skips_occupied_high_display(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        xvfb_proc = _FakeProc("100\n")
+        with patch.object(runtime.shutil, "which", return_value="/usr/bin/Xvfb"), patch.object(
+            runtime,
+            "_xvfb_display_in_use",
+            side_effect=lambda number: number == 99,
+        ), patch.object(
+            runtime.subprocess,
+            "Popen",
+            return_value=xvfb_proc,
+        ) as popen, patch.object(
+            runtime.selectors,
+            "DefaultSelector",
+            return_value=_FakeSelector(),
+        ), patch.object(runtime.sys, "platform", "linux"):
+            display = runtime._start_virtual_display(width=1280, height=800)
+
+        self.assertIsNotNone(display)
+        assert display is not None
+        self.assertEqual(display.display, ":100")
+        self.assertEqual(list(popen.call_args.args[0])[1], ":100")
+        display.close()
+
+    @unittest.skipIf(os.name == "nt", "POSIX executable fixture")
+    def test_xvfb_start_failure_preserves_stderr(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        with runtime.tempfile.TemporaryDirectory() as td:
+            fake = runtime.Path(td) / "Xvfb"
+            fake.write_text("#!/bin/sh\necho synthetic-xvfb-failure >&2\nexit 23\n", encoding="utf-8")
+            fake.chmod(0o755)
+            with patch.object(runtime.shutil, "which", return_value=str(fake)), patch.object(
+                runtime,
+                "_xvfb_display_in_use",
+                return_value=False,
+            ), patch.object(runtime.sys, "platform", "linux"):
+                with self.assertRaisesRegex(RuntimeError, "synthetic-xvfb-failure"):
+                    runtime._start_virtual_display(width=1280, height=800)
 
     def test_headed_launch_does_not_fallback_to_host_display_when_isolation_fails(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime

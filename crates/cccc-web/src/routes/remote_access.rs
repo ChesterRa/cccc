@@ -1,6 +1,7 @@
 use axum::extract::{Query, State};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use cccc_core::access_tokens::AccessTokenStore;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 
@@ -55,6 +56,7 @@ async fn apply(State(state): State<AppState>) -> ApiResult {
     let response = call(&state, "remote_access_state", Map::new()).await?;
     let mut remote = response.0["result"]["remote_access"].clone();
     super::remote_access_projection::apply(&state, &mut remote);
+    ensure_remote_admin_token(&state, &remote)?;
     if !remote
         .get("restart_required")
         .and_then(Value::as_bool)
@@ -96,4 +98,67 @@ async fn apply(State(state): State<AppState>) -> ApiResult {
         "target_remote_url":diagnostics.get("desired_remote_url").cloned().unwrap_or(Value::Null),
         "remote_access":remote
     }})))
+}
+
+fn ensure_remote_admin_token(state: &AppState, remote: &Value) -> Result<(), ApiError> {
+    let config = remote.get("config").unwrap_or(&Value::Null);
+    let diagnostics = remote.get("diagnostics").unwrap_or(&Value::Null);
+    let host = config
+        .get("web_host")
+        .or_else(|| diagnostics.get("web_host"))
+        .and_then(Value::as_str)
+        .unwrap_or("127.0.0.1");
+    let public_url = config
+        .get("web_public_url")
+        .or_else(|| diagnostics.get("web_public_url"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !remote_web_exposure(host, public_url)
+        || crate::environment_flag("CCCC_WEB_ALLOW_UNAUTHENTICATED")
+    {
+        return Ok(());
+    }
+    let has_admin = AccessTokenStore::new(state.home.clone())
+        .and_then(|store| store.list())
+        .map_err(|error| {
+            ApiError::unavailable(
+                "access_token_store_unavailable",
+                format!("failed to inspect access tokens: {error}"),
+            )
+        })?
+        .iter()
+        .any(|token| token.is_admin);
+    if has_admin {
+        return Ok(());
+    }
+    Err(ApiError::conflict(
+        "remote_access_admin_token_required",
+        "refusing remote Web exposure without an administrator access token; use CCCC_WEB_ALLOW_UNAUTHENTICATED=1 only behind a trusted local network boundary",
+        json!({}),
+    ))
+}
+
+fn remote_web_exposure(host: &str, public_url: &str) -> bool {
+    let host = host.trim().to_ascii_lowercase();
+    !public_url.trim().is_empty()
+        || !matches!(
+            host.as_str(),
+            "" | "127.0.0.1" | "localhost" | "::1" | "[::1]"
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::remote_web_exposure;
+
+    #[test]
+    fn remote_exposure_includes_non_loopback_hosts_and_public_urls() {
+        assert!(!remote_web_exposure("127.0.0.1", ""));
+        assert!(!remote_web_exposure("[::1]", ""));
+        assert!(remote_web_exposure("0.0.0.0", ""));
+        assert!(remote_web_exposure(
+            "127.0.0.1",
+            "https://cccc.example.com/ui/"
+        ));
+    }
 }

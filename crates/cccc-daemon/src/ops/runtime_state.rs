@@ -1,25 +1,108 @@
 use cccc_contracts::{ActorRuntime, DaemonRequest, Event, RunnerKind, utc_now};
 use cccc_core::integration_state;
-use cccc_core::{GroupDoc, GroupStore, HomeLayout, inbox};
+use cccc_core::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::io;
 
 use crate::dispatch::{OpError, OpResult, first_non_blank_arg, object, required_arg, string_arg};
 
 const KEY: &str = "runtime_states";
+const DELIVERY_PREFERENCES_KEY: &str = "web_model_delivery_preferences";
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "headless_status" => headless_status(home, request),
         "headless_set_status" => headless_set_status(home, request),
         "headless_ack_message" => headless_ack_message(home, request),
+        "web_model_delivery_preferences_get" => delivery_preferences_get(home, request),
+        "web_model_delivery_preferences_update" => delivery_preferences_update(home, request),
         "runtime_wait_next_turn" | "web_model_runtime_wait_next_turn" => {
             wait_next_turn(home, request)
         }
+        "web_model_runtime_recover_turn" => recover_turn(home, request),
         "runtime_complete_turn" | "web_model_runtime_complete_turn" => complete_turn(home, request),
         _ => return None,
     })
+}
+
+fn delivery_preference(group: &GroupDoc, actor_id: &str) -> Value {
+    let stored = group
+        .extra
+        .get(DELIVERY_PREFERENCES_KEY)
+        .and_then(|preferences| preferences.get(actor_id));
+    let mode = stored
+        .and_then(|preference| preference.get("mode"))
+        .and_then(Value::as_str)
+        .filter(|mode| matches!(*mode, "standard" | "image_compat"))
+        .unwrap_or("standard");
+    json!({
+        "mode":mode,
+        "updated_at":stored.and_then(|value| value["updated_at"].as_str()).unwrap_or(""),
+        "updated_by":stored.and_then(|value| value["updated_by"].as_str()).unwrap_or("")
+    })
+}
+
+fn require_web_model_actor<'a>(
+    group: &'a GroupDoc,
+    actor_id: &str,
+) -> Result<&'a cccc_contracts::Actor, OpError> {
+    let actor = actor(group, actor_id)?;
+    if actor.runtime != ActorRuntime::WebModel {
+        return Err(OpError::new(
+            "invalid_actor_runtime",
+            "web-model delivery operations require runtime=web_model",
+        ));
+    }
+    Ok(actor)
+}
+
+fn delivery_preferences_get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let (group, actor_id) = group_actor(home, request)?;
+    require_web_model_actor(&group, &actor_id)?;
+    object(json!({
+        "group_id":group.group_id,
+        "actor_id":actor_id,
+        "preference":delivery_preference(&group, &actor_id)
+    }))
+}
+
+fn delivery_preferences_update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let (group, actor_id) = group_actor(home, request)?;
+    require_web_model_actor(&group, &actor_id)?;
+    let by = string_arg(request, "by").unwrap_or_default();
+    if by != "user" {
+        return Err(OpError::new(
+            "permission_denied",
+            "web-model delivery preferences are user-controlled",
+        ));
+    }
+    let mode = required_arg(request, "mode")?.to_ascii_lowercase();
+    if !matches!(mode.as_str(), "standard" | "image_compat") {
+        return Err(OpError::new(
+            "invalid_web_model_delivery_mode",
+            "mode must be standard or image_compat",
+        ));
+    }
+    let preference = json!({"mode":mode,"updated_at":utc_now(),"updated_by":by});
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    integration_state::group_update(&store, &group.group_id, DELIVERY_PREFERENCES_KEY, |value| {
+        if !value.is_object() {
+            *value = json!({});
+        }
+        value
+            .as_object_mut()
+            .expect("preference map initialized")
+            .insert(actor_id.clone(), preference.clone());
+        Ok(())
+    })
+    .map_err(OpError::io)?;
+    object(json!({
+        "group_id":group.group_id,
+        "actor_id":actor_id,
+        "preference":preference
+    }))
 }
 
 fn headless_status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -141,6 +224,7 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let latest = messages.last().expect("messages is not empty");
     let turn_id = turn_id(&group.group_id, &actor_id, &event_ids);
     let coalesced_text = coalesced_text(&messages, &actor_id);
+    let web_model_mode = delivery_preference(&group, &actor_id)["mode"].clone();
     let turn = json!({
         "turn_id":turn_id,
         "group_id":group.group_id,
@@ -152,7 +236,7 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "messages":messages,
         "coalesced_text":coalesced_text,
         "system_prompt":cccc_core::system_prompt::render_session(home, &group, actor),
-        "delivery":{"mode":"cursor_on_complete","cursor_committed":false,"max_events":limit,"kind_filter":kind_filter},
+        "delivery":{"mode":"cursor_on_complete","cursor_committed":false,"max_events":limit,"kind_filter":kind_filter,"web_model_mode":web_model_mode},
         "instructions":"Process this coalesced CCCC turn and call cccc_runtime_complete_turn when finished."
     });
     set_runtime_status(
@@ -164,6 +248,109 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         turn["latest_event_id"].as_str().unwrap_or(""),
     )?;
     object(json!({"status":"work_available","turn":turn,"cursor":{"event_id":cursor,"ts":""}}))
+}
+
+fn recover_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let (group, actor_id) = group_actor(home, request)?;
+    let actor = require_web_model_actor(&group, &actor_id)?;
+    let raw_event_ids = request
+        .args
+        .get("event_ids")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            OpError::new(
+                "invalid_event_ids",
+                "event_ids must be a non-empty list of strings",
+            )
+        })?;
+    if raw_event_ids.is_empty() || raw_event_ids.iter().any(|value| !value.is_string()) {
+        return Err(OpError::new(
+            "invalid_event_ids",
+            "event_ids must be a non-empty list of strings",
+        ));
+    }
+    let event_ids = raw_event_ids
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let requested = event_ids.iter().cloned().collect::<HashSet<_>>();
+    if requested.len() != event_ids.len() || requested.contains("") {
+        return Err(OpError::new(
+            "invalid_event_ids",
+            "event_ids must be non-empty and unique",
+        ));
+    }
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let ledger_path = store.ledger_path(&group.group_id).map_err(OpError::io)?;
+    let all_events = ledger::read_all(&ledger_path).map_err(OpError::io)?;
+    let messages = all_events
+        .iter()
+        .filter(|event| requested.contains(&event.id))
+        .cloned()
+        .collect::<Vec<_>>();
+    if messages.len() != requested.len() {
+        let missing = event_ids
+            .iter()
+            .find(|event_id| !messages.iter().any(|event| &event.id == *event_id))
+            .cloned()
+            .unwrap_or_default();
+        return Err(OpError::new(
+            "event_not_found",
+            format!("event not found: {missing}"),
+        ));
+    }
+    for event in &messages {
+        if !matches!(event.kind.as_str(), "chat.message" | "system.notify") {
+            return Err(OpError::new(
+                "invalid_event_kind",
+                "turn event kind must be chat.message or system.notify",
+            ));
+        }
+        if !inbox::is_for_actor(&group, event, &actor_id) {
+            return Err(OpError::new(
+                "event_not_for_actor",
+                format!("event is not addressed to actor: {actor_id}"),
+            ));
+        }
+    }
+    let latest = messages.last().expect("validated recovery messages");
+    let cursor = inbox::cursor(home, &group.group_id, &actor_id).map_err(OpError::io)?;
+    let cursor_position = cursor
+        .as_deref()
+        .and_then(|cursor_id| all_events.iter().position(|event| event.id == cursor_id));
+    let latest_position = all_events.iter().position(|event| event.id == latest.id);
+    if cursor_position
+        .zip(latest_position)
+        .is_none_or(|(cursor, latest)| cursor < latest)
+    {
+        return Err(OpError::new(
+            "turn_not_committed",
+            "turn recovery only accepts events already covered by the actor cursor",
+        ));
+    }
+    let ordered_ids = messages
+        .iter()
+        .map(|event| event.id.clone())
+        .collect::<Vec<_>>();
+    let recovered_turn_id = turn_id(&group.group_id, &actor_id, &ordered_ids);
+    let coalesced = coalesced_text(&messages, &actor_id);
+    let web_model_mode = delivery_preference(&group, &actor_id)["mode"].clone();
+    let turn = json!({
+        "turn_id":recovered_turn_id,
+        "group_id":group.group_id,
+        "actor_id":actor_id,
+        "created_at":utc_now(),
+        "event_ids":ordered_ids,
+        "latest_event_id":latest.id,
+        "latest_ts":latest.ts,
+        "messages":messages,
+        "coalesced_text":coalesced,
+        "system_prompt":cccc_core::system_prompt::render_session(home, &group, actor),
+        "delivery":{"mode":"recovery_no_cursor_mutation","cursor_committed":true,"web_model_mode":web_model_mode}
+    });
+    object(json!({"status":"recovered","turn":turn}))
 }
 
 fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -419,14 +606,8 @@ fn turn_id(group_id: &str, actor_id: &str, event_ids: &[String]) -> String {
 }
 
 fn coalesced_text(messages: &[Event], actor_id: &str) -> String {
-    let mut output = messages
-        .iter()
-        .map(|event| {
-            let text = event.data.get("text").and_then(Value::as_str).unwrap_or("");
-            format!("[{} -> {}] {}", event.by, actor_id, text)
-        })
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let _ = actor_id;
+    let mut output = super::actor_delivery_render::render_batch(messages).unwrap_or_default();
     if output.chars().count() > 24_000 {
         output = output.chars().take(23_920).collect();
         output.push_str("\n\n[cccc] coalesced turn text truncated");

@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -17,8 +18,12 @@ class TestWebManifestStatic(unittest.TestCase):
         os.environ["CCCC_HOME"] = home_tmp.name
         os.environ["CCCC_WEB_DIST"] = dist_tmp.name
         dist_path = Path(dist_tmp.name)
-        (dist_path / "index.html").write_text("<html><body>ok</body></html>", encoding="utf-8")
-        (dist_path / "manifest.webmanifest").write_text('{"name":"CCCC"}\n', encoding="utf-8")
+        (dist_path / "index.html").write_text(
+            "<html><body>ok</body></html>", encoding="utf-8"
+        )
+        (dist_path / "manifest.webmanifest").write_text(
+            '{"name":"CCCC"}\n', encoding="utf-8"
+        )
 
         def cleanup() -> None:
             if old_home is None:
@@ -42,7 +47,11 @@ class TestWebManifestStatic(unittest.TestCase):
             resp = client.get("/ui/manifest.webmanifest")
 
             self.assertEqual(resp.status_code, 200)
-            self.assertTrue(str(resp.headers.get("content-type") or "").startswith("application/manifest+json"))
+            self.assertTrue(
+                str(resp.headers.get("content-type") or "").startswith(
+                    "application/manifest+json"
+                )
+            )
             self.assertNotIn("content-disposition", resp.headers)
             self.assertEqual(resp.text, '{"name":"CCCC"}\n')
         finally:
@@ -56,7 +65,11 @@ class TestWebManifestStatic(unittest.TestCase):
                     resp = client.get(path)
 
                     self.assertEqual(resp.status_code, 200)
-                    self.assertTrue(str(resp.headers.get("content-type") or "").startswith("text/html"))
+                    self.assertTrue(
+                        str(resp.headers.get("content-type") or "").startswith(
+                            "text/html"
+                        )
+                    )
                     self.assertEqual(resp.text, "<html><body>ok</body></html>")
         finally:
             cleanup()
@@ -71,9 +84,57 @@ class TestWebManifestStatic(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_source_checkout_uses_canonical_web_dist_before_packaged_copy(self) -> None:
+        from cccc.ports.web import app as web_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            module = root / "src" / "cccc" / "ports" / "web" / "app.py"
+            source_dist = root / "web" / "dist"
+            packaged_dist = module.parent / "dist"
+            module.parent.mkdir(parents=True)
+            source_dist.mkdir(parents=True)
+            packaged_dist.mkdir(parents=True)
+            module.touch()
+            (root / "pyproject.toml").touch()
+            (root / "web" / "package.json").write_text("{}\n", encoding="utf-8")
+            (source_dist / "index.html").write_text("source\n", encoding="utf-8")
+            (packaged_dist / "index.html").write_text("packaged\n", encoding="utf-8")
+
+            with (
+                mock.patch.object(web_app, "__file__", str(module)),
+                mock.patch.dict(os.environ, {}, clear=False),
+            ):
+                os.environ.pop("CCCC_WEB_DIST", None)
+                self.assertEqual(web_app._resolve_web_dist_dir(), source_dist)
+
+    def test_installed_package_uses_packaged_web_dist(self) -> None:
+        from cccc.ports.web import app as web_app
+
+        with tempfile.TemporaryDirectory() as tmp:
+            module = Path(tmp) / "site-packages" / "cccc" / "ports" / "web" / "app.py"
+            packaged_dist = module.parent / "dist"
+            packaged_dist.mkdir(parents=True)
+            module.touch()
+            (packaged_dist / "index.html").write_text("packaged\n", encoding="utf-8")
+
+            with (
+                mock.patch.object(web_app, "__file__", str(module)),
+                mock.patch.dict(os.environ, {}, clear=False),
+            ):
+                os.environ.pop("CCCC_WEB_DIST", None)
+                self.assertEqual(web_app._resolve_web_dist_dir(), packaged_dist)
+
     @pytest.mark.packaged_web_dist
     def test_packaged_ui_dist_contains_remote_pairing_flow(self) -> None:
-        dist = Path(__file__).resolve().parents[1] / "src" / "cccc" / "ports" / "web" / "dist"
+        dist = (
+            Path(__file__).resolve().parents[1]
+            / "src"
+            / "cccc"
+            / "ports"
+            / "web"
+            / "dist"
+        )
         bundles = list((dist / "assets").glob("*.js"))
         self.assertTrue(bundles, "JavaScript chunks are missing from packaged web dist")
         text = "\n".join(bundle.read_text(encoding="utf-8") for bundle in bundles)

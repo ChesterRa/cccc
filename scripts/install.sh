@@ -139,6 +139,8 @@ lock_acquired=0
 transaction_started=0
 transaction_committed=0
 daemon_was_running=0
+marker_touched=0
+marker_original=0
 : > "$originals"
 
 rollback_install() {
@@ -155,6 +157,13 @@ rollback_install() {
       rm -f "$destination" || printf 'CCCC installer: rollback failed to remove %s\n' "$destination" >&2
     fi
   done
+  if [ "$marker_touched" -eq 1 ]; then
+    rm -f "$marker_path" || printf 'CCCC installer: rollback failed to remove %s\n' "$marker_path" >&2
+    if [ "$marker_original" -eq 1 ] &&
+      ! mv "$backup_dir/$INSTALL_MARKER" "$marker_path"; then
+      printf 'CCCC installer: rollback failed to restore %s\n' "$marker_path" >&2
+    fi
+  fi
   if [ "$daemon_was_running" -eq 1 ] && [ -x "$INSTALL_DIR/cccc" ]; then
     if ! "$INSTALL_DIR/cccc" daemon start >/dev/null 2>&1; then
       printf 'CCCC installer: rollback restored the previous binary but failed to restart its daemon\n' >&2
@@ -170,6 +179,7 @@ cleanup() {
   for binary in $BINARIES; do
     rm -f "$INSTALL_DIR/$binary$stage_suffix"
   done
+  rm -f "$INSTALL_DIR/$INSTALL_MARKER$stage_suffix"
   if [ "$transaction_committed" -eq 1 ]; then
     rm -rf "$backup_dir"
   fi
@@ -256,7 +266,9 @@ printf '%s\n' "$$" > "$install_lock/pid"
 existing_cli="$INSTALL_DIR/cccc"
 marker_owned=0
 marker_path="$INSTALL_DIR/$INSTALL_MARKER"
-if [ -f "$marker_path" ]; then
+if [ -e "$marker_path" ] || [ -L "$marker_path" ]; then
+  [ -f "$marker_path" ] && [ ! -L "$marker_path" ] ||
+    fail "existing standalone ownership marker is not a regular file: $marker_path"
   marker_value=
   if marker_value=$(cat "$marker_path" 2>/dev/null) &&
     [ "$marker_value" = "$INSTALL_MARKER_VERSION" ]; then
@@ -297,10 +309,17 @@ done
 installed_version=$("$INSTALL_DIR/cccc" --version) || fail "installed cccc failed its version check"
 [ "$installed_version" = "cccc $VERSION" ] ||
   fail "installed version mismatch: expected cccc $VERSION, got $installed_version"
+if [ -e "$marker_path" ] || [ -L "$marker_path" ]; then
+  mv "$marker_path" "$backup_dir/$INSTALL_MARKER"
+  marker_original=1
+fi
+marker_touched=1
+marker_stage="$INSTALL_DIR/$INSTALL_MARKER$stage_suffix"
+printf '%s\n' "$INSTALL_MARKER_VERSION" > "$marker_stage"
+mv "$marker_stage" "$marker_path"
 if [ "$daemon_was_running" -eq 1 ]; then
   "$INSTALL_DIR/cccc" daemon start >/dev/null || fail "the updated CCCC daemon could not restart"
 fi
-printf '%s\n' "$INSTALL_MARKER_VERSION" > "$INSTALL_DIR/$INSTALL_MARKER"
 transaction_committed=1
 rm -rf "$backup_dir"
 

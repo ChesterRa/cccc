@@ -115,7 +115,6 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
 
   const [provider, setProvider] = useState<"off" | "manual" | "tailscale">("off");
   const [mode, setMode] = useState("tailnet_only");
-  const [requireAccessToken, setRequireAccessToken] = useState(true);
   const [webHost, setWebHost] = useState("127.0.0.1");
   const [webPort, setWebPort] = useState("8848");
   const [webPublicUrl, setWebPublicUrl] = useState("");
@@ -202,7 +201,6 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         setRemoteState(state);
         setProvider((state.provider as "off" | "manual" | "tailscale") || "off");
         setMode(String(state.mode || "tailnet_only"));
-        setRequireAccessToken(Boolean(state.require_access_token ?? true));
         setWebHost(String(state.config?.web_host || state.diagnostics?.web_host || "127.0.0.1"));
         setWebPort(String(state.config?.web_port || state.diagnostics?.web_port || 8848));
         setWebPublicUrl(
@@ -369,30 +367,23 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
     return "private";
   }, [webHost, webPublicUrl]);
 
-  const tokenPolicyMode = useMemo<"local" | "private_optional" | "public">(() => {
-    if (exposureClass === "local") return "local";
-    if (exposureClass === "public") return "public";
-    return "private_optional";
-  }, [exposureClass]);
-
-  const effectiveRequireAccessToken =
-    exposureClass === "public" ? true : exposureClass === "private" ? requireAccessToken : false;
+  const effectiveRequireAccessToken = exposureClass !== "local";
   const isTailscaleProvider = accessGoal === "lan" && provider === "tailscale";
   const reachabilityDirty = useMemo(() => {
     if (!remoteState) return false;
     return (
       provider !== savedProvider ||
       mode !== savedMode ||
-      requireAccessToken !== savedRequireAccessToken ||
+      (accessGoal !== "local" && !savedRequireAccessToken) ||
       webHost.trim() !== savedWebHost.trim() ||
       webPort.trim() !== savedWebPort.trim() ||
       webPublicUrl.trim() !== savedWebPublicUrl.trim()
     );
   }, [
+    accessGoal,
     mode,
     provider,
     remoteState,
-    requireAccessToken,
     savedMode,
     savedProvider,
     savedRequireAccessToken,
@@ -425,13 +416,6 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
           ? "webAccess.actionHintApplyReady"
           : "webAccess.actionHintManualRestart"
         : "webAccess.actionHintManual";
-  const requireAccessTokenHintKey =
-    tokenPolicyMode === "local"
-      ? "webAccess.requireAccessTokenHintLocal"
-      : tokenPolicyMode === "public"
-        ? "webAccess.requireAccessTokenHintPublic"
-        : "webAccess.requireAccessTokenHintPrivateOptional";
-
   useEffect(() => {
     if (provider === "tailscale" || Boolean(lastApplyError)) {
       setShowAdvanced(true);
@@ -465,7 +449,6 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       setMode("tailnet_only");
       if (goal === "local") {
         setProvider("off");
-        setRequireAccessToken(true);
         setWebHost("127.0.0.1");
         setWebPublicUrl("");
         return;
@@ -477,7 +460,6 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         return;
       }
       setProvider("manual");
-      setRequireAccessToken(true);
       setWebHost("127.0.0.1");
     },
     [provider],
@@ -619,12 +601,6 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       const manualEnabled =
         effectiveProvider === "manual" &&
         (!isLoopbackHost(trimmedHost) || Boolean(trimmedPublicUrl));
-      const nextRequireAccessToken =
-        selectedAccessGoal === "public"
-          ? true
-          : selectedAccessGoal === "lan"
-            ? requireAccessToken
-            : true;
       const resp = await api.updateRemoteAccessConfig({
         provider: effectiveProvider,
         mode,
@@ -634,7 +610,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
             : effectiveProvider === "off"
               ? false
               : undefined,
-        requireAccessToken: nextRequireAccessToken,
+        requireAccessToken: true,
         webHost,
         webPort: parsedPort,
         webPublicUrl,
@@ -1761,22 +1737,6 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
                     </div>
                   </div>
                 </div>
-                <label className="mt-3 flex items-start gap-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-3">
-                  <input
-                    type="checkbox"
-                    checked={requireAccessToken}
-                    onChange={(e) => setRequireAccessToken(e.target.checked)}
-                    className="mt-1"
-                  />
-                  <div>
-                    <div className="text-sm font-medium text-[var(--color-text-primary)]">
-                      {t("webAccess.requireAccessTokenLabel")}
-                    </div>
-                    <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                      {t(requireAccessTokenHintKey)}
-                    </div>
-                  </div>
-                </label>
                 {remoteMethodValue === "tailscale" ? (
                   <div className="mt-3 rounded-lg border border-black/10 bg-[rgb(245,245,245)] px-3 py-3 text-xs leading-6 text-[rgb(35,36,37)] dark:border-white/12 dark:bg-white/[0.08] dark:text-white">
                     <div className="font-medium">{t("webAccess.privateMethodTailscaleTitle")}</div>

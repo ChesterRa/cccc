@@ -31,12 +31,17 @@ make_release() {
   local checksum_value=${2:-valid}
   local reported_version=${3:-$version}
   local missing_binary=${4:-}
+  local custom_binary=${5:-}
   local package="cccc-v${version}-${target}"
   local release_dir="$TMP_ROOT/releases/download/v${version}"
   mkdir -p "$release_dir" "$TMP_ROOT/package/$package"
   binary=cccc
   if [[ "$binary" != "$missing_binary" ]]; then
-    printf '#!/usr/bin/env sh\nif [ "${1:-}" = "--version" ]; then printf "cccc %s\\n"; exit 0; fi\nexit 1\n' "$reported_version" > "$TMP_ROOT/package/$package/$binary"
+    if [[ -n "$custom_binary" ]]; then
+      cp "$custom_binary" "$TMP_ROOT/package/$package/$binary"
+    else
+      printf '#!/usr/bin/env sh\nif [ "${1:-}" = "--version" ]; then printf "cccc %s\\n"; exit 0; fi\nexit 1\n' "$reported_version" > "$TMP_ROOT/package/$package/$binary"
+    fi
     chmod 755 "$TMP_ROOT/package/$package/$binary"
   fi
   tar -C "$TMP_ROOT/package" -czf "$release_dir/$package.tar.gz" "$package"
@@ -104,6 +109,85 @@ CCCC_ALLOW_REPLACE_EXISTING=1 \
 sh "$ROOT_DIR/scripts/install.sh"
 [[ "$("$foreign_install/cccc" --version)" == "cccc $version" ]]
 grep -Fxq 'standalone-v1' "$foreign_install/.cccc-standalone"
+
+readonly_marker_version=0.0.10-test
+readonly_marker_state="$TMP_ROOT/readonly-marker-daemon-state"
+readonly_marker_release="$TMP_ROOT/readonly-marker-release-cccc"
+cat > "$readonly_marker_release" <<EOF
+#!/usr/bin/env sh
+if [ "\${1:-}" = "--version" ]; then
+  printf 'cccc $readonly_marker_version\\n'
+  exit 0
+fi
+if [ "\${1:-}" = daemon ] && [ "\${2:-}" = start ]; then
+  printf 'new-running\\n' > "\$CCCC_TEST_DAEMON_STATE"
+  exit 0
+fi
+exit 1
+EOF
+chmod 755 "$readonly_marker_release"
+make_release "$readonly_marker_version" valid "$readonly_marker_version" "" "$readonly_marker_release"
+readonly_marker_install="$TMP_ROOT/readonly-marker-installed"
+readonly_marker_old="$TMP_ROOT/readonly-marker-old-cccc"
+mkdir -p "$readonly_marker_install"
+printf 'old-running\n' > "$readonly_marker_state"
+cat > "$readonly_marker_old" <<'EOF'
+#!/usr/bin/env sh
+if [ "${1:-}" = daemon ] && [ "${2:-}" = status ]; then
+  [ "$(cat "$CCCC_TEST_DAEMON_STATE")" = old-running ]
+  exit
+fi
+if [ "${1:-}" = daemon ] && [ "${2:-}" = stop ]; then
+  printf 'stopped\n' > "$CCCC_TEST_DAEMON_STATE"
+  exit 0
+fi
+if [ "${1:-}" = daemon ] && [ "${2:-}" = start ]; then
+  [ "$(cat "$CCCC_TEST_DAEMON_STATE")" != new-running ] || exit 1
+  printf 'old-running\n' > "$CCCC_TEST_DAEMON_STATE"
+  exit 0
+fi
+exit 1
+EOF
+chmod 755 "$readonly_marker_old"
+cp "$readonly_marker_old" "$readonly_marker_install/cccc"
+printf 'foreign-v1\n' > "$readonly_marker_install/.cccc-standalone"
+chmod 444 "$readonly_marker_install/.cccc-standalone"
+HOME="$TMP_ROOT/readonly-marker-home" \
+CCCC_VERSION="$readonly_marker_version" \
+CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+CCCC_INSTALL_DIR="$readonly_marker_install" \
+CCCC_NO_MODIFY_PATH=1 \
+CCCC_ALLOW_REPLACE_EXISTING=1 \
+CCCC_TEST_DAEMON_STATE="$readonly_marker_state" \
+sh "$ROOT_DIR/scripts/install.sh"
+[[ "$("$readonly_marker_install/cccc" --version)" == "cccc $readonly_marker_version" ]]
+grep -Fxq 'standalone-v1' "$readonly_marker_install/.cccc-standalone"
+[[ "$(cat "$readonly_marker_state")" == new-running ]]
+
+marker_rollback_version=0.0.11-test
+make_release "$marker_rollback_version"
+marker_rollback_install="$TMP_ROOT/marker-rollback-installed"
+marker_rollback_state="$TMP_ROOT/marker-rollback-daemon-state"
+mkdir -p "$marker_rollback_install"
+cp "$readonly_marker_old" "$marker_rollback_install/cccc"
+printf 'old-running\n' > "$marker_rollback_state"
+printf 'foreign-v1\n' > "$marker_rollback_install/.cccc-standalone"
+marker_rollback_hash=$(checksum "$marker_rollback_install/cccc")
+if HOME="$TMP_ROOT/marker-rollback-home" \
+  CCCC_VERSION="$marker_rollback_version" \
+  CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
+  CCCC_INSTALL_DIR="$marker_rollback_install" \
+  CCCC_NO_MODIFY_PATH=1 \
+  CCCC_ALLOW_REPLACE_EXISTING=1 \
+  CCCC_TEST_DAEMON_STATE="$marker_rollback_state" \
+  sh "$ROOT_DIR/scripts/install.sh" 2> "$TMP_ROOT/marker-rollback-error"; then
+  echo "installer accepted a replacement whose daemon could not restart" >&2
+  exit 1
+fi
+grep -Fq 'updated CCCC daemon could not restart' "$TMP_ROOT/marker-rollback-error"
+[[ "$(checksum "$marker_rollback_install/cccc")" == "$marker_rollback_hash" ]]
+grep -Fxq 'foreign-v1' "$marker_rollback_install/.cccc-standalone"
+[[ "$(cat "$marker_rollback_state")" == old-running ]]
 
 sed "s/@CCCC_VERSION@/$version/g" "$ROOT_DIR/scripts/install.sh" > "$TMP_ROOT/versioned-install.sh"
 HOME="$TMP_ROOT/versioned-home" \

@@ -75,11 +75,24 @@ fn set_running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpR
             "remote access provider is off",
         ));
     }
-    let token_count = token_count(home);
-    if running && boolean(&global.remote_access, "require_access_token", true) && token_count == 0 {
+    let host = text(&global.remote_access, "web_host", "127.0.0.1");
+    let public_url = text(&global.remote_access, "web_public_url", "");
+    let remotely_reachable = remote_web_exposure(&host, &public_url);
+    let (_, admin_token_count) = token_counts(home);
+    if running
+        && remotely_reachable
+        && !environment_flag("CCCC_WEB_ALLOW_UNAUTHENTICATED")
+        && admin_token_count == 0
+    {
         return Err(OpError::new(
-            "remote_access_invalid_config",
-            "an access token is required before remote access can start",
+            "remote_access_admin_token_required",
+            "an administrator access token is required before remote access can start",
+        ));
+    }
+    if running && !remotely_reachable && !environment_flag("CCCC_REMOTE_ALLOW_LOOPBACK") {
+        return Err(OpError::new(
+            "remote_access_unreachable",
+            "web server binding is not remotely reachable",
         ));
     }
     if provider == "tailscale" {
@@ -168,10 +181,21 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
     let host = text(config, "web_host", "127.0.0.1");
     let port = number(config, "web_port", 8848);
     let public_url = text(config, "web_public_url", "");
-    let tokens = token_count(home);
+    let (tokens, admin_tokens) = token_counts(home);
     let tailscale_installed = command_exists("tailscale");
-    let reachable =
-        !matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1") || !public_url.is_empty();
+    let reachable = remote_web_exposure(&host, &public_url);
+    let allow_unauthenticated_listener = environment_flag("CCCC_WEB_ALLOW_UNAUTHENTICATED");
+    let allow_loopback_remote = environment_flag("CCCC_REMOTE_ALLOW_LOOPBACK");
+    let remote_listener_auth_required = reachable && !allow_unauthenticated_listener;
+    let remote_listener_auth_requirement_satisfied =
+        !remote_listener_auth_required || admin_tokens > 0;
+    let effective_require_token = if !reachable || allow_unauthenticated_listener {
+        false
+    } else if !public_url.is_empty() {
+        true
+    } else {
+        require_token
+    };
     let supervised = environment_flag("CCCC_WEB_SUPERVISED");
     let live_host = std::env::var("CCCC_WEB_EFFECTIVE_HOST")
         .ok()
@@ -195,7 +219,8 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
     } else {
         public_url.clone()
     };
-    let misconfigured = enabled && ((require_token && tokens == 0) || !reachable);
+    let misconfigured = enabled
+        && (!remote_listener_auth_requirement_satisfied || (!reachable && !allow_loopback_remote));
     let status = if misconfigured {
         "misconfigured"
     } else if provider == "tailscale" && !tailscale_installed {
@@ -214,13 +239,25 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
     } else {
         None
     };
+    let status_reason = if misconfigured && !remote_listener_auth_requirement_satisfied {
+        "missing_access_token"
+    } else if misconfigured && !reachable {
+        "binding_unreachable"
+    } else {
+        status
+    };
+    let next_steps = if !remote_listener_auth_requirement_satisfied {
+        vec!["Create an Admin Access Token in Settings > Web Access before exposing Web remotely."]
+    } else {
+        Vec::new()
+    };
     json!({"remote_access":{
         "provider":provider,
         "mode":mode,
         "require_access_token":require_token,
         "enabled":enabled,
         "status":status,
-        "status_reason":status,
+        "status_reason":status_reason,
         "endpoint":endpoint,
         "updated_at":config.get("updated_at").cloned().unwrap_or(Value::Null),
         "restart_required":restart_required,
@@ -230,7 +267,13 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
             "web_bind_reachable":reachable,
             "access_token_present":tokens > 0,
             "access_token_count":tokens,
-            "effective_require_access_token":require_token,
+            "access_token_requirement_satisfied":if effective_require_token {tokens > 0}else{true},
+            "admin_access_token_present":admin_tokens > 0,
+            "admin_access_token_count":admin_tokens,
+            "remote_listener_auth_required":remote_listener_auth_required,
+            "remote_listener_auth_requirement_satisfied":remote_listener_auth_requirement_satisfied,
+            "allow_unauthenticated_listener_override":allow_unauthenticated_listener,
+            "effective_require_access_token":effective_require_token,
             "tailscale_installed":tailscale_installed
             ,"desired_local_url":desired_local_url
             ,"desired_remote_url":desired_remote_url
@@ -247,9 +290,11 @@ fn payload(home: &HomeLayout, config: &Map<String, Value>) -> Value {
             "web_public_url":if public_url.is_empty(){Value::Null}else{Value::String(public_url)},
             "access_token_configured":tokens > 0,
             "access_token_count":tokens,
+            "admin_access_token_configured":admin_tokens > 0,
+            "admin_access_token_count":admin_tokens,
             "access_token_source":"rust_home"
         },
-        "next_steps":[]
+        "next_steps":next_steps
     }})
 }
 
@@ -274,10 +319,25 @@ fn require_user(request: &DaemonRequest) -> Result<(), OpError> {
     }
 }
 
-fn token_count(home: &HomeLayout) -> usize {
+fn token_counts(home: &HomeLayout) -> (usize, usize) {
     AccessTokenStore::new(home.clone())
         .and_then(|store| store.list())
-        .map_or(0, |tokens| tokens.len())
+        .map_or((0, 0), |tokens| {
+            let total = tokens.len();
+            let admin = tokens.iter().filter(|token| token.is_admin).count();
+            (total, admin)
+        })
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    matches!(
+        host.trim().to_ascii_lowercase().as_str(),
+        "" | "127.0.0.1" | "localhost" | "::1" | "[::1]"
+    )
+}
+
+fn remote_web_exposure(host: &str, public_url: &str) -> bool {
+    !public_url.trim().is_empty() || !is_loopback_host(host)
 }
 
 fn text(config: &Map<String, Value>, key: &str, default: &str) -> String {

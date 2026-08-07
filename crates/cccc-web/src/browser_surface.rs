@@ -3,10 +3,16 @@ mod interaction;
 mod navigation;
 mod page_recovery;
 mod profile_owner;
+mod prompt_submission;
 mod proxy;
 mod system_browser;
 
-pub use interaction::serve_socket;
+pub use interaction::{serve_socket, serve_vnc_socket};
+#[cfg(test)]
+pub(crate) use prompt_submission::SUBMISSION_EVIDENCE_TIMEOUT;
+pub(crate) use prompt_submission::{
+    PromptSubmissionOutcome, conversation_url_for_target, stored_verified_submission_evidence,
+};
 
 use anyhow::{Context, Result, bail};
 use cccc_contracts::utc_now;
@@ -534,6 +540,16 @@ impl BrowserSurfaces {
             .is_ok_and(|pages| pages.into_iter().any(|page| page.target_id() == target_id))
     }
 
+    pub async fn vnc_port(&self, key: &str) -> Result<u16> {
+        self.sessions
+            .lock()
+            .await
+            .get(key)
+            .and_then(|session| session.system_browser.as_ref())
+            .and_then(SystemBrowserLaunch::vnc_port)
+            .context("VNC viewer is not available for this browser surface")
+    }
+
     pub async fn close(&self, key: &str) -> Result<bool> {
         let key_operation = self.key_operation(key).await;
         let _key_operation_guard = key_operation.lock().await;
@@ -742,13 +758,17 @@ fn authuser_from_url(raw: &str) -> usize {
 }
 
 fn state(session: &Session) -> Value {
+    let viewer = session.system_browser.as_ref().map_or_else(
+        || json!({"kind":"screencast","vnc":{"available":false,"error":"unsupported_surface"}}),
+        SystemBrowserLaunch::viewer,
+    );
     json!({
         "active":true,"state":"ready","message":"Browser surface is ready.","strategy":session.strategy,
         "url":session.url,"width":session.width,"height":session.height,
         "started_at":session.started_at,"updated_at":session.updated_at,
         "last_frame_seq":session.seq,"last_frame_at":session.updated_at,"controller_attached":false,
         "metadata":session.metadata,
-        "viewer":{"kind":"screencast","vnc":{"available":false,"error":"VNC is not configured"}}
+        "viewer":viewer
     })
 }
 
@@ -756,7 +776,7 @@ fn idle() -> Value {
     json!({
         "active":false,"state":"idle","message":"No browser surface session is active for this slot.",
         "width":0,"height":0,"last_frame_seq":0,"controller_attached":false,
-        "viewer":{"kind":"screencast","vnc":{"available":false,"error":"VNC is not configured"}}
+        "viewer":{"kind":"screencast","vnc":{"available":false,"error":"browser_surface_not_active"}}
     })
 }
 

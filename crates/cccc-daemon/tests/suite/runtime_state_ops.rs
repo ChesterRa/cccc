@@ -51,6 +51,12 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
         turn.result["turn"]["messages"].as_array().map(Vec::len),
         Some(2)
     );
+    let coalesced = turn.result["turn"]["coalesced_text"]
+        .as_str()
+        .expect("coalesced text");
+    assert!(coalesced.contains("[cccc] user → headless1: first"));
+    assert!(coalesced.contains("[cccc] user → headless1: second"));
+    assert!(coalesced.contains("Use cccc_message_reply for replies"));
     assert!(
         turn.result["turn"]["system_prompt"]
             .as_str()

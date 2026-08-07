@@ -7,41 +7,14 @@ use chromiumoxide::cdp::browser_protocol::input::{
     DispatchKeyEventParams, DispatchKeyEventType, InsertTextParams,
 };
 use chromiumoxide::layout::Point;
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 use std::future::Future;
 
 use super::BrowserSurfaces;
-use super::navigation::goto_dom_content_loaded;
 
 impl BrowserSurfaces {
-    pub async fn submit_prompt(&self, key: &str, target_url: &str, prompt: &str) -> Result<Value> {
-        if prompt.trim().is_empty() {
-            bail!("browser prompt is empty");
-        }
-        let mut sessions = self.sessions.lock().await;
-        let session = sessions
-            .get_mut(key)
-            .context("browser surface is not active")?;
-        if !target_url.is_empty() {
-            let current = session.page.url().await?.unwrap_or_default();
-            if current != target_url {
-                goto_dom_content_loaded(&session.page, target_url).await?;
-            }
-        }
-        session
-            .page
-            .evaluate(
-                "(() => { const input = document.querySelector('#prompt-textarea, textarea, [contenteditable=\"true\"]'); if (!input) throw new Error('prompt input unavailable'); input.focus(); if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) { input.value = ''; } else { input.textContent = ''; } input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' })); })()",
-            )
-            .await?;
-        session.page.execute(InsertTextParams::new(prompt)).await?;
-        press_key(&session.page, "Enter").await?;
-        let url = session.page.url().await?.unwrap_or_default();
-        session.updated_at = utc_now();
-        Ok(json!({"submitted":true,"tab_url":url}))
-    }
-
     pub async fn command(&self, key: &str, command: &Value) -> Result<()> {
         let mut sessions = self.sessions.lock().await;
         let session = sessions
@@ -132,14 +105,13 @@ pub async fn serve_socket(
     mut socket: WebSocket,
     surfaces: &BrowserSurfaces,
     key: &str,
+    viewer_mode: &str,
     mut shutdown: tokio::sync::broadcast::Receiver<()>,
 ) {
+    let stream_frames = viewer_mode_uses_frames(viewer_mode, surfaces.vnc_port(key).await.is_ok());
+    let initial = state_event(surfaces.info(key).await);
     if socket
-        .send(Message::Text(
-            json!({"t":"state","active":true,"state":"ready"})
-                .to_string()
-                .into(),
-        ))
+        .send(Message::Text(initial.to_string().into()))
         .await
         .is_err()
     {
@@ -152,7 +124,7 @@ pub async fn serve_socket(
                 close_for_shutdown(&mut socket).await;
                 break;
             }
-            _ = interval.tick() => match until_shutdown(&mut shutdown, surfaces.frame(key)).await {
+            _ = interval.tick(), if stream_frames => match until_shutdown(&mut shutdown, surfaces.frame(key)).await {
                 None => {
                     close_for_shutdown(&mut socket).await;
                     break;
@@ -200,6 +172,71 @@ pub async fn serve_socket(
                             json!({"t":"error","message":error.to_string()}).to_string().into(),
                         )).await;
                     }
+                }
+            }
+        }
+    }
+}
+
+fn state_event(mut state: Value) -> Value {
+    if let Some(object) = state.as_object_mut() {
+        object.insert("t".into(), json!("state"));
+    }
+    state
+}
+
+fn viewer_mode_uses_frames(mode: &str, vnc_available: bool) -> bool {
+    mode.trim().eq_ignore_ascii_case("screencast") || !vnc_available
+}
+
+pub async fn serve_vnc_socket(
+    mut socket: WebSocket,
+    surfaces: &BrowserSurfaces,
+    key: &str,
+    mut shutdown: tokio::sync::broadcast::Receiver<()>,
+) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let Ok(port) = surfaces.vnc_port(key).await else {
+        let _ = socket.send(Message::Close(None)).await;
+        return;
+    };
+    let Ok(stream) = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)).await
+    else {
+        let _ = socket.send(Message::Close(None)).await;
+        return;
+    };
+    let (mut vnc_reader, mut vnc_writer) = stream.into_split();
+    let (mut sender, mut receiver) = socket.split();
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        tokio::select! {
+            _ = shutdown.recv() => {
+                let _ = sender.send(Message::Close(None)).await;
+                break;
+            }
+            read = vnc_reader.read(&mut buffer) => match read {
+                Ok(0) | Err(_) => break,
+                Ok(read) => {
+                    if sender
+                        .send(Message::Binary(buffer[..read].to_vec().into()))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            },
+            message = receiver.next() => {
+                let Some(Ok(message)) = message else { break };
+                match message {
+                    Message::Binary(bytes) => {
+                        if vnc_writer.write_all(&bytes).await.is_err() {
+                            break;
+                        }
+                    }
+                    Message::Close(_) => break,
+                    _ => {}
                 }
             }
         }
@@ -269,7 +306,8 @@ async fn press_key(page: &Page, key: &str) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{should_override_viewport, until_shutdown};
+    use super::{should_override_viewport, state_event, until_shutdown, viewer_mode_uses_frames};
+    use serde_json::json;
     use std::future::pending;
 
     #[test]
@@ -281,6 +319,26 @@ mod tests {
     fn headless_browser_only_resizes_when_dimensions_change() {
         assert!(!should_override_viewport(false, (800, 600), (800, 600)));
         assert!(should_override_viewport(false, (800, 600), (1024, 768)));
+    }
+
+    #[test]
+    fn initial_socket_state_preserves_vnc_capability() {
+        let state = state_event(json!({
+            "active":true,
+            "state":"ready",
+            "viewer":{"kind":"vnc","vnc":{"available":true}}
+        }));
+
+        assert_eq!(state["t"], "state");
+        assert_eq!(state["viewer"]["kind"], "vnc");
+        assert_eq!(state["viewer"]["vnc"]["available"], true);
+    }
+
+    #[test]
+    fn vnc_viewers_do_not_duplicate_cdp_frame_capture() {
+        assert!(!viewer_mode_uses_frames("auto", true));
+        assert!(viewer_mode_uses_frames("screencast", true));
+        assert!(viewer_mode_uses_frames("auto", false));
     }
 
     #[tokio::test]

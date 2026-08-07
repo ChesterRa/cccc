@@ -14,7 +14,15 @@ from ...kernel.access_tokens import list_access_tokens
 from ...kernel.events import publish_event
 from ...kernel.settings import get_remote_access_settings, resolve_remote_access_web_binding, update_remote_access_settings
 from ...paths import ensure_home
-from ...ports.web.runtime_control import http_url, is_loopback_host, is_wildcard_host, local_display_url, read_web_runtime_state
+from ...ports.web.runtime_control import (
+    allow_unauthenticated_web_listener,
+    http_url,
+    is_loopback_host,
+    is_wildcard_host,
+    local_display_url,
+    read_web_runtime_state,
+    remote_web_exposure,
+)
 from ...util.conv import coerce_bool
 from ...util.time import utc_now_iso
 
@@ -78,8 +86,9 @@ def _exposure_class(binding: Dict[str, Any]) -> str:
     return "local" if is_loopback_host(host) else "private"
 
 
-def _access_token_count() -> int:
-    return len(list_access_tokens())
+def _access_token_counts() -> tuple[int, int]:
+    tokens = list_access_tokens()
+    return len(tokens), sum(1 for token in tokens if bool(token.get("is_admin")))
 
 
 def _effective_web_binding(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -177,14 +186,18 @@ def _web_binding_diagnostics(*, provider: str, require_access_token: bool, mode:
     exposure_class = _exposure_class(binding)
     web_bind_loopback = is_loopback_host(host)
     web_bind_reachable = bool(public_url) or (not web_bind_loopback)
-    access_token_count = _access_token_count()
+    access_token_count, admin_access_token_count = _access_token_counts()
     access_token_present = access_token_count > 0
-    if exposure_class == "local":
+    admin_access_token_present = admin_access_token_count > 0
+    allow_unauthenticated_listener = allow_unauthenticated_web_listener()
+    if exposure_class == "local" or allow_unauthenticated_listener:
         effective_require_access_token = False
     elif exposure_class == "public":
         effective_require_access_token = True
     else:
         effective_require_access_token = bool(require_access_token)
+    remote_listener_auth_required = remote_web_exposure(host=host, public_url=public_url) and not allow_unauthenticated_listener
+    remote_listener_auth_requirement_satisfied = not remote_listener_auth_required or admin_access_token_present
     runtime = _effective_web_runtime_state()
     runtime_pid = int(runtime.get("pid") or 0)
     runtime_host = str(runtime.get("host") or "").strip() or None
@@ -205,6 +218,11 @@ def _web_binding_diagnostics(*, provider: str, require_access_token: bool, mode:
         "access_token_requirement_satisfied": access_token_present if effective_require_access_token else True,
         "access_token_source": "store" if access_token_present else "none",
         "access_token_count": access_token_count,
+        "admin_access_token_present": admin_access_token_present,
+        "admin_access_token_count": admin_access_token_count,
+        "remote_listener_auth_required": remote_listener_auth_required,
+        "remote_listener_auth_requirement_satisfied": remote_listener_auth_requirement_satisfied,
+        "allow_unauthenticated_listener_override": allow_unauthenticated_listener,
         "allow_insecure_remote_override": _allow_insecure_remote(),
         "effective_require_access_token": effective_require_access_token,
         "exposure_class": exposure_class,
@@ -245,15 +263,13 @@ def _remote_next_steps(*, provider: str, status: str, diagnostics: Dict[str, Any
         return out
     if provider == "tailscale" and not bool(diagnostics.get("mode_supported")):
         out.append("Set remote access mode to tailnet_only.")
-    if exposure_class in ("private", "public") and bool(diagnostics.get("effective_require_access_token")) and not bool(diagnostics.get("access_token_present")):
+    if not bool(diagnostics.get("remote_listener_auth_requirement_satisfied")):
         out.append("Create an Admin Access Token in Settings > Web Access before exposing Web remotely.")
     if provider == "manual":
         if not bool(diagnostics.get("web_bind_reachable")):
             out.append("Use a non-loopback Web host (for example 0.0.0.0) or set a Public URL, then click Save.")
         if exposure_class == "private" and bool(diagnostics.get("running_in_wsl")):
             out.append("If CCCC is running inside WSL2, 0.0.0.0 only exposes Web inside WSL by default. For LAN access, enable WSL mirrored networking or add a Windows portproxy/firewall rule.")
-        if exposure_class in ("private", "public") and bool(diagnostics.get("effective_require_access_token")) and not bool(diagnostics.get("access_token_present")):
-            out.append("If this is only a trusted LAN, you can also turn off the token requirement and save again.")
         if restart_required:
             if apply_supported:
                 out.append("Click Apply in Settings > Web Access to switch the running Web binding.")
@@ -280,6 +296,8 @@ def _remote_next_steps(*, provider: str, status: str, diagnostics: Dict[str, Any
 
 def _status_reason(*, provider: str, status: str, diagnostics: Dict[str, Any], restart_required: bool) -> str:
     exposure_class = str(diagnostics.get("exposure_class") or "local")
+    if not bool(diagnostics.get("remote_listener_auth_requirement_satisfied")):
+        return "missing_access_token"
     if restart_required:
         return "apply_pending"
     if provider == "off" or exposure_class == "local":
@@ -287,8 +305,6 @@ def _status_reason(*, provider: str, status: str, diagnostics: Dict[str, Any], r
     if status == "running":
         return "running"
     if status == "misconfigured":
-        if bool(diagnostics.get("effective_require_access_token")) and not bool(diagnostics.get("access_token_present")):
-            return "missing_access_token"
         if not bool(diagnostics.get("web_bind_reachable")) and not _allow_loopback_remote():
             return "binding_unreachable"
         if not bool(diagnostics.get("mode_supported")):
@@ -381,7 +397,7 @@ def _remote_access_state_payload(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if provider in ("manual", "tailscale") and enabled:
         if not bool(diagnostics.get("mode_supported")):
             status = "misconfigured"
-        elif bool(diagnostics.get("effective_require_access_token")) and not bool(diagnostics.get("access_token_present")):
+        elif not bool(diagnostics.get("remote_listener_auth_requirement_satisfied")):
             status = "misconfigured"
         elif not bool(diagnostics.get("web_bind_reachable")) and not _allow_loopback_remote():
             status = "misconfigured"
@@ -414,6 +430,8 @@ def _remote_access_state_payload(cfg: Dict[str, Any]) -> Dict[str, Any]:
                 "access_token_configured": diagnostics["access_token_count"] > 0,
                 "access_token_count": diagnostics["access_token_count"],
                 "access_token_source": diagnostics["access_token_source"],
+                "admin_access_token_configured": diagnostics["admin_access_token_count"] > 0,
+                "admin_access_token_count": diagnostics["admin_access_token_count"],
             },
             "next_steps": _remote_next_steps(provider=provider, status=status, diagnostics=diagnostics),
         }
@@ -569,8 +587,11 @@ def handle_remote_access_start(args: Dict[str, Any]) -> DaemonResponse:
         mode=mode,
         binding=binding,
     )
-    if bool(diagnostics.get("effective_require_access_token")) and not bool(diagnostics.get("access_token_present")):
-        return _error("remote_access_invalid_config", "access token is required when require_access_token=true")
+    if not bool(diagnostics.get("remote_listener_auth_requirement_satisfied")):
+        return _error(
+            "remote_access_admin_token_required",
+            "an administrator access token is required before remote access can start",
+        )
     if not bool(diagnostics.get("web_bind_reachable")) and not _allow_loopback_remote():
         return _remote_unreachable_error(provider=provider, diagnostics=diagnostics)
 

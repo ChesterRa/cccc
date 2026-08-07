@@ -218,6 +218,11 @@ $rollbackRestoreFailed = $false
 $pathModified = $false
 $userPathBeforeInstall = $null
 $processPathBeforeInstall = $env:Path
+$markerPath = Join-Path $InstallDir $installMarker
+$markerStage = "$markerPath.cccc-install-$PID"
+$markerBackup = Join-Path $backupDir $installMarker
+$markerTouched = $false
+$markerOriginal = $false
 
 try {
   New-Item -ItemType Directory -Path $tempDir | Out-Null
@@ -307,9 +312,14 @@ try {
   }
 
   $existingCli = Join-Path $InstallDir "cccc.exe"
-  $markerPath = Join-Path $InstallDir $installMarker
   $ownedByStandaloneInstaller = $false
-  if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
+  if (Test-Path -LiteralPath $markerPath) {
+    $markerItem = Get-Item -LiteralPath $markerPath -Force
+    $markerIsRegularFile = -not $markerItem.PSIsContainer -and
+      ($markerItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -eq 0
+    if (-not $markerIsRegularFile) {
+      throw "Existing standalone ownership marker is not a regular file: $markerPath"
+    }
     try {
       $ownedByStandaloneInstaller =
         (Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop).Trim() -eq $installMarkerVersion
@@ -357,6 +367,14 @@ try {
   if ($LASTEXITCODE -ne 0 -or $installedVersion -ne "cccc $Version") {
     throw "Installed version mismatch: expected cccc $Version, got $installedVersion"
   }
+
+  if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
+    Move-Item -LiteralPath $markerPath -Destination $markerBackup
+    $markerOriginal = $true
+  }
+  $markerTouched = $true
+  Set-Content -LiteralPath $markerStage -Value $installMarkerVersion -Encoding Ascii
+  Move-Item -LiteralPath $markerStage -Destination $markerPath
 
   $pathEntries = @($env:Path.Split(';', [StringSplitOptions]::RemoveEmptyEntries))
   $pathReady = $pathEntries.Where({ Test-SameDirectoryPath $_ $InstallDir }).Count -gt 0
@@ -408,7 +426,6 @@ try {
     & (Join-Path $InstallDir "cccc.exe") daemon start *> $null
     if ($LASTEXITCODE -ne 0) { throw "The updated CCCC daemon could not restart" }
   }
-  Set-Content -LiteralPath $markerPath -Value $installMarkerVersion -Encoding Ascii
   $transactionCommitted = $true
   Remove-Item -LiteralPath $backupDir -Recurse -Force
 
@@ -439,7 +456,25 @@ try {
           }
         }
       } else {
-        Remove-Item -LiteralPath $destination -Force -ErrorAction SilentlyContinue
+        try {
+          if (Test-Path -LiteralPath $destination) {
+            Remove-Item -LiteralPath $destination -Force -ErrorAction Stop
+          }
+        } catch {
+          $rollbackRestoreFailed = $true
+          Write-Error "Rollback failed to remove $destination`: $_" -ErrorAction Continue
+        }
+      }
+    }
+    if ($markerTouched -and -not $rollbackRestoreFailed) {
+      Remove-Item -LiteralPath $markerPath -Force -ErrorAction SilentlyContinue
+      if ($markerOriginal -and (Test-Path -LiteralPath $markerBackup -PathType Leaf)) {
+        try {
+          Move-Item -LiteralPath $markerBackup -Destination $markerPath -Force
+        } catch {
+          $rollbackRestoreFailed = $true
+          Write-Error "Rollback failed to restore $markerPath`: $_" -ErrorAction Continue
+        }
       }
     }
     if ($daemonWasRunning -and (Test-Path -LiteralPath (Join-Path $InstallDir "cccc.exe"))) {
@@ -456,6 +491,7 @@ try {
   foreach ($stage in $staged) {
     Remove-Item -LiteralPath $stage -Force -ErrorAction SilentlyContinue
   }
+  Remove-Item -LiteralPath $markerStage -Force -ErrorAction SilentlyContinue
   if ($rollbackRestoreFailed) {
     Write-Error "Previous binary backup retained at $backupDir" -ErrorAction Continue
   } else {

@@ -106,3 +106,43 @@ class TestWebRemoteAccessApply(unittest.TestCase):
             cleanup_host()
             cleanup_supervised()
             cleanup()
+
+    def test_remote_access_apply_rejects_remote_binding_without_admin_token(self) -> None:
+        from cccc.kernel.settings import update_remote_access_settings
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        cleanup_override = self._with_env("CCCC_WEB_ALLOW_UNAUTHENTICATED", None)
+        cleanup_supervised = self._with_env("CCCC_WEB_SUPERVISED", "1")
+        cleanup_host = self._with_env("CCCC_WEB_EFFECTIVE_HOST", "127.0.0.1")
+        cleanup_port = self._with_env("CCCC_WEB_EFFECTIVE_PORT", "8848")
+        cleanup_mode = self._with_env("CCCC_WEB_EFFECTIVE_MODE", "normal")
+        called: list[str] = []
+        try:
+            update_remote_access_settings(
+                {
+                    "provider": "manual",
+                    "enabled": True,
+                    "web_host": "0.0.0.0",
+                    "web_port": 9001,
+                }
+            )
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                app = create_app()
+                with TestClient(app) as client:
+                    client.app.state.request_web_restart = lambda: called.append("restart")
+                    resp = client.post("/api/v1/remote_access/apply?by=user")
+            self.assertEqual(resp.status_code, 409)
+            error = resp.json().get("error") or {}
+            self.assertEqual(
+                str(error.get("code") or ""),
+                "remote_access_admin_token_required",
+            )
+            self.assertEqual(called, [])
+        finally:
+            cleanup_mode()
+            cleanup_port()
+            cleanup_host()
+            cleanup_supervised()
+            cleanup_override()
+            cleanup()

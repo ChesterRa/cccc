@@ -333,6 +333,57 @@ try {
     }
   }
 
+  $readonlyMarkerVersion = "9.9.5"
+  $readonlyMarkerSource = Join-Path $tempRoot "readonly-marker-version.rs"
+  $readonlyMarkerBinary = Join-Path $tempRoot "readonly-marker-version.exe"
+  Set-Content -LiteralPath $readonlyMarkerSource -Encoding utf8 -Value @'
+use std::env;
+fn main() {
+    let args = env::args().skip(1).collect::<Vec<_>>();
+    if args.len() == 1 && args[0] == "--version" {
+        println!("cccc 9.9.5");
+        return;
+    }
+    if args.len() == 2 && args[0] == "daemon" && args[1] == "start" {
+        return;
+    }
+    std::process::exit(1);
+}
+'@
+  & rustc $readonlyMarkerSource -O -o $readonlyMarkerBinary
+  if ($LASTEXITCODE -ne 0) { throw "failed to build read-only marker fixture" }
+  New-FixtureRelease $readonlyMarkerVersion $true $readonlyMarkerBinary
+  $readonlyMarkerInstall = Join-Path $tempRoot "readonly-marker-installed"
+  $readonlyMarkerHome = Join-Path $tempRoot "readonly-marker-home"
+  New-Item -ItemType Directory -Force -Path $readonlyMarkerInstall | Out-Null
+  Copy-Item -LiteralPath (Join-Path $releaseBinaryDir "cccc.exe") -Destination (Join-Path $readonlyMarkerInstall "cccc.exe")
+  $readonlyMarkerPath = Join-Path $readonlyMarkerInstall ".cccc-standalone"
+  Set-Content -LiteralPath $readonlyMarkerPath -Value "foreign-v1" -Encoding Ascii
+  (Get-Item -LiteralPath $readonlyMarkerPath).IsReadOnly = $true
+  $homeBeforeReadonlyMarker = $env:CCCC_HOME
+  $allowReplaceBeforeReadonlyMarker = $env:CCCC_ALLOW_REPLACE_EXISTING
+  try {
+    $env:CCCC_HOME = $readonlyMarkerHome
+    $env:CCCC_ALLOW_REPLACE_EXISTING = "1"
+    & (Join-Path $readonlyMarkerInstall "cccc.exe") daemon start
+    if ($LASTEXITCODE -ne 0) { throw "failed to start the read-only marker fixture daemon" }
+    & (Join-Path $rootDir "scripts\install.ps1") -Version $readonlyMarkerVersion -InstallDir $readonlyMarkerInstall -NoModifyPath
+  } finally {
+    $env:CCCC_HOME = $homeBeforeReadonlyMarker
+    if ($null -eq $allowReplaceBeforeReadonlyMarker) {
+      Remove-Item Env:CCCC_ALLOW_REPLACE_EXISTING -ErrorAction SilentlyContinue
+    } else {
+      $env:CCCC_ALLOW_REPLACE_EXISTING = $allowReplaceBeforeReadonlyMarker
+    }
+  }
+  $readonlyMarkerReported = (& (Join-Path $readonlyMarkerInstall "cccc.exe") --version | Out-String).Trim()
+  if ($readonlyMarkerReported -ne "cccc $readonlyMarkerVersion") {
+    throw "installer did not replace the read-only foreign marker fixture"
+  }
+  if ((Get-Content -LiteralPath $readonlyMarkerPath -Raw).Trim() -ne "standalone-v1") {
+    throw "installer did not atomically replace the read-only ownership marker"
+  }
+
   $slowSource = Join-Path $tempRoot "slow-version.rs"
   $slowBinary = Join-Path $tempRoot "slow-version.exe"
   Set-Content -LiteralPath $slowSource -Encoding utf8 -Value @'

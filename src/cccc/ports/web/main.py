@@ -17,6 +17,7 @@ from .runtime_control import (
     restart_supervised_web_child_with_fallback,
     start_supervised_web_child,
     stop_web_child,
+    web_listener_auth_error,
     wait_for_child_exit_interruptibly,
 )
 
@@ -59,6 +60,7 @@ def _get_lan_ip() -> str:
 
 
 def _print_web_banner(host: str, port: int) -> None:
+    print("[cccc] Implementation: python", file=sys.stderr)
     print("[cccc] Starting web server...", file=sys.stderr)
     print(f"[cccc]   Local:   http://{_http_host_literal(host)}:{int(port)}", file=sys.stderr)
     lan_ip = _get_lan_ip()
@@ -67,6 +69,10 @@ def _print_web_banner(host: str, port: int) -> None:
 
 
 def _run_web_child(*, host: str, port: int, mode: str, reload: bool, log_level: str) -> int:
+    auth_error = web_listener_auth_error(home=ensure_home(), host=str(host))
+    if auth_error:
+        print(f"error: {auth_error}", file=sys.stderr)
+        return 1
     os.environ["CCCC_WEB_MODE"] = str(mode or "normal")
     config = uvicorn.Config(
         "cccc.ports.web.app:create_app",

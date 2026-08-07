@@ -22,7 +22,7 @@ async fn changed_help_notifies_only_running_actors() {
         call(
             &home,
             "actor_add",
-            json!({"group_id":group_id,"actor_id":actor_id,"runtime":"web_model","runner":"headless","role":"peer","by":"user"}),
+            json!({"group_id":group_id,"actor_id":actor_id,"runtime":"custom","runner":"headless","role":"peer","by":"user"}),
         );
     }
     call(

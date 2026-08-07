@@ -1,4 +1,4 @@
-use cccc_contracts::{Actor, DaemonRequest, Event};
+use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, Event};
 use cccc_core::actors;
 use cccc_core::ledger;
 use cccc_core::permissions::{self, ActorAction};
@@ -63,6 +63,9 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             ));
         }
         actor = actor_profile_runtime::link(home, &actor, &actor.profile_id)?;
+    }
+    if actor.runtime == ActorRuntime::WebModel {
+        require_single_web_model_actor(home, &group_id, &actor.id)?;
     }
     actor.default_scope_key = normalize_default_scope_key(&group, &actor.default_scope_key)?;
     let added = store(home)?
@@ -142,6 +145,23 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "actor_profile_linked_readonly",
             "linked actor runtime fields are read-only; convert to custom first",
         ));
+    }
+    let mut preview_group = group.clone();
+    let patched_preview =
+        actors::update(&mut preview_group, &actor_id, &patch).map_err(OpError::invalid)?;
+    let mut final_preview = if !profile_id.is_empty() {
+        actor_profile_runtime::link(home, &patched_preview, &profile_id)?
+    } else if profile_action == "convert_to_custom" {
+        let mut resolved = actor_profile_runtime::resolve(home, &patched_preview)?;
+        resolved.profile_id.clear();
+        resolved.profile_revision_applied = 0;
+        resolved
+    } else {
+        patched_preview
+    };
+    final_preview.role = None;
+    if final_preview.runtime == ActorRuntime::WebModel {
+        require_single_web_model_actor(home, &group_id, &actor_id)?;
     }
     let converted_secrets = if profile_action == "convert_to_custom" {
         let mut secrets = actor_profile_runtime::profile_secrets(home, current)?;
@@ -304,6 +324,37 @@ fn normalize_default_scope_key(group: &GroupDoc, reference: &str) -> Result<Stri
                 format!("scope not attached: {reference}"),
             )
         })
+}
+
+fn require_single_web_model_actor(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+) -> Result<(), OpError> {
+    let store = store(home)?;
+    for meta in store.list().map_err(OpError::io)? {
+        let group = store.load(&meta.group_id).map_err(OpError::io)?;
+        for actor in &group.actors {
+            if actor.runtime != ActorRuntime::WebModel
+                || (group.group_id == group_id && actor.id == actor_id)
+            {
+                continue;
+            }
+            let label = if actor.title.trim().is_empty() {
+                actor.id.as_str()
+            } else {
+                actor.title.as_str()
+            };
+            return Err(OpError::new(
+                "chatgpt_web_model_singleton",
+                format!(
+                    "ChatGPT Web Model is limited to one actor per CCCC instance (existing actor: {label} in group {}). Remove the existing ChatGPT Web Model actor before creating another.",
+                    group.group_id
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn private_env_arg(request: &DaemonRequest) -> Result<Option<BTreeMap<String, String>>, OpError> {

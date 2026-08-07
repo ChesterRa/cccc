@@ -3,24 +3,31 @@ use axum::extract::{Query, State};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use cccc_contracts::utc_now;
+use cccc_contracts::{ActorRuntime, utc_now};
 use cccc_core::GroupStore;
 use cccc_core::integration_state;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use std::fs;
 use std::io;
+use std::path::{Path, PathBuf};
 
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
 
 pub(super) const TARGETS_KEY: &str = "web_model_browser_targets";
+const DELIVERY_PREFERENCES_KEY: &str = "web_model_delivery_preferences";
 
 #[derive(Debug, Deserialize)]
 struct SessionQuery {
     group_id: String,
     actor_id: String,
+    #[serde(default, rename = "inspect")]
+    _inspect: bool,
     #[serde(default)]
-    inspect: bool,
+    mode: String,
+    #[serde(default)]
+    viewer_mode: String,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -32,6 +39,10 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/web-model/browser-session/bind-current",
             post(bind_current),
         )
+        .route(
+            "/api/v1/web-model/browser-session/delivery-preference",
+            post(update_delivery_preference),
+        )
         .route("/api/v1/web-model/browser-session/ws", get(upgrade))
 }
 
@@ -39,9 +50,8 @@ async fn info(State(state): State<AppState>, Query(query): Query<SessionQuery>) 
     let group_id = required_identifier(&query.group_id, "group_id")?;
     let actor_id = required_identifier(&query.actor_id, "actor_id")?;
     validate_actor(&state, group_id, actor_id)?;
-    if query.inspect {
-        super::web_model_delivery::deliver_pending(&state, group_id, actor_id).await?;
-    }
+    // Active Rust surfaces already inspect composer readiness in `payload`.
+    // Keep this GET read-only; delivery is owned by the background worker.
     payload(&state, group_id, actor_id).await
 }
 
@@ -54,18 +64,15 @@ async fn open(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResu
     let provider = super::web_model_connector_store::for_actor(&state, &group_id, &actor_id)
         .and_then(|item| item["provider"].as_str().map(str::to_owned))
         .unwrap_or_else(|| "chatgpt".into());
-    let profile = state
-        .home
-        .root()
-        .join("browser-profiles/web-model")
-        .join(safe_segment(&group_id)?)
-        .join(safe_segment(&actor_id)?);
+    let target = super::web_model_delivery_state::target(&state, &group_id, &actor_id)?;
+    let open_url = browser_open_url(&target, provider_url(&provider));
+    let profile = browser_profile_path(state.home.root(), &group_id, &actor_id)?;
     state
         .browser_surfaces
         .ensure_open_system(
             &key(&group_id, &actor_id),
             &profile,
-            provider_url(&provider),
+            &open_url,
             width,
             height,
         )
@@ -113,7 +120,10 @@ async fn bind_current(State(state): State<AppState>, Json(body): Json<Value>) ->
     let target = if clear {
         json!({})
     } else if new_chat {
-        json!({"state":"new_chat_armed","kind":"new_chat","url":url,"saved_at":utc_now(),"next_delivery":"new_chat"})
+        let provider = super::web_model_connector_store::for_actor(&state, &group_id, &actor_id)
+            .and_then(|item| item["provider"].as_str().map(str::to_owned))
+            .unwrap_or_else(|| "chatgpt".into());
+        json!({"state":"new_chat_armed","kind":"new_chat","url":provider_url(&provider),"saved_at":utc_now(),"next_delivery":"new_chat"})
     } else {
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err(ApiError::bad("a browser conversation URL is required"));
@@ -138,6 +148,26 @@ async fn bind_current(State(state): State<AppState>, Json(body): Json<Value>) ->
     payload(&state, &group_id, &actor_id).await
 }
 
+async fn update_delivery_preference(
+    State(state): State<AppState>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let group_id = required(&body, "group_id")?;
+    let actor_id = required(&body, "actor_id")?;
+    validate_actor(&state, &group_id, &actor_id)?;
+    let mode = required(&body, "mode")?;
+    let mut request = super::web_model_delivery_completion::args(&group_id, &actor_id);
+    request.insert("mode".into(), json!(mode));
+    request.insert("by".into(), json!("user"));
+    super::web_model_delivery_completion::call(
+        &state,
+        "web_model_delivery_preferences_update",
+        request,
+    )
+    .await?;
+    payload(&state, &group_id, &actor_id).await
+}
+
 async fn upgrade(
     State(state): State<AppState>,
     Query(query): Query<SessionQuery>,
@@ -147,6 +177,8 @@ async fn upgrade(
     let actor_id = required_identifier(&query.actor_id, "actor_id")?;
     validate_actor(&state, group_id, actor_id)?;
     let session_key = key(group_id, actor_id);
+    let vnc = query.mode.trim().eq_ignore_ascii_case("vnc");
+    let viewer_mode = query.viewer_mode;
     if state.web_mode.is_read_only() {
         return Ok(ws.on_upgrade(|socket| async move {
             crate::readonly::reject_socket(
@@ -158,13 +190,24 @@ async fn upgrade(
         }));
     }
     Ok(ws.on_upgrade(move |socket| async move {
-        crate::browser_surface::serve_socket(
-            socket,
-            &state.browser_surfaces,
-            &session_key,
-            state.shutdown.subscribe(),
-        )
-        .await;
+        if vnc {
+            crate::browser_surface::serve_vnc_socket(
+                socket,
+                &state.browser_surfaces,
+                &session_key,
+                state.shutdown.subscribe(),
+            )
+            .await;
+        } else {
+            crate::browser_surface::serve_socket(
+                socket,
+                &state.browser_surfaces,
+                &session_key,
+                &viewer_mode,
+                state.shutdown.subscribe(),
+            )
+            .await;
+        }
     }))
 }
 
@@ -173,25 +216,295 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str) -> ApiResult 
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
     let targets = integration_state::group_get(&store, group_id, TARGETS_KEY).map_err(io_error)?;
     let target = targets.get(actor_id).cloned().unwrap_or_else(|| json!({}));
-    let active = surface["active"].as_bool().unwrap_or(false);
-    let url = surface["url"].as_str().unwrap_or("");
-    let browser = json!({
-        "active":active,
-        "ready":active,
-        "state":if active{"ready"}else{"idle"},
-        "tab_url":url,
-        "last_tab_url":url,
-        "conversation_url":target["url"].as_str().unwrap_or(""),
-        "pending_new_chat_bind":target["kind"] == "new_chat",
-        "delivery_target":target
+    let preferences = integration_state::group_get(&store, group_id, DELIVERY_PREFERENCES_KEY)
+        .map_err(io_error)?;
+    let stored_preference = preferences
+        .get(actor_id)
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let delivery_mode = match stored_preference["mode"].as_str() {
+        Some("image_compat") => "image_compat",
+        _ => "standard",
+    };
+    let delivery_preference = json!({
+        "mode":delivery_mode,
+        "updated_at":stored_preference["updated_at"].as_str().unwrap_or(""),
+        "updated_by":stored_preference["updated_by"].as_str().unwrap_or("")
     });
+    let active = surface["active"].as_bool().unwrap_or(false);
+    let metadata = surface
+        .get("metadata")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let readiness = if active {
+        state
+            .browser_surfaces
+            .prompt_readiness(&key(group_id, actor_id))
+            .await
+            .unwrap_or_else(|error| {
+                json!({
+                    "ready":false,
+                    "login_required":true,
+                    "tab_url":surface["url"],
+                    "message":error.to_string()
+                })
+            })
+    } else {
+        json!({"ready":false,"login_required":false,"tab_url":surface["url"]})
+    };
+    let ready = readiness["ready"].as_bool().unwrap_or(false);
+    let login_required = readiness["login_required"].as_bool().unwrap_or(false);
+    let url = readiness["tab_url"]
+        .as_str()
+        .or_else(|| surface["url"].as_str())
+        .unwrap_or("");
+    let kind = target["kind"].as_str().unwrap_or("");
+    let conversation_url = if kind == "existing_chat" {
+        target["url"].as_str().unwrap_or("")
+    } else {
+        ""
+    };
+    let pending_new_chat_bind = kind == "new_chat";
+    let internal_delivery_status = target["last_delivery_status"].as_str().unwrap_or("");
+    let delivery_status = match internal_delivery_status {
+        "pending_new_chat_bind" => "pending",
+        "submission_ambiguous"
+        | "submission_ambiguous_completion_pending"
+        | "completion_ambiguous"
+        | "legacy_submission_unverified" => "ambiguous",
+        "deferred" | "legacy_recovery_submitting" => "submitting",
+        value => value,
+    };
+    let submission = &target["last_submission_evidence"];
+    let submission_evidence = submission["submission_evidence"]
+        .as_str()
+        .or_else(|| submission.as_str())
+        .unwrap_or("");
+    let send_selector = submission["send_selector"].as_str().unwrap_or("");
+    let pending_new_chat_last_tab_url = submission["tab_url"]
+        .as_str()
+        .or_else(|| submission["observed"]["url"].as_str())
+        .unwrap_or("");
+    let last_error = target["last_error"].as_str().unwrap_or("");
+    let delivery_state = match internal_delivery_status {
+        "pending_new_chat_bind" => "pending_bind",
+        "submitting" | "deferred" | "legacy_recovery_submitting" => "submitting",
+        "submission_ambiguous"
+        | "submission_ambiguous_completion_pending"
+        | "completion_ambiguous"
+        | "legacy_submission_unverified"
+        | "ambiguous" => "ambiguous",
+        "failed" | "completion_conflict" => "failed",
+        "submitted" => "submitted",
+        "bound" => "bound",
+        _ => "idle",
+    };
+    let cursor_committed = matches!(
+        internal_delivery_status,
+        "submitted"
+            | "pending_new_chat_bind"
+            | "submission_ambiguous"
+            | "legacy_submission_unverified"
+            | "bound"
+    );
+    let (target_state, target_label, target_reason) = match kind {
+        "existing_chat" => (
+            "bound",
+            "Existing ChatGPT chat",
+            "Next delivery goes to the saved ChatGPT conversation URL.",
+        ),
+        "new_chat" if internal_delivery_status == "pending_new_chat_bind" => (
+            "new_chat_pending",
+            "Binding new ChatGPT chat",
+            "The first prompt was submitted; CCCC is waiting for ChatGPT to expose the final /c/... URL.",
+        ),
+        "new_chat" => (
+            "new_chat_pending",
+            "New ChatGPT chat on next delivery",
+            "Next delivery starts a fresh ChatGPT chat, then binds its final /c/... URL.",
+        ),
+        _ => (
+            "missing",
+            "No target selected",
+            "Save an existing ChatGPT chat or choose new-chat delivery.",
+        ),
+    };
+    let (delivery_label, delivery_reason) = match delivery_state {
+        "pending_bind" => (
+            "Binding chat",
+            "Prompt was submitted; waiting for ChatGPT to assign the chat URL.",
+        ),
+        "submitting" if internal_delivery_status == "deferred" => (
+            "Waiting to submit",
+            "ChatGPT is responding and no safe Send prompt control is available yet.",
+        ),
+        "submitting" => (
+            "Submitting",
+            "CCCC is currently injecting this batch into the ChatGPT browser session.",
+        ),
+        "ambiguous" => (
+            "Delivery unverified",
+            if last_error.is_empty() {
+                "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it."
+            } else {
+                last_error
+            },
+        ),
+        "failed" => (
+            "Delivery failed",
+            if last_error.is_empty() {
+                "The last ChatGPT delivery did not complete."
+            } else {
+                last_error
+            },
+        ),
+        "submitted" => (
+            "Submitted",
+            if submission_evidence.is_empty() {
+                "The last browser delivery was submitted."
+            } else {
+                submission_evidence
+            },
+        ),
+        "bound" => (
+            "Chat bound",
+            "The submitted prompt has been bound to a ChatGPT conversation.",
+        ),
+        _ => (
+            "No recent delivery",
+            "No browser delivery has been recorded yet.",
+        ),
+    };
+    let (next_action, next_label, next_reason) = if !active {
+        (
+            "open_chatgpt",
+            "Open ChatGPT",
+            "Open ChatGPT to sign in or inspect the page.",
+        )
+    } else if !ready {
+        (
+            "login_chatgpt",
+            "Sign in to ChatGPT",
+            "Open ChatGPT and sign in with this browser profile.",
+        )
+    } else if target_state == "missing" {
+        ("bind_chat", "Choose a target ChatGPT chat", target_reason)
+    } else if delivery_state == "pending_bind" {
+        (
+            "wait_for_chat_bind",
+            "Wait for ChatGPT chat binding",
+            delivery_reason,
+        )
+    } else if delivery_state == "ambiguous" {
+        ("inspect_error", "Inspect ChatGPT delivery", delivery_reason)
+    } else if delivery_state == "failed" {
+        ("retry_delivery", "Retry ChatGPT delivery", delivery_reason)
+    } else {
+        (
+            "none",
+            "No action needed",
+            "ChatGPT Web Model is ready for browser delivery.",
+        )
+    };
+    let tone = if delivery_state == "failed" {
+        "error"
+    } else if next_action != "none" {
+        "needs"
+    } else if ready && matches!(target_state, "bound" | "new_chat_pending") {
+        "ready"
+    } else {
+        "neutral"
+    };
     let health = json!({
         "schema":"cccc.web_model.health.v1","group_id":group_id,"actor_id":actor_id,
-        "tone":if active{"ready"}else{"needs"},
-        "summary":if active{"Browser session is ready."}else{"Open the browser session to continue."},
-        "browser":{"state":if active{"ready"}else{"idle"},"active":active,"ready":active,"url":url},
-        "delivery_target":browser["delivery_target"]
+        "tone":tone,
+        "summary":next_label,
+        "browser":{
+            "state":if ready{"ready"}else if active{"sign_in_required"}else{"closed"},
+            "label":if ready{"Ready"}else if active{"Needs sign-in"}else{"Not open"},
+            "reason":readiness["message"].as_str().unwrap_or(if active {
+                "Open ChatGPT and sign in with this browser profile."
+            } else {
+                "Open ChatGPT to sign in or inspect the page."
+            }),
+            "active":active,"ready":ready,"logged_in_guess":ready,"url":url,
+            "viewer_attached":surface["controller_attached"],
+            "last_frame_at":surface["last_frame_at"]
+        },
+        "target":{
+            "state":target_state,"label":target_label,"reason":target_reason,
+            "url":if conversation_url.is_empty(){target["url"].as_str().unwrap_or("")}else{conversation_url},
+            "saved_at":target["saved_at"],"next_delivery":target["next_delivery"]
+        },
+        "delivery_target":target,
+        "delivery":{
+            "state":delivery_state,"label":delivery_label,"reason":delivery_reason,
+            "last_delivery_id":target["last_delivery_id"],
+            "last_turn_id":target["last_delivery_turn_id"],
+            "last_event_ids":target["last_delivery_event_ids"],
+            "last_delivery_at":target["last_delivery_at"],
+            "last_submission_evidence":submission_evidence,
+            "last_send_selector":send_selector,
+            "last_error":if delivery_state == "pending_bind" && last_error == "conversation_url_pending" {""} else {last_error},
+            "cursor_committed":cursor_committed,
+            "mode":delivery_mode
+        },
+        "next_action":{"recommended":next_action,"label":next_label,"reason":next_reason}
     });
+    let mut browser = json!({
+        "active":active,
+        "ready":ready,
+        "login_required":login_required,
+        "pid":metadata["pid"],
+        "cdp_port":metadata["cdp_port"],
+        "profile_dir":metadata["profile_dir"],
+        "visibility":metadata["visibility"],
+        "started_at":surface["started_at"],
+        "updated_at":surface["updated_at"],
+        "state":if ready{"ready"}else if active{"sign_in_required"}else{"idle"},
+        "message":readiness["message"],
+        "tab_url":url,
+        "last_tab_url":url,
+        "conversation_url":conversation_url,
+        "pending_new_chat_bind":pending_new_chat_bind,
+        "pending_new_chat_url":if pending_new_chat_bind {target["url"].as_str().unwrap_or("")} else {""},
+        "pending_new_chat_bind_started_at":if pending_new_chat_bind {target["saved_at"].as_str().unwrap_or("")} else {""},
+        "pending_new_chat_submitted":target["state"] == "new_chat_submitted",
+        "pending_new_chat_submitted_at":target["submitted_at"],
+        "pending_new_chat_delivery_id":target["delivery_id"],
+        "pending_new_chat_last_turn_id":if pending_new_chat_bind {target["last_delivery_turn_id"].as_str().unwrap_or("")} else {""},
+        "pending_new_chat_last_event_ids":if pending_new_chat_bind {target["last_delivery_event_ids"].clone()} else {json!([])},
+        "pending_new_chat_last_tab_url":if pending_new_chat_bind {pending_new_chat_last_tab_url} else {""},
+        "target_saved_at":target["saved_at"],
+        "new_chat_bound_at":target["bound_at"],
+        "delivery_target":target.clone()
+    });
+    browser
+        .as_object_mut()
+        .expect("browser session payload")
+        .extend(
+            json!({
+            "bootstrap_seed_delivered_at":target["bootstrap_seed_delivered_at"],
+            "bootstrap_seed_version":target["bootstrap_seed_version"],
+            "bootstrap_seed_digest":target["bootstrap_seed_digest"],
+            "bootstrap_seed_conversation_url":target["bootstrap_seed_conversation_url"],
+            "last_delivery_at":target["last_delivery_at"],
+            "last_delivery_started_at":target["last_delivery_started_at"],
+            "last_delivery_id":target["last_delivery_id"],
+            "last_delivery_status":delivery_status,
+            "last_submission_evidence":submission_evidence,
+            "last_send_selector":send_selector,
+            "last_turn_id":target["last_delivery_turn_id"],
+            "last_event_ids":target["last_delivery_event_ids"],
+            "last_error":last_error,
+            "delivery_mode":delivery_mode,
+            "delivery_preference":delivery_preference,
+            "health_snapshot":health
+            })
+            .as_object()
+            .cloned()
+            .expect("browser session details"),
+        );
     Ok(success(json!({
         "browser_session":browser,"browser_surface":surface,"health_snapshot":health
     })))
@@ -202,12 +515,39 @@ fn validate_actor(state: &AppState, group_id: &str, actor_id: &str) -> Result<()
         .map_err(io_error)?
         .load(group_id)
         .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))?;
-    group
+    let actor = group
         .actors
         .iter()
-        .any(|actor| actor.id == actor_id)
-        .then_some(())
-        .ok_or_else(|| ApiError::not_found(format!("actor not found: {actor_id}")))
+        .find(|actor| actor.id == actor_id)
+        .ok_or_else(|| ApiError::not_found(format!("actor not found: {actor_id}")))?;
+    if actor.runtime != ActorRuntime::WebModel {
+        return Err(ApiError::bad(
+            "ChatGPT browser sessions can only be bound to actors using runtime=web_model",
+        ));
+    }
+    Ok(())
+}
+
+fn browser_profile_path(home: &Path, group_id: &str, actor_id: &str) -> Result<PathBuf, ApiError> {
+    let group_id = safe_segment(group_id)?;
+    let actor_id = safe_segment(actor_id)?;
+    let shared = home.join("state/web_model_browser/_shared/chatgpt_web/chrome_profile");
+    let legacy = home
+        .join("browser-profiles/web-model")
+        .join(group_id)
+        .join(actor_id);
+    if directory_has_content(&shared) || !directory_has_content(&legacy) {
+        Ok(shared)
+    } else {
+        Ok(legacy)
+    }
+}
+
+fn directory_has_content(path: &Path) -> bool {
+    fs::read_dir(path)
+        .ok()
+        .and_then(|mut entries| entries.next())
+        .is_some()
 }
 
 fn provider_url(provider: &str) -> &'static str {
@@ -216,6 +556,17 @@ fn provider_url(provider: &str) -> &'static str {
         "gemini" => "https://gemini.google.com/",
         "grok" => "https://grok.com/",
         _ => "https://chatgpt.com/",
+    }
+}
+
+fn browser_open_url(target: &Value, provider_url: &str) -> String {
+    let stored = target["url"].as_str().map(str::trim).unwrap_or_default();
+    let stored_is_http =
+        reqwest::Url::parse(stored).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
+    if matches!(target["kind"].as_str(), Some("existing_chat" | "new_chat")) && stored_is_http {
+        stored.to_owned()
+    } else {
+        provider_url.to_owned()
     }
 }
 
@@ -264,8 +615,81 @@ fn io_error(error: io::Error) -> ApiError {
 }
 
 #[cfg(test)]
+mod profile_tests {
+    use super::browser_profile_path;
+
+    #[test]
+    fn browser_profile_prefers_shared_cross_implementation_login() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let shared = temp
+            .path()
+            .join("state/web_model_browser/_shared/chatgpt_web/chrome_profile");
+        let legacy = temp.path().join("browser-profiles/web-model/group/web1");
+        std::fs::create_dir_all(&shared).expect("shared profile");
+        std::fs::create_dir_all(&legacy).expect("legacy profile");
+        std::fs::write(shared.join("Cookies"), b"shared").expect("shared marker");
+        std::fs::write(legacy.join("Cookies"), b"legacy").expect("legacy marker");
+
+        assert_eq!(
+            browser_profile_path(temp.path(), "group", "web1").expect("profile"),
+            shared
+        );
+    }
+
+    #[test]
+    fn browser_profile_keeps_legacy_rust_login_until_shared_migration() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let legacy = temp.path().join("browser-profiles/web-model/group/web1");
+        std::fs::create_dir_all(&legacy).expect("legacy profile");
+        std::fs::write(legacy.join("Cookies"), b"legacy").expect("legacy marker");
+
+        assert_eq!(
+            browser_profile_path(temp.path(), "group", "web1").expect("profile"),
+            legacy
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use super::required_identifier;
+    use super::{browser_open_url, required_identifier};
+    use serde_json::json;
+
+    #[test]
+    fn browser_open_prefers_the_saved_delivery_target() {
+        assert_eq!(
+            browser_open_url(
+                &json!({
+                    "kind":"existing_chat",
+                    "url":"https://chatgpt.com/c/bound-chat"
+                }),
+                "https://chatgpt.com/",
+            ),
+            "https://chatgpt.com/c/bound-chat"
+        );
+        assert_eq!(
+            browser_open_url(
+                &json!({"kind":"new_chat","url":"https://chatgpt.com/"}),
+                "https://example.test/",
+            ),
+            "https://chatgpt.com/"
+        );
+    }
+
+    #[test]
+    fn browser_open_falls_back_for_missing_or_invalid_targets() {
+        assert_eq!(
+            browser_open_url(&json!({}), "https://chatgpt.com/"),
+            "https://chatgpt.com/"
+        );
+        assert_eq!(
+            browser_open_url(
+                &json!({"kind":"existing_chat","url":"javascript:alert(1)"}),
+                "https://chatgpt.com/",
+            ),
+            "https://chatgpt.com/"
+        );
+    }
 
     #[test]
     fn query_identifiers_are_required_and_trimmed() {

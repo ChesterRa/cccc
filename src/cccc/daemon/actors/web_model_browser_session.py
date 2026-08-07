@@ -333,6 +333,7 @@ def submit_prompt_via_web_model_chatgpt_browser_session(
     timeout_seconds: float,
     input_timeout_seconds: float = 30.0,
     new_chat_bind_timeout_seconds: float = 20.0,
+    attachment_path: str = "",
 ) -> dict[str, Any]:
     with _SESSION_WRITE_LOCK:
         return _submit_prompt_via_web_model_chatgpt_browser_session_locked(
@@ -345,6 +346,7 @@ def submit_prompt_via_web_model_chatgpt_browser_session(
             timeout_seconds=timeout_seconds,
             input_timeout_seconds=input_timeout_seconds,
             new_chat_bind_timeout_seconds=new_chat_bind_timeout_seconds,
+            attachment_path=attachment_path,
         )
 
 
@@ -359,6 +361,7 @@ def _submit_prompt_via_web_model_chatgpt_browser_session_locked(
     timeout_seconds: float,
     input_timeout_seconds: float = 30.0,
     new_chat_bind_timeout_seconds: float = 20.0,
+    attachment_path: str = "",
 ) -> dict[str, Any]:
     surface = open_web_model_chatgpt_browser_session(
         group_id=group_id,
@@ -381,6 +384,7 @@ def _submit_prompt_via_web_model_chatgpt_browser_session_locked(
             "input_timeout_seconds": float(input_timeout_seconds or 30.0),
             "new_chat_bind_timeout_seconds": float(new_chat_bind_timeout_seconds or 20.0),
             "command_timeout_seconds": float(timeout_seconds or 120.0),
+            "attachment_path": str(attachment_path or "").strip(),
         },
         timeout=max(5.0, float(timeout_seconds or 120.0)),
     )

@@ -160,6 +160,130 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_delivery_preferences_persist_and_are_snapshotted_by_the_next_turn(self) -> None:
+        from cccc.kernel.ledger import append_event
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            updated, _ = self._call(
+                "web_model_delivery_preferences_update",
+                {
+                    "group_id": group.group_id,
+                    "actor_id": "peer1",
+                    "by": "user",
+                    "mode": "image_compat",
+                },
+            )
+            self.assertTrue(updated.ok, getattr(updated, "error", None))
+            self.assertEqual(((updated.result or {}).get("preference") or {}).get("mode"), "image_compat")
+
+            loaded, _ = self._call(
+                "web_model_delivery_preferences_get",
+                {"group_id": group.group_id, "actor_id": "peer1"},
+            )
+            self.assertTrue(loaded.ok, getattr(loaded, "error", None))
+            self.assertEqual(((loaded.result or {}).get("preference") or {}).get("mode"), "image_compat")
+
+            append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "snapshot the selected mode", "to": ["peer1"]},
+            )
+            wait, _ = self._call(
+                "web_model_runtime_wait_next_turn",
+                {"group_id": group.group_id, "actor_id": "peer1"},
+            )
+            self.assertTrue(wait.ok, getattr(wait, "error", None))
+            delivery = ((wait.result or {}).get("turn") or {}).get("delivery") or {}
+            self.assertEqual(delivery.get("web_model_mode"), "image_compat")
+        finally:
+            cleanup()
+
+    def test_delivery_preferences_reject_unknown_modes_and_non_user_writes(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            invalid, _ = self._call(
+                "web_model_delivery_preferences_update",
+                {
+                    "group_id": group.group_id,
+                    "actor_id": "peer1",
+                    "by": "user",
+                    "mode": "pro",
+                },
+            )
+            self.assertFalse(invalid.ok)
+            self.assertEqual(invalid.error.code, "invalid_web_model_delivery_mode")
+
+            denied, _ = self._call(
+                "web_model_delivery_preferences_update",
+                {
+                    "group_id": group.group_id,
+                    "actor_id": "peer1",
+                    "by": "peer1",
+                    "mode": "image_compat",
+                },
+            )
+            self.assertFalse(denied.ok)
+            self.assertEqual(denied.error.code, "permission_denied")
+        finally:
+            cleanup()
+
+    def test_recover_turn_rebuilds_only_an_already_committed_actor_turn(self) -> None:
+        from cccc.kernel.inbox import get_cursor
+        from cccc.kernel.ledger import append_event
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "legacy pending task", "to": ["peer1"]},
+            )
+            wait, _ = self._call(
+                "web_model_runtime_wait_next_turn",
+                {"group_id": group.group_id, "actor_id": "peer1"},
+            )
+            turn = (wait.result or {}).get("turn") or {}
+            complete, _ = self._call(
+                "web_model_runtime_complete_turn",
+                {
+                    "group_id": group.group_id,
+                    "actor_id": "peer1",
+                    "by": "peer1",
+                    "turn_id": turn.get("turn_id"),
+                    "event_ids": [event["id"]],
+                    "status": "done",
+                },
+            )
+            self.assertTrue(complete.ok, getattr(complete, "error", None))
+            cursor_before = get_cursor(group, "peer1")
+
+            recovered, _ = self._call(
+                "web_model_runtime_recover_turn",
+                {
+                    "group_id": group.group_id,
+                    "actor_id": "peer1",
+                    "event_ids": [event["id"]],
+                },
+            )
+            self.assertTrue(recovered.ok, getattr(recovered, "error", None))
+            rebuilt = (recovered.result or {}).get("turn") or {}
+            self.assertEqual(rebuilt.get("event_ids"), [event["id"]])
+            self.assertIn("legacy pending task", str(rebuilt.get("coalesced_text") or ""))
+            self.assertIn("[CCCC]", str(rebuilt.get("system_prompt") or ""))
+            self.assertEqual(get_cursor(group, "peer1"), cursor_before)
+        finally:
+            cleanup()
+
     def test_delivered_turn_commits_through_ledger_tail_when_timestamp_regresses(self) -> None:
         from cccc.contracts.v1.event import Event as ContractEvent
         from cccc.daemon.actors.web_model_runtime_ops import commit_web_model_delivered_turn
@@ -439,6 +563,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(payload.get("actor_id"), "peer1")
             self.assertEqual(payload.get("target_url"), "https://chatgpt.com/c/test-chat")
             self.assertEqual(payload.get("auto_bind_new_chat"), False)
+            self.assertEqual(payload.get("attachment_path"), "")
             self.assertTrue(str(payload.get("delivery_id") or "").startswith("webdelivery:peer1:"))
             prompt = str(payload.get("prompt") or "")
             self.assertIn("Browser batch webdelivery:peer1:", prompt)
@@ -480,6 +605,67 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 os.environ.pop("CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD", None)
             else:
                 os.environ["CCCC_WEB_MODEL_BROWSER_AUTO_RELOAD"] = old_reload
+            cleanup()
+
+    def test_browser_delivery_image_compat_snapshots_mode_and_passes_cached_png(self) -> None:
+        from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
+        from cccc.kernel.ledger import append_event
+
+        home, cleanup = self._with_home()
+        old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
+        try:
+            group = self._create_group_with_actor()
+            self._bind_chatgpt_conversation(group)
+            updated, _ = self._call(
+                "web_model_delivery_preferences_update",
+                {
+                    "group_id": group.group_id,
+                    "actor_id": "peer1",
+                    "by": "user",
+                    "mode": "image_compat",
+                },
+            )
+            self.assertTrue(updated.ok, getattr(updated, "error", None))
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "compatibility delivery", "to": ["peer1"]},
+            )
+            os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            calls: list[dict] = []
+
+            def submit_via_session(**kwargs) -> dict:
+                calls.append(dict(kwargs))
+                return self._projected_submit_result()
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=submit_via_session,
+            ):
+                result = submit_next_web_model_browser_turn(
+                    group.group_id,
+                    "peer1",
+                    trigger_event_id=event["id"],
+                )
+
+            self.assertTrue(result.get("ok"), result)
+            self.assertEqual(len(calls), 1)
+            payload = calls[0]
+            attachment = Path(str(payload.get("attachment_path") or ""))
+            self.assertEqual(attachment.parent, Path(home) / "cache" / "web-model")
+            self.assertTrue(attachment.name.startswith("cccc-mcp-compat-"))
+            self.assertTrue(attachment.name.endswith(".png"))
+            self.assertTrue(attachment.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+            self.assertIn(b"CCCC-Delivery\0", attachment.read_bytes())
+            self.assertIn("blank image is transport-only", str(payload.get("prompt") or ""))
+        finally:
+            if old_mode is None:
+                os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
+            else:
+                os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
             cleanup()
 
     def test_browser_delivery_does_not_include_nomcp_fallback_when_public_https_is_available(self) -> None:

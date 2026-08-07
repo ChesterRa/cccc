@@ -12,6 +12,10 @@ use crate::api::{ApiError, ApiResult, success};
 #[derive(Debug, Deserialize)]
 struct SlotQuery {
     slot: String,
+    #[serde(default)]
+    mode: String,
+    #[serde(default)]
+    viewer_mode: String,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -106,17 +110,37 @@ async fn upgrade(
             .await;
         });
     }
-    ws.on_upgrade(move |socket| serve(socket, state, key(&group_id, &query.slot)))
+    let vnc = query.mode.trim().eq_ignore_ascii_case("vnc");
+    ws.on_upgrade(move |socket| {
+        serve(
+            socket,
+            state,
+            key(&group_id, &query.slot),
+            vnc,
+            query.viewer_mode,
+        )
+    })
 }
 
-async fn serve(socket: WebSocket, state: AppState, key: String) {
-    crate::browser_surface::serve_socket(
-        socket,
-        &state.browser_surfaces,
-        &key,
-        state.shutdown.subscribe(),
-    )
-    .await;
+async fn serve(socket: WebSocket, state: AppState, key: String, vnc: bool, viewer_mode: String) {
+    if vnc {
+        crate::browser_surface::serve_vnc_socket(
+            socket,
+            &state.browser_surfaces,
+            &key,
+            state.shutdown.subscribe(),
+        )
+        .await;
+    } else {
+        crate::browser_surface::serve_socket(
+            socket,
+            &state.browser_surfaces,
+            &key,
+            &viewer_mode,
+            state.shutdown.subscribe(),
+        )
+        .await;
+    }
 }
 
 fn key(group_id: &str, slot: &str) -> String {

@@ -147,6 +147,17 @@ class TestWebBindPreflight(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("boom", stderr.getvalue())
 
+    def test_python_web_banner_names_the_implementation(self) -> None:
+        from cccc.ports.web import main as web_main
+
+        stderr = io.StringIO()
+        with patch.object(web_main, "_get_lan_ip", return_value=""), patch.object(
+            web_main.sys, "stderr", stderr
+        ):
+            web_main._print_web_banner("127.0.0.1", 8848)
+
+        self.assertEqual(stderr.getvalue().splitlines()[0], "[cccc] Implementation: python")
+
     def test_web_main_uses_fast_shutdown_timeout(self) -> None:
         from cccc.ports.web import main as web_main
 
@@ -162,6 +173,79 @@ class TestWebBindPreflight(unittest.TestCase):
         self.assertEqual(mock_config.call_args.kwargs.get("timeout_graceful_shutdown"), 0.2)
         mock_server.assert_called_once()
         server_instance.run.assert_called_once_with()
+
+    def test_python_web_refuses_remote_listener_without_admin_token(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+        from cccc.ports.web import main as web_main
+
+        _, cleanup = self._with_home()
+        old_override = os.environ.pop("CCCC_WEB_ALLOW_UNAUTHENTICATED", None)
+        stderr = io.StringIO()
+        try:
+            create_access_token("scoped-user", allowed_groups=["g_test"], is_admin=False)
+            with patch.object(web_main.uvicorn, "Server") as mock_server, patch.object(
+                web_main.sys, "stderr", stderr
+            ):
+                rc = web_main.main(
+                    ["--serve-child", "--host", "0.0.0.0", "--port", "8848"]
+                )
+        finally:
+            if old_override is not None:
+                os.environ["CCCC_WEB_ALLOW_UNAUTHENTICATED"] = old_override
+            cleanup()
+
+        self.assertEqual(rc, 1)
+        self.assertIn("administrator access token", stderr.getvalue())
+        mock_server.assert_not_called()
+
+    def test_python_web_allows_remote_listener_with_admin_token(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+        from cccc.ports.web import main as web_main
+
+        _, cleanup = self._with_home()
+        server_instance = unittest.mock.Mock()
+        try:
+            create_access_token("admin-user", is_admin=True)
+            with patch.object(web_main.uvicorn, "Config"), patch.object(
+                web_main.uvicorn,
+                "Server",
+                return_value=server_instance,
+            ):
+                rc = web_main.main(
+                    ["--serve-child", "--host", "0.0.0.0", "--port", "8848"]
+                )
+        finally:
+            cleanup()
+
+        self.assertEqual(rc, 0)
+        server_instance.run.assert_called_once_with()
+
+    def test_python_supervisor_refuses_remote_child_before_spawn(self) -> None:
+        from pathlib import Path
+
+        from cccc.ports.web import runtime_control
+
+        home, cleanup = self._with_home()
+        old_override = os.environ.pop("CCCC_WEB_ALLOW_UNAUTHENTICATED", None)
+        try:
+            with patch.object(runtime_control, "spawn_web_child") as mock_spawn:
+                proc, error = runtime_control.start_supervised_web_child(
+                    home=Path(home),
+                    host="0.0.0.0",
+                    port=8848,
+                    mode="normal",
+                    reload=False,
+                    log_level="info",
+                    launch_source="test",
+                )
+        finally:
+            if old_override is not None:
+                os.environ["CCCC_WEB_ALLOW_UNAUTHENTICATED"] = old_override
+            cleanup()
+
+        self.assertIsNone(proc)
+        self.assertIn("administrator access token", str(error or ""))
+        mock_spawn.assert_not_called()
 
     def test_web_main_uses_shared_binding_defaults(self) -> None:
         from cccc.kernel.settings import update_remote_access_settings

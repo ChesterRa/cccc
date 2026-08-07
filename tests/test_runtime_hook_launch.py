@@ -41,8 +41,10 @@ def test_codex_direct_command_gets_session_only_hooks(tmp_path: Path) -> None:
     )
     assert command[:2] == ["codex", "--search"]
     assert any(item.startswith("hooks.UserPromptSubmit=") for item in command)
-    assert any(item.startswith("hooks.PostToolUseFailure=") for item in command)
-    assert any(item.startswith("hooks.StopFailure=") for item in command)
+    assert any(item.startswith("hooks.PostToolUse=") for item in command)
+    assert any(item.startswith("hooks.Stop=") for item in command)
+    assert not any(item.startswith("hooks.PostToolUseFailure=") for item in command)
+    assert not any(item.startswith("hooks.StopFailure=") for item in command)
     assert any(item.startswith("hooks.state=") for item in command)
     assert env["CCCC_HOOK_LAUNCH_TOKEN"] == "token"
 

@@ -7,13 +7,17 @@ by that session.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
+import zlib
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -25,7 +29,7 @@ from ..daemon.browser.projected_browser_runtime import (
 )
 from ..paths import ensure_home
 from ..util.process import pid_is_alive, terminate_pid
-from ..util.fs import atomic_write_json, read_json
+from ..util.fs import atomic_write_bytes, atomic_write_json, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
 
 CHATGPT_URL = "https://chatgpt.com/"
@@ -54,9 +58,42 @@ SEND_BUTTON_SELECTORS = [
 CDP_CONNECT_TIMEOUT_MS = 5000
 DEFAULT_BROWSER_DELIVERY_TIMEOUT_SECONDS = 120.0
 CHATGPT_SUBMIT_DEFERRED_MARKER = "chatgpt_submit_deferred:"
-CHATGPT_SUBMIT_DEFERRED_ERROR = (
-    f"{CHATGPT_SUBMIT_DEFERRED_MARKER} ChatGPT is responding and no safe Send prompt control is available"
+CHATGPT_SUBMIT_DEFERRED_ERROR = f"{CHATGPT_SUBMIT_DEFERRED_MARKER} ChatGPT is responding and no safe Send prompt control is available"
+_COMPATIBILITY_IMAGE_B64 = (
+    "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAKUlEQVR42u3OIQEAAAACIP+f1hkW"
+    "WEB6FgEBAQEBAQEBAQEBAQEBgXdgl/rw4tnPBf0AAAAASUVORK5CYII="
 )
+_BROWSER_TARGETS_KEY = "web_model_browser_targets"
+_CANONICAL_TARGET_FIELDS = frozenset(
+    {
+        "conversation_url",
+        "pending_new_chat_bind",
+        "pending_new_chat_url",
+        "pending_new_chat_bind_started_at",
+        "pending_new_chat_submitted",
+        "pending_new_chat_submitted_at",
+        "new_chat_bound_at",
+        "target_saved_at",
+        "pending_new_chat_delivery_id",
+        "pending_new_chat_last_turn_id",
+        "pending_new_chat_last_event_ids",
+        "pending_new_chat_last_tab_url",
+        "last_delivery_at",
+        "last_delivery_started_at",
+        "last_delivery_id",
+        "last_delivery_status",
+        "last_submission_evidence",
+        "last_send_selector",
+        "last_turn_id",
+        "last_event_ids",
+        "last_error",
+        "bootstrap_seed_delivered_at",
+        "bootstrap_seed_version",
+        "bootstrap_seed_digest",
+        "bootstrap_seed_conversation_url",
+    }
+)
+_TARGET_STATE_LOCK = threading.RLock()
 
 
 class _UnsafeSubmitState(RuntimeError):
@@ -65,6 +102,38 @@ class _UnsafeSubmitState(RuntimeError):
 
 class _SubmitDeferredState(RuntimeError):
     pass
+
+
+def chatgpt_compatibility_image_path(delivery_id: str = "") -> Path:
+    delivery_id = str(delivery_id or "").strip()
+    data = base64.b64decode(_COMPATIBILITY_IMAGE_B64, validate=True)
+    if delivery_id:
+        digest = hashlib.sha256(
+            delivery_id.encode("utf-8", errors="strict")
+        ).hexdigest()
+        iend_offset = len(data) - 12
+        if iend_offset < 8 or data[iend_offset + 4 : iend_offset + 8] != b"IEND":
+            raise RuntimeError("compatibility image is missing its terminal PNG chunk")
+        marker = b"CCCC-Delivery\0" + digest.encode("ascii")
+        chunk_type = b"tEXt"
+        chunk = (
+            len(marker).to_bytes(4, "big")
+            + chunk_type
+            + marker
+            + (zlib.crc32(chunk_type + marker) & 0xFFFFFFFF).to_bytes(4, "big")
+        )
+        data = data[:iend_offset] + chunk + data[iend_offset:]
+        filename = f"cccc-mcp-compat-{digest[:16]}.png"
+    else:
+        filename = "cccc-mcp-compat.png"
+    path = ensure_home() / "cache" / "web-model" / filename
+    try:
+        current = path.read_bytes()
+    except OSError:
+        current = b""
+    if current != data:
+        atomic_write_bytes(path, data)
+    return path
 
 
 def _normalize_chatgpt_url(value: Any, *, require_conversation: bool = False) -> str:
@@ -87,7 +156,9 @@ def _normalize_chatgpt_url(value: Any, *, require_conversation: bool = False) ->
     path = str(parsed.path or "/")
     if require_conversation:
         parts = [part for part in path.split("/") if part]
-        has_conversation_id = any(part == "c" and index + 1 < len(parts) for index, part in enumerate(parts))
+        has_conversation_id = any(
+            part == "c" and index + 1 < len(parts) for index, part in enumerate(parts)
+        )
         if not has_conversation_id:
             return ""
     netloc = host if not port or port == 443 else f"{host}:{port}"
@@ -110,7 +181,9 @@ def _wait_for_conversation_url(page: Any, *, timeout_seconds: float = 15.0) -> s
 
 def _safe_token(value: str, fallback: str) -> str:
     raw = str(value or "").strip()
-    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in raw).strip("_")
+    cleaned = "".join(
+        ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in raw
+    ).strip("_")
     return cleaned[:96] or fallback
 
 
@@ -158,7 +231,10 @@ def _dir_has_content(path: Path) -> bool:
 
 def _candidate_legacy_profile_dirs(group_id: str, actor_id: str) -> list[Path]:
     roots: list[Path] = []
-    direct = _actor_state_root({"group_id": group_id, "actor_id": actor_id}) / "chrome_profile"
+    direct = (
+        _actor_state_root({"group_id": group_id, "actor_id": actor_id})
+        / "chrome_profile"
+    )
     if direct.exists():
         roots.append(direct)
     base = ensure_home() / "state" / "web_model_browser"
@@ -167,6 +243,13 @@ def _candidate_legacy_profile_dirs(group_id: str, actor_id: str) -> list[Path]:
             if "_shared" in candidate.parts:
                 continue
             if candidate not in roots:
+                roots.append(candidate)
+    except Exception:
+        pass
+    rust_profiles = ensure_home() / "browser-profiles" / "web-model"
+    try:
+        for candidate in rust_profiles.glob("*/*"):
+            if candidate.is_dir() and candidate not in roots:
                 roots.append(candidate)
     except Exception:
         pass
@@ -192,14 +275,203 @@ def _ensure_shared_profile_migrated(group_id: str, actor_id: str) -> None:
         ensure_dir(shared, 0o700)
 
 
-def record_chatgpt_browser_state(group_id: str, actor_id: str, state: dict[str, Any]) -> None:
+def record_chatgpt_browser_state(
+    group_id: str, actor_id: str, state: dict[str, Any]
+) -> None:
     state_root = chatgpt_browser_actor_state_root(group_id, actor_id)
-    current = _load_state(state_root)
-    _write_state(state_root, {**current, **dict(state or {})})
+    current = read_chatgpt_browser_state(group_id, actor_id)
+    incoming = dict(state or {})
+    updated = {**current, **incoming}
+    if "last_submission_evidence" in incoming:
+        updated["last_submission_evidence_raw"] = incoming.get(
+            "last_submission_evidence"
+        )
+    _write_state(state_root, updated)
+    if _CANONICAL_TARGET_FIELDS.intersection(incoming):
+        _persist_canonical_browser_target(group_id, actor_id, updated)
 
 
 def read_chatgpt_browser_state(group_id: str, actor_id: str) -> dict[str, Any]:
-    return _load_state(chatgpt_browser_actor_state_root(group_id, actor_id))
+    state = _load_state(chatgpt_browser_actor_state_root(group_id, actor_id))
+    store_exists, target = _canonical_browser_target(group_id, actor_id)
+    if store_exists:
+        return {**state, **_session_patch_from_canonical_target(target)}
+    if _chatgpt_delivery_target_snapshot(state).get("kind") != "none":
+        _persist_canonical_browser_target(group_id, actor_id, state)
+    return state
+
+
+def _canonical_browser_target(
+    group_id: str, actor_id: str
+) -> tuple[bool, dict[str, Any]]:
+    try:
+        from ..kernel.group import load_group
+
+        group = load_group(str(group_id or "").strip())
+        if group is None or not isinstance(group.doc, dict):
+            return False, {}
+        targets = group.doc.get(_BROWSER_TARGETS_KEY)
+        if not isinstance(targets, dict):
+            return False, {}
+        target = targets.get(str(actor_id or "").strip())
+        return True, dict(target) if isinstance(target, dict) else {}
+    except Exception:
+        return False, {}
+
+
+def _session_patch_from_canonical_target(target: dict[str, Any]) -> dict[str, Any]:
+    kind = str((target or {}).get("kind") or "").strip().lower()
+    if kind == "existing_chat":
+        conversation_url = _conversation_url_from_tab(target.get("url"))
+        selection = {
+            "conversation_url": conversation_url,
+            "pending_new_chat_bind": False,
+            "pending_new_chat_url": "",
+            "pending_new_chat_bind_started_at": "",
+            "pending_new_chat_submitted": False,
+            "pending_new_chat_submitted_at": "",
+            "new_chat_bound_at": str(target.get("bound_at") or ""),
+            "target_saved_at": str(target.get("saved_at") or ""),
+        }
+    elif kind == "new_chat":
+        raw_status = str(target.get("last_delivery_status") or "").strip().lower()
+        submitted = (
+            str(target.get("state") or "").strip().lower() == "new_chat_submitted"
+            or raw_status == "pending_new_chat_bind"
+        )
+        selection = {
+            "conversation_url": "",
+            "pending_new_chat_bind": True,
+            "pending_new_chat_url": _normalize_chatgpt_url(target.get("url"))
+            or CHATGPT_URL,
+            "pending_new_chat_bind_started_at": str(target.get("saved_at") or ""),
+            "pending_new_chat_submitted": submitted,
+            "pending_new_chat_submitted_at": str(target.get("submitted_at") or ""),
+            "new_chat_bound_at": "",
+            "target_saved_at": str(target.get("saved_at") or ""),
+        }
+    else:
+        selection = {
+            "conversation_url": "",
+            "pending_new_chat_bind": False,
+            "pending_new_chat_url": "",
+            "pending_new_chat_bind_started_at": "",
+            "pending_new_chat_submitted": False,
+            "pending_new_chat_submitted_at": "",
+            "new_chat_bound_at": "",
+            "target_saved_at": "",
+        }
+
+    raw_status = str(target.get("last_delivery_status") or "").strip().lower()
+    if raw_status == "pending_new_chat_bind":
+        delivery_status = "pending"
+    elif raw_status in {
+        "submission_ambiguous",
+        "submission_ambiguous_completion_pending",
+        "completion_ambiguous",
+        "legacy_submission_unverified",
+    }:
+        delivery_status = "ambiguous"
+    elif raw_status in {"deferred", "legacy_recovery_submitting"}:
+        delivery_status = "submitting"
+    else:
+        delivery_status = raw_status
+    evidence = target.get("last_submission_evidence")
+    if isinstance(evidence, dict):
+        submission_evidence = str(evidence.get("submission_evidence") or "")
+        send_selector = str(evidence.get("send_selector") or "")
+    else:
+        submission_evidence = str(evidence or "")
+        send_selector = ""
+    event_ids = (
+        list(target.get("last_delivery_event_ids") or [])
+        if isinstance(target.get("last_delivery_event_ids"), list)
+        else []
+    )
+    pending = kind == "new_chat" and bool(selection["pending_new_chat_submitted"])
+    pending_tab_url = ""
+    if isinstance(evidence, dict):
+        pending_tab_url = str(evidence.get("tab_url") or "")
+        observed = evidence.get("observed")
+        if not pending_tab_url and isinstance(observed, dict):
+            pending_tab_url = str(observed.get("url") or "")
+    return {
+        **selection,
+        "pending_new_chat_delivery_id": str(
+            target.get("delivery_id") or target.get("last_delivery_id") or ""
+        )
+        if pending
+        else "",
+        "pending_new_chat_last_turn_id": str(
+            target.get("last_delivery_turn_id") or ""
+        )
+        if pending
+        else "",
+        "pending_new_chat_last_event_ids": event_ids if pending else [],
+        "pending_new_chat_last_tab_url": pending_tab_url if pending else "",
+        "last_delivery_at": str(target.get("last_delivery_at") or ""),
+        "last_delivery_started_at": str(
+            target.get("last_delivery_started_at") or ""
+        ),
+        "last_delivery_id": str(target.get("last_delivery_id") or ""),
+        "last_delivery_status": delivery_status,
+        "last_submission_evidence": submission_evidence,
+        "last_submission_evidence_raw": evidence,
+        "last_send_selector": send_selector,
+        "last_turn_id": str(target.get("last_delivery_turn_id") or ""),
+        "last_event_ids": event_ids,
+        "last_error": str(target.get("last_error") or ""),
+        "bootstrap_seed_delivered_at": str(
+            target.get("bootstrap_seed_delivered_at") or ""
+        ),
+        "bootstrap_seed_version": str(target.get("bootstrap_seed_version") or ""),
+        "bootstrap_seed_digest": str(target.get("bootstrap_seed_digest") or ""),
+        "bootstrap_seed_conversation_url": str(
+            target.get("bootstrap_seed_conversation_url") or ""
+        ),
+    }
+
+
+def _persist_canonical_browser_target(
+    group_id: str, actor_id: str, state: dict[str, Any]
+) -> None:
+    normalized_group_id = str(group_id or "").strip()
+    normalized_actor_id = str(actor_id or "").strip()
+    if not normalized_group_id or not normalized_actor_id:
+        return
+    lock = None
+    try:
+        from ..kernel.group import load_group
+        from ..util.file_lock import acquire_lockfile
+
+        with _TARGET_STATE_LOCK:
+            group_dir = ensure_home() / "groups" / normalized_group_id
+            lock = acquire_lockfile(group_dir / "group.yaml.lock", blocking=True)
+            group = load_group(normalized_group_id)
+            if group is None or not isinstance(group.doc, dict):
+                return
+            targets = group.doc.get(_BROWSER_TARGETS_KEY)
+            if not isinstance(targets, dict):
+                targets = {}
+                group.doc[_BROWSER_TARGETS_KEY] = targets
+            target = _chatgpt_delivery_target_snapshot(state)
+            if str(target.get("kind") or "") == "none":
+                targets.pop(normalized_actor_id, None)
+            else:
+                current = targets.get(normalized_actor_id)
+                targets[normalized_actor_id] = {
+                    **(dict(current) if isinstance(current, dict) else {}),
+                    **target,
+                }
+            group.save()
+    except Exception:
+        pass
+    finally:
+        if lock is not None:
+            try:
+                lock.close()
+            except Exception:
+                pass
 
 
 def record_chatgpt_browser_process_state(state: dict[str, Any]) -> None:
@@ -214,12 +486,10 @@ def read_chatgpt_browser_process_state() -> dict[str, Any]:
 
 def reset_chatgpt_browser_actor_runtime_state(group_id: str, actor_id: str) -> None:
     """Clear actor binding/delivery state while preserving the Chrome login profile."""
-    state_root = chatgpt_browser_actor_state_root(group_id, actor_id)
-    current = _load_state(state_root)
-    _write_state(
-        state_root,
+    record_chatgpt_browser_state(
+        group_id,
+        actor_id,
         {
-            **current,
             "conversation_url": "",
             "pending_new_chat_bind": False,
             "pending_new_chat_url": "",
@@ -301,8 +571,12 @@ def _managed_profile_dir(profile_dir: str | Path) -> Path | None:
 
 def _same_profile_path(left: str | Path, right: str | Path) -> bool:
     try:
-        left_norm = os.path.normcase(os.path.abspath(os.path.expanduser(str(left or ""))))
-        right_norm = os.path.normcase(os.path.abspath(os.path.expanduser(str(right or ""))))
+        left_norm = os.path.normcase(
+            os.path.abspath(os.path.expanduser(str(left or "")))
+        )
+        right_norm = os.path.normcase(
+            os.path.abspath(os.path.expanduser(str(right or "")))
+        )
     except Exception:
         return False
     return bool(left_norm and right_norm and left_norm == right_norm)
@@ -352,7 +626,9 @@ def _profile_process_pids_from_proc(profile: Path) -> list[int]:
             continue
         if not raw:
             continue
-        args = [part.decode("utf-8", errors="ignore") for part in raw.split(b"\0") if part]
+        args = [
+            part.decode("utf-8", errors="ignore") for part in raw.split(b"\0") if part
+        ]
         user_data_dir = _user_data_dir_from_args(args)
         if user_data_dir and _same_profile_path(user_data_dir, profile):
             pids.append(pid)
@@ -393,7 +669,11 @@ def _profile_process_pids_from_ps(profile: Path) -> list[int]:
 
 
 def _profile_process_pids_from_windows(profile: Path) -> list[int]:
-    powershell = shutil.which("powershell.exe") or shutil.which("powershell") or shutil.which("pwsh")
+    powershell = (
+        shutil.which("powershell.exe")
+        or shutil.which("powershell")
+        or shutil.which("pwsh")
+    )
     if not powershell:
         return []
     command = (
@@ -403,7 +683,14 @@ def _profile_process_pids_from_windows(profile: Path) -> list[int]:
     )
     try:
         proc = subprocess.run(
-            [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            [
+                powershell,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command,
+            ],
             capture_output=True,
             text=True,
             timeout=10,
@@ -428,7 +715,9 @@ def _profile_process_pids_from_windows(profile: Path) -> list[int]:
             continue
         if pid <= 0 or pid == current_pid:
             continue
-        user_data_dir = _user_data_dir_from_command_line(str(item.get("CommandLine") or ""))
+        user_data_dir = _user_data_dir_from_command_line(
+            str(item.get("CommandLine") or "")
+        )
         if user_data_dir and _same_profile_path(user_data_dir, profile):
             pids.append(pid)
     return pids
@@ -441,7 +730,9 @@ def _profile_process_pids(profile_dir: str | Path) -> list[int]:
     if os.name == "nt":
         pids = _profile_process_pids_from_windows(profile)
     else:
-        pids = _profile_process_pids_from_proc(profile) or _profile_process_pids_from_ps(profile)
+        pids = _profile_process_pids_from_proc(
+            profile
+        ) or _profile_process_pids_from_ps(profile)
     return sorted(set(pids), reverse=True)
 
 
@@ -556,7 +847,10 @@ def _visible_input_selector(page: Any, *, timeout_seconds: float) -> str:
         except Exception as exc:
             last_error = str(exc)
         time.sleep(0.2)
-    raise RuntimeError(last_error or "ChatGPT composer input not found; log in and enable the CCCC connector")
+    raise RuntimeError(
+        last_error
+        or "ChatGPT composer input not found; log in and enable the CCCC connector"
+    )
 
 
 def _clear_and_type_prompt(page: Any, selector: str, prompt: str) -> None:
@@ -660,7 +954,9 @@ def _prompt_inserted(page: Any, selector: str, prompt: str) -> bool:
         return True
     prefix = expected[: min(160, len(expected))]
     suffix = expected[-min(120, len(expected)) :]
-    return bool(prefix and prefix in actual) and (len(expected) <= 200 or bool(suffix and suffix in actual))
+    return bool(prefix and prefix in actual) and (
+        len(expected) <= 200 or bool(suffix and suffix in actual)
+    )
 
 
 def _prompt_present_in_any_composer(page: Any, prompt: str, selector: str = "") -> bool:
@@ -730,12 +1026,18 @@ def _prompt_present_in_any_composer(page: Any, prompt: str, selector: str = "") 
             continue
         if expected in actual:
             return True
-        if prefix and prefix in actual and (len(expected) <= 200 or bool(suffix and suffix in actual)):
+        if (
+            prefix
+            and prefix in actual
+            and (len(expected) <= 200 or bool(suffix and suffix in actual))
+        ):
             return True
     return False
 
 
-def _wait_for_prompt_inserted(page: Any, selector: str, prompt: str, *, timeout_seconds: float = 3.0) -> bool:
+def _wait_for_prompt_inserted(
+    page: Any, selector: str, prompt: str, *, timeout_seconds: float = 3.0
+) -> bool:
     deadline = time.time() + max(0.5, float(timeout_seconds))
     while time.time() < deadline:
         if _prompt_present_in_any_composer(page, prompt, selector):
@@ -819,7 +1121,9 @@ def _wait_for_stable_send_control(
     return False
 
 
-def _composer_control_candidate_selector(page: Any, input_selector: str, candidate_selector: str) -> str:
+def _composer_control_candidate_selector(
+    page: Any, input_selector: str, candidate_selector: str
+) -> str:
     try:
         result = page.evaluate(
             """args => {
@@ -858,7 +1162,10 @@ def _composer_control_candidate_selector(page: Any, input_selector: str, candida
                 candidate.setAttribute("data-cccc-chatgpt-send-candidate", marker);
                 return `[data-cccc-chatgpt-send-candidate="${marker}"]`;
             }""",
-            {"inputSelector": str(input_selector or ""), "candidateSelector": str(candidate_selector or "")},
+            {
+                "inputSelector": str(input_selector or ""),
+                "candidateSelector": str(candidate_selector or ""),
+            },
         )
     except Exception:
         return ""
@@ -945,10 +1252,14 @@ def _click_send(page: Any, *, input_selector: str, timeout_seconds: float = 5.0)
         for selector in SEND_BUTTON_SELECTORS:
             click_invoked = False
             try:
-                candidate_selector = _composer_control_candidate_selector(page, input_selector, selector)
+                candidate_selector = _composer_control_candidate_selector(
+                    page, input_selector, selector
+                )
                 if not candidate_selector:
                     continue
-                if not _wait_for_stable_send_control(page, candidate_selector, deadline=deadline):
+                if not _wait_for_stable_send_control(
+                    page, candidate_selector, deadline=deadline
+                ):
                     continue
                 control = page.locator(candidate_selector).first
                 click_invoked = True
@@ -967,7 +1278,9 @@ def _click_send(page: Any, *, input_selector: str, timeout_seconds: float = 5.0)
         try:
             candidate_selector = _scored_composer_send_selector(page, input_selector)
             if candidate_selector:
-                if not _wait_for_stable_send_control(page, candidate_selector, deadline=deadline):
+                if not _wait_for_stable_send_control(
+                    page, candidate_selector, deadline=deadline
+                ):
                     continue
                 control = page.locator(candidate_selector).first
                 click_invoked = True
@@ -1232,7 +1545,9 @@ def _chatgpt_running_visible(page: Any) -> bool:
     except Exception:
         pass
     try:
-        return bool(page.locator('[data-testid="stop-button"]').first.is_visible(timeout=150))
+        return bool(
+            page.locator('[data-testid="stop-button"]').first.is_visible(timeout=150)
+        )
     except Exception:
         return False
 
@@ -1255,7 +1570,9 @@ def _wait_for_submission(
     return "stop_without_echo" if stop_seen else ""
 
 
-def _raise_submission_unverified(page: Any, selector: str, *, attempted_action: str) -> None:
+def _raise_submission_unverified(
+    page: Any, selector: str, *, attempted_action: str
+) -> None:
     diagnostics = _submission_diagnostics(page, selector)
     raise RuntimeError(
         "ChatGPT submit action was attempted but submission could not be verified; "
@@ -1273,26 +1590,223 @@ def _wait_after_submit_action(
     *,
     timeout_seconds: float,
 ) -> dict[str, Any] | None:
-    evidence = _wait_for_submission(page, selector, prompt=prompt, timeout_seconds=timeout_seconds)
+    evidence = _wait_for_submission(
+        page, selector, prompt=prompt, timeout_seconds=timeout_seconds
+    )
     if evidence == "message_echo":
-        return {"input_selector": selector, "send_selector": action, "submission_evidence": evidence}
+        return {
+            "input_selector": selector,
+            "send_selector": action,
+            "submission_evidence": evidence,
+        }
     if evidence == "stop_without_echo":
         submission_evidence = (
             "click_dispatch_unknown"
             if action.endswith(":click_dispatch_unknown")
             else "running_without_echo"
         )
-        return {"input_selector": selector, "send_selector": action, "submission_evidence": submission_evidence}
+        return {
+            "input_selector": selector,
+            "send_selector": action,
+            "submission_evidence": submission_evidence,
+        }
     if not _prompt_present_in_any_composer(page, prompt, selector):
-        return {"input_selector": selector, "send_selector": action, "submission_evidence": "composer_cleared"}
+        return {
+            "input_selector": selector,
+            "send_selector": action,
+            "submission_evidence": "composer_cleared",
+        }
     return None
 
 
-def _remaining_submit_timeout(deadline: float, *, maximum: float = 20.0, reserve_seconds: float = 0.75) -> float:
+def _remaining_submit_timeout(
+    deadline: float, *, maximum: float = 20.0, reserve_seconds: float = 0.75
+) -> float:
     remaining = float(deadline) - time.time() - max(0.0, float(reserve_seconds))
     if remaining <= 0:
         return 0.0
     return min(float(maximum), remaining)
+
+
+def _dismiss_duplicate_compatibility_image_dialog(page: Any) -> None:
+    action = page.evaluate(
+        r"""() => {
+            const visible = node => {
+                if (!node || node.closest('[aria-hidden="true"], [inert]')) return false;
+                const rect = node.getBoundingClientRect();
+                const style = getComputedStyle(node);
+                return rect.width > 0 && rect.height > 0 && style.display !== 'none'
+                    && style.visibility !== 'hidden' && Number.parseFloat(style.opacity || '1') > 0.01;
+            };
+            const duplicate = Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
+                .filter(visible)
+                .find(node => {
+                    const text = String(node.innerText || node.textContent || '').replace(/\s+/g, ' ').toLowerCase();
+                    return text.includes("you've already uploaded this file")
+                        || text.includes('you have already uploaded this file');
+                });
+            if (!duplicate) return 'none';
+            const button = Array.from(duplicate.querySelectorAll('button, [role="button"]'))
+                .filter(visible)
+                .find(node => /^(ok|okay|确定|確認)$/.test(
+                    String(node.innerText || node.textContent || node.getAttribute('aria-label') || '').trim().toLowerCase()
+                ));
+            if (!button) return 'blocked';
+            button.click();
+            return 'dismissed';
+        }"""
+    )
+    if action == "none":
+        return
+    if action != "dismissed":
+        raise RuntimeError(
+            "ChatGPT duplicate compatibility image dialog could not be dismissed"
+        )
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        visible = page.evaluate(
+            r"""() => Array.from(document.querySelectorAll('[role="dialog"], [aria-modal="true"]'))
+                .some(node => {
+                    const rect = node.getBoundingClientRect();
+                    const style = getComputedStyle(node);
+                    const text = String(node.innerText || node.textContent || '').replace(/\s+/g, ' ').toLowerCase();
+                    return rect.width > 0 && rect.height > 0 && style.display !== 'none'
+                        && style.visibility !== 'hidden' && Number.parseFloat(style.opacity || '1') > 0.01
+                        && (text.includes("you've already uploaded this file")
+                            || text.includes('you have already uploaded this file'));
+                })"""
+        )
+        if not bool(visible):
+            return
+        time.sleep(0.1)
+    raise RuntimeError(
+        "ChatGPT duplicate compatibility image dialog remained open after dismissal"
+    )
+
+
+def _compatibility_attachment_status(
+    page: Any, delivery_id: str, filename: str
+) -> dict[str, Any]:
+    value = page.evaluate(
+        """payload => {
+            const visible = node => {
+                if (!node || node.closest('[aria-hidden="true"], [inert]')) return false;
+                const rect = node.getBoundingClientRect();
+                const style = getComputedStyle(node);
+                return rect.width >= 8 && rect.height >= 8 && style.display !== 'none'
+                    && style.visibility !== 'hidden' && Number.parseFloat(style.opacity || '1') > 0.01;
+            };
+            const input = document.querySelector('#upload-photos, input[type=file][accept*="image"]');
+            const fileCount = input?.files?.length || 0;
+            const filename = String(payload?.filename || '');
+            const ownedInput = fileCount >= 1 && Array.from(input.files || []).some(file => file?.name === filename);
+            const composer = document.querySelector('#prompt-textarea, .ProseMirror, [role="textbox"][contenteditable="true"]');
+            const root = composer?.closest('form')
+                || composer?.closest('[data-testid*="composer" i], [class*="composer" i]')
+                || document;
+            const explicitPreviews = Array.from(root.querySelectorAll(
+                '[data-testid*="attachment" i], [data-testid*="file-preview" i], [data-testid*="upload-preview" i], '
+                + '[class*="attachment" i], [class*="file-preview" i], [class*="upload-preview" i]'
+            )).filter(node => !(node instanceof HTMLInputElement) && visible(node));
+            const imagePreviews = Array.from(root.querySelectorAll('img')).filter(node => {
+                if (!visible(node)) return false;
+                const rect = node.getBoundingClientRect();
+                return rect.width >= 24 && rect.height >= 24 && rect.width <= 512 && rect.height <= 512;
+            });
+            const previewNodes = Array.from(new Set([...explicitPreviews, ...imagePreviews]));
+            const ownedPreview = previewNodes.some(node => [node.getAttribute('aria-label') || '',
+                node.getAttribute('alt') || '', node.getAttribute('title') || '', node.textContent || '']
+                .join(' ').includes(filename));
+            const deliveryId = String(payload?.delivery_id || '');
+            const marked = document.documentElement.dataset.ccccWebModelAttachmentDelivery === deliveryId;
+            const dispatched = document.documentElement.dataset.ccccWebModelAttachmentDispatched === deliveryId;
+            return {ready: marked || ownedInput || ownedPreview || previewNodes.length > 0, marked, dispatched,
+                owned_input: ownedInput, owned_preview: ownedPreview, file_count: fileCount,
+                preview_count: previewNodes.length, image_preview_count: imagePreviews.length};
+        }""",
+        {"delivery_id": str(delivery_id or ""), "filename": str(filename or "")},
+    )
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _attach_compatibility_image(
+    page: Any,
+    path: Path,
+    *,
+    delivery_id: str,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    delivery_id = str(delivery_id or "").strip()
+    if not delivery_id:
+        raise RuntimeError("compatibility image delivery_id is required")
+    resolved = Path(path).resolve(strict=True)
+    existing = _compatibility_attachment_status(page, delivery_id, resolved.name)
+    if bool(existing.get("ready")):
+        try:
+            page.evaluate(
+                "deliveryId => { document.documentElement.dataset.ccccWebModelAttachmentDelivery = deliveryId; }",
+                delivery_id,
+            )
+        except Exception:
+            pass
+        return {**existing, "path": str(resolved), "delivery_id": delivery_id}
+    upload = page.locator("#upload-photos, input[type=file][accept*='image']").first
+    try:
+        upload.set_input_files(str(resolved))
+    except Exception as exc:
+        raise RuntimeError(
+            f"{CHATGPT_SUBMIT_DEFERRED_MARKER} "
+            "ChatGPT compatibility image upload did not complete before submission; "
+            "attachment_dispatch=file_input; "
+            f"error={str(exc)[:600]}"
+        ) from exc
+    try:
+        page.evaluate(
+            "deliveryId => { document.documentElement.dataset.ccccWebModelAttachmentDispatched = deliveryId; }",
+            delivery_id,
+        )
+    except Exception:
+        pass
+    deadline = time.time() + max(0.2, float(timeout_seconds or 0.2))
+    latest: dict[str, Any] = {
+        "delivery_id": delivery_id,
+        "filename": resolved.name,
+        "dispatched": True,
+        "ready": False,
+    }
+    while time.time() < deadline:
+        try:
+            latest = {
+                **_compatibility_attachment_status(page, delivery_id, resolved.name),
+                "delivery_id": delivery_id,
+                "filename": resolved.name,
+                "dispatched": True,
+            }
+        except Exception as exc:
+            latest = {
+                "delivery_id": delivery_id,
+                "filename": resolved.name,
+                "dispatched": True,
+                "ready": False,
+                "reason": "attachment_readiness_unknown",
+                "error": str(exc)[:600],
+            }
+        if bool(latest.get("ready")):
+            try:
+                page.evaluate(
+                    "deliveryId => { document.documentElement.dataset.ccccWebModelAttachmentDelivery = deliveryId; }",
+                    delivery_id,
+                )
+            except Exception:
+                pass
+            return {**latest, "path": str(resolved), "delivery_id": delivery_id}
+        time.sleep(0.1)
+    raise RuntimeError(
+        f"{CHATGPT_SUBMIT_DEFERRED_MARKER} "
+        "ChatGPT compatibility image upload readiness was not confirmed before submission; "
+        "attachment_dispatch=file_input; "
+        f"attachment_state={json.dumps(latest, ensure_ascii=False, separators=(',', ':'))[:600]}"
+    )
 
 
 def _submit_prompt(
@@ -1301,29 +1815,58 @@ def _submit_prompt(
     *,
     input_timeout_seconds: float,
     submit_timeout_seconds: float | None = None,
+    attachment_path: str | Path | None = None,
+    delivery_id: str = "",
 ) -> dict[str, Any]:
-    submit_budget = max(1.0, float(submit_timeout_seconds if submit_timeout_seconds is not None else input_timeout_seconds))
+    submit_budget = max(
+        1.0,
+        float(
+            submit_timeout_seconds
+            if submit_timeout_seconds is not None
+            else input_timeout_seconds
+        ),
+    )
     submit_deadline = time.time() + submit_budget
+    attachment_evidence: dict[str, Any] = {}
+
+    def _with_attachment(result: dict[str, Any]) -> dict[str, Any]:
+        if not attachment_evidence:
+            return result
+        return {**result, "attachment": attachment_evidence}
 
     def _wait_after_action(action: str) -> dict[str, Any] | None:
         wait_seconds = _remaining_submit_timeout(submit_deadline)
         if wait_seconds <= 0:
             return None
-        return _wait_after_submit_action(page, selector, prompt, action, timeout_seconds=wait_seconds)
+        return _wait_after_submit_action(
+            page, selector, prompt, action, timeout_seconds=wait_seconds
+        )
 
+    if attachment_path:
+        _dismiss_duplicate_compatibility_image_dialog(page)
     if _submission_echo_found(page, prompt):
         return {
             "input_selector": "",
             "send_selector": "existing:message_echo",
             "submission_evidence": "message_echo",
         }
-    selector = _visible_input_selector(page, timeout_seconds=min(float(input_timeout_seconds), submit_budget))
+    selector = _visible_input_selector(
+        page, timeout_seconds=min(float(input_timeout_seconds), submit_budget)
+    )
     if not _prompt_exactly_staged(page, selector, prompt):
         try:
             _clear_and_type_prompt(page, selector, prompt)
         except Exception as exc:
             first_error = str(exc)
-            retry_timeout = min(3.0, max(1.0, _remaining_submit_timeout(submit_deadline, maximum=3.0, reserve_seconds=0.25)))
+            retry_timeout = min(
+                3.0,
+                max(
+                    1.0,
+                    _remaining_submit_timeout(
+                        submit_deadline, maximum=3.0, reserve_seconds=0.25
+                    ),
+                ),
+            )
             selector = _visible_input_selector(page, timeout_seconds=retry_timeout)
             try:
                 _clear_and_type_prompt(page, selector, prompt)
@@ -1332,17 +1875,47 @@ def _submit_prompt(
                     "ChatGPT composer input was found but could not be focused; "
                     f"first_error={first_error[:400]}; retry_error={str(retry_exc)[:400]}"
                 ) from retry_exc
-    insert_timeout = _remaining_submit_timeout(submit_deadline, maximum=3.0, reserve_seconds=0.25)
-    if not _wait_for_prompt_inserted(page, selector, prompt, timeout_seconds=max(0.2, insert_timeout)):
+    insert_timeout = _remaining_submit_timeout(
+        submit_deadline, maximum=3.0, reserve_seconds=0.25
+    )
+    if not _wait_for_prompt_inserted(
+        page, selector, prompt, timeout_seconds=max(0.2, insert_timeout)
+    ):
         raise RuntimeError("ChatGPT prompt insertion did not stick")
-    settle_seconds = min(0.5, max(0.0, _remaining_submit_timeout(submit_deadline, maximum=0.5, reserve_seconds=0.25)))
+    if attachment_path:
+        attachment_timeout = _remaining_submit_timeout(
+            submit_deadline, maximum=10.0, reserve_seconds=0.5
+        )
+        if attachment_timeout <= 0:
+            raise RuntimeError(
+                "ChatGPT compatibility image attachment timed out before it started"
+            )
+        attachment_evidence = _attach_compatibility_image(
+            page,
+            Path(attachment_path),
+            delivery_id=delivery_id,
+            timeout_seconds=attachment_timeout,
+        )
+    settle_seconds = min(
+        0.5,
+        max(
+            0.0,
+            _remaining_submit_timeout(
+                submit_deadline, maximum=0.5, reserve_seconds=0.25
+            ),
+        ),
+    )
     if settle_seconds > 0:
         time.sleep(settle_seconds)
     send_selector = ""
     try:
-        click_timeout = _remaining_submit_timeout(submit_deadline, maximum=20.0, reserve_seconds=0.25)
+        click_timeout = _remaining_submit_timeout(
+            submit_deadline, maximum=20.0, reserve_seconds=0.25
+        )
         if click_timeout > 0:
-            send_selector = _click_send(page, input_selector=selector, timeout_seconds=max(0.5, click_timeout))
+            send_selector = _click_send(
+                page, input_selector=selector, timeout_seconds=max(0.5, click_timeout)
+            )
     except _SubmitDeferredState:
         raise
     except _UnsafeSubmitState:
@@ -1352,7 +1925,7 @@ def _submit_prompt(
     if send_selector:
         result = _wait_after_action(send_selector)
         if result is not None:
-            return result
+            return _with_attachment(result)
         _raise_submission_unverified(page, selector, attempted_action=send_selector)
     if _chatgpt_running_visible(page):
         raise _SubmitDeferredState(CHATGPT_SUBMIT_DEFERRED_ERROR)
@@ -1360,14 +1933,14 @@ def _submit_prompt(
     if request_submit:
         result = _wait_after_action(request_submit)
         if result is not None:
-            return result
+            return _with_attachment(result)
         _raise_submission_unverified(page, selector, attempted_action=request_submit)
     if _chatgpt_running_visible(page):
         raise _SubmitDeferredState(CHATGPT_SUBMIT_DEFERRED_ERROR)
     page.keyboard.press("Enter")
     result = _wait_after_action("keyboard:Enter")
     if result is not None:
-        return result
+        return _with_attachment(result)
     _raise_submission_unverified(page, selector, attempted_action="keyboard:Enter")
 
 
@@ -1387,7 +1960,10 @@ def _inspect_chatgpt_browser(
         contexts = list(getattr(browser, "contexts", []) or [])
         context = contexts[0] if contexts else browser.new_context()
         pages = list(getattr(context, "pages", []) or [])
-        page = next((item for item in pages if _normalize_chatgpt_url(str(item.url or ""))), None)
+        page = next(
+            (item for item in pages if _normalize_chatgpt_url(str(item.url or ""))),
+            None,
+        )
         fallback_url = str(getattr(pages[0], "url", "") or "") if pages else ""
         if page is None and ensure_page:
             page = context.new_page()
@@ -1397,7 +1973,9 @@ def _inspect_chatgpt_browser(
                 "tab_url": fallback_url,
                 "ready": False,
                 "login_required": True,
-                "message": "ChatGPT sign-in is required" if fallback_url else "ChatGPT tab is not open",
+                "message": "ChatGPT sign-in is required"
+                if fallback_url
+                else "ChatGPT tab is not open",
             }
         if bring_to_front:
             page.bring_to_front()
@@ -1406,7 +1984,9 @@ def _inspect_chatgpt_browser(
         selector = ""
         ready = False
         try:
-            selector = _visible_input_selector(page, timeout_seconds=input_timeout_seconds)
+            selector = _visible_input_selector(
+                page, timeout_seconds=input_timeout_seconds
+            )
             ready = True
         except Exception:
             ready = False
@@ -1418,9 +1998,18 @@ def _inspect_chatgpt_browser(
         }
 
 
-def _combined_session_state(actor_state: dict[str, Any], browser_state: dict[str, Any]) -> dict[str, Any]:
+def _combined_session_state(
+    actor_state: dict[str, Any], browser_state: dict[str, Any]
+) -> dict[str, Any]:
     out = dict(actor_state or {})
-    for key in ("pid", "cdp_port", "browser_binary", "profile_dir", "visibility", "started_at"):
+    for key in (
+        "pid",
+        "cdp_port",
+        "browser_binary",
+        "profile_dir",
+        "visibility",
+        "started_at",
+    ):
         if key in browser_state:
             out[key] = browser_state.get(key)
     return out
@@ -1454,7 +2043,9 @@ def _seconds_since_iso(ts: str) -> float | None:
 
 
 def _stale_submitting_delivery(session: dict[str, Any]) -> bool:
-    started_at = str(session.get("last_delivery_started_at") or session.get("last_delivery_at") or "").strip()
+    started_at = str(
+        session.get("last_delivery_started_at") or session.get("last_delivery_at") or ""
+    ).strip()
     age = _seconds_since_iso(started_at)
     return age is not None and age >= _delivery_timeout_seconds(session)
 
@@ -1463,13 +2054,69 @@ def _chatgpt_delivery_target_snapshot(session: dict[str, Any]) -> dict[str, Any]
     conversation_url = _conversation_url_from_tab(session.get("conversation_url"))
     pending_new_chat = bool(session.get("pending_new_chat_bind"))
     pending_submitted = bool(session.get("pending_new_chat_submitted"))
-    pending_url = _normalize_chatgpt_url(session.get("pending_new_chat_url")) or CHATGPT_URL
+    pending_url = (
+        _normalize_chatgpt_url(session.get("pending_new_chat_url")) or CHATGPT_URL
+    )
     saved_at = str(
         session.get("target_saved_at")
         or session.get("new_chat_bound_at")
         or session.get("pending_new_chat_bind_started_at")
         or ""
     ).strip()
+    raw_delivery_status = str(session.get("last_delivery_status") or "").strip()
+    canonical_delivery_status = {
+        "pending": "pending_new_chat_bind",
+        "ambiguous": "submission_ambiguous",
+    }.get(raw_delivery_status, raw_delivery_status)
+    raw_evidence = session.get("last_submission_evidence_raw")
+    evidence = dict(raw_evidence) if isinstance(raw_evidence, dict) else {}
+    submission_evidence = str(session.get("last_submission_evidence") or "").strip()
+    send_selector = str(session.get("last_send_selector") or "").strip()
+    pending_tab_url = str(
+        session.get("pending_new_chat_last_tab_url") or ""
+    ).strip()
+    if submission_evidence:
+        evidence["submission_evidence"] = submission_evidence
+    if send_selector:
+        evidence["send_selector"] = send_selector
+    if pending_new_chat and pending_submitted and pending_tab_url:
+        evidence["tab_url"] = pending_tab_url
+    if not evidence and isinstance(raw_evidence, str) and raw_evidence.strip():
+        evidence_value: Any = raw_evidence.strip()
+    elif evidence:
+        evidence_value = evidence
+    else:
+        evidence_value = submission_evidence
+    event_ids = (
+        list(session.get("last_event_ids") or [])
+        if isinstance(session.get("last_event_ids"), list)
+        else []
+    )
+    delivery_state = {
+        "bound_at": str(session.get("new_chat_bound_at") or "").strip(),
+        "last_delivery_at": str(session.get("last_delivery_at") or "").strip(),
+        "last_delivery_started_at": str(
+            session.get("last_delivery_started_at") or ""
+        ).strip(),
+        "last_delivery_id": str(session.get("last_delivery_id") or "").strip(),
+        "last_delivery_turn_id": str(session.get("last_turn_id") or "").strip(),
+        "last_delivery_event_ids": event_ids,
+        "last_delivery_status": canonical_delivery_status,
+        "last_submission_evidence": evidence_value,
+        "last_error": str(session.get("last_error") or "").strip(),
+        "bootstrap_seed_delivered_at": str(
+            session.get("bootstrap_seed_delivered_at") or ""
+        ).strip(),
+        "bootstrap_seed_version": str(
+            session.get("bootstrap_seed_version") or ""
+        ).strip(),
+        "bootstrap_seed_digest": str(
+            session.get("bootstrap_seed_digest") or ""
+        ).strip(),
+        "bootstrap_seed_conversation_url": str(
+            session.get("bootstrap_seed_conversation_url") or ""
+        ).strip(),
+    }
     if conversation_url:
         return {
             "state": "bound_existing_chat",
@@ -1479,6 +2126,9 @@ def _chatgpt_delivery_target_snapshot(session: dict[str, Any]) -> dict[str, Any]
             "next_delivery": "existing_chat",
             "label": "Existing ChatGPT chat",
             "detail": "Next delivery goes to the saved ChatGPT conversation URL.",
+            "submitted_at": "",
+            "delivery_id": "",
+            **delivery_state,
         }
     if pending_new_chat and pending_submitted:
         return {
@@ -1486,11 +2136,16 @@ def _chatgpt_delivery_target_snapshot(session: dict[str, Any]) -> dict[str, Any]
             "kind": "new_chat",
             "url": pending_url,
             "saved_at": saved_at,
-            "submitted_at": str(session.get("pending_new_chat_submitted_at") or "").strip(),
-            "delivery_id": str(session.get("pending_new_chat_delivery_id") or "").strip(),
+            "submitted_at": str(
+                session.get("pending_new_chat_submitted_at") or ""
+            ).strip(),
+            "delivery_id": str(
+                session.get("pending_new_chat_delivery_id") or ""
+            ).strip(),
             "next_delivery": "wait_for_new_chat_bind",
             "label": "Binding new ChatGPT chat",
             "detail": "The first prompt was submitted; CCCC is waiting for ChatGPT to expose the final /c/... URL.",
+            **delivery_state,
         }
     if pending_new_chat:
         return {
@@ -1501,6 +2156,9 @@ def _chatgpt_delivery_target_snapshot(session: dict[str, Any]) -> dict[str, Any]
             "next_delivery": "new_chat",
             "label": "New ChatGPT chat on next delivery",
             "detail": "Next delivery starts a fresh ChatGPT chat, then binds its final /c/... URL.",
+            "submitted_at": "",
+            "delivery_id": "",
+            **delivery_state,
         }
     return {
         "state": "none",
@@ -1529,8 +2187,12 @@ def build_chatgpt_web_model_health_snapshot(
 
     session = dict(browser_session or {})
     surface = dict(browser_surface or {})
-    surface_error = surface.get("error") if isinstance(surface.get("error"), dict) else {}
-    surface_error_text = str(surface_error.get("message") or surface.get("message") or "").strip()
+    surface_error = (
+        surface.get("error") if isinstance(surface.get("error"), dict) else {}
+    )
+    surface_error_text = str(
+        surface_error.get("message") or surface.get("message") or ""
+    ).strip()
     session_error = str(session.get("error") or "").strip()
     last_error = str(session.get("last_error") or "").strip()
     surface_state = str(surface.get("state") or "").strip().lower()
@@ -1548,7 +2210,9 @@ def build_chatgpt_web_model_health_snapshot(
     if surface_state == "failed" or session_error:
         browser_state = "failed"
         browser_label = "Check failed"
-        browser_reason = session_error or surface_error_text or "ChatGPT browser check failed."
+        browser_reason = (
+            session_error or surface_error_text or "ChatGPT browser check failed."
+        )
     elif ready:
         browser_state = "ready"
         browser_label = "Ready"
@@ -1573,17 +2237,26 @@ def build_chatgpt_web_model_health_snapshot(
     if conversation_url:
         target_state = "bound"
         target_label = str(delivery_target.get("label") or "Bound chat")
-        target_reason = str(delivery_target.get("detail") or "Browser delivery targets the bound ChatGPT conversation.")
+        target_reason = str(
+            delivery_target.get("detail")
+            or "Browser delivery targets the bound ChatGPT conversation."
+        )
         target_url = conversation_url
     elif pending_new_chat:
         target_state = "new_chat_pending"
         target_label = str(delivery_target.get("label") or "New chat pending")
-        target_reason = str(delivery_target.get("detail") or "Next delivery creates or finishes binding a ChatGPT conversation.")
+        target_reason = str(
+            delivery_target.get("detail")
+            or "Next delivery creates or finishes binding a ChatGPT conversation."
+        )
         target_url = pending_new_chat_url or CHATGPT_URL
     else:
         target_state = "missing"
         target_label = str(delivery_target.get("label") or "No target selected")
-        target_reason = str(delivery_target.get("detail") or "Save an existing ChatGPT chat or choose new-chat delivery.")
+        target_reason = str(
+            delivery_target.get("detail")
+            or "Save an existing ChatGPT chat or choose new-chat delivery."
+        )
         target_url = ""
 
     raw_delivery_status = str(session.get("last_delivery_status") or "").strip().lower()
@@ -1591,26 +2264,40 @@ def build_chatgpt_web_model_health_snapshot(
     pending_bind_delivery = raw_delivery_status == "pending" or (
         not conversation_url
         and pending_new_chat
-        and (bool(session.get("pending_new_chat_submitted")) or last_error == "conversation_url_pending")
+        and (
+            bool(session.get("pending_new_chat_submitted"))
+            or last_error == "conversation_url_pending"
+        )
     )
-    stale_submitting_delivery = raw_delivery_status == "submitting" and _stale_submitting_delivery(session)
+    stale_submitting_delivery = (
+        raw_delivery_status == "submitting" and _stale_submitting_delivery(session)
+    )
     if pending_bind_delivery:
         delivery_state = "pending_bind"
         delivery_label = "Binding chat"
-        delivery_reason = "Prompt was submitted; waiting for ChatGPT to assign the chat URL."
+        delivery_reason = (
+            "Prompt was submitted; waiting for ChatGPT to assign the chat URL."
+        )
     elif stale_submitting_delivery:
         delivery_state = "failed"
         delivery_label = "Delivery interrupted"
-        delivery_reason = "Browser delivery started but did not finish before the submit timeout."
+        delivery_reason = (
+            "Browser delivery started but did not finish before the submit timeout."
+        )
         last_error = last_error or "delivery_submitting_stale"
     elif raw_delivery_status == "submitting":
         delivery_state = "submitting"
         delivery_label = "Submitting"
-        delivery_reason = "CCCC is currently injecting this batch into the ChatGPT browser session."
+        delivery_reason = (
+            "CCCC is currently injecting this batch into the ChatGPT browser session."
+        )
     elif raw_delivery_status == "ambiguous":
         delivery_state = "ambiguous"
         delivery_label = "Delivery unverified"
-        delivery_reason = last_error or "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it."
+        delivery_reason = (
+            last_error
+            or "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it."
+        )
     elif raw_delivery_status == "failed":
         delivery_state = "failed"
         delivery_label = "Delivery failed"
@@ -1618,34 +2305,59 @@ def build_chatgpt_web_model_health_snapshot(
     elif raw_delivery_status == "bound":
         delivery_state = "bound"
         delivery_label = "Chat bound"
-        delivery_reason = "The submitted prompt has been bound to a ChatGPT conversation."
+        delivery_reason = (
+            "The submitted prompt has been bound to a ChatGPT conversation."
+        )
     elif raw_delivery_status == "submitted" or last_delivery_at:
         delivery_state = "submitted"
         delivery_label = "Submitted"
-        delivery_reason = str(session.get("last_submission_evidence") or "").strip() or "The last browser delivery was submitted."
+        delivery_reason = (
+            str(session.get("last_submission_evidence") or "").strip()
+            or "The last browser delivery was submitted."
+        )
     else:
         delivery_state = "idle"
         delivery_label = "No recent delivery"
         delivery_reason = "No browser delivery has been recorded yet."
 
     if browser_state == "failed":
-        next_action = _health_next_action("restart_browser", "Restart ChatGPT browser", browser_reason)
+        next_action = _health_next_action(
+            "restart_browser", "Restart ChatGPT browser", browser_reason
+        )
     elif browser_state == "closed":
-        next_action = _health_next_action("open_chatgpt", "Open ChatGPT", browser_reason)
+        next_action = _health_next_action(
+            "open_chatgpt", "Open ChatGPT", browser_reason
+        )
     elif browser_state == "sign_in_required":
-        next_action = _health_next_action("login_chatgpt", "Sign in to ChatGPT", browser_reason)
+        next_action = _health_next_action(
+            "login_chatgpt", "Sign in to ChatGPT", browser_reason
+        )
     elif delivery_state == "pending_bind":
-        next_action = _health_next_action("wait_for_chat_bind", "Wait for ChatGPT chat binding", delivery_reason)
+        next_action = _health_next_action(
+            "wait_for_chat_bind", "Wait for ChatGPT chat binding", delivery_reason
+        )
     elif delivery_state == "submitting":
-        next_action = _health_next_action("none", "Submitting to ChatGPT", delivery_reason)
+        next_action = _health_next_action(
+            "none", "Submitting to ChatGPT", delivery_reason
+        )
     elif target_state == "missing":
-        next_action = _health_next_action("bind_chat", "Choose a target ChatGPT chat", target_reason)
+        next_action = _health_next_action(
+            "bind_chat", "Choose a target ChatGPT chat", target_reason
+        )
     elif delivery_state == "ambiguous":
-        next_action = _health_next_action("inspect_error", "Inspect ChatGPT delivery", delivery_reason)
+        next_action = _health_next_action(
+            "inspect_error", "Inspect ChatGPT delivery", delivery_reason
+        )
     elif delivery_state == "failed":
-        next_action = _health_next_action("retry_delivery", "Retry or reload ChatGPT delivery", delivery_reason)
+        next_action = _health_next_action(
+            "retry_delivery", "Retry or reload ChatGPT delivery", delivery_reason
+        )
     else:
-        next_action = _health_next_action("none", "No action needed", "ChatGPT Web Model is ready for browser delivery.")
+        next_action = _health_next_action(
+            "none",
+            "No action needed",
+            "ChatGPT Web Model is ready for browser delivery.",
+        )
 
     if delivery_state == "failed" or browser_state == "failed":
         tone = "error"
@@ -1688,12 +2400,23 @@ def build_chatgpt_web_model_health_snapshot(
             "reason": delivery_reason,
             "last_delivery_id": str(session.get("last_delivery_id") or ""),
             "last_turn_id": str(session.get("last_turn_id") or ""),
-            "last_event_ids": session.get("last_event_ids") if isinstance(session.get("last_event_ids"), list) else [],
+            "last_event_ids": session.get("last_event_ids")
+            if isinstance(session.get("last_event_ids"), list)
+            else [],
             "last_delivery_at": last_delivery_at,
-            "last_submission_evidence": str(session.get("last_submission_evidence") or ""),
+            "last_submission_evidence": str(
+                session.get("last_submission_evidence") or ""
+            ),
             "last_send_selector": str(session.get("last_send_selector") or ""),
-            "last_error": "" if delivery_state == "pending_bind" and last_error == "conversation_url_pending" else last_error,
-            "cursor_committed": delivery_state in {"submitted", "bound", "pending_bind", "ambiguous"},
+            "last_error": ""
+            if delivery_state == "pending_bind"
+            and last_error == "conversation_url_pending"
+            else last_error,
+            "cursor_committed": delivery_state
+            in {"submitted", "bound", "pending_bind", "ambiguous"},
+            "mode": "image_compat"
+            if str(session.get("delivery_mode") or "") == "image_compat"
+            else "standard",
         },
         "next_action": next_action,
     }
@@ -1706,7 +2429,9 @@ def _session_payload(
     check_alive: bool = True,
 ) -> dict[str, Any]:
     port = int(state.get("cdp_port") or 0)
-    alive = port > 0 and (not check_alive or _wait_cdp_endpoint(port, timeout_seconds=0.4))
+    alive = port > 0 and (
+        not check_alive or _wait_cdp_endpoint(port, timeout_seconds=0.4)
+    )
     payload = {
         "active": alive,
         "pid": int(state.get("pid") or 0),
@@ -1723,39 +2448,78 @@ def _session_payload(
         "last_submission_evidence": str(state.get("last_submission_evidence") or ""),
         "last_send_selector": str(state.get("last_send_selector") or ""),
         "last_turn_id": str(state.get("last_turn_id") or ""),
-        "last_event_ids": state.get("last_event_ids") if isinstance(state.get("last_event_ids"), list) else [],
+        "last_event_ids": state.get("last_event_ids")
+        if isinstance(state.get("last_event_ids"), list)
+        else [],
         "last_tab_url": str(state.get("last_tab_url") or ""),
         "conversation_url": str(state.get("conversation_url") or ""),
         "pending_new_chat_bind": bool(state.get("pending_new_chat_bind")),
         "pending_new_chat_url": str(state.get("pending_new_chat_url") or ""),
-        "pending_new_chat_bind_started_at": str(state.get("pending_new_chat_bind_started_at") or ""),
+        "pending_new_chat_bind_started_at": str(
+            state.get("pending_new_chat_bind_started_at") or ""
+        ),
         "pending_new_chat_submitted": bool(state.get("pending_new_chat_submitted")),
-        "pending_new_chat_submitted_at": str(state.get("pending_new_chat_submitted_at") or ""),
-        "pending_new_chat_delivery_id": str(state.get("pending_new_chat_delivery_id") or ""),
-        "pending_new_chat_last_turn_id": str(state.get("pending_new_chat_last_turn_id") or ""),
+        "pending_new_chat_submitted_at": str(
+            state.get("pending_new_chat_submitted_at") or ""
+        ),
+        "pending_new_chat_delivery_id": str(
+            state.get("pending_new_chat_delivery_id") or ""
+        ),
+        "pending_new_chat_last_turn_id": str(
+            state.get("pending_new_chat_last_turn_id") or ""
+        ),
         "pending_new_chat_last_event_ids": state.get("pending_new_chat_last_event_ids")
         if isinstance(state.get("pending_new_chat_last_event_ids"), list)
         else [],
-        "pending_new_chat_last_tab_url": str(state.get("pending_new_chat_last_tab_url") or ""),
+        "pending_new_chat_last_tab_url": str(
+            state.get("pending_new_chat_last_tab_url") or ""
+        ),
         "new_chat_bound_at": str(state.get("new_chat_bound_at") or ""),
         "target_saved_at": str(state.get("target_saved_at") or ""),
-        "bootstrap_seed_delivered_at": str(state.get("bootstrap_seed_delivered_at") or ""),
+        "bootstrap_seed_delivered_at": str(
+            state.get("bootstrap_seed_delivered_at") or ""
+        ),
+        "bootstrap_seed_version": str(state.get("bootstrap_seed_version") or ""),
+        "bootstrap_seed_digest": str(state.get("bootstrap_seed_digest") or ""),
+        "bootstrap_seed_conversation_url": str(
+            state.get("bootstrap_seed_conversation_url") or ""
+        ),
         "auto_reload_active": bool(state.get("auto_reload_active")),
-        "auto_reload_window_started_at": str(state.get("auto_reload_window_started_at") or ""),
-        "auto_reload_window_expires_at": str(state.get("auto_reload_window_expires_at") or ""),
-        "auto_reload_last_progress_at": str(state.get("auto_reload_last_progress_at") or ""),
-        "auto_reload_last_progress_reason": str(state.get("auto_reload_last_progress_reason") or ""),
-        "auto_reload_last_progress_detail": str(state.get("auto_reload_last_progress_detail") or ""),
-        "auto_reload_last_delivery_id": str(state.get("auto_reload_last_delivery_id") or ""),
+        "auto_reload_window_started_at": str(
+            state.get("auto_reload_window_started_at") or ""
+        ),
+        "auto_reload_window_expires_at": str(
+            state.get("auto_reload_window_expires_at") or ""
+        ),
+        "auto_reload_last_progress_at": str(
+            state.get("auto_reload_last_progress_at") or ""
+        ),
+        "auto_reload_last_progress_reason": str(
+            state.get("auto_reload_last_progress_reason") or ""
+        ),
+        "auto_reload_last_progress_detail": str(
+            state.get("auto_reload_last_progress_detail") or ""
+        ),
+        "auto_reload_last_delivery_id": str(
+            state.get("auto_reload_last_delivery_id") or ""
+        ),
         "auto_reload_last_turn_id": str(state.get("auto_reload_last_turn_id") or ""),
-        "auto_reload_last_event_ids": state.get("auto_reload_last_event_ids") if isinstance(state.get("auto_reload_last_event_ids"), list) else [],
+        "auto_reload_last_event_ids": state.get("auto_reload_last_event_ids")
+        if isinstance(state.get("auto_reload_last_event_ids"), list)
+        else [],
         "auto_reload_target_url": str(state.get("auto_reload_target_url") or ""),
-        "auto_reload_last_reload_at": str(state.get("auto_reload_last_reload_at") or ""),
-        "auto_reload_last_reload_reason": str(state.get("auto_reload_last_reload_reason") or ""),
+        "auto_reload_last_reload_at": str(
+            state.get("auto_reload_last_reload_at") or ""
+        ),
+        "auto_reload_last_reload_reason": str(
+            state.get("auto_reload_last_reload_reason") or ""
+        ),
         "auto_reload_last_page_url": str(state.get("auto_reload_last_page_url") or ""),
         "auto_reload_count": int(state.get("auto_reload_count") or 0),
         "auto_reload_completed_at": str(state.get("auto_reload_completed_at") or ""),
-        "auto_reload_completed_reason": str(state.get("auto_reload_completed_reason") or ""),
+        "auto_reload_completed_reason": str(
+            state.get("auto_reload_completed_reason") or ""
+        ),
         "auto_reload_expired_at": str(state.get("auto_reload_expired_at") or ""),
         "auto_reload_last_error": str(state.get("auto_reload_last_error") or ""),
         "ready": False,
@@ -1767,7 +2531,9 @@ def _session_payload(
     return payload
 
 
-def chatgpt_browser_session_cached_status(group_id: str, actor_id: str) -> dict[str, Any]:
+def chatgpt_browser_session_cached_status(
+    group_id: str, actor_id: str
+) -> dict[str, Any]:
     """Return persisted ChatGPT browser state without inspecting the page.
 
     The cheap CDP liveness check prevents a stale persisted port from being
@@ -1805,18 +2571,26 @@ def chatgpt_browser_session_status(group_id: str, actor_id: str) -> dict[str, An
     return payload
 
 
-def _record_pending_new_chat_bound(state_root: Path, state: dict[str, Any], conversation_url: str) -> dict[str, Any]:
+def _record_pending_new_chat_bound(
+    group_id: str, actor_id: str, state: dict[str, Any], conversation_url: str
+) -> dict[str, Any]:
     normalized = _conversation_url_from_tab(conversation_url)
     if not normalized:
         return {"ok": False, "resolved": False, "error": "invalid_conversation_url"}
     now = utc_now_iso()
-    pending_url = _normalize_chatgpt_url(state.get("pending_new_chat_url")) or CHATGPT_URL
+    pending_url = (
+        _normalize_chatgpt_url(state.get("pending_new_chat_url")) or CHATGPT_URL
+    )
     seed_url = _normalize_chatgpt_url(state.get("bootstrap_seed_conversation_url"))
     pending_delivery_id = str(state.get("pending_new_chat_delivery_id") or "").strip()
     pending_turn_id = str(state.get("pending_new_chat_last_turn_id") or "").strip()
     pending_event_ids = [
         str(item or "").strip()
-        for item in (state.get("pending_new_chat_last_event_ids") if isinstance(state.get("pending_new_chat_last_event_ids"), list) else [])
+        for item in (
+            state.get("pending_new_chat_last_event_ids")
+            if isinstance(state.get("pending_new_chat_last_event_ids"), list)
+            else []
+        )
         if str(item or "").strip()
     ]
     update = {
@@ -1834,15 +2608,29 @@ def _record_pending_new_chat_bound(state_root: Path, state: dict[str, Any], conv
         "target_saved_at": now,
         "last_tab_url": normalized,
         "last_delivery_status": "bound",
-        "last_delivery_id": pending_delivery_id or str(state.get("last_delivery_id") or "").strip(),
+        "last_delivery_id": pending_delivery_id
+        or str(state.get("last_delivery_id") or "").strip(),
         "last_turn_id": pending_turn_id or str(state.get("last_turn_id") or "").strip(),
-        "last_event_ids": pending_event_ids or (state.get("last_event_ids") if isinstance(state.get("last_event_ids"), list) else []),
+        "last_event_ids": pending_event_ids
+        or (
+            state.get("last_event_ids")
+            if isinstance(state.get("last_event_ids"), list)
+            else []
+        ),
         "last_delivery_at": now,
         "last_error": "",
     }
-    if seed_url and seed_url == pending_url and str(state.get("bootstrap_seed_delivered_at") or "").strip():
+    if (
+        seed_url
+        and seed_url == pending_url
+        and str(state.get("bootstrap_seed_delivered_at") or "").strip()
+    ):
         update["bootstrap_seed_conversation_url"] = normalized
-    _write_state(state_root, {**state, **update})
+    record_chatgpt_browser_state(
+        group_id,
+        actor_id,
+        update,
+    )
     return {
         "ok": True,
         "resolved": True,
@@ -1858,7 +2646,9 @@ def _record_pending_new_chat_bound(state_root: Path, state: dict[str, Any], conv
 
 def _page_pending_delivery_id(page: Any) -> str:
     try:
-        value = page.evaluate("() => sessionStorage.getItem('cccc_pending_new_chat_delivery_id') || ''")
+        value = page.evaluate(
+            "() => sessionStorage.getItem('cccc_pending_new_chat_delivery_id') || ''"
+        )
     except Exception:
         return ""
     return str(value or "").strip()
@@ -1869,18 +2659,27 @@ def _mark_page_pending_delivery(page: Any, delivery_id: str) -> None:
     if not token:
         return
     try:
-        page.evaluate("value => sessionStorage.setItem('cccc_pending_new_chat_delivery_id', value)", token)
+        page.evaluate(
+            "value => sessionStorage.setItem('cccc_pending_new_chat_delivery_id', value)",
+            token,
+        )
     except Exception:
         pass
 
 
-def resolve_pending_chatgpt_conversation(group_id: str, actor_id: str) -> dict[str, Any]:
+def resolve_pending_chatgpt_conversation(
+    group_id: str, actor_id: str
+) -> dict[str, Any]:
     """Resolve a previously submitted new ChatGPT chat once ChatGPT assigns /c/..."""
-    state_root = chatgpt_browser_actor_state_root(group_id, actor_id)
-    state = _load_state(state_root)
+    state = read_chatgpt_browser_state(group_id, actor_id)
     if not bool(state.get("pending_new_chat_bind")):
         conversation_url = _conversation_url_from_tab(state.get("conversation_url"))
-        return {"ok": True, "resolved": bool(conversation_url), "conversation_url": conversation_url, "pending": False}
+        return {
+            "ok": True,
+            "resolved": bool(conversation_url),
+            "conversation_url": conversation_url,
+            "pending": False,
+        }
     if not bool(state.get("pending_new_chat_submitted")):
         return {"ok": True, "resolved": False, "pending": True, "submitted": False}
     candidates = (
@@ -1890,11 +2689,19 @@ def resolve_pending_chatgpt_conversation(group_id: str, actor_id: str) -> dict[s
     for candidate in candidates:
         conversation_url = _conversation_url_from_tab(candidate)
         if conversation_url:
-            return _record_pending_new_chat_bound(state_root, state, conversation_url)
+            return _record_pending_new_chat_bound(
+                group_id, actor_id, state, conversation_url
+            )
     browser_state = read_chatgpt_browser_process_state()
     port = int(browser_state.get("cdp_port") or 0)
     if port <= 0 or not _wait_cdp_endpoint(port, timeout_seconds=0.4):
-        return {"ok": True, "resolved": False, "pending": True, "submitted": True, "browser_active": False}
+        return {
+            "ok": True,
+            "resolved": False,
+            "pending": True,
+            "submitted": True,
+            "browser_active": False,
+        }
     expected_delivery_id = str(state.get("pending_new_chat_delivery_id") or "").strip()
     sync_playwright = ensure_sync_playwright()
     with sync_playwright() as pw:
@@ -1911,16 +2718,23 @@ def resolve_pending_chatgpt_conversation(group_id: str, actor_id: str) -> dict[s
                 conversation_url = _conversation_url_from_tab(page_url)
                 if not conversation_url:
                     continue
-                if expected_delivery_id and _page_pending_delivery_id(page) == expected_delivery_id:
+                if (
+                    expected_delivery_id
+                    and _page_pending_delivery_id(page) == expected_delivery_id
+                ):
                     matching.append(conversation_url)
                 else:
                     fallback.append(conversation_url)
         unique_matching = list(dict.fromkeys(matching))
         if len(unique_matching) == 1:
-            return _record_pending_new_chat_bound(state_root, state, unique_matching[0])
+            return _record_pending_new_chat_bound(
+                group_id, actor_id, state, unique_matching[0]
+            )
         unique_fallback = list(dict.fromkeys(fallback))
         if not expected_delivery_id and len(unique_fallback) == 1:
-            return _record_pending_new_chat_bound(state_root, state, unique_fallback[0])
+            return _record_pending_new_chat_bound(
+                group_id, actor_id, state, unique_fallback[0]
+            )
     return {
         "ok": True,
         "resolved": False,

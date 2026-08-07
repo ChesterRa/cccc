@@ -24,6 +24,7 @@ from ...util.time import parse_utc_iso, utc_now_iso
 from ...ports.web_model_browser_sidecar import (
     CHATGPT_URL,
     CHATGPT_SUBMIT_DEFERRED_MARKER,
+    chatgpt_compatibility_image_path,
     _conversation_url_from_tab,
     read_chatgpt_browser_state,
     record_chatgpt_browser_state,
@@ -32,7 +33,10 @@ from ...ports.web_model_browser_sidecar import (
 from ..messaging.actor_turn_rendering import render_actor_event_batch_for_delivery
 from ..messaging.delivery import MCP_REMINDER_LINE
 from ..runner_state_ops import read_headless_state, update_headless_state
-from .web_model_runtime_ops import commit_web_model_delivered_turn
+from .web_model_runtime_ops import (
+    commit_web_model_delivered_turn,
+    web_model_delivery_preference,
+)
 
 _LOG = logging.getLogger("cccc.daemon.web_model.browser_delivery")
 _IN_FLIGHT_LOCK = threading.Lock()
@@ -52,13 +56,14 @@ _PULL_MODES = {"", "pull", "native", "remote_mcp", "off", "disabled", "none"}
 _EXPLICIT_PULL_MODES = _PULL_MODES - {""}
 _BROWSER_MODES = {"browser", "chatgpt", "chatgpt_browser", "browser_delivery"}
 _DEFAULT_TIMEOUT_SECONDS = 30.0
-_PROMPT_TEXT_LIMIT = 48_000
+_PROMPT_TEXT_LIMIT = 24_000
 _MAX_BROWSER_DELIVERY_EVENTS = 20
 _PENDING_NEW_CHAT_RETRY_AFTER_SECONDS = 60.0
 _DEFERRED_RETRY_AFTER_SECONDS = 3.0
 _DEFERRED_MAX_AUTOMATIC_RETRIES = 3
 _DEFERRED_MAX_RETRY_AFTER_SECONDS = 30.0
 _BOOTSTRAP_SEED_VERSION = "web-model-bootstrap-normal-system-prompt-v2"
+_COMPATIBILITY_IMAGE_NOTE = "[CCCC] Compatibility attachment: the blank image is transport-only and carries no task context."
 
 
 def _actor_env(actor: Dict[str, Any]) -> Dict[str, str]:
@@ -96,7 +101,14 @@ def _timeout_seconds(actor: Dict[str, Any]) -> float:
     return max(5.0, min(value, 3600.0))
 
 
-def _float_setting(actor: Dict[str, Any], keys: tuple[str, ...], *, default: float, minimum: float, maximum: float) -> float:
+def _float_setting(
+    actor: Dict[str, Any],
+    keys: tuple[str, ...],
+    *,
+    default: float,
+    minimum: float,
+    maximum: float,
+) -> float:
     raw = _setting(actor, keys)
     if not raw:
         return default
@@ -176,7 +188,9 @@ def _build_web_model_bootstrap_seed(group: Any, actor: Dict[str, Any]) -> str:
 
 
 def _bootstrap_seed_digest(seed_text: str) -> str:
-    return hashlib.sha256(str(seed_text or "").encode("utf-8", errors="replace")).hexdigest()[:20]
+    return hashlib.sha256(
+        str(seed_text or "").encode("utf-8", errors="replace")
+    ).hexdigest()[:20]
 
 
 def _compact_delivery_event(event: Dict[str, Any]) -> Dict[str, Any]:
@@ -191,37 +205,58 @@ def _compact_delivery_event(event: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _browser_delivery_id(*, group_id: str, actor_id: str, messages: List[Dict[str, Any]]) -> str:
+def _browser_delivery_id(
+    *, group_id: str, actor_id: str, messages: List[Dict[str, Any]]
+) -> str:
     payload = {
         "group_id": group_id,
         "actor_id": actor_id,
         "event_ids": [str(item.get("id") or "") for item in messages],
     }
-    digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:20]
+    digest = hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:20]
     return f"webdelivery:{actor_id}:{digest}"
 
 
 def _browser_delivery_batch(group: Any, *, actor_id: str) -> Dict[str, Any]:
-    messages = unread_messages(group, actor_id=actor_id, limit=_MAX_BROWSER_DELIVERY_EVENTS, kind_filter="all")
+    messages = unread_messages(
+        group, actor_id=actor_id, limit=_MAX_BROWSER_DELIVERY_EVENTS, kind_filter="all"
+    )
     compact_messages = [_compact_delivery_event(event) for event in messages]
     latest = compact_messages[-1] if compact_messages else {}
-    delivery_id = _browser_delivery_id(group_id=group.group_id, actor_id=actor_id, messages=compact_messages) if compact_messages else ""
+    delivery_id = (
+        _browser_delivery_id(
+            group_id=group.group_id, actor_id=actor_id, messages=compact_messages
+        )
+        if compact_messages
+        else ""
+    )
     return {
         "delivery_id": delivery_id,
         "turn_id": delivery_id,
         "group_id": group.group_id,
         "actor_id": actor_id,
         "created_at": utc_now_iso(),
-        "event_ids": [str(item.get("id") or "") for item in compact_messages if str(item.get("id") or "")],
+        "event_ids": [
+            str(item.get("id") or "")
+            for item in compact_messages
+            if str(item.get("id") or "")
+        ],
         "latest_event_id": str(latest.get("id") or ""),
         "latest_ts": str(latest.get("ts") or ""),
         "messages": compact_messages,
-        "coalesced_text": render_actor_event_batch_for_delivery(compact_messages, actor_id=actor_id),
+        "coalesced_text": render_actor_event_batch_for_delivery(
+            compact_messages, actor_id=actor_id
+        ),
         "delivery": {
             "mode": "browser_injection_cursor_on_submit",
             "cursor_committed": False,
             "max_events": _MAX_BROWSER_DELIVERY_EVENTS,
             "kind_filter": "all",
+            "web_model_mode": web_model_delivery_preference(group, actor_id=actor_id)[
+                "mode"
+            ],
         },
     }
 
@@ -235,20 +270,32 @@ def build_web_model_browser_turn_prompt(
     delivery_id = str(turn.get("delivery_id") or turn.get("turn_id") or "").strip()
     event_ids = [
         str(item or "").strip()
-        for item in (turn.get("event_ids") if isinstance(turn.get("event_ids"), list) else [])
+        for item in (
+            turn.get("event_ids") if isinstance(turn.get("event_ids"), list) else []
+        )
         if str(item or "").strip()
     ]
     coalesced_text = str(turn.get("coalesced_text") or "").strip()
     if len(coalesced_text) > _PROMPT_TEXT_LIMIT:
-        coalesced_text = coalesced_text[: _PROMPT_TEXT_LIMIT - 80].rstrip() + "\n\n[cccc] delivery text truncated"
+        coalesced_text = (
+            coalesced_text[: _PROMPT_TEXT_LIMIT - 80].rstrip()
+            + "\n\n[cccc] delivery text truncated"
+        )
     event_label = ",".join(event_ids) if event_ids else "-"
     setup_seed = str(bootstrap_seed_text or "").strip()
     setup_block = f"{setup_seed}\n\n" if setup_seed else ""
     reminder = str(MCP_REMINDER_LINE or "").strip()
     reminder_block = f"{reminder}\n\n" if reminder else ""
+    delivery = turn.get("delivery") if isinstance(turn.get("delivery"), dict) else {}
+    compatibility_note = (
+        f"{_COMPATIBILITY_IMAGE_NOTE}\n"
+        if str(delivery.get("web_model_mode") or "") == "image_compat"
+        else ""
+    )
     return (
         f"{setup_block}"
         f"[cccc] Browser batch {delivery_id} events={event_label} actor={actor_id}\n"
+        f"{compatibility_note}"
         f"{reminder_block}"
         f"{coalesced_text}"
     )
@@ -273,7 +320,9 @@ def _record_delivery_submitting(
                 "last_turn_id": str(turn.get("turn_id") or ""),
                 "last_event_ids": list(turn.get("event_ids") or []),
                 "last_delivery_id": str(delivery_id or turn.get("delivery_id") or ""),
-                "last_delivery_timeout_seconds": float(timeout_seconds or _DEFAULT_TIMEOUT_SECONDS),
+                "last_delivery_timeout_seconds": float(
+                    timeout_seconds or _DEFAULT_TIMEOUT_SECONDS
+                ),
                 "last_delivery_status": "submitting",
                 "last_submission_evidence": "",
                 "last_send_selector": "",
@@ -360,7 +409,10 @@ def _existing_pending_new_chat_bound_event(
     event_ids: List[str],
     conversation_url: str,
 ) -> Optional[Dict[str, Any]]:
-    normalized_url = _conversation_url_from_tab(conversation_url) or str(conversation_url or "").strip()
+    normalized_url = (
+        _conversation_url_from_tab(conversation_url)
+        or str(conversation_url or "").strip()
+    )
     for event in iter_events_reverse(group.ledger_path):
         if str(event.get("kind") or "").strip() != "web_model.browser_delivery.bound":
             continue
@@ -371,10 +423,15 @@ def _existing_pending_new_chat_bound_event(
             continue
         existing_delivery_id = str(data.get("delivery_id") or "").strip()
         existing_event_ids = _normalized_event_ids(data.get("event_ids"))
-        existing_url = _conversation_url_from_tab(data.get("bound_conversation_url")) or str(data.get("bound_conversation_url") or "").strip()
+        existing_url = (
+            _conversation_url_from_tab(data.get("bound_conversation_url"))
+            or str(data.get("bound_conversation_url") or "").strip()
+        )
         delivery_matches = bool(delivery_id) and existing_delivery_id == delivery_id
         event_ids_match = bool(event_ids) and existing_event_ids == event_ids
-        url_matches = not normalized_url or not existing_url or existing_url == normalized_url
+        url_matches = (
+            not normalized_url or not existing_url or existing_url == normalized_url
+        )
         if delivery_id and event_ids:
             if delivery_matches and event_ids_match:
                 return event
@@ -386,7 +443,9 @@ def _existing_pending_new_chat_bound_event(
     return None
 
 
-def append_pending_new_chat_bound_event(group_id: str, actor_id: str, resolution: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def append_pending_new_chat_bound_event(
+    group_id: str, actor_id: str, resolution: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
     if not isinstance(resolution, dict) or not bool(resolution.get("resolved")):
         return None
     conversation_url = str(resolution.get("conversation_url") or "").strip()
@@ -438,13 +497,22 @@ def append_pending_new_chat_bound_event(group_id: str, actor_id: str, resolution
 
 def _has_unread_work(group: Any, actor_id: str) -> bool:
     try:
-        return bool(unread_messages(group, actor_id=actor_id, limit=1, kind_filter="all"))
+        return bool(
+            unread_messages(group, actor_id=actor_id, limit=1, kind_filter="all")
+        )
     except Exception:
         return False
 
 
 def _target_chat_url(group_id: str, actor_id: str, actor: Dict[str, Any]) -> str:
-    explicit = _setting(actor, ("CCCC_WEB_MODEL_CHAT_URL", "CCCC_WEB_MODEL_CONVERSATION_URL", "CCCC_WEB_MODEL_TARGET_URL"))
+    explicit = _setting(
+        actor,
+        (
+            "CCCC_WEB_MODEL_CHAT_URL",
+            "CCCC_WEB_MODEL_CONVERSATION_URL",
+            "CCCC_WEB_MODEL_TARGET_URL",
+        ),
+    )
     if explicit:
         return explicit
     try:
@@ -466,15 +534,23 @@ def _pending_new_chat_state(group_id: str, actor_id: str) -> Dict[str, Any]:
             resolved = resolve_pending_chatgpt_conversation(group_id, actor_id)
         except Exception as exc:
             resolved = {"ok": False, "error": str(exc)}
-        conversation_url = str(resolved.get("conversation_url") or "").strip() if isinstance(resolved, dict) else ""
+        conversation_url = (
+            str(resolved.get("conversation_url") or "").strip()
+            if isinstance(resolved, dict)
+            else ""
+        )
         if conversation_url:
-            append_pending_new_chat_bound_event(group_id, actor_id, resolved if isinstance(resolved, dict) else {})
+            append_pending_new_chat_bound_event(
+                group_id, actor_id, resolved if isinstance(resolved, dict) else {}
+            )
             return {
                 "target_url": conversation_url,
                 "auto_bind_new_chat": False,
                 "resolved_pending_new_chat": True,
             }
-        submitted_at = parse_utc_iso(str(state.get("pending_new_chat_submitted_at") or ""))
+        submitted_at = parse_utc_iso(
+            str(state.get("pending_new_chat_submitted_at") or "")
+        )
         now = parse_utc_iso(utc_now_iso())
         if submitted_at is not None and now is not None:
             age_seconds = (now - submitted_at).total_seconds()
@@ -499,23 +575,31 @@ def _pending_new_chat_state(group_id: str, actor_id: str) -> Dict[str, Any]:
                 },
             )
             return {
-                "target_url": str(state.get("pending_new_chat_url") or CHATGPT_URL).strip() or CHATGPT_URL,
+                "target_url": str(
+                    state.get("pending_new_chat_url") or CHATGPT_URL
+                ).strip()
+                or CHATGPT_URL,
                 "auto_bind_new_chat": True,
                 "retry_pending_new_chat": True,
             }
         return {
             "status": "target_chat_binding_pending",
-            "error": str((resolved or {}).get("error") or "target_chat_binding_pending") if isinstance(resolved, dict) else "target_chat_binding_pending",
+            "error": str((resolved or {}).get("error") or "target_chat_binding_pending")
+            if isinstance(resolved, dict)
+            else "target_chat_binding_pending",
             "auto_bind_new_chat": False,
             "pending_new_chat_submitted": True,
         }
     return {
-        "target_url": str(state.get("pending_new_chat_url") or CHATGPT_URL).strip() or CHATGPT_URL,
+        "target_url": str(state.get("pending_new_chat_url") or CHATGPT_URL).strip()
+        or CHATGPT_URL,
         "auto_bind_new_chat": True,
     }
 
 
-def _bootstrap_seed_required(group_id: str, actor_id: str, *, target_url: str = "", seed_digest: str = "") -> bool:
+def _bootstrap_seed_required(
+    group_id: str, actor_id: str, *, target_url: str = "", seed_digest: str = ""
+) -> bool:
     try:
         state = read_chatgpt_browser_state(group_id, actor_id)
     except Exception:
@@ -529,20 +613,36 @@ def _bootstrap_seed_required(group_id: str, actor_id: str, *, target_url: str = 
         headless_state = {}
     started_at = parse_utc_iso(str(headless_state.get("started_at") or ""))
     delivered_at = parse_utc_iso(delivered_at_raw)
-    if started_at is not None and delivered_at is not None and started_at > delivered_at:
+    if (
+        started_at is not None
+        and delivered_at is not None
+        and started_at > delivered_at
+    ):
         return True
-    if str(state.get("bootstrap_seed_version") or "").strip() != _BOOTSTRAP_SEED_VERSION:
+    if (
+        str(state.get("bootstrap_seed_version") or "").strip()
+        != _BOOTSTRAP_SEED_VERSION
+    ):
         return True
     expected_url = str(target_url or "").strip()
-    if expected_url and str(state.get("bootstrap_seed_conversation_url") or "").strip() != expected_url:
+    if (
+        expected_url
+        and str(state.get("bootstrap_seed_conversation_url") or "").strip()
+        != expected_url
+    ):
         return True
     expected_digest = str(seed_digest or "").strip()
-    if expected_digest and str(state.get("bootstrap_seed_digest") or "").strip() != expected_digest:
+    if (
+        expected_digest
+        and str(state.get("bootstrap_seed_digest") or "").strip() != expected_digest
+    ):
         return True
     return False
 
 
-def _mark_bootstrap_seed_delivered(group_id: str, actor_id: str, *, target_url: str = "", seed_digest: str = "") -> None:
+def _mark_bootstrap_seed_delivered(
+    group_id: str, actor_id: str, *, target_url: str = "", seed_digest: str = ""
+) -> None:
     try:
         record_chatgpt_browser_state(
             group_id,
@@ -558,7 +658,9 @@ def _mark_bootstrap_seed_delivered(group_id: str, actor_id: str, *, target_url: 
         pass
 
 
-def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_event_id: str = "") -> Dict[str, Any]:
+def submit_next_web_model_browser_turn(
+    group_id: str, actor_id: str, *, trigger_event_id: str = ""
+) -> Dict[str, Any]:
     group = load_group(str(group_id or "").strip())
     if group is None:
         return {"ok": False, "error": "group_not_found"}
@@ -576,7 +678,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
     auto_bind_new_chat = bool(pending_new_chat.get("auto_bind_new_chat"))
     pending_status = str(pending_new_chat.get("status") or "").strip()
     if pending_status == "target_chat_binding_pending" and not target_url:
-        update_headless_state(group.group_id, aid, status="waiting", active_turn_id="", latest_event_id="")
+        update_headless_state(
+            group.group_id, aid, status="waiting", active_turn_id="", latest_event_id=""
+        )
         return {
             "ok": True,
             "status": "target_chat_binding_pending",
@@ -584,17 +688,27 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "reschedule": False,
         }
     if not target_url:
-        update_headless_state(group.group_id, aid, status="waiting", active_turn_id="", latest_event_id="")
-        return {"ok": False, "status": "target_chat_required", "error": "target_chat_required"}
+        update_headless_state(
+            group.group_id, aid, status="waiting", active_turn_id="", latest_event_id=""
+        )
+        return {
+            "ok": False,
+            "status": "target_chat_required",
+            "error": "target_chat_required",
+        }
     turn = _browser_delivery_batch(group, actor_id=aid)
     if not turn.get("event_ids"):
-        update_headless_state(group.group_id, aid, status="waiting", active_turn_id="", latest_event_id="")
+        update_headless_state(
+            group.group_id, aid, status="waiting", active_turn_id="", latest_event_id=""
+        )
         return {"ok": True, "status": "idle"}
 
     provider = _provider_from_actor_or_connector(group.group_id, actor) or "chatgpt_web"
     candidate_seed_text = _build_web_model_bootstrap_seed(group, actor)
     seed_digest = _bootstrap_seed_digest(candidate_seed_text)
-    bootstrap_seed = _bootstrap_seed_required(group.group_id, aid, target_url=target_url, seed_digest=seed_digest)
+    bootstrap_seed = _bootstrap_seed_required(
+        group.group_id, aid, target_url=target_url, seed_digest=seed_digest
+    )
     bootstrap_seed_text = candidate_seed_text if bootstrap_seed else ""
     delivery_id = str(turn.get("delivery_id") or "")
     delivery_timeout_seconds = _timeout_seconds(actor)
@@ -604,7 +718,8 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         previous_browser_state = {}
     already_submitting = (
         str(previous_browser_state.get("last_delivery_id") or "") == delivery_id
-        and str(previous_browser_state.get("last_delivery_status") or "") == "submitting"
+        and str(previous_browser_state.get("last_delivery_status") or "")
+        == "submitting"
     )
     _record_delivery_submitting(
         group.group_id,
@@ -633,9 +748,20 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
         turn,
         bootstrap_seed_text=bootstrap_seed_text,
     )
+    delivery_mode = str(
+        (turn.get("delivery") or {}).get("web_model_mode") or "standard"
+    )
+    attachment_path = (
+        str(chatgpt_compatibility_image_path(delivery_id))
+        if delivery_mode == "image_compat"
+        else ""
+    )
     browser_surface: Dict[str, Any] = {}
     try:
-        from .web_model_browser_session import close_web_model_chatgpt_browser_session, submit_prompt_via_web_model_chatgpt_browser_session
+        from .web_model_browser_session import (
+            close_web_model_chatgpt_browser_session,
+            submit_prompt_via_web_model_chatgpt_browser_session,
+        )
 
         submit_kwargs = {
             "group_id": group.group_id,
@@ -659,15 +785,20 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                 minimum=1.0,
                 maximum=120.0,
             ),
+            "attachment_path": attachment_path,
         }
         try:
-            delivery_result = submit_prompt_via_web_model_chatgpt_browser_session(**submit_kwargs)
+            delivery_result = submit_prompt_via_web_model_chatgpt_browser_session(
+                **submit_kwargs
+            )
         except Exception as first_exc:
             first_error = str(first_exc)
             if not _is_transient_projected_browser_error(first_error):
                 raise
             try:
-                close_web_model_chatgpt_browser_session(group_id=group.group_id, actor_id=aid)
+                close_web_model_chatgpt_browser_session(
+                    group_id=group.group_id, actor_id=aid
+                )
             except Exception:
                 pass
             _record_delivery_submitting(
@@ -678,18 +809,30 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                 timeout_seconds=delivery_timeout_seconds,
             )
             try:
-                delivery_result = submit_prompt_via_web_model_chatgpt_browser_session(**submit_kwargs)
+                delivery_result = submit_prompt_via_web_model_chatgpt_browser_session(
+                    **submit_kwargs
+                )
             except Exception as second_exc:
-                raise RuntimeError(f"{second_exc}; retry_after_transient_error={first_error[:300]}") from second_exc
-        browser_surface = delivery_result.get("browser_surface") if isinstance(delivery_result.get("browser_surface"), dict) else {}
+                raise RuntimeError(
+                    f"{second_exc}; retry_after_transient_error={first_error[:300]}"
+                ) from second_exc
+        browser_surface = (
+            delivery_result.get("browser_surface")
+            if isinstance(delivery_result.get("browser_surface"), dict)
+            else {}
+        )
     except Exception as exc:
         delivery_result = {"ok": False, "error": str(exc)}
 
     ok = bool(delivery_result.get("ok", True))
-    browser_result = delivery_result.get("browser") if isinstance(delivery_result.get("browser"), dict) else {}
-    delivered_conversation_url = str(browser_result.get("conversation_url") or "").strip() or _conversation_url_from_tab(
-        browser_result.get("tab_url")
+    browser_result = (
+        delivery_result.get("browser")
+        if isinstance(delivery_result.get("browser"), dict)
+        else {}
     )
+    delivered_conversation_url = str(
+        browser_result.get("conversation_url") or ""
+    ).strip() or _conversation_url_from_tab(browser_result.get("tab_url"))
     pending_conversation_url = bool(
         ok
         and auto_bind_new_chat
@@ -713,7 +856,12 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             ),
         }
         pending_conversation_url = False
-    if ok and auto_bind_new_chat and not delivered_conversation_url and not pending_conversation_url:
+    if (
+        ok
+        and auto_bind_new_chat
+        and not delivered_conversation_url
+        and not pending_conversation_url
+    ):
         ok = False
         delivery_result = {
             **delivery_result,
@@ -721,7 +869,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "error": "new ChatGPT chat did not produce a conversation URL",
         }
     if pending_conversation_url:
-        pending_delivery_id = str(delivery_result.get("delivery_id") or turn.get("delivery_id") or "")
+        pending_delivery_id = str(
+            delivery_result.get("delivery_id") or turn.get("delivery_id") or ""
+        )
         commit = commit_web_model_delivered_turn(group, actor_id=aid, turn=turn, by=aid)
         pending_seed_state = (
             {
@@ -750,14 +900,18 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                 "pending_new_chat_delivery_id": pending_delivery_id,
                 "pending_new_chat_last_turn_id": str(turn.get("turn_id") or ""),
                 "pending_new_chat_last_event_ids": list(turn.get("event_ids") or []),
-                "pending_new_chat_last_tab_url": str(browser_result.get("tab_url") or ""),
+                "pending_new_chat_last_tab_url": str(
+                    browser_result.get("tab_url") or ""
+                ),
                 **pending_seed_state,
                 "last_delivery_at": utc_now_iso(),
                 "last_turn_id": str(turn.get("turn_id") or ""),
                 "last_event_ids": list(turn.get("event_ids") or []),
                 "last_delivery_id": pending_delivery_id,
                 "last_delivery_status": "pending",
-                "last_submission_evidence": str(browser_result.get("submission_evidence") or ""),
+                "last_submission_evidence": str(
+                    browser_result.get("submission_evidence") or ""
+                ),
                 "last_send_selector": str(browser_result.get("send_selector") or ""),
                 "last_error": "conversation_url_pending",
             },
@@ -770,7 +924,10 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             latest_event_id="",
         )
         try:
-            from .web_model_browser_recovery_watcher import ensure_web_model_browser_recovery_watcher, start_web_model_browser_reload_window
+            from .web_model_browser_recovery_watcher import (
+                ensure_web_model_browser_recovery_watcher,
+                start_web_model_browser_reload_window,
+            )
 
             ensure_web_model_browser_recovery_watcher(group.group_id, aid, logger=_LOG)
             start_web_model_browser_reload_window(
@@ -791,11 +948,15 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             kind="web_model.browser_delivery.pending",
             data={
                 "provider": provider,
-                "delivery_id": str(delivery_result.get("delivery_id") or turn.get("delivery_id") or ""),
+                "delivery_id": str(
+                    delivery_result.get("delivery_id") or turn.get("delivery_id") or ""
+                ),
                 "trigger_event_id": str(trigger_event_id or "").strip(),
                 "delivery_transport": "projected_session",
                 "cursor_committed": bool(commit.get("cursor_committed")),
-                "commit_error": "" if bool(commit.get("ok")) else str(commit.get("error") or ""),
+                "commit_error": ""
+                if bool(commit.get("ok"))
+                else str(commit.get("error") or ""),
                 "bootstrap_seed": bool(bootstrap_seed),
                 "target_url": target_url,
                 "auto_bind_new_chat": bool(auto_bind_new_chat),
@@ -805,7 +966,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                     "state": str(browser_surface.get("state") or ""),
                     "url": str(browser_surface.get("url") or ""),
                 },
-                "browser": delivery_result.get("browser") if isinstance(delivery_result.get("browser"), dict) else {},
+                "browser": delivery_result.get("browser")
+                if isinstance(delivery_result.get("browser"), dict)
+                else {},
             },
         )
         return {
@@ -819,9 +982,14 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "reschedule": False,
         }
     if ok:
-        delivery_id = str(delivery_result.get("delivery_id") or turn.get("delivery_id") or "")
+        delivery_id = str(
+            delivery_result.get("delivery_id") or turn.get("delivery_id") or ""
+        )
         try:
-            from .web_model_browser_recovery_watcher import ensure_web_model_browser_recovery_watcher, start_web_model_browser_reload_window
+            from .web_model_browser_recovery_watcher import (
+                ensure_web_model_browser_recovery_watcher,
+                start_web_model_browser_reload_window,
+            )
 
             ensure_web_model_browser_recovery_watcher(group.group_id, aid, logger=_LOG)
             start_web_model_browser_reload_window(
@@ -879,7 +1047,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                 "last_event_ids": list(turn.get("event_ids") or []),
                 "last_delivery_id": delivery_id,
                 "last_delivery_status": "submitted",
-                "last_submission_evidence": str(browser_result.get("submission_evidence") or ""),
+                "last_submission_evidence": str(
+                    browser_result.get("submission_evidence") or ""
+                ),
                 "last_send_selector": str(browser_result.get("send_selector") or ""),
                 "last_tab_url": str(browser_result.get("tab_url") or ""),
                 "last_error": "",
@@ -896,7 +1066,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                 "trigger_event_id": str(trigger_event_id or "").strip(),
                 "delivery_transport": "projected_session",
                 "cursor_committed": bool(commit.get("cursor_committed")),
-                "commit_error": "" if bool(commit.get("ok")) else str(commit.get("error") or ""),
+                "commit_error": ""
+                if bool(commit.get("ok"))
+                else str(commit.get("error") or ""),
                 "bootstrap_seed": bool(bootstrap_seed),
                 "target_url": target_url,
                 "auto_bind_new_chat": bool(auto_bind_new_chat),
@@ -906,7 +1078,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                     "state": str(browser_surface.get("state") or ""),
                     "url": str(browser_surface.get("url") or ""),
                 },
-                "browser": delivery_result.get("browser") if isinstance(delivery_result.get("browser"), dict) else {},
+                "browser": delivery_result.get("browser")
+                if isinstance(delivery_result.get("browser"), dict)
+                else {},
             },
         )
         return {
@@ -917,7 +1091,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "commit": commit,
             "event": event,
             "delivery": delivery_result,
-            "reschedule": bool(commit.get("ok")) and bool(commit.get("cursor_committed")) and _has_unread_work(group, aid),
+            "reschedule": bool(commit.get("ok"))
+            and bool(commit.get("cursor_committed"))
+            and _has_unread_work(group, aid),
         }
 
     error = str(delivery_result.get("error") or "browser delivery failed")
@@ -946,12 +1122,25 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "reschedule_after_seconds": _DEFERRED_RETRY_AFTER_SECONDS,
         }
     if _is_submission_ambiguous_error(error):
-        delivery_id = str(delivery_result.get("delivery_id") or turn.get("delivery_id") or "")
-        ambiguous_browser = delivery_result.get("browser") if isinstance(delivery_result.get("browser"), dict) else {}
-        ambiguous_evidence = str(ambiguous_browser.get("submission_evidence") or "submit_unverified").strip()
-        ambiguous_send_selector = str(ambiguous_browser.get("send_selector") or "").strip()
+        delivery_id = str(
+            delivery_result.get("delivery_id") or turn.get("delivery_id") or ""
+        )
+        ambiguous_browser = (
+            delivery_result.get("browser")
+            if isinstance(delivery_result.get("browser"), dict)
+            else {}
+        )
+        ambiguous_evidence = str(
+            ambiguous_browser.get("submission_evidence") or "submit_unverified"
+        ).strip()
+        ambiguous_send_selector = str(
+            ambiguous_browser.get("send_selector") or ""
+        ).strip()
         try:
-            from .web_model_browser_recovery_watcher import ensure_web_model_browser_recovery_watcher, start_web_model_browser_reload_window
+            from .web_model_browser_recovery_watcher import (
+                ensure_web_model_browser_recovery_watcher,
+                start_web_model_browser_reload_window,
+            )
 
             ensure_web_model_browser_recovery_watcher(group.group_id, aid, logger=_LOG)
             start_web_model_browser_reload_window(
@@ -965,7 +1154,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             )
         except Exception:
             pass
-        commit = commit_web_model_delivered_turn(group, actor_id=aid, turn=turn, by="system")
+        commit = commit_web_model_delivered_turn(
+            group, actor_id=aid, turn=turn, by="system"
+        )
         record_chatgpt_browser_state(
             group.group_id,
             aid,
@@ -1000,7 +1191,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
                 "submission_evidence": ambiguous_evidence,
                 "delivery_transport": "projected_session",
                 "cursor_committed": bool(commit.get("cursor_committed")),
-                "commit_error": "" if bool(commit.get("ok")) else str(commit.get("error") or ""),
+                "commit_error": ""
+                if bool(commit.get("ok"))
+                else str(commit.get("error") or ""),
                 "target_url": target_url,
                 "auto_bind_new_chat": bool(auto_bind_new_chat),
                 "browser": ambiguous_browser,
@@ -1016,7 +1209,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "event": event,
         }
 
-    commit = commit_web_model_delivered_turn(group, actor_id=aid, turn=turn, by="system")
+    commit = commit_web_model_delivered_turn(
+        group, actor_id=aid, turn=turn, by="system"
+    )
     record_chatgpt_browser_state(
         group.group_id,
         aid,
@@ -1050,7 +1245,9 @@ def submit_next_web_model_browser_turn(group_id: str, actor_id: str, *, trigger_
             "error": error,
             "delivery_transport": "projected_session",
             "cursor_committed": bool(commit.get("cursor_committed")),
-            "commit_error": "" if bool(commit.get("ok")) else str(commit.get("error") or ""),
+            "commit_error": ""
+            if bool(commit.get("ok"))
+            else str(commit.get("error") or ""),
             "target_url": target_url,
             "auto_bind_new_chat": bool(auto_bind_new_chat),
         },
@@ -1091,7 +1288,9 @@ def schedule_web_model_browser_delivery(
         try:
             while True:
                 try:
-                    result = submit_next_web_model_browser_turn(gid, aid, trigger_event_id=trigger_event_id)
+                    result = submit_next_web_model_browser_turn(
+                        gid, aid, trigger_event_id=trigger_event_id
+                    )
                 except Exception:
                     active_logger.exception(
                         "[web-model-browser-delivery] unexpected error group=%s actor=%s",
@@ -1099,7 +1298,10 @@ def schedule_web_model_browser_delivery(
                         aid,
                     )
                     break
-                if not result.get("ok") and str(result.get("error") or "") != "browser_delivery_disabled":
+                if (
+                    not result.get("ok")
+                    and str(result.get("error") or "") != "browser_delivery_disabled"
+                ):
                     active_logger.info(
                         "[web-model-browser-delivery] failed group=%s actor=%s error=%s",
                         gid,
@@ -1109,7 +1311,10 @@ def schedule_web_model_browser_delivery(
                 if not bool(result.get("reschedule")):
                     break
                 try:
-                    requested_delay = max(0.0, min(float(result.get("reschedule_after_seconds") or 0.0), 60.0))
+                    requested_delay = max(
+                        0.0,
+                        min(float(result.get("reschedule_after_seconds") or 0.0), 60.0),
+                    )
                 except Exception:
                     requested_delay = 0.0
                 if str(result.get("status") or "") != "deferred":
@@ -1133,20 +1338,30 @@ def schedule_web_model_browser_delivery(
                 deferred_retries += 1
                 threading.Event().wait(retry_delay)
         except Exception:
-            active_logger.exception("[web-model-browser-delivery] unexpected error group=%s actor=%s", gid, aid)
+            active_logger.exception(
+                "[web-model-browser-delivery] unexpected error group=%s actor=%s",
+                gid,
+                aid,
+            )
         finally:
             with _IN_FLIGHT_LOCK:
                 _IN_FLIGHT.discard(key)
         if exhausted_delivery_id:
             try:
                 current_group = load_group(gid)
-                current_turn = _browser_delivery_batch(current_group, actor_id=aid) if current_group is not None else {}
+                current_turn = (
+                    _browser_delivery_batch(current_group, actor_id=aid)
+                    if current_group is not None
+                    else {}
+                )
                 current_delivery_id = str(current_turn.get("delivery_id") or "").strip()
                 if current_delivery_id and current_delivery_id != exhausted_delivery_id:
                     schedule_web_model_browser_delivery(
                         group_id=gid,
                         actor_id=aid,
-                        trigger_event_id=str(current_turn.get("latest_event_id") or "").strip(),
+                        trigger_event_id=str(
+                            current_turn.get("latest_event_id") or ""
+                        ).strip(),
                         logger=active_logger,
                     )
             except Exception:

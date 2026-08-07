@@ -29,6 +29,7 @@ async fn supervised_apply_returns_receipt_and_exits_for_restart() {
         .env("CCCC_WEB_EFFECTIVE_HOST", "127.0.0.1")
         .env("CCCC_WEB_EFFECTIVE_PORT", live_port.to_string())
         .env("CCCC_WEB_SUPERVISED", "1")
+        .env_remove("CCCC_WEB_ALLOW_UNAUTHENTICATED")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true);
@@ -48,6 +49,48 @@ async fn supervised_apply_returns_receipt_and_exits_for_restart() {
         r#""target_local_url":"http://127.0.0.1:{desired_port}""#
     )));
     assert_eq!(status.code(), Some(75));
+}
+
+#[tokio::test]
+async fn supervised_apply_rejects_remote_binding_without_admin_token() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let live_port = free_port().await;
+    let desired_port = free_port().await;
+    call(
+        &home,
+        "remote_access_configure",
+        json!({"provider":"manual","web_host":"0.0.0.0","web_port":desired_port,"by":"user"}),
+    );
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_daemon(&home).await;
+    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_cccc-web"))
+        .env("CCCC_HOME", home.root())
+        .env("CCCC_WEB_HOST", "127.0.0.1")
+        .env("CCCC_WEB_PORT", live_port.to_string())
+        .env("CCCC_WEB_EFFECTIVE_HOST", "127.0.0.1")
+        .env("CCCC_WEB_EFFECTIVE_PORT", live_port.to_string())
+        .env("CCCC_WEB_SUPERVISED", "1")
+        .env_remove("CCCC_WEB_ALLOW_UNAUTHENTICATED")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("web child");
+    wait_for_port(live_port).await;
+    let response = post_apply(live_port).await;
+    child.kill().await.expect("stop web child");
+    let _ = child.wait().await;
+    daemon.abort();
+    let _ = daemon.await;
+
+    assert!(response.starts_with("HTTP/1.1 409"), "{response}");
+    assert!(
+        response.contains(r#""code":"remote_access_admin_token_required""#),
+        "{response}"
+    );
 }
 
 fn call(home: &HomeLayout, op: &str, args: Value) -> Value {

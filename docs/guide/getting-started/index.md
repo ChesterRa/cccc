@@ -175,10 +175,12 @@ cccc doctor
 ```
 
 `status` shows the selected, running, and available product implementations.
-Python is the current default. On a supported platform wheel, use `cccc rust`
-to select the bundled Rust implementation or `cccc python` to switch back.
-`doctor` checks Python, agent runtimes, system configuration, the invoked CCCC
-executable, PATH resolution, and duplicate `cccc` commands.
+Python is the initial default while no implementation choice has been saved.
+On a supported platform wheel, use `cccc rust` to select the bundled Rust
+implementation or `cccc python` to switch back; later bare invocations follow
+that persisted choice. `doctor` checks Python, agent runtimes, system
+configuration, the invoked CCCC executable, PATH resolution, and duplicate
+`cccc` commands.
 
 ## Next Steps
 

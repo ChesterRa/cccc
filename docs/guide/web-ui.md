@@ -208,7 +208,7 @@ CCCC_WEB_HOST=$(tailscale ip -4) cccc
 
 Before exposing the Web UI beyond localhost, first create an **Admin Access Token** in **Settings > Web Access**.
 
-The Web Access panel keeps LAN/public `Save`, `Apply now`, and remote-endpoint copying disabled until an Admin Access Token exists. Switching back to localhost-only remains available so an incomplete remote setup can be recovered safely.
+The Web Access panel keeps LAN/public `Save`, `Apply now`, and remote-endpoint copying disabled until an Admin Access Token exists. Python and Rust also enforce the same rule at remote start, apply, and listener boundaries, so direct API calls and stale saved settings cannot bypass the panel. Group-scoped tokens do not satisfy this administrator recovery requirement. Switching back to localhost-only remains available so an incomplete remote setup can be recovered safely.
 
 In **Settings > Web Access**, `127.0.0.1` means local-only and `0.0.0.0` means localhost plus your LAN IP on a normal local host. On WSL2 NAT, it still stays inside the VM until Windows networking forwards it outward.
 
@@ -218,11 +218,12 @@ For the default local app flow, prefer restarting from the owning `cccc` session
 
 `Start` / `Stop` are only for Tailscale remote access and do not rebind the already-running Web socket.
 
-CCCC keeps the token policy tiered:
+CCCC keeps the token policy simple:
 
-- localhost-only: remote token gate is not the main concern
-- LAN/private network: Access Tokens are the default and recommended posture
-- public URL / tunnel / reverse proxy: Access Tokens are mandatory
+- localhost-only: no remote-exposure token prerequisite
+- LAN/private network and public URL/tunnel/reverse proxy: an Admin Access Token is mandatory before exposure
+
+`CCCC_WEB_ALLOW_UNAUTHENTICATED=1` is an explicit unsafe listener override for deployments that already enforce a trusted network boundary outside CCCC. It is intentionally not offered as a Web UI toggle.
 
 Then authenticate once to bootstrap the session cookie:
 

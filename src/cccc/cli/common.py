@@ -606,6 +606,7 @@ def _default_entry(*, web_host_override: str = "", web_port_override: Optional[i
                 return ""
 
         def _print_web_banner(cur_host: str, cur_port: int) -> None:
+            print("[cccc] Implementation: python", file=sys.stderr)
             print("[cccc] Starting web server...", file=sys.stderr)
             print(f"[cccc]   Local:   http://{_http_host_literal(cur_host)}:{cur_port}", file=sys.stderr)
             lan_ip = _get_lan_ip()

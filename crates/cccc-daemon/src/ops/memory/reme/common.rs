@@ -348,7 +348,11 @@ fn write_locked(
 ) -> io::Result<WriteOutcome> {
     let lock_path = path.with_extension("md.lock");
     cccc_core::fs::with_exclusive_lock(&lock_path, || {
-        let existing = fs::read_to_string(path).unwrap_or_default();
+        let existing = match fs::read_to_string(path) {
+            Ok(existing) => existing,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error),
+        };
         let (merged, outcome) = operation(existing)?;
         cccc_core::fs::atomic_write(path, merged.as_bytes())?;
         Ok(outcome)
@@ -403,7 +407,7 @@ pub(super) fn truncate(value: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{contains_content_hash, digest};
+    use super::{contains_content_hash, digest, write_raw};
 
     #[test]
     fn recognizes_python_spaced_metadata_for_cross_language_dedup() {
@@ -412,5 +416,16 @@ mod tests {
             "<!-- cccc.memory.meta {{\"entry_id\": \"mem_python\", \"content_hash\": \"{content_hash}\"}} -->"
         );
         assert!(contains_content_hash(&existing, &content_hash));
+    }
+
+    #[test]
+    fn write_preserves_an_existing_file_when_it_cannot_be_decoded() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("MEMORY.md");
+        let original = [0xff, 0xfe, 0xfd];
+        std::fs::write(&path, original).expect("invalid UTF-8 fixture");
+
+        assert!(write_raw(&path, "replacement", "append").is_err());
+        assert_eq!(std::fs::read(path).expect("preserved memory"), original);
     }
 }

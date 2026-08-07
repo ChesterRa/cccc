@@ -28,7 +28,20 @@ fn remote_access_requires_secure_configuration_and_token() {
         "remote_access_configure",
         json!({"provider":"manual","web_host":"0.0.0.0","web_port":9000,"require_access_token":true,"by":"user"}),
     );
-    assert!(!raw(&home, "remote_access_start", json!({"by":"user"})).ok);
+    let missing = raw(&home, "remote_access_start", json!({"by":"user"}));
+    assert_eq!(
+        missing.error.expect("missing admin error").code,
+        "remote_access_admin_token_required"
+    );
+    AccessTokenStore::new(home.clone())
+        .expect("tokens")
+        .create("scoped", vec!["g_test".into()], false, None)
+        .expect("scoped token");
+    let scoped = raw(&home, "remote_access_start", json!({"by":"user"}));
+    assert_eq!(
+        scoped.error.expect("scoped token error").code,
+        "remote_access_admin_token_required"
+    );
     AccessTokenStore::new(home.clone())
         .expect("tokens")
         .create("admin", Vec::new(), true, None)
@@ -75,6 +88,23 @@ fn remote_access_mode_matches_python_contract() {
     assert_eq!(
         unsupported.error.expect("error").code,
         "remote_access_invalid_config"
+    );
+}
+
+#[test]
+fn remote_access_start_rejects_loopback_binding() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    home.initialize().expect("home");
+    ok(
+        &home,
+        "remote_access_configure",
+        json!({"provider":"manual","web_host":"127.0.0.1","by":"user"}),
+    );
+    let start = raw(&home, "remote_access_start", json!({"by":"user"}));
+    assert_eq!(
+        start.error.expect("unreachable error").code,
+        "remote_access_unreachable"
     );
 }
 

@@ -32,7 +32,7 @@
     "i18next-browser-languagedetector": "^8.2.1",
     "lucide-react": "^1.24.0",
     "markdown-it": "^14.3.0",
-    "mermaid": "11.16.0",
+    "mermaid": "11.16.1",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -51,7 +51,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "autoprefixer": "^10.5.2",
     "happy-dom": "20.11.0",
-    "postcss": "^8.5.18",
+    "postcss": "^8.5.26",
     "tailwindcss": "^4.3.2",
     "typescript": "^5.9.3",
     "vite-plus": "0.2.4"

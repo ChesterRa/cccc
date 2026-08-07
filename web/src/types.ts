@@ -1071,6 +1071,11 @@ export type RemoteAccessState = {
     access_token_requirement_satisfied?: boolean;
     access_token_source?: "store" | "none" | string;
     access_token_count?: number;
+    admin_access_token_present?: boolean;
+    admin_access_token_count?: number;
+    remote_listener_auth_required?: boolean;
+    remote_listener_auth_requirement_satisfied?: boolean;
+    allow_unauthenticated_listener_override?: boolean;
     allow_insecure_remote_override?: boolean;
     effective_require_access_token?: boolean;
     exposure_class?: "local" | "private" | "public" | string;
@@ -1106,6 +1111,8 @@ export type RemoteAccessState = {
     web_public_url?: string | null;
     access_token_configured?: boolean;
     access_token_count?: number;
+    admin_access_token_configured?: boolean;
+    admin_access_token_count?: number;
     access_token_source?: "store" | "none" | string;
   } | null;
   next_steps?: string[] | null;

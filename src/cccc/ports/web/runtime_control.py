@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from ...kernel.access_tokens import list_access_tokens
 from ...paths import ensure_home
 from ...util.fs import atomic_write_json, read_json
 from ...util.process import resolve_background_python_argv, supervised_process_popen_kwargs, terminate_pid
@@ -116,6 +117,32 @@ def clear_web_runtime_state(*, home: Optional[Path] = None, pid: Optional[int] =
 def is_loopback_host(host: str) -> bool:
     normalized = str(host or "").strip().lower()
     return normalized in {"", "127.0.0.1", "localhost", "::1", "[::1]"}
+
+
+def allow_unauthenticated_web_listener() -> bool:
+    value = str(os.environ.get("CCCC_WEB_ALLOW_UNAUTHENTICATED") or "").strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
+def remote_web_exposure(*, host: str, public_url: str = "") -> bool:
+    return bool(str(public_url or "").strip()) or not is_loopback_host(host)
+
+
+def has_admin_access_token(home: Optional[Path] = None) -> bool:
+    return any(bool(item.get("is_admin")) for item in list_access_tokens(home))
+
+
+def web_listener_auth_error(*, home: Path, host: str, public_url: str = "") -> Optional[str]:
+    if (
+        not remote_web_exposure(host=host, public_url=public_url)
+        or allow_unauthenticated_web_listener()
+        or has_admin_access_token(home)
+    ):
+        return None
+    return (
+        "refusing remote Web exposure without an administrator access token; "
+        "use CCCC_WEB_ALLOW_UNAUTHENTICATED=1 only behind a trusted local network boundary"
+    )
 
 
 def is_wildcard_host(host: str) -> bool:
@@ -279,6 +306,9 @@ def start_supervised_web_child(
     log_level: str,
     launch_source: str,
 ) -> tuple[Optional[subprocess.Popen[str]], Optional[str]]:
+    auth_error = web_listener_auth_error(home=home, host=str(host))
+    if auth_error:
+        return None, auth_error
     try:
         from .bind_preflight import ensure_tcp_port_bindable
 

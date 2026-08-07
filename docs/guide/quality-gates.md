@@ -60,6 +60,13 @@ npm ci --prefix web
 npm -C web run check
 ```
 
+In a source checkout, both implementations use `web/dist`, so
+`npm -C web run build` is sufficient before restarting the local Web process.
+Use `scripts/build_web.sh` when preparing a Python package: it builds the same
+frontend and also refreshes the packaged copy under
+`src/cccc/ports/web/dist` that is embedded in wheels. `CCCC_WEB_DIST` remains
+the explicit override for testing a different bundle.
+
 CI pins Node 20.19.5 for reproducible formatting, linting, testing, and bundling, while `engines.node` defines the supported local runtime range. The project deliberately does not use `devEngines`, because exact package-manager checks can prevent every `npm` and `npx` command from starting when a developer has a different compatible npm version.
 
 `npm run check` runs Vite+ Oxfmt and Oxlint, followed by the independent TypeScript 5.9 `tsc --noEmit` compatibility check. `npm run typecheck` remains available separately for focused diagnosis.

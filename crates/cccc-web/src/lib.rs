@@ -440,8 +440,7 @@ fn environment_flag(name: &str) -> bool {
 }
 
 fn ensure_listener_auth(home: &HomeLayout, address: SocketAddr) -> Result<()> {
-    let explicitly_allowed = std::env::var("CCCC_WEB_ALLOW_UNAUTHENTICATED")
-        .is_ok_and(|value| matches!(value.trim(), "1" | "true" | "yes"));
+    let explicitly_allowed = environment_flag("CCCC_WEB_ALLOW_UNAUTHENTICATED");
     if !address.ip().is_loopback()
         && !explicitly_allowed
         && !AccessTokenStore::new(home.clone())?
@@ -495,11 +494,21 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn remote_listener_requires_an_access_token() {
+    fn remote_listener_requires_an_administrator_access_token() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         assert!(ensure_listener_auth(&home, "0.0.0.0:8848".parse().expect("address")).is_err());
         assert!(ensure_listener_auth(&home, "127.0.0.1:8848".parse().expect("address")).is_ok());
+        AccessTokenStore::new(home.clone())
+            .expect("tokens")
+            .create("scoped", vec!["g_test".into()], false, None)
+            .expect("scoped token");
+        assert!(ensure_listener_auth(&home, "0.0.0.0:8848".parse().expect("address")).is_err());
+        AccessTokenStore::new(home.clone())
+            .expect("tokens")
+            .create("admin", Vec::new(), true, None)
+            .expect("admin token");
+        assert!(ensure_listener_auth(&home, "0.0.0.0:8848".parse().expect("address")).is_ok());
     }
     #[tokio::test]
     async fn shutdown_closes_active_sse_response() {

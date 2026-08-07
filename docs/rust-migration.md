@@ -60,11 +60,43 @@ Supported PyPI platform wheels expose both implementations through the existing
 selector; the portable wheel remains Python-only. The standalone preview is
 always Rust-only.
 
-The Python release builds one source distribution and portable wheel first, then
-builds four native wheels in parallel and publishes only after the exact six-file
-set passes metadata and platform-payload checks. The standalone workflow builds
-native archives for the same four targets, reuses one Web bundle, executes every
-binary, and verifies final Linux and Windows installer candidates before publish.
+The public Python launcher owns implementation selection inside a pip install:
+
+```bash
+cccc status            # selected, running, and available implementations
+cccc rust              # persist Rust and launch
+cccc python             # persist Python and launch
+cccc rust doctor        # persist Rust, then run one command
+```
+
+Selection is stored atomically in `CCCC_HOME/implementation.json`; no file means
+Python, preserving existing installations. That default applies only until an
+implementation is selected: a later bare `cccc` follows the persisted choice,
+and the startup banner names the implementation actually serving Web. Before
+selecting Rust, the launcher requires an executable payload whose normalized
+SemVer exactly matches the installed Python product version. A selector stops
+the active Web process and daemon before persisting the new implementation.
+Missing, corrupt, or mismatched payloads fail explicitly and never fall back
+silently.
+
+Inside a pip installation, `cccc update` always upgrades `cccc-pair` through pip.
+This keeps the launcher, Python implementation, Rust payload, Web assets, and
+contracts on one version. The launcher stops the active Web/daemon pair before
+replacement so Windows can replace the native executable safely. The private
+Rust binary cannot overwrite its containing wheel independently. The standalone
+preview contains Rust only, so `cccc python` and implementation switching are
+intentionally unavailable there.
+
+The Python release builds one source distribution and portable fallback wheel,
+then builds native wheels for Linux x86-64, Intel macOS, Apple Silicon macOS, and
+Windows x86-64 in parallel. Linux targets the manylinux 2.28 baseline and is
+repaired with `auditwheel`; macOS and Windows dependencies are checked and
+repaired with `delocate` and `delvewheel`. Publication begins only after the
+exact six-file set passes metadata and platform-payload checks. Unsupported
+platforms receive the portable wheel and report Rust as unavailable. The
+standalone workflow builds native archives for the same four targets, reuses one
+Web bundle, executes every binary, and verifies final Linux and Windows installer
+candidates before publish.
 
 Cargo remains a workspace development tool and the crates stay non-publishable.
 The experimental standalone workflow builds and verifies all four supported
@@ -208,6 +240,36 @@ external headless actors retain the pull contract: the executor obtains an
 ordered batch with `cccc_runtime_wait_next_turn` and commits its exact contiguous
 event prefix with `cccc_runtime_complete_turn`. The legacy
 `web_model_runtime_*` daemon operation names remain accepted for compatibility.
+
+Rust ChatGPT Web Model delivery follows the same browser transaction boundary as
+Python. It selects a visible editable composer, confines Send discovery to that
+composer, and treats Stop or a disabled Send control as a retryable pre-submit
+deferral. Only a matching user-message echo is reported as `submitted`; weaker
+post-click signals remain explicitly `ambiguous` and follow the shared
+at-most-once policy, so CCCC does not click the same prompt again automatically.
+The first delivery to a newly bound conversation also carries the daemon's
+actor system prompt and Web transport contract; that bootstrap is recorded only
+after the matching browser message appears, and is not repeated on later turns
+unless the target or prompt revision changes.
+The Web health projection exposes whether the cursor was committed and the
+recommended recovery action. A newly created chat is bound to its final
+conversation URL before a later batch can be delivered into it.
+
+The daemon also owns a per-actor delivery preference shared by both
+implementations. `standard` remains the default text-only path.
+`image_compat` is an explicitly experimental ChatGPT transport workaround: CCCC
+materializes one deterministic 32x32 blank PNG in its runtime cache, attaches it
+through the browser file input before Send, and treats attachment plus prompt
+submission as one transaction. The setting persists across daemon restarts and
+engine switches, applies from the next accepted turn, and does not select or
+change the model in ChatGPT.
+
+Rust can conservatively recover pre-migration `wmd_*` new-chat deliveries whose
+cursor was already committed before the conversation URL was bound. It rebuilds
+the current prompt (including the actor bootstrap) and clicks Send only when the
+same page has no user message or active response and its staged composer exactly
+matches the recorded legacy prompt. User-edited or otherwise unverifiable drafts
+remain paused, preserving the at-most-once boundary.
 
 Cursor, Kilo, and Antigravity PTY sessions receive an idempotent MCP setup
 contract before the normal preamble. It first checks for `cccc_bootstrap` and

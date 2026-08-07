@@ -45,6 +45,9 @@ _SCREENCAST_EVERY_NTH_FRAME = 1
 _SOCKET_READ_TIMEOUT_SECONDS = 0.2
 _START_WAIT_TIMEOUT_SECONDS = 20.0
 _VNC_START_TIMEOUT_SECONDS = 3.0
+_XVFB_FIRST_DISPLAY = 99
+_XVFB_LAST_DISPLAY = 199
+_XVFB_START_TIMEOUT_SECONDS = 5.0
 
 
 def ensure_dir(path: Path, mode: int = 0o700) -> None:
@@ -142,6 +145,46 @@ class _VirtualDisplay:
         _terminate_process(self.proc)
 
 
+def _xvfb_display_in_use(number: int, *, temp_root: Path = Path("/tmp")) -> bool:
+    return (temp_root / f".X{int(number)}-lock").exists() or (
+        temp_root / ".X11-unix" / f"X{int(number)}"
+    ).exists()
+
+
+def _xvfb_args(*, number: int, width: int, height: int) -> list[str]:
+    return [
+        f":{int(number)}",
+        "-displayfd",
+        "1",
+        "-screen",
+        "0",
+        f"{max(1024, int(width))}x{max(768, int(height))}x24",
+        "-nolisten",
+        "tcp",
+    ]
+
+
+def _xvfb_display_conflict(output: str) -> bool:
+    detail = str(output or "").lower()
+    return any(
+        marker in detail
+        for marker in (
+            "server already active",
+            "server already running",
+            "failed to bind listener",
+            "cannot establish any listening sockets",
+        )
+    )
+
+
+def _xvfb_start_error(reason: str, output: str = "") -> str:
+    compact_output = " ".join(str(output or "").replace("\r", "\n").split())
+    prefix = str(reason or "Xvfb startup failed").strip() or "Xvfb startup failed"
+    if compact_output:
+        return f"{prefix}; {compact_output[:800]}"
+    return prefix
+
+
 def _start_virtual_display(*, width: int, height: int) -> _VirtualDisplay | None:
     if os.name == "nt" or sys.platform == "darwin":
         return None
@@ -151,58 +194,77 @@ def _start_virtual_display(*, width: int, height: int) -> _VirtualDisplay | None
             "Linux projected browser requires Xvfb to stay off the host desktop; "
             "install it (Debian/Ubuntu: sudo apt install xvfb) and restart the browser session"
         )
-    proc = subprocess.Popen(
-        [
-            binary,
-            "-displayfd",
-            "1",
-            "-screen",
-            "0",
-            f"{max(1024, int(width))}x{max(768, int(height))}x24",
-            "-nolisten",
-            "unix",
-            "-nolisten",
-            "tcp",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
-    selector = selectors.DefaultSelector()
-    display = ""
-    try:
-        if proc.stdout is None:
-            raise RuntimeError("Xvfb did not expose a display fd")
-        selector.register(proc.stdout, selectors.EVENT_READ)
-        deadline = time.time() + 5.0
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                raise RuntimeError("Xvfb exited before a display became ready")
-            events = selector.select(timeout=max(0.1, deadline - time.time()))
-            if not events:
-                continue
-            line = str(proc.stdout.readline() or "").strip()
-            if not line:
-                continue
-            if line.startswith(":"):
-                display = line
+    for number in range(_XVFB_FIRST_DISPLAY, _XVFB_LAST_DISPLAY + 1):
+        if _xvfb_display_in_use(number):
+            continue
+
+        proc = None
+        stderr_log = None
+        selector = selectors.DefaultSelector()
+        display = ""
+        failure_reason = f"Xvfb display :{number} did not report a usable display"
+        try:
+            stderr_log = tempfile.TemporaryFile(mode="w+t", encoding="utf-8", errors="replace")
+            proc = subprocess.Popen(
+                [binary, *_xvfb_args(number=number, width=width, height=height)],
+                stdout=subprocess.PIPE,
+                stderr=stderr_log,
+                text=True,
+            )
+            if proc.stdout is None:
+                failure_reason = f"Xvfb display :{number} did not expose a display fd"
             else:
-                display = f":{line}"
-            break
-    finally:
-        try:
-            selector.close()
-        except Exception:
-            pass
-        try:
-            if proc.stdout is not None:
-                proc.stdout.close()
-        except Exception:
-            pass
-    if not display:
+                selector.register(proc.stdout, selectors.EVENT_READ)
+                deadline = time.time() + _XVFB_START_TIMEOUT_SECONDS
+                while time.time() < deadline:
+                    if proc.poll() is not None:
+                        failure_reason = f"Xvfb display :{number} exited before becoming ready"
+                        break
+                    events = selector.select(timeout=max(0.1, deadline - time.time()))
+                    if not events:
+                        continue
+                    reported = str(proc.stdout.readline() or "").strip().lstrip(":")
+                    if reported == str(number) and proc.poll() is None:
+                        display = f":{number}"
+                    elif reported:
+                        failure_reason = (
+                            f"Xvfb display :{number} reported unexpected display :{reported}"
+                        )
+                    break
+                else:
+                    failure_reason = f"Xvfb display :{number} startup timed out"
+        except Exception as exc:
+            _terminate_process(proc)
+            if stderr_log is not None:
+                stderr_log.close()
+            raise RuntimeError(f"failed to start Xvfb display :{number}: {exc}") from exc
+        finally:
+            try:
+                selector.close()
+            except Exception:
+                pass
+            try:
+                if proc is not None and proc.stdout is not None:
+                    proc.stdout.close()
+            except Exception:
+                pass
+
+        if display:
+            if stderr_log is not None:
+                stderr_log.close()
+            return _VirtualDisplay(proc=proc, display=display)
+
         _terminate_process(proc)
-        raise RuntimeError("Xvfb did not report a usable display")
-    return _VirtualDisplay(proc=proc, display=display)
+        output = _read_temp_text(stderr_log)
+        if stderr_log is not None:
+            stderr_log.close()
+        if _xvfb_display_in_use(number) or _xvfb_display_conflict(output):
+            continue
+        raise RuntimeError(_xvfb_start_error(failure_reason, output))
+
+    raise RuntimeError(
+        f"no free Xvfb display is available in :{_XVFB_FIRST_DISPLAY}-:{_XVFB_LAST_DISPLAY}"
+    )
 
 
 def _system_browser_binaries(channel: str) -> list[str]:
@@ -1481,6 +1543,8 @@ class ProjectedBrowserSession:
                 prompt,
                 input_timeout_seconds=float(payload.get("input_timeout_seconds") or 30.0),
                 submit_timeout_seconds=submit_timeout_seconds,
+                attachment_path=str(payload.get("attachment_path") or "").strip() or None,
+                delivery_id=delivery_id,
             )
             conversation_url = _conversation_url_from_tab(str(getattr(page, "url", "") or ""))
             if auto_bind_new_chat and not conversation_url:

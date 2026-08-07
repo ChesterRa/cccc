@@ -10,17 +10,18 @@ from ...kernel.runtime_hooks.store import begin_launch
 from .provider_command import normalize_cli_command, shell_command
 
 HOOK_TIMEOUT_SECONDS = 3
+# Keep this list aligned with Codex's documented hook contract. Failed tool
+# commands are reported through PostToolUse; Codex does not currently expose
+# separate PostToolUseFailure or StopFailure hook events.
 HOOK_EVENTS = (
     ("SessionStart", "session_start"),
     ("UserPromptSubmit", "user_prompt_submit"),
     ("PreToolUse", "pre_tool_use"),
     ("PermissionRequest", "permission_request"),
     ("PostToolUse", "post_tool_use"),
-    ("PostToolUseFailure", "post_tool_use_failure"),
     ("SubagentStart", "subagent_start"),
     ("SubagentStop", "subagent_stop"),
     ("Stop", "stop"),
-    ("StopFailure", "stop_failure"),
     ("SessionEnd", "session_end"),
 )
 _CODEX_SUBCOMMANDS = {

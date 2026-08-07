@@ -65,31 +65,64 @@ pub(super) async fn reconcile(
     );
     match raw_call(state, "web_model_runtime_complete_turn", request).await {
         Ok(_) => {
+            let submission_ambiguous =
+                target["last_delivery_status"] == "submission_ambiguous_completion_pending";
+            let pending_new_chat_bind = target["kind"] == "new_chat";
+            let final_status = if submission_ambiguous {
+                "submission_ambiguous"
+            } else if pending_new_chat_bind {
+                "pending_new_chat_bind"
+            } else {
+                "submitted"
+            };
+            let final_error = if submission_ambiguous {
+                "browser submission was attempted but could not be verified; automatic redelivery is paused"
+            } else if pending_new_chat_bind {
+                "conversation_url_pending"
+            } else {
+                ""
+            };
             update_target(
                 state,
                 group_id,
                 actor_id,
-                json!({"last_delivery_status":"submitted","last_delivery_reconciled_at":cccc_contracts::utc_now(),"last_error":""}),
+                json!({
+                    "last_delivery_status":final_status,
+                    "last_delivery_reconciled_at":cccc_contracts::utc_now(),
+                    "last_error":final_error
+                }),
             )?;
             record_connector(
                 state,
                 group_id,
                 actor_id,
-                "submitted",
+                if submission_ambiguous {
+                    "ambiguous"
+                } else {
+                    "submitted"
+                },
                 &evidence.turn_id,
-                "",
+                final_error,
             )?;
             Ok(true)
         }
         Err(error) => {
             let attempts = evidence.attempts + 1;
             let conflict = error.code.as_deref() == Some("completion_conflict");
+            let submission_ambiguous =
+                target["last_delivery_status"] == "submission_ambiguous_completion_pending";
             update_target(
                 state,
                 group_id,
                 actor_id,
                 json!({
-                    "last_delivery_status":if conflict {"completion_conflict"} else {"ambiguous"},
+                    "last_delivery_status":if conflict {
+                        "completion_conflict"
+                    } else if submission_ambiguous {
+                        "submission_ambiguous_completion_pending"
+                    } else {
+                        "ambiguous"
+                    },
                     "last_delivery_reconcile_attempts":if conflict {MAX_RECONCILE_ATTEMPTS} else {attempts},
                     "last_error":error.api.to_string()
                 }),

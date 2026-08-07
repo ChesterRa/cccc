@@ -62,24 +62,44 @@ export type NomcpSession = {
 
 export type NomcpSessionCreateResult = { session: NomcpSession; secret: string };
 
+export type WebModelDeliveryMode = "standard" | "image_compat";
+
+export type WebModelDeliveryPreference = {
+  mode: WebModelDeliveryMode;
+  updated_at?: string;
+  updated_by?: string;
+};
+
 export type WebModelBrowserSession = {
   active?: boolean;
   ready?: boolean;
   login_required?: boolean;
+  state?: string;
   pid?: number;
   cdp_port?: number;
   profile_dir?: string;
   visibility?: string;
+  started_at?: string;
+  updated_at?: string;
   tab_url?: string;
   last_tab_url?: string;
   conversation_url?: string;
   pending_new_chat_bind?: boolean;
   pending_new_chat_url?: string;
   pending_new_chat_bind_started_at?: string;
+  pending_new_chat_submitted?: boolean;
+  pending_new_chat_submitted_at?: string;
+  pending_new_chat_delivery_id?: string;
+  pending_new_chat_last_turn_id?: string;
+  pending_new_chat_last_event_ids?: string[];
+  pending_new_chat_last_tab_url?: string;
   new_chat_bound_at?: string;
   target_saved_at?: string;
   delivery_target?: WebModelDeliveryTarget;
   bootstrap_seed_delivered_at?: string;
+  bootstrap_seed_version?: string;
+  bootstrap_seed_digest?: string;
+  bootstrap_seed_conversation_url?: string;
   auto_reload_active?: boolean;
   auto_reload_window_started_at?: string;
   auto_reload_window_expires_at?: string;
@@ -99,6 +119,8 @@ export type WebModelBrowserSession = {
   auto_reload_expired_at?: string;
   auto_reload_last_error?: string;
   last_delivery_at?: string;
+  last_delivery_started_at?: string;
+  last_delivery_timeout_seconds?: number;
   last_delivery_id?: string;
   last_delivery_status?: string;
   last_submission_evidence?: string;
@@ -106,6 +128,8 @@ export type WebModelBrowserSession = {
   last_turn_id?: string;
   last_event_ids?: string[];
   last_error?: string;
+  delivery_mode?: WebModelDeliveryMode;
+  delivery_preference?: WebModelDeliveryPreference;
   error?: string;
   message?: string;
   health_snapshot?: WebModelHealthSnapshot;
@@ -149,6 +173,7 @@ export type WebModelHealthSnapshot = {
     last_send_selector?: string;
     last_error?: string;
     cursor_committed?: boolean;
+    mode?: WebModelDeliveryMode;
   };
   next_action?: { recommended?: string; label?: string; reason?: string };
 };
@@ -383,6 +408,33 @@ export async function bindCurrentWebModelBrowserConversation(args: {
         conversation_url: String(args.conversationUrl || "").trim(),
         new_chat: Boolean(args.newChat),
         clear: Boolean(args.clear),
+      }),
+    },
+  );
+  if (!resp.ok) return resp;
+  return {
+    ok: true,
+    result: {
+      browser_session: resp.result.browser_session || {},
+      browser_surface: normalizePresentationBrowserSurfaceState(resp.result.browser_surface),
+      health_snapshot: resp.result.health_snapshot,
+    },
+  };
+}
+
+export async function updateWebModelDeliveryPreference(args: {
+  groupId: string;
+  actorId: string;
+  mode: WebModelDeliveryMode;
+}): Promise<ApiResponse<WebModelBrowserSurfaceResult>> {
+  const resp = await apiJson<WebModelBrowserSurfaceResult>(
+    "/api/v1/web-model/browser-session/delivery-preference",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        group_id: String(args.groupId || "").trim(),
+        actor_id: String(args.actorId || "").trim(),
+        mode: args.mode,
       }),
     },
   );

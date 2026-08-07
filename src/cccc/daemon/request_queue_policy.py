@@ -21,6 +21,8 @@ READ_QUEUE_OPS = {
     "actor_profile_list",
     "observability_get",
     "ping",
+    "web_model_delivery_preferences_get",
+    "web_model_runtime_recover_turn",
 }
 
 _SLASH_COMMAND_VIEWS = {"slash", "slash_commands"}

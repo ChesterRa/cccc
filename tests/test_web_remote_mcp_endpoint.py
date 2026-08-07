@@ -1163,6 +1163,20 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                         "last_error": "",
                     },
                 )
+
+                preference = client.post(
+                    "/api/v1/web-model/browser-session/delivery-preference",
+                    headers=headers,
+                    json={
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "mode": "image_compat",
+                    },
+                )
+                self.assertEqual(preference.status_code, 200)
+                preference_browser = (preference.json().get("result") or {}).get("browser_session") or {}
+                self.assertEqual(preference_browser.get("delivery_mode"), "image_compat")
+                self.assertEqual((preference_browser.get("delivery_preference") or {}).get("updated_by"), "user")
         finally:
             cleanup()
 

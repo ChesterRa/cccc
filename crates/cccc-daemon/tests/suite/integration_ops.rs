@@ -4,6 +4,62 @@ use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
 #[test]
+fn chatgpt_web_model_actor_is_singleton_across_groups() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let first = call(&home, "group_create", json!({"title":"first"}));
+    let first_group = first.result["group"]["group_id"]
+        .as_str()
+        .expect("first group id");
+    let second = call(&home, "group_create", json!({"title":"second"}));
+    let second_group = second.result["group"]["group_id"]
+        .as_str()
+        .expect("second group id");
+
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":first_group,"actor_id":"web1","runtime":"web_model","by":"user"}),
+    );
+    let duplicate = raw_call(
+        &home,
+        "actor_add",
+        json!({"group_id":second_group,"actor_id":"web2","runtime":"web_model","by":"user"}),
+    );
+    assert_eq!(
+        duplicate.error.expect("singleton error").code,
+        "chatgpt_web_model_singleton"
+    );
+
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":second_group,"actor_id":"peer","runtime":"codex","by":"user"}),
+    );
+    let converted = raw_call(
+        &home,
+        "actor_update",
+        json!({"group_id":second_group,"actor_id":"peer","patch":{"runtime":"web_model"},"by":"user"}),
+    );
+    assert_eq!(
+        converted.error.expect("update singleton error").code,
+        "chatgpt_web_model_singleton"
+    );
+
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":first_group,"actor_id":"web1","by":"user"}),
+    );
+    let replacement = call(
+        &home,
+        "actor_update",
+        json!({"group_id":second_group,"actor_id":"peer","patch":{"runtime":"web_model"},"by":"user"}),
+    );
+    assert_eq!(replacement.result["actor"]["runtime"], "web_model");
+}
+
+#[test]
 fn actor_scope_paths_are_persisted_as_attached_scope_keys() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");

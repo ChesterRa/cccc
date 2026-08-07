@@ -614,6 +614,7 @@ dependencies = [
  "cccc-pair-sherpa-onnx",
  "chromiumoxide",
  "chrono",
+ "crc32fast",
  "dingtalk-stream",
  "ed25519-dalek",
  "flate2",

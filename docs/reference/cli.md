@@ -281,6 +281,10 @@ the command fails without changing the selection or falling back to Python.
 If the selection file is corrupt, ordinary commands fail visibly; an explicit
 `cccc python` selector replaces it and restores the safe default.
 
+Python is the initial default only while no implementation choice has been
+stored. After `cccc rust` or `cccc python`, a bare `cccc` follows that persisted
+choice; the Web startup banner prints the implementation that actually started.
+
 `status`, `version`, and `update` are stable launcher commands. `status` shows
 the selected implementation, the implementation reported by a live daemon, and
 whether the bundled Rust payload is usable. `version` is the shared product

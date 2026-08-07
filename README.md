@@ -103,8 +103,9 @@ cccc
 
 Open **http://127.0.0.1:8848** — by default, CCCC brings up the daemon and the local Web UI together.
 
-In the recommended pip distribution, Python is the current default. Switch
-persistently, or switch and run a command in one step:
+In the recommended pip distribution, Python is the initial default only until
+an implementation choice is saved. A bare `cccc` then follows that persisted
+choice. Switch persistently, or switch and run a command in one step:
 
 ```bash
 cccc status            # selected, running, and available implementations
@@ -262,7 +263,7 @@ For setup commands, runner-mode guidance, and troubleshooting for every supporte
 
 ChatGPT Web can join a CCCC group as a real actor, not just an external chat window: CCCC delivers group messages into one bound ChatGPT conversation via browser delivery, and GPT-5.x calls back through an actor-bound remote MCP connector — receiving routed messages, replying visibly, editing repository files, and running scoped shell/git commands much like a native local coding agent. This also turns spare ChatGPT Web capacity into additional local-development agent capacity.
 
-Setup requires exposing CCCC through a public HTTPS URL for the MCP connector (Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy). Note that GPT-5.x Pro sessions currently cannot be used this way — they do not expose third-party MCP connectors. Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
+Setup requires exposing CCCC through a public HTTPS URL for the MCP connector (Cloudflare Tunnel, ngrok, Tailscale Funnel, or a reverse proxy). CCCC defaults to stable text-only delivery and also offers an experimental **GPT Pro** mode that attaches a tiny blank PNG when delivering each batch. This compatibility workaround does not switch ChatGPT models or guarantee connector availability, and may stop working when ChatGPT changes. Full setup and troubleshooting: [ChatGPT Web Model Runtime](https://chesterra.github.io/cccc/guide/web-model-runtime).
 
 ## Group Bridge: connect remote groups
 

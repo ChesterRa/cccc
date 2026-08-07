@@ -41,6 +41,7 @@ from ...mcp.group_bridge import GroupBridgeContext, handle_group_bridge_request
 from ...mcp.handlers.cccc_capability import capability_install as mcp_capability_install
 from ...mcp.handlers.cccc_capability import capability_use as mcp_capability_use
 from ..stream_close import close_stream_writer
+from ..runtime_control import web_listener_auth_error
 from ..schemas import (
     BrandingUpdateRequest,
     DebugClearLogsRequest,
@@ -88,6 +89,12 @@ class WebModelBrowserBindRequest(BaseModel):
     conversation_url: str = ""
     new_chat: bool = False
     clear: bool = False
+
+
+class WebModelDeliveryPreferenceRequest(BaseModel):
+    group_id: str
+    actor_id: str
+    mode: str
 
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
@@ -288,7 +295,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     def _daemon_http_status_for_error(code: str, default: int = 500) -> int:
         normalized = str(code or "").strip()
-        if normalized in {"missing_group_id", "missing_actor_id", "invalid_actor_runtime", "chatgpt_tab_not_found"}:
+        if normalized in {
+            "missing_group_id",
+            "missing_actor_id",
+            "invalid_actor_runtime",
+            "invalid_web_model_delivery_mode",
+            "chatgpt_tab_not_found",
+        }:
             return 400
         if normalized in {"group_not_found", "actor_not_found"}:
             return 404
@@ -679,6 +692,27 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     browser["pending_new_chat_resolution_event_id"] = str(bound_event.get("id") or "")
             except Exception:
                 pass
+        preference = {"mode": "standard", "updated_at": "", "updated_by": ""}
+        if str(group_id or "").strip() and str(actor_id or "").strip():
+            preference_result = await _call_web_model_browser_daemon(
+                "web_model_delivery_preferences_get",
+                {"group_id": group_id, "actor_id": actor_id},
+                default_status=500,
+            )
+            loaded_preference = preference_result.get("preference")
+            if isinstance(loaded_preference, dict):
+                preference = {
+                    "mode": "image_compat"
+                    if str(loaded_preference.get("mode") or "") == "image_compat"
+                    else "standard",
+                    "updated_at": str(loaded_preference.get("updated_at") or ""),
+                    "updated_by": str(loaded_preference.get("updated_by") or ""),
+                }
+        browser = {
+            **browser,
+            "delivery_mode": preference["mode"],
+            "delivery_preference": preference,
+        }
         health_snapshot = build_chatgpt_web_model_health_snapshot(
             group_id=group_id,
             actor_id=actor_id,
@@ -823,6 +857,26 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "bootstrap_seed_conversation_url": "",
                 "last_error": "",
             },
+        )
+        return await _web_model_browser_payload(group_id, actor_id, {})
+
+    @global_router.post(
+        "/api/v1/web-model/browser-session/delivery-preference",
+        dependencies=[Depends(require_admin)],
+    )
+    async def web_model_browser_delivery_preference(req: WebModelDeliveryPreferenceRequest) -> Dict[str, Any]:
+        group_id = str(req.group_id or "").strip()
+        actor_id = str(req.actor_id or "").strip()
+        _require_web_model_browser_actor(group_id, actor_id)
+        await _call_web_model_browser_daemon(
+            "web_model_delivery_preferences_update",
+            {
+                "group_id": group_id,
+                "actor_id": actor_id,
+                "mode": str(req.mode or "").strip().lower(),
+                "by": "user",
+            },
+            default_status=500,
         )
         return await _web_model_browser_payload(group_id, actor_id, {})
 
@@ -1482,6 +1536,20 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if not isinstance(remote, dict):
             raise HTTPException(status_code=503, detail={"code": "remote_access_unavailable", "message": "remote access state unavailable"})
         diagnostics = remote.get("diagnostics") if isinstance(remote.get("diagnostics"), dict) else {}
+        config = remote.get("config") if isinstance(remote.get("config"), dict) else {}
+        auth_error = web_listener_auth_error(
+            home=ctx.home,
+            host=str(config.get("web_host") or diagnostics.get("web_host") or "127.0.0.1"),
+            public_url=str(config.get("web_public_url") or diagnostics.get("web_public_url") or ""),
+        )
+        if auth_error:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "remote_access_admin_token_required",
+                    "message": auth_error,
+                },
+            )
         if not bool(remote.get("restart_required")):
             return {"ok": True, "result": {"accepted": False, "remote_access": remote}}
         if not bool(remote.get("apply_supported")):

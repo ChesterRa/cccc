@@ -5,17 +5,18 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 const HOOK_TIMEOUT_SECONDS: u64 = 3;
-const HOOK_EVENTS: [(&str, &str); 11] = [
+// Keep this list aligned with Codex's documented hook contract. Failed tool
+// commands are reported through PostToolUse; Codex does not currently expose
+// separate PostToolUseFailure or StopFailure hook events.
+const HOOK_EVENTS: [(&str, &str); 9] = [
     ("SessionStart", "session_start"),
     ("UserPromptSubmit", "user_prompt_submit"),
     ("PreToolUse", "pre_tool_use"),
     ("PermissionRequest", "permission_request"),
     ("PostToolUse", "post_tool_use"),
-    ("PostToolUseFailure", "post_tool_use_failure"),
     ("SubagentStart", "subagent_start"),
     ("SubagentStop", "subagent_stop"),
     ("Stop", "stop"),
-    ("StopFailure", "stop_failure"),
     ("SessionEnd", "session_end"),
 ];
 
@@ -399,10 +400,16 @@ mod tests {
         assert!(
             command
                 .iter()
+                .any(|item| item.starts_with("hooks.PostToolUse="))
+        );
+        assert!(command.iter().any(|item| item.starts_with("hooks.Stop=")));
+        assert!(
+            !command
+                .iter()
                 .any(|item| item.starts_with("hooks.PostToolUseFailure="))
         );
         assert!(
-            command
+            !command
                 .iter()
                 .any(|item| item.starts_with("hooks.StopFailure="))
         );

@@ -92,6 +92,8 @@ pub(super) fn is_read_only(op: &str) -> bool {
             | "terminal_status"
             | "terminal_tail"
             | "version"
+            | "web_model_delivery_preferences_get"
+            | "web_model_runtime_recover_turn"
             | "group_bridge_session_open"
             | "group_bridge_session_close"
             | "group_bridge_session_poll"

@@ -4,6 +4,7 @@ use crate::network::detect_lan_ipv4;
 
 pub fn print(host: &str, port: u16) {
     let (local_url, network_url) = urls(host, port, detect_lan_ipv4());
+    eprintln!("[cccc] Implementation: rust");
     eprintln!("[cccc] Starting web server...");
     eprintln!("[cccc]   Local:   {local_url}");
     if let Some(network_url) = network_url {

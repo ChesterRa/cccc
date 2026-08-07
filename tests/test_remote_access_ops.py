@@ -290,8 +290,15 @@ class TestRemoteAccessOps(unittest.TestCase):
             cleanup()
 
     def test_remote_access_state_reports_missing_access_token_reason_for_private_binding(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
         _, cleanup = self._with_home()
         try:
+            create_access_token(
+                "scoped-user",
+                allowed_groups=["g_test"],
+                is_admin=False,
+            )
             cfg, _ = self._call(
                 "remote_access_configure",
                 {
@@ -306,8 +313,21 @@ class TestRemoteAccessOps(unittest.TestCase):
             remote = (cfg.result or {}).get("remote_access") if isinstance(cfg.result, dict) else {}
             self.assertEqual(str(remote.get("status") or ""), "misconfigured")
             self.assertEqual(str(remote.get("status_reason") or ""), "missing_access_token")
+            diagnostics = remote.get("diagnostics") if isinstance(remote.get("diagnostics"), dict) else {}
+            self.assertEqual(bool(diagnostics.get("access_token_present")), True)
+            self.assertEqual(bool(diagnostics.get("admin_access_token_present")), False)
+            self.assertEqual(
+                bool(diagnostics.get("remote_listener_auth_requirement_satisfied")),
+                False,
+            )
             next_steps = remote.get("next_steps") if isinstance(remote.get("next_steps"), list) else []
             self.assertTrue(any("Create an Admin Access Token" in step for step in next_steps))
+            start, _ = self._call("remote_access_start", {"by": "user"})
+            self.assertFalse(start.ok)
+            self.assertEqual(
+                str(getattr(start, "error", None).code),
+                "remote_access_admin_token_required",
+            )
         finally:
             cleanup()
 
@@ -504,6 +524,8 @@ class TestRemoteAccessOps(unittest.TestCase):
             self.assertEqual(str(cfg_doc.get("web_public_url") or ""), "https://cccc.example.com/ui/")
             self.assertEqual(bool(cfg_doc.get("access_token_configured")), True)
             self.assertEqual(int(cfg_doc.get("access_token_count") or 0), 2)
+            self.assertEqual(bool(cfg_doc.get("admin_access_token_configured")), True)
+            self.assertEqual(int(cfg_doc.get("admin_access_token_count") or 0), 1)
         finally:
             cleanup()
 
