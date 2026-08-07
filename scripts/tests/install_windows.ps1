@@ -51,7 +51,7 @@ function New-FixtureRelease([string]$Version, [bool]$ValidChecksum, [string]$Ccc
     Copy-Item -LiteralPath $source -Destination (Join-Path $packageDir $binary)
   }
   $archive = Join-Path $releaseDir "$package.zip"
-  Compress-Archive -Path $packageDir -DestinationPath $archive -Force
+  Compress-Archive -Path $packageDir -DestinationPath $archive
   $archiveChecksum = if ($ValidChecksum) {
     (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
   } else {
@@ -346,7 +346,7 @@ fn main() {
 '@
   & rustc $slowSource -O -o $slowBinary
   if ($LASTEXITCODE -ne 0) { throw "failed to build locked rollback fixture" }
-  $lockedVersion = "9.9.9"
+  $lockedVersion = "9.9.7"
   New-FixtureRelease $lockedVersion $true $slowBinary
   $oldHash = (Get-FileHash (Join-Path $installDir "cccc.exe")).Hash
   $childOut = Join-Path $tempRoot "locked-rollback.out"
@@ -375,8 +375,15 @@ fn main() {
     }
   }
   if ($null -eq $heldBinary) {
-    $child.Kill()
-    throw "failed to acquire the replacement binary lock"
+    if (-not $child.HasExited) {
+      $child.Kill()
+      $child.WaitForExit()
+    }
+    $childLogs = @(
+      Get-Content -LiteralPath $childOut -Raw -ErrorAction SilentlyContinue
+      Get-Content -LiteralPath $childErr -Raw -ErrorAction SilentlyContinue
+    ) -join [Environment]::NewLine
+    throw "failed to acquire the replacement binary lock. Child output:`n$childLogs"
   }
   $child.WaitForExit()
   $backupDir = Join-Path $installDir (".cccc-backup-" + $child.Id)
