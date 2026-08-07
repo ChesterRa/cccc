@@ -6,9 +6,14 @@ use cccc_core::HomeLayout;
 use http_body_util::BodyExt;
 use serde_json::{Map, Value, json};
 use tokio::sync::broadcast;
+use tokio::time::{Duration, Instant};
 use tower::ServiceExt;
 
+use super::web_model_delivery::IDLE_POLL_INTERVAL;
 use super::web_model_delivery_test_support::{chrome_available, prompt_page};
+
+const BACKGROUND_DELIVERY_MARGIN: Duration = Duration::from_secs(5);
+const DELIVERY_STATUS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[tokio::test]
 async fn connector_activity_binding_and_browser_delivery_share_one_turn() {
@@ -172,7 +177,10 @@ async fn request_json(app: &axum::Router, request: Request<Body>) -> Value {
 }
 
 async fn wait_for_background_delivery(app: &axum::Router, group_id: &str, actor_id: &str) -> Value {
-    for _ in 0..50 {
+    // The worker may enter its idle interval immediately before the message arrives.
+    // Cover that full interval plus bounded time for the browser submission itself.
+    let deadline = Instant::now() + IDLE_POLL_INTERVAL + BACKGROUND_DELIVERY_MARGIN;
+    loop {
         let value = request_json(
             app,
             Request::get(format!(
@@ -187,9 +195,14 @@ async fn wait_for_background_delivery(app: &axum::Router, group_id: &str, actor_
         {
             return value;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        if Instant::now() >= deadline {
+            panic!(
+                "background browser delivery did not complete: {}",
+                value["result"]["browser_session"]["delivery_target"]
+            );
+        }
+        tokio::time::sleep(DELIVERY_STATUS_POLL_INTERVAL).await;
     }
-    panic!("background browser delivery did not complete");
 }
 
 async fn wait_for_daemon(home: &HomeLayout) {

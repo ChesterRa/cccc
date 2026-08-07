@@ -13,6 +13,7 @@ use super::web_model_delivery_state::{record_connector, target, update_target};
 
 static IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+pub(super) const IDLE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
 
 pub(super) enum DeliveryOutcome {
     Submitted,
@@ -41,7 +42,7 @@ pub(super) async fn ensure_worker(state: AppState, group_id: String, actor_id: S
                 }
                 Ok(DeliveryOutcome::Idle | DeliveryOutcome::Ambiguous) => {
                     retry_seconds = 1;
-                    std::time::Duration::from_secs(5)
+                    IDLE_POLL_INTERVAL
                 }
                 Err(error) => {
                     tracing::warn!(
