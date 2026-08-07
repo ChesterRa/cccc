@@ -501,7 +501,7 @@ Windows x86-64 上，pip 会选择同时包含 Python 实现和版本严格匹�
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
 # Windows CMD 或 PowerShell
-powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
 这个可选通道只适合评估无 Python 的 Rust-only 部署。它会从 GitHub Releases

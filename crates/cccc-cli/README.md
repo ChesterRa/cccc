@@ -22,7 +22,7 @@ product use.
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 ```
 
-Windows CMD or PowerShell uses `powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"`.
+Windows CMD or PowerShell uses `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"`.
 These installers download a checksum-verified GitHub Release binary and require
 neither Rust nor Python. This Rust-only channel has no Python fallback or
 implementation switching and is not the recommended replacement for the pip

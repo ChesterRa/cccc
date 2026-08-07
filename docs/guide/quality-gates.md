@@ -94,11 +94,11 @@ The Rust job also executes `scripts/tests/smoke_rust_replacement.sh` against the
 actual built executable. The smoke uses a fresh `CCCC_HOME`, verifies offline
 `status`, starts the daemon, creates a scoped Web Model actor, performs an MCP
 handshake and a real `cccc_code_exec` cell, then stops the daemon and verifies
-offline status again. The manual final-installer verifiers repeat this check for
+offline status again. The release-candidate verifiers repeat this check for
 the installed Unix artifact; Windows verifies installed offline status, MCP
 startup, daemon lifecycle, and that the executable is released after shutdown.
 
-The full Windows Rust workspace job is intentionally retired because it did not complete reliably on hosted runners. Windows keeps focused PTY compatibility coverage in `windows-smoke`. Python releases publish one portable wheel and one source distribution without rebuilding Rust. Standalone releases build the four supported native archives, but build the shared Web bundle only once; final installer smoke checks are performed manually instead of adding Linux and Windows release jobs. The Web job uploads its bundle and the package job consumes that artifact, so packaging tests the same bundle without rebuilding it. The `packaged_web_dist` pytest marker is reserved for assertions that require this artifact; source-only Python runs exclude it, while the package job executes it after downloading the bundle.
+The full Windows Rust workspace job is intentionally retired because it did not complete reliably on hosted runners. Windows keeps focused PTY compatibility coverage in `windows-smoke`. Python releases build and smoke one portable wheel plus a source distribution, build four native Rust wheels in parallel, and publish only after the exact version-matched set passes metadata and payload checks. Standalone releases build the shared Web bundle once, execute each of the four native binaries once, and run the final Linux and Windows installer verifiers in parallel before publication. These bounded release gates do not repeat the full Rust/Python suites, Web tests, or cross-language interoperability tests owned by normal CI. The Web job uploads its bundle and the package job consumes that artifact, so packaging tests the same bundle without rebuilding it. The `packaged_web_dist` pytest marker is reserved for assertions that require this artifact; source-only Python runs exclude it, while the package job executes it after downloading the bundle.
 
 ## Stable Python Shards
 

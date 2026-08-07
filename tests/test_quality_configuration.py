@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -192,3 +193,23 @@ def test_full_precommit_path_does_not_use_xdist_auto_workers() -> None:
     assert 'python -m pytest tests/ "${pytest_common[@]}"' in source
     assert source.count("env -u CCCC_GROUP_ID -u CCCC_ACTOR_ID") >= 2
     assert "python -W error::SyntaxWarning -m compileall -q src/cccc scripts tests" in source
+
+
+def test_impacted_rust_precommit_supports_binary_only_packages() -> None:
+    result = subprocess.run(
+        [
+            "bash",
+            "scripts/pre_commit_rust.sh",
+            "--dry-run",
+            "--",
+            "crates/cccc-cli/src/commands/update.rs",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert "rust_scope=cccc" in result.stdout
+    assert "rust_targets=default,changed-tests" in result.stdout
+    assert "--lib" not in result.stdout

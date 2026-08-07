@@ -501,7 +501,7 @@ universal Python wheel を使い、`cccc status` が Rust を利用不可と明�
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
 # Windows CMD または PowerShell
-powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
 このオプションは、Python なしの Rust-only 配備を評価する場合に限って利用してください。

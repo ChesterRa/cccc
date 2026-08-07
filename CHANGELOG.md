@@ -8,8 +8,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 
 ### Changed
 - **Distribution guidance now keeps PyPI as the stable, recommended product path.** The standalone Rust binary is presented consistently as an experimental Rust-only preview without Python fallback or implementation switching, including its GitHub Release metadata.
+- **Release publication now gates complete Python and standalone artifact sets without duplicating normal CI.** PyPI receives one source distribution, one portable wheel, and four version-matched native Rust wheels after parallel payload checks; standalone binaries execute on their build hosts and final Linux and Windows installer candidates are verified in parallel. Full source and cross-language interoperability suites remain in normal CI only.
 
 ### Fixed
+- **Standalone Windows self-updates now enable TLS 1.2 before downloading the installer.** Windows PowerShell 5.1 can update through the same hardened bootstrap path used by the documented fresh-install command.
 - **Rust resume recovery now respects explicit actor and Group stops.** Resume verification is generation-guarded and serialized with lifecycle changes, while failure detection reads only the current PTY session so retained errors from an earlier session cannot reject a later valid resume.
 - **Duplicate CCCC installations no longer fail silently through PATH shadowing.** Standalone installers preserve other installations but put the managed command first where they own PATH setup, report every remaining duplicate, and both Python and Rust `doctor` identify the invoked executable, active PATH command, and conflicts.
 - **Experimental standalone installers no longer overwrite a public command owned by another installation.** Unix and Windows require the exact standalone ownership marker unless replacement is explicitly requested, and the Rust self-updater validates the same marker contents.

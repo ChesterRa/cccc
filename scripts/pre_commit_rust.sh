@@ -167,13 +167,13 @@ print_plan() {
     return
   fi
 
-  echo "rust_targets=lib,bins,changed-tests"
+  echo "rust_targets=default,changed-tests"
   if [[ "$rust_workspace" == "1" || ${#rust_source_packages[@]} -gt 0 ]]; then
     printf "rust_clippy="
-    printf '%q ' cargo clippy "${rust_source_scope_args[@]}" --lib --bins --locked --jobs "$cargo_jobs" -- -D warnings
+    printf '%q ' cargo clippy "${rust_source_scope_args[@]}" --locked --jobs "$cargo_jobs" -- -D warnings
     echo ""
     printf "rust_test="
-    printf '%q ' cargo test "${rust_source_scope_args[@]}" --lib --bins --locked --jobs "$cargo_jobs"
+    printf '%q ' cargo test "${rust_source_scope_args[@]}" --locked --jobs "$cargo_jobs"
     echo ""
   fi
   if [[ ${#rust_test_specs[@]} -gt 0 ]]; then
@@ -208,8 +208,8 @@ if [[ "$full" == "1" ]]; then
 fi
 
 if [[ "$rust_workspace" == "1" || ${#rust_source_packages[@]} -gt 0 ]]; then
-  run_timed "Rust source lint" cargo clippy "${rust_source_scope_args[@]}" --lib --bins --locked --jobs "$cargo_jobs" -- -D warnings
-  run_timed "Rust unit tests" cargo test "${rust_source_scope_args[@]}" --lib --bins --locked --jobs "$cargo_jobs"
+  run_timed "Rust source lint" cargo clippy "${rust_source_scope_args[@]}" --locked --jobs "$cargo_jobs" -- -D warnings
+  run_timed "Rust tests" cargo test "${rust_source_scope_args[@]}" --locked --jobs "$cargo_jobs"
 fi
 
 if [[ ${#rust_test_specs[@]} -gt 0 ]]; then

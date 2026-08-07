@@ -21,8 +21,10 @@ Install the stable product distribution from PyPI:
 python -m pip install -U cccc-pair
 ```
 
-PyPI publishes a portable Python wheel and source distribution. The current
-Python package does not bundle a private Rust executable.
+PyPI publishes one source distribution, one portable Python wheel, and native
+platform wheels for Linux x86-64, Intel/Apple Silicon macOS, and Windows x86-64.
+Each platform wheel bundles a private, version-matched Rust executable while
+keeping Python as the initial default; other platforms use the portable wheel.
 
 To explicitly evaluate the experimental standalone Rust preview without a Rust
 or Python toolchain:
@@ -32,7 +34,7 @@ or Python toolchain:
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
 # Windows CMD or PowerShell
-powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
 The GitHub Pages scripts pin the product version represented by the current
@@ -54,14 +56,15 @@ cccc update --check
 Standalone Rust previews update through the GitHub Pages installer and support
 `--channel stable|rc`; the updater resolves and pins a concrete release version
 before invoking the installer. Pip installations update `cccc-pair` through pip.
-Legacy Python installations that already contain a private Rust payload retain
-their implementation-selector compatibility, but the portable wheel does not
-create that payload. The standalone preview is always Rust-only.
+Supported PyPI platform wheels expose both implementations through the existing
+selector; the portable wheel remains Python-only. The standalone preview is
+always Rust-only.
 
-The Python release publishes one source distribution and one portable wheel.
-The standalone workflow builds native archives for Linux x86-64, Intel macOS,
-Apple Silicon macOS, and Windows x86-64, reusing one Web bundle. Final native
-installation smoke checks are manual rather than separate release jobs.
+The Python release builds one source distribution and portable wheel first, then
+builds four native wheels in parallel and publishes only after the exact six-file
+set passes metadata and platform-payload checks. The standalone workflow builds
+native archives for the same four targets, reuses one Web bundle, executes every
+binary, and verifies final Linux and Windows installer candidates before publish.
 
 Cargo remains a workspace development tool and the crates stay non-publishable.
 The experimental standalone workflow builds and verifies all four supported
@@ -233,9 +236,9 @@ A release is publishable only when all of these remain true:
 
 - Rust owns its CLI, daemon, kernel, MCP, Web API, runners, and integrations.
 - The existing Web UI builds unchanged against the Rust HTTP/WebSocket surface.
-- The portable Python wheel and source distribution pass package metadata and
-  install checks; all four standalone native archives and their checksum set are
-  complete.
+- The Python source distribution, portable wheel, and four native wheels form one
+  version-matched set and pass metadata, size, and payload checks; all four
+  standalone native archives and their checksum set are complete.
 - CI runs offline status, daemon lifecycle, MCP initialization, and a real
   `cccc_code_exec` cell against the built Rust binary. Manual final-installer
   verification repeats the complete Unix flow; Windows verifies installed
@@ -244,8 +247,9 @@ A release is publishable only when all of these remain true:
 - Python, Cargo, the lockfile, and the Git tag resolve to one release identity.
 - The native binary runs without a Python backend dependency.
 - The cross-language persisted-state tests pass in their dedicated interop job.
-- PyPI publication happens once after the portable Python artifacts pass their
-  gates; standalone native assets are published by their dedicated workflow.
+- PyPI publication happens once after the complete six-file distribution set
+  passes its gates; standalone native assets are published by their dedicated
+  workflow.
 - Existing `~/.cccc` data remains available after switching implementations.
 
 Credentialed live-provider canaries (NotebookLM/Google browser auth and external

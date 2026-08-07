@@ -12,6 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,7 +53,227 @@ jobs:
           python -m build
           python -m twine check dist/*
 
-      - name: Upload Python distribution
+      - name: Smoke installed portable Python wheel
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          python -m venv .release-smoke
+          .release-smoke/bin/python -m pip install --no-deps --force-reinstall dist/*.whl
+          expected="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          actual="$(CCCC_HOME="$RUNNER_TEMP/cccc-python-release-smoke" .release-smoke/bin/cccc version)"
+          test "$actual" = "$expected"
+
+      - name: Upload shared Web bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-web-bundle
+          path: |
+            web/dist
+            src/cccc/ports/web/dist
+          if-no-files-found: error
+
+      - name: Upload Python compatibility distribution
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dist-universal
+          path: dist/*
+          if-no-files-found: error
+
+  native-linux-x64:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container: quay.io/pypa/manylinux_2_28_x86_64:latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore Web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-web-bundle
+          path: .
+
+      - name: Install native build dependencies
+        run: dnf install -y cmake openssl-devel perl-core pkgconf-pkg-config
+
+      - name: Select Python 3.14
+        run: echo "/opt/python/cp314-cp314/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Rust implementation against manylinux 2.28
+        run: |
+          touch web/dist/index.html
+          cargo build --release --locked -p cccc --bin cccc
+          strip target/release/cccc
+          python scripts/check_release_versions.py --rust-binary target/release/cccc
+
+      - name: Build and repair Linux native wheel
+        run: |
+          python -m pip install -U pip build "auditwheel==6.7.0"
+          mkdir -p wheelhouse/raw wheelhouse/final
+          CCCC_BUILD_RUST_BINARY="$PWD/target/release/cccc" \
+            CCCC_BUILD_WHEEL_TAG=linux_x86_64 \
+            python -m build --wheel --outdir wheelhouse/raw
+          auditwheel repair \
+            --plat manylinux_2_28_x86_64 \
+            --wheel-dir wheelhouse/final \
+            wheelhouse/raw/*.whl
+          wheel_path="$(find wheelhouse/final -maxdepth 1 -name '*.whl' -print -quit)"
+          python scripts/verify_native_wheel.py "$wheel_path" --platform-tag manylinux_2_28_x86_64
+          auditwheel show "$wheel_path"
+
+      - name: Upload Linux native wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dist-linux-x64
+          path: wheelhouse/final/*.whl
+          if-no-files-found: error
+
+  native-desktop:
+    needs: build
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: target/x86_64-apple-darwin/release/cccc
+            platform_tag: macosx_11_0_x86_64
+            repair: delocate
+            arch: x86_64
+            artifact: macos-x64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            binary: target/aarch64-apple-darwin/release/cccc
+            platform_tag: macosx_11_0_arm64
+            repair: delocate
+            arch: arm64
+            artifact: macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary: target/x86_64-pc-windows-msvc/release/cccc.exe
+            platform_tag: win_amd64
+            repair: delvewheel
+            arch: AMD64
+            artifact: windows-x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Restore Web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: release-web-bundle
+          path: .
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build Rust implementation
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          touch web/dist/index.html
+          cargo build --release --locked --target "${{ matrix.target }}" -p cccc --bin cccc
+          python scripts/check_release_versions.py --rust-binary "${{ matrix.binary }}"
+
+      - name: Strip macOS binary
+        if: matrix.repair == 'delocate'
+        run: strip "${{ matrix.binary }}"
+
+      - name: Build raw platform wheel
+        env:
+          CCCC_BUILD_RUST_BINARY: ${{ matrix.binary }}
+          CCCC_BUILD_WHEEL_TAG: ${{ matrix.platform_tag }}
+        run: |
+          python -m pip install -U pip build
+          mkdir -p wheelhouse/raw wheelhouse/final
+          python -m build --wheel --outdir wheelhouse/raw
+
+      - name: Repair macOS wheel dependencies
+        if: matrix.repair == 'delocate'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: |
+          python -m pip install "delocate==0.13.0"
+          delocate-wheel \
+            --require-archs "${{ matrix.arch }}" \
+            --wheel-dir wheelhouse/final \
+            --verbose \
+            wheelhouse/raw/*.whl
+
+      - name: Repair Windows wheel dependencies
+        if: matrix.repair == 'delvewheel'
+        run: |
+          python -m pip install "delvewheel==1.13.0"
+          delvewheel show --analyze-existing-exes wheelhouse/raw/*.whl
+          delvewheel repair --analyze-existing-exes --wheel-dir wheelhouse/final wheelhouse/raw/*.whl
+
+      - name: Verify native wheel structure
+        run: |
+          wheel_path="$(find wheelhouse/final -maxdepth 1 -name '*.whl' -print -quit)"
+          python scripts/verify_native_wheel.py "$wheel_path" --platform-tag "${{ matrix.platform_tag }}"
+
+      - name: Upload native wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dist-${{ matrix.artifact }}
+          path: wheelhouse/final/*.whl
+          if-no-files-found: error
+
+  collect:
+    needs:
+      - build
+      - native-linux-x64
+      - native-desktop
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Download every release distribution
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify complete distribution set
+        run: |
+          python -m pip install -U twine
+          python -m twine check dist/*
+          python scripts/verify_python_release_set.py dist
+
+      - name: Upload verified release set
         uses: actions/upload-artifact@v4
         with:
           name: release-dist
@@ -61,7 +282,7 @@ jobs:
 
   publish:
     if: github.event_name == 'push'
-    needs: build
+    needs: collect
     runs-on: ubuntu-latest
     steps:
       - name: Set up Python
@@ -69,7 +290,7 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Download Python distribution
+      - name: Download verified release set
         uses: actions/download-artifact@v4
         with:
           name: release-dist
@@ -92,7 +313,7 @@ jobs:
             echo "token=${{ secrets.PYPI_API_TOKEN }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Upload Python compatibility distribution to ${{ steps.repo.outputs.name }}
+      - name: Upload unified distribution to ${{ steps.repo.outputs.name }}
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ steps.repo.outputs.token }}

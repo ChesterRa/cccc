@@ -51,7 +51,7 @@ function New-FixtureRelease([string]$Version, [bool]$ValidChecksum, [string]$Ccc
     Copy-Item -LiteralPath $source -Destination (Join-Path $packageDir $binary)
   }
   $archive = Join-Path $releaseDir "$package.zip"
-  Compress-Archive -Path $packageDir -DestinationPath $archive
+  Compress-Archive -Path $packageDir -DestinationPath $archive -Force
   $archiveChecksum = if ($ValidChecksum) {
     (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
   } else {

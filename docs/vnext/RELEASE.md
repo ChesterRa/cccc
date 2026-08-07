@@ -8,21 +8,25 @@ line.
 
 The GitHub Actions workflow builds and uploads:
 
-- Python source distribution and portable Python wheel
+- Python source distribution, portable wheel, and four native platform wheels
 - Native Rust archives for Linux x86-64, Intel/Apple Silicon macOS, and Windows x86-64
 - Bundled Web UI assets (built from `web/` and packaged under `cccc/ports/web/dist/`)
 - Embedded MCP server (`cccc mcp`) + protocol reference (`cccc_help`, sourced from `cccc/resources/cccc-help.md`)
 
-Normal CI owns implementation and interoperability tests. Python publication does
-not compile Rust. The standalone workflow builds the shared Web UI once, compiles
-each supported native binary once, and attaches the archives, checksums, and
-installers to GitHub Releases. Final native installation smoke checks are manual.
+Normal CI owns implementation and interoperability tests; release workflows do
+not repeat those suites. Python publication performs one clean installation smoke
+of the portable wheel, builds four Rust-backed platform wheels in parallel, and
+publishes only after the source distribution and all five wheels form one verified
+set. The standalone workflow builds the shared Web UI once, compiles and executes
+each supported native binary once, then verifies the final Linux and Windows
+installers in parallel before attaching the archives, checksums, and installers
+to GitHub Releases.
 
 ## Tag ↔ Version conventions
 
 The release workflows are tag-driven (`v*`) and enforce one normalized identity
 across the tag, PEP 440 in `pyproject.toml`, SemVer in `Cargo.toml`, and
-Cargo.lock. The manual native-install check confirms the built binary version.
+Cargo.lock. Automated native smokes confirm the built and installed versions.
 
 | Git tag | Upload target | Expected `pyproject.toml` version |
 |--------|----------------|-----------------------------------|
@@ -41,19 +45,15 @@ Cargo.lock. The manual native-install check confirms the built binary version.
 3. Smoke-test the portable Python wheel locally:
    - `python -m pip install --force-reinstall dist/*.whl`
    - `cccc version`
-4. After GitHub assets are published, manually test a native installation:
-   - macOS/Linux: download the complete asset set and run
-     `scripts/tests/verify_release_unix.sh <artifact-dir> <target>`.
-   - Windows: download the complete asset set and run
-     `scripts/tests/verify_release_windows.ps1 -ArtifactDir <artifact-dir> -Target x86_64-pc-windows-msvc`.
-   - The verifiers install into temporary directories and exercise version,
-     offline status, daemon lifecycle, and MCP startup; Unix also runs a real
-     nested-tool `cccc_code_exec` cell.
-   - Confirm the release contains four archives, `SHA256SUMS`, `install.sh`, and
-     `install.ps1`.
-5. Tag and push:
+4. Tag and push:
    - `git tag -a v0.4.0-rcN -m "v0.4.0-rcN"`
    - `git push --tags`
+5. Confirm the bounded release gates pass before publication:
+   - the Python source distribution, portable wheel, and four native wheels share one version,
+   - all four native binaries execute `cccc --version` on their build hosts,
+   - Linux and Windows install from the final release-candidate asset set,
+   - the portable Python wheel installs without dependencies and runs `cccc version`,
+   - no full source suite or cross-language interoperability suite is repeated.
 
 ## Installing an RC from TestPyPI
 

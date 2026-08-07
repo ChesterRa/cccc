@@ -14,6 +14,13 @@ const UNIX_INSTALLER_URL: &str = "https://chesterra.github.io/cccc/install.sh";
 const WINDOWS_INSTALLER_URL: &str = "https://chesterra.github.io/cccc/install.ps1";
 const INSTALL_MARKER: &str = ".cccc-standalone";
 const INSTALL_MARKER_VERSION: &str = "standalone-v1";
+#[cfg(any(windows, test))]
+const WINDOWS_INSTALL_COMMAND: &str = concat!(
+    "Wait-Process -Id $env:CCCC_UPDATE_PARENT_PID -ErrorAction SilentlyContinue; ",
+    "[Net.ServicePointManager]::SecurityProtocol = ",
+    "[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; ",
+    "Invoke-RestMethod -Uri $env:CCCC_INSTALLER_URL | Invoke-Expression",
+);
 
 pub async fn run(args: UpdateArgs) -> Result<()> {
     let executable = std::env::current_exe().context("could not resolve the CCCC executable")?;
@@ -153,7 +160,7 @@ fn run_installer(install_dir: &Path, version: Option<&str>) -> Result<()> {
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            "Wait-Process -Id $env:CCCC_UPDATE_PARENT_PID -ErrorAction SilentlyContinue; Invoke-RestMethod -Uri $env:CCCC_INSTALLER_URL | Invoke-Expression",
+            WINDOWS_INSTALL_COMMAND,
         ])
         .env("CCCC_UPDATE_PARENT_PID", std::process::id().to_string())
         .env("CCCC_INSTALLER_URL", WINDOWS_INSTALLER_URL)
@@ -230,6 +237,17 @@ mod tests {
         assert!(valid_release_version("1.2.3"));
         assert!(!valid_release_version("latest"));
         assert!(!valid_release_version("1.2.3/../../escape"));
+    }
+
+    #[test]
+    fn windows_updater_enables_tls_before_downloading_the_installer() {
+        let tls = WINDOWS_INSTALL_COMMAND
+            .find("[Net.SecurityProtocolType]::Tls12")
+            .expect("Windows updater TLS bootstrap");
+        let download = WINDOWS_INSTALL_COMMAND
+            .find("Invoke-RestMethod")
+            .expect("Windows updater download");
+        assert!(tls < download);
     }
 
     #[test]
