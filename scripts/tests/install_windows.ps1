@@ -370,9 +370,10 @@ fn main() {
           [IO.FileShare]::Read
         )
       }
-    } catch {
-      Start-Sleep -Milliseconds 10
-    }
+    } catch {}
+    # Get-FileHash does not share the file for deletion on Windows. Leave a
+    # window for the installer to rename the old executable between probes.
+    if ($null -eq $heldBinary) { Start-Sleep -Milliseconds 10 }
   }
   if ($null -eq $heldBinary) {
     if (-not $child.HasExited) {
