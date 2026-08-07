@@ -93,6 +93,17 @@ def test_rust_job_is_python_free_and_serializes_daemon_tests() -> None:
         assert f"--skip {legacy_test}" in runs
 
 
+def test_rust_job_and_manual_verifiers_cover_replacement_smoke() -> None:
+    runs = _runs(_workflow()["jobs"]["rust"])
+    unix_verifier = (ROOT / "scripts/tests/verify_release_unix.sh").read_text(encoding="utf-8")
+    windows_verifier = (ROOT / "scripts/tests/verify_release_windows.ps1").read_text(encoding="utf-8")
+
+    assert "scripts/tests/smoke_rust_replacement.sh target/release/cccc" in runs
+    assert "smoke_rust_replacement.sh" in unix_verifier
+    assert '"method":"initialize"' in windows_verifier
+    assert "Daemon:      stopped" in windows_verifier
+
+
 def test_ci_does_not_carry_retired_source_size_or_one_time_migration_governance() -> None:
     runs = "\n".join(_runs(job) for job in _workflow()["jobs"].values())
 

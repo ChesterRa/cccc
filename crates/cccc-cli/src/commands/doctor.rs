@@ -6,12 +6,22 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub async fn run(home: &HomeLayout, product_version: &str) -> Result<()> {
+pub async fn run(home: &HomeLayout, product_version: &str, all_runtimes: bool) -> Result<()> {
     let browser = find_browser();
+    let xvfb = find_command("Xvfb");
+    let x11vnc = find_command("x11vnc");
     let daemon = daemon_status(home).await;
     println!(
         "{}",
-        serde_json::to_string_pretty(&report(home, product_version, browser.as_deref(), daemon,))?
+        serde_json::to_string_pretty(&report(
+            home,
+            product_version,
+            browser.as_deref(),
+            xvfb.as_deref(),
+            x11vnc.as_deref(),
+            daemon,
+            all_runtimes,
+        ))?
     );
     Ok(())
 }
@@ -42,16 +52,22 @@ fn report(
     home: &HomeLayout,
     product_version: &str,
     browser: Option<&Path>,
+    xvfb: Option<&Path>,
+    x11vnc: Option<&Path>,
     daemon: Value,
+    all_runtimes: bool,
 ) -> Value {
-    let xvfb = find_command("Xvfb");
-    let x11vnc = find_command("x11vnc");
+    let linux = cfg!(target_os = "linux");
+    let mut runtimes = cccc_runtime::detect_runtimes();
+    if !all_runtimes {
+        runtimes.retain(|runtime| runtime.name != "custom");
+    }
     json!({
         "implementation":"rust",
         "version":product_version,
         "home":home.root(),
         "daemon":daemon,
-        "runtimes":cccc_runtime::detect_runtimes(),
+        "runtimes":runtimes,
         "pty":{
             "supported":true,
             "backend":if cfg!(windows){"ConPTY"}else{"native PTY"},
@@ -62,15 +78,19 @@ fn report(
             "other_surface_mode":"headless",
             "browser_available":browser.is_some(),
             "browser_path":browser,
-            "xvfb_required":false,
-            "system_browser_available":browser.is_some(),
+            "xvfb_required":linux,
+            "system_browser_available":browser.is_some() && (!linux || xvfb.is_some()),
             "system_browser_path":browser,
             "xvfb_available":xvfb.is_some(),
             "xvfb_path":xvfb,
             "x11vnc_available":x11vnc.is_some(),
             "x11vnc_path":x11vnc,
-            "xvfb_required_for_linux_web_model":false,
-            "note":"Web Model uses system Chrome/Edge/Chromium via CDP; Linux uses Xvfb when available and otherwise falls back to headless CDP projection."
+            "xvfb_required_for_linux_web_model":linux,
+            "note":if linux {
+                "Web Model uses system Chrome/Edge/Chromium via an isolated Xvfb display; Xvfb is required on Linux."
+            } else {
+                "Web Model uses system Chrome/Edge/Chromium via CDP."
+            }
         }
     })
 }
@@ -126,7 +146,16 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let browser = Path::new("/usr/bin/google-chrome");
-        let value = report(&home, "0.4.33", Some(browser), json!({"running":false}));
+        let xvfb = Path::new("/usr/bin/Xvfb");
+        let value = report(
+            &home,
+            "0.4.33",
+            Some(browser),
+            Some(xvfb),
+            None,
+            json!({"running":false}),
+            false,
+        );
         assert_eq!(value["version"], "0.4.33");
         assert_eq!(value["daemon"]["running"], false);
         assert_eq!(value["projected_browser"]["mode"], "hybrid");
@@ -140,7 +169,10 @@ mod tests {
             value["projected_browser"]["browser_path"],
             browser.to_string_lossy().as_ref()
         );
-        assert_eq!(value["projected_browser"]["xvfb_required"], false);
+        assert_eq!(
+            value["projected_browser"]["xvfb_required"],
+            cfg!(target_os = "linux")
+        );
         assert_eq!(value["projected_browser"]["system_browser_available"], true);
         assert_eq!(
             value["projected_browser"]["system_browser_path"],
@@ -148,7 +180,40 @@ mod tests {
         );
         assert_eq!(
             value["projected_browser"]["xvfb_required_for_linux_web_model"],
-            false
+            cfg!(target_os = "linux")
+        );
+        assert!(
+            value["runtimes"]
+                .as_array()
+                .expect("runtimes")
+                .iter()
+                .all(|runtime| runtime["name"] != "custom")
+        );
+    }
+
+    #[test]
+    fn linux_system_browser_contract_requires_xvfb() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let value = report(
+            &home,
+            "0.4.33",
+            Some(Path::new("/usr/bin/chromium")),
+            None,
+            None,
+            json!({"running":false}),
+            true,
+        );
+        assert_eq!(
+            value["projected_browser"]["system_browser_available"],
+            !cfg!(target_os = "linux")
+        );
+        assert!(
+            value["runtimes"]
+                .as_array()
+                .expect("runtimes")
+                .iter()
+                .any(|runtime| runtime["name"] == "custom")
         );
     }
 }

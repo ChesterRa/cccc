@@ -1,6 +1,7 @@
 mod args;
 mod commands;
 mod hook_receiver;
+mod shutdown;
 mod web_instance;
 mod web_launch;
 
@@ -23,6 +24,16 @@ async fn main() -> Result<()> {
     match cli.command {
         None => launch(home, cli.host, cli.port, None).await,
         Some(CommandKind::Web(args)) => {
+            if args.reload {
+                eprintln!(
+                    "[cccc] --reload is accepted for compatibility; the standalone Rust server does not use a source reloader"
+                );
+            }
+            if args.log_level != "info" {
+                eprintln!(
+                    "[cccc] --log-level is accepted for compatibility; configure Rust logging with RUST_LOG"
+                );
+            }
             let mode = if args.exhibit {
                 Some(cccc_web::WebMode::Exhibit)
             } else {
@@ -82,10 +93,12 @@ async fn main() -> Result<()> {
         Some(CommandKind::Ledger(args)) => commands::messaging::ledger(&client, &home, args).await,
         Some(CommandKind::Daemon { action }) => daemon(action, home, &client).await,
         Some(CommandKind::Runtime { action }) => runtime(&client, action).await,
-        Some(CommandKind::Status) => status(&client).await,
-        Some(CommandKind::Doctor) => commands::doctor::run(&home, PRODUCT_VERSION).await,
+        Some(CommandKind::Status) => commands::status::run(&home, PRODUCT_VERSION).await,
+        Some(CommandKind::Doctor(args)) => {
+            commands::doctor::run(&home, PRODUCT_VERSION, args.all).await
+        }
         Some(CommandKind::Setup(args)) => commands::setup::run(&home, args),
-        Some(CommandKind::Update(args)) => commands::update::run(args),
+        Some(CommandKind::Update(args)) => commands::update::run(args).await,
     }
 }
 
@@ -128,7 +141,7 @@ async fn launch(
         finish_embedded_daemon(&client, embedded_daemon.take()).await;
         bail!("embedded Rust daemon failed to start");
     }
-    let shutdown_feedback = tokio::spawn(report_interrupt());
+    let shutdown_watchdog = tokio::spawn(shutdown::watch_for_interrupt());
     let mode = web_mode.unwrap_or_else(cccc_web::WebMode::from_env);
     let result = loop {
         let monitor =
@@ -161,8 +174,8 @@ async fn launch(
             Err(error) => break Err(error),
         }
     };
-    shutdown_feedback.abort();
     finish_embedded_daemon(&client, embedded_daemon.take()).await;
+    shutdown_watchdog.abort();
     result
 }
 
@@ -227,12 +240,6 @@ async fn wait_for_web_instance_exit(
     }
 }
 
-async fn report_interrupt() {
-    if tokio::signal::ctrl_c().await.is_ok() {
-        eprintln!("Stopping CCCC...");
-    }
-}
-
 async fn finish_embedded_daemon(
     client: &DaemonClient,
     daemon: Option<tokio::task::JoinHandle<Result<()>>>,
@@ -293,19 +300,15 @@ async fn show_active(client: &DaemonClient, home: &HomeLayout) -> Result<()> {
     print(call(client, "group_show", json!({"group_id":group_id})).await?)
 }
 
-async fn status(client: &DaemonClient) -> Result<()> {
-    if !ping(client).await {
-        bail!("ccccd: not running");
-    }
-    print(call(client, "group_list", json!({})).await?)
-}
-
 async fn runtime(client: &DaemonClient, action: RuntimeAction) -> Result<()> {
     match action {
-        RuntimeAction::List => println!(
-            "{}",
-            serde_json::to_string_pretty(&cccc_runtime::detect_runtimes())?
-        ),
+        RuntimeAction::List { all } => {
+            let mut runtimes = cccc_runtime::detect_runtimes();
+            if !all {
+                runtimes.retain(|runtime| runtime.name != "custom");
+            }
+            println!("{}", serde_json::to_string_pretty(&runtimes)?);
+        }
         RuntimeAction::Hermes { action } => {
             let (op, args) = match action {
                 HermesAction::Status => ("runtime_hermes_status", json!({})),

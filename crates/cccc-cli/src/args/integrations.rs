@@ -2,7 +2,11 @@ use clap::{Args, Subcommand};
 
 #[derive(Debug, Args)]
 pub struct PromptArgs {
-    pub actor_id: String,
+    /// Legacy positional spelling retained for Rust preview users.
+    #[arg(value_name = "ACTOR_ID")]
+    pub legacy_actor_id: Option<String>,
+    #[arg(long = "actor-id")]
+    pub actor_id: Option<String>,
     #[arg(long = "group")]
     pub group_id: Option<String>,
 }
@@ -128,6 +132,8 @@ pub enum SpaceAction {
         lane: String,
         #[arg(long, default_value = "notebooklm")]
         provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
     },
     Unbind {
         #[arg(long = "group")]
@@ -136,6 +142,8 @@ pub enum SpaceAction {
         lane: String,
         #[arg(long, default_value = "notebooklm")]
         provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
     },
     Sync {
         #[arg(long = "group")]
@@ -146,6 +154,8 @@ pub enum SpaceAction {
         provider: String,
         #[arg(long)]
         force: bool,
+        #[arg(long, default_value = "user")]
+        by: String,
     },
     Ingest {
         #[arg(long = "group")]
@@ -160,6 +170,8 @@ pub enum SpaceAction {
         idempotency_key: Option<String>,
         #[arg(long, default_value = "notebooklm")]
         provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
     },
     Query {
         query: String,
@@ -187,22 +199,12 @@ pub enum SpaceAction {
         provider: String,
     },
     Jobs {
-        #[arg(long = "group")]
-        group_id: Option<String>,
-        #[arg(long)]
-        lane: String,
-        #[arg(long, default_value = "list")]
-        action: String,
-        #[arg(long)]
-        job_id: Option<String>,
-        #[arg(long, default_value = "notebooklm")]
-        provider: String,
+        #[command(subcommand)]
+        action: SpaceJobsAction,
     },
     Auth {
-        #[arg(default_value = "status")]
-        action: String,
-        #[arg(long, default_value = "notebooklm")]
-        provider: String,
+        #[command(subcommand)]
+        action: SpaceAuthAction,
     },
     Credential {
         #[command(subcommand)]
@@ -211,6 +213,78 @@ pub enum SpaceAction {
     Health {
         #[arg(long, default_value = "notebooklm")]
         provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SpaceJobsAction {
+    List {
+        #[arg(long = "group")]
+        group_id: Option<String>,
+        #[arg(long)]
+        lane: String,
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
+        #[arg(long)]
+        state: Option<String>,
+        #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u64).range(1..=500))]
+        limit: u64,
+    },
+    Retry {
+        job_id: String,
+        #[arg(long = "group")]
+        group_id: Option<String>,
+        #[arg(long)]
+        lane: String,
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
+    },
+    Cancel {
+        job_id: String,
+        #[arg(long = "group")]
+        group_id: Option<String>,
+        #[arg(long)]
+        lane: String,
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SpaceAuthAction {
+    Status {
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
+    },
+    Start {
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
+        #[arg(long, default_value_t = 900, value_parser = clap::value_parser!(u64).range(60..=1800))]
+        timeout_seconds: u64,
+        #[arg(long)]
+        force_reauth: bool,
+    },
+    Cancel {
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
+    },
+    Disconnect {
+        #[arg(long, default_value = "notebooklm")]
+        provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
     },
 }
 
@@ -219,6 +293,8 @@ pub enum SpaceCredentialAction {
     Status {
         #[arg(long, default_value = "notebooklm")]
         provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
     },
     Set {
         #[arg(long, default_value = "notebooklm")]
@@ -227,9 +303,13 @@ pub enum SpaceCredentialAction {
         auth_json: Option<String>,
         #[arg(long, conflicts_with = "auth_json")]
         auth_json_file: Option<String>,
+        #[arg(long, default_value = "user")]
+        by: String,
     },
     Clear {
         #[arg(long, default_value = "notebooklm")]
         provider: String,
+        #[arg(long, default_value = "user")]
+        by: String,
     },
 }

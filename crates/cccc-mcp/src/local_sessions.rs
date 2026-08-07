@@ -29,22 +29,6 @@ pub fn start(root: &Path, args: &Map<String, Value>) -> Result<Value, String> {
     Ok(json!({"session_id":session_id,"status":status}))
 }
 
-pub fn start_code(root: &Path, args: &Map<String, Value>) -> Result<Value, String> {
-    let code = args
-        .get("code")
-        .and_then(Value::as_str)
-        .ok_or("code is required")?;
-    let language = args.get("language").and_then(Value::as_str).unwrap_or("sh");
-    let command = match language {
-        "javascript" | "js" => vec!["node", "-e", code],
-        "rust" => return Err("Rust snippets require a project command".into()),
-        _ => vec!["sh", "-lc", code],
-    };
-    let mut forwarded = args.clone();
-    forwarded.insert("command".into(), json!(command));
-    start(root, &forwarded)
-}
-
 pub fn write(args: &Map<String, Value>) -> Result<Value, String> {
     let (session_id, group_id) = session(args)?;
     if let Some(data) = args.get("chars").and_then(Value::as_str) {
@@ -60,19 +44,6 @@ pub fn write(args: &Map<String, Value>) -> Result<Value, String> {
             cccc_runtime::stop(&group_id, &session_id).map_err(|error| error.to_string())?;
         remove_session(&session_id)?;
         return Ok(json!({"session_id":session_id,"status":status}));
-    }
-    payload(&group_id, &session_id)
-}
-
-pub async fn wait(args: &Map<String, Value>) -> Result<Value, String> {
-    let (session_id, group_id) = session(args)?;
-    let wait_ms = args
-        .get("wait_ms")
-        .and_then(Value::as_u64)
-        .unwrap_or(0)
-        .min(30_000);
-    if wait_ms > 0 {
-        tokio::time::sleep(std::time::Duration::from_millis(wait_ms)).await;
     }
     payload(&group_id, &session_id)
 }
