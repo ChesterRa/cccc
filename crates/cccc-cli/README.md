@@ -22,7 +22,7 @@ product use.
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 ```
 
-Windows PowerShell uses `irm https://chesterra.github.io/cccc/install.ps1 | iex`.
+Windows CMD or PowerShell uses `powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"`.
 These installers download a checksum-verified GitHub Release binary and require
 neither Rust nor Python. This Rust-only channel has no Python fallback or
 implementation switching and is not the recommended replacement for the pip
@@ -36,6 +36,9 @@ Use `cccc update --check` to inspect the detected installation and update source
 The installer refuses to overwrite an existing public `cccc` command without its
 standalone ownership marker. The private wheel payload remains updated only as
 part of the complete pip product.
+Commands in other directories are preserved. The default installer moves its
+directory to the front of the user PATH and reports remaining duplicates; verify
+the selected command in a new terminal with `cccc doctor`.
 
 ## Workspace development
 

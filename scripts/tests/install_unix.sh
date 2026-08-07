@@ -114,9 +114,23 @@ sh "$TMP_ROOT/versioned-install.sh"
 grep -Fxq 'standalone-v1' "$TMP_ROOT/versioned-home/.local/bin/.cccc-standalone"
 
 mkdir -p "$TMP_ROOT/home with space"
-printf '# existing login profile\n' > "$TMP_ROOT/home with space/.profile"
+cat > "$TMP_ROOT/home with space/.profile" <<'EOF'
+# existing login profile
+
+# CCCC
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac
+EOF
+shadow_bin="$TMP_ROOT/older-cccc/bin"
+mkdir -p "$shadow_bin"
+cat > "$shadow_bin/cccc" <<'EOF'
+#!/usr/bin/env sh
+if [ "${1:-}" = "--version" ]; then printf 'cccc 0.3.0\n'; fi
+EOF
+chmod 755 "$shadow_bin/cccc"
+shadow_hash=$(checksum "$shadow_bin/cccc")
 HOME="$TMP_ROOT/home with space" \
 SHELL=/bin/bash \
+PATH="$shadow_bin:$TMP_ROOT/home with space/.local/bin:$PATH" \
 CCCC_VERSION="$version" \
 CCCC_RELEASE_BASE_URL="file://$TMP_ROOT/releases" \
 sh "$ROOT_DIR/scripts/install.sh" > "$TMP_ROOT/bash-install.out"
@@ -126,10 +140,18 @@ grep -Fxq 'standalone-v1' "$TMP_ROOT/home with space/.local/bin/.cccc-standalone
 [[ "$("$TMP_ROOT/home with space/.local/bin/cccc" --version)" == "cccc $version" ]]
 for bash_profile in .profile .bashrc; do
   test "$(grep -Fc '# CCCC' "$TMP_ROOT/home with space/$bash_profile")" -eq 1
-  grep -Fq 'case ":$PATH:" in *":$HOME/.local/bin:"*)' "$TMP_ROOT/home with space/$bash_profile"
+  grep -Fq 'case "$PATH" in "$HOME/.local/bin"|"$HOME/.local/bin:"*)' "$TMP_ROOT/home with space/$bash_profile"
+  ! grep -Fq 'case ":$PATH:" in *":$HOME/.local/bin:"*)' "$TMP_ROOT/home with space/$bash_profile"
 done
 test ! -e "$TMP_ROOT/home with space/.bash_profile"
 grep -Fq 'Activate in this shell: source ~/.bashrc' "$TMP_ROOT/bash-install.out"
+grep -Fq 'Verify installed command directly:' "$TMP_ROOT/bash-install.out"
+grep -Fq 'Other CCCC commands were left unchanged:' "$TMP_ROOT/bash-install.out"
+grep -Fq 'older-cccc/bin/cccc' "$TMP_ROOT/bash-install.out"
+[[ "$(checksum "$shadow_bin/cccc")" == "$shadow_hash" ]]
+HOME="$TMP_ROOT/home with space" \
+PATH="$shadow_bin:$TMP_ROOT/home with space/.local/bin:$PATH" \
+/bin/bash -c '. "$HOME/.profile"; [ "${PATH%%:*}" = "$HOME/.local/bin" ]'
 
 login_profile_before=$(checksum "$TMP_ROOT/home with space/.profile")
 interactive_profile_before=$(checksum "$TMP_ROOT/home with space/.bashrc")

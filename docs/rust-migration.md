@@ -31,8 +31,8 @@ or Python toolchain:
 # macOS / Linux
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
-# Windows PowerShell
-irm https://chesterra.github.io/cccc/install.ps1 | iex
+# Windows CMD or PowerShell
+powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
 The GitHub Pages scripts pin the product version represented by the current
@@ -137,8 +137,9 @@ the single daily shadow write for durable memory entries.
 `cccc space auth status|start|cancel|disconnect` uses the local Rust Web API for
 NotebookLM authentication. IM start requests sent directly to the daemon are
 delegated to the Web-owned integration worker, preserving one lifecycle owner.
-`cccc doctor` reports daemon identity/version, PTY support, browser discovery,
-and Linux display helpers so installation failures are visible from the CLI.
+`cccc doctor` reports daemon identity/version, the invoked executable, PATH
+resolution and duplicate `cccc` commands, PTY support, browser discovery, and
+Linux display helpers so installation failures are visible from the CLI.
 Linux Web Model projection requires Xvfb and fails with an actionable error when
 it is absent; it no longer silently changes behavior by falling back to a
 headless browser.

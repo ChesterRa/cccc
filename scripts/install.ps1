@@ -8,6 +8,10 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+# Windows PowerShell 5.1 can otherwise negotiate an obsolete TLS protocol.
+[Net.ServicePointManager]::SecurityProtocol =
+  [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+
 $defaultVersion = "@CCCC_VERSION@"
 $releaseTagPrefix = if ($env:CCCC_RELEASE_TAG_PREFIX) { $env:CCCC_RELEASE_TAG_PREFIX } else { "@CCCC_RELEASE_TAG_PREFIX@" }
 if ($releaseTagPrefix.StartsWith("@")) {
@@ -40,6 +44,41 @@ function Get-ResponseUri([object]$Response) {
     return $Response.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
   }
   throw "Could not resolve the latest release URI"
+}
+
+function Get-CcccCommandPaths([string]$PathValue) {
+  if ([string]::IsNullOrWhiteSpace($PathValue)) { return }
+  $extensions = if ($env:PATHEXT) { @($env:PATHEXT.Split(';')) } else { @('.COM', '.EXE', '.BAT', '.CMD') }
+  $names = @('cccc')
+  foreach ($extension in $extensions) {
+    $extension = $extension.Trim()
+    if (-not $extension) { continue }
+    if (-not $extension.StartsWith('.')) { $extension = ".$extension" }
+    $names += "cccc$extension"
+  }
+  if ($names -notcontains 'cccc.ps1') { $names += 'cccc.ps1' }
+  $seen = @{}
+  foreach ($entry in $PathValue.Split(';', [StringSplitOptions]::RemoveEmptyEntries)) {
+    $directory = [Environment]::ExpandEnvironmentVariables($entry.Trim().Trim('"'))
+    if (-not $directory) { continue }
+    foreach ($name in $names) {
+      $candidate = Join-Path $directory $name
+      if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) { continue }
+      $fullPath = [IO.Path]::GetFullPath($candidate)
+      $key = $fullPath.ToUpperInvariant()
+      if ($seen.ContainsKey($key)) { continue }
+      $seen[$key] = $true
+      Write-Output $fullPath
+    }
+  }
+}
+
+function Test-SameCommandPath([string]$Left, [string]$Right) {
+  if (-not $Left -or -not $Right) { return $false }
+  return [IO.Path]::GetFullPath($Left).Equals(
+    [IO.Path]::GetFullPath($Right),
+    [StringComparison]::OrdinalIgnoreCase
+  )
 }
 
 function Receive-File([string]$Uri, [string]$Destination) {
@@ -266,11 +305,33 @@ try {
     $env:Path = (@($InstallDir) + $processEntries) -join ';'
     Write-Host "Added $InstallDir to the front of the user and current PowerShell PATH."
   } elseif (-not $pathReady) {
-    Write-Host "Add $InstallDir to PATH, then open a new terminal."
+    Write-Warning "Move $InstallDir to the front of PATH, then open a new terminal."
+  }
+
+  $installedCommand = [IO.Path]::GetFullPath((Join-Path $InstallDir "cccc.exe"))
+  $resolvedCommands = @(Get-CcccCommandPaths $env:Path)
+  $resolvedCommand = if ($resolvedCommands.Count -gt 0) { $resolvedCommands[0] } else { $null }
+  if (-not $NoModifyPath -and -not (Test-SameCommandPath $resolvedCommand $installedCommand)) {
+    throw "PATH verification resolved cccc to $resolvedCommand instead of $installedCommand"
+  }
+  if ($NoModifyPath -and -not (Test-SameCommandPath $resolvedCommand $installedCommand)) {
+    Write-Warning "This shell still resolves cccc to $resolvedCommand. Run $installedCommand directly or move $InstallDir to the front of PATH."
+  }
+  $otherCommands = @(
+    $resolvedCommands |
+      Where-Object { -not (Test-SameCommandPath $_ $installedCommand) } |
+      Select-Object -Unique
+  )
+  if ($otherCommands.Count -gt 0) {
+    Write-Host "Other CCCC commands were left unchanged:"
+    foreach ($commandPath in $otherCommands) {
+      Write-Host "  - $commandPath"
+    }
   }
 
   Write-Host "Installed CCCC v$Version in $InstallDir"
-  Write-Host "Run: cccc doctor"
+  Write-Host "Verify installed command directly: `"$installedCommand`" doctor"
+  Write-Host "Verify after opening a new terminal: cccc doctor"
 } finally {
   if ($transactionStarted -and -not $transactionCommitted) {
     foreach ($binary in $binaries) {

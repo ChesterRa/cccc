@@ -25,6 +25,11 @@ On Linux, the report includes projected-browser readiness: system Chrome/Edge, r
 isolation, and the optional `x11vnc` VNC viewer. A missing `x11vnc` does not prevent browser
 isolation; CCCC falls back to its CDP screencast viewer.
 
+The installation section reports the executable handling the current invocation,
+the first `cccc` selected by PATH, and all other `cccc` commands. A `CONFLICT`
+status means an older installation is ahead of the current launcher; move the
+current launcher's directory to the front of PATH and open a new terminal.
+
 ### `cccc runtime list`
 
 List available agent runtimes.

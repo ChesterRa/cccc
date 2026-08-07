@@ -49,12 +49,23 @@ Rust-only standalone preview is also available for deployment testing:
 # macOS / Linux
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
-# Windows PowerShell
-irm https://chesterra.github.io/cccc/install.ps1 | iex
+# Windows CMD or PowerShell
+powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
 The preview has no Python fallback or implementation switching and is not the
 recommended replacement for the pip product.
+
+### Why does `cccc` still start an older installation after an upgrade?
+
+CCCC does not delete commands owned by another Python environment or installer.
+Run `cccc doctor` and inspect the `Installation` section. It shows the current
+launcher, the first command selected by PATH, and every duplicate. The standalone
+installer puts its default directory first for new terminals; an existing terminal
+must be reopened (or its PATH refreshed). Custom install directories and
+`CCCC_NO_MODIFY_PATH=1` require you to move that directory to the front manually.
+When PATH still selects the old command, run the newly installed executable by
+the absolute path printed by the installer to get the current diagnostic report.
 
 ### How do I upgrade from an older version (0.3.x)?
 

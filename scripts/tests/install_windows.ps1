@@ -11,7 +11,15 @@ $realVersion = $versionMatch.Matches[0].Groups[1].Value
 $releaseBinaryDir = Join-Path $rootDir "target\release"
 $originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
 $originalProcessPath = $env:Path
+$originalSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
+$originalCcccHome = $env:CCCC_HOME
+$originalLauncherPath = $env:CCCC_LAUNCHER_PATH
 $installerSource = Get-Content -LiteralPath (Join-Path $rootDir "scripts\install.ps1") -Raw
+$tlsSnapshot = $installerSource.IndexOf('[Net.ServicePointManager]::SecurityProtocol =')
+$downloadSnapshot = $installerSource.IndexOf('Invoke-WebRequest')
+if ($tlsSnapshot -lt 0 -or $downloadSnapshot -lt 0 -or $tlsSnapshot -gt $downloadSnapshot) {
+  throw "installer does not enable TLS 1.2 before its first HTTPS request"
+}
 $lockSnapshot = $installerSource.IndexOf('$lockStream = [IO.File]::Open')
 $originalSnapshot = $installerSource.IndexOf('$originals += $binary')
 if ($lockSnapshot -lt 0 -or $originalSnapshot -lt 0 -or $lockSnapshot -gt $originalSnapshot) {
@@ -92,6 +100,8 @@ function New-UnsafeFixtureRelease([string]$Version, [string]$UnsafeKind) {
 
 try {
   New-Item -ItemType Directory -Path $tempRoot | Out-Null
+  $env:CCCC_HOME = Join-Path $tempRoot "home"
+  Remove-Item Env:CCCC_LAUNCHER_PATH -ErrorAction SilentlyContinue
   New-FixtureRelease $realVersion $true
   $installDir = Join-Path $tempRoot "installed"
   $releaseRoot = (Resolve-Path (Join-Path $tempRoot "releases")).Path
@@ -100,6 +110,15 @@ try {
   $versionedInstaller = Join-Path $tempRoot "install.ps1"
   (Get-Content -LiteralPath (Join-Path $rootDir "scripts\install.ps1") -Raw).Replace("@CCCC_VERSION@", $realVersion) |
     Set-Content -LiteralPath $versionedInstaller
+
+  $olderCommandDir = Join-Path $tempRoot "older-cccc"
+  New-Item -ItemType Directory -Force -Path $olderCommandDir | Out-Null
+  $olderCommand = Join-Path $olderCommandDir "cccc.cmd"
+  Set-Content -LiteralPath $olderCommand -Value '@echo cccc 0.3.0' -Encoding Ascii
+  $olderCommandHash = (Get-FileHash -LiteralPath $olderCommand).Hash
+  $env:Path = "$olderCommandDir;$env:Path"
+  $testUserPath = if ($originalUserPath) { "$olderCommandDir;$originalUserPath" } else { $olderCommandDir }
+  [Environment]::SetEnvironmentVariable("Path", $testUserPath, "User")
 
   $foreignInstallDir = Join-Path $tempRoot "foreign-installed"
   New-Item -ItemType Directory -Force -Path $foreignInstallDir | Out-Null
@@ -143,12 +162,27 @@ try {
     throw "installer did not write its standalone marker"
   }
   & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir -NoModifyPath
-  & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir
+  $installOutput = (& (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir *>&1 | Out-String)
+  if (-not $installOutput.Contains("Other CCCC commands were left unchanged:")) {
+    throw "installer did not report the older CCCC command"
+  }
+  if (-not $installOutput.Contains("Verify installed command directly:")) {
+    throw "installer did not provide an absolute verification command"
+  }
+  if (-not $installOutput.Contains($olderCommand)) { throw "installer did not identify the older CCCC command path" }
+  if ((Get-FileHash -LiteralPath $olderCommand).Hash -ne $olderCommandHash) {
+    throw "installer modified an older CCCC command outside its install directory"
+  }
   $updatedUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
   $matchingPathEntries = @($updatedUserPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries)).Where({
     $_.TrimEnd('\') -ieq $installDir.TrimEnd('\')
   })
   if ($matchingPathEntries.Count -ne 1) { throw "installer did not add exactly one user PATH entry" }
+  if (@($updatedUserPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries)).Where({
+      $_.TrimEnd('\') -ieq $olderCommandDir.TrimEnd('\')
+    }).Count -ne 1) {
+    throw "installer removed or duplicated the older CCCC PATH entry"
+  }
   if ($updatedUserPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries)[0].TrimEnd('\') -ine $installDir.TrimEnd('\')) {
     throw "installer did not prepend its user PATH entry"
   }
@@ -158,6 +192,13 @@ try {
   }
   if ($processPathEntries.Where({ $_.TrimEnd('\') -ieq $installDir.TrimEnd('\') }).Count -ne 1) {
     throw "installer duplicated its current-process PATH entry"
+  }
+  $doctorReport = (& (Join-Path $installDir "cccc.exe") doctor | Out-String | ConvertFrom-Json)
+  if ($doctorReport.installation.path_status -ne "ok") {
+    throw "Rust doctor did not resolve the installed Windows command"
+  }
+  if (@($doctorReport.installation.conflicting_commands) -notcontains $olderCommand) {
+    throw "Rust doctor did not report the older Windows command"
   }
   & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $installDir
   $updatedUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
@@ -318,5 +359,8 @@ fn main() {
 } finally {
   [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
   $env:Path = $originalProcessPath
+  [Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol
+  if ($null -eq $originalCcccHome) { Remove-Item Env:CCCC_HOME -ErrorAction SilentlyContinue } else { $env:CCCC_HOME = $originalCcccHome }
+  if ($null -eq $originalLauncherPath) { Remove-Item Env:CCCC_LAUNCHER_PATH -ErrorAction SilentlyContinue } else { $env:CCCC_LAUNCHER_PATH = $originalLauncherPath }
   Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

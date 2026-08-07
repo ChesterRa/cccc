@@ -60,8 +60,15 @@ def test_windows_smoke_keeps_the_product_pty_checks_without_web_migration_setup(
     runs = _runs(windows)
     uses = {step.get("uses", "") for step in windows["steps"]}
 
+    assert windows["needs"] == "web"
     assert "tests/test_socket_special_ops.py" in runs
     assert "tests/test_windows_pty_backend.py" in runs
+    assert "tests/test_installation_diagnostics.py" in runs
+    assert "tests/test_system_cmds_doctor.py" in runs
+    assert "cargo build --release --locked -p cccc --bin cccc" in runs
+    assert "scripts/tests/install_windows.ps1" in runs
+    assert any(item.startswith("actions/download-artifact") for item in uses)
+    assert any(item.startswith("dtolnay/rust-toolchain") for item in uses)
     assert not any(item.startswith("actions/setup-node") for item in uses)
     assert "npm " not in runs
 
@@ -303,8 +310,33 @@ def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
     powershell_installer = (ROOT / "docs/public/install.ps1").read_text(encoding="utf-8")
     assert f'DEFAULT_VERSION="{version}"' in shell_installer
     assert f'$defaultVersion = "{version}"' in powershell_installer
+    tls_bootstrap = "[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12"
+    assert tls_bootstrap in powershell_installer
+    assert powershell_installer.index(tls_bootstrap) < powershell_installer.index("Invoke-WebRequest")
     assert "@CCCC_" not in shell_installer
     assert "@CCCC_" not in powershell_installer
+
+
+def test_windows_install_command_supports_cmd_and_legacy_powershell_tls() -> None:
+    command = (
+        "powershell.exe -NoProfile -Command \"[Net.ServicePointManager]::SecurityProtocol = "
+        "[Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; "
+        "Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression\""
+    )
+    documentation = [
+        "README.md",
+        "README.zh-CN.md",
+        "README.ja.md",
+        "docs/rust-migration.md",
+        "docs/guide/getting-started/index.md",
+        "docs/guide/faq.md",
+        "crates/cccc-cli/README.md",
+    ]
+
+    for relative_path in documentation:
+        contents = (ROOT / relative_path).read_text(encoding="utf-8")
+        assert command in contents, relative_path
+        assert "irm https://chesterra.github.io/cccc/install.ps1 | iex" not in contents, relative_path
 
 
 def test_rust_workspace_cannot_create_a_second_registry_distribution() -> None:

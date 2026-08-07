@@ -226,10 +226,17 @@ jobs:
 
   windows-smoke:
     if: github.event_name != 'schedule'
+    needs: web
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download Web bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: bundled-web
+          path: web/dist
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -246,6 +253,21 @@ jobs:
         run: >-
           python -m pytest -q --timeout=90 --timeout-method=thread
           tests/test_socket_special_ops.py tests/test_windows_pty_backend.py
+          tests/test_installation_diagnostics.py tests/test_system_cmds_doctor.py
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build native Windows installer fixture
+        run: cargo build --release --locked -p cccc --bin cccc
+
+      - name: Test Windows installer ownership and PATH handling
+        shell: pwsh
+        timeout-minutes: 15
+        run: scripts/tests/install_windows.ps1
 
   rust:
     if: github.event_name != 'schedule'

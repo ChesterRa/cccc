@@ -6,6 +6,8 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+mod installation;
+
 pub async fn run(home: &HomeLayout, product_version: &str, all_runtimes: bool) -> Result<()> {
     let browser = find_browser();
     let xvfb = find_command("Xvfb");
@@ -66,6 +68,7 @@ fn report(
         "implementation":"rust",
         "version":product_version,
         "home":home.root(),
+        "installation":installation::report(),
         "daemon":daemon,
         "runtimes":runtimes,
         "pty":{
@@ -157,6 +160,8 @@ mod tests {
             false,
         );
         assert_eq!(value["version"], "0.4.33");
+        assert!(value["installation"]["path_status"].is_string());
+        assert!(value["installation"]["command_candidates"].is_array());
         assert_eq!(value["daemon"]["running"], false);
         assert_eq!(value["projected_browser"]["mode"], "hybrid");
         assert_eq!(

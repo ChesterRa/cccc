@@ -122,10 +122,10 @@ macOS or Linux:
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 ```
 
-Windows PowerShell:
+Windows CMD or PowerShell:
 
 ```powershell
-irm https://chesterra.github.io/cccc/install.ps1 | iex
+powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
 The installer downloads a checksum-verified GitHub Release binary. It does not
@@ -135,13 +135,18 @@ command it does not own. Uninstall that command deliberately or choose another
 installer is pinned to that release candidate. You can also select it explicitly
 with `CCCC_VERSION`:
 
+Commands in other directories are never removed. The default installer puts its
+directory first in the user PATH and reports every remaining `cccc` command. Open
+a new terminal after installation and run `cccc doctor` to verify that PATH
+resolves to the executable you just installed.
+
 ```bash
 curl -fsSL https://chesterra.github.io/cccc/install.sh | CCCC_VERSION=0.4.34-rc2 sh
 ```
 
 ```powershell
 $env:CCCC_VERSION = "0.4.34-rc2"
-irm https://chesterra.github.io/cccc/install.ps1 | iex
+powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 Remove-Item Env:CCCC_VERSION
 ```
 
@@ -172,7 +177,8 @@ cccc doctor
 `status` shows the selected, running, and available product implementations.
 Python is the current default. On a supported platform wheel, use `cccc rust`
 to select the bundled Rust implementation or `cccc python` to switch back.
-`doctor` checks Python, agent runtimes, and system configuration.
+`doctor` checks Python, agent runtimes, system configuration, the invoked CCCC
+executable, PATH resolution, and duplicate `cccc` commands.
 
 ## Next Steps
 

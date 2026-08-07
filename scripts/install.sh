@@ -32,6 +32,41 @@ need awk
 need grep
 need mktemp
 
+canonical_command_path() {
+  command_path=$1
+  command_dir=${command_path%/*}
+  command_name=${command_path##*/}
+  [ "$command_dir" != "$command_path" ] || command_dir=.
+  if canonical_dir=$(CDPATH= cd -P "$command_dir" 2>/dev/null && pwd -P); then
+    printf '%s/%s\n' "$canonical_dir" "$command_name"
+  else
+    printf '%s\n' "$command_path"
+  fi
+}
+
+list_cccc_commands() {
+  remaining_path=${PATH:-}
+  while :; do
+    case "$remaining_path" in
+      *:*)
+        path_directory=${remaining_path%%:*}
+        remaining_path=${remaining_path#*:}
+        path_done=0
+        ;;
+      *)
+        path_directory=$remaining_path
+        path_done=1
+        ;;
+    esac
+    [ -n "$path_directory" ] || path_directory=.
+    candidate="$path_directory/cccc"
+    if [ -f "$candidate" ] && [ -x "$candidate" ]; then
+      canonical_command_path "$candidate"
+    fi
+    [ "$path_done" -eq 0 ] || break
+  done | awk '!seen[$0]++'
+}
+
 download() {
   url=$1
   destination=$2
@@ -269,19 +304,23 @@ printf '%s\n' "$INSTALL_MARKER_VERSION" > "$INSTALL_DIR/$INSTALL_MARKER"
 transaction_committed=1
 rm -rf "$backup_dir"
 
-path_ready=1
-case ":${PATH:-}:" in
-  *":$INSTALL_DIR:"*) ;;
-  *) path_ready=0 ;;
-esac
-
 add_path_profile() {
   profile_path=$1
   touch "$profile_path"
-  if ! grep -Fqx "$path_line" "$profile_path"; then
+  if grep -Fqx "$path_line" "$profile_path"; then
+    :
+  elif grep -Fqx "$legacy_path_line" "$profile_path"; then
+    replacement="$profile_path.cccc-install.$$"
+    if ! awk -v old="$legacy_path_line" -v new="$path_line" \
+      '{ if ($0 == old) print new; else print }' "$profile_path" > "$replacement" ||
+      ! mv "$replacement" "$profile_path"; then
+      rm -f "$replacement"
+      fail "could not update CCCC PATH entry in $profile_path"
+    fi
+  else
     printf '\n# CCCC\n%s\n' "$path_line" >> "$profile_path"
   fi
-  printf 'Added %s to PATH in %s.\n' "$INSTALL_DIR" "$profile_path"
+  printf 'Ensured %s is first on PATH in %s.\n' "$INSTALL_DIR" "$profile_path"
 }
 
 bash_login_profile() {
@@ -295,8 +334,9 @@ bash_login_profile() {
 }
 
 activation_hint=
-if [ "$path_ready" -eq 0 ] && [ "$NO_MODIFY_PATH" != "1" ] && [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
-  path_line='case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
+if [ "$NO_MODIFY_PATH" != "1" ] && [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
+  legacy_path_line='case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
+  path_line='case "$PATH" in "$HOME/.local/bin"|"$HOME/.local/bin:"*) ;; *) export PATH="$HOME/.local/bin:$PATH" ;; esac'
   case "${SHELL:-}" in
     */zsh)
       add_path_profile "$HOME/.zprofile"
@@ -308,16 +348,38 @@ if [ "$path_ready" -eq 0 ] && [ "$NO_MODIFY_PATH" != "1" ] && [ "$INSTALL_DIR" =
       add_path_profile "$HOME/.bashrc"
       activation_hint='source ~/.bashrc'
       ;;
-    *) printf 'Add %s to PATH, then open a new terminal.\n' "$INSTALL_DIR" ;;
+    *) printf 'Move %s to the front of PATH, then open a new terminal.\n' "$INSTALL_DIR" ;;
   esac
-elif [ "$path_ready" -eq 0 ]; then
-  printf 'Add %s to PATH, then open a new terminal.\n' "$INSTALL_DIR"
+else
+  printf 'Move %s to the front of PATH, then open a new terminal.\n' "$INSTALL_DIR"
 fi
 
+installed_command=$(canonical_command_path "$INSTALL_DIR/cccc")
+list_cccc_commands > "$tmp_dir/path-commands"
+other_commands=0
+while IFS= read -r command_path; do
+  [ -n "$command_path" ] || continue
+  if [ "$command_path" != "$installed_command" ]; then
+    if [ "$other_commands" -eq 0 ]; then
+      printf 'Other CCCC commands were left unchanged:\n'
+    fi
+    printf '  - %s\n' "$command_path"
+    other_commands=$((other_commands + 1))
+  fi
+done < "$tmp_dir/path-commands"
+
+PATH="$INSTALL_DIR${PATH:+:$PATH}"
+export PATH
+resolved_command=$(command -v cccc 2>/dev/null || :)
+resolved_command=$(canonical_command_path "$resolved_command")
+[ "$resolved_command" = "$installed_command" ] ||
+  fail "PATH verification resolved cccc to $resolved_command instead of $installed_command"
+
 printf 'Installed CCCC v%s in %s\n' "$VERSION" "$INSTALL_DIR"
+printf 'Verify installed command directly: "%s/cccc" doctor\n' "$INSTALL_DIR"
 if [ -n "$activation_hint" ]; then
   printf 'Activate in this shell: %s\n' "$activation_hint"
 elif [ "$INSTALL_DIR" = "$HOME/.local/bin" ]; then
   printf 'Activate in this shell: export PATH="$HOME/.local/bin:$PATH"; hash -r\n'
 fi
-printf 'Run: cccc doctor\n'
+printf 'Verify after opening a new terminal: cccc doctor\n'

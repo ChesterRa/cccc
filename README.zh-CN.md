@@ -500,14 +500,17 @@ Windows x86-64 上，pip 会选择同时包含 Python 实现和版本严格匹�
 # macOS / Linux
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
-# Windows PowerShell
-irm https://chesterra.github.io/cccc/install.ps1 | iex
+# Windows CMD 或 PowerShell
+powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
 这个可选通道只适合评估无 Python 的 Rust-only 部署。它会从 GitHub Releases
 下载并校验二进制，也可通过同一安装器执行 `cccc update`，但不具备 Python
 回退或实现切换能力，目前不作为 pip 产品的推荐替代品。安装器不会覆盖不属于它的
 现有 `cccc` 命令；请先有意卸载原命令，或改用其它 `CCCC_INSTALL_DIR`。
+其它目录中的同名命令会原样保留。使用默认安装目录时，安装器会把新命令放到用户
+PATH 最前面，并列出仍然存在的重复命令。打开新终端后运行 `cccc doctor`，其
+`Installation` 部分会显示本次入口、PATH 实际命中的命令以及全部冲突路径。
 
 当前托管的原生安装器固定安装 `v0.4.34-rc2` 候选版本。
 

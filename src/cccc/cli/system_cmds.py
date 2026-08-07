@@ -6,6 +6,7 @@ import json
 from importlib.metadata import PackageNotFoundError, distribution
 
 from .common import *  # noqa: F401,F403
+from .installation_diagnostics import inspect_cccc_installation
 
 __all__ = [
     "cmd_version",
@@ -376,6 +377,21 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # CCCC_HOME
     home = ensure_home()
     print(f"CCCC_HOME: {home}")
+
+    installation = inspect_cccc_installation()
+    print()
+    print("Installation:")
+    print(f"  Current executable: {installation.get('current_executable') or '(unknown)'}")
+    print(f"  PATH resolves to: {installation.get('resolved_command') or '(not found)'}")
+    path_status = str(installation.get("path_status") or "unknown")
+    print(f"  PATH status: {path_status.upper()}")
+    conflicting_commands = installation.get("conflicting_commands")
+    if isinstance(conflicting_commands, list) and conflicting_commands:
+        print("  Other CCCC commands left unchanged:")
+        for command in conflicting_commands:
+            print(f"    - {command}")
+    if path_status == "conflict":
+        print("  Fix: move the current executable's directory to the front of PATH, then open a new terminal.")
     
     # Daemon status
     resp = call_daemon({"op": "ping"})

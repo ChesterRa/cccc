@@ -505,8 +505,8 @@ reports Rust as unavailable instead of pretending to switch.
 # macOS / Linux
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
-# Windows PowerShell
-irm https://chesterra.github.io/cccc/install.ps1 | iex
+# Windows CMD or PowerShell
+powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
 Use this optional channel only when evaluating a Rust-only deployment without
@@ -515,6 +515,11 @@ through the same installer, but it has no Python fallback or implementation
 switching and is not yet the recommended replacement for the pip product. The
 installer refuses to overwrite an existing `cccc` command that it does not own;
 uninstall that command deliberately or choose another `CCCC_INSTALL_DIR` first.
+Commands in other directories are left untouched. For the default install
+directory, the installer places the new command first in the user PATH and lists
+any remaining duplicates. Open a new terminal and run `cccc doctor`; its
+`Installation` section reports the invoked executable, the command selected by
+PATH, and every conflicting command.
 
 The hosted native installer currently pins the `v0.4.34-rc2` release candidate.
 

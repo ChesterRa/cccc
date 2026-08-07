@@ -500,8 +500,8 @@ universal Python wheel を使い、`cccc status` が Rust を利用不可と明�
 # macOS / Linux
 curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 
-# Windows PowerShell
-irm https://chesterra.github.io/cccc/install.ps1 | iex
+# Windows CMD または PowerShell
+powershell.exe -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
 このオプションは、Python なしの Rust-only 配備を評価する場合に限って利用してください。
@@ -510,6 +510,10 @@ GitHub Releases からチェックサム検証済みバイナリを取得し、�
 pip 製品の推奨代替ではありません。インストーラーは自身が所有しない既存の `cccc`
 コマンドを上書きしないため、意図的にアンインストールするか、別の
 `CCCC_INSTALL_DIR` を指定してください。
+別ディレクトリにある同名コマンドは変更しません。デフォルトのインストール先では、
+新しいコマンドをユーザー PATH の先頭に置き、残っている重複コマンドを表示します。
+新しいターミナルで `cccc doctor` を実行すると、`Installation` セクションに
+実行中の入口、PATH が選ぶコマンド、競合するすべてのパスが表示されます。
 
 現在のネイティブインストーラーは `v0.4.34-rc2` リリース候補を固定してインストールします。
 
