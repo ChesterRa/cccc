@@ -151,15 +151,18 @@ fn schedule_capture(
 }
 
 fn stop(group: &GroupDoc, actor_id: &str) -> Result<Option<SessionStatus>, OpError> {
-    match cccc_runtime::stop(&group.group_id, actor_id) {
-        Ok(status) => {
-            super::runtime_hook_session::revoke(&group.group_id, actor_id);
-            super::runtime_hook_input::reset(&group.group_id, actor_id);
-            Ok(Some(status))
+    super::runtime_hook_session::with_launch_lock(&group.group_id, actor_id, || {
+        resume_verification::cancel(&group.group_id, actor_id);
+        match cccc_runtime::stop(&group.group_id, actor_id) {
+            Ok(status) => {
+                super::runtime_hook_session::revoke(&group.group_id, actor_id);
+                super::runtime_hook_input::reset(&group.group_id, actor_id);
+                Ok(Some(status))
+            }
+            Err(cccc_runtime::RuntimeError::NotFound(_, _)) => Ok(None),
+            Err(error) => Err(runtime_error(error)),
         }
-        Err(cccc_runtime::RuntimeError::NotFound(_, _)) => Ok(None),
-        Err(error) => Err(runtime_error(error)),
-    }
+    })
 }
 
 pub fn status(group_id: &str, actor_id: &str) -> Option<SessionStatus> {

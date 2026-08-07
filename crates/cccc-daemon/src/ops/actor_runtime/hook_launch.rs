@@ -20,7 +20,7 @@ pub(super) fn launch(
     })
 }
 
-fn launch_serialized(
+pub(super) fn launch_serialized(
     home: &HomeLayout,
     group: &GroupDoc,
     actor: &Actor,

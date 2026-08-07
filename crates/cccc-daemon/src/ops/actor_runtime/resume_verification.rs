@@ -7,9 +7,16 @@ use std::time::{Duration, Instant};
 
 use super::{hook_launch, runtime_session, schedule_capture};
 
+#[path = "resume_verification_registry.rs"]
+mod registry;
+
 const CAPTURE_DELAY: Duration = Duration::from_secs(2);
 const FAILURE_MONITOR_DURATION: Duration = Duration::from_secs(20);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+pub(super) fn cancel(group_id: &str, actor_id: &str) {
+    registry::cancel(group_id, actor_id);
+}
 
 #[derive(Clone, Copy)]
 struct VerificationTiming {
@@ -60,12 +67,16 @@ fn schedule_with_timing(
     resumed_status: SessionStatus,
     timing: VerificationTiming,
 ) {
-    let _ = std::thread::Builder::new()
+    let registration =
+        registry::Registration::new(&group.group_id, &actor.id, &resumed_status.started_at);
+    let registration_key = (group.group_id.clone(), actor.id.clone());
+    let spawn = std::thread::Builder::new()
         .name(format!(
             "cccc-resume-verify:{}:{}",
             group.group_id, actor.id
         ))
         .spawn(move || {
+            let _registration = registration;
             let started = Instant::now();
             let capture_at = started + timing.capture_delay;
             let deadline = started + timing.monitor_duration.max(timing.capture_delay);
@@ -119,72 +130,92 @@ fn schedule_with_timing(
                 }
                 return;
             };
-            if crate::runtime_start_gate::permit(&home).is_err() {
-                return;
-            }
-            let stopped = match cccc_runtime::stop_if_started_at(
+            let fallback = super::super::runtime_hook_session::with_launch_lock(
                 &group.group_id,
                 &actor.id,
-                &resumed_status.started_at,
-            ) {
-                Ok(stopped) => stopped,
-                Err(stop_error) => {
-                    tracing::warn!(
-                        group_id = %group.group_id,
-                        actor_id = %actor.id,
-                        %stop_error,
-                        "failed to stop rejected resumed actor"
-                    );
-                    return;
-                }
-            };
-            if stopped.is_none() {
-                match cccc_runtime::status(&group.group_id, &actor.id) {
-                    Ok(current)
-                        if current.running || current.started_at != resumed_status.started_at =>
+                || {
+                    if !registry::is_current(&group.group_id, &actor.id, &resumed_status.started_at)
                     {
-                        return;
+                        return None;
                     }
-                    Ok(_) | Err(cccc_runtime::RuntimeError::NotFound(_, _)) => {}
-                    Err(status_error) => {
+                    let stopped = match cccc_runtime::stop_if_started_at(
+                        &group.group_id,
+                        &actor.id,
+                        &resumed_status.started_at,
+                    ) {
+                        Ok(stopped) => stopped,
+                        Err(stop_error) => {
+                            tracing::warn!(
+                                group_id = %group.group_id,
+                                actor_id = %actor.id,
+                                %stop_error,
+                                "failed to stop rejected resumed actor"
+                            );
+                            return None;
+                        }
+                    };
+                    if stopped.is_none() {
+                        match cccc_runtime::status(&group.group_id, &actor.id) {
+                            Ok(current)
+                                if current.running
+                                    || current.started_at != resumed_status.started_at =>
+                            {
+                                return None;
+                            }
+                            Ok(_) | Err(cccc_runtime::RuntimeError::NotFound(_, _)) => {}
+                            Err(status_error) => {
+                                tracing::warn!(
+                                    group_id = %group.group_id,
+                                    actor_id = %actor.id,
+                                    %status_error,
+                                    "failed to verify rejected resumed actor ownership"
+                                );
+                                return None;
+                            }
+                        }
+                    }
+                    super::super::runtime_hook_session::revoke(&group.group_id, &actor.id);
+                    if let Err(persist_error) = runtime_session::mark_resume_failed(
+                        &home,
+                        &group.group_id,
+                        &actor.id,
+                        &error,
+                    ) {
                         tracing::warn!(
+                            %persist_error,
                             group_id = %group.group_id,
                             actor_id = %actor.id,
-                            %status_error,
-                            "failed to verify rejected resumed actor ownership"
+                            "failed to persist resume failure"
                         );
-                        return;
                     }
-                }
-            }
-            super::super::runtime_hook_session::revoke(&group.group_id, &actor.id);
-            if let Err(persist_error) =
-                runtime_session::mark_resume_failed(&home, &group.group_id, &actor.id, &error)
-            {
-                tracing::warn!(
-                    %persist_error,
-                    group_id = %group.group_id,
-                    actor_id = %actor.id,
-                    "failed to persist resume failure"
-                );
-            }
-            let fresh_command = if actor.runtime == ActorRuntime::Grok {
-                runtime_session::prepare_fresh_grok_command(
-                    &home,
-                    &group.group_id,
-                    &actor.id,
-                    &cwd,
-                    &base_command,
-                )
-                .command
-            } else {
-                base_command.clone()
-            };
-            match hook_launch::launch(&home, &group, &actor, &cwd, &env, fresh_command) {
-                Ok(fresh) => {
+                    let fresh_command = if actor.runtime == ActorRuntime::Grok {
+                        runtime_session::prepare_fresh_grok_command(
+                            &home,
+                            &group.group_id,
+                            &actor.id,
+                            &cwd,
+                            &base_command,
+                        )
+                        .command
+                    } else {
+                        base_command.clone()
+                    };
+                    Some(hook_launch::launch_serialized(
+                        &home,
+                        &group,
+                        &actor,
+                        &cwd,
+                        &env,
+                        fresh_command,
+                    ))
+                },
+            );
+            match fallback {
+                None => {}
+                Some(Ok(fresh)) => {
                     schedule_capture(&home, &group, &actor, cwd, base_command, &fresh);
                 }
-                Err(fallback_error) => tracing::warn!(
+                Some(Err(fallback_error)) => tracing::warn!(
                     group_id = %group.group_id,
                     actor_id = %actor.id,
                     message = %fallback_error.message,
@@ -192,6 +223,9 @@ fn schedule_with_timing(
                 ),
             }
         });
+    if spawn.is_err() {
+        cancel(&registration_key.0, &registration_key.1);
+    }
 }
 
 #[cfg(all(test, unix))]

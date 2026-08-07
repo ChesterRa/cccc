@@ -123,7 +123,7 @@ pub fn schedule_codex_session_capture(
 }
 
 pub fn resume_failure(group_id: &str, actor_id: &str) -> Option<String> {
-    let history = cccc_runtime::history(group_id, actor_id, None, 64_000).ok()?;
+    let history = cccc_runtime::retained_history(group_id, actor_id).ok()?;
     resume_failure_marker(&history.data).map(str::to_owned)
 }
 
