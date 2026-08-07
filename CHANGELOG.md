@@ -9,8 +9,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 ### Changed
 - **Distribution guidance now keeps PyPI as the stable, recommended product path.** The standalone Rust binary is presented consistently as an experimental Rust-only preview without Python fallback or implementation switching, including its GitHub Release metadata.
 - **Release publication now gates complete Python and standalone artifact sets without duplicating normal CI.** PyPI receives one source distribution, one portable wheel, and four version-matched native Rust wheels after parallel payload checks; standalone binaries execute on their build hosts and final Linux and Windows installer candidates are verified in parallel. Full source and cross-language interoperability suites remain in normal CI only.
+- **Group Bridge pairing invitations are copied as soon as they are generated.** The complete JSON remains visible for manual copying when clipboard access is unavailable.
 
 ### Fixed
+- **Codex PTY failures now reach runtime activity in both backends.** CCCC registers `PostToolUseFailure` and `StopFailure`, records failed tool or turn outcomes, and returns a still-running actor to idle after a failed turn.
+- **Remote Web settings now require an administrator Access Token before exposure.** LAN/public settings cannot be saved or applied, and remote endpoints cannot be copied, until an administrator token exists; local-only recovery remains available.
+- **Settings dialog footers retain their normal mobile spacing when adding the device safe area.** Bottom actions no longer lose their base padding on notched devices.
 - **Standalone Windows replacement tolerates short-lived executable locks.** Installer transactions retry bounded file moves after probing or stopping the old CCCC process, avoiding transient sharing violations while preserving rollback and active-lock failures.
 - **Rust diagnostics now use the same system-browser discovery as the Web runtime.** On Windows, `cccc doctor` recognizes Chrome, Edge, and Chromium in both `Program Files` roots even when the browser is not on `PATH`; an unlocked `cccc-web.lock` containing a crashed process PID remains safely reclaimable on the next launch.
 - **Standalone Windows self-updates now enable TLS 1.2 before downloading the installer.** Windows PowerShell 5.1 can update through the same hardened bootstrap path used by the documented fresh-install command.

@@ -5,15 +5,17 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 const HOOK_TIMEOUT_SECONDS: u64 = 3;
-const HOOK_EVENTS: [(&str, &str); 9] = [
+const HOOK_EVENTS: [(&str, &str); 11] = [
     ("SessionStart", "session_start"),
     ("UserPromptSubmit", "user_prompt_submit"),
     ("PreToolUse", "pre_tool_use"),
     ("PermissionRequest", "permission_request"),
     ("PostToolUse", "post_tool_use"),
+    ("PostToolUseFailure", "post_tool_use_failure"),
     ("SubagentStart", "subagent_start"),
     ("SubagentStop", "subagent_stop"),
     ("Stop", "stop"),
+    ("StopFailure", "stop_failure"),
     ("SessionEnd", "session_end"),
 ];
 
@@ -393,6 +395,16 @@ mod tests {
             command
                 .iter()
                 .any(|item| item.starts_with("hooks.PermissionRequest="))
+        );
+        assert!(
+            command
+                .iter()
+                .any(|item| item.starts_with("hooks.PostToolUseFailure="))
+        );
+        assert!(
+            command
+                .iter()
+                .any(|item| item.starts_with("hooks.StopFailure="))
         );
         assert!(command.iter().any(|item| item.starts_with("hooks.state=")));
         assert!(!command.contains(&"--dangerously-bypass-hook-trust".into()));

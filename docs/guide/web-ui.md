@@ -208,6 +208,8 @@ CCCC_WEB_HOST=$(tailscale ip -4) cccc
 
 Before exposing the Web UI beyond localhost, first create an **Admin Access Token** in **Settings > Web Access**.
 
+The Web Access panel keeps LAN/public `Save`, `Apply now`, and remote-endpoint copying disabled until an Admin Access Token exists. Switching back to localhost-only remains available so an incomplete remote setup can be recovered safely.
+
 In **Settings > Web Access**, `127.0.0.1` means local-only and `0.0.0.0` means localhost plus your LAN IP on a normal local host. On WSL2 NAT, it still stays inside the VM until Windows networking forwards it outward.
 
 `Save` stores the target binding. If Web was started by `cccc` or `cccc web`, use `Apply now` in **Settings > Web Access** to perform the short supervised restart. If Web is managed by Docker, systemd, or another external supervisor, restart that service instead.

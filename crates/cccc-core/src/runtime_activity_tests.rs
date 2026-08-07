@@ -181,6 +181,48 @@ fn record(home: &HomeLayout, runtime: &str, payload: &serde_json::Value) -> Code
 }
 
 #[test]
+fn stop_failure_marks_the_turn_failed_while_the_actor_returns_idle() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    home.initialize().expect("initialize");
+    codex_hook_state::begin_launch(&home, "codex", "g_test", "peer", "token", "HookPending")
+        .expect("launch");
+    record(
+        &home,
+        "codex",
+        &json!({"hook_event_name":"SessionStart","session_id":"session-1"}),
+    );
+    record(
+        &home,
+        "codex",
+        &json!({
+            "hook_event_name":"UserPromptSubmit",
+            "session_id":"session-1",
+            "turn_id":"turn-1"
+        }),
+    );
+    let state = record(
+        &home,
+        "codex",
+        &json!({
+            "hook_event_name":"StopFailure",
+            "session_id":"session-1",
+            "turn_id":"turn-1"
+        }),
+    );
+
+    assert_eq!(state.status, "idle");
+    assert_eq!(state.event, "StopFailure");
+    let failed = super::read_events(&home, "g_test")
+        .expect("events")
+        .into_iter()
+        .find(|event| event.event_type == "StopFailure")
+        .expect("failed turn activity");
+    assert_eq!(failed.kind, "turn");
+    assert_eq!(failed.status, "failed");
+}
+
+#[test]
 fn session_end_terminalizes_active_children() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");

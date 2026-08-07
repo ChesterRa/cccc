@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from cccc.kernel.runtime_hooks.contracts import HookState, RuntimeActivityEvent
+from cccc.kernel.runtime_hooks.activity import read_events
 from cccc.kernel.runtime_hooks.committed_io import write_json_committed
 from cccc.kernel.runtime_hooks.projection import (
     launch_identity_path,
@@ -135,6 +136,29 @@ def test_v3_launch_session_turn_operation_and_session_end_are_fenced(tmp_path: P
         ),
     )
     assert operation.operation_id == "operation-1"
+    failed = record_hook_event(
+        tmp_path,
+        "codex",
+        "g1",
+        "peer",
+        "token-new",
+        _payload(
+            "StopFailure",
+            session_id="session-1",
+            turn_id="turn-1",
+        ),
+    )
+    assert (failed.status, failed.event, failed.turn_id) == (
+        "idle",
+        "StopFailure",
+        None,
+    )
+    failed_activity = next(
+        event
+        for event in read_events(tmp_path, "g1")
+        if event.event_type == "StopFailure"
+    )
+    assert (failed_activity.kind, failed_activity.status) == ("turn", "failed")
     stopped = record_hook_event(
         tmp_path,
         "codex",

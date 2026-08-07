@@ -5,6 +5,7 @@ import { InfoIcon } from "../../Icons";
 import { BodyPortal } from "../../ui/BodyPortal";
 import { SelectCombobox } from "../../SelectCombobox";
 import { InfoPopover } from "./InfoPopover";
+import { WebAccessReachabilityActions } from "./WebAccessReachabilityActions";
 import * as api from "../../../services/api";
 import {
   inputClass,
@@ -23,6 +24,14 @@ import {
 } from "./types";
 import { useModalA11y } from "../../../hooks/useModalA11y";
 import { copyTextToClipboard } from "../../../utils/copy";
+import {
+  httpUrl,
+  inferAccessGoal,
+  isLoopbackHost,
+  isRemoteAccessBlockedByMissingAdminToken,
+  isWildcardHost,
+  type AccessGoal,
+} from "./webAccessReachabilityModel";
 
 interface WebAccessTabProps {
   isDark: boolean;
@@ -38,8 +47,6 @@ type RestartDialogState = {
   standaloneCommand: string;
 };
 
-type AccessGoal = "local" | "lan" | "public";
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
@@ -52,35 +59,6 @@ function statusChipClass(_isDark: boolean, tone: "neutral" | "good" | "warn") {
     return "border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400";
   }
   return "border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]";
-}
-
-function isLoopbackHost(host: string): boolean {
-  const normalized = String(host || "")
-    .trim()
-    .toLowerCase();
-  return (
-    normalized === "" ||
-    normalized === "127.0.0.1" ||
-    normalized === "localhost" ||
-    normalized === "::1" ||
-    normalized === "[::1]"
-  );
-}
-
-function isWildcardHost(host: string): boolean {
-  const normalized = String(host || "")
-    .trim()
-    .toLowerCase();
-  return normalized === "0.0.0.0" || normalized === "::" || normalized === "[::]";
-}
-
-function httpUrl(host: string, port: string | number): string {
-  const rawHost = String(host || "").trim() || "127.0.0.1";
-  const normalizedHost =
-    rawHost.includes(":") && !rawHost.startsWith("[") && !rawHost.endsWith("]")
-      ? `[${rawHost}]`
-      : rawHost;
-  return `http://${normalizedHost}:${String(port || "").trim() || "8848"}/ui/`;
 }
 
 function resolveApplyRedirectUrl(
@@ -115,13 +93,6 @@ function resolveApplyRedirectUrl(
     return usableRemoteUrl;
   }
   return httpUrl(isLoopbackHost(configHost) ? "127.0.0.1" : configHost, configPort);
-}
-
-function inferAccessGoal(provider: string, host: string, publicUrl: string): AccessGoal {
-  if (String(publicUrl || "").trim()) return "public";
-  if (String(provider || "").trim() === "tailscale") return "lan";
-  if (String(provider || "").trim() === "off" || isLoopbackHost(host)) return "local";
-  return "lan";
 }
 
 export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
@@ -177,12 +148,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
     typeof session?.access_token_count === "number" ? session.access_token_count : accessTokenCount;
   const loginActive = Boolean(session?.login_active ?? knownAccessTokenCount > 0);
   const canAccessGlobalSettings = Boolean(session?.can_access_global_settings ?? !loginActive);
-  const publicAccessTokenConfigured =
-    knownAccessTokenCount > 0 ||
-    Boolean(
-      remoteState?.config?.access_token_configured ||
-      remoteState?.diagnostics?.access_token_present,
-    );
+  const publicAccessTokenConfigured = hasAdminToken;
 
   const pushHint = (value: string) => {
     setHint(value);
@@ -442,6 +408,14 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
     : restartRequired && applySupported
       ? "apply"
       : "idle";
+  const draftRemoteAccessBlocked = isRemoteAccessBlockedByMissingAdminToken(
+    accessGoal,
+    hasAdminToken,
+  );
+  const savedRemoteAccessBlocked = isRemoteAccessBlockedByMissingAdminToken(
+    savedAccessGoal,
+    hasAdminToken,
+  );
   const actionHintKey = isTailscaleProvider
     ? "webAccess.actionHintTailscale"
     : statusReason === "missing_access_token"
@@ -611,6 +585,10 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
   };
 
   const handleSaveReachability = async () => {
+    if (draftRemoteAccessBlocked) {
+      setError(t("webAccess.remoteAdminTokenRequiredHint"));
+      return;
+    }
     setSaveBusy(true);
     setError("");
     try {
@@ -698,6 +676,10 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
   };
 
   const handleApplyReachability = async () => {
+    if (savedRemoteAccessBlocked) {
+      setError(t("webAccess.remoteAdminTokenRequiredHint"));
+      return;
+    }
     setApplyBusy(true);
     setError("");
     try {
@@ -1864,62 +1846,26 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
             ) : null}
           </div>
 
-          <div className="mt-4 rounded-xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="min-w-0">
-                <div className="text-sm font-medium text-[var(--color-text-primary)]">
-                  {primaryReachabilityAction === "save"
-                    ? t("webAccess.saveChanges")
-                    : primaryReachabilityAction === "apply"
-                      ? t("webAccess.applyNow")
-                      : t("webAccess.savedState")}
-                </div>
-                <div className="mt-1 text-xs leading-6 text-[var(--color-text-muted)]">
-                  {primaryReachabilityAction === "save"
-                    ? t("webAccess.primaryActionSaveHint")
-                    : t(actionHintKey)}
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (primaryReachabilityAction === "save") {
-                      void handleSaveReachability();
-                      return;
-                    }
-                    if (primaryReachabilityAction === "apply") {
-                      void handleApplyReachability();
-                    }
-                  }}
-                  disabled={primaryReachabilityAction === "idle" || saveBusy || applyBusy}
-                  className={`${primaryButtonClass(primaryReachabilityAction === "save" ? saveBusy : applyBusy)} disabled:opacity-50`}
-                >
-                  {primaryReachabilityAction === "save"
-                    ? saveBusy
-                      ? t("webAccess.saving")
-                      : t("webAccess.saveChanges")
-                    : primaryReachabilityAction === "apply"
-                      ? applyBusy
-                        ? t("common:loading")
-                        : t("webAccess.applyNow")
-                      : t("webAccess.savedState")}
-                </button>
-                {remoteState?.endpoint ? (
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      const ok = await copyTextToClipboard(remoteState.endpoint || "");
-                      if (ok) pushHint(t("webAccess.copied"));
-                    }}
-                    className={secondaryButtonClass()}
-                  >
-                    {t("webAccess.copyEndpoint")}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          </div>
+          <WebAccessReachabilityActions
+            action={primaryReachabilityAction}
+            actionHint={
+              primaryReachabilityAction === "save"
+                ? t("webAccess.primaryActionSaveHint")
+                : t(actionHintKey)
+            }
+            draftGoal={accessGoal}
+            savedGoal={savedAccessGoal}
+            hasAdminToken={hasAdminToken}
+            saveBusy={saveBusy}
+            applyBusy={applyBusy}
+            endpoint={remoteState?.endpoint || null}
+            onSave={() => void handleSaveReachability()}
+            onApply={() => void handleApplyReachability()}
+            onCopyEndpoint={async () => {
+              const ok = await copyTextToClipboard(remoteState?.endpoint || "");
+              if (ok) pushHint(t("webAccess.copied"));
+            }}
+          />
 
           <div ref={advancedDisclosureRef} className="mt-4">
             <button

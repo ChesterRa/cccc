@@ -52,7 +52,7 @@ export const settingsDialogHeaderClass = `flex shrink-0 items-start gap-3 border
 
 export const settingsDialogBodyClass = `min-h-0 flex-1 overflow-y-auto scrollbar-subtle p-4 sm:p-6 lg:p-7 [scrollbar-gutter:stable]`;
 
-export const settingsDialogFooterClass = `flex shrink-0 items-center justify-end gap-2 border-t border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5 sm:py-4 safe-area-bottom-compact`;
+export const settingsDialogFooterClass = `flex shrink-0 items-center justify-end gap-2 border-t border-[var(--glass-border-subtle)] px-4 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom,0px))] sm:px-5 sm:pt-4 sm:pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))]`;
 
 export const cardClass = (_isDark?: boolean) =>
   `glass-panel rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-4 shadow-sm`;

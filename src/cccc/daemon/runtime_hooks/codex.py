@@ -16,9 +16,11 @@ HOOK_EVENTS = (
     ("PreToolUse", "pre_tool_use"),
     ("PermissionRequest", "permission_request"),
     ("PostToolUse", "post_tool_use"),
+    ("PostToolUseFailure", "post_tool_use_failure"),
     ("SubagentStart", "subagent_start"),
     ("SubagentStop", "subagent_stop"),
     ("Stop", "stop"),
+    ("StopFailure", "stop_failure"),
     ("SessionEnd", "session_end"),
 )
 _CODEX_SUBCOMMANDS = {

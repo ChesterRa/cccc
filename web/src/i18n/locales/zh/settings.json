@@ -1369,6 +1369,7 @@
     "groupSelectionRequired": "受限访问令牌至少要选择一个允许的工作组。",
     "adminTokenLabel": "管理员访问令牌",
     "firstTokenAdminHint": "第一个访问令牌必须是管理员，否则你会把自己锁在门外。",
+    "remoteAdminTokenRequiredHint": "请先在“访问令牌”中创建管理员令牌；创建前不能保存或应用远程设置，也不能复制远程入口。",
     "adminTokenHint": "管理员访问令牌可以管理全局设置以及其它访问令牌。",
     "scopedTokenGroupsTitle": "受限令牌的工作组",
     "scopedTokenGroupsHint": "受限访问令牌必须绑定到一个或多个工作组。全局设置始终仅限管理员。",

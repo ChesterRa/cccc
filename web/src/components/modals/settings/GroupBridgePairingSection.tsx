@@ -42,6 +42,7 @@ import {
 import { publishGroupBridgePairingChanged } from "../../../utils/groupBridgePairingEvents";
 import { copyTextToClipboard } from "../../../utils/copy";
 import { formatRecipientIdentifier } from "../../../utils/recipientIdentifier";
+import { accessButtonClass, defaultIssuerEndpoint } from "./groupBridgePairingView";
 
 interface Props {
   isDark: boolean;
@@ -52,27 +53,6 @@ interface Props {
   trusts: GroupBridgeTrust[];
   outbounds: GroupBridgePairingOutbound[];
   refreshPairing: () => Promise<void>;
-}
-
-function defaultIssuerEndpoint(): string {
-  return typeof window !== "undefined" ? window.location.origin : "";
-}
-
-function accessButtonClass(level: GroupBridgeAccessLevel, selected: boolean): string {
-  const selectedClass =
-    level === "full"
-      ? "border-rose-500/40 bg-rose-500/15 text-rose-700 dark:text-rose-200"
-      : level === "read"
-        ? "border-sky-500/35 bg-sky-500/15 text-sky-700 dark:text-sky-200"
-        : "border-slate-500/25 bg-[var(--color-bg-primary)] text-[var(--color-text-primary)]";
-  return [
-    "min-h-[32px] rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition-all duration-150",
-    "focus:outline-none focus:ring-2 focus:ring-slate-500/15",
-    "disabled:cursor-not-allowed disabled:opacity-50",
-    selected
-      ? selectedClass
-      : "border-transparent text-[var(--color-text-muted)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
-  ].join(" ");
 }
 
 export function GroupBridgePairingSection({
@@ -125,6 +105,16 @@ export function GroupBridgePairingSection({
     busy,
   });
 
+  const copyConnectionInfo = useCallback(
+    async (value: string) => {
+      const copied = await copyTextToClipboard(value);
+      setCopyNotice(
+        t(copied ? "group_bridge.copyConnectionInfoDone" : "group_bridge.copyConnectionInfoManual"),
+      );
+    },
+    [t],
+  );
+
   const onCreateInvite = useCallback(async () => {
     setInviteError("");
     setCopyNotice("");
@@ -147,7 +137,9 @@ export function GroupBridgePairingSection({
           );
           return;
         }
-        setCreatedInfo(JSON.stringify(infoResp.result.payload, null, 2));
+        const nextCreatedInfo = JSON.stringify(infoResp.result.payload, null, 2);
+        setCreatedInfo(nextCreatedInfo);
+        await copyConnectionInfo(nextCreatedInfo);
         await refreshPairing();
       } else {
         setInviteError(resp.error.message || t("group_bridge.createInviteFailed"));
@@ -157,15 +149,12 @@ export function GroupBridgePairingSection({
     } finally {
       setBusy(false);
     }
-  }, [currentGroupId, currentGroupTitle, issuerEndpoint, refreshPairing, t]);
+  }, [copyConnectionInfo, currentGroupId, currentGroupTitle, issuerEndpoint, refreshPairing, t]);
 
   const onCopyConnectionInfo = useCallback(async () => {
     if (!createdInfo) return;
-    const copied = await copyTextToClipboard(createdInfo);
-    setCopyNotice(
-      t(copied ? "group_bridge.copyConnectionInfoDone" : "group_bridge.copyConnectionInfoManual"),
-    );
-  }, [createdInfo, t]);
+    await copyConnectionInfo(createdInfo);
+  }, [copyConnectionInfo, createdInfo]);
 
   const copyTrustRecipientIdentifier = useCallback(
     async (trust: GroupBridgeTrust, displayName: string, accessLevel: string) => {

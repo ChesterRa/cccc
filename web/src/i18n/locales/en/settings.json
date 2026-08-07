@@ -1374,6 +1374,7 @@
     "groupSelectionRequired": "Select at least one allowed group for a scoped access token.",
     "adminTokenLabel": "Admin Access Token",
     "firstTokenAdminHint": "The first access token must be admin so you do not lock yourself out.",
+    "remoteAdminTokenRequiredHint": "Create an administrator Access Token first. Until then, remote settings cannot be saved or applied, and the remote endpoint cannot be copied.",
     "adminTokenHint": "Admin access tokens can manage global settings and other access tokens.",
     "scopedTokenGroupsTitle": "Scoped token groups",
     "scopedTokenGroupsHint": "Scoped access tokens must be assigned to one or more groups. Global settings stay admin-only.",

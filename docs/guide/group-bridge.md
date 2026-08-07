@@ -61,7 +61,7 @@ Group Bridge pairing is managed in the Web UI.
 
 4. Generate a one-time pairing invitation.
 
-   The invitation is a JSON payload, not just a raw code. Send the full payload to the requester. It expires and is shown once.
+   The invitation is a JSON payload, not just a raw code. CCCC copies the full payload immediately and keeps it visible for manual copying if clipboard access is unavailable. Send the full payload to the requester. It expires and is shown once.
 
 5. In the requester group, open **Settings > Group Bridge** and paste the pairing invitation.
 
