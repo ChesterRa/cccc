@@ -81,6 +81,51 @@ function Test-SameCommandPath([string]$Left, [string]$Right) {
   )
 }
 
+function Test-SameDirectoryPath([string]$Entry, [string]$Directory) {
+  if ([string]::IsNullOrWhiteSpace($Entry) -or [string]::IsNullOrWhiteSpace($Directory)) {
+    return $false
+  }
+  try {
+    $expanded = [Environment]::ExpandEnvironmentVariables($Entry.Trim().Trim('"'))
+    return [IO.Path]::GetFullPath($expanded).TrimEnd('\').Equals(
+      [IO.Path]::GetFullPath($Directory).TrimEnd('\'),
+      [StringComparison]::OrdinalIgnoreCase
+    )
+  } catch {
+    return $false
+  }
+}
+
+function Add-DirectoryToPathFront([string]$PathValue, [string]$Directory) {
+  $entries = if ($PathValue) {
+    @($PathValue.Split(';', [StringSplitOptions]::RemoveEmptyEntries))
+  } else {
+    @()
+  }
+  $remaining = @($entries.Where({ -not (Test-SameDirectoryPath $_ $Directory) }))
+  return (@($Directory) + $remaining) -join ';'
+}
+
+function Join-PersistedWindowsPath([string]$MachinePath, [string]$UserPath) {
+  $parts = @()
+  if (-not [string]::IsNullOrWhiteSpace($MachinePath)) { $parts += $MachinePath }
+  if (-not [string]::IsNullOrWhiteSpace($UserPath)) { $parts += $UserPath }
+  return $parts -join ';'
+}
+
+function Get-ProspectiveCcccCommandPath([string]$PathValue, [string]$InstalledCommand) {
+  if ([string]::IsNullOrWhiteSpace($PathValue)) { return $null }
+  $installDirectory = Split-Path -Parent $InstalledCommand
+  foreach ($entry in $PathValue.Split(';', [StringSplitOptions]::RemoveEmptyEntries)) {
+    if (Test-SameDirectoryPath $entry $installDirectory) {
+      return [IO.Path]::GetFullPath($InstalledCommand)
+    }
+    $commands = @(Get-CcccCommandPaths $entry)
+    if ($commands.Count -gt 0) { return $commands[0] }
+  }
+  return $null
+}
+
 function Receive-File([string]$Uri, [string]$Destination) {
   $parsed = [Uri]$Uri
   if ($parsed.IsFile) {
@@ -104,6 +149,18 @@ if (-not $isWindowsRuntime) {
 }
 if ($architecture -ne "X64") {
   throw "Unsupported Windows architecture: $architecture"
+}
+
+$installedCommand = [IO.Path]::GetFullPath((Join-Path $InstallDir "cccc.exe"))
+if (-not $NoModifyPath) {
+  $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+  $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+  $prospectiveUserPath = Add-DirectoryToPathFront $userPath $InstallDir
+  $prospectivePath = Join-PersistedWindowsPath $machinePath $prospectiveUserPath
+  $prospectiveCommand = Get-ProspectiveCcccCommandPath $prospectivePath $installedCommand
+  if (-not (Test-SameCommandPath $prospectiveCommand $installedCommand)) {
+    throw "Machine PATH resolves cccc to $prospectiveCommand before the per-user install directory $InstallDir. Windows places Machine PATH before User PATH in a new terminal, so this installer cannot safely override that command without changing machine-wide state. Remove or upgrade the machine-wide CCCC from an elevated shell, or rerun with -NoModifyPath and invoke $installedCommand directly"
+  }
 }
 
 if (-not $Version -and $defaultVersion -match '^[0-9]+\.[0-9]+\.[0-9]+') {
@@ -146,6 +203,9 @@ $transactionStarted = $false
 $transactionCommitted = $false
 $daemonWasRunning = $false
 $rollbackRestoreFailed = $false
+$pathModified = $false
+$userPathBeforeInstall = $null
+$processPathBeforeInstall = $env:Path
 
 try {
   New-Item -ItemType Directory -Path $tempDir | Out-Null
@@ -285,30 +345,21 @@ try {
   if ($LASTEXITCODE -ne 0 -or $installedVersion -ne "cccc $Version") {
     throw "Installed version mismatch: expected cccc $Version, got $installedVersion"
   }
-  if ($daemonWasRunning) {
-    & (Join-Path $InstallDir "cccc.exe") daemon start *> $null
-    if ($LASTEXITCODE -ne 0) { throw "The updated CCCC daemon could not restart" }
-  }
-  Set-Content -LiteralPath $markerPath -Value $installMarkerVersion -Encoding Ascii
-  $transactionCommitted = $true
-  Remove-Item -LiteralPath $backupDir -Recurse -Force
 
   $pathEntries = @($env:Path.Split(';', [StringSplitOptions]::RemoveEmptyEntries))
-  $pathReady = $pathEntries.Where({ $_.TrimEnd('\') -ieq $InstallDir.TrimEnd('\') }).Count -gt 0
+  $pathReady = $pathEntries.Where({ Test-SameDirectoryPath $_ $InstallDir }).Count -gt 0
   if (-not $NoModifyPath) {
     $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-    $userEntries = if ($userPath) { @($userPath.Split(';', [StringSplitOptions]::RemoveEmptyEntries)) } else { @() }
-    $userEntries = @($userEntries.Where({ $_.TrimEnd('\') -ine $InstallDir.TrimEnd('\') }))
-    [Environment]::SetEnvironmentVariable("Path", ((@($InstallDir) + $userEntries) -join ';'), "User")
-
-    $processEntries = @($pathEntries.Where({ $_.TrimEnd('\') -ine $InstallDir.TrimEnd('\') }))
-    $env:Path = (@($InstallDir) + $processEntries) -join ';'
-    Write-Host "Added $InstallDir to the front of the user and current PowerShell PATH."
+    $userPathBeforeInstall = $userPath
+    $updatedUserPath = Add-DirectoryToPathFront $userPath $InstallDir
+    [Environment]::SetEnvironmentVariable("Path", $updatedUserPath, "User")
+    $pathModified = $true
+    $env:Path = Add-DirectoryToPathFront $env:Path $InstallDir
+    Write-Host "Added $InstallDir to the front of User PATH and the current PowerShell PATH."
   } elseif (-not $pathReady) {
     Write-Warning "Move $InstallDir to the front of PATH, then open a new terminal."
   }
 
-  $installedCommand = [IO.Path]::GetFullPath((Join-Path $InstallDir "cccc.exe"))
   $resolvedCommands = @(Get-CcccCommandPaths $env:Path)
   $resolvedCommand = if ($resolvedCommands.Count -gt 0) { $resolvedCommands[0] } else { $null }
   if (-not $NoModifyPath -and -not (Test-SameCommandPath $resolvedCommand $installedCommand)) {
@@ -329,11 +380,39 @@ try {
     }
   }
 
+  if (-not $NoModifyPath) {
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $persistedUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $persistedPath = Join-PersistedWindowsPath $machinePath $persistedUserPath
+    $persistedCommands = @(Get-CcccCommandPaths $persistedPath)
+    $persistedCommand = if ($persistedCommands.Count -gt 0) { $persistedCommands[0] } else { $null }
+    if (-not (Test-SameCommandPath $persistedCommand $installedCommand)) {
+      throw "Persistent PATH verification resolved cccc to $persistedCommand instead of $installedCommand"
+    }
+    Write-Host "Verified persistent Machine + User PATH resolves cccc to $installedCommand."
+  }
+
+  if ($daemonWasRunning) {
+    & (Join-Path $InstallDir "cccc.exe") daemon start *> $null
+    if ($LASTEXITCODE -ne 0) { throw "The updated CCCC daemon could not restart" }
+  }
+  Set-Content -LiteralPath $markerPath -Value $installMarkerVersion -Encoding Ascii
+  $transactionCommitted = $true
+  Remove-Item -LiteralPath $backupDir -Recurse -Force
+
   Write-Host "Installed CCCC v$Version in $InstallDir"
   Write-Host "Verify installed command directly: `"$installedCommand`" doctor"
   Write-Host "Verify after opening a new terminal: cccc doctor"
 } finally {
   if ($transactionStarted -and -not $transactionCommitted) {
+    if ($pathModified) {
+      try {
+        [Environment]::SetEnvironmentVariable("Path", $userPathBeforeInstall, "User")
+        $env:Path = $processPathBeforeInstall
+      } catch {
+        Write-Error "Rollback failed to restore PATH: $_" -ErrorAction Continue
+      }
+    }
     foreach ($binary in $binaries) {
       $destination = Join-Path $InstallDir $binary
       $backup = Join-Path $backupDir $binary

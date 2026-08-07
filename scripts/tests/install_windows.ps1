@@ -10,10 +10,12 @@ $versionMatch = Select-String -Path (Join-Path $rootDir "Cargo.toml") -Pattern '
 $realVersion = $versionMatch.Matches[0].Groups[1].Value
 $releaseBinaryDir = Join-Path $rootDir "target\release"
 $originalUserPath = [Environment]::GetEnvironmentVariable("Path", "User")
+$originalMachinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
 $originalProcessPath = $env:Path
 $originalSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
 $originalCcccHome = $env:CCCC_HOME
 $originalLauncherPath = $env:CCCC_LAUNCHER_PATH
+$machinePathModified = $false
 $installerSource = Get-Content -LiteralPath (Join-Path $rootDir "scripts\install.ps1") -Raw
 $tlsSnapshot = $installerSource.IndexOf('[Net.ServicePointManager]::SecurityProtocol =')
 $downloadSnapshot = $installerSource.IndexOf('Invoke-WebRequest')
@@ -111,6 +113,49 @@ try {
   (Get-Content -LiteralPath (Join-Path $rootDir "scripts\install.ps1") -Raw).Replace("@CCCC_VERSION@", $realVersion) |
     Set-Content -LiteralPath $versionedInstaller
 
+  $machineCommandDir = Join-Path $tempRoot "machine-cccc"
+  New-Item -ItemType Directory -Force -Path $machineCommandDir | Out-Null
+  $machineCommand = Join-Path $machineCommandDir "cccc.cmd"
+  Set-Content -LiteralPath $machineCommand -Value '@echo cccc 0.2.0' -Encoding Ascii
+  $machineCommandHash = (Get-FileHash -LiteralPath $machineCommand).Hash
+  $machineConflictInstallDir = Join-Path $tempRoot "machine-conflict-installed"
+  try {
+    $testMachinePath = if ($originalMachinePath) {
+      "$machineCommandDir;$originalMachinePath"
+    } else {
+      $machineCommandDir
+    }
+    [Environment]::SetEnvironmentVariable("Path", $testMachinePath, "Machine")
+    $machinePathModified = $true
+    $failed = $false
+    try {
+      & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $machineConflictInstallDir
+    } catch {
+      $message = $_.Exception.Message
+      $isMachineConflict = $message -like "*Machine PATH resolves cccc*"
+      $identifiesMachineCommand = $message.IndexOf($machineCommand, [StringComparison]::OrdinalIgnoreCase) -ge 0
+      $failed = $isMachineConflict -and $identifiesMachineCommand
+    }
+    if (-not $failed) { throw "installer did not reject a machine PATH command that wins in new terminals" }
+    if (Test-Path -LiteralPath (Join-Path $machineConflictInstallDir "cccc.exe")) {
+      throw "installer wrote a binary before rejecting the machine PATH conflict"
+    }
+    $machineBypassInstallDir = Join-Path $tempRoot "machine-conflict-direct-install"
+    & (Join-Path $rootDir "scripts\install.ps1") -Version $realVersion -InstallDir $machineBypassInstallDir -NoModifyPath
+    $machineBypassVersion = (& (Join-Path $machineBypassInstallDir "cccc.exe") --version | Out-String).Trim()
+    if ($machineBypassVersion -ne "cccc $realVersion") {
+      throw "-NoModifyPath did not preserve direct installation during a machine PATH conflict"
+    }
+    if ((Get-FileHash -LiteralPath $machineCommand).Hash -ne $machineCommandHash) {
+      throw "installer modified the machine PATH command"
+    }
+  } finally {
+    if ($machinePathModified) {
+      [Environment]::SetEnvironmentVariable("Path", $originalMachinePath, "Machine")
+      $machinePathModified = $false
+    }
+  }
+
   $olderCommandDir = Join-Path $tempRoot "older-cccc"
   New-Item -ItemType Directory -Force -Path $olderCommandDir | Out-Null
   $olderCommand = Join-Path $olderCommandDir "cccc.cmd"
@@ -169,7 +214,9 @@ try {
   if (-not $installOutput.Contains("Verify installed command directly:")) {
     throw "installer did not provide an absolute verification command"
   }
-  if (-not $installOutput.Contains($olderCommand)) { throw "installer did not identify the older CCCC command path" }
+  if ($installOutput.IndexOf($olderCommand, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+    throw "installer did not identify the older CCCC command path"
+  }
   if ((Get-FileHash -LiteralPath $olderCommand).Hash -ne $olderCommandHash) {
     throw "installer modified an older CCCC command outside its install directory"
   }
@@ -357,6 +404,9 @@ fn main() {
 
   Write-Host "OK: Windows installer"
 } finally {
+  if ($machinePathModified) {
+    [Environment]::SetEnvironmentVariable("Path", $originalMachinePath, "Machine")
+  }
   [Environment]::SetEnvironmentVariable("Path", $originalUserPath, "User")
   $env:Path = $originalProcessPath
   [Net.ServicePointManager]::SecurityProtocol = $originalSecurityProtocol
