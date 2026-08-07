@@ -106,6 +106,18 @@ function Add-DirectoryToPathFront([string]$PathValue, [string]$Directory) {
   return (@($Directory) + $remaining) -join ';'
 }
 
+function Move-CcccItemWithRetry([string]$Source, [string]$Destination) {
+  for ($attempt = 0; $attempt -lt 40; $attempt++) {
+    try {
+      Move-Item -LiteralPath $Source -Destination $Destination -ErrorAction Stop
+      return
+    } catch {
+      if ($attempt -eq 39) { throw }
+      Start-Sleep -Milliseconds 50
+    }
+  }
+}
+
 function Join-PersistedWindowsPath([string]$MachinePath, [string]$UserPath) {
   $parts = @()
   if (-not [string]::IsNullOrWhiteSpace($MachinePath)) { $parts += $MachinePath }
@@ -334,11 +346,11 @@ try {
   }
 
   foreach ($binary in $originals) {
-    Move-Item -LiteralPath (Join-Path $InstallDir $binary) -Destination (Join-Path $backupDir $binary)
+    Move-CcccItemWithRetry (Join-Path $InstallDir $binary) (Join-Path $backupDir $binary)
   }
   foreach ($binary in $binaries) {
     $stage = Join-Path $InstallDir (".$binary.cccc-install-" + $PID)
-    Move-Item -LiteralPath $stage -Destination (Join-Path $InstallDir $binary)
+    Move-CcccItemWithRetry $stage (Join-Path $InstallDir $binary)
   }
 
   $installedVersion = (& (Join-Path $InstallDir "cccc.exe") --version | Out-String).Trim()
