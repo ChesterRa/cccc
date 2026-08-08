@@ -103,10 +103,12 @@ Version 0.4.x has a completely different command structure from 0.3.x. The old `
 python -m pip install -U cccc-pair
 ```
 
-PyPI is the stable CCCC product distribution. Supported platform wheels contain
-both the Python implementation and a private, version-matched Rust executable;
-Python remains the initial default and `cccc rust` opts into the bundled engine.
-Other platforms receive the universal Python wheel.
+PyPI is the stable CCCC product distribution, with Python as its stable and
+recommended implementation. Supported platform wheels also contain a private,
+version-matched **experimental Rust implementation** for opt-in performance
+evaluation with `cccc rust`. Feature and integration parity is still in progress;
+use `cccc python` for reliability-critical workflows. Other platforms receive the
+universal Python wheel.
 
 ### Experimental standalone Rust preview
 
@@ -175,12 +177,12 @@ cccc doctor
 ```
 
 `status` shows the selected, running, and available product implementations.
-Python is the initial default while no implementation choice has been saved.
-On a supported platform wheel, use `cccc rust` to select the bundled Rust
-implementation or `cccc python` to switch back; later bare invocations follow
-that persisted choice. `doctor` checks Python, agent runtimes, system
-configuration, the invoked CCCC executable, PATH resolution, and duplicate
-`cccc` commands.
+Python is the stable initial default while no implementation choice has been
+saved. On a supported platform wheel, use `cccc rust` to opt into the bundled
+experimental Rust implementation or `cccc python` to return to stable Python;
+later bare invocations follow that persisted choice. `doctor` checks Python,
+agent runtimes, system configuration, the invoked CCCC executable, PATH
+resolution, and duplicate `cccc` commands.
 
 ## Next Steps
 

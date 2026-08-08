@@ -133,6 +133,7 @@ fn app_with_shutdown(
     Router,
     Arc<im_runtime::ImWorkerRegistry>,
     Arc<browser_surface::BrowserSurfaces>,
+    AppState,
 ) {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let ledger_events = ledger_event_hub::LedgerEventHub::new(home.clone());
@@ -164,6 +165,7 @@ fn app_with_shutdown(
         web_mode,
         exhibit_allow_terminal: readonly::exhibit_allow_terminal_from_env(),
     };
+    let app_state = state.clone();
     let app = routes::router()
         .fallback(static_asset)
         .layer(CorsLayer::permissive())
@@ -177,7 +179,7 @@ fn app_with_shutdown(
             auth::authorize,
         ))
         .with_state(state);
-    (app, im_workers, browser_surfaces)
+    (app, im_workers, browser_surfaces, app_state)
 }
 
 fn spawn_notebooklm_auth_shutdown(
@@ -375,7 +377,7 @@ where
         .then(|| Arc::new(RestartHandle::new(web_shutdown.clone())));
     let mut restart_rx = web_shutdown.subscribe();
     let (shutdown_started, mut shutdown_started_rx) = tokio::sync::oneshot::channel();
-    let (app, im_workers, browser_surfaces) = app_with_shutdown(
+    let (app, im_workers, browser_surfaces, app_state) = app_with_shutdown(
         home,
         web_shutdown.clone(),
         web_mode,
@@ -385,6 +387,7 @@ where
             port: address.port(),
         },
     );
+    routes::spawn_web_model_supervisor(app_state);
     let server = async move {
         axum::serve(listener, app)
             .with_graceful_shutdown(async move {

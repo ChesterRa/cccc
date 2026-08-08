@@ -77,10 +77,12 @@ python -m pip install -U --pre \
   cccc-pair
 ```
 
-> PyPI 包是当前稳定且推荐的 CCCC 发行方式。在 Linux x86-64、Intel/Apple
-> Silicon macOS 和 Windows x86-64 上，对应平台 wheel 会同时包含 Python 与
-> 版本严格匹配的 Rust 实现。如果要专门测试无 Python 的 Rust-only 部署，可选用
-> 下文的[实验性独立 Rust 预览版](#实验性独立-rust-预览版)。
+> PyPI 包是当前稳定且推荐的 CCCC 发行方式，Python 是其中稳定的默认实现。在
+> Linux x86-64、Intel/Apple Silicon macOS 和 Windows x86-64 上，对应平台 wheel
+> 还会包含一个私有且版本严格匹配的**实验性 Rust 实现**，可通过 `cccc rust`
+> 显式选择并评估性能。其功能与集成细节仍在持续对齐；可靠性敏感的工作请使用
+> `cccc python`。如果要专门测试无 Python 的 Rust-only 部署，可选用下文的
+> [实验性独立 Rust 预览版](#实验性独立-rust-预览版)。
 
 ### 升级
 
@@ -100,19 +102,20 @@ cccc
 
 打开 **http://127.0.0.1:8848** — 默认会一起拉起 daemon 和本地 Web UI。
 
-在推荐的 pip 发行版中，当前默认实现仍是 Python。可以持久切换，也可以在切换后
-立即执行命令：
+在推荐的 pip 发行版中，Python 是稳定的初始默认实现；Rust 是用于性能评估的
+实验性显式选项。可以持久切换，也可以在切换后立即执行命令：
 
 ```bash
 cccc status            # 查看已选、正在运行和可用的实现
-cccc rust              # 选择 Rust，然后启动 CCCC
-cccc python             # 选择 Python，然后启动 CCCC
-cccc rust doctor        # 选择 Rust，然后执行 doctor
+cccc rust              # 选择实验性 Rust，然后启动 CCCC
+cccc python            # 选择稳定 Python，然后启动 CCCC
+cccc rust doctor        # 选择实验性 Rust，然后执行 doctor
 ```
 
 切换属于显式生命周期操作：CCCC 会先校验目标载荷，再停止当前 Web/daemon，
 且绝不会悄悄回退到另一实现。各 agent runtime 的 MCP 配置始终指向公开的
 `cccc` 启动器，因此之后切换实现时无需逐个重配。
+任何时候都可以运行 `cccc python` 回到稳定实现。
 
 实验性独立发行版只包含 Rust，因此其中不会提供 `cccc python` 或实现切换。
 
@@ -489,10 +492,11 @@ CCCC 不替代你的 agent —— 它是让它们成为一个团队的那一层�
 python -m pip install -U cccc-pair
 ```
 
-这是完整且受支持的产品发行版。在 Linux x86-64、Intel/Apple Silicon macOS 和
-Windows x86-64 上，pip 会选择同时包含 Python 实现和版本严格匹配的私有 Rust
-可执行文件的平台 wheel。其他平台使用通用 Python wheel；`cccc status` 会明确
-显示 Rust 不可用，而不会假装切换成功。
+这是完整且受支持的产品发行版，其中 Python 是稳定且推荐的实现。在 Linux
+x86-64、Intel/Apple Silicon macOS 和 Windows x86-64 上，pip 会选择还包含一个
+私有、版本严格匹配的实验性 Rust 可执行文件的平台 wheel，用于显式的性能评估。
+其他平台使用通用 Python wheel；`cccc status` 会明确显示 Rust 不可用，而不会
+假装切换成功。
 
 ### 实验性独立 Rust 预览版
 
@@ -504,9 +508,10 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
-这个可选通道只适合评估无 Python 的 Rust-only 部署。它会从 GitHub Releases
-下载并校验二进制，也可通过同一安装器执行 `cccc update`，但不具备 Python
-回退或实现切换能力，目前不作为 pip 产品的推荐替代品。安装器不会覆盖不属于它的
+这个可选通道只适合在无 Python 的 Rust-only 部署中评估实验性 Rust 实现。它会
+从 GitHub Releases 下载并校验二进制，也可通过同一安装器执行 `cccc update`，
+但不具备 Python 回退或实现切换能力，不作为稳定 pip/Python 路径的推荐替代品。
+安装器不会覆盖不属于它的
 现有 `cccc` 命令；请先有意卸载原命令，或改用其它 `CCCC_INSTALL_DIR`。
 其它目录中的同名命令会原样保留。使用默认安装目录时，安装器会把新命令放到用户
 PATH 最前面，并列出仍然存在的重复命令。打开新终端后运行 `cccc doctor`，其

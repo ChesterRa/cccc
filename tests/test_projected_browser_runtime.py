@@ -3,7 +3,7 @@ import os
 import socket
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 
 class _FakeProc:
@@ -539,6 +539,76 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
             finally:
                 manager.close(key="test-vnc-session")
         self.assertTrue(fake_vnc.closed)
+
+    def test_page_viewer_mode_keeps_cdp_frames_with_vnc_available(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        fake_runtime = _CountingCaptureRuntime()
+        fake_vnc = _FakeVncServer()
+        with patch.object(runtime, "launch_projected_browser_runtime", return_value=fake_runtime), patch.object(
+            runtime._ProjectedVncServer,
+            "start",
+            return_value=(fake_vnc, ""),
+        ):
+            manager = runtime.ProjectedBrowserSessionManager(idle_message="No test browser session.")
+            try:
+                state = manager.open(
+                    key="test-page-view-session",
+                    profile_dir=runtime.Path("/tmp/projected-browser-page-view-test"),
+                    url="https://chatgpt.com/",
+                    width=1280,
+                    height=800,
+                    headless=False,
+                    channel_candidates=("chrome",),
+                )
+                self.assertEqual(state["viewer"]["kind"], "vnc")
+
+                runtime_sock, viewer_sock = socket.socketpair()
+                try:
+                    self.assertTrue(
+                        manager.attach_socket_with_mode(
+                            key="test-page-view-session",
+                            sock=runtime_sock,
+                            viewer_mode="screencast",
+                        )
+                    )
+                    self.assertIn('"t": "state"', _recv_socket_line(viewer_sock))
+                    deadline = time.time() + 1.0
+                    while fake_runtime.capture_calls <= 0 and time.time() < deadline:
+                        time.sleep(0.02)
+                    self.assertGreater(fake_runtime.capture_calls, 0)
+                finally:
+                    try:
+                        viewer_sock.sendall(b'{"t":"disconnect"}\n')
+                    except Exception:
+                        pass
+                    viewer_sock.close()
+            finally:
+                manager.close(key="test-page-view-session")
+
+    def test_scroll_command_preserves_pointer_coordinates(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        projected = Mock()
+        projected.current_url.return_value = "https://example.test/"
+        session = runtime.ProjectedBrowserSession(
+            session_key="test-scroll-session",
+            profile_dir=runtime.Path("/tmp/projected-browser-scroll-test"),
+            url="https://example.test/",
+            width=1280,
+            height=800,
+            headless=False,
+            channel_candidates=("chrome",),
+        )
+
+        result = session._apply_command(
+            projected,
+            "scroll",
+            {"x": 640, "y": 320, "dx": 4, "dy": 121},
+        )
+
+        self.assertEqual(result, {"ok": True})
+        projected.scroll.assert_called_once_with(dx=4.0, dy=121.0, x=640.0, y=320.0)
 
     def test_socket_command_read_does_not_wait_for_timeout(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime

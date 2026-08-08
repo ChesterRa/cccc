@@ -14,6 +14,12 @@ import { classNames } from "../../utils/classNames";
 import { CollapseIcon, ExpandIcon } from "../Icons";
 import { mapContainedImagePoint } from "./projectedBrowserCoordinates";
 import { resolveBrowserObserverDisconnect } from "./projectedBrowserConnection";
+import {
+  projectedBrowserEffectiveViewerMode,
+  projectedBrowserSocketViewerMode,
+  shouldReuseProjectedBrowserSession,
+  type ProjectedBrowserViewerMode,
+} from "./projectedBrowserViewerMode";
 
 type RfbInstance = {
   viewOnly: boolean;
@@ -45,6 +51,7 @@ type ProjectedBrowserSurfacePanelProps = {
   refreshNonce: number;
   reuseActiveSession?: boolean;
   sessionIdentity?: string;
+  defaultViewerMode?: ProjectedBrowserViewerMode;
   chromeMode?: "standalone" | "embedded";
   viewportClassName?: string;
   onFrameUpdate?: (frame: ProjectedBrowserFrame | null) => void;
@@ -72,11 +79,11 @@ type ProjectedBrowserSurfacePanelProps = {
     fullScreen: string;
     exitFullScreen: string;
     viewerLabel: string;
-    viewerVnc: string;
-    viewerScreencast: string;
-    viewerFallback: string;
-    viewerTooltipVnc: string;
-    viewerTooltipScreencast: string;
+    viewerPage: string;
+    viewerBrowser: string;
+    viewerPageTooltip: string;
+    viewerBrowserTooltip: string;
+    viewerBrowserUnavailable: string;
     viewerFallbackReason: string;
     viewerReasonX11vncNotFound: string;
     viewerReasonWaylandEnv: string;
@@ -191,6 +198,7 @@ export function ProjectedBrowserSurfacePanel({
   refreshNonce,
   reuseActiveSession = true,
   sessionIdentity = "",
+  defaultViewerMode = "page",
   chromeMode = "standalone",
   viewportClassName,
   onFrameUpdate,
@@ -216,6 +224,7 @@ export function ProjectedBrowserSurfacePanel({
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const runIdRef = useRef(0);
+  const activeLifecycleKeyRef = useRef("");
   const lastRefreshNonceRef = useRef(refreshNonce);
   const pendingRefreshIdRef = useRef("");
   const refreshFeedbackTimerRef = useRef<number | null>(null);
@@ -260,24 +269,25 @@ export function ProjectedBrowserSurfacePanel({
       t("presentationExitFullScreenAction", { defaultValue: "Exit full screen" }),
     viewerLabel:
       labels?.viewerLabel || t("presentationBrowserViewerLabel", { defaultValue: "Viewer" }),
-    viewerVnc: labels?.viewerVnc || t("presentationBrowserViewerVnc", { defaultValue: "VNC" }),
-    viewerScreencast:
-      labels?.viewerScreencast ||
-      t("presentationBrowserViewerScreencast", { defaultValue: "CDP screencast" }),
-    viewerFallback:
-      labels?.viewerFallback ||
-      t("presentationBrowserViewerFallback", { defaultValue: "CDP fallback" }),
-    viewerTooltipVnc:
-      labels?.viewerTooltipVnc ||
-      t("presentationBrowserViewerTooltipVnc", {
+    viewerPage: labels?.viewerPage || t("presentationBrowserViewerPage", { defaultValue: "Page" }),
+    viewerBrowser:
+      labels?.viewerBrowser || t("presentationBrowserViewerBrowser", { defaultValue: "Browser" }),
+    viewerPageTooltip:
+      labels?.viewerPageTooltip ||
+      t("presentationBrowserViewerPageTooltip", {
         defaultValue:
-          "Interactive view is using the VNC stream. Browser automation still uses the daemon-controlled browser session.",
+          "Show the website content directly. The site still runs in the same daemon-controlled browser.",
       }),
-    viewerTooltipScreencast:
-      labels?.viewerTooltipScreencast ||
-      t("presentationBrowserViewerTooltipScreencast", {
+    viewerBrowserTooltip:
+      labels?.viewerBrowserTooltip ||
+      t("presentationBrowserViewerBrowserTooltip", {
         defaultValue:
-          "Interactive view is using the CDP screencast fallback. Browser automation still uses the daemon-controlled browser session.",
+          "Show the complete browser window for browser UI, sign-in prompts, and native interaction.",
+      }),
+    viewerBrowserUnavailable:
+      labels?.viewerBrowserUnavailable ||
+      t("presentationBrowserViewerBrowserUnavailable", {
+        defaultValue: "Complete browser view is unavailable; page view remains active.",
       }),
     viewerFallbackReason:
       labels?.viewerFallbackReason ||
@@ -325,6 +335,7 @@ export function ProjectedBrowserSurfacePanel({
   const [renderedFrame, setRenderedFrame] = useState<ProjectedBrowserFrame | null>(null);
   const [panelError, setPanelError] = useState("");
   const [isExpanded, setIsExpanded] = useState(false);
+  const [viewerMode, setViewerMode] = useState<ProjectedBrowserViewerMode>(defaultViewerMode);
   const [vncConnected, setVncConnected] = useState(false);
   const [vncFailed, setVncFailed] = useState(false);
   const [refreshFeedback, setRefreshFeedback] = useState<
@@ -408,6 +419,12 @@ export function ProjectedBrowserSurfacePanel({
   };
 
   useEffect(() => {
+    const lifecycleKey = `${sessionIdentity}\u0000${webSocketUrl}\u0000${runNonce}`;
+    const reuseCurrentSession = shouldReuseProjectedBrowserSession(
+      reuseActiveSession,
+      activeLifecycleKeyRef.current,
+      lifecycleKey,
+    );
     const runId = runIdRef.current + 1;
     runIdRef.current = runId;
     let disposed = false;
@@ -431,8 +448,8 @@ export function ProjectedBrowserSurfacePanel({
     };
 
     const attachSocket = () => {
-      const viewerMode = vncFailed ? "screencast" : "auto";
-      const ws = new WebSocket(urlWithViewerParam(webSocketUrl, "viewer_mode", viewerMode));
+      const socketViewerMode = projectedBrowserSocketViewerMode(viewerMode, vncFailed);
+      const ws = new WebSocket(urlWithViewerParam(webSocketUrl, "viewer_mode", socketViewerMode));
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -589,11 +606,12 @@ export function ProjectedBrowserSurfacePanel({
       if (disposed) return;
 
       if (
-        reuseActiveSession &&
+        reuseCurrentSession &&
         existing.ok &&
         existing.result.browser_surface.active &&
         ["starting", "ready"].includes(String(existing.result.browser_surface.state || "").trim())
       ) {
+        activeLifecycleKeyRef.current = lifecycleKey;
         setSessionState(normalizeState(existing.result.browser_surface));
         attachSocket();
         return;
@@ -635,6 +653,7 @@ export function ProjectedBrowserSurfacePanel({
         return;
       }
 
+      activeLifecycleKeyRef.current = lifecycleKey;
       setSessionState(normalizeState(started.result.browser_surface));
       attachSocket();
     };
@@ -654,32 +673,34 @@ export function ProjectedBrowserSurfacePanel({
     reuseActiveSession,
     sessionIdentity,
     vncFailed,
+    viewerMode,
     webSocketUrl,
   ]);
 
-  const vncAvailable =
+  const browserViewAvailable =
     String(sessionState.viewer?.kind || "")
       .trim()
-      .toLowerCase() === "vnc" && !vncFailed;
+      .toLowerCase() === "vnc" && !!sessionState.viewer?.vnc?.available;
+  const vncAvailable = viewerMode === "browser" && browserViewAvailable && !vncFailed;
   const displayIsolated =
     !!sessionState.metadata?.display_owned &&
     String(sessionState.metadata?.display_owner || "").trim() === "cccc_xvfb";
-  const viewerKind = vncAvailable ? texts.viewerVnc : texts.viewerFallback;
-  const viewerKindLabel = displayIsolated
-    ? `${viewerKind} · ${texts.viewerIsolationXvfb}`
-    : viewerKind;
   const vncFallbackReason = String(sessionState.viewer?.vnc?.error || "").trim();
-  const vncFallbackReasonLabel = vncAvailable
+  const vncFallbackReasonLabel = browserViewAvailable
     ? ""
     : formatVncFallbackReason(vncFallbackReason, texts);
-  const viewerTransportTooltip = vncAvailable
-    ? texts.viewerTooltipVnc
-    : vncFallbackReason
-      ? `${texts.viewerTooltipScreencast} ${texts.viewerFallbackReason}: ${vncFallbackReason}`
-      : texts.viewerTooltipScreencast;
-  const viewerTooltip = displayIsolated
-    ? `${viewerTransportTooltip} ${texts.viewerTooltipIsolationXvfb}`
-    : viewerTransportTooltip;
+  const isolationTooltip = displayIsolated ? ` ${texts.viewerTooltipIsolationXvfb}` : "";
+  const pageModeTooltip = `${texts.viewerPageTooltip}${isolationTooltip}`;
+  const browserModeTooltip = browserViewAvailable
+    ? `${texts.viewerBrowserTooltip}${isolationTooltip}`
+    : `${texts.viewerBrowserUnavailable}${
+        vncFallbackReasonLabel ? ` ${texts.viewerFallbackReason}: ${vncFallbackReasonLabel}.` : ""
+      }${isolationTooltip}`;
+  const effectiveViewerMode = projectedBrowserEffectiveViewerMode(
+    viewerMode,
+    browserViewAvailable,
+    vncFailed,
+  );
 
   useEffect(() => {
     if (!vncAvailable || sessionState.state !== "ready") {
@@ -740,14 +761,7 @@ export function ProjectedBrowserSurfacePanel({
     if (!container || typeof ResizeObserver === "undefined") return;
 
     const sendResize = () => {
-      if (
-        String(sessionState.viewer?.kind || "")
-          .trim()
-          .toLowerCase() === "vnc" &&
-        !vncFailed
-      ) {
-        return;
-      }
+      if (vncAvailable) return;
       const width = Math.max(640, Math.round(container.clientWidth || 0));
       const height = Math.max(480, Math.round(container.clientHeight || 0));
       if (!width || !height) return;
@@ -776,11 +790,19 @@ export function ProjectedBrowserSurfacePanel({
         resizeTimerRef.current = null;
       }
     };
-  }, [isExpanded, sessionState.viewer?.kind, vncFailed]);
+  }, [isExpanded, vncAvailable]);
 
   const handleBack = () => {
     setPanelError("");
     sendCommand({ t: "back" });
+  };
+
+  const handleViewerModeChange = (nextMode: ProjectedBrowserViewerMode) => {
+    if (nextMode === "browser") {
+      setVncFailed(false);
+    }
+    setPanelError("");
+    setViewerMode(nextMode);
   };
 
   const handleReconnect = () => {
@@ -858,7 +880,18 @@ export function ProjectedBrowserSurfacePanel({
 
   const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
     if (vncAvailable) return;
-    sendCommand({ t: "scroll", dx: Math.round(event.deltaX), dy: Math.round(event.deltaY) });
+    const frame = frameRef.current || renderedFrame;
+    if (!frame || !imageRef.current) return;
+    const rect = imageRef.current.getBoundingClientRect();
+    const point = mapContainedImagePoint({ x: event.clientX, y: event.clientY }, rect, frame);
+    if (!point) return;
+    sendCommand({
+      t: "scroll",
+      x: point.x,
+      y: point.y,
+      dx: Math.round(event.deltaX),
+      dy: Math.round(event.deltaY),
+    });
     event.preventDefault();
   };
 
@@ -956,21 +989,44 @@ export function ProjectedBrowserSurfacePanel({
                 ? texts.closed
                 : texts.starting}
         </span>
-        <span
+        <div
+          role="group"
+          aria-label={texts.viewerLabel}
           className={classNames(
-            "inline-flex max-w-[220px] items-center gap-1 rounded-full px-2.5 py-1 font-medium",
-            isDark ? "bg-white/[0.06] text-slate-300" : "bg-gray-100 text-gray-700",
+            "inline-flex shrink-0 items-center rounded-full p-0.5",
+            isDark ? "bg-white/[0.06]" : "bg-black/[0.045]",
           )}
-          title={viewerTooltip}
         >
-          <span className="text-[0.68rem] uppercase opacity-70">{texts.viewerLabel}</span>
-          <span className="truncate">{viewerKindLabel}</span>
-          {vncFallbackReasonLabel ? (
-            <span className="hidden max-w-[180px] truncate opacity-70 sm:inline">
-              · {vncFallbackReasonLabel}
-            </span>
-          ) : null}
-        </span>
+          {(["page", "browser"] as const).map((mode) => {
+            const selected = effectiveViewerMode === mode;
+            const browserMode = mode === "browser";
+            return (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={selected}
+                disabled={browserMode && !browserViewAvailable}
+                onClick={() => handleViewerModeChange(mode)}
+                title={browserMode ? browserModeTooltip : pageModeTooltip}
+                className={classNames(
+                  "rounded-full px-2.5 py-1 font-medium transition-colors",
+                  selected
+                    ? isDark
+                      ? "bg-white/[0.11] text-slate-100 shadow-sm"
+                      : "bg-white text-gray-800 shadow-sm ring-1 ring-black/[0.05]"
+                    : isDark
+                      ? "text-slate-400 hover:bg-white/[0.05] hover:text-slate-200"
+                      : "text-gray-500 hover:bg-white/70 hover:text-gray-700",
+                  browserMode && !browserViewAvailable
+                    ? "cursor-not-allowed opacity-45 hover:bg-transparent"
+                    : "",
+                )}
+              >
+                {browserMode ? texts.viewerBrowser : texts.viewerPage}
+              </button>
+            );
+          })}
+        </div>
         <span className="min-w-0 flex-1 truncate">{sessionState.url || fallbackUrl || ""}</span>
         {refreshFeedbackLabel ? (
           <span

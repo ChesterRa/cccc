@@ -31,8 +31,8 @@ async fn launches_chromium_and_captures_nonempty_frame() {
             "g_test::slot-1",
             &temp.path().join("profile"),
             &url,
-            800,
-            600,
+            1120,
+            760,
         )
         .await
         .expect("open");
@@ -44,8 +44,8 @@ async fn launches_chromium_and_captures_nonempty_frame() {
         .expect("jpeg");
     assert!(image.len() > 1_000);
     assert_eq!(&image[..2], &[0xff, 0xd8]);
-    assert_eq!(frame["width"], 800);
-    assert_eq!(frame["height"], 600);
+    assert_eq!(frame["width"], 1120);
+    assert_eq!(frame["height"], 760);
     assert!(manager.close("g_test::slot-1").await.expect("close"));
     server.abort();
 }
@@ -485,6 +485,53 @@ async fn special_key_command_applies_native_input_behavior() {
         .expect("input value");
     assert_eq!(value, "waterbang");
     assert!(manager.close("keyboard-test").await.expect("close"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn scroll_command_targets_the_nested_container_under_the_pointer() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = local_page(
+        "<!doctype html><style>html,body{margin:0;height:100%;overflow:hidden}#scroller{width:400px;height:300px;overflow:auto}#content{height:2000px}</style><div id='scroller'><div id='content'>scroll target</div></div>",
+    )
+    .await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    manager
+        .open("scroll-test", &temp.path().join("profile"), &url, 800, 600)
+        .await
+        .expect("open browser");
+
+    manager
+        .command(
+            "scroll-test",
+            &json!({"t":"scroll","x":200,"y":150,"dx":0,"dy":240}),
+        )
+        .await
+        .expect("dispatch wheel");
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    let page = manager
+        .sessions
+        .lock()
+        .await
+        .get("scroll-test")
+        .expect("browser session")
+        .page
+        .clone();
+    let scroll_top: f64 = page
+        .evaluate("document.querySelector('#scroller').scrollTop")
+        .await
+        .expect("read nested scroll position")
+        .into_value()
+        .expect("numeric scroll position");
+
+    assert!(
+        scroll_top >= 200.0,
+        "nested container did not scroll: {scroll_top}"
+    );
+    assert!(manager.close("scroll-test").await.expect("close"));
     server.abort();
 }
 

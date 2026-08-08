@@ -19,6 +19,7 @@ use cccc_contracts::utc_now;
 use chromiumoxide::Page;
 use chromiumoxide::browser::{Browser, BrowserConfig};
 use chromiumoxide::cdp::browser_protocol::network::CookieParam;
+use chromiumoxide::handler::viewport::Viewport;
 use futures_util::StreamExt;
 use futures_util::future::join_all;
 use navigation::goto_dom_content_loaded;
@@ -336,6 +337,11 @@ impl BrowserSurfaces {
                 let mut config = BrowserConfig::builder()
                     .user_data_dir(profile)
                     .window_size(width, height)
+                    .viewport(Viewport {
+                        width,
+                        height,
+                        ..Viewport::default()
+                    })
                     .new_headless_mode();
                 if !proxy_args.is_empty() {
                     config = config.args(proxy_args);

@@ -3,15 +3,29 @@ use cccc_contracts::DaemonRequest;
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, Value, json};
 
+use crate::RequestContext;
 use crate::mapping;
 
 pub async fn call(
     home: &HomeLayout,
     client: &DaemonClient,
     name: &str,
+    arguments: Map<String, Value>,
+) -> Result<Value, String> {
+    call_with_context(home, client, name, arguments, None).await
+}
+
+pub(crate) async fn call_with_context(
+    home: &HomeLayout,
+    client: &DaemonClient,
+    name: &str,
     mut arguments: Map<String, Value>,
+    context: Option<RequestContext<'_>>,
 ) -> Result<Value, String> {
     add_runtime_context(home, &mut arguments);
+    if let Some(context) = context {
+        apply_request_context(&mut arguments, context);
+    }
     authorize_tool(home, name, &arguments)?;
     let message_operation = is_message_operation(name, &arguments);
     if message_operation {
@@ -330,6 +344,20 @@ fn apply_actor_context(args: &mut Map<String, Value>, actor: Option<&str>) {
     }
 }
 
+fn apply_request_context(args: &mut Map<String, Value>, context: RequestContext<'_>) {
+    // A remote connector is bound to exactly one actor and group. Its request
+    // arguments are model-controlled, so the request-scoped binding is authoritative.
+    args.insert(
+        "group_id".into(),
+        Value::String(context.group_id.to_owned()),
+    );
+    args.insert(
+        "actor_id".into(),
+        Value::String(context.actor_id.to_owned()),
+    );
+    args.insert("by".into(), Value::String(context.actor_id.to_owned()));
+}
+
 pub(crate) fn tool_result(payload: Value) -> Value {
     let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into());
     json!({"content":[{"type":"text","text":text}],"structuredContent":payload})
@@ -377,9 +405,10 @@ fn is_repo_tool(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_actor_context, bootstrap_recovery, help_markdown, is_message_operation,
-        with_post_message_nudge,
+        apply_actor_context, apply_request_context, bootstrap_recovery, help_markdown,
+        is_message_operation, with_post_message_nudge,
     };
+    use crate::RequestContext;
     use serde_json::json;
 
     #[test]
@@ -403,6 +432,26 @@ mod tests {
 
         assert_eq!(args["actor_id"], "backend");
         assert_eq!(args["by"], "backend");
+    }
+
+    #[test]
+    fn request_scoped_actor_binding_overrides_model_controlled_identity() {
+        let mut args = json!({"group_id":"other","actor_id":"other","by":"user"})
+            .as_object()
+            .cloned()
+            .expect("args");
+
+        apply_request_context(
+            &mut args,
+            RequestContext {
+                group_id: "bound-group",
+                actor_id: "bound-actor",
+            },
+        );
+
+        assert_eq!(args["group_id"], "bound-group");
+        assert_eq!(args["actor_id"], "bound-actor");
+        assert_eq!(args["by"], "bound-actor");
     }
 
     #[test]

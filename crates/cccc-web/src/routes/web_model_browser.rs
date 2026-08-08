@@ -22,12 +22,18 @@ const DELIVERY_PREFERENCES_KEY: &str = "web_model_delivery_preferences";
 struct SessionQuery {
     group_id: String,
     actor_id: String,
-    #[serde(default, rename = "inspect")]
-    _inspect: bool,
+    #[serde(default)]
+    inspect: bool,
     #[serde(default)]
     mode: String,
     #[serde(default)]
     viewer_mode: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct InspectQuery {
+    #[serde(default)]
+    inspect: bool,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -50,37 +56,45 @@ async fn info(State(state): State<AppState>, Query(query): Query<SessionQuery>) 
     let group_id = required_identifier(&query.group_id, "group_id")?;
     let actor_id = required_identifier(&query.actor_id, "actor_id")?;
     validate_actor(&state, group_id, actor_id)?;
-    // Active Rust surfaces already inspect composer readiness in `payload`.
-    // Keep this GET read-only; delivery is owned by the background worker.
-    payload(&state, group_id, actor_id).await
+    // Status inspection is read-only; delivery is owned by the background worker.
+    payload(&state, group_id, actor_id, query.inspect).await
 }
 
-async fn open(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
+async fn open(
+    State(state): State<AppState>,
+    Query(query): Query<InspectQuery>,
+    Json(body): Json<Value>,
+) -> ApiResult {
     let group_id = required(&body, "group_id")?;
     let actor_id = required(&body, "actor_id")?;
     validate_actor(&state, &group_id, &actor_id)?;
     let width = dimension(&body, "width", 1366, 640, 2560);
     let height = dimension(&body, "height", 900, 480, 1600);
-    let provider = super::web_model_connector_store::for_actor(&state, &group_id, &actor_id)
-        .and_then(|item| item["provider"].as_str().map(str::to_owned))
-        .unwrap_or_else(|| "chatgpt".into());
-    let target = super::web_model_delivery_state::target(&state, &group_id, &actor_id)?;
-    let open_url = browser_open_url(&target, provider_url(&provider));
-    let profile = browser_profile_path(state.home.root(), &group_id, &actor_id)?;
-    state
-        .browser_surfaces
-        .ensure_open_system(
-            &key(&group_id, &actor_id),
-            &profile,
-            &open_url,
-            width,
-            height,
-        )
-        .await
-        .map_err(|error| ApiError::bad(format!("{error:#}")))?;
+    ensure_open_for_actor(&state, &group_id, &actor_id, width, height).await?;
     super::web_model_delivery::ensure_worker(state.clone(), group_id.clone(), actor_id.clone())
         .await;
-    payload(&state, &group_id, &actor_id).await
+    payload(&state, &group_id, &actor_id, query.inspect).await
+}
+
+pub(super) async fn ensure_open_for_actor(
+    state: &AppState,
+    group_id: &str,
+    actor_id: &str,
+    width: u32,
+    height: u32,
+) -> Result<Value, ApiError> {
+    validate_actor(state, group_id, actor_id)?;
+    let provider = super::web_model_connector_store::for_actor(state, group_id, actor_id)
+        .and_then(|item| item["provider"].as_str().map(str::to_owned))
+        .unwrap_or_else(|| "chatgpt".into());
+    let target = super::web_model_delivery_state::target(state, group_id, actor_id)?;
+    let open_url = browser_open_url(&target, provider_url(&provider));
+    let profile = browser_profile_path(state.home.root(), group_id, actor_id)?;
+    state
+        .browser_surfaces
+        .ensure_open_system(&key(group_id, actor_id), &profile, &open_url, width, height)
+        .await
+        .map_err(|error| ApiError::bad(format!("{error:#}")))
 }
 
 async fn close(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
@@ -92,7 +106,7 @@ async fn close(State(state): State<AppState>, Json(body): Json<Value>) -> ApiRes
         .close(&key(&group_id, &actor_id))
         .await
         .map_err(|error| ApiError::bad(error.to_string()))?;
-    payload(&state, &group_id, &actor_id).await
+    payload(&state, &group_id, &actor_id, false).await
 }
 
 async fn bind_current(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
@@ -145,7 +159,7 @@ async fn bind_current(State(state): State<AppState>, Json(body): Json<Value>) ->
         super::web_model_delivery::ensure_worker(state.clone(), group_id.clone(), actor_id.clone())
             .await;
     }
-    payload(&state, &group_id, &actor_id).await
+    payload(&state, &group_id, &actor_id, false).await
 }
 
 async fn update_delivery_preference(
@@ -165,7 +179,7 @@ async fn update_delivery_preference(
         request,
     )
     .await?;
-    payload(&state, &group_id, &actor_id).await
+    payload(&state, &group_id, &actor_id, false).await
 }
 
 async fn upgrade(
@@ -211,8 +225,9 @@ async fn upgrade(
     }))
 }
 
-async fn payload(state: &AppState, group_id: &str, actor_id: &str) -> ApiResult {
-    let surface = state.browser_surfaces.info(&key(group_id, actor_id)).await;
+async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool) -> ApiResult {
+    let session_key = key(group_id, actor_id);
+    let mut surface = state.browser_surfaces.info(&session_key).await;
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
     let targets = integration_state::group_get(&store, group_id, TARGETS_KEY).map_err(io_error)?;
     let target = targets.get(actor_id).cloned().unwrap_or_else(|| json!({}));
@@ -232,14 +247,10 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str) -> ApiResult 
         "updated_by":stored_preference["updated_by"].as_str().unwrap_or("")
     });
     let active = surface["active"].as_bool().unwrap_or(false);
-    let metadata = surface
-        .get("metadata")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let readiness = if active {
-        state
+    let readiness = if active && inspect {
+        let readiness = state
             .browser_surfaces
-            .prompt_readiness(&key(group_id, actor_id))
+            .prompt_readiness(&session_key)
             .await
             .unwrap_or_else(|error| {
                 json!({
@@ -248,10 +259,18 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str) -> ApiResult 
                     "tab_url":surface["url"],
                     "message":error.to_string()
                 })
-            })
+            });
+        surface = state.browser_surfaces.info(&session_key).await;
+        readiness
+    } else if active {
+        cached_readiness(&surface)
     } else {
         json!({"ready":false,"login_required":false,"tab_url":surface["url"]})
     };
+    let metadata = surface
+        .get("metadata")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     let ready = readiness["ready"].as_bool().unwrap_or(false);
     let login_required = readiness["login_required"].as_bool().unwrap_or(false);
     let url = readiness["tab_url"]
@@ -381,7 +400,7 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str) -> ApiResult 
             "Open ChatGPT",
             "Open ChatGPT to sign in or inspect the page.",
         )
-    } else if !ready {
+    } else if login_required {
         (
             "login_chatgpt",
             "Sign in to ChatGPT",
@@ -420,8 +439,8 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str) -> ApiResult 
         "tone":tone,
         "summary":next_label,
         "browser":{
-            "state":if ready{"ready"}else if active{"sign_in_required"}else{"closed"},
-            "label":if ready{"Ready"}else if active{"Needs sign-in"}else{"Not open"},
+            "state":if ready{"ready"}else if login_required{"sign_in_required"}else if active{"open"}else{"closed"},
+            "label":if ready{"Ready"}else if login_required{"Needs sign-in"}else if active{"Open"}else{"Not open"},
             "reason":readiness["message"].as_str().unwrap_or(if active {
                 "Open ChatGPT and sign in with this browser profile."
             } else {
@@ -461,7 +480,7 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str) -> ApiResult 
         "visibility":metadata["visibility"],
         "started_at":surface["started_at"],
         "updated_at":surface["updated_at"],
-        "state":if ready{"ready"}else if active{"sign_in_required"}else{"idle"},
+        "state":if ready{"ready"}else if login_required{"sign_in_required"}else if active{"open"}else{"idle"},
         "message":readiness["message"],
         "tab_url":url,
         "last_tab_url":url,
@@ -508,6 +527,23 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str) -> ApiResult 
     Ok(success(json!({
         "browser_session":browser,"browser_surface":surface,"health_snapshot":health
     })))
+}
+
+fn cached_readiness(surface: &Value) -> Value {
+    let current_url = surface["url"].as_str().unwrap_or_default();
+    let cached = &surface["metadata"]["prompt_readiness"];
+    let cached_url = cached["tab_url"].as_str().unwrap_or_default();
+    if cached.is_object()
+        && (current_url.is_empty() || cached_url.is_empty() || current_url == cached_url)
+    {
+        return cached.clone();
+    }
+    json!({
+        "ready":false,
+        "login_required":false,
+        "tab_url":current_url,
+        "message":"Browser is open; ChatGPT readiness has not been checked yet."
+    })
 }
 
 fn validate_actor(state: &AppState, group_id: &str, actor_id: &str) -> Result<(), ApiError> {

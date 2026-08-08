@@ -77,9 +77,12 @@ python -m pip install -U --pre \
   cccc-pair
 ```
 
-> PyPI パッケージが、現在の安定した推奨 CCCC ディストリビューションです。
-> Linux x86-64、Intel/Apple Silicon macOS、Windows x86-64 の platform wheel
-> には、Python と同じバージョンの private Rust 実装が含まれます。Python なしの
+> PyPI パッケージが、現在の安定した推奨 CCCC ディストリビューションであり、
+> Python が安定版のデフォルト実装です。Linux x86-64、Intel/Apple Silicon macOS、
+> Windows x86-64 の platform wheel には、`cccc rust` で明示的に選択して性能を
+> 評価するための、Python と同じバージョンの private な**実験的 Rust 実装**も
+> 含まれます。機能とインテグレーションの parity は現在も整備中です。信頼性を
+> 重視するワークフローでは `cccc python` を使用してください。Python なしの
 > Rust-only 配備を試す場合に限り、下記の実験的スタンドアロン版を利用できます。
 
 ### アップグレード
@@ -101,19 +104,21 @@ cccc
 
 **http://127.0.0.1:8848** を開く — デフォルトで daemon とローカル Web UI が一緒に起動します。
 
-推奨の pip ディストリビューションでは、現在のデフォルト実装は Python です。
-永続的に切り替えるか、切り替えとコマンド実行を 1 ステップで行えます。
+推奨の pip ディストリビューションでは、Python が安定版の初期デフォルト実装です。
+Rust は性能評価向けの実験的な明示選択です。永続的に切り替えるか、切り替えと
+コマンド実行を 1 ステップで行えます。
 
 ```bash
 cccc status            # 選択中・実行中・利用可能な実装を表示
-cccc rust              # Rust を選択して CCCC を起動
-cccc python             # Python を選択して CCCC を起動
-cccc rust doctor        # Rust を選択して doctor を実行
+cccc rust              # 実験的 Rust を選択して CCCC を起動
+cccc python             # 安定版 Python を選択して CCCC を起動
+cccc rust doctor        # 実験的 Rust を選択して doctor を実行
 ```
 
 切り替えは明示的なライフサイクル操作です。CCCC は対象 payload を検証してから現在の
 Web/daemon を停止し、別実装へ暗黙にフォールバックしません。Agent runtime の MCP 設定は
 安定した公開 `cccc` launcher を参照するため、後の切り替えでも再設定は不要です。
+いつでも `cccc python` で安定版の実装へ戻せます。
 
 実験的スタンドアロン版には Rust だけが含まれるため、`cccc python` と実装切り替えは
 利用できません。
@@ -489,10 +494,11 @@ CCCC はエージェントを置き換えるものではなく、それらをチ
 python -m pip install -U cccc-pair
 ```
 
-これは完全にサポートされる製品ディストリビューションです。Linux x86-64、
-Intel/Apple Silicon macOS、Windows x86-64 では、Python 実装と同じバージョンの
-private Rust 実行ファイルを含む platform wheel が選択されます。それ以外では
-universal Python wheel を使い、`cccc status` が Rust を利用不可と明示します。
+これは完全にサポートされる製品ディストリビューションで、Python が安定版の
+推奨実装です。Linux x86-64、Intel/Apple Silicon macOS、Windows x86-64 では、
+性能評価向けに Python と同じバージョンの private な実験的 Rust 実行ファイルも
+含む platform wheel が選択されます。それ以外では universal Python wheel を使い、
+`cccc status` が Rust を利用不可と明示します。
 
 ### 実験的スタンドアロン Rust プレビュー
 
@@ -504,10 +510,11 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
-このオプションは、Python なしの Rust-only 配備を評価する場合に限って利用してください。
-GitHub Releases からチェックサム検証済みバイナリを取得し、同じインストーラーで
-`cccc update` できますが、Python fallback と実装切り替えはありません。現時点では
-pip 製品の推奨代替ではありません。インストーラーは自身が所有しない既存の `cccc`
+このオプションは、Python なしの Rust-only 配備で実験的 Rust 実装を評価する場合に
+限って利用してください。GitHub Releases からチェックサム検証済みバイナリを取得し、
+同じインストーラーで `cccc update` できますが、Python fallback と実装切り替えは
+ありません。安定版の pip/Python 経路の推奨代替ではありません。インストーラーは
+自身が所有しない既存の `cccc`
 コマンドを上書きしないため、意図的にアンインストールするか、別の
 `CCCC_INSTALL_DIR` を指定してください。
 別ディレクトリにある同名コマンドは変更しません。デフォルトのインストール先では、

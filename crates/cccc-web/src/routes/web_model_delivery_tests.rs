@@ -32,7 +32,7 @@ async fn browser_session_rejects_non_web_model_actor() {
         json!({"group_id":group_id,"actor_id":"peer1","runtime":"codex","runner":"headless","role":"peer","by":"user"}),
     );
     let (shutdown, _) = broadcast::channel(2);
-    let (app, _, _) = crate::app_with_shutdown(
+    let (app, _, _, _) = crate::app_with_shutdown(
         home,
         shutdown,
         crate::WebMode::Normal,
@@ -103,7 +103,7 @@ async fn browser_session_projects_the_shared_target_contract() {
     )
     .expect("pending target");
     let (shutdown, _) = broadcast::channel(2);
-    let (app, _, _) = crate::app_with_shutdown(
+    let (app, _, _, _) = crate::app_with_shutdown(
         home,
         shutdown,
         crate::WebMode::Normal,
@@ -206,7 +206,7 @@ async fn browser_session_inspection_does_not_deliver_or_commit_messages() {
         json!({"group_id":group_id,"by":"user","to":["web1"],"text":"must remain unread"}),
     );
     let (shutdown, _) = broadcast::channel(2);
-    let (app, _, _) = crate::app_with_shutdown(
+    let (app, _, _, _) = crate::app_with_shutdown(
         home.clone(),
         shutdown,
         crate::WebMode::Normal,
@@ -239,6 +239,91 @@ async fn browser_session_inspection_does_not_deliver_or_commit_messages() {
 }
 
 #[tokio::test]
+async fn cached_browser_status_does_not_reinspect_the_page() {
+    if !chrome_available() {
+        return;
+    }
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let created = daemon_sync(&home, "group_create", json!({"title":"cached inspect"}));
+    let group_id = created["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    daemon_sync(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","runner":"headless","role":"peer","by":"user"}),
+    );
+    let (shutdown, _) = broadcast::channel(2);
+    let (app, _, surfaces, _) = crate::app_with_shutdown(
+        home,
+        shutdown,
+        crate::WebMode::Normal,
+        None,
+        crate::LiveBinding::from_env(),
+    );
+    let (page_url, page_server) = prompt_page().await;
+    let session_key = super::web_model_browser::key(&group_id, "web1");
+    surfaces
+        .ensure_open(
+            &session_key,
+            &temp.path().join("profile"),
+            &page_url,
+            900,
+            700,
+        )
+        .await
+        .expect("browser surface");
+
+    let inspected = request_json(
+        &app,
+        Request::get(format!(
+            "/api/v1/web-model/browser-session?group_id={group_id}&actor_id=web1&inspect=true"
+        ))
+        .body(Body::empty())
+        .expect("inspect browser request"),
+    )
+    .await;
+    let page = surfaces
+        .sessions
+        .lock()
+        .await
+        .get(&session_key)
+        .expect("session")
+        .page
+        .clone();
+    page.evaluate("document.querySelector('#prompt-textarea').remove()")
+        .await
+        .expect("remove composer");
+    let cached = request_json(
+        &app,
+        Request::get(format!(
+            "/api/v1/web-model/browser-session?group_id={group_id}&actor_id=web1&inspect=false"
+        ))
+        .body(Body::empty())
+        .expect("cached browser request"),
+    )
+    .await;
+    let refreshed = request_json(
+        &app,
+        Request::get(format!(
+            "/api/v1/web-model/browser-session?group_id={group_id}&actor_id=web1&inspect=true"
+        ))
+        .body(Body::empty())
+        .expect("refresh browser request"),
+    )
+    .await;
+    let _ = surfaces.close(&session_key).await;
+    page_server.abort();
+
+    assert_eq!(inspected["result"]["browser_session"]["ready"], true);
+    assert_eq!(cached["result"]["browser_session"]["ready"], true);
+    assert_eq!(refreshed["result"]["browser_session"]["ready"], false);
+}
+
+#[tokio::test]
 async fn delivery_preference_persists_through_rust_web_and_daemon_turns() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -266,7 +351,7 @@ async fn delivery_preference_persists_through_rust_web_and_daemon_turns() {
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
     let (shutdown, _) = broadcast::channel(2);
-    let (app, _, _) = crate::app_with_shutdown(
+    let (app, _, _, _) = crate::app_with_shutdown(
         home.clone(),
         shutdown.clone(),
         crate::WebMode::Normal,
@@ -313,6 +398,156 @@ async fn delivery_preference_persists_through_rust_web_and_daemon_turns() {
     );
 }
 
+#[tokio::test]
+async fn connector_mcp_uses_its_bound_actor_for_listing_and_calls() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let created = daemon_sync(&home, "group_create", json!({"title":"connector scope"}));
+    let group_id = created["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    daemon_sync(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":temp.path(),"by":"user"}),
+    );
+    daemon_sync(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","runner":"headless","role":"peer","by":"user"}),
+    );
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_daemon(&home).await;
+    let (shutdown, _) = broadcast::channel(2);
+    let (app, _, _, _) = crate::app_with_shutdown(
+        home,
+        shutdown.clone(),
+        crate::WebMode::Normal,
+        None,
+        crate::LiveBinding::from_env(),
+    );
+
+    let create = request_json(
+        &app,
+        Request::post("/api/v1/web-model/connectors")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"group_id":group_id,"actor_id":"web1","provider":"chatgpt"}).to_string(),
+            ))
+            .expect("create connector request"),
+    )
+    .await;
+    let connector_id = create["result"]["connector"]["connector_id"]
+        .as_str()
+        .expect("connector id");
+    let secret = create["result"]["secret"].as_str().expect("secret");
+    let endpoint = format!("/mcp/web-model/{connector_id}?token={secret}");
+    let listed = request_json(
+        &app,
+        Request::post(&endpoint)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}).to_string(),
+            ))
+            .expect("list tools request"),
+    )
+    .await;
+    let names = listed["result"]["tools"]
+        .as_array()
+        .expect("tool list")
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let bootstrap = request_json(
+        &app,
+        Request::post(&endpoint)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "jsonrpc":"2.0",
+                    "id":2,
+                    "method":"tools/call",
+                    "params":{
+                        "name":"cccc_bootstrap",
+                        "arguments":{"actor_id":"user","by":"user"}
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("bootstrap request"),
+    )
+    .await;
+    let code_exec = request_json(
+        &app,
+        Request::post(&endpoint)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "jsonrpc":"2.0",
+                    "id":3,
+                    "method":"tools/call",
+                    "params":{
+                        "name":"cccc_code_exec",
+                        "arguments":{
+                            "source":"text(String(ALL_TOOLS.some((tool) => tool.raw_name === 'cccc_repo')));",
+                            "yield_time_ms":5000
+                        }
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("code mode request"),
+    )
+    .await;
+    let forbidden_status = app
+        .clone()
+        .oneshot(
+            Request::post(&endpoint)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "jsonrpc":"2.0",
+                        "id":4,
+                        "method":"tools/call",
+                        "params":{
+                            "name":"cccc_bootstrap",
+                            "arguments":{"group_id":"another-group"}
+                        }
+                    })
+                    .to_string(),
+                ))
+                .expect("cross-group request"),
+        )
+        .await
+        .expect("cross-group response")
+        .status();
+    let _ = shutdown.send(());
+    daemon.abort();
+    let _ = daemon.await;
+
+    assert_eq!(
+        names.len(),
+        31,
+        "unexpected Web Model tool surface: {names:?}"
+    );
+    assert!(names.contains("cccc_code_exec"));
+    assert!(names.contains("cccc_code_wait"));
+    assert!(names.contains("cccc_repo"));
+    assert_eq!(
+        bootstrap["result"]["structuredContent"]["session"]["actor_id"],
+        "web1"
+    );
+    assert_eq!(
+        code_exec["result"]["structuredContent"]["status"],
+        "completed"
+    );
+    assert_eq!(code_exec["result"]["structuredContent"]["output"], "true");
+    assert_eq!(forbidden_status, StatusCode::FORBIDDEN);
+}
+
 const BACKGROUND_DELIVERY_MARGIN: Duration = Duration::from_secs(5);
 const DELIVERY_STATUS_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -344,7 +579,7 @@ async fn connector_activity_binding_and_browser_delivery_share_one_turn() {
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
     let (shutdown, _) = broadcast::channel(2);
-    let (app, _, surfaces) = crate::app_with_shutdown(
+    let (app, _, surfaces, _) = crate::app_with_shutdown(
         home.clone(),
         shutdown.clone(),
         crate::WebMode::Normal,
@@ -852,7 +1087,7 @@ async fn ambiguous_browser_submission_commits_at_most_once_without_claiming_succ
     let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
     wait_for_daemon(&home).await;
     let (shutdown, _) = broadcast::channel(2);
-    let (app, _, surfaces) = crate::app_with_shutdown(
+    let (app, _, surfaces, _) = crate::app_with_shutdown(
         home.clone(),
         shutdown.clone(),
         crate::WebMode::Normal,
@@ -871,6 +1106,16 @@ async fn ambiguous_browser_submission_commits_at_most_once_without_claiming_succ
         )
         .await
         .expect("browser surface");
+    request_json(
+        &app,
+        Request::post("/api/v1/web-model/connectors")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"group_id":group_id,"actor_id":"web1","provider":"chatgpt_web"}).to_string(),
+            ))
+            .expect("create connector request"),
+    )
+    .await;
     request_json(
         &app,
         Request::post("/api/v1/web-model/browser-session/bind-current")
@@ -1195,7 +1440,7 @@ impl LegacyPendingFixture {
         let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
         wait_for_daemon(&home).await;
         let (shutdown, _) = broadcast::channel(2);
-        let (app, _, surfaces) = crate::app_with_shutdown(
+        let (app, _, surfaces, _) = crate::app_with_shutdown(
             home,
             shutdown.clone(),
             crate::WebMode::Normal,
@@ -1203,6 +1448,17 @@ impl LegacyPendingFixture {
             crate::LiveBinding::from_env(),
         );
         let session_key = super::web_model_browser::key(&group_id, "web1");
+        request_json(
+            &app,
+            Request::post("/api/v1/web-model/connectors")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"group_id":group_id,"actor_id":"web1","provider":"chatgpt_web"})
+                        .to_string(),
+                ))
+                .expect("create connector request"),
+        )
+        .await;
         let opened = request_json(
             &app,
             Request::post("/api/v1/web-model/browser-session/open")
@@ -1308,7 +1564,16 @@ async fn request_json(app: &axum::Router, request: Request<Body>) -> Value {
 }
 
 async fn wait_for_background_delivery(app: &axum::Router, group_id: &str, actor_id: &str) -> Value {
-    wait_for_delivery_status(app, group_id, actor_id, "submitted").await
+    wait_for_delivery_status(app, group_id, actor_id, "submitted").await;
+    request_json(
+        app,
+        Request::get(format!(
+            "/api/v1/web-model/browser-session?group_id={group_id}&actor_id={actor_id}&inspect=true"
+        ))
+        .body(Body::empty())
+        .expect("inspected browser state request"),
+    )
+    .await
 }
 
 async fn wait_for_delivery_status(

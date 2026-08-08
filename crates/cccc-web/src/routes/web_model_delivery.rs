@@ -19,6 +19,12 @@ use super::web_model_delivery_state::{record_connector, target as load_target, u
 static IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 pub(super) const IDLE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(5);
+const DEFERRED_RETRY_BASE: std::time::Duration = std::time::Duration::from_secs(3);
+const DEFERRED_MAX_AUTOMATIC_RETRIES: u32 = 3;
+
+fn deferred_retry_delay(retries: u32) -> Option<std::time::Duration> {
+    (retries < DEFERRED_MAX_AUTOMATIC_RETRIES).then(|| DEFERRED_RETRY_BASE * (1_u32 << retries))
+}
 
 const BOOTSTRAP_SEED_VERSION: &str = "web-model-bootstrap-normal-system-prompt-v2";
 const COMPATIBILITY_IMAGE_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAKUlEQVR42u3OIQEAAAACIP+f1hkWWEB6FgEBAQEBAQEBAQEBAQEBgXdgl/rw4tnPBf0AAAAASUVORK5CYII=";
@@ -39,52 +45,142 @@ struct BootstrapSeed {
 pub(super) enum DeliveryOutcome {
     Submitted,
     Idle,
-    Deferred,
+    Deferred(String),
     Ambiguous,
+    Stopped,
 }
 
 pub(super) async fn ensure_worker(state: AppState, group_id: String, actor_id: String) {
+    spawn_worker(state, group_id, actor_id);
+}
+
+fn spawn_worker(state: AppState, group_id: String, actor_id: String) {
     let session_key = key(&group_id, &actor_id);
     let Some(worker) = SessionGuard::acquire(&WORKERS, session_key.clone()) else {
         return;
     };
     tokio::spawn(async move {
-        let _worker = worker;
-        let mut retry_seconds = 1_u64;
-        let mut shutdown = state.shutdown.subscribe();
-        loop {
-            let surface = state.browser_surfaces.info(&session_key).await;
-            if !surface["active"].as_bool().unwrap_or(false) {
-                break;
+        // Keep the worker guard in this scope so it is always released before the fresh-turn
+        // check below. An event arriving during the final deferred attempt cannot acquire the
+        // guard, so that check is responsible for recovering its wake-up.
+        let exhausted_turn_id = {
+            let _worker = worker;
+            let mut exhausted_turn_id = None;
+            let mut retry_seconds = 1_u64;
+            let mut deferred_turn_id = String::new();
+            let mut deferred_retries = 0_u32;
+            let mut shutdown = state.shutdown.subscribe();
+            loop {
+                let surface = state.browser_surfaces.info(&session_key).await;
+                if !surface["active"].as_bool().unwrap_or(false) {
+                    break;
+                }
+                let delay = match deliver_pending(&state, &group_id, &actor_id).await {
+                    Ok(DeliveryOutcome::Submitted) => {
+                        retry_seconds = 1;
+                        deferred_turn_id.clear();
+                        deferred_retries = 0;
+                        std::time::Duration::from_millis(10)
+                    }
+                    Ok(DeliveryOutcome::Deferred(turn_id)) => {
+                        retry_seconds = 1;
+                        if deferred_turn_id != turn_id {
+                            deferred_turn_id = turn_id;
+                            deferred_retries = 0;
+                        }
+                        let Some(delay) = deferred_retry_delay(deferred_retries) else {
+                            tracing::info!(
+                                group_id,
+                                actor_id,
+                                turn_id = deferred_turn_id,
+                                "Web-model browser deferred retry budget exhausted"
+                            );
+                            exhausted_turn_id = Some(deferred_turn_id.clone());
+                            break;
+                        };
+                        deferred_retries += 1;
+                        delay
+                    }
+                    Ok(DeliveryOutcome::Idle | DeliveryOutcome::Ambiguous) => {
+                        retry_seconds = 1;
+                        deferred_turn_id.clear();
+                        deferred_retries = 0;
+                        IDLE_POLL_INTERVAL
+                    }
+                    Ok(DeliveryOutcome::Stopped) => break,
+                    Err(error) => {
+                        tracing::warn!(
+                            group_id,
+                            actor_id,
+                            %error,
+                            "Web-model browser delivery failed; retrying"
+                        );
+                        retry_seconds = (retry_seconds * 2).min(30);
+                        std::time::Duration::from_secs(retry_seconds)
+                    }
+                };
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {},
+                    _ = shutdown.recv() => break,
+                }
             }
-            let delay = match deliver_pending(&state, &group_id, &actor_id).await {
-                Ok(DeliveryOutcome::Submitted) => {
-                    retry_seconds = 1;
-                    std::time::Duration::from_millis(10)
-                }
-                Ok(
-                    DeliveryOutcome::Idle | DeliveryOutcome::Deferred | DeliveryOutcome::Ambiguous,
-                ) => {
-                    retry_seconds = 1;
-                    IDLE_POLL_INTERVAL
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        group_id,
-                        actor_id,
-                        %error,
-                        "Web-model browser delivery failed; retrying"
-                    );
-                    retry_seconds = (retry_seconds * 2).min(30);
-                    std::time::Duration::from_secs(retry_seconds)
-                }
-            };
-            tokio::select! {
-                _ = tokio::time::sleep(delay) => {},
-                _ = shutdown.recv() => break,
+            exhausted_turn_id
+        };
+
+        let Some(exhausted_turn_id) = exhausted_turn_id else {
+            return;
+        };
+        match fresh_turn_after_exhaustion(&state, &group_id, &actor_id, &exhausted_turn_id).await {
+            Ok(Some(fresh_turn_id)) => {
+                tracing::debug!(
+                    group_id,
+                    actor_id,
+                    exhausted_turn_id,
+                    fresh_turn_id,
+                    "Rescheduling Web-model browser delivery for fresh unread work"
+                );
+                spawn_worker(state, group_id, actor_id);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(
+                    group_id,
+                    actor_id,
+                    %error,
+                    "Web-model browser fresh unread check failed"
+                );
             }
         }
     });
+}
+
+async fn fresh_turn_after_exhaustion(
+    state: &AppState,
+    group_id: &str,
+    actor_id: &str,
+    exhausted_turn_id: &str,
+) -> Result<Option<String>, ApiError> {
+    if !super::web_model_supervisor::actor_delivery_enabled(state, group_id, actor_id) {
+        return Ok(None);
+    }
+    let wait = daemon_call(
+        state,
+        "web_model_runtime_wait_next_turn",
+        args(group_id, actor_id),
+    )
+    .await?;
+    Ok(replacement_turn_id(exhausted_turn_id, &wait))
+}
+
+fn replacement_turn_id(exhausted_turn_id: &str, wait: &Value) -> Option<String> {
+    if wait["status"] != "work_available" {
+        return None;
+    }
+    wait["turn"]["turn_id"]
+        .as_str()
+        .map(str::trim)
+        .filter(|turn_id| !turn_id.is_empty() && *turn_id != exhausted_turn_id)
+        .map(str::to_owned)
 }
 
 pub(super) async fn deliver_pending(
@@ -130,6 +226,9 @@ async fn deliver_once(
     actor_id: &str,
     session_key: &str,
 ) -> Result<DeliveryOutcome, ApiError> {
+    if !super::web_model_supervisor::actor_delivery_enabled(state, group_id, actor_id) {
+        return Ok(DeliveryOutcome::Stopped);
+    }
     let surface = state.browser_surfaces.info(session_key).await;
     if !surface["active"].as_bool().unwrap_or(false) {
         return Ok(DeliveryOutcome::Idle);
@@ -143,7 +242,12 @@ async fn deliver_once(
         if recover_verified_ambiguous_submission(state, group_id, actor_id, &target).await? {
             return Ok(DeliveryOutcome::Submitted);
         }
-        return Ok(DeliveryOutcome::Ambiguous);
+        // The attempted turn was already committed to preserve at-most-once delivery. A known
+        // conversation target can therefore continue with later turns without retrying it. A new
+        // chat must remain fenced until its conversation URL can be recovered.
+        if target["kind"] == "new_chat" {
+            return Ok(DeliveryOutcome::Ambiguous);
+        }
     }
     if is_legacy_pending_delivery(&target) {
         if state
@@ -174,13 +278,22 @@ async fn deliver_once(
         }
         let reconciled = load_target(state, group_id, actor_id)?;
         if reconciled["last_delivery_status"] == "submission_ambiguous" {
-            return Ok(DeliveryOutcome::Ambiguous);
-        }
-        if reconciled["kind"] == "new_chat" {
-            return resolve_pending_new_chat(state, group_id, actor_id, session_key, &reconciled)
+            if reconciled["kind"] == "new_chat" {
+                return Ok(DeliveryOutcome::Ambiguous);
+            }
+        } else {
+            if reconciled["kind"] == "new_chat" {
+                return resolve_pending_new_chat(
+                    state,
+                    group_id,
+                    actor_id,
+                    session_key,
+                    &reconciled,
+                )
                 .await;
+            }
+            return Ok(DeliveryOutcome::Submitted);
         }
-        return Ok(DeliveryOutcome::Submitted);
     }
     if target["kind"] == "new_chat"
         && matches!(
@@ -245,10 +358,10 @@ async fn deliver_once(
                 json!({"last_delivery_status":"deferred","last_submission_evidence":browser,"last_error":message}),
             )?;
             record_connector(state, group_id, actor_id, "deferred", turn_id, message)?;
-            return Ok(DeliveryOutcome::Deferred);
+            return Ok(DeliveryOutcome::Deferred(turn_id.to_owned()));
         }
         Ok(PromptSubmissionOutcome::Ambiguous(browser)) => {
-            let message = "browser submission was attempted but could not be verified; automatic redelivery is paused";
+            let message = "browser submission was attempted but could not be verified; this message will not be redelivered automatically";
             let complete = complete_args(
                 group_id,
                 actor_id,
@@ -289,7 +402,7 @@ async fn deliver_once(
                 actor_id,
                 turn_id,
                 cursor_committed = completion.is_ok(),
-                "Web-model browser submission could not be verified; automatic redelivery is paused"
+                "Web-model browser submission could not be verified; the attempted message will not be redelivered automatically"
             );
             return Ok(DeliveryOutcome::Ambiguous);
         }
@@ -575,7 +688,7 @@ async fn recover_legacy_pending_delivery(
                     "last_error":message
                 }),
             )?;
-            return Ok(DeliveryOutcome::Deferred);
+            return Ok(DeliveryOutcome::Deferred(turn_id.to_owned()));
         }
         Ok(PromptSubmissionOutcome::Ambiguous(browser)) => {
             let message = "legacy recovery attempted submission but could not verify whether ChatGPT accepted it; automatic redelivery is paused";
@@ -850,7 +963,7 @@ mod tests {
 
     use super::{
         BOOTSTRAP_SEED_VERSION, bootstrap_seed_digest, browser_delivery_id, build_browser_prompt,
-        compatibility_image_for_delivery,
+        compatibility_image_for_delivery, deferred_retry_delay, replacement_turn_id,
     };
 
     #[test]
@@ -863,6 +976,43 @@ mod tests {
             browser_delivery_id("web1", "webturn:web1:abc123"),
             browser_delivery_id("web1", "webturn:web1:def456")
         );
+    }
+
+    #[test]
+    fn deferred_delivery_uses_three_bounded_automatic_retries() {
+        assert_eq!(
+            deferred_retry_delay(0).map(|value| value.as_secs()),
+            Some(3)
+        );
+        assert_eq!(
+            deferred_retry_delay(1).map(|value| value.as_secs()),
+            Some(6)
+        );
+        assert_eq!(
+            deferred_retry_delay(2).map(|value| value.as_secs()),
+            Some(12)
+        );
+        assert_eq!(deferred_retry_delay(3), None);
+    }
+
+    #[test]
+    fn deferred_exhaustion_reschedules_only_fresh_unread_work() {
+        let same_turn = json!({
+            "status":"work_available",
+            "turn":{"turn_id":"webturn:web1:old"}
+        });
+        let fresh_turn = json!({
+            "status":"work_available",
+            "turn":{"turn_id":"webturn:web1:fresh"}
+        });
+        let idle = json!({"status":"idle","turn":null});
+
+        assert_eq!(replacement_turn_id("webturn:web1:old", &same_turn), None);
+        assert_eq!(
+            replacement_turn_id("webturn:web1:old", &fresh_turn).as_deref(),
+            Some("webturn:web1:fresh")
+        );
+        assert_eq!(replacement_turn_id("webturn:web1:old", &idle), None);
     }
 
     #[test]

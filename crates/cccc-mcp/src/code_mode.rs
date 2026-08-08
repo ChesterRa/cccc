@@ -88,7 +88,7 @@ pub async fn start(
     ) as usize;
 
     prune_cells().await;
-    let nested_tools = nested_tools(home, client).await;
+    let nested_tools = nested_tools(home, client, &owner).await;
     let (cell_id, cell) = spawn_cell(root, owner, source, nested_tools, yield_time_ms).await?;
     cells().lock().await.insert(cell_id.clone(), cell.clone());
     schedule_expiration(cell_id.clone());
@@ -295,8 +295,8 @@ fn integer_arg(value: Option<&Value>, default: u64, minimum: u64, maximum: u64) 
     parsed.clamp(minimum, maximum)
 }
 
-async fn nested_tools(home: &HomeLayout, client: &DaemonClient) -> Vec<Value> {
-    crate::visible_tools(home, client)
+async fn nested_tools(home: &HomeLayout, client: &DaemonClient, owner: &Owner) -> Vec<Value> {
+    crate::visible_tools_for_actor(home, client, &owner.group_id, &owner.actor_id)
         .await
         .into_iter()
         .filter_map(|tool| {

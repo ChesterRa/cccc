@@ -404,18 +404,37 @@ impl BrowserSurfaces {
             .into_value::<ComposerCandidate>()
             .context("decode visible browser composer")?;
         let ready = !candidate.selector.is_empty();
-        self.record_page_state(key, &page).await;
-        Ok(json!({
+        let readiness = json!({
             "ready":ready,
             "login_required":!ready,
             "tab_url":url,
             "input_selector":candidate.descriptor,
+            "checked_at":cccc_contracts::utc_now(),
             "message":if ready {
                 "Browser model composer is ready."
             } else {
                 "Browser model sign-in or composer setup is required."
             }
-        }))
+        });
+        self.record_prompt_readiness(key, &page, &readiness).await;
+        Ok(readiness)
+    }
+
+    async fn record_prompt_readiness(&self, key: &str, page: &Page, readiness: &Value) {
+        let mut sessions = self.sessions.lock().await;
+        let Some(session) = sessions.get_mut(key) else {
+            return;
+        };
+        if session.page.target_id() != page.target_id() {
+            return;
+        }
+        if let Some(url) = readiness["tab_url"].as_str() {
+            session.url = url.to_owned();
+        }
+        if let Some(metadata) = session.metadata.as_object_mut() {
+            metadata.insert("prompt_readiness".into(), readiness.clone());
+        }
+        session.updated_at = cccc_contracts::utc_now();
     }
 
     async fn record_page_state(&self, key: &str, page: &Page) {

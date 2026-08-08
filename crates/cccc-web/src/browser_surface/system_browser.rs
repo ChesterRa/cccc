@@ -83,6 +83,7 @@ impl SystemBrowserLaunch {
             .port(self.cdp_port)
             .args(["--no-first-run", "--no-default-browser-check"])
             .window_size(self.width, self.height)
+            .viewport(None)
             .arg(window_position(self.background))
             .arg("--force-device-scale-factor=1");
         config = config.with_head();
@@ -239,7 +240,7 @@ impl SystemBrowserLaunch {
     pub(super) fn vnc_port(&self) -> Option<u16> {
         #[cfg(target_os = "linux")]
         {
-            return self.vnc.as_ref().map(|vnc| vnc.port);
+            self.vnc.as_ref().map(|vnc| vnc.port)
         }
         #[cfg(not(target_os = "linux"))]
         None

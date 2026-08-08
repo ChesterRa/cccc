@@ -823,7 +823,9 @@ class PlaywrightProjectedRuntime:
     def click(self, *, x: float, y: float, button: str = "left") -> None:
         self.page.mouse.click(float(x), float(y), button=str(button or "left"))
 
-    def scroll(self, *, dx: float, dy: float) -> None:
+    def scroll(self, *, dx: float, dy: float, x: float | None = None, y: float | None = None) -> None:
+        if x is not None and y is not None:
+            self.page.mouse.move(float(x), float(y))
         self.page.mouse.wheel(float(dx), float(dy))
 
     def key_press(self, *, key: str) -> None:
@@ -1486,9 +1488,13 @@ class ProjectedBrowserSession:
                 button=str(payload.get("button") or "left"),
             )
         elif kind == "scroll":
+            raw_x = payload.get("x")
+            raw_y = payload.get("y")
             runtime.scroll(
                 dx=float(payload.get("dx") or 0.0),
                 dy=float(payload.get("dy") or 0.0),
+                x=float(raw_x) if isinstance(raw_x, (int, float)) else None,
+                y=float(raw_y) if isinstance(raw_y, (int, float)) else None,
             )
         elif kind == "key":
             runtime.key_press(key=str(payload.get("key") or ""))

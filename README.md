@@ -78,9 +78,12 @@ python -m pip install -U --pre \
   cccc-pair
 ```
 
-> The PyPI package is the stable, recommended CCCC distribution. On Linux x86-64,
-> Intel/Apple Silicon macOS, and Windows x86-64, its platform wheel includes the
-> version-matched Rust implementation alongside Python. An optional
+> The PyPI package is the stable, recommended CCCC distribution, with Python as
+> its stable default implementation. On Linux x86-64, Intel/Apple Silicon macOS,
+> and Windows x86-64, its platform wheel also includes a private, version-matched
+> **experimental Rust implementation** for opt-in performance evaluation with
+> `cccc rust`. Feature and integration parity is still in progress; use
+> `cccc python` for reliability-critical workflows. An optional
 > [experimental standalone Rust preview](#experimental-standalone-rust-preview)
 > is available for Rust-only deployment testing.
 
@@ -103,21 +106,23 @@ cccc
 
 Open **http://127.0.0.1:8848** — by default, CCCC brings up the daemon and the local Web UI together.
 
-In the recommended pip distribution, Python is the initial default only until
-an implementation choice is saved. A bare `cccc` then follows that persisted
-choice. Switch persistently, or switch and run a command in one step:
+In the recommended pip distribution, Python is the stable initial default until
+an implementation choice is saved. Rust is an experimental, explicit opt-in for
+performance evaluation. A bare `cccc` follows the persisted choice. Switch
+persistently, or switch and run a command in one step:
 
 ```bash
 cccc status            # selected, running, and available implementations
-cccc rust              # select Rust, then launch CCCC
-cccc python             # select Python, then launch CCCC
-cccc rust doctor        # select Rust, then run doctor
+cccc rust              # select experimental Rust, then launch CCCC
+cccc python            # select stable Python, then launch CCCC
+cccc rust doctor        # select experimental Rust, then run doctor
 ```
 
 Switching is an explicit lifecycle operation: CCCC validates the target payload,
 stops the active Web/daemon pair, and never silently falls back to the other
 implementation. Agent runtime MCP configurations keep pointing at the stable
 public `cccc` launcher, so they follow later switches automatically.
+Use `cccc python` to return to the stable implementation at any time.
 
 The experimental standalone distribution contains Rust only, so `cccc python`
 and implementation switching are intentionally unavailable there.
@@ -494,11 +499,12 @@ For detailed security guidance, see [SECURITY.md](SECURITY.md).
 python -m pip install -U cccc-pair
 ```
 
-This is the complete supported product distribution. On Linux x86-64,
-Intel/Apple Silicon macOS, and Windows x86-64, pip selects a platform wheel that
-contains both the Python implementation and a private, version-matched Rust
-executable. Other platforms receive the universal Python wheel; `cccc status`
-reports Rust as unavailable instead of pretending to switch.
+This is the complete supported product distribution, with Python as its stable
+and recommended implementation. On Linux x86-64, Intel/Apple Silicon macOS, and
+Windows x86-64, pip selects a platform wheel that also contains a private,
+version-matched experimental Rust executable for opt-in performance evaluation.
+Other platforms receive the universal Python wheel; `cccc status` reports Rust
+as unavailable instead of pretending to switch.
 
 ### Experimental standalone Rust preview
 
@@ -510,10 +516,11 @@ curl -fsSL https://chesterra.github.io/cccc/install.sh | sh
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; Invoke-RestMethod 'https://chesterra.github.io/cccc/install.ps1' | Invoke-Expression"
 ```
 
-Use this optional channel only when evaluating a Rust-only deployment without
-Python. It downloads a checksum-verified binary from GitHub Releases and updates
-through the same installer, but it has no Python fallback or implementation
-switching and is not yet the recommended replacement for the pip product. The
+Use this optional channel only when evaluating the experimental Rust
+implementation in a Rust-only deployment without Python. It downloads a
+checksum-verified binary from GitHub Releases and updates through the same
+installer, but it has no Python fallback or implementation switching and is not
+the recommended replacement for the stable pip/Python path. The
 installer refuses to overwrite an existing `cccc` command that it does not own;
 uninstall that command deliberately or choose another `CCCC_INSTALL_DIR` first.
 Commands in other directories are left untouched. For the default install

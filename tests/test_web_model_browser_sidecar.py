@@ -206,6 +206,15 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
                     "conversation_url": "https://chatgpt.com/c/test-chat",
                     "last_delivery_status": "submitted",
                     "last_delivery_id": "delivery-1",
+                    "browser_readiness": {
+                        "pid": 12345,
+                        "cdp_port": 9222,
+                        "inspection": {
+                            "ready": True,
+                            "login_required": False,
+                            "tab_url": "https://chatgpt.com/c/test-chat",
+                        },
+                    },
                 },
             )
 
@@ -232,7 +241,7 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
                 "bound_existing_chat",
             )
             self.assertEqual(status.get("last_delivery_id"), "delivery-1")
-            self.assertFalse(bool(status.get("ready")))
+            self.assertTrue(bool(status.get("ready")))
             self.assertFalse(bool(status.get("login_required")))
             with patch(
                 "cccc.ports.web_model_browser_sidecar._wait_cdp_endpoint",
@@ -241,6 +250,43 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
                 stale_status = chatgpt_browser_session_cached_status("g-test", "peer1")
             self.assertFalse(bool(stale_status.get("active")))
             self.assertFalse(bool(stale_status.get("login_required")))
+        finally:
+            cleanup()
+
+    def test_explicit_browser_inspection_is_reused_by_cached_status(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            chatgpt_browser_session_cached_status,
+            chatgpt_browser_session_status,
+            record_chatgpt_browser_process_state,
+        )
+
+        _, cleanup = self._with_home()
+        try:
+            record_chatgpt_browser_process_state(
+                {"pid": 12345, "cdp_port": 9222, "visibility": "projected"}
+            )
+            inspection = {
+                "ready": True,
+                "login_required": False,
+                "tab_url": "https://chatgpt.com/c/test-chat",
+            }
+            with (
+                patch(
+                    "cccc.ports.web_model_browser_sidecar._wait_cdp_endpoint",
+                    return_value=True,
+                ),
+                patch(
+                    "cccc.ports.web_model_browser_sidecar._inspect_chatgpt_browser",
+                    return_value=inspection,
+                ) as inspect_browser,
+            ):
+                inspected = chatgpt_browser_session_status("g-test", "peer1")
+                cached = chatgpt_browser_session_cached_status("g-test", "peer1")
+
+            inspect_browser.assert_called_once()
+            self.assertTrue(bool(inspected.get("ready")))
+            self.assertTrue(bool(cached.get("ready")))
+            self.assertEqual(cached.get("tab_url"), "https://chatgpt.com/c/test-chat")
         finally:
             cleanup()
 

@@ -688,6 +688,7 @@ export function WebModelRuntimePanel({
             key={`chatgpt-runtime-surface:${groupId}:${actorId}:${surfaceRestartNonce}`}
             isDark={isDark}
             refreshNonce={0}
+            defaultViewerMode="page"
             chromeMode="embedded"
             viewportClassName="h-full min-h-0"
             loadSession={loadBrowserSurfaceSession}

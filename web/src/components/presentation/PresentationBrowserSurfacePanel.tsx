@@ -35,6 +35,7 @@ export function PresentationBrowserSurfacePanel({
       refreshNonce={refreshNonce}
       reuseActiveSession={false}
       sessionIdentity={`${groupId}:${slotId}:${url}`}
+      defaultViewerMode="page"
       chromeMode="embedded"
       viewportClassName={viewportClassName}
       onFrameUpdate={onFrameUpdate}

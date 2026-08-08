@@ -263,13 +263,15 @@ Notes:
 ### `cccc python [command ...]` / `cccc rust [command ...]`
 
 Select the product implementation persistently, then optionally execute a
-command with that implementation.
+command with that implementation. Python is the stable and recommended default;
+Rust is an experimental opt-in for performance evaluation while feature and
+integration parity remains in progress.
 
 ```bash
 cccc status             # Show selected, running, and available implementations
-cccc rust               # Select Rust and launch daemon + Web
-cccc rust doctor        # Select Rust and run doctor
-cccc python             # Select Python and launch daemon + Web
+cccc rust               # Select experimental Rust and launch daemon + Web
+cccc rust doctor        # Select experimental Rust and run doctor
+cccc python             # Select stable Python and launch daemon + Web
 cccc python daemon start
 ```
 
@@ -281,9 +283,10 @@ the command fails without changing the selection or falling back to Python.
 If the selection file is corrupt, ordinary commands fail visibly; an explicit
 `cccc python` selector replaces it and restores the safe default.
 
-Python is the initial default only while no implementation choice has been
-stored. After `cccc rust` or `cccc python`, a bare `cccc` follows that persisted
-choice; the Web startup banner prints the implementation that actually started.
+Python is the stable initial default only while no implementation choice has
+been stored. After `cccc rust` or `cccc python`, a bare `cccc` follows that
+persisted choice; the Web startup banner prints the implementation that actually
+started. Use `cccc python` to return to the stable implementation at any time.
 
 `status`, `version`, and `update` are stable launcher commands. `status` shows
 the selected implementation, the implementation reported by a live daemon, and
@@ -338,8 +341,8 @@ Notes:
   preserve their current install directory, and contain no Python fallback or
   implementation switching.
 - Editable and local-path installs are reported but not updated automatically.
-- The recommended platform wheel updates the Python launcher and private Rust
-  payload together.
+- The recommended platform wheel updates the public launcher, stable Python
+  implementation, and experimental private Rust payload together.
 - After a successful update, CCCC stops the older Web/daemon pair; the next
   command starts the selected implementation from the new product version.
 

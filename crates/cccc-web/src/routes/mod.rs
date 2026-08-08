@@ -62,6 +62,7 @@ mod web_model_delivery_state;
 mod web_model_delivery_test_support;
 #[cfg(test)]
 mod web_model_delivery_tests;
+mod web_model_supervisor;
 
 use crate::AppState;
 use axum::Router;
@@ -112,6 +113,8 @@ pub fn router() -> Router<AppState> {
         .merge(streams::routes())
         .merge(terminal::routes())
 }
+
+pub(crate) use web_model_supervisor::spawn as spawn_web_model_supervisor;
 
 #[cfg(test)]
 mod tests {

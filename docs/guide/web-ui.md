@@ -24,6 +24,25 @@ The Web UI has these main areas:
 - **Main Area**: Chat messages or terminal view
 - **Input**: Message composer with @mention support
 
+### Embedded browser views
+
+ChatGPT Web Model, NotebookLM sign-in, and Presentation use the same embedded-browser viewer. The
+website always runs in the daemon-owned browser session; changing the viewer does not replace that
+browser, navigate it, or change its profile.
+
+- **Page** shows the website content directly and uses the available panel space efficiently. It is
+  the default for normal Web Model operation and Presentation.
+- **Browser** shows the complete browser window when a safe VNC projection is available. It is the
+  default for sign-in and setup surfaces where browser UI or native prompts may matter.
+
+Switching views reconnects only the viewer transport and keeps the current browser session and URL.
+On platforms or installations without the VNC capability, **Browser** is unavailable and **Page**
+remains active. Neither view emulates the website: it still sees the same daemon-owned browser
+process. Web Model and NotebookLM use a real system Chrome/Edge session for sites such as ChatGPT
+and Google; Presentation may use its own Chromium runtime. Browser-native UI that is outside the web
+page is only visible through **Browser** (or through the physical browser window on platforms that
+expose it).
+
 ## Managing Groups
 
 ### Creating a Group

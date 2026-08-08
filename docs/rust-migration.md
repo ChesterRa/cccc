@@ -1,12 +1,19 @@
-# Rust Implementation and Product Distribution
+# Experimental Rust Implementation and Product Distribution
 
-The maintained Python compatibility distribution remains `cccc-pair` on PyPI.
-The repository separately publishes an experimental standalone Rust preview for
-supported platforms. Both share the product version, data contracts, and public
-command, while the standalone artifact contains no Python fallback or
-implementation selector. Replacement readiness is enforced by source-level
-parity tests plus binary and manual installed-artifact smoke checks; promotion
-from preview remains a release decision, not an implementation fallback.
+The stable, recommended CCCC product distribution remains `cccc-pair` on PyPI,
+with Python as its stable default implementation. Supported native wheels also
+bundle a private, version-matched **experimental Rust implementation** for
+explicit performance evaluation. The repository separately publishes that same
+experimental engine as a standalone Rust preview for supported platforms. Both
+channels share the product version, data contracts, and public command, while the
+standalone artifact contains no Python fallback or implementation selector.
+
+Experimental means the Rust implementation is maintained and release-tested but
+does not yet promise complete feature and integration parity with Python. Use
+`cccc python` for reliability-critical workflows. Promotion out of experimental
+is gate-based rather than time-based: it requires no known high-priority parity
+gaps across the core CLI, daemon, Web, MCP, runtime, and integration paths, plus
+passing cross-implementation state and supported-platform installation gates.
 
 Prereleases use one canonical product identity and tag such as `v0.4.34-rc2`.
 The Python manifest represents that identity as PEP 440 `0.4.34rc2`, while the
@@ -23,8 +30,9 @@ python -m pip install -U cccc-pair
 
 PyPI publishes one source distribution, one portable Python wheel, and native
 platform wheels for Linux x86-64, Intel/Apple Silicon macOS, and Windows x86-64.
-Each platform wheel bundles a private, version-matched Rust executable while
-keeping Python as the initial default; other platforms use the portable wheel.
+Each platform wheel bundles a private, version-matched experimental Rust
+executable while keeping stable Python as the initial default; other platforms
+use the portable wheel.
 
 To explicitly evaluate the experimental standalone Rust preview without a Rust
 or Python toolchain:
@@ -56,28 +64,31 @@ cccc update --check
 Standalone Rust previews update through the GitHub Pages installer and support
 `--channel stable|rc`; the updater resolves and pins a concrete release version
 before invoking the installer. Pip installations update `cccc-pair` through pip.
-Supported PyPI platform wheels expose both implementations through the existing
-selector; the portable wheel remains Python-only. The standalone preview is
-always Rust-only.
+The channel selects a product release stream; it does not change the Rust
+implementation's experimental maturity status.
+Supported PyPI platform wheels expose stable Python and experimental Rust through
+the existing selector; the portable wheel remains Python-only. The standalone
+preview is always Rust-only.
 
 The public Python launcher owns implementation selection inside a pip install:
 
 ```bash
 cccc status            # selected, running, and available implementations
-cccc rust              # persist Rust and launch
-cccc python             # persist Python and launch
-cccc rust doctor        # persist Rust, then run one command
+cccc rust              # persist experimental Rust and launch
+cccc python            # persist stable Python and launch
+cccc rust doctor        # persist experimental Rust, then run one command
 ```
 
 Selection is stored atomically in `CCCC_HOME/implementation.json`; no file means
-Python, preserving existing installations. That default applies only until an
+stable Python, preserving existing installations. Selecting Rust is an explicit
+opt-in to the experimental implementation. The default applies only until an
 implementation is selected: a later bare `cccc` follows the persisted choice,
 and the startup banner names the implementation actually serving Web. Before
 selecting Rust, the launcher requires an executable payload whose normalized
 SemVer exactly matches the installed Python product version. A selector stops
 the active Web process and daemon before persisting the new implementation.
 Missing, corrupt, or mismatched payloads fail explicitly and never fall back
-silently.
+silently; `cccc python` returns to the stable implementation.
 
 Inside a pip installation, `cccc update` always upgrades `cccc-pair` through pip.
 This keeps the launcher, Python implementation, Rust payload, Web assets, and

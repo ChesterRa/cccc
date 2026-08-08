@@ -4,7 +4,8 @@ use cccc_contracts::utc_now;
 use chromiumoxide::Page;
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use chromiumoxide::cdp::browser_protocol::input::{
-    DispatchKeyEventParams, DispatchKeyEventType, InsertTextParams,
+    DispatchKeyEventParams, DispatchKeyEventType, DispatchMouseEventParams, DispatchMouseEventType,
+    InsertTextParams,
 };
 use chromiumoxide::layout::Point;
 use futures_util::{SinkExt, StreamExt};
@@ -59,12 +60,19 @@ impl BrowserSurfaces {
                 press_key(&session.page, key).await?;
             }
             "scroll" => {
-                let script = format!(
-                    "window.scrollBy({}, {})",
-                    number(command, "dx"),
-                    number(command, "dy")
-                );
-                session.page.evaluate(script).await?;
+                let x = command
+                    .get("x")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(f64::from(session.width) / 2.0);
+                let y = command
+                    .get("y")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(f64::from(session.height) / 2.0);
+                let mut wheel =
+                    DispatchMouseEventParams::new(DispatchMouseEventType::MouseWheel, x, y);
+                wheel.delta_x = Some(number(command, "dx"));
+                wheel.delta_y = Some(number(command, "dy"));
+                session.page.execute(wheel).await?;
             }
             "back" => {
                 session.page.evaluate("history.back()").await?;

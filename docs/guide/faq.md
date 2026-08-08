@@ -42,8 +42,10 @@ cd cccc
 pip install -e .
 ```
 
-Supported PyPI platform wheels include both implementations. An experimental
-Rust-only standalone preview is also available for deployment testing:
+Supported PyPI platform wheels include stable Python plus a private,
+version-matched experimental Rust implementation for opt-in performance
+evaluation. An experimental Rust-only standalone preview is also available for
+deployment testing:
 
 ```bash
 # macOS / Linux
@@ -96,17 +98,20 @@ toolchain, but supports fewer platforms and contains only the Rust implementatio
 
 ```bash
 cccc status
-cccc rust              # persist Rust and launch CCCC
-cccc python            # persist Python and launch CCCC
-cccc rust doctor       # persist Rust, then run one command
+cccc rust              # persist experimental Rust and launch CCCC
+cccc python            # persist stable Python and launch CCCC
+cccc rust doctor       # persist experimental Rust, then run one command
 ```
 
-These selectors belong to the recommended pip distribution. Python remains the
-default. Supported PyPI platform wheels contain Rust privately; other platforms
-receive the universal Python wheel and report Rust as unavailable. The selector
-validates the payload and stops the active Web/daemon pair. It never installs a
-second command or silently falls back. The standalone preview contains Rust only
-and therefore does not expose implementation switching.
+These selectors belong to the recommended pip distribution. Python is the stable
+default; `cccc rust` explicitly opts into the experimental Rust implementation,
+whose feature and integration parity is still in progress. Use `cccc python` for
+reliability-critical workflows or to switch back. Supported PyPI platform wheels
+contain Rust privately; other platforms receive the universal Python wheel and
+report Rust as unavailable. The selector validates the payload and stops the
+active Web/daemon pair. It never installs a second command or silently falls
+back. The standalone preview contains Rust only and therefore does not expose
+implementation switching.
 
 ### How do I check if CCCC is working?
 

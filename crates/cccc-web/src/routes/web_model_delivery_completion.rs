@@ -76,7 +76,7 @@ pub(super) async fn reconcile(
                 "submitted"
             };
             let final_error = if submission_ambiguous {
-                "browser submission was attempted but could not be verified; automatic redelivery is paused"
+                "browser submission was attempted but could not be verified; this message will not be redelivered automatically"
             } else if pending_new_chat_bind {
                 "conversation_url_pending"
             } else {

@@ -1,8 +1,9 @@
-# Voice Secretary (Rust Distribution)
+# Voice Secretary (Experimental Rust Implementation)
 
-Python remains the default CCCC distribution. This page documents the optional
-Rust implementation of Voice Secretary and its native speech pipeline. See the
-standard Voice Secretary controls in the Web UI when running Python.
+Python remains the stable default CCCC implementation. This page documents Voice
+Secretary in the experimental Rust implementation and its native speech
+pipeline. See the standard Voice Secretary controls in the Web UI when running
+Python.
 
 Voice Secretary is a hidden internal actor backed by repository Markdown.
 Enabling it copies the foreman's runtime settings into the dedicated

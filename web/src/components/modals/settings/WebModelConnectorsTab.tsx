@@ -1213,6 +1213,7 @@ export default function WebModelConnectorsTab({
                       key={`chatgpt-actor-surface:${groupId}:${actorId}:${browserSurfaceRestartNonce}`}
                       isDark={isDark}
                       refreshNonce={browserSurfaceRefreshNonce}
+                      defaultViewerMode="browser"
                       viewportClassName="h-[68vh] min-h-[460px] max-h-[780px]"
                       loadSession={loadBrowserSurfaceSession}
                       startSession={startBrowserSurfaceSession}

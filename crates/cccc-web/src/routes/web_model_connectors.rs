@@ -111,7 +111,7 @@ async fn mcp_with_path_token(
 async fn run_connector_mcp(
     state: &AppState,
     connector: &Value,
-    mut request: Value,
+    request: Value,
 ) -> Result<Json<Value>, ApiError> {
     let method = request
         .get("method")
@@ -121,8 +121,8 @@ async fn run_connector_mcp(
     let mut tool_name = String::new();
     if request.get("method").and_then(Value::as_str) == Some("tools/call") {
         let params = request
-            .get_mut("params")
-            .and_then(Value::as_object_mut)
+            .get("params")
+            .and_then(Value::as_object)
             .ok_or_else(|| ApiError::bad("tools/call params must be an object"))?;
         tool_name = params
             .get("name")
@@ -130,8 +130,8 @@ async fn run_connector_mcp(
             .unwrap_or("")
             .to_owned();
         let arguments = params
-            .get_mut("arguments")
-            .and_then(Value::as_object_mut)
+            .get("arguments")
+            .and_then(Value::as_object)
             .ok_or_else(|| ApiError::bad("tools/call arguments must be an object"))?;
         let bound_group = connector["group_id"].as_str().unwrap_or("");
         if arguments
@@ -141,10 +141,14 @@ async fn run_connector_mcp(
         {
             return Err(ApiError::forbidden("connector cannot access another group"));
         }
-        arguments.insert("group_id".into(), Value::String(bound_group.into()));
-        arguments.insert("actor_id".into(), connector["actor_id"].clone());
     }
-    let response = cccc_mcp::handle_request(&state.home, &request).await;
+    let response = cccc_mcp::handle_request_for_actor(
+        &state.home,
+        &request,
+        connector["group_id"].as_str().unwrap_or(""),
+        connector["actor_id"].as_str().unwrap_or(""),
+    )
+    .await;
     let call_status = if response.get("error").is_some()
         || response["result"]["isError"].as_bool().unwrap_or(false)
     {

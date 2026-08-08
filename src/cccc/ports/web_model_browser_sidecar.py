@@ -2525,7 +2525,7 @@ def _session_payload(
         "ready": False,
         "login_required": False,
     }
-    if inspection:
+    if inspection and alive:
         payload.update(inspection)
     payload["delivery_target"] = _chatgpt_delivery_target_snapshot(payload)
     return payload
@@ -2543,7 +2543,18 @@ def chatgpt_browser_session_cached_status(
     actor_state = read_chatgpt_browser_state(group_id, actor_id)
     browser_state = read_chatgpt_browser_process_state()
     state = _combined_session_state(actor_state, browser_state)
-    return _session_payload(state)
+    cached = actor_state.get("browser_readiness")
+    inspection: dict[str, Any] | None = None
+    if isinstance(cached, dict):
+        same_process = (
+            int(cached.get("pid") or 0) == int(browser_state.get("pid") or 0)
+            and int(cached.get("cdp_port") or 0)
+            == int(browser_state.get("cdp_port") or 0)
+        )
+        candidate = cached.get("inspection")
+        if same_process and isinstance(candidate, dict):
+            inspection = dict(candidate)
+    return _session_payload(state, inspection)
 
 
 def chatgpt_browser_session_status(group_id: str, actor_id: str) -> dict[str, Any]:
@@ -2565,6 +2576,17 @@ def chatgpt_browser_session_status(group_id: str, actor_id: str) -> dict[str, An
         inspection = _inspect_chatgpt_browser(port, input_timeout_seconds=0.8)
     except Exception as exc:
         inspection = {"ready": False, "login_required": True, "error": str(exc)[:1000]}
+    record_chatgpt_browser_state(
+        group_id,
+        actor_id,
+        {
+            "browser_readiness": {
+                "pid": int(browser_state.get("pid") or 0),
+                "cdp_port": port,
+                "inspection": dict(inspection),
+            }
+        },
+    )
     payload = _session_payload(state, inspection)
     if bool(resolution.get("resolved")):
         payload["pending_new_chat_resolution"] = dict(resolution)

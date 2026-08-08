@@ -42,7 +42,7 @@ async fn run_stdio_loop(home: &HomeLayout) -> Result<()> {
         if request.get("id").is_none() {
             continue;
         }
-        let response = handle(home, &client, &request).await;
+        let response = handle(home, &client, &request, None).await;
         write_response(&mut output, &response).await?;
     }
     Ok(())
@@ -54,10 +54,37 @@ pub async fn shutdown(home: &HomeLayout) {
 
 pub async fn handle_request(home: &HomeLayout, request: &Value) -> Value {
     let client = DaemonClient::new(home.clone());
-    handle(home, &client, request).await
+    handle(home, &client, request, None).await
 }
 
-async fn handle(home: &HomeLayout, client: &DaemonClient, request: &Value) -> Value {
+pub async fn handle_request_for_actor(
+    home: &HomeLayout,
+    request: &Value,
+    group_id: &str,
+    actor_id: &str,
+) -> Value {
+    let client = DaemonClient::new(home.clone());
+    handle(
+        home,
+        &client,
+        request,
+        Some(RequestContext { group_id, actor_id }),
+    )
+    .await
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct RequestContext<'a> {
+    group_id: &'a str,
+    actor_id: &'a str,
+}
+
+async fn handle(
+    home: &HomeLayout,
+    client: &DaemonClient,
+    request: &Value,
+    context: Option<RequestContext<'_>>,
+) -> Value {
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
     let result = match method {
@@ -67,7 +94,9 @@ async fn handle(home: &HomeLayout, client: &DaemonClient, request: &Value) -> Va
             "serverInfo": {"name": "cccc-mcp", "version": env!("CARGO_PKG_VERSION")},
         })),
         "ping" => Ok(json!({})),
-        "tools/list" => Ok(json!({"tools": visible_tools(home, client).await})),
+        "tools/list" => {
+            Ok(json!({"tools": visible_tools_with_context(home, client, context).await}))
+        }
         "tools/call" => {
             let params = request.get("params").and_then(Value::as_object);
             let name = params
@@ -79,7 +108,7 @@ async fn handle(home: &HomeLayout, client: &DaemonClient, request: &Value) -> Va
                 .and_then(Value::as_object)
                 .cloned()
                 .unwrap_or_default();
-            router::call(home, client, name, arguments).await
+            router::call_with_context(home, client, name, arguments, context).await
         }
         _ => Err(format!("unknown method: {method}")),
     };
@@ -89,22 +118,40 @@ async fn handle(home: &HomeLayout, client: &DaemonClient, request: &Value) -> Va
     }
 }
 
-pub(crate) async fn visible_tools(home: &HomeLayout, client: &DaemonClient) -> Vec<Value> {
+pub(crate) async fn visible_tools_for_actor(
+    home: &HomeLayout,
+    client: &DaemonClient,
+    group_id: &str,
+    actor_id: &str,
+) -> Vec<Value> {
+    visible_tools_with_context(home, client, Some(RequestContext { group_id, actor_id })).await
+}
+
+async fn visible_tools_with_context(
+    home: &HomeLayout,
+    client: &DaemonClient,
+    context: Option<RequestContext<'_>>,
+) -> Vec<Value> {
     let mut catalog = tools::catalog();
-    if std::env::var("CCCC_MCP_TOOL_PROFILE")
-        .ok()
-        .is_some_and(|value| value.trim().eq_ignore_ascii_case("full"))
+    if context.is_none()
+        && std::env::var("CCCC_MCP_TOOL_PROFILE")
+            .ok()
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("full"))
     {
         hide_disabled_code_mode_tools(&mut catalog);
         return catalog;
     }
-    let group_id = std::env::var("CCCC_GROUP_ID")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| cccc_core::active::get(home).ok().flatten());
-    let actor_id = std::env::var("CCCC_ACTOR_ID")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
+    let group_id = context.map(|value| value.group_id.to_owned()).or_else(|| {
+        std::env::var("CCCC_GROUP_ID")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| cccc_core::active::get(home).ok().flatten())
+    });
+    let actor_id = context.map(|value| value.actor_id.to_owned()).or_else(|| {
+        std::env::var("CCCC_ACTOR_ID")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+    });
     let (Some(group_id), Some(actor_id)) = (group_id, actor_id) else {
         return core_tools(catalog);
     };
@@ -203,4 +250,37 @@ async fn write_response(output: &mut tokio::io::Stdout, response: &Value) -> Res
     output.write_all(&bytes).await?;
     output.flush().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn unscoped_fallback_remains_the_thirteen_core_tools() {
+        let names = super::core_tools(super::tools::catalog())
+            .into_iter()
+            .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+            .collect::<BTreeSet<_>>();
+        let expected = [
+            "cccc_agent_state",
+            "cccc_bootstrap",
+            "cccc_capability_search",
+            "cccc_capability_use",
+            "cccc_context_get",
+            "cccc_coordination",
+            "cccc_file",
+            "cccc_help",
+            "cccc_inbox_list",
+            "cccc_inbox_mark_read",
+            "cccc_message_reply",
+            "cccc_message_send",
+            "cccc_task",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+
+        assert_eq!(names, expected);
+    }
 }

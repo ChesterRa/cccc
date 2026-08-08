@@ -719,6 +719,7 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
                   key={String(authFlow?.session_id || authFlow?.started_at || "notebooklm-auth")}
                   isDark={_isDark}
                   refreshNonce={0}
+                  defaultViewerMode="browser"
                   viewportClassName="h-[68vh] min-h-[460px] max-h-[780px] w-full sm:h-[72vh] sm:min-h-[560px]"
                   fallbackUrl="https://notebooklm.google.com/"
                   labels={{
