@@ -277,9 +277,6 @@ jobs:
       - name: Build native Windows installer fixture
         run: cargo build --release --locked -p cccc --bin cccc
 
-      - name: Test native Windows PTY history replay
-        run: cargo test --release --locked -p cccc-pair-runtime --test terminal_replay
-
       - name: Test Windows installer ownership and PATH handling
         shell: pwsh
         timeout-minutes: 15

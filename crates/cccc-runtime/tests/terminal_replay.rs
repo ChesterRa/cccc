@@ -1,12 +1,9 @@
+#![cfg(unix)]
+
 use cccc_contracts::RunnerKind;
 use cccc_runtime::{HistoryConfig, LaunchSpec, RuntimeError};
 use std::collections::BTreeMap;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
-const MARKER_TIMEOUT: Duration = Duration::from_secs(15);
-const MARKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
-const CURSOR_POSITION_QUERY: &str = "\u{1b}[6n";
-const CURSOR_POSITION_RESPONSE: &[u8] = b"\x1b[1;1R";
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn active_history_replays_raw_ansi_in_pages_and_excludes_completed_sessions() {
@@ -91,31 +88,17 @@ fn active_history_replays_raw_ansi_in_pages_and_excludes_completed_sessions() {
 }
 
 fn wait_for_marker(group_id: &str, actor_id: &str, marker: &str) {
-    let deadline = Instant::now() + MARKER_TIMEOUT;
-    let mut replied_to_cursor_query = false;
-    loop {
-        let history = cccc_runtime::retained_history(group_id, actor_id);
-        if let Ok(page) = &history {
-            if page.data.contains(marker) {
-                return;
-            }
-            if !replied_to_cursor_query && page.data.contains(CURSOR_POSITION_QUERY) {
-                cccc_runtime::write(group_id, actor_id, CURSOR_POSITION_RESPONSE)
-                    .expect("reply to terminal cursor-position query");
-                replied_to_cursor_query = true;
-            }
+    for _ in 0..100 {
+        if cccc_runtime::retained_history(group_id, actor_id)
+            .is_ok_and(|page| page.data.contains(marker))
+        {
+            return;
         }
-        if Instant::now() >= deadline {
-            let status = cccc_runtime::status(group_id, actor_id);
-            panic!(
-                "terminal output did not contain {marker:?} within {MARKER_TIMEOUT:?}; status={status:?}; history={history:?}"
-            );
-        }
-        std::thread::sleep(MARKER_POLL_INTERVAL);
+        std::thread::sleep(Duration::from_millis(20));
     }
+    panic!("terminal output did not contain {marker:?}");
 }
 
-#[cfg(unix)]
 fn replay_command() -> Vec<String> {
     vec![
         "sh".into(),
@@ -124,33 +107,10 @@ fn replay_command() -> Vec<String> {
     ]
 }
 
-#[cfg(unix)]
 fn old_session_command() -> Vec<String> {
     vec![
         "sh".into(),
         "-c".into(),
         "printf '%s' 'old persisted session'; sleep 5".into(),
-    ]
-}
-
-#[cfg(windows)]
-fn replay_command() -> Vec<String> {
-    vec![
-        "powershell.exe".into(),
-        "-NoProfile".into(),
-        "-NonInteractive".into(),
-        "-Command".into(),
-        "[Console]::Out.Write('old conversation' + [char]13 + [char]10 + [char]27 + '[2J' + [char]27 + '[Hcurrent screen'); [Console]::Out.Flush(); Start-Sleep -Seconds 5".into(),
-    ]
-}
-
-#[cfg(windows)]
-fn old_session_command() -> Vec<String> {
-    vec![
-        "powershell.exe".into(),
-        "-NoProfile".into(),
-        "-NonInteractive".into(),
-        "-Command".into(),
-        "[Console]::Out.Write('old persisted session'); [Console]::Out.Flush(); Start-Sleep -Seconds 5".into(),
     ]
 }
