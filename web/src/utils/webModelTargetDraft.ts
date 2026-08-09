@@ -13,7 +13,16 @@ export function isChatGptConversationUrl(url?: string): boolean {
     if (parsed.hostname !== "chatgpt.com" && !parsed.hostname.endsWith(".chatgpt.com"))
       return false;
     const parts = parsed.pathname.split("/").filter(Boolean);
-    return parts.some((part, index) => part === "c" && Boolean(parts[index + 1]));
+    return parts.some((part, index) => {
+      if (part !== "c" || !parts[index + 1]) return false;
+      let conversationId = parts[index + 1];
+      try {
+        conversationId = decodeURIComponent(conversationId);
+      } catch {
+        return false;
+      }
+      return !conversationId.toUpperCase().startsWith("WEB:");
+    });
   } catch {
     return false;
   }

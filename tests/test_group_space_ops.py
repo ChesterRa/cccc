@@ -1015,6 +1015,97 @@ class TestGroupSpaceOps(unittest.TestCase):
             cleanup_stub()
             cleanup()
 
+    def test_space_artifact_generate_preflights_default_save_destination(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-artifacts-preflight")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": "nb_art_preflight",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            with patch(
+                "cccc.daemon.space.group_space_ops.provider_generate_artifact",
+                return_value={"task_id": "must_not_exist", "status": "pending"},
+            ) as generate:
+                result, _ = self._call(
+                    "group_space_artifact",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "work",
+                        "action": "generate",
+                        "kind": "report",
+                        "wait": True,
+                        "save_to_space": True,
+                        "by": "user",
+                    },
+                )
+
+            self.assertFalse(result.ok)
+            self.assertEqual(str(getattr(result.error, "code", "")), "space_job_invalid")
+            generate.assert_not_called()
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_space_artifact_generate_defaults_to_async_without_local_save(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-artifacts-safe-defaults")
+            remote_space_id = "nb_art_safe_defaults"
+            lane_key = f"{gid}:notebooklm:work:{remote_space_id}"
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": remote_space_id,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            with patch(
+                "cccc.daemon.space.group_space_ops.provider_generate_artifact",
+                return_value={"task_id": "task_safe_defaults", "status": "pending"},
+            ), patch(
+                "cccc.daemon.space.group_space_ops.provider_wait_artifact",
+                return_value={"task_id": "task_safe_defaults", "status": "completed"},
+            ):
+                generated, _ = self._call(
+                    "group_space_artifact",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "work",
+                        "action": "generate",
+                        "kind": "report",
+                        "by": "user",
+                    },
+                )
+                self.assertTrue(generated.ok, getattr(generated, "error", None))
+                result = generated.result if isinstance(generated.result, dict) else {}
+                self.assertEqual(bool(result.get("wait")), False)
+                self.assertEqual(bool(result.get("saved_to_space")), False)
+                self.assertEqual(bool(result.get("background")), True)
+                self.assertTrue(self._wait_for_generate_lane_idle(lane_key))
+        finally:
+            cleanup_stub()
+            cleanup()
+
     def test_space_artifact_generate_save_path_prefers_canonical_artifact_id(self) -> None:
         _, cleanup = self._with_home()
         scope_td = tempfile.TemporaryDirectory()

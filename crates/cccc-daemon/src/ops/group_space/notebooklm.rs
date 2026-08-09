@@ -1,5 +1,6 @@
 use cccc_core::{HomeLayout, space_credentials};
 use cccc_notebooklm::{Artifact, ArtifactGeneration, Client, Error, Notebook, QueryResult, Source};
+use std::time::Duration;
 
 use crate::dispatch::OpError;
 
@@ -8,7 +9,7 @@ pub(super) fn client(home: &HomeLayout) -> Result<Client, OpError> {
         .map_err(OpError::io)?
         .ok_or_else(|| {
             OpError::new(
-                "credential_missing",
+                "space_provider_not_configured",
                 "NotebookLM auth storage state is not configured",
             )
         })?;
@@ -61,6 +62,14 @@ pub(super) fn delete_source(
     run(home, |client| client.delete_source(notebook_id, source_id))
 }
 
+pub(super) fn refresh_source(
+    home: &HomeLayout,
+    notebook_id: &str,
+    source_id: &str,
+) -> Result<(), OpError> {
+    run(home, |client| client.refresh_source(notebook_id, source_id))
+}
+
 pub(super) fn rename_source(
     home: &HomeLayout,
     notebook_id: &str,
@@ -89,11 +98,33 @@ pub(super) fn generate_artifact(
     })
 }
 
+pub(super) fn wait_artifact(
+    home: &HomeLayout,
+    notebook_id: &str,
+    artifact_id: &str,
+    timeout: Duration,
+    initial_interval: Duration,
+    max_interval: Duration,
+) -> Result<Artifact, OpError> {
+    run(home, |client| {
+        client.wait_for_artifact(
+            notebook_id,
+            artifact_id,
+            timeout,
+            initial_interval,
+            max_interval,
+        )
+    })
+}
+
 pub(super) fn download_artifact(
     home: &HomeLayout,
     artifact: &Artifact,
+    output_format: Option<&str>,
 ) -> Result<Vec<u8>, OpError> {
-    run(home, |client| client.download_artifact(artifact))
+    run(home, |client| {
+        client.download_artifact(artifact, output_format)
+    })
 }
 
 fn run<T>(
@@ -138,12 +169,43 @@ fn persist_rotated_credentials(home: &HomeLayout, client: &Client) {
 
 fn map_error(error: Error) -> OpError {
     let code = match error {
-        Error::InvalidCredential(_) => "credential_invalid",
-        Error::Authentication => "auth_expired",
-        Error::Refused(_) => "provider_refused",
-        Error::Transport(_) => "provider_transport_error",
-        Error::Rpc { .. } => "provider_rpc_error",
-        Error::SchemaDrift { .. } => "provider_schema_drift",
+        Error::InvalidCredential(_) | Error::Authentication => "space_provider_auth_invalid",
+        Error::RateLimited(_) => "space_provider_rate_limited",
+        Error::Timeout(_) => "space_provider_timeout",
+        Error::Refused(_) | Error::Transport(_) | Error::Rpc { .. } => {
+            "space_provider_upstream_error"
+        }
+        Error::SchemaDrift { .. } => "space_provider_compat_mismatch",
     };
     OpError::new(code, error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_error;
+    use cccc_notebooklm::Error;
+
+    #[test]
+    fn maps_native_failures_to_shared_provider_error_codes() {
+        assert_eq!(
+            map_error(Error::Authentication).code,
+            "space_provider_auth_invalid"
+        );
+        assert_eq!(
+            map_error(Error::RateLimited("quota".into())).code,
+            "space_provider_rate_limited"
+        );
+        assert_eq!(
+            map_error(Error::Timeout("wait".into())).code,
+            "space_provider_timeout"
+        );
+        assert_eq!(
+            map_error(Error::SchemaDrift {
+                context: "test",
+                message: "shape".into(),
+            })
+            .code,
+            "space_provider_compat_mismatch"
+        );
+    }
 }

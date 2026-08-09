@@ -56,8 +56,8 @@ do not require a browser.
 
 Internal implementation crates use the `cccc-pair-*` namespace and are not
 intended to be installed directly. Manual standalone workflow runs verify release
-candidates; release tags also attach the verified experimental preview assets to
-GitHub Releases.
+candidates. When explicitly run on a matching release tag, that workflow can also
+attach the verified experimental preview assets to GitHub Releases.
 
 Project documentation and source: <https://github.com/chesterra/cccc>
 

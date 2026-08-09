@@ -2,12 +2,23 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   defaultTargetDraftFromSession,
+  isChatGptConversationUrl,
   liveBrowserConversationUrlFromSession,
   savedTargetDraftFromSession,
   targetDraftMatchesSaved,
 } from "../../../../src/utils/webModelTargetDraft";
 
 describe("ChatGPT Web Model target draft model", () => {
+  it("rejects ChatGPT provisional WEB routes as saveable conversations", () => {
+    expect(isChatGptConversationUrl("https://chatgpt.com/c/WEB:temporary")).toBe(false);
+    expect(isChatGptConversationUrl("https://chatgpt.com/c/WEB%3Atemporary")).toBe(false);
+    expect(
+      liveBrowserConversationUrlFromSession({
+        tab_url: "https://chatgpt.com/c/WEB:temporary",
+      }),
+    ).toBe("");
+  });
+
   it("keeps a saved conversation URL as the existing-chat draft", () => {
     const session = {
       conversation_url: "https://chatgpt.com/c/saved-chat",

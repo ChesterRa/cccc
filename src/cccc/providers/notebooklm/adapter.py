@@ -1044,7 +1044,13 @@ async def _list_artifacts_async(
     from ._vendor.notebooklm.types import ArtifactType
 
     client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
-    artifact_type = _enum_or_none(ArtifactType, kind, field="kind") if kind else None
+    # NotebookLM reports both briefing documents and study guides as the
+    # provider-level REPORT type. Preserve CCCC's more specific command kind,
+    # but use the provider's actual discriminator for listing.
+    provider_kind = "report" if kind == "study_guide" else kind
+    artifact_type = (
+        _enum_or_none(ArtifactType, provider_kind, field="kind") if provider_kind else None
+    )
     async with client:
         artifacts = await client.artifacts.list(notebook_id, artifact_type=artifact_type)
     rows = [_artifact_to_dict(item) for item in list(artifacts or [])]
@@ -1180,7 +1186,7 @@ async def _generate_artifact_async(
                 notebook_id,
                 source_ids=source_ids,
             )
-            note_id = str((out or {}).get("note_id") or "").strip()
+            note_id = str(getattr(out, "note_id", None) or "").strip()
             return {
                 "provider": "notebooklm",
                 "remote_space_id": notebook_id,
@@ -1367,12 +1373,12 @@ async def _delete_source_async(
 ) -> Dict[str, Any]:
     client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
     async with client:
-        ok = await client.sources.delete(notebook_id, source_id)
+        await client.sources.delete(notebook_id, source_id)
     return {
         "provider": "notebooklm",
         "remote_space_id": notebook_id,
         "source_id": source_id,
-        "deleted": bool(ok),
+        "deleted": True,
     }
 
 
@@ -1404,12 +1410,12 @@ async def _refresh_source_async(
 ) -> Dict[str, Any]:
     client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
     async with client:
-        ok = await client.sources.refresh(notebook_id, source_id)
+        await client.sources.refresh(notebook_id, source_id)
     return {
         "provider": "notebooklm",
         "remote_space_id": notebook_id,
         "source_id": source_id,
-        "refreshed": bool(ok),
+        "refreshed": True,
     }
 
 
@@ -1421,11 +1427,14 @@ def _map_vendor_exception(exc: Exception) -> NotebookLMProviderError:
             AuthError,
             ClientError,
             ConfigurationError,
+            DecodingError,
             NetworkError,
+            NotFoundError,
             RPCTimeoutError,
             RPCError,
             RateLimitError,
             ServerError,
+            WaitTimeoutError,
         )
     except Exception:
         return NotebookLMProviderError(
@@ -1446,6 +1455,20 @@ def _map_vendor_exception(exc: Exception) -> NotebookLMProviderError:
         return NotebookLMProviderError(
             code="space_provider_auth_invalid",
             message=str(exc) or "NotebookLM auth invalid",
+            transient=False,
+            degrade_provider=True,
+        )
+    if isinstance(exc, NotFoundError):
+        return NotebookLMProviderError(
+            code="space_provider_not_found",
+            message=str(exc) or "NotebookLM resource not found",
+            transient=False,
+            degrade_provider=False,
+        )
+    if isinstance(exc, DecodingError):
+        return NotebookLMProviderError(
+            code="space_provider_compat_mismatch",
+            message=str(exc) or "NotebookLM response schema mismatch",
             transient=False,
             degrade_provider=True,
         )
@@ -1482,6 +1505,13 @@ def _map_vendor_exception(exc: Exception) -> NotebookLMProviderError:
         return NotebookLMProviderError(
             code="space_provider_timeout",
             message=str(exc) or "NotebookLM request timed out",
+            transient=True,
+            degrade_provider=False,
+        )
+    if isinstance(exc, WaitTimeoutError):
+        return NotebookLMProviderError(
+            code="space_provider_timeout",
+            message=str(exc) or "NotebookLM operation timed out",
             transient=True,
             degrade_provider=False,
         )

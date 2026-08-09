@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from typing import Any
 
 import httpx
 
@@ -119,6 +120,7 @@ class Kernel:
         body: PostBody,
         *,
         read_timeout: float | None = None,
+        max_response_bytes: int | None = None,
     ) -> httpx.Response:
         """Issue a raw buffered POST through the live HTTP client."""
         timeout_override: httpx.Timeout | None = None
@@ -134,12 +136,17 @@ class Kernel:
                 write=self._timeout,
                 pool=self._timeout,
             )
+        headers_arg = dict(headers) if headers is not None else None
+        stream_kwargs: dict[str, Any] = {}
+        if max_response_bytes is not None:
+            stream_kwargs["max_bytes"] = max_response_bytes
         return await stream_post_with_size_cap(
             self.get_http_client(),
             url,
             body=body,
-            headers=dict(headers) if headers is not None else None,
+            headers=headers_arg,
             timeout=timeout_override,
+            **stream_kwargs,
         )
 
     async def aclose(self) -> None:

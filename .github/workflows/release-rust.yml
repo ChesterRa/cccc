@@ -1,16 +1,19 @@
-name: Build and publish experimental standalone Rust preview
+name: Experimental standalone Rust preview
 
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: rust-preview-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -24,7 +27,7 @@ jobs:
       - name: Verify shared release identity
         shell: bash
         run: |
-          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             python scripts/check_release_versions.py --tag "${GITHUB_REF_NAME}"
           else
             python scripts/check_release_versions.py
@@ -56,6 +59,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             archive: zip
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -112,6 +116,7 @@ jobs:
   prepare:
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -160,9 +165,10 @@ jobs:
         run: ./scripts/tests/verify_release_windows.ps1 -ArtifactDir artifacts -Target "${{ matrix.target }}"
 
   publish:
-    if: github.event_name == 'push'
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:

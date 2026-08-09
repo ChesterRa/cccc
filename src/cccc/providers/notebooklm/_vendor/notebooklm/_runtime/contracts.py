@@ -49,6 +49,7 @@ class Kernel(Protocol):
         body: bytes,
         *,
         read_timeout: float | None = None,
+        max_response_bytes: int | None = None,
     ) -> httpx.Response: ...
 
     @property

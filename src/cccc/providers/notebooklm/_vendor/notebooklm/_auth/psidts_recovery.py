@@ -524,9 +524,14 @@ def recover_psidts_in_memory(rookiepy_cookies: list[dict[str, Any]]) -> bool:
        expired — see :func:`_psidts_needs_recovery`).
     3. Secondary binding intact (``OSID``, or ``APISID + SAPISID``).
 
-    On success, mutates ``rookiepy_cookies`` to append the rotated
-    ``__Secure-1PSIDTS`` (and ``__Secure-3PSIDTS``) entries in rookiepy's
-    snake_case format. Downstream
+    On success, mutates ``rookiepy_cookies`` so the rotated
+    ``__Secure-1PSIDTS`` (and ``__Secure-3PSIDTS``) entries are present in
+    rookiepy's snake_case format. A rotated cookie that shares its
+    ``(name, domain, path)`` identity with an existing row REPLACES that row
+    in place (the rotation is the value we want to persist); otherwise it is
+    appended. This keeps exactly one row per identity so split-state recovery
+    cannot write a duplicate ``__Secure-3PSIDTS`` row to ``storage_state.json``
+    (issue #1523). Downstream
     :func:`notebooklm._auth.cookies.convert_rookiepy_cookies_to_storage_state`
     picks them up on re-conversion.
 
@@ -589,22 +594,51 @@ def recover_psidts_in_memory(rookiepy_cookies: list[dict[str, Any]]) -> bool:
         )
         return False
 
+    # Index the source jar by RFC 6265 identity so a rotated cookie that
+    # already has a same-(name, domain, path) row REPLACES it in place rather
+    # than appending a second occurrence. Split-state recovery (#1523) hits
+    # this: __Secure-1PSIDTS is missing/expired (so recovery fires) while a
+    # fresh __Secure-3PSIDTS is already present — RotateCookies rotates BOTH,
+    # and a blind append leaves a duplicate __Secure-3PSIDTS (and a stale
+    # __Secure-1PSIDTS twin) row with no analog in any real browser jar. The
+    # rotation is the value we want to persist, so the rotated occurrence wins
+    # — mirroring the last-occurrence-wins dedup in
+    # ``filter_storage_state_cookies_by_domain_policy`` (#1513). ``path or "/"``
+    # matches the normalization the loaders and save_cookies_to_storage use.
+    index_by_identity: dict[tuple[str, str, str], int] = {}
+    for pos, entry in enumerate(rookiepy_cookies):
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        domain = entry.get("domain")
+        if not isinstance(name, str) or not isinstance(domain, str):
+            continue
+        path = entry.get("path")
+        index_by_identity[(name, domain, (path if isinstance(path, str) else "") or "/")] = pos
+
     for cookie in rotated_cookies:
         if cookie.name not in {_PSIDTS_COOKIE, "__Secure-3PSIDTS"}:
             continue
         if not cookie.value or not cookie.domain:
             continue
-        rookiepy_cookies.append(
-            {
-                "name": cookie.name,
-                "value": cookie.value,
-                "domain": cookie.domain,
-                "path": cookie.path or "/",
-                "expires": cookie.expires,
-                "secure": True,
-                "http_only": True,
-            }
-        )
+        rotated_entry = {
+            "name": cookie.name,
+            "value": cookie.value,
+            "domain": cookie.domain,
+            "path": cookie.path or "/",
+            "expires": cookie.expires,
+            "secure": True,
+            "http_only": True,
+        }
+        identity = (cookie.name, cookie.domain, cookie.path or "/")
+        existing = index_by_identity.get(identity)
+        if existing is None:
+            index_by_identity[identity] = len(rookiepy_cookies)
+            rookiepy_cookies.append(rotated_entry)
+        else:
+            # Same (name, domain, path) already present — overwrite with the
+            # rotated occurrence so exactly one row carries the fresh value.
+            rookiepy_cookies[existing] = rotated_entry
 
     logger.info(
         "Recovered %s via in-memory RotateCookies POST (browser-cookies extraction)",
@@ -627,8 +661,10 @@ def validate_with_recovery(
     retry through :func:`recover_psidts_in_memory` (issue #990). When the
     recovery preconditions hold (SID present, PSIDTS absent or expired,
     secondary binding intact — see :func:`_psidts_needs_recovery`), the
-    rotated cookies are appended to ``rookiepy_cookies`` in place so
-    downstream persistence picks them up.
+    rotated cookies are merged into ``rookiepy_cookies`` in place by
+    ``(name, domain, path)`` identity — overwriting an existing same-identity
+    row, else appended — so downstream persistence picks them up without
+    duplicating a SIDTS entry.
 
     Lives in the auth subpackage rather than the CLI login package so both
     CLI call sites can route through ``notebooklm.auth`` without adding a

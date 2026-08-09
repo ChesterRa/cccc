@@ -7,4 +7,6 @@ minimal and import only specific submodules from the adapter boundary.
 
 from __future__ import annotations
 
-__all__: list[str] = []
+__version__ = "0.8.0"
+
+__all__ = ["__version__"]

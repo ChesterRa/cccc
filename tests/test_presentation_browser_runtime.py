@@ -25,7 +25,7 @@ class _FakeRuntime:
     def click(self, *, x: float, y: float, button: str = "left") -> None:
         self.actions.append(("click", (int(x), int(y), button)))
 
-    def scroll(self, *, dx: float, dy: float) -> None:
+    def scroll(self, *, dx: float, dy: float, x: float | None = None, y: float | None = None) -> None:
         self.actions.append(("scroll", (int(dx), int(dy))))
 
     def key_press(self, *, key: str) -> None:

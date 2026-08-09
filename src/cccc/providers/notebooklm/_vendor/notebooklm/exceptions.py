@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import os
 import re
+import reprlib
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -74,6 +75,10 @@ __all__ = [
     # Validation/Config
     "ValidationError",
     "ConfigurationError",
+    "MissingDependencyError",
+    # Headless re-auth (layer-3 auth recovery)
+    "HeadlessReauthError",
+    "HeadlessLoginRequiredError",
     # Network (NOT under RPC - happens before RPC)
     "NetworkError",
     # RPC Protocol
@@ -115,14 +120,19 @@ __all__ = [
     "ArtifactInProgressTimeoutError",
     # Domain: Research
     "ResearchError",
+    "ResearchStartUnavailableError",
     "ResearchTimeoutError",
     "ResearchTaskMismatchError",
+    "AmbiguousResearchTaskError",
     # Domain: Notes
     "NoteError",
     "NoteNotFoundError",
     # Domain: Mind maps
     "MindMapError",
     "MindMapNotFoundError",
+    # Domain: Source labels
+    "LabelError",
+    "LabelNotFoundError",
 ]
 
 
@@ -151,42 +161,42 @@ class NotFoundError(NotebookLMError):
     """Common base for resource-not-found exceptions.
 
     Catch this to handle any not-found case across notebooks, sources,
-    and artifacts in one ``except`` clause::
+    artifacts, notes, mind maps, and labels together::
 
         try:
             notebook = await client.notebooks.get(nb_id)
             source = await client.sources.wait_until_ready(nb_id, src_id)
             await client.artifacts.download_audio(nb_id, dest, audio_id)
         except NotFoundError as e:
-            # Catches NotebookNotFoundError, SourceNotFoundError,
-            # ArtifactNotFoundError, and MindMapNotFoundError uniformly (and
-            # NoteNotFoundError once its not-found paths land in v0.8.0).
+            # Catches NotebookNotFoundError, SourceNotFoundError, ArtifactNotFoundError,
+            # NoteNotFoundError, MindMapNotFoundError, and LabelNotFoundError uniformly
+            # (all namespace get() methods raise their *NotFoundError as of v0.8.0).
             handle_missing_resource(e)
 
     The example uses methods that *raise* a ``*NotFoundError`` on missing
-    IDs (:meth:`NotebooksAPI.get`, :meth:`SourcesAPI.wait_until_ready`,
-    the artifact download / content paths). :meth:`SourcesAPI.get` and
-    :meth:`ArtifactsAPI.get` instead return ``None`` for missing IDs — use
-    them when you want a lookup that does not trigger the umbrella.
-    :class:`MindMapNotFoundError` is raised by the ``client.mind_maps``
-    mutation paths (issue #1291); :class:`NoteNotFoundError` is defined but
-    not raised by any method yet (the prerequisite for the v0.8.0 work).
+    IDs. As of v0.8.0 (the #1247 flip) **every** namespace ``get()`` —
+    :meth:`NotebooksAPI.get`, :meth:`SourcesAPI.get`, :meth:`ArtifactsAPI.get`,
+    :meth:`NotesAPI.get`, :meth:`MindMapsAPI.get`, and :meth:`LabelsAPI.get` —
+    raises its matching ``*NotFoundError`` on a miss; use ``get_or_none()`` for
+    a ``None``-on-miss lookup that does not trigger the umbrella.
+    :class:`MindMapNotFoundError` is also raised by the ``client.mind_maps``
+    mutation paths (issue #1291).
 
     Subclasses retain their existing type-specific bases — for example,
     :class:`SourceNotFoundError` is still a :class:`SourceError`, and
     :class:`NotebookNotFoundError` is still an :class:`RPCError` and a
     :class:`NotebookError`. This umbrella is additive and does not
-    change existing catch semantics.
-
-    .. note::
-
-        As of v0.6.0, every concrete ``*NotFoundError`` subclass also mixes in
-        :class:`RPCError`, so ``except RPCError`` catches each of them
-        uniformly. See the v0.6.0 BREAKING-CHANGE entry in CHANGELOG.md
-        for migration guidance (the broad ``except RPCError`` clause now
-        intercepts a missing source / artifact that previously fell
-        through to the specific ``*NotFoundError`` handler).
+    change existing catch semantics. Since v0.6.0 every concrete
+    ``*NotFoundError`` also mixes in :class:`RPCError`, so ``except RPCError``
+    now intercepts a missing source / artifact that previously fell through to
+    the specific ``*NotFoundError`` handler (see the v0.6.0 CHANGELOG entry).
     """
+
+    #: Near-miss ``{"id", "title"}`` candidates for a failed *name* lookup
+    #: (issue #1787); empty unless a name resolver sets it. The immutable empty
+    #: default is never mutated in place — resolvers assign a fresh list. See
+    #: :func:`notebooklm._app.errors.did_you_mean_hint`.
+    candidates: Sequence[dict[str, str]] = ()
 
 
 class WaitTimeoutError(NotebookLMError, TimeoutError):
@@ -239,6 +249,45 @@ class ConfigurationError(NotebookLMError):
     """Missing or invalid configuration (auth, storage)."""
 
 
+class MissingDependencyError(ConfigurationError):
+    """A required *optional* dependency (an install extra) is not installed.
+
+    Raised e.g. when ``output_format="markdown"`` needs the ``markdownify`` extra.
+    Subclasses :class:`ConfigurationError` (so existing handlers keep working) but
+    :func:`notebooklm._app.errors.classify` routes it to the more specific
+    ``DEPENDENCY`` category so adapters surface an *install the extra* hint rather
+    than the auth/storage one (#1959).
+    """
+
+
+# =============================================================================
+# Headless re-auth (layer-3 auth recovery; not an RPC-protocol error)
+# =============================================================================
+
+
+class HeadlessReauthError(NotebookLMError):
+    """Base for layer-3 headless re-auth (silent browser re-mint) failures.
+
+    Raised by the headless arm of the browser-capture core and the
+    :mod:`notebooklm._auth.headless_reauth` decision layer. Distinct from
+    :class:`AuthError` (an RPC-protocol auth failure) because L3 is a *recovery*
+    step that drives a real browser, not a decoded batchexecute error.
+    """
+
+
+class HeadlessLoginRequiredError(HeadlessReauthError):
+    """The persisted browser profile's Google session is also dead.
+
+    Raised when the headless browser, launched against the persistent profile,
+    is redirected to the Google login page instead of landing on NotebookLM —
+    meaning even the longer-lived browser-profile session has expired and there
+    is no unattended path left. The unattended caller must surface this (it
+    never hangs waiting for a human) so the operator re-runs ``notebooklm
+    login``. Also raised when the unattended capture core aborts via its
+    ``io.fail`` sink (there is no interactive console to route an exit code to).
+    """
+
+
 # =============================================================================
 # Network (NOT under RPC - happens before RPC processing)
 # =============================================================================
@@ -276,12 +325,13 @@ class RPCError(NotebookLMError):
 
     Note:
         Domain-level "not found" exceptions — :class:`NotebookNotFoundError`,
-        :class:`SourceNotFoundError`, :class:`ArtifactNotFoundError` — inherit
-        from :class:`RPCError` so that ``except RPCError`` keeps catching them
-        at transport-level call sites. The underlying RPC call succeeded but
-        returned a degenerate / empty payload identifying the resource as
-        missing. When writing ``except RPCError`` clauses, be aware these
-        domain errors may also flow through; catch the specific domain type
+        :class:`SourceNotFoundError`, :class:`ArtifactNotFoundError`,
+        :class:`NoteNotFoundError`, :class:`MindMapNotFoundError`, and
+        :class:`LabelNotFoundError` — inherit from :class:`RPCError` so that
+        ``except RPCError`` keeps catching them at transport-level call sites.
+        Absence may come from an empty/degenerate payload or an omitted ID in a
+        list/content lookup. When writing ``except RPCError`` clauses, be aware
+        these domain errors may also flow through; catch the specific domain type
         BEFORE the broad ``except RPCError`` clause if you want to handle them
         differently.
 
@@ -353,8 +403,7 @@ class UnknownRPCMethodError(DecodingError):
     """RPC response structure doesn't match expectations.
 
     This often indicates Google has changed the API. Check for library updates.
-
-    Carries structured context to help diagnose schema drift:
+    Carries structured context to help diagnose schema drift.
 
     Attributes:
         method_id: The RPC method ID that was requested (or that drifted).
@@ -364,12 +413,11 @@ class UnknownRPCMethodError(DecodingError):
             this error (e.g. ``"_notebooks.list"``).
         found_ids: When raised by the response-level decoder, the list of RPC
             IDs actually present in the response.
-        raw_response: First 80 chars of the raw response, when available
-            (``NOTEBOOKLM_DEBUG=1`` preserves the full body). The string branch
-            is secret-scrubbed before truncation; non-string payloads are stored
-            as-is on this subclass.
-        data_at_failure: Truncated repr (~200 chars) of the data the helper
-            was attempting to index into when descent failed.
+        raw_response: As for :class:`RPCError` (secret-scrubbed, ~80 chars or
+            full body under ``NOTEBOOKLM_DEBUG=1``); non-string payloads are
+            stored as-is on this subclass.
+        data_at_failure: Secret-scrubbed repr of the data indexed into at
+            failure; the caller passes a ``reprlib``-bounded preview (not capped here).
     """
 
     def __init__(
@@ -415,7 +463,9 @@ class UnknownRPCMethodError(DecodingError):
         # class's ``str | None`` contract entirely.
         if not isinstance(raw_response, str):
             self.raw_response = raw_response
-        self.data_at_failure = data_at_failure
+        # Scrub at STORE time: ``data_at_failure`` is ``!r``-spliced into
+        # ``str``/``repr``/tracebacks, bypassing the ``RedactingFilter`` (#1518).
+        self.data_at_failure = None if data_at_failure is None else scrub_secrets(data_at_failure)
 
     def __str__(self) -> str:
         base = super().__str__()
@@ -624,10 +674,10 @@ class RPCTimeoutError(NetworkError):
 class RPCResponseTooLargeError(RPCError):
     """RPC response body exceeded the configured maximum size.
 
-    Raised by the streaming transport when a response body grows past
-    ``MAX_RPC_RESPONSE_BYTES`` (currently 50 MiB) while being read. The guard
-    aborts the read mid-stream rather than buffering an unbounded body, so a
-    runaway or hostile server can't exhaust process memory.
+    Raised by the streaming transport when a response body grows past the
+    configured per-call cap. Calls without override use ``MAX_RPC_RESPONSE_BYTES``
+    (currently 50 MiB). The guard aborts mid-stream rather than buffering an
+    unbounded body, so runaway servers can't exhaust process memory.
 
     Attributes:
         limit_bytes: The configured maximum (in bytes) that was exceeded.
@@ -864,10 +914,10 @@ class SourceNotFoundError(NotFoundError, RPCError, SourceError):
     RPC layer. ``except NotFoundError`` catches it alongside
     :class:`NotebookNotFoundError` and :class:`ArtifactNotFoundError`.
 
-    Note that ``client.sources.get`` returns ``None`` for a missing source
-    rather than raising — only the workflows that need a concrete source to
-    proceed (e.g. ``get_fulltext``, ``wait_until_ready``) surface the missing
-    source as an exception.
+    As of v0.8.0 ``client.sources.get`` **raises** this error for a missing
+    source; use ``client.sources.get_or_none`` for a ``None``-on-miss lookup.
+    Workflows that need a concrete source to proceed (e.g. ``get_fulltext``,
+    ``wait_until_ready``) also surface the missing source as this exception.
 
     .. note::
        **v0.6.0 BREAKING CHANGE:** prior to v0.6.0, :class:`SourceNotFoundError`
@@ -1230,44 +1280,45 @@ class ArtifactInProgressTimeoutError(ArtifactTimeoutError):
         )
 
 
-# =============================================================================
 # Domain: Research
-# =============================================================================
+# Keep catch behavior explicit: task mismatch remains ValidationError; ambiguous,
+# timeout, and start-unavailable paths are ResearchError domain failures.
 
 
 class ResearchError(NotebookLMError):
-    """Base for research operations.
+    """Research catch-all; ResearchTaskMismatchError stays ValidationError."""
 
-    Added in v0.7.0 to give the research domain a catchable base mirroring
-    :class:`SourceError` / :class:`ArtifactError`. :class:`ResearchTimeoutError`
-    inherits from it (and from :class:`WaitTimeoutError`).
 
-    ``ResearchTaskMismatchError`` deliberately does NOT inherit from this base:
-    it remains a :class:`ValidationError` so existing ``except ValidationError``
-    clauses on :meth:`ResearchAPI.import_sources` keep catching it unchanged.
-    """
+class ResearchStartUnavailableError(RPCError, ResearchError):
+    """No-run start signal; also RPCError because the backend returned a frame."""
+
+    def __init__(
+        self,
+        notebook_id: str,
+        mode: str,
+        *,
+        method_id: str | None = None,
+        raw_response: str | None = None,
+        rpc_code: str | int | None = None,
+        found_ids: list[str] | None = None,
+    ) -> None:
+        self.notebook_id = notebook_id
+        self.mode = mode
+        super().__init__(
+            (
+                f"{mode.capitalize()} research failed to start: "
+                "NotebookLM returned no research run. "
+                "Try mode='fast' or retry later."
+            ),
+            method_id=method_id,
+            raw_response=raw_response,
+            rpc_code=rpc_code,
+            found_ids=found_ids,
+        )
 
 
 class ResearchTimeoutError(WaitTimeoutError, ResearchError):
-    """Research task did not reach a terminal state before timeout.
-
-    Raised by :meth:`ResearchAPI.wait_for_completion` when the research task
-    does not reach ``completed`` / ``failed`` within the wait budget.
-
-    Inherits from :class:`WaitTimeoutError` (and therefore the built-in
-    :class:`TimeoutError`) and :class:`ResearchError`. Before v0.7.0 this path
-    raised the bare built-in :class:`TimeoutError`; routing it through this
-    subclass is backward-compatible for ``except TimeoutError`` callers and
-    newly catchable via ``except WaitTimeoutError`` / ``except ResearchError``.
-
-    Attributes:
-        notebook_id: Notebook containing the research task.
-        task_id: The research task ID (``"unknown"`` when no task id was
-            resolved before the timeout).
-        timeout: Wait budget in seconds.
-        timeout_seconds: Alias for ``timeout``.
-        last_status: Last observed research status before timeout.
-    """
+    """Timeout signal catchable as TimeoutError, WaitTimeoutError, and ResearchError."""
 
     def __init__(
         self,
@@ -1290,24 +1341,7 @@ class ResearchTimeoutError(WaitTimeoutError, ResearchError):
 
 
 class ResearchTaskMismatchError(ValidationError):
-    """Per-source ``research_task_id`` does not match the caller's ``task_id``.
-
-    Raised by :meth:`ResearchAPI.import_sources` when one of the supplied
-    sources carries a ``research_task_id`` that differs from the
-    discriminator ``task_id`` passed by the caller. This is the wire-crossing
-    bug: the caller intends to import results for task A, but one of the
-    source entries was actually discovered under task B. Importing under
-    the wrong task would mis-attribute provenance, so this check fails
-    loud before any RPC traffic is issued.
-
-    Inherits from :class:`ValidationError` so existing ``except
-    ValidationError`` clauses on ``import_sources`` continue to catch it.
-
-    Attributes:
-        task_id: The discriminator ``task_id`` passed by the caller.
-        source_research_task_id: The ``research_task_id`` carried by the
-            offending source dict.
-    """
+    """ValidationError for cross-task source provenance, not a ResearchError."""
 
     def __init__(self, *, task_id: str, source_research_task_id: str):
         self.task_id = task_id
@@ -1317,6 +1351,20 @@ class ResearchTaskMismatchError(ValidationError):
             f"research_task_id={source_research_task_id!r} but caller passed "
             f"task_id={task_id!r}. Sources discovered under one research "
             f"task cannot be imported under another."
+        )
+
+
+class AmbiguousResearchTaskError(ResearchError):
+    """ResearchError for ambiguous in-flight tasks; callers must pass task_id."""
+
+    def __init__(self, *, notebook_id: str, task_ids: list[str]):
+        self.notebook_id = notebook_id
+        self.task_ids = task_ids
+        super().__init__(
+            f"ResearchAPI poll on notebook {notebook_id!r} is ambiguous: "
+            f"{len(task_ids)} research tasks are in flight but no task_id was "
+            f"supplied to select one. Pass task_id=<id> (from research.start) "
+            f"to choose explicitly. In-flight task ids: {reprlib.repr(task_ids)}."
         )
 
 
@@ -1337,17 +1385,15 @@ class NoteNotFoundError(NotFoundError, RPCError, NoteError):
     """Note not found in notebook.
 
     .. note::
-       Under v0.7.0 this type is raised only when ``NOTEBOOKLM_FUTURE_ERRORS``
-       is on — ``notes.get`` (via ``resolve_get``, #1247) and ``notes.update``
-       (#1362) then fail loud on a missing note. It is the unconditional
-       not-found signal for note paths in v0.8.0 (#1346); see below.
+       As of v0.8.0 this is the unconditional not-found signal for note paths
+       (#1346): ``notes.get`` (#1247) and ``notes.update`` (#1362) fail loud on
+       a missing note. See below.
 
     Inherits from :class:`NotFoundError` (cross-domain umbrella),
     :class:`RPCError` (transport-level catchability), and :class:`NoteError`
-    (domain base). The RPC base is what note read/mutation paths will raise when
-    the server returns an empty / degenerate payload for a missing note ID, so
-    ``except RPCError`` keeps working at call sites that handle transport-level
-    failures. ``except NoteError`` works at domain-level call sites that don't
+    (domain base). Note absence is detected via a note-list lookup that omits
+    the id (not a transport 404), while the RPCError base preserves broad catch
+    behavior. ``except NoteError`` works at domain-level call sites that don't
     care about the RPC layer. ``except NotFoundError`` catches it alongside
     :class:`NotebookNotFoundError` and :class:`SourceNotFoundError`.
 
@@ -1421,6 +1467,58 @@ class MindMapNotFoundError(NotFoundError, RPCError, MindMapError):
         self.mind_map_id = mind_map_id
         super().__init__(
             f"Mind map not found: {mind_map_id}",
+            method_id=method_id,
+            raw_response=raw_response,
+        )
+
+
+# =============================================================================
+# Domain: Source labels
+# =============================================================================
+
+
+class LabelError(NotebookLMError):
+    """Base for source-label operations.
+
+    Gives the label domain a catchable base mirroring :class:`SourceError` /
+    :class:`NoteError`. :class:`LabelNotFoundError` inherits from it.
+    """
+
+
+class LabelNotFoundError(NotFoundError, RPCError, LabelError):
+    """Source label not found in notebook.
+
+    Raised by ``client.labels.get`` and the label mutation paths
+    (``rename``/``set_emoji``/``update``/``add_sources``/``sources``) on a
+    missing target. Absence is detected via a label list lookup, not a transport
+    404 (the ``LIST_LABELS`` payload simply omits the id). The idempotent
+    ``delete`` interprets the same absence as a no-op returning ``None``
+    (ADR-0019); ``get_or_none`` returns ``None``.
+
+    Inherits from :class:`NotFoundError` (cross-domain umbrella),
+    :class:`RPCError` (transport-level catchability), and :class:`LabelError`
+    (domain base), so ``except RPCError`` keeps working at call sites that handle
+    transport-level failures, ``except LabelError`` works at domain-level call
+    sites, and ``except NotFoundError`` catches it alongside the other
+    not-found errors.
+
+    Attributes:
+        label_id: The ID that was not found.
+        method_id: The RPC method ID (inherited from :class:`RPCError`).
+        raw_response: First 80 chars of the raw response, if any
+            (``NOTEBOOKLM_DEBUG=1`` preserves the full body).
+    """
+
+    def __init__(
+        self,
+        label_id: str,
+        *,
+        method_id: str | None = None,
+        raw_response: str | None = None,
+    ):
+        self.label_id = label_id
+        super().__init__(
+            f"Label not found: {label_id}",
             method_id=method_id,
             raw_response=raw_response,
         )

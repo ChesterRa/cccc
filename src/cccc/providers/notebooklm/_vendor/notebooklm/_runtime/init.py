@@ -139,7 +139,11 @@ def _resolve_async_client_factory(
     """Resolve the construction-only async-client seam."""
     if async_client_factory is not None:
         return async_client_factory
-    return httpx.AsyncClient
+    # PoC opt-in: browser TLS/JA3 impersonation transport (curl_cffi), shared
+    # across every authenticated-Google client.
+    from .._curl_cffi_transport import resolve_transport_factory
+
+    return resolve_transport_factory()
 
 
 def validate_constructor_args(
@@ -319,8 +323,8 @@ def build_collaborators(
     #
     # Event-loop affinity guard rationale: the lifecycle captures
     # ``asyncio.get_running_loop()`` in ``_bound_loop`` at ``open()`` time
-    # and the cross-loop check in ``_perform_authed_post`` does a cheap
-    # ``is`` comparison against it. Each client is per-loop — the asyncio primitives we hold
+    # and ``RuntimeTransport.perform_authed_post`` does the cross-loop
+    # check with a cheap ``is`` comparison against it. Each client is per-loop — the asyncio primitives we hold
     # (``_reqid_lock``, ``_refresh_lock``, ``_auth_snapshot_lock``,
     # ``_rpc_semaphore``, the ``httpx.AsyncClient``
     # pool, in-flight tasks like ``_refresh_task`` / ``_keepalive_task``)

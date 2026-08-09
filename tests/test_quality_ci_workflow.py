@@ -30,6 +30,34 @@ def _runs(job: dict) -> str:
     return "\n".join(step.get("run", "") for step in job.get("steps", []))
 
 
+def test_ci_has_read_only_permissions_bounded_jobs_and_cancels_stale_runs() -> None:
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["concurrency"] == {
+        "group": "ci-${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": "${{ github.event_name != 'schedule' }}",
+    }
+    assert {name: job.get("timeout-minutes") for name, job in jobs.items()} == {
+        "quality": "15",
+        "web": "15",
+        "python-tests": "25",
+        "python-compat": "15",
+        "package": "25",
+        "windows-smoke": "40",
+        "rust": "45",
+        "interop": "30",
+        "nightly-serial": "45",
+    }
+    rust_toolchain = next(
+        step["uses"]
+        for step in jobs["rust"]["steps"]
+        if step.get("uses", "").startswith("dtolnay/rust-toolchain")
+    )
+    assert rust_toolchain == "dtolnay/rust-toolchain@1.88.0"
+
+
 def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
     jobs = _workflow()["jobs"]
 
@@ -205,7 +233,8 @@ def test_schedule_runs_serial_full_python_suites_at_both_support_endpoints() -> 
 
 
 def test_python_release_builds_one_atomic_dual_implementation_set() -> None:
-    jobs = _release_workflow()["jobs"]
+    workflow = _release_workflow()
+    jobs = workflow["jobs"]
 
     build_setup = next(
         step for step in jobs["build"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
@@ -214,6 +243,11 @@ def test_python_release_builds_one_atomic_dual_implementation_set() -> None:
         step for step in jobs["publish"]["steps"] if step.get("uses", "").startswith("actions/setup-python")
     )
     assert set(jobs) == {"build", "native-linux-x64", "native-desktop", "collect", "publish"}
+    assert workflow["concurrency"] == {
+        "group": "release-${{ github.ref }}",
+        "cancel-in-progress": "false",
+    }
+    assert jobs["publish"]["timeout-minutes"] == "10"
     assert build_setup["with"]["python-version"] == "3.14"
     assert publish_setup["with"]["python-version"] == "3.14"
     assert jobs["native-linux-x64"]["needs"] == "build"
@@ -263,7 +297,7 @@ def test_windows_rust_binaries_use_the_static_crt() -> None:
     assert 'target-feature=+crt-static' in cargo_config
 
 
-def test_one_tag_publishes_pypi_and_matching_standalone_rust_assets() -> None:
+def test_product_tag_publishes_pypi_while_standalone_preview_is_manual() -> None:
     release = _release_workflow()
     rust_candidate = _rust_release_workflow()
 
@@ -277,10 +311,22 @@ def test_one_tag_publishes_pypi_and_matching_standalone_rust_assets() -> None:
     assert "scripts/publish_rust_crates.sh --publish" not in release_runs
     assert "python -m twine upload" in _runs(release["jobs"]["publish"])
 
-    assert rust_candidate["on"]["push"]["tags"] == ["v*"]
-    assert "workflow_dispatch" in rust_candidate["on"]
-    assert rust_candidate["jobs"]["publish"]["if"] == "github.event_name == 'push'"
+    assert set(rust_candidate["on"]) == {"workflow_dispatch"}
+    assert rust_candidate["concurrency"] == {
+        "group": "rust-preview-${{ github.ref }}",
+        "cancel-in-progress": "false",
+    }
+    assert rust_candidate["jobs"]["publish"]["if"] == "startsWith(github.ref, 'refs/tags/v')"
     assert set(rust_candidate["jobs"]) == {"web", "build", "prepare", "verify", "publish"}
+    assert {
+        name: job.get("timeout-minutes") for name, job in rust_candidate["jobs"].items()
+    } == {
+        "web": "15",
+        "build": "45",
+        "prepare": "10",
+        "verify": "5",
+        "publish": "10",
+    }
     assert rust_candidate["jobs"]["build"]["needs"] == "web"
     assert {item["target"] for item in rust_candidate["jobs"]["build"]["strategy"]["matrix"]["include"]} == {
         "aarch64-apple-darwin",
@@ -322,6 +368,24 @@ def test_one_tag_publishes_pypi_and_matching_standalone_rust_assets() -> None:
     assert "recommended stable distribution remains cccc-pair from PyPI" in publish_runs
 
 
+def test_python_release_keeps_registry_tokens_out_of_step_outputs() -> None:
+    publish = _release_workflow()["jobs"]["publish"]
+    classify = next(step for step in publish["steps"] if step.get("id") == "channel")
+    uploads = [step for step in publish["steps"] if "twine upload" in step.get("run", "")]
+
+    assert "secrets." not in classify["run"]
+    assert "token=" not in classify["run"]
+    assert {step["if"] for step in uploads} == {
+        "steps.channel.outputs.prerelease == 'true'",
+        "steps.channel.outputs.prerelease == 'false'",
+    }
+    assert {step["env"]["TWINE_PASSWORD"] for step in uploads} == {
+        "${{ secrets.TEST_PYPI_API_TOKEN }}",
+        "${{ secrets.PYPI_API_TOKEN }}",
+    }
+    assert all("steps.channel.outputs.token" not in str(step) for step in publish["steps"])
+
+
 def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
     docs_workflow = yaml.load(
         (ROOT / ".github/workflows/docs.yml").read_text(encoding="utf-8"),
@@ -330,6 +394,10 @@ def test_docs_publish_stable_installers_from_the_canonical_scripts() -> None:
     paths = set(docs_workflow["on"]["push"]["paths"])
     package = json.loads((ROOT / "docs/package.json").read_text(encoding="utf-8"))
 
+    assert {name: job.get("timeout-minutes") for name, job in docs_workflow["jobs"].items()} == {
+        "build": "15",
+        "deploy": "10",
+    }
     assert {
         "scripts/install.sh",
         "scripts/install.ps1",

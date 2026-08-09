@@ -7,9 +7,17 @@ on:
   schedule:
     - cron: "17 2 * * *"
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'schedule' }}
+
 jobs:
   quality:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,6 +46,7 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -72,6 +81,7 @@ jobs:
     if: github.event_name != 'schedule'
     needs: web
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -108,6 +118,7 @@ jobs:
   python-compat:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -159,6 +170,7 @@ jobs:
     if: github.event_name != 'schedule'
     needs: [quality, web, python-tests, python-compat, interop]
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -228,6 +240,7 @@ jobs:
     if: github.event_name != 'schedule'
     needs: web
     runs-on: windows-latest
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -273,13 +286,14 @@ jobs:
     if: github.event_name != 'schedule'
     needs: web
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           name: bundled-web
           path: web/dist
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
@@ -316,6 +330,7 @@ jobs:
     if: github.event_name != 'schedule'
     needs: web
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       CCCC_TEST_PYTHON: python
     steps:
@@ -357,6 +372,7 @@ jobs:
   nightly-serial:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

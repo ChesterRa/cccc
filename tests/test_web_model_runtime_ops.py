@@ -797,7 +797,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
             cleanup()
 
-    def test_builtin_browser_delivery_retries_once_after_transient_projected_page_close(self) -> None:
+    def test_builtin_browser_delivery_does_not_retry_after_projected_page_close(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event
@@ -846,10 +846,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             ):
                 result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
-            self.assertTrue(result.get("ok"), result)
-            self.assertEqual(result.get("status"), "submitted")
-            self.assertEqual(len(calls), 2)
-            close_session.assert_called_once_with(group_id=group.group_id, actor_id="peer1")
+            self.assertFalse(result.get("ok"), result)
+            self.assertEqual(result.get("status"), "ambiguous")
+            self.assertEqual(len(calls), 1)
+            close_session.assert_not_called()
             self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
         finally:
             if old_mode is None:
@@ -858,7 +858,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
             cleanup()
 
-    def test_builtin_browser_delivery_retries_once_after_transient_hidden_input_click(self) -> None:
+    def test_builtin_browser_delivery_does_not_retry_after_hidden_input_click_error(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event
@@ -896,10 +896,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             ):
                 result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
-            self.assertTrue(result.get("ok"), result)
-            self.assertEqual(result.get("status"), "submitted")
-            self.assertEqual(len(calls), 2)
-            close_session.assert_called_once_with(group_id=group.group_id, actor_id="peer1")
+            self.assertFalse(result.get("ok"), result)
+            self.assertEqual(result.get("status"), "ambiguous")
+            self.assertEqual(len(calls), 1)
+            close_session.assert_not_called()
             self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
         finally:
             if old_mode is None:
@@ -908,7 +908,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
             cleanup()
 
-    def test_builtin_browser_delivery_retries_once_after_inserted_without_submit(self) -> None:
+    def test_builtin_browser_delivery_does_not_retry_after_inserted_without_submit(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event
@@ -946,10 +946,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             ):
                 result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
-            self.assertTrue(result.get("ok"), result)
-            self.assertEqual(result.get("status"), "submitted")
-            self.assertEqual(len(calls), 2)
-            close_session.assert_called_once_with(group_id=group.group_id, actor_id="peer1")
+            self.assertFalse(result.get("ok"), result)
+            self.assertEqual(result.get("status"), "ambiguous")
+            self.assertEqual(len(calls), 1)
+            close_session.assert_not_called()
             self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
         finally:
             if old_mode is None:
@@ -1067,7 +1067,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
             cleanup()
 
-    def test_browser_delivery_projected_session_failure_marks_turn_failed_without_redelivery(self) -> None:
+    def test_browser_delivery_projected_session_error_is_ambiguous_without_redelivery(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
         from cccc.daemon.runner_state_ops import read_headless_state
         from cccc.kernel.inbox import unread_messages
@@ -1097,7 +1097,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
             self.assertFalse(result.get("ok"), result)
-            self.assertEqual(result.get("status"), "failed")
+            self.assertEqual(result.get("status"), "ambiguous")
             self.assertTrue(result.get("cursor_committed"))
             self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
             self.assertEqual(unread_messages(group, actor_id="peer1", limit=10, kind_filter="all"), [])
@@ -1105,16 +1105,20 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(str(state.get("status") or ""), "waiting")
             self.assertEqual(str(state.get("active_turn_id") or ""), "")
             browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
-            self.assertEqual(browser_state.get("last_delivery_status"), "failed")
+            self.assertEqual(browser_state.get("last_delivery_status"), "ambiguous")
+            self.assertEqual(
+                browser_state.get("last_submission_evidence"),
+                "browser_error_after_dispatch_fence",
+            )
             self.assertIn("browser unavailable", str(browser_state.get("last_error") or ""))
-            failed_events = [
+            ambiguous_events = [
                 json.loads(line)
                 for line in read_last_lines(group.ledger_path, 20)
-                if "web_model.browser_delivery.failed" in line
+                if "web_model.browser_delivery.ambiguous" in line
             ]
-            self.assertTrue(failed_events)
-            self.assertEqual((failed_events[-1].get("data") or {}).get("event_ids"), [event["id"]])
-            self.assertEqual((failed_events[-1].get("data") or {}).get("cursor_committed"), True)
+            self.assertTrue(ambiguous_events)
+            self.assertEqual((ambiguous_events[-1].get("data") or {}).get("event_ids"), [event["id"]])
+            self.assertEqual((ambiguous_events[-1].get("data") or {}).get("cursor_committed"), True)
 
             second = append_event(
                 group.ledger_path,
@@ -1142,6 +1146,163 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(len(prompts), 1)
             self.assertIn("manual retry after visible failure", prompts[0])
             self.assertNotIn("retry after failed browser delivery", prompts[0])
+        finally:
+            if old_mode is None:
+                os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
+            else:
+                os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
+            cleanup()
+
+    def test_bound_chat_redirect_blocks_delivery_without_committing_cursor(self) -> None:
+        from cccc.daemon.actors.web_model_browser_delivery import (
+            submit_next_web_model_browser_turn,
+        )
+        from cccc.kernel.inbox import get_cursor, unread_messages
+        from cccc.kernel.ledger import append_event, read_last_lines
+        from cccc.ports.web_model_browser_sidecar import (
+            CHATGPT_BOUND_TARGET_ERROR_MARKER,
+            read_chatgpt_browser_state,
+        )
+
+        _, cleanup = self._with_home()
+        old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
+        try:
+            group = self._create_group_with_actor()
+            self._bind_chatgpt_conversation(group)
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "must stay unread on target mismatch", "to": ["peer1"]},
+            )
+            os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=RuntimeError(
+                    f"{CHATGPT_BOUND_TARGET_ERROR_MARKER} expected=https://chatgpt.com/c/test-chat observed=https://chatgpt.com/"
+                ),
+            ):
+                result = submit_next_web_model_browser_turn(
+                    group.group_id, "peer1", trigger_event_id=event["id"]
+                )
+
+            self.assertFalse(result.get("ok"), result)
+            self.assertEqual(result.get("status"), "failed")
+            self.assertFalse(result.get("cursor_committed"))
+            self.assertNotEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertEqual(
+                [
+                    item.get("id")
+                    for item in unread_messages(
+                        group, actor_id="peer1", limit=10, kind_filter="all"
+                    )
+                ],
+                [event["id"]],
+            )
+            browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
+            self.assertEqual(browser_state.get("last_delivery_status"), "failed")
+            self.assertEqual(
+                browser_state.get("last_submission_evidence"),
+                "bound_conversation_unavailable",
+            )
+            failed_events = [
+                json.loads(line)
+                for line in read_last_lines(group.ledger_path, 20)
+                if "web_model.browser_delivery.failed" in line
+            ]
+            self.assertTrue(failed_events)
+            self.assertFalse(
+                bool((failed_events[-1].get("data") or {}).get("cursor_committed"))
+            )
+        finally:
+            if old_mode is None:
+                os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
+            else:
+                os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
+            cleanup()
+
+    def test_browser_delivery_interrupted_dispatch_is_fenced_without_redelivery(self) -> None:
+        from cccc.daemon.actors import web_model_browser_delivery as delivery
+        from cccc.kernel.inbox import get_cursor
+        from cccc.kernel.ledger import append_event
+        from cccc.ports.web_model_browser_sidecar import read_chatgpt_browser_state, record_chatgpt_browser_state
+
+        _, cleanup = self._with_home()
+        old_mode = os.environ.get("CCCC_WEB_MODEL_DELIVERY_MODE")
+        try:
+            group = self._create_group_with_actor()
+            self._bind_chatgpt_conversation(group)
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "interrupted browser delivery", "to": ["peer1"]},
+            )
+            os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
+            turn = delivery._browser_delivery_batch(group, actor_id="peer1")
+            record_chatgpt_browser_state(
+                group.group_id,
+                "peer1",
+                {
+                    "last_delivery_id": str(turn.get("delivery_id") or ""),
+                    "last_turn_id": str(turn.get("turn_id") or ""),
+                    "last_event_ids": list(turn.get("event_ids") or []),
+                    "last_delivery_status": "submitting",
+                    "last_delivery_started_at": "2026-08-09T00:00:00Z",
+                },
+            )
+            second = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "later message still delivers", "to": ["peer1"]},
+            )
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=AssertionError("interrupted delivery must not be submitted again"),
+            ) as submit:
+                result = delivery.submit_next_web_model_browser_turn(
+                    group.group_id, "peer1", trigger_event_id=second["id"]
+                )
+
+            self.assertFalse(result.get("ok"), result)
+            self.assertEqual(result.get("status"), "ambiguous")
+            self.assertTrue(result.get("cursor_committed"))
+            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
+            self.assertTrue(result.get("reschedule"))
+            submit.assert_not_called()
+            browser_state = read_chatgpt_browser_state(group.group_id, "peer1")
+            self.assertEqual(browser_state.get("last_delivery_status"), "ambiguous")
+            self.assertEqual(browser_state.get("last_submission_evidence"), "interrupted_dispatch")
+
+            prompts: list[str] = []
+
+            def submit_success(**kwargs: object) -> dict:
+                prompts.append(str(kwargs.get("prompt") or ""))
+                return self._projected_submit_result(delivery_id="delivery-after-interruption")
+
+            with patch(
+                "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
+                side_effect=submit_success,
+            ):
+                second_result = delivery.submit_next_web_model_browser_turn(
+                    group.group_id, "peer1", trigger_event_id=second["id"]
+                )
+
+            self.assertTrue(second_result.get("ok"), second_result)
+            self.assertEqual(second_result.get("status"), "submitted")
+            self.assertEqual(get_cursor(group, "peer1")[0], second["id"])
+            self.assertEqual(len(prompts), 1)
+            self.assertIn("later message still delivers", prompts[0])
+            self.assertNotIn("interrupted browser delivery", prompts[0])
         finally:
             if old_mode is None:
                 os.environ.pop("CCCC_WEB_MODEL_DELIVERY_MODE", None)
@@ -1787,7 +1948,7 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = old_mode
             cleanup()
 
-    def test_browser_delivery_retries_stale_pending_new_chat_bind(self) -> None:
+    def test_browser_delivery_does_not_resubmit_stale_pending_new_chat_bind(self) -> None:
         from cccc.daemon.actors.web_model_browser_delivery import submit_next_web_model_browser_turn
         from cccc.kernel.inbox import get_cursor
         from cccc.kernel.ledger import append_event
@@ -1821,16 +1982,6 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 data={"text": "retry stale new chat", "to": ["peer1"]},
             )
             os.environ["CCCC_WEB_MODEL_DELIVERY_MODE"] = "browser"
-            calls: list[dict] = []
-
-            def submit_via_session(**kwargs) -> dict:
-                calls.append(dict(kwargs))
-                return self._projected_submit_result(
-                    delivery_id="delivery-retry",
-                    tab_url="https://chatgpt.com/c/retry-chat",
-                    conversation_url="https://chatgpt.com/c/retry-chat",
-                )
-
             with (
                 patch(
                     "cccc.daemon.actors.web_model_browser_delivery.resolve_pending_chatgpt_conversation",
@@ -1838,20 +1989,20 @@ class TestWebModelRuntimeOps(unittest.TestCase):
                 ) as resolve,
                 patch(
                     "cccc.daemon.actors.web_model_browser_session.submit_prompt_via_web_model_chatgpt_browser_session",
-                    side_effect=submit_via_session,
-                ),
+                    side_effect=AssertionError("pending new chat must not be resubmitted"),
+                ) as submit,
             ):
                 result = submit_next_web_model_browser_turn(group.group_id, "peer1", trigger_event_id=event["id"])
 
             self.assertTrue(result.get("ok"), result)
-            self.assertEqual(result.get("status"), "submitted")
-            self.assertEqual(get_cursor(group, "peer1")[0], event["id"])
-            self.assertEqual(calls[0].get("target_url"), "https://chatgpt.com/")
-            self.assertEqual(calls[0].get("auto_bind_new_chat"), True)
-            self.assertIn("Session bootstrap for this browser chat", str(calls[0].get("prompt") or ""))
+            self.assertEqual(result.get("status"), "target_chat_binding_pending")
+            self.assertEqual(get_cursor(group, "peer1"), ("", ""))
+            submit.assert_not_called()
             state = read_chatgpt_browser_state(group.group_id, "peer1")
-            self.assertEqual(state.get("conversation_url"), "https://chatgpt.com/c/retry-chat")
-            self.assertEqual(state.get("pending_new_chat_bind"), False)
+            self.assertEqual(state.get("conversation_url"), "")
+            self.assertEqual(state.get("pending_new_chat_bind"), True)
+            self.assertEqual(state.get("pending_new_chat_submitted"), True)
+            self.assertEqual(state.get("pending_new_chat_delivery_id"), "delivery-stale")
             resolve.assert_called_once_with(group.group_id, "peer1")
         finally:
             if old_mode is None:

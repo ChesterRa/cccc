@@ -137,7 +137,7 @@ def _is_notebooklm_url(url: str) -> bool:
         host = str(urlparse(raw).hostname or "").lower()
     except Exception:
         return False
-    return host.endswith("notebooklm.google.com")
+    return host in {"notebooklm.google.com", "notebook.google.com"}
 
 
 def _cancel_requested(cancel_event: threading.Event, *, session_id: str) -> bool:

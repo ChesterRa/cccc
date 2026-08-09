@@ -77,6 +77,41 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertEqual(
             _conversation_url_from_tab("https://chatgpt.com.evil.test/c/abc123"), ""
         )
+        self.assertEqual(
+            _conversation_url_from_tab(
+                "https://chatgpt.com/c/WEB:1c383803-1938-493d-a2f6-060168787e8a"
+            ),
+            "",
+        )
+        self.assertEqual(
+            _conversation_url_from_tab("https://chatgpt.com/c/WEB%3Atemporary"),
+            "",
+        )
+
+    def test_chatgpt_conversation_binding_waits_past_provisional_route(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import _wait_for_conversation_url
+
+        class Page:
+            def __init__(self) -> None:
+                self._urls = iter(
+                    [
+                        "https://chatgpt.com/c/WEB:temporary",
+                        "https://chatgpt.com/c/WEB:temporary",
+                        "https://chatgpt.com/c/final-chat",
+                        "https://chatgpt.com/c/final-chat",
+                    ]
+                )
+                self._last = "https://chatgpt.com/"
+
+            @property
+            def url(self) -> str:
+                self._last = next(self._urls, self._last)
+                return self._last
+
+        self.assertEqual(
+            _wait_for_conversation_url(Page(), timeout_seconds=2.0),
+            "https://chatgpt.com/c/final-chat",
+        )
 
     def test_health_snapshot_treats_pending_bind_as_recoverable_wait(self) -> None:
         from cccc.ports.web_model_browser_sidecar import (
@@ -153,6 +188,29 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         self.assertTrue(delivery.get("cursor_committed"))
         self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "none")
         self.assertEqual(snapshot.get("tone"), "ready")
+
+    def test_health_snapshot_blocks_a_bound_chat_when_live_page_mismatches(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            build_chatgpt_web_model_health_snapshot,
+        )
+
+        snapshot = build_chatgpt_web_model_health_snapshot(
+            group_id="g-test",
+            actor_id="peer1",
+            browser_session={
+                "active": True,
+                "ready": True,
+                "tab_url": "https://chatgpt.com/",
+                "conversation_url": "https://chatgpt.com/c/bound-chat",
+            },
+            browser_surface={"active": True, "state": "ready"},
+        )
+
+        self.assertEqual((snapshot.get("target") or {}).get("state"), "unavailable")
+        self.assertEqual(
+            (snapshot.get("next_action") or {}).get("recommended"), "bind_chat"
+        )
+        self.assertEqual(snapshot.get("tone"), "needs")
 
     def test_health_snapshot_derives_pending_bind_from_existing_fields(self) -> None:
         from cccc.ports.web_model_browser_sidecar import (
@@ -1175,6 +1233,7 @@ document.querySelector('[data-testid="send-button"]').addEventListener('click', 
                     f"{sidecar.CHATGPT_SUBMIT_DEFERRED_MARKER} no safe Send prompt control"
                 ),
             ),
+            patch.object(sidecar, "_prompt_present_in_any_composer", return_value=True),
             patch.object(sidecar, "_request_submit_composer") as request_submit,
             patch.object(sidecar.time, "sleep", return_value=None),
         ):
@@ -1207,6 +1266,7 @@ document.querySelector('[data-testid="send-button"]').addEventListener('click', 
                     sidecar.CHATGPT_SUBMIT_DEFERRED_ERROR
                 ),
             ),
+            patch.object(sidecar, "_prompt_present_in_any_composer", return_value=True),
             patch.object(sidecar.time, "sleep", return_value=None),
         ):
             with self.assertRaisesRegex(
@@ -1215,6 +1275,83 @@ document.querySelector('[data-testid="send-button"]').addEventListener('click', 
                 sidecar._submit_prompt(page, prompt, input_timeout_seconds=1.0)
 
         clear_prompt.assert_not_called()
+
+    def test_submit_prompt_recovers_echo_before_deferred_retry(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        page = object()
+        prompt = "[cccc] Browser batch webdelivery:peer1:auto events=abc123def456 actor=peer1"
+
+        with (
+            patch.object(sidecar, "_submission_echo_found", side_effect=[False, True]),
+            patch.object(
+                sidecar, "_visible_input_selector", return_value="#prompt-textarea"
+            ),
+            patch.object(sidecar, "_clear_and_type_prompt"),
+            patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(
+                sidecar,
+                "_click_send",
+                side_effect=sidecar._SubmitDeferredState(
+                    sidecar.CHATGPT_SUBMIT_DEFERRED_ERROR
+                ),
+            ),
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            result = sidecar._submit_prompt(
+                page,
+                prompt,
+                input_timeout_seconds=1.0,
+            )
+
+        self.assertEqual(result.get("submission_evidence"), "message_echo")
+        self.assertEqual(result.get("send_selector"), "send_control:deferred")
+
+    def test_submit_prompt_fences_changed_page_instead_of_deferred_retry(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        class Page:
+            url = "https://chatgpt.com/"
+
+        page = Page()
+        prompt = "[cccc] Browser batch webdelivery:peer1:auto events=abc123def456 actor=peer1"
+
+        def submit_then_defer(*_args, **_kwargs):
+            page.url = "https://chatgpt.com/c/new"
+            raise sidecar._SubmitDeferredState(sidecar.CHATGPT_SUBMIT_DEFERRED_ERROR)
+
+        with (
+            patch.object(sidecar, "_submission_echo_found", return_value=False),
+            patch.object(
+                sidecar, "_visible_input_selector", return_value="#prompt-textarea"
+            ),
+            patch.object(sidecar, "_clear_and_type_prompt"),
+            patch.object(sidecar, "_wait_for_prompt_inserted", return_value=True),
+            patch.object(
+                sidecar,
+                "_click_send",
+                side_effect=submit_then_defer,
+            ),
+            patch.object(
+                sidecar, "_prompt_present_in_any_composer", return_value=True
+            ),
+            patch.object(
+                sidecar,
+                "_submission_diagnostics",
+                return_value={"url": "https://chatgpt.com/c/new"},
+            ),
+            patch.object(sidecar.time, "sleep", return_value=None),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "submission_verification=ambiguous"
+            ) as raised:
+                sidecar._submit_prompt(
+                    page,
+                    prompt,
+                    input_timeout_seconds=1.0,
+                )
+
+        self.assertNotIn(sidecar.CHATGPT_SUBMIT_DEFERRED_MARKER, str(raised.exception))
 
     def test_submit_prompt_accepts_existing_delivery_echo_before_retrying(self) -> None:
         from cccc.ports import web_model_browser_sidecar as sidecar
@@ -2106,6 +2243,53 @@ document.querySelector('[data-testid="send-button"]').addEventListener('click', 
         finally:
             cleanup()
 
+    def test_provisional_rust_target_is_exposed_as_invalid_not_bound(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            _write_state,
+            chatgpt_browser_actor_state_root,
+            read_chatgpt_browser_state,
+        )
+
+        home, cleanup = self._with_home()
+        try:
+            group_id = "g-provisional"
+            actor_id = "web1"
+            group_dir = Path(home) / "groups" / group_id
+            group_dir.mkdir(parents=True)
+            (group_dir / "group.yaml").write_text(
+                "\n".join(
+                    [
+                        "v: 1",
+                        f"group_id: {group_id}",
+                        "title: Provisional target",
+                        "actors: []",
+                        "web_model_browser_targets:",
+                        f"  {actor_id}:",
+                        "    state: bound_existing_chat",
+                        "    kind: existing_chat",
+                        "    url: https://chatgpt.com/c/WEB:temporary",
+                        "    saved_at: '2026-08-09T00:00:00Z'",
+                        "    next_delivery: existing_chat",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            _write_state(
+                chatgpt_browser_actor_state_root(group_id, actor_id),
+                {"conversation_url": "https://chatgpt.com/c/WEB:temporary"},
+            )
+
+            loaded = read_chatgpt_browser_state(group_id, actor_id)
+
+            self.assertEqual(loaded.get("conversation_url"), "")
+            self.assertEqual(
+                loaded.get("invalid_conversation_url"),
+                "https://chatgpt.com/c/WEB:temporary",
+            )
+        finally:
+            cleanup()
+
     def test_resolve_pending_chatgpt_conversation_binds_from_pending_state_url(
         self,
     ) -> None:
@@ -2555,6 +2739,61 @@ document.querySelector('[data-testid="send-button"]').addEventListener('click', 
             self.assertEqual(result, existing)
             open_session.assert_not_called()
             close_browser.assert_not_called()
+        finally:
+            cleanup()
+
+    def test_projected_chatgpt_session_realigns_active_instance_to_saved_chat(
+        self,
+    ) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+        from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
+
+        _, cleanup = self._with_home()
+        try:
+            record_chatgpt_browser_state(
+                "g-test",
+                "peer1",
+                {"conversation_url": "https://chatgpt.com/c/bound-chat"},
+            )
+            existing = {
+                "active": True,
+                "state": "ready",
+                "url": "https://chatgpt.com/",
+                "metadata": {"cdp_port": 9222},
+            }
+            aligned = {
+                **existing,
+                "url": "https://chatgpt.com/c/bound-chat",
+            }
+            with (
+                patch.object(
+                    web_model_browser_session._MANAGER,
+                    "info",
+                    side_effect=[existing, aligned],
+                ),
+                patch.object(
+                    web_model_browser_session._MANAGER, "execute", return_value={"ok": True}
+                ) as execute,
+                patch.object(
+                    web_model_browser_session,
+                    "ensure_web_model_browser_recovery_watcher",
+                    return_value=True,
+                ),
+            ):
+                result = web_model_browser_session.open_web_model_chatgpt_browser_session(
+                    group_id="g-test",
+                    actor_id="peer1",
+                    width=1280,
+                    height=800,
+                )
+
+            self.assertEqual(result.get("url"), "https://chatgpt.com/c/bound-chat")
+            execute.assert_called_once_with(
+                key="chatgpt_web",
+                kind="navigate",
+                payload={"url": "https://chatgpt.com/c/bound-chat"},
+                timeout=35.0,
+            )
         finally:
             cleanup()
 

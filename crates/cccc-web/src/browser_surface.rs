@@ -11,7 +11,9 @@ pub use interaction::{serve_socket, serve_vnc_socket};
 #[cfg(test)]
 pub(crate) use prompt_submission::SUBMISSION_EVIDENCE_TIMEOUT;
 pub(crate) use prompt_submission::{
-    PromptSubmissionOutcome, conversation_url_for_target, stored_verified_submission_evidence,
+    BOUND_CONVERSATION_ERROR_MARKER, PromptSubmissionOutcome, conversation_target_matches,
+    conversation_url_for_target, is_chatgpt_url, normalized_chatgpt_conversation_url,
+    stored_verified_submission_evidence,
 };
 
 use anyhow::{Context, Result, bail};

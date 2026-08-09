@@ -32,8 +32,11 @@ class MindMap:
         notebook_id: The notebook the mind map belongs to.
         title: Display title.
         kind: :class:`MindMapKind` discriminator (``NOTE_BACKED`` / ``INTERACTIVE``).
-        created_at: Creation time when known (interactive artifacts expose it;
-            ``None`` for note-backed rows that don't carry a timestamp).
+        created_at: Creation time when known. Both kinds carry it: interactive
+            artifacts expose it via the ``LIST_ARTIFACTS`` timestamp block, and
+            note-backed rows carry it in the note metadata envelope at
+            ``row[1][2][2][0]`` (decoded through ``NoteRow.created_at``; issue
+            #1529). ``None`` only when the row genuinely omits the slot.
         tree: The parsed ``{"name", "children"}`` node tree when cheaply
             available (note-backed list rows carry it; interactive maps leave it
             ``None`` — fetch it with ``client.mind_maps.get_tree(...)``).

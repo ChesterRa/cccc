@@ -141,7 +141,7 @@ def space_artifact(
     kind: str = "",
     options: Optional[Dict[str, Any]] = None,
     wait: bool = False,
-    save_to_space: bool = True,
+    save_to_space: bool = False,
     output_path: str = "",
     output_format: str = "",
     artifact_id: str = "",

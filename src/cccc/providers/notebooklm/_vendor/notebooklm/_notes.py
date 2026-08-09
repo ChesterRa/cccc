@@ -18,8 +18,7 @@ import builtins
 import logging
 from typing import Any
 
-from ._deprecation import future_errors_enabled
-from ._lookup import resolve_get
+from ._lookup import unwrap_or_raise
 from ._mind_map import NoteBackedMindMapService
 from ._note_service import NoteRowKind, NoteService
 from ._row_adapters.notes import NoteRow
@@ -90,7 +89,7 @@ class NotesAPI:
 
         return notes
 
-    async def get(self, notebook_id: str, note_id: str) -> Note | None:
+    async def get(self, notebook_id: str, note_id: str) -> Note:
         """Get a specific note by ID.
 
         Args:
@@ -98,34 +97,27 @@ class NotesAPI:
             note_id: The note ID.
 
         Returns:
-            Note object, or None if not found.
+            The :class:`~notebooklm.types.Note`.
 
-        .. deprecated:: 0.7.0
-            Returning ``None`` for a missing note is deprecated and emits a
-            :class:`DeprecationWarning`. In **v0.8.0** this method will raise
-            ``NoteNotFoundError`` instead, to match ``notebooks.get`` (issue
-            #1247). Wrap the call in ``try/except NoteNotFoundError`` to keep
-            handling missing notes. Suppress the warning with
-            ``NOTEBOOKLM_QUIET_DEPRECATIONS``, or set
-            ``NOTEBOOKLM_FUTURE_ERRORS=1`` to preview the v0.8.0 raise now.
+        Raises:
+            NoteNotFoundError: If no note with ``note_id`` exists (matches
+                ``notebooks.get``; issue #1247). Use :meth:`get_or_none` for the
+                sanctioned ``None``-on-miss lookup.
         """
-        # The warn-runway / raise decision is single-sourced in
-        # ``_lookup.resolve_get``: it warns and returns ``None`` today, or
-        # raises ``NoteNotFoundError`` under ``NOTEBOOKLM_FUTURE_ERRORS`` (the
-        # v0.8.0 flip, issue #1247). Internal callers that need the silent
-        # optional-lookup must use ``get_or_none`` directly.
-        return resolve_get(
+        # ``_lookup.unwrap_or_raise`` single-sources the raise-on-miss decision
+        # (#1247). Internal callers that need the silent optional-lookup must
+        # use ``get_or_none`` directly.
+        return unwrap_or_raise(
             await self.get_or_none(notebook_id, note_id),
-            not_found=NoteNotFoundError(note_id),
-            resource="note",
+            NoteNotFoundError(note_id),
         )
 
     async def get_or_none(self, notebook_id: str, note_id: str) -> Note | None:
         """Get a note by ID, returning ``None`` when it does not exist.
 
         The sanctioned ``None``-on-miss lookup (ADR-0019): unlike :meth:`get`
-        — which is slated to raise ``NoteNotFoundError`` on a miss in v0.8.0
-        (issue #1247) — this returns ``None`` for a genuine absence and emits no
+        — which now raises ``NoteNotFoundError`` on a miss (#1247) — this
+        returns ``None`` for a genuine absence and emits no
         deprecation warning. Transport, auth, and decode faults raised by the
         underlying note listing are **not** swallowed; only a real "not found"
         yields ``None``.
@@ -139,12 +131,17 @@ class NotesAPI:
         """
         all_items = await self._get_all_notes_and_mind_maps(notebook_id)
         for item in all_items:
-            if isinstance(item, list) and len(item) > 0 and item[0] == note_id:
+            # The id-slot read goes through ``NoteRow.id`` so the position
+            # knowledge stays in the adapter (``NoteRow`` stringifies the raw
+            # slot, matching the unified ``SourceRow.id`` convention) instead
+            # of an open-coded ``item[0]`` that silently flips found →
+            # not-found if the id slot ever moves.
+            if isinstance(item, list) and len(item) > 0 and NoteRow(item).id == note_id:
                 return self._parse_note(item, notebook_id)
         return None
 
-    # Internal optional-lookup alias: kept as a stable private name so existing
-    # internal call sites and tests can probe without the public deprecation.
+    # Internal optional-lookup alias: a stable private name so internal call
+    # sites and tests use the ``None``-on-miss lookup rather than the raising get().
     _get_or_none = get_or_none
 
     async def create(
@@ -185,22 +182,23 @@ class NotesAPI:
             title: The new title.
 
         Raises:
-            NoteNotFoundError: When ``NOTEBOOKLM_FUTURE_ERRORS`` (the v0.8.0
-                preview, issue #1362) is enabled and ``note_id`` does not exist.
-                The ``UPDATE_NOTE`` RPC is ``allow_null=True`` and silently
-                no-ops on a missing note, so the current (v0.7.0) contract
-                silently "succeeds" on a miss; the preview adds a public-facade
-                existence preflight so a mutate-existing op fails loud per
-                ADR-0019 Class 5.
+            NoteNotFoundError: When ``note_id`` does not exist. The
+                ``UPDATE_NOTE`` RPC is ``allow_null=True`` and silently no-ops
+                on a missing note, so a public-facade existence preflight runs
+                first to make a mutate-existing op fail loud per ADR-0019
+                Class 5.
+
+        .. versionchanged:: 0.8.0
+            **Breaking change:** updating a missing note now raises
+            :class:`NoteNotFoundError` instead of silently "succeeding" via the
+            ``allow_null=True`` no-op (#1362).
         """
-        if future_errors_enabled():
-            # v0.8.0 preview (issue #1362): detect a missing target at the
-            # public facade (never inside ``_note_service`` — that crosses the
-            # layer boundary). ``get_or_none`` is the silent optional-lookup;
-            # only a genuine miss yields ``None`` (transport/auth/decode faults
-            # propagate). Default-off keeps the historical silent no-op.
-            if await self.get_or_none(notebook_id, note_id) is None:
-                raise NoteNotFoundError(note_id)
+        # v0.8.0 (issue #1362): detect a missing target at the public facade
+        # (never inside ``_note_service`` — that crosses the layer boundary).
+        # ``get_or_none`` is the silent optional-lookup; only a genuine miss
+        # yields ``None`` (transport/auth/decode faults propagate).
+        if await self.get_or_none(notebook_id, note_id) is None:
+            raise NoteNotFoundError(note_id)
         await self._notes.update_note(notebook_id, note_id, content, title)
 
     async def delete(self, notebook_id: str, note_id: str) -> None:
@@ -308,4 +306,5 @@ class NotesAPI:
             notebook_id=notebook_id,
             title=row.title,
             content=row.content or "",
+            created_at=row.created_at,
         )

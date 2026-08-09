@@ -20,6 +20,7 @@ pub(crate) const SUBMISSION_EVIDENCE_TIMEOUT: Duration = Duration::from_secs(8);
 const POLL_INTERVAL: Duration = Duration::from_millis(150);
 const SEND_STABILITY_INTERVAL: Duration = Duration::from_millis(300);
 const ATTACHMENT_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const BOUND_CONVERSATION_ERROR_MARKER: &str = "chatgpt_bound_conversation_unavailable:";
 
 pub(crate) enum PromptSubmissionOutcome {
     Verified(Value),
@@ -123,9 +124,12 @@ impl BrowserSurfaces {
             bail!("browser prompt is empty");
         }
         let page = self.page(key).await?;
-        if !target_url.is_empty() {
+        if has_chatgpt_conversation_route(target_url) {
+            self.align_chatgpt_conversation_target(key, target_url, Duration::from_secs(5))
+                .await?;
+        } else if !target_url.is_empty() {
             let current = page.url().await?.unwrap_or_default();
-            if current != target_url {
+            if !same_page(&current, target_url) {
                 goto_dom_content_loaded(&page, target_url).await?;
             }
         }
@@ -157,9 +161,21 @@ impl BrowserSurfaces {
         if let Some(path) = attachment_path {
             let attachment = attach_compatibility_image(&page, path, delivery_id).await?;
             if let AttachmentOutcome::Deferred(attachment) = attachment {
-                let outcome = attachment_deferred(&composer.descriptor, &baseline, attachment);
-                self.record_page_state(key, &page).await;
-                return Ok(PromptSubmissionOutcome::Deferred(outcome));
+                let outcome = self
+                    .classify_deferred_submission(
+                        key,
+                        &page,
+                        SubmissionAttempt {
+                            prompt,
+                            needles: &needles,
+                            input: &composer.descriptor,
+                            action: "attachment:file_input_dispatch",
+                            baseline: &baseline,
+                        },
+                        "attachment_not_ready",
+                    )
+                    .await;
+                return Ok(with_attachment_evidence(outcome, attachment));
             }
             baseline = inspect_submission(&page, prompt, &needles).await?;
             if !baseline.composer_exact {
@@ -194,31 +210,37 @@ impl BrowserSurfaces {
                     )
                     .await)
             }
-            SendReadiness::Deferred(probe) => {
-                self.record_page_state(key, &page).await;
-                Ok(PromptSubmissionOutcome::Deferred(evidence(
-                    false,
-                    &probe.descriptor,
+            SendReadiness::Deferred(probe) => Ok(self
+                .classify_deferred_submission(
+                    key,
+                    &page,
+                    SubmissionAttempt {
+                        prompt,
+                        needles: &needles,
+                        input: &composer.descriptor,
+                        action: &probe.descriptor,
+                        baseline: &baseline,
+                    },
                     "send_control_deferred",
-                    &deferred_reason(&probe),
-                    &baseline,
-                    &baseline,
-                )))
-            }
+                )
+                .await),
             SendReadiness::Missing(probe) => {
                 let request_submit = request_submit(&page).await;
                 match request_submit {
-                    Ok(result) if result.unsafe_state => {
-                        self.record_page_state(key, &page).await;
-                        Ok(PromptSubmissionOutcome::Deferred(evidence(
-                            false,
-                            &result.action,
+                    Ok(result) if result.unsafe_state => Ok(self
+                        .classify_deferred_submission(
+                            key,
+                            &page,
+                            SubmissionAttempt {
+                                prompt,
+                                needles: &needles,
+                                input: &composer.descriptor,
+                                action: &result.action,
+                                baseline: &baseline,
+                            },
                             "send_control_deferred",
-                            "composer is currently in a stop or running state",
-                            &baseline,
-                            &baseline,
-                        )))
-                    }
+                        )
+                        .await),
                     Ok(result) if result.invoked => {
                         let action = if result.error.is_empty() {
                             result.action
@@ -239,17 +261,20 @@ impl BrowserSurfaces {
                             )
                             .await)
                     }
-                    Ok(_) if probe.running || probe.stop_visible => {
-                        self.record_page_state(key, &page).await;
-                        Ok(PromptSubmissionOutcome::Deferred(evidence(
-                            false,
-                            "",
+                    Ok(_) if probe.running || probe.stop_visible => Ok(self
+                        .classify_deferred_submission(
+                            key,
+                            &page,
+                            SubmissionAttempt {
+                                prompt,
+                                needles: &needles,
+                                input: &composer.descriptor,
+                                action: &probe.descriptor,
+                                baseline: &baseline,
+                            },
                             "send_control_deferred",
-                            &deferred_reason(&probe),
-                            &baseline,
-                            &baseline,
-                        )))
-                    }
+                        )
+                        .await),
                     Ok(_) => {
                         let action = "keyboard:Enter";
                         let press = match page.find_element(COMPOSER_SELECTOR).await {
@@ -291,6 +316,70 @@ impl BrowserSurfaces {
                 }
             }
         }
+    }
+
+    async fn classify_deferred_submission(
+        &self,
+        key: &str,
+        page: &Page,
+        attempt: SubmissionAttempt<'_>,
+        deferred_evidence: &str,
+    ) -> PromptSubmissionOutcome {
+        let observed = match inspect_submission(page, attempt.prompt, attempt.needles).await {
+            Ok(observed) => observed,
+            Err(error) => {
+                tracing::debug!(%error, "failed to recheck a deferred browser submission");
+                self.record_page_state(key, page).await;
+                return PromptSubmissionOutcome::Ambiguous(evidence(
+                    false,
+                    attempt.action,
+                    "deferred_state_unverifiable",
+                    attempt.input,
+                    attempt.baseline,
+                    attempt.baseline,
+                ));
+            }
+        };
+        self.record_page_state(key, page).await;
+        if observed.echo_found {
+            return PromptSubmissionOutcome::Verified(evidence(
+                true,
+                attempt.action,
+                "message_echo",
+                attempt.input,
+                attempt.baseline,
+                &observed,
+            ));
+        }
+        if let Some(submission_evidence) = verified_submission_evidence(attempt.baseline, &observed)
+        {
+            return PromptSubmissionOutcome::Verified(evidence(
+                true,
+                attempt.action,
+                submission_evidence,
+                attempt.input,
+                attempt.baseline,
+                &observed,
+            ));
+        }
+        if let Some(submission_evidence) = weak_submission_evidence(attempt.baseline, &observed) {
+            return PromptSubmissionOutcome::Ambiguous(evidence(
+                false,
+                attempt.action,
+                submission_evidence,
+                attempt.input,
+                attempt.baseline,
+                &observed,
+            ));
+        }
+        PromptSubmissionOutcome::Deferred(evidence(
+            false,
+            attempt.action,
+            deferred_evidence,
+            attempt.input,
+            attempt.baseline,
+            &observed,
+        ))
     }
 
     async fn verify_attempt(
@@ -372,6 +461,56 @@ impl BrowserSurfaces {
             .context("browser surface is not active")
     }
 
+    pub(crate) async fn navigate_to_url(&self, key: &str, target_url: &str) -> Result<String> {
+        let page = self.page(key).await?;
+        let current = page.url().await?.unwrap_or_default();
+        if !same_page(&current, target_url) {
+            goto_dom_content_loaded(&page, target_url).await?;
+        }
+        let observed = page.url().await?.unwrap_or_default();
+        self.record_page_state(key, &page).await;
+        Ok(observed)
+    }
+
+    pub(crate) async fn align_chatgpt_conversation_target(
+        &self,
+        key: &str,
+        target_url: &str,
+        timeout: Duration,
+    ) -> Result<String> {
+        let expected = normalized_chatgpt_conversation_url(target_url).ok_or_else(|| {
+            anyhow::anyhow!(
+                "{BOUND_CONVERSATION_ERROR_MARKER} saved ChatGPT conversation URL is provisional or invalid"
+            )
+        })?;
+        let page = self.page(key).await?;
+        let current = page.url().await?.unwrap_or_default();
+        if conversation_target_matches(&expected, &current) {
+            self.record_page_state(key, &page).await;
+            return Ok(expected);
+        }
+        goto_dom_content_loaded(&page, &expected).await?;
+        let deadline = Instant::now() + timeout;
+        let mut consecutive = 0_u8;
+        loop {
+            let observed = page.url().await?.unwrap_or_default();
+            if conversation_target_matches(&expected, &observed) {
+                consecutive += 1;
+                if consecutive >= 2 {
+                    self.record_page_state(key, &page).await;
+                    return Ok(expected);
+                }
+            } else {
+                consecutive = 0;
+            }
+            if Instant::now() >= deadline {
+                self.record_page_state(key, &page).await;
+                bail!("{BOUND_CONVERSATION_ERROR_MARKER} expected={expected} observed={observed}");
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    }
+
     pub(crate) async fn wait_for_conversation_url(
         &self,
         key: &str,
@@ -380,11 +519,28 @@ impl BrowserSurfaces {
     ) -> Result<Option<String>> {
         let page = self.page(key).await?;
         let deadline = Instant::now() + timeout;
+        let mut candidate = None::<String>;
+        let mut consecutive = 0_u8;
         loop {
             let current = page.url().await?.unwrap_or_default();
             if let Some(conversation_url) = conversation_url_for_target(target_url, &current) {
-                self.record_page_state(key, &page).await;
-                return Ok(Some(conversation_url));
+                if timeout.is_zero() {
+                    self.record_page_state(key, &page).await;
+                    return Ok(Some(conversation_url));
+                }
+                if candidate.as_deref() == Some(conversation_url.as_str()) {
+                    consecutive += 1;
+                } else {
+                    candidate = Some(conversation_url);
+                    consecutive = 1;
+                }
+                if consecutive >= 2 {
+                    self.record_page_state(key, &page).await;
+                    return Ok(candidate);
+                }
+            } else {
+                candidate = None;
+                consecutive = 0;
             }
             if Instant::now() >= deadline {
                 self.record_page_state(key, &page).await;
@@ -748,7 +904,13 @@ pub(crate) fn stored_verified_submission_evidence(value: &Value) -> Option<&'sta
 }
 
 fn conversation_route_changed(before: &str, after: &str) -> bool {
-    before != after && after.split('/').any(|segment| segment == "c")
+    if before == after {
+        return false;
+    }
+    reqwest::Url::parse(after)
+        .ok()
+        .and_then(|url| conversation_route_id(&url))
+        .is_some_and(|id| !provisional_conversation_id(&id))
 }
 
 pub(crate) fn conversation_url_for_target(target: &str, current: &str) -> Option<String> {
@@ -760,16 +922,74 @@ pub(crate) fn conversation_url_for_target(target: &str, current: &str) -> Option
     {
         return None;
     }
-    let current_segments = current.path_segments()?.collect::<Vec<_>>();
-    let has_conversation_id = current_segments
-        .windows(2)
-        .any(|pair| matches!(pair[0], "c" | "chat" | "app") && !pair[1].is_empty());
-    if !has_conversation_id || current.path() == target.path() {
+    let conversation_id = conversation_route_id(&current)?;
+    if provisional_conversation_id(&conversation_id) || current.path() == target.path() {
         return None;
     }
     current.set_query(None);
     current.set_fragment(None);
     Some(current.to_string())
+}
+
+pub(crate) fn is_chatgpt_url(value: &str) -> bool {
+    reqwest::Url::parse(value).is_ok_and(|url| {
+        url.host_str().is_some_and(|host| {
+            let host = host.trim_end_matches('.').to_ascii_lowercase();
+            host == "chatgpt.com" || host.ends_with(".chatgpt.com")
+        })
+    })
+}
+
+pub(crate) fn has_chatgpt_conversation_route(value: &str) -> bool {
+    if !is_chatgpt_url(value) {
+        return false;
+    }
+    reqwest::Url::parse(value)
+        .ok()
+        .and_then(|url| chatgpt_conversation_id(&url))
+        .is_some()
+}
+
+pub(crate) fn normalized_chatgpt_conversation_url(value: &str) -> Option<String> {
+    if !is_chatgpt_url(value) {
+        return None;
+    }
+    let mut url = reqwest::Url::parse(value).ok()?;
+    if url.scheme() != "https" {
+        return None;
+    }
+    let conversation_id = chatgpt_conversation_id(&url)?;
+    if provisional_conversation_id(&conversation_id) {
+        return None;
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    Some(url.to_string())
+}
+
+pub(crate) fn conversation_target_matches(expected: &str, observed: &str) -> bool {
+    normalized_chatgpt_conversation_url(expected)
+        .zip(normalized_chatgpt_conversation_url(observed))
+        .is_some_and(|(expected, observed)| expected == observed)
+}
+
+fn conversation_route_id(url: &reqwest::Url) -> Option<String> {
+    let segments = url.path_segments()?.collect::<Vec<_>>();
+    segments.windows(2).find_map(|pair| {
+        (matches!(pair[0], "c" | "chat" | "app") && !pair[1].is_empty()).then(|| pair[1].to_owned())
+    })
+}
+
+fn chatgpt_conversation_id(url: &reqwest::Url) -> Option<String> {
+    let segments = url.path_segments()?.collect::<Vec<_>>();
+    segments
+        .windows(2)
+        .find_map(|pair| (pair[0] == "c" && !pair[1].is_empty()).then(|| pair[1].to_owned()))
+}
+
+fn provisional_conversation_id(value: &str) -> bool {
+    let value = value.trim().to_ascii_uppercase();
+    value.starts_with("WEB:") || value.starts_with("WEB%3A")
 }
 
 fn submission_needles(prompt: &str) -> Vec<String> {
@@ -794,14 +1014,6 @@ fn submission_needles(prompt: &str) -> Vec<String> {
     needles
 }
 
-fn deferred_reason(probe: &SendProbe) -> String {
-    if probe.running || probe.stop_visible {
-        "browser model is responding and no safe Send prompt control is available".to_owned()
-    } else {
-        "browser composer Send prompt control is not enabled yet".to_owned()
-    }
-}
-
 fn evidence(
     submitted: bool,
     action: &str,
@@ -821,17 +1033,25 @@ fn evidence(
     })
 }
 
-fn attachment_deferred(input: &str, baseline: &SubmissionSnapshot, attachment: Value) -> Value {
-    let mut value = evidence(
-        false,
-        "attachment:file_input_dispatch",
-        "attachment_not_ready",
-        input,
-        baseline,
-        baseline,
-    );
-    value["attachment"] = attachment;
-    value
+fn with_attachment_evidence(
+    outcome: PromptSubmissionOutcome,
+    attachment: Value,
+) -> PromptSubmissionOutcome {
+    let attach = |mut value: Value| {
+        value["attachment"] = attachment.clone();
+        value
+    };
+    match outcome {
+        PromptSubmissionOutcome::Verified(value) => {
+            PromptSubmissionOutcome::Verified(attach(value))
+        }
+        PromptSubmissionOutcome::Deferred(value) => {
+            PromptSubmissionOutcome::Deferred(attach(value))
+        }
+        PromptSubmissionOutcome::Ambiguous(value) => {
+            PromptSubmissionOutcome::Ambiguous(attach(value))
+        }
+    }
 }
 
 const SELECT_COMPOSER_SCRIPT: &str = r#"() => {
@@ -1164,9 +1384,11 @@ const ATTACHMENT_STATUS_SCRIPT: &str = r#"payload => {
 #[cfg(test)]
 mod tests {
     use super::{
-        SubmissionSnapshot, attachment_deferred, conversation_route_changed,
-        conversation_url_for_target, stored_verified_submission_evidence, submission_needles,
-        verified_submission_evidence, weak_submission_evidence,
+        PromptSubmissionOutcome, SubmissionSnapshot, conversation_route_changed,
+        conversation_target_matches, conversation_url_for_target,
+        normalized_chatgpt_conversation_url, stored_verified_submission_evidence,
+        submission_needles, verified_submission_evidence, weak_submission_evidence,
+        with_attachment_evidence,
     };
 
     #[test]
@@ -1176,11 +1398,20 @@ mod tests {
             composer_contains_prompt: true,
             ..SubmissionSnapshot::default()
         };
-        let evidence = attachment_deferred(
-            "div#prompt-textarea",
-            &baseline,
+        let evidence = with_attachment_evidence(
+            PromptSubmissionOutcome::Deferred(super::evidence(
+                false,
+                "attachment:file_input_dispatch",
+                "attachment_not_ready",
+                "div#prompt-textarea",
+                &baseline,
+                &baseline,
+            )),
             serde_json::json!({"ready":false,"dispatched":false}),
         );
+        let PromptSubmissionOutcome::Deferred(evidence) = evidence else {
+            panic!("attachment should remain retryable before submit")
+        };
 
         assert_eq!(evidence["submitted"], false);
         assert_eq!(evidence["submission_evidence"], "attachment_not_ready");
@@ -1249,6 +1480,10 @@ mod tests {
             "https://chatgpt.com/",
             "https://chatgpt.com/login"
         ));
+        assert!(!conversation_route_changed(
+            "https://chatgpt.com/",
+            "https://chatgpt.com/c/WEB:temporary"
+        ));
     }
 
     #[test]
@@ -1265,6 +1500,36 @@ mod tests {
             conversation_url_for_target("https://chatgpt.com/", "https://example.com/c/abc"),
             None
         );
+        assert_eq!(
+            conversation_url_for_target(
+                "https://chatgpt.com/",
+                "https://chatgpt.com/c/WEB:temporary"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn chatgpt_targets_require_a_stable_conversation_route() {
+        assert_eq!(
+            normalized_chatgpt_conversation_url(
+                "https://chatgpt.com/c/final-chat?model=gpt-5#latest"
+            )
+            .as_deref(),
+            Some("https://chatgpt.com/c/final-chat")
+        );
+        assert_eq!(
+            normalized_chatgpt_conversation_url("https://chatgpt.com/c/WEB:temporary"),
+            None
+        );
+        assert!(conversation_target_matches(
+            "https://chatgpt.com/c/final-chat",
+            "https://chatgpt.com/c/final-chat?model=gpt-5"
+        ));
+        assert!(!conversation_target_matches(
+            "https://chatgpt.com/c/final-chat",
+            "https://chatgpt.com/"
+        ));
     }
 
     #[test]

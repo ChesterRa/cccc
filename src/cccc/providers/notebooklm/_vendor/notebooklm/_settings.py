@@ -6,7 +6,7 @@ from typing import Any
 
 from ._runtime.contracts import RpcCaller
 from .rpc import RPCMethod, safe_index
-from .types import AccountLimits, AccountTier
+from .types import AccountLimits, UserSettings
 
 logger = logging.getLogger(__name__)
 
@@ -14,34 +14,21 @@ logger = logging.getLogger(__name__)
 _ACCOUNT_LIMITS_PATH = (0, 1)
 _NOTEBOOK_LIMIT_INDEX = 1
 _SOURCE_LIMIT_INDEX = 2
-_TIER_PREFIX = "NOTEBOOKLM_TIER_"
-_TIER_PLAN_NAMES = {
-    "NOTEBOOKLM_TIER_STANDARD": "Standard",
-    "NOTEBOOKLM_TIER_PLUS": "Google AI Plus",
-    "NOTEBOOKLM_TIER_PRO": "Google AI Pro",
-    "NOTEBOOKLM_TIER_PRO_DASHER_END_USER": "Google Workspace Pro",
-    "NOTEBOOKLM_TIER_ULTRA": "Google AI Ultra",
-}
+# index 3 = max_characters_per_source (e.g. 500000) — not surfaced today
+_TIER_INDEX = 4
 
 
 def build_get_user_settings_params() -> list[Any]:
-    """Build GET_USER_SETTINGS params without sharing a mutable list."""
+    """Build GET_USER_SETTINGS params without sharing a mutable list.
+
+    The live endpoint is ``GetOrCreateAccount``: it returns the account record
+    (output-language settings and account-level limits) and may create the
+    account server-side on the first call, so it is account-level rather than a
+    pure settings read.
+    """
     return [
         None,
         [1, None, None, None, None, None, None, None, None, None, [1]],
-    ]
-
-
-def build_get_user_tier_params() -> list[Any]:
-    """Build GET_USER_TIER params for the NotebookLM homepage context."""
-    return [
-        [
-            [
-                [None, "1", 627],
-                [None, None, None, None, None, None, None, None, None, [None, None, 2]],
-                1,
-            ]
-        ]
     ]
 
 
@@ -136,29 +123,14 @@ def extract_account_limits(data: list | None) -> AccountLimits:
     source_limit = (
         _positive_int(limits[_SOURCE_LIMIT_INDEX]) if len(limits) > _SOURCE_LIMIT_INDEX else None
     )
+    # Tier enum rides the same block (idx 4); absent on legacy 4-element blocks.
+    tier = _positive_int(limits[_TIER_INDEX]) if len(limits) > _TIER_INDEX else None
     return AccountLimits(
         notebook_limit=notebook_limit,
         source_limit=source_limit,
         raw_limits=raw_limits,
+        tier=tier,
     )
-
-
-def _find_tier_string(value: Any) -> str | None:
-    """Find the first NotebookLM tier string in a nested response."""
-    stack = [value]
-    while stack:
-        item = stack.pop()
-        if isinstance(item, str) and item.startswith(_TIER_PREFIX):
-            return item
-        if isinstance(item, list):
-            stack.extend(reversed(item))
-    return None
-
-
-def extract_account_tier(data: list | None) -> AccountTier:
-    """Extract the NotebookLM subscription tier from GET_USER_TIER response data."""
-    tier = _find_tier_string(data)
-    return AccountTier(tier=tier, plan_name=_TIER_PLAN_NAMES.get(tier) if tier else None)
 
 
 class SettingsAPI:
@@ -236,6 +208,52 @@ class SettingsAPI:
         self._log_language_result(current_language, "Output language is now")
         return current_language
 
+    async def _fetch_user_settings(self) -> Any:
+        """Fetch the raw GET_USER_SETTINGS response (one POST)."""
+        logger.debug("Fetching user settings")
+        return await self._rpc.rpc_call(
+            RPCMethod.GET_USER_SETTINGS,
+            build_get_user_settings_params(),
+            source_path="/",
+        )
+
+    def _extract_limits(self, result: Any) -> AccountLimits:
+        limits = extract_account_limits(result)
+        if limits.notebook_limit is not None:
+            logger.debug("Notebook limit from user settings: %s", limits.notebook_limit)
+        else:
+            logger.debug("Could not parse account limits from response")
+        return limits
+
+    def _extract_output_language(self, result: Any) -> str | None:
+        language = _extract_language(
+            result,
+            self._GET_SETTINGS_PREFIX,
+            self._GET_SETTINGS_TAIL,
+            method_id=RPCMethod.GET_USER_SETTINGS.value,
+            # Describes the extraction site, not any one public caller — this
+            # helper backs both get_output_language() and get_user_settings().
+            source="_settings._extract_output_language",
+        )
+        self._log_language_result(language, "Current output language")
+        return language
+
+    async def get_user_settings(self) -> UserSettings:
+        """Fetch user settings once, returning both limits and output language.
+
+        A single ``GET_USER_SETTINGS`` response carries both payloads, so callers
+        that need both (e.g. MCP ``server_info``) should use this instead of
+        firing ``get_account_limits`` and ``get_output_language`` separately.
+
+        Returns:
+            UserSettings with parsed account limits and output language.
+        """
+        result = await self._fetch_user_settings()
+        return UserSettings(
+            limits=self._extract_limits(result),
+            output_language=self._extract_output_language(result),
+        )
+
     async def get_output_language(self) -> str | None:
         """Get the current output language setting.
 
@@ -245,23 +263,7 @@ class SettingsAPI:
             The current language code (e.g., "en", "ja", "zh_Hans"),
             or None if not set or couldn't be parsed.
         """
-        logger.debug("Fetching user settings to get output language")
-
-        result = await self._rpc.rpc_call(
-            RPCMethod.GET_USER_SETTINGS,
-            build_get_user_settings_params(),
-            source_path="/",
-        )
-
-        current_language = _extract_language(
-            result,
-            self._GET_SETTINGS_PREFIX,
-            self._GET_SETTINGS_TAIL,
-            method_id=RPCMethod.GET_USER_SETTINGS.value,
-            source="_settings.get_output_language",
-        )
-        self._log_language_result(current_language, "Current output language")
-        return current_language
+        return self._extract_output_language(await self._fetch_user_settings())
 
     async def get_account_limits(self) -> AccountLimits:
         """Get account-level limits advertised by NotebookLM user settings.
@@ -269,41 +271,7 @@ class SettingsAPI:
         Returns:
             AccountLimits with parsed notebook/source limits when present.
         """
-        logger.debug("Fetching user settings to get account limits")
-
-        result = await self._rpc.rpc_call(
-            RPCMethod.GET_USER_SETTINGS,
-            build_get_user_settings_params(),
-            source_path="/",
-        )
-
-        limits = extract_account_limits(result)
-        if limits.notebook_limit is not None:
-            logger.debug("Notebook limit from user settings: %s", limits.notebook_limit)
-        else:
-            logger.debug("Could not parse account limits from response")
-        return limits
-
-    async def get_account_tier(self) -> AccountTier:
-        """Get the NotebookLM subscription tier for the current account.
-
-        Returns:
-            AccountTier with the raw tier string and a friendly plan name when known.
-        """
-        logger.debug("Fetching user tier")
-
-        result = await self._rpc.rpc_call(
-            RPCMethod.GET_USER_TIER,
-            build_get_user_tier_params(),
-            source_path="/",
-        )
-
-        tier = extract_account_tier(result)
-        if tier.tier:
-            logger.debug("NotebookLM account tier: %s", tier.tier)
-        else:
-            logger.debug("Could not parse account tier from response")
-        return tier
+        return self._extract_limits(await self._fetch_user_settings())
 
     def _log_language_result(self, language: str | None, success_prefix: str) -> None:
         """Log the result of a language operation."""

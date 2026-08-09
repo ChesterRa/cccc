@@ -111,10 +111,12 @@ candidates before publish.
 
 Cargo remains a workspace development tool and the crates stay non-publishable.
 The experimental standalone workflow builds and verifies all four supported
-archives on manual runs. A matching pushed tag additionally publishes those
-preview archives, checksums, and versioned installers to GitHub Releases with an
-explicit experimental notice; prerelease tags are marked as such in GitHub
-Releases.
+archives on manual runs. When an operator manually dispatches it on a matching
+`v*` tag, it also publishes those preview archives, checksums, and versioned
+installers to GitHub Releases with an explicit experimental notice; prerelease
+tags are marked as such in GitHub Releases. Product tags do not publish the
+standalone preview automatically. Release operators publish one deliberately with
+`gh workflow run release-rust.yml --ref v<version>` after the product tag exists.
 
 ## Data compatibility
 
@@ -209,7 +211,23 @@ the live route for message delivery before HTTP/MCP fallback.
 The Rust NotebookLM adapter owns notebook sources, Studio artifact
 create/list/download operations, and incremental work/memory synchronization.
 Sync hashes local text files, replaces changed remote sources, removes deleted
-sources, and persists convergence state in the group-space document.
+sources, and persists convergence state in the group-space document. Source
+refresh invokes NotebookLM's refresh RPC, and synchronous artifact generation
+can wait for completion and save into the attached scope's `space/artifacts/`.
+
+Native Rust `resource_ingest` currently accepts `pasted_text` only. File, URL,
+YouTube, and Drive resource ingestion fail with `capability_unavailable`
+instead of being silently converted to pasted text; local `.md`/`.txt` files
+remain supported through `group_space_sync`. Query
+`group_space_capabilities` before using implementation-specific source types.
+Artifact generation defaults to `wait=false` and `save_to_space=false`. Rust
+does not yet run Python's background auto-save worker; list or download the
+completed remote artifact later, or explicitly request synchronous wait and
+save. Native Rust downloads currently support audio, video, report/study guide,
+infographic, and slide deck artifacts. Quiz, flashcard, mind-map, and data-table
+generation remains available with `save_to_space=false`, but their native
+download/formatting paths report `capability_unavailable` instead of writing an
+incorrect file format.
 
 ## Runtime recovery and delivery
 

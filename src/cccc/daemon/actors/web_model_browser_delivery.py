@@ -23,6 +23,7 @@ from ...kernel.web_model_connectors import list_web_model_connectors
 from ...util.time import parse_utc_iso, utc_now_iso
 from ...ports.web_model_browser_sidecar import (
     CHATGPT_URL,
+    CHATGPT_BOUND_TARGET_ERROR_MARKER,
     CHATGPT_SUBMIT_DEFERRED_MARKER,
     chatgpt_compatibility_image_path,
     _conversation_url_from_tab,
@@ -58,7 +59,6 @@ _BROWSER_MODES = {"browser", "chatgpt", "chatgpt_browser", "browser_delivery"}
 _DEFAULT_TIMEOUT_SECONDS = 30.0
 _PROMPT_TEXT_LIMIT = 24_000
 _MAX_BROWSER_DELIVERY_EVENTS = 20
-_PENDING_NEW_CHAT_RETRY_AFTER_SECONDS = 60.0
 _DEFERRED_RETRY_AFTER_SECONDS = 3.0
 _DEFERRED_MAX_AUTOMATIC_RETRIES = 3
 _DEFERRED_MAX_RETRY_AFTER_SECONDS = 30.0
@@ -333,27 +333,6 @@ def _record_delivery_submitting(
         pass
 
 
-def _is_transient_projected_browser_error(error: str) -> bool:
-    lowered = str(error or "").lower()
-    if any(
-        fragment in lowered
-        for fragment in (
-            "target page, context or browser has been closed",
-            "browser command timed out",
-            "page.evaluate",
-            "page.goto",
-            "page.reload",
-            "locator.click",
-            "element is not visible",
-            "composer input was found but could not be focused",
-            "chatgpt prompt insertion did not stick",
-            "chatgpt prompt was inserted but did not submit",
-        )
-    ):
-        return True
-    return False
-
-
 def _is_submission_ambiguous_error(error: str) -> bool:
     lowered = str(error or "").lower()
     return (
@@ -364,6 +343,10 @@ def _is_submission_ambiguous_error(error: str) -> bool:
 
 def _is_submission_deferred_error(error: str) -> bool:
     return CHATGPT_SUBMIT_DEFERRED_MARKER in str(error or "").lower()
+
+
+def _is_bound_target_error(error: str) -> bool:
+    return CHATGPT_BOUND_TARGET_ERROR_MARKER in str(error or "").lower()
 
 
 def _append_delivery_event(
@@ -514,7 +497,7 @@ def _target_chat_url(group_id: str, actor_id: str, actor: Dict[str, Any]) -> str
         ),
     )
     if explicit:
-        return explicit
+        return _conversation_url_from_tab(explicit)
     try:
         state = read_chatgpt_browser_state(group_id, actor_id)
     except Exception:
@@ -547,40 +530,6 @@ def _pending_new_chat_state(group_id: str, actor_id: str) -> Dict[str, Any]:
                 "target_url": conversation_url,
                 "auto_bind_new_chat": False,
                 "resolved_pending_new_chat": True,
-            }
-        submitted_at = parse_utc_iso(
-            str(state.get("pending_new_chat_submitted_at") or "")
-        )
-        now = parse_utc_iso(utc_now_iso())
-        if submitted_at is not None and now is not None:
-            age_seconds = (now - submitted_at).total_seconds()
-        else:
-            age_seconds = 0.0
-        if age_seconds >= _PENDING_NEW_CHAT_RETRY_AFTER_SECONDS:
-            record_chatgpt_browser_state(
-                group_id,
-                actor_id,
-                {
-                    "pending_new_chat_submitted": False,
-                    "pending_new_chat_submitted_at": "",
-                    "pending_new_chat_delivery_id": "",
-                    "pending_new_chat_last_turn_id": "",
-                    "pending_new_chat_last_event_ids": [],
-                    "pending_new_chat_last_tab_url": "",
-                    "bootstrap_seed_delivered_at": "",
-                    "bootstrap_seed_version": "",
-                    "bootstrap_seed_digest": "",
-                    "bootstrap_seed_conversation_url": "",
-                    "last_error": "conversation_url_pending_retry",
-                },
-            )
-            return {
-                "target_url": str(
-                    state.get("pending_new_chat_url") or CHATGPT_URL
-                ).strip()
-                or CHATGPT_URL,
-                "auto_bind_new_chat": True,
-                "retry_pending_new_chat": True,
             }
         return {
             "status": "target_chat_binding_pending",
@@ -716,11 +665,116 @@ def submit_next_web_model_browser_turn(
         previous_browser_state = read_chatgpt_browser_state(group.group_id, aid)
     except Exception:
         previous_browser_state = {}
-    already_submitting = (
+    same_delivery = (
         str(previous_browser_state.get("last_delivery_id") or "") == delivery_id
+    )
+    previous_event_ids = [
+        str(item or "").strip()
+        for item in (
+            previous_browser_state.get("last_event_ids")
+            if isinstance(previous_browser_state.get("last_event_ids"), list)
+            else []
+        )
+        if str(item or "").strip()
+    ]
+    interrupted_submitting = (
+        bool(previous_event_ids)
         and str(previous_browser_state.get("last_delivery_status") or "")
         == "submitting"
+        and not _is_submission_deferred_error(
+            str(previous_browser_state.get("last_error") or "")
+        )
     )
+    if interrupted_submitting:
+        interrupted_turn = {
+            **turn,
+            "turn_id": str(previous_browser_state.get("last_turn_id") or "").strip()
+            or str(turn.get("turn_id") or ""),
+            "event_ids": previous_event_ids,
+            "latest_event_id": previous_event_ids[-1],
+        }
+        interrupted_delivery_id = str(
+            previous_browser_state.get("last_delivery_id") or ""
+        ).strip() or delivery_id
+        error = (
+            "browser delivery was interrupted after its at-most-once dispatch fence; "
+            "the message will not be redelivered automatically"
+        )
+        commit = commit_web_model_delivered_turn(
+            group, actor_id=aid, turn=interrupted_turn, by="system"
+        )
+        pending_state = (
+            {
+                "pending_new_chat_bind": True,
+                "pending_new_chat_submitted": True,
+                "pending_new_chat_submitted_at": utc_now_iso(),
+                "pending_new_chat_delivery_id": interrupted_delivery_id,
+                "pending_new_chat_last_turn_id": str(
+                    interrupted_turn.get("turn_id") or ""
+                ),
+                "pending_new_chat_last_event_ids": previous_event_ids,
+                "pending_new_chat_last_tab_url": str(
+                    previous_browser_state.get("last_tab_url") or ""
+                ),
+            }
+            if auto_bind_new_chat
+            else {}
+        )
+        record_chatgpt_browser_state(
+            group.group_id,
+            aid,
+            {
+                **pending_state,
+                "last_delivery_at": utc_now_iso(),
+                "last_turn_id": str(interrupted_turn.get("turn_id") or ""),
+                "last_event_ids": previous_event_ids,
+                "last_delivery_id": interrupted_delivery_id,
+                "last_delivery_status": "ambiguous",
+                "last_submission_evidence": "interrupted_dispatch",
+                "last_send_selector": "",
+                "last_error": error,
+            },
+        )
+        update_headless_state(
+            group.group_id,
+            aid,
+            status="waiting",
+            active_turn_id="",
+            latest_event_id="",
+        )
+        event = _append_delivery_event(
+            group=group,
+            actor_id=aid,
+            turn=interrupted_turn,
+            kind="web_model.browser_delivery.ambiguous",
+            data={
+                "provider": provider,
+                "trigger_event_id": str(trigger_event_id or "").strip(),
+                "delivery_id": interrupted_delivery_id,
+                "error": error,
+                "submission_evidence": "interrupted_dispatch",
+                "delivery_transport": "projected_session",
+                "cursor_committed": bool(commit.get("cursor_committed")),
+                "commit_error": ""
+                if bool(commit.get("ok"))
+                else str(commit.get("error") or ""),
+                "target_url": target_url,
+                "auto_bind_new_chat": bool(auto_bind_new_chat),
+            },
+        )
+        return {
+            "ok": False,
+            "status": "ambiguous",
+            "turn_id": str(interrupted_turn.get("turn_id") or ""),
+            "error": error,
+            "cursor_committed": bool(commit.get("cursor_committed")),
+            "commit": commit,
+            "event": event,
+            "reschedule": bool(commit.get("ok"))
+            and bool(commit.get("cursor_committed"))
+            and not auto_bind_new_chat
+            and _has_unread_work(group, aid),
+        }
     _record_delivery_submitting(
         group.group_id,
         aid,
@@ -728,7 +782,7 @@ def submit_next_web_model_browser_turn(
         delivery_id=delivery_id,
         timeout_seconds=delivery_timeout_seconds,
     )
-    if not already_submitting:
+    if not same_delivery:
         _append_delivery_event(
             group=group,
             actor_id=aid,
@@ -759,7 +813,6 @@ def submit_next_web_model_browser_turn(
     browser_surface: Dict[str, Any] = {}
     try:
         from .web_model_browser_session import (
-            close_web_model_chatgpt_browser_session,
             submit_prompt_via_web_model_chatgpt_browser_session,
         )
 
@@ -787,42 +840,30 @@ def submit_next_web_model_browser_turn(
             ),
             "attachment_path": attachment_path,
         }
-        try:
-            delivery_result = submit_prompt_via_web_model_chatgpt_browser_session(
-                **submit_kwargs
-            )
-        except Exception as first_exc:
-            first_error = str(first_exc)
-            if not _is_transient_projected_browser_error(first_error):
-                raise
-            try:
-                close_web_model_chatgpt_browser_session(
-                    group_id=group.group_id, actor_id=aid
-                )
-            except Exception:
-                pass
-            _record_delivery_submitting(
-                group.group_id,
-                aid,
-                turn=turn,
-                delivery_id=delivery_id,
-                timeout_seconds=delivery_timeout_seconds,
-            )
-            try:
-                delivery_result = submit_prompt_via_web_model_chatgpt_browser_session(
-                    **submit_kwargs
-                )
-            except Exception as second_exc:
-                raise RuntimeError(
-                    f"{second_exc}; retry_after_transient_error={first_error[:300]}"
-                ) from second_exc
+        delivery_result = submit_prompt_via_web_model_chatgpt_browser_session(
+            **submit_kwargs
+        )
         browser_surface = (
             delivery_result.get("browser_surface")
             if isinstance(delivery_result.get("browser_surface"), dict)
             else {}
         )
     except Exception as exc:
-        delivery_result = {"ok": False, "error": str(exc)}
+        original_error = str(exc)
+        if _is_submission_ambiguous_error(original_error):
+            delivery_result = {"ok": False, "error": original_error}
+        else:
+            delivery_result = {
+                "ok": False,
+                "error": (
+                    "browser delivery failed after its at-most-once dispatch fence; "
+                    "submission_verification=ambiguous; "
+                    f"original_error={original_error[:1200]}"
+                ),
+                "browser": {
+                    "submission_evidence": "browser_error_after_dispatch_fence"
+                },
+            }
 
     ok = bool(delivery_result.get("ok", True))
     browser_result = (
@@ -1097,6 +1138,56 @@ def submit_next_web_model_browser_turn(
         }
 
     error = str(delivery_result.get("error") or "browser delivery failed")
+    if _is_bound_target_error(error):
+        delivery_id = str(turn.get("delivery_id") or "")
+        record_chatgpt_browser_state(
+            group.group_id,
+            aid,
+            {
+                "last_delivery_at": utc_now_iso(),
+                "last_turn_id": str(turn.get("turn_id") or ""),
+                "last_event_ids": list(turn.get("event_ids") or []),
+                "last_delivery_id": delivery_id,
+                "last_delivery_status": "failed",
+                "last_submission_evidence": "bound_conversation_unavailable",
+                "last_send_selector": "",
+                "last_error": error[:1200],
+            },
+        )
+        update_headless_state(
+            group.group_id,
+            aid,
+            status="waiting",
+            active_turn_id="",
+            latest_event_id="",
+        )
+        event = _append_delivery_event(
+            group=group,
+            actor_id=aid,
+            turn=turn,
+            kind="web_model.browser_delivery.failed",
+            data={
+                "provider": provider,
+                "trigger_event_id": str(trigger_event_id or "").strip(),
+                "delivery_id": delivery_id,
+                "error": error,
+                "submission_evidence": "bound_conversation_unavailable",
+                "delivery_transport": "projected_session",
+                "cursor_committed": False,
+                "commit_error": "",
+                "target_url": target_url,
+                "auto_bind_new_chat": False,
+            },
+        )
+        return {
+            "ok": False,
+            "status": "failed",
+            "turn_id": str(turn.get("turn_id") or ""),
+            "error": error,
+            "cursor_committed": False,
+            "event": event,
+            "reschedule": False,
+        }
     if _is_submission_deferred_error(error):
         record_chatgpt_browser_state(
             group.group_id,
@@ -1106,7 +1197,7 @@ def submit_next_web_model_browser_turn(
                 "last_turn_id": str(turn.get("turn_id") or ""),
                 "last_event_ids": list(turn.get("event_ids") or []),
                 "last_delivery_id": str(turn.get("delivery_id") or ""),
-                "last_delivery_status": "submitting",
+                "last_delivery_status": "deferred",
                 "last_submission_evidence": "",
                 "last_send_selector": "",
                 "last_error": error[:1200],

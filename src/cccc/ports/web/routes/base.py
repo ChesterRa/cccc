@@ -772,6 +772,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         from ...web_model_browser_sidecar import (
             CHATGPT_URL,
             _conversation_url_from_tab,
+            _has_chatgpt_conversation_route,
             _normalize_chatgpt_url,
             chatgpt_browser_session_cached_status,
             chatgpt_browser_session_status,
@@ -827,6 +828,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if bool(req.new_chat):
             conversation_url = ""
             pending_url = CHATGPT_URL
+        elif pending_url and _has_chatgpt_conversation_route(raw_url) and not conversation_url:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "chatgpt_conversation_url_provisional",
+                    "message": "ChatGPT is still assigning the final conversation URL; wait for a stable /c/... address and save again",
+                    "details": {},
+                },
+            )
         if not conversation_url and not pending_url:
             raise HTTPException(
                 status_code=400,

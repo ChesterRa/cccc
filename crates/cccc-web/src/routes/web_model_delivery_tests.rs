@@ -178,6 +178,41 @@ async fn browser_session_projects_the_shared_target_contract() {
         bound["result"]["health_snapshot"]["delivery"]["cursor_committed"],
         true
     );
+
+    integration_state::group_update(
+        &store,
+        &group_id,
+        super::web_model_browser::TARGETS_KEY,
+        |value| {
+            value["web1"] = json!({
+                "state":"bound_existing_chat",
+                "kind":"existing_chat",
+                "url":"https://chatgpt.com/c/WEB:temporary",
+                "saved_at":"2026-08-07T00:00:03Z",
+                "next_delivery":"existing_chat"
+            });
+            Ok(())
+        },
+    )
+    .expect("provisional target");
+    let invalid = request_json(
+        &app,
+        Request::get(format!(
+            "/api/v1/web-model/browser-session?group_id={group_id}&actor_id=web1"
+        ))
+        .body(Body::empty())
+        .expect("invalid browser request"),
+    )
+    .await;
+    assert_eq!(invalid["result"]["browser_session"]["conversation_url"], "");
+    assert_eq!(
+        invalid["result"]["browser_session"]["delivery_target"]["state"],
+        "invalid_existing_chat"
+    );
+    assert_eq!(
+        invalid["result"]["health_snapshot"]["target"]["state"],
+        "invalid"
+    );
 }
 
 #[tokio::test]
@@ -834,6 +869,62 @@ async fn visible_stop_control_defers_without_clicking_or_claiming_submission() {
 }
 
 #[tokio::test]
+async fn externally_accepted_prompt_is_not_deferred_for_automatic_retry() {
+    if !chrome_available() {
+        return;
+    }
+    let _browser_test = browser_test_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = crate::browser_surface::BrowserSurfaces::default();
+    let (page_url, page_server) = prompt_page_with(PromptPageBehavior::AutoSubmitThenStop).await;
+    manager
+        .open(
+            "auto-submit",
+            &temp.path().join("profile"),
+            &page_url,
+            800,
+            600,
+        )
+        .await
+        .expect("browser surface");
+
+    let prompt =
+        "[cccc] Browser batch webdelivery:web1:auto events=0123456789abcdef actor=web1\nhello";
+    let outcome = manager
+        .submit_prompt_with_attachment("auto-submit", &page_url, prompt, None, "")
+        .await
+        .expect("submission outcome");
+    let evidence = match outcome {
+        crate::browser_surface::PromptSubmissionOutcome::Verified(evidence) => evidence,
+        crate::browser_surface::PromptSubmissionOutcome::Ambiguous(evidence) => {
+            panic!("matching external submission should be verified: {evidence}")
+        }
+        crate::browser_surface::PromptSubmissionOutcome::Deferred(evidence) => {
+            panic!("accepted prompt must not be automatically retryable: {evidence}")
+        }
+    };
+    let page = manager
+        .sessions
+        .lock()
+        .await
+        .get("auto-submit")
+        .expect("session")
+        .page
+        .clone();
+    let send_clicks: i64 = page
+        .evaluate("globalThis.sendClicks || 0")
+        .await
+        .expect("send click count")
+        .into_value()
+        .expect("send click number");
+    let _ = manager.close("auto-submit").await;
+    page_server.abort();
+
+    assert_eq!(evidence["submission_evidence"], "message_echo");
+    assert_eq!(send_clicks, 1);
+}
+
+#[tokio::test]
 async fn compatibility_image_is_attached_once_before_verified_submission() {
     if !chrome_available() {
         return;
@@ -1203,6 +1294,62 @@ async fn ambiguous_browser_submission_commits_at_most_once_without_claiming_succ
 }
 
 #[tokio::test]
+async fn interrupted_dispatch_is_fenced_and_later_turns_still_deliver() {
+    if !chrome_available() {
+        return;
+    }
+    let _browser_test = browser_test_lock().lock().await;
+    let fixture = LegacyPendingFixture::open_interrupted().await;
+    let interrupted = wait_for_delivery_status(
+        &fixture.app,
+        &fixture.group_id,
+        "web1",
+        "submission_ambiguous",
+    )
+    .await;
+    let page = fixture.page().await;
+    let clicks_after_recovery: i64 = page
+        .evaluate("globalThis.sendClicks || 0")
+        .await
+        .expect("send clicks after interrupted recovery")
+        .into_value()
+        .expect("send click count");
+    let client = DaemonClient::new(fixture.home.clone());
+    let second = client
+        .call(&request(
+            "send",
+            json!({"group_id":fixture.group_id,"by":"user","to":["web1"],"text":"later turn still delivers"}),
+        ))
+        .await
+        .expect("send later turn");
+    let delivered =
+        wait_for_delivery_status(&fixture.app, &fixture.group_id, "web1", "submitted").await;
+    let submitted: String = page
+        .evaluate("globalThis.submitted || ''")
+        .await
+        .expect("submitted later prompt")
+        .into_value()
+        .expect("submitted prompt string");
+
+    assert_eq!(clicks_after_recovery, 0);
+    assert_eq!(
+        interrupted["result"]["browser_session"]["delivery_target"]["last_submission_evidence"]["submission_evidence"],
+        "interrupted_dispatch"
+    );
+    assert!(second.ok);
+    assert!(
+        submitted.contains("later turn still delivers"),
+        "{submitted}"
+    );
+    assert!(!submitted.contains("legacy pending task"), "{submitted}");
+    assert_eq!(
+        delivered["result"]["browser_session"]["delivery_target"]["last_delivery_status"],
+        "submitted"
+    );
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn persisted_direct_submission_evidence_recovers_and_binds_new_chat() {
     if !chrome_available() {
         return;
@@ -1308,6 +1455,7 @@ async fn legacy_pending_new_chat_pauses_when_the_staged_prompt_was_edited() {
 
 struct LegacyPendingFixture {
     _temp: tempfile::TempDir,
+    home: HomeLayout,
     app: axum::Router,
     group_id: String,
     page_url: String,
@@ -1322,6 +1470,7 @@ struct LegacyPendingFixture {
 enum PersistedDeliveryState {
     LegacyPending,
     VerifiedAmbiguous,
+    InterruptedSubmitting,
 }
 
 impl LegacyPendingFixture {
@@ -1333,6 +1482,14 @@ impl LegacyPendingFixture {
         Self::open_with_state(
             PromptPageBehavior::IgnoreSend,
             PersistedDeliveryState::VerifiedAmbiguous,
+        )
+        .await
+    }
+
+    async fn open_interrupted() -> Self {
+        Self::open_with_state(
+            PromptPageBehavior::Submit,
+            PersistedDeliveryState::InterruptedSubmitting,
         )
         .await
     }
@@ -1374,19 +1531,24 @@ impl LegacyPendingFixture {
             json!({"group_id":group_id,"actor_id":"web1"}),
         );
         let turn = wait["turn"].clone();
-        daemon_sync(
-            &home,
-            "web_model_runtime_complete_turn",
-            json!({
-                "group_id":group_id,
-                "actor_id":"web1",
-                "by":"web1",
-                "turn_id":turn["turn_id"],
-                "event_ids":turn["event_ids"],
-                "delivery_id":"wmd_legacy_pending",
-                "status":"done"
-            }),
-        );
+        if !matches!(
+            persisted_state,
+            PersistedDeliveryState::InterruptedSubmitting
+        ) {
+            daemon_sync(
+                &home,
+                "web_model_runtime_complete_turn",
+                json!({
+                    "group_id":group_id,
+                    "actor_id":"web1",
+                    "by":"web1",
+                    "turn_id":turn["turn_id"],
+                    "event_ids":turn["event_ids"],
+                    "delivery_id":"wmd_legacy_pending",
+                    "status":"done"
+                }),
+            );
+        }
         let (page_url, page_server) = prompt_page_with(behavior).await;
         let recovered_url = format!("{page_url}/c/recovered-conversation");
         let store = GroupStore::new(home.clone()).expect("group store");
@@ -1426,6 +1588,18 @@ impl LegacyPendingFixture {
                         },
                         "last_error":"browser submission was attempted but could not be verified"
                     }),
+                    PersistedDeliveryState::InterruptedSubmitting => json!({
+                        "state":"bound_existing_chat",
+                        "kind":"existing_chat",
+                        "url":page_url,
+                        "last_delivery_status":"submitting",
+                        "last_delivery_id":"webdelivery:web1:interrupted",
+                        "last_delivery_turn_id":turn["turn_id"],
+                        "last_delivery_event_ids":turn["event_ids"],
+                        "last_delivery_started_at":"2026-08-09T00:00:00Z",
+                        "last_submission_evidence":{},
+                        "last_error":""
+                    }),
                 };
                 value
                     .as_object_mut()
@@ -1441,7 +1615,7 @@ impl LegacyPendingFixture {
         wait_for_daemon(&home).await;
         let (shutdown, _) = broadcast::channel(2);
         let (app, _, surfaces, _) = crate::app_with_shutdown(
-            home,
+            home.clone(),
             shutdown.clone(),
             crate::WebMode::Normal,
             None,
@@ -1476,6 +1650,7 @@ impl LegacyPendingFixture {
         );
         Self {
             _temp: temp,
+            home,
             app,
             group_id,
             page_url,

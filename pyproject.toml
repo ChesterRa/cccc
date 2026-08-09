@@ -19,7 +19,7 @@ dependencies = [
   "dingtalk-stream>=0.24.3",
   "fastapi>=0.110,<1.0",
   "filelock>=3.13,<4",
-  "httpx[socks]>=0.24,<1.0",
+  "httpx[socks]>=0.27,<0.29",
   "lark-oapi>=1.0.0",
   "pydantic>=2.0,<3.0",
   "pywinpty>=2.0,<3.0.4; platform_system == 'Windows'",
@@ -60,6 +60,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
 "cccc.ports.web" = ["dist/**"]
+"cccc.providers.notebooklm._vendor" = ["LICENSE", "VENDORED_FROM.md"]
 "cccc.resources" = ["*.md", "*.yaml", "*.json", "*.js", "*.py"]
 
 [tool.setuptools.packages.find]

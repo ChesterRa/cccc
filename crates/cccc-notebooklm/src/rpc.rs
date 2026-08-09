@@ -7,6 +7,7 @@ pub(crate) const CREATE_NOTEBOOK: &str = "CCqFvf";
 pub(crate) const GET_NOTEBOOK: &str = "rLM1Ne";
 pub(crate) const ADD_SOURCE: &str = "izAoDd";
 pub(crate) const DELETE_SOURCE: &str = "tGMBJ";
+pub(crate) const REFRESH_SOURCE: &str = "FLmJqe";
 pub(crate) const UPDATE_SOURCE: &str = "b7Wfje";
 pub(crate) const CREATE_ARTIFACT: &str = "R7cb6c";
 pub(crate) const LIST_ARTIFACTS: &str = "gArtLc";
@@ -64,7 +65,7 @@ pub(crate) fn decode(raw: &str, rpc_id: &str, allow_null: bool) -> Result<Value>
                     Some(Value::Null) | None => {
                         let status = frame.get(5).cloned().unwrap_or(Value::Null);
                         if status.to_string().contains("UserDisplayableError") {
-                            terminal_error = Some(Error::Refused(status.to_string()));
+                            terminal_error = Some(Error::RateLimited(status.to_string()));
                         } else if allow_null {
                             result.get_or_insert(Value::Null);
                         } else if result.is_none() {

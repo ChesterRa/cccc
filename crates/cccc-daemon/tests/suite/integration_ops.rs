@@ -178,6 +178,34 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
         "group_space_bind",
         json!({"group_id":group_id,"provider":"notebooklm","lane":"work","remote_space_id":"notebook-1"}),
     );
+    let capabilities = call(
+        &home,
+        "group_space_capabilities",
+        json!({"group_id":group_id,"provider":"notebooklm"}),
+    );
+    assert_eq!(
+        capabilities.result["ingest"]["resource_ingest"]["source_types"],
+        json!(["pasted_text"])
+    );
+    assert!(
+        capabilities.result["unavailable_capabilities"]
+            .as_array()
+            .is_some_and(|items| items.contains(&json!("resource_ingest.web_page")))
+    );
+    let unsupported_resource = raw_call(
+        &home,
+        "group_space_ingest",
+        json!({
+            "group_id":group_id,
+            "lane":"work",
+            "kind":"resource_ingest",
+            "payload":{"source_type":"web_page","url":"https://example.test"}
+        }),
+    );
+    assert_eq!(
+        unsupported_resource.error.expect("capability error").code,
+        "capability_unavailable"
+    );
     let unavailable = raw_call(
         &home,
         "group_space_ingest",
@@ -185,7 +213,7 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
     );
     assert_eq!(
         unavailable.error.expect("provider error").code,
-        "credential_missing"
+        "space_provider_not_configured"
     );
     let local = raw_call(
         &home,
@@ -321,7 +349,10 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
         json!({"provider":"notebooklm","by":"user"}),
     );
     assert_eq!(health.result["healthy"], false);
-    assert_eq!(health.result["error"]["code"], "credential_invalid");
+    assert_eq!(
+        health.result["error"]["code"],
+        "space_provider_auth_invalid"
+    );
     let remote_status = call(
         &home,
         "group_space_status",

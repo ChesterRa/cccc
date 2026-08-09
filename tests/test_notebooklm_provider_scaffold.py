@@ -277,7 +277,10 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
             _ = auth_payload, timeout_seconds
             return _FakeClient()
 
-        with patch("cccc.providers.notebooklm.adapter._build_client", side_effect=_fake_build_client):
+        with patch(
+            "cccc.providers.notebooklm.adapter._build_client",
+            side_effect=_fake_build_client,
+        ):
             out = asyncio.run(
                 _generate_artifact_async(
                     notebook_id="nb_1",
@@ -291,6 +294,174 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
         self.assertEqual(str(out.get("task_id") or ""), "task_1")
         kwargs = captured.get("kwargs") if isinstance(captured.get("kwargs"), dict) else {}
         self.assertEqual(str(getattr(kwargs.get("style"), "name", "") or ""), "SCIENTIFIC")
+
+    def test_v080_source_mutations_treat_no_exception_as_success(self) -> None:
+        import asyncio
+
+        from cccc.providers.notebooklm.adapter import _delete_source_async, _refresh_source_async
+
+        class _FakeSources:
+            async def delete(self, notebook_id, source_id):
+                _ = notebook_id, source_id
+                return None
+
+            async def refresh(self, notebook_id, source_id):
+                _ = notebook_id, source_id
+                return None
+
+        class _FakeClient:
+            sources = _FakeSources()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        async def _fake_build_client(*, auth_payload, timeout_seconds):
+            _ = auth_payload, timeout_seconds
+            return _FakeClient()
+
+        with patch("cccc.providers.notebooklm.adapter._build_client", side_effect=_fake_build_client):
+            deleted = asyncio.run(
+                _delete_source_async(
+                    notebook_id="nb_1",
+                    source_id="src_1",
+                    auth_payload={},
+                    timeout_seconds=10.0,
+                )
+            )
+            refreshed = asyncio.run(
+                _refresh_source_async(
+                    notebook_id="nb_1",
+                    source_id="src_1",
+                    auth_payload={},
+                    timeout_seconds=10.0,
+                )
+            )
+
+        self.assertTrue(deleted.get("deleted"))
+        self.assertTrue(refreshed.get("refreshed"))
+
+    def test_v080_mind_map_uses_typed_result(self) -> None:
+        import asyncio
+
+        from cccc.providers.notebooklm._vendor.notebooklm.types import MindMapResult
+        from cccc.providers.notebooklm.adapter import _generate_artifact_async
+
+        class _FakeArtifacts:
+            async def generate_mind_map(self, notebook_id, *, source_ids=None):
+                _ = notebook_id, source_ids
+                return MindMapResult(note_id="note_1")
+
+        class _FakeClient:
+            artifacts = _FakeArtifacts()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        async def _fake_build_client(*, auth_payload, timeout_seconds):
+            _ = auth_payload, timeout_seconds
+            return _FakeClient()
+
+        with patch("cccc.providers.notebooklm.adapter._build_client", side_effect=_fake_build_client):
+            out = asyncio.run(
+                _generate_artifact_async(
+                    notebook_id="nb_1",
+                    kind="mind_map",
+                    options={},
+                    auth_payload={},
+                    timeout_seconds=10.0,
+                )
+            )
+
+        self.assertEqual(out.get("task_id"), "note_1")
+        self.assertEqual(out.get("status"), "completed")
+
+    def test_study_guide_listing_uses_provider_report_discriminator(self) -> None:
+        import asyncio
+
+        from cccc.providers.notebooklm.adapter import _list_artifacts_async
+
+        captured = {}
+
+        class _FakeArtifacts:
+            async def list(self, notebook_id, *, artifact_type=None):
+                captured["notebook_id"] = notebook_id
+                captured["artifact_type"] = artifact_type
+                return []
+
+        class _FakeClient:
+            artifacts = _FakeArtifacts()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        async def _fake_build_client(*, auth_payload, timeout_seconds):
+            _ = auth_payload, timeout_seconds
+            return _FakeClient()
+
+        with patch("cccc.providers.notebooklm.adapter._build_client", side_effect=_fake_build_client):
+            asyncio.run(
+                _list_artifacts_async(
+                    notebook_id="nb_1",
+                    kind="study_guide",
+                    auth_payload={},
+                    timeout_seconds=10.0,
+                )
+            )
+
+        self.assertEqual(captured.get("notebook_id"), "nb_1")
+        self.assertEqual(str(getattr(captured.get("artifact_type"), "value", "")), "report")
+
+    def test_v080_typed_errors_keep_retry_and_degrade_semantics(self) -> None:
+        from cccc.providers.notebooklm._vendor.notebooklm.exceptions import (
+            DecodingError,
+            SourceNotFoundError,
+            SourceTimeoutError,
+        )
+        from cccc.providers.notebooklm.adapter import _map_vendor_exception
+
+        not_found = _map_vendor_exception(SourceNotFoundError("src_1"))
+        self.assertEqual(not_found.code, "space_provider_not_found")
+        self.assertFalse(not_found.transient)
+        self.assertFalse(not_found.degrade_provider)
+
+        decoding = _map_vendor_exception(DecodingError("unexpected response row"))
+        self.assertEqual(decoding.code, "space_provider_compat_mismatch")
+        self.assertFalse(decoding.transient)
+        self.assertTrue(decoding.degrade_provider)
+
+        timeout = _map_vendor_exception(SourceTimeoutError("src_1", 10.0))
+        self.assertEqual(timeout.code, "space_provider_timeout")
+        self.assertTrue(timeout.transient)
+        self.assertFalse(timeout.degrade_provider)
+
+    def test_vendor_probe_requires_exact_v080_runtime(self) -> None:
+        from cccc.providers.notebooklm import compat
+        from cccc.providers.notebooklm._vendor import notebooklm
+
+        self.assertTrue(compat.probe_notebooklm_vendor().compatible)
+        with patch.object(notebooklm, "__version__", "0.7.2"):
+            status = compat.probe_notebooklm_vendor()
+
+        self.assertFalse(status.compatible)
+        self.assertIn("expected 0.8.0", status.reason)
+
+    def test_auth_flow_accepts_current_personal_notebook_hosts(self) -> None:
+        from cccc.daemon.space.notebooklm_auth_flow import _is_notebooklm_url
+        from cccc.daemon.space.notebooklm_auth_browser_runtime import _GOOGLE_COOKIE_URLS
+
+        self.assertTrue(_is_notebooklm_url("https://notebooklm.google.com/notebook/abc"))
+        self.assertTrue(_is_notebooklm_url("https://notebook.google.com/"))
+        self.assertFalse(_is_notebooklm_url("https://notebook.google.com.example.test/"))
+        self.assertIn("https://notebook.google.com", _GOOGLE_COOKIE_URLS)
 
     def test_create_space_works_from_saved_state_without_real_env_flag(self) -> None:
         from cccc.daemon.space.group_space_provider import provider_create_space

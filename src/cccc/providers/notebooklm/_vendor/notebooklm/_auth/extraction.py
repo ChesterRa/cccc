@@ -23,7 +23,12 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
-from .._url_utils import contains_google_auth_redirect, is_google_auth_redirect
+from .._url_utils import (
+    contains_google_auth_redirect,
+    is_google_auth_redirect,
+    is_notebooklm_unavailable_redirect,
+    notebooklm_unavailable_location,
+)
 from ..exceptions import AuthExtractionError
 
 
@@ -178,6 +183,26 @@ def _safe_url(url: str) -> str:
     return f"{parsed.scheme}://{netloc}{path}"
 
 
+def _unavailable_redirect_message(final_url: str) -> str:
+    """Build the access-gate message for a redirect to ``notebooklm.google``.
+
+    The redirect is Google's region / anti-abuse gate (commonly
+    ``?location=unsupported``), not expired auth or a page-structure change. We
+    surface the ``location`` parameter explicitly because :func:`_safe_url` drops
+    the query — and that parameter is the actual diagnostic.
+    """
+    location = notebooklm_unavailable_location(final_url)
+    where = _safe_url(final_url)
+    target = f"{where} (location={location})" if location else where
+    return (
+        f"NotebookLM redirected this request to its region / anti-abuse access gate: "
+        f"{target}. This is not a library bug or an expired login. Likely a VPN/proxy "
+        "or datacenter IP, or an IP/timezone/language mismatch. Verify by opening "
+        "https://notebooklm.google.com in a normal browser on the same network; if it "
+        "redirects there too, use a residential connection in a supported region."
+    )
+
+
 def extract_csrf_from_html(html: str, final_url: str = "") -> str:
     """
     Extract CSRF token (SNlM0e) from NotebookLM page HTML.
@@ -206,8 +231,14 @@ def extract_csrf_from_html(html: str, final_url: str = "") -> str:
     token = extract_wiz_field(html, "SNlM0e", strict=False)
     if token is not None:
         return token
-    # Drift path: differentiate "auth expired" from "shape changed" because
-    # the remediation differs (re-login vs file a bug).
+    # Drift path: differentiate "access gate" / "auth expired" / "shape changed"
+    # because the remediation differs (fix environment / re-login / file a bug).
+    # The *final URL* is the authoritative landing signal, so it is checked
+    # before the weaker ``contains_google_auth_redirect(html)`` body scan — the
+    # ``notebooklm.google`` gate page itself carries an ``accounts.google.com``
+    # sign-in link, which would otherwise mis-route it to "auth expired" (#1630).
+    if is_notebooklm_unavailable_redirect(final_url):
+        raise ValueError(_unavailable_redirect_message(final_url))
     if is_google_auth_redirect(final_url) or contains_google_auth_redirect(html):
         raise ValueError(
             "Authentication expired or invalid. Run 'notebooklm login' to re-authenticate."
@@ -241,6 +272,10 @@ def extract_session_id_from_html(html: str, final_url: str = "") -> str:
     sid = extract_wiz_field(html, "FdrFJe", strict=False)
     if sid is not None:
         return sid
+    # Final-URL landing host is authoritative; check it before the body scan
+    # (the gate page carries an accounts.google.com link). See extract_csrf.
+    if is_notebooklm_unavailable_redirect(final_url):
+        raise ValueError(_unavailable_redirect_message(final_url))
     if is_google_auth_redirect(final_url) or contains_google_auth_redirect(html):
         raise ValueError(
             "Authentication expired or invalid. Run 'notebooklm login' to re-authenticate."

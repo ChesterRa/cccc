@@ -17,6 +17,8 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any, Protocol
 
+from .._row_adapters.chat import SavedChatNoteRow
+from .._row_adapters.notes import NoteRow
 from ..rpc import RPCMethod
 from ..types import Note
 
@@ -157,17 +159,24 @@ def _resolve_reference(
 ) -> ChatReference | None:
     """Look up the ChatReference that backs citation marker ``[N]``.
 
-    Prefers an exact ``citation_number`` match; falls back to positional
-    lookup (``references[N-1]``) when ``citation_number`` is unset on
-    the reference. Returns ``None`` if neither path resolves to a
-    reference with a usable ``chunk_id``.
+    Prefers an exact ``citation_number`` match. The positional fallback
+    (``references[N-1]``) applies ONLY when that positional candidate has no
+    ``citation_number`` set — the legacy unset-number contract it was built
+    for. It must NOT fire for a *numbered* list with a hole: the wire parser
+    keeps raw ordinals when it skips a malformed citation row, so after
+    ``[good#1, skipped#2, good#3]`` a positional fallback for marker ``[2]``
+    would anchor raw citation #3 — a WRONG anchor. Returns ``None`` instead
+    (the caller skips that marker's anchor with a warning): a missing anchor
+    is recoverable, a mis-anchored note is silently wrong.
     """
     for ref in references:
         if ref.citation_number == citation_number and ref.chunk_id:
             return ref
     idx = citation_number - 1
-    if 0 <= idx < len(references) and references[idx].chunk_id:
-        return references[idx]
+    if 0 <= idx < len(references):
+        candidate = references[idx]
+        if candidate.citation_number is None and candidate.chunk_id:
+            return candidate
     return None
 
 
@@ -323,30 +332,31 @@ async def save_chat_answer_as_note(
 
     # The captured server response wraps the 6-element note in an outer
     # list (``[[note_id, ..., title, rich_content]]``), but some response
-    # paths return the note flat (``[note_id, ...]``) — see existing
-    # ``create_note`` which handles both. Unwrap defensively.
-    note_data: list[Any] | None = None
-    if isinstance(result, list) and len(result) > 0:
-        if isinstance(result[0], list):
-            note_data = result[0]
-        elif isinstance(result[0], str):
-            note_data = result
-
-    note_id: str | None = None
-    server_title = title
-    if note_data is not None and len(note_data) > 0 and isinstance(note_data[0], str):
-        note_id = note_data[0]
-        # Slot [4] of the note carries the server-stored title, which
-        # may differ from the requested title (smart-title generation).
-        if len(note_data) > 4 and isinstance(note_data[4], str):
-            server_title = note_data[4]
+    # paths return the note flat (``[note_id, ...]``). The unwrap + the
+    # ``note_data[0]`` id / ``note_data[4]`` server-title position knowledge
+    # lives in ``_row_adapters.chat.SavedChatNoteRow`` (SOFT — see
+    # ``create_note`` which handles both shapes). Slot [4] of the note carries
+    # the server-stored title, which may differ from the requested title
+    # (smart-title generation); absent → keep the requested ``title``.
+    create_row = SavedChatNoteRow(result)
+    note_data = create_row.note_data
+    note_id = create_row.note_id
+    server_title = create_row.server_title if create_row.server_title is not None else title
 
     if not note_id:
         raise RuntimeError("CREATE_NOTE returned no note ID for saved-from-chat request")
+
+    # ``note_data`` is the inner note envelope (``[id, content, metadata, ...]``);
+    # wrap it into the ``[id, inner]`` current-row shape so NoteRow's centralised
+    # ``row[1][2][2][0]`` descent decodes the creation timestamp — the same
+    # extraction ``create_note`` uses (issue #1529). Absent / malformed shapes
+    # degrade to None.
+    created_at = NoteRow([note_id, note_data]).created_at
 
     return Note(
         id=note_id,
         notebook_id=notebook_id,
         title=server_title,
         content=answer_text,
+        created_at=created_at,
     )

@@ -7,6 +7,7 @@ pub(super) enum PromptPageBehavior {
     DuplicateAttachmentDialog,
     IgnoreSend,
     StopOnly,
+    AutoSubmitThenStop,
     LegacyStaged,
     LegacyEdited,
 }
@@ -179,6 +180,44 @@ pub(super) async fn prompt_page_with(
     document.querySelector('[data-testid="stop-button"]').addEventListener('click', () => {
       globalThis.stopClicks = (globalThis.stopClicks || 0) + 1;
     });
+  </script>
+</body>
+</html>"#
+                }
+                PromptPageBehavior::AutoSubmitThenStop => {
+                    r#"<!doctype html>
+<html>
+<body>
+  <main>
+    <form id="composer-form">
+      <div id="prompt-textarea" class="ProseMirror" role="textbox" contenteditable="true" style="width:440px;min-height:64px"></div>
+    </form>
+    <section id="messages"></section>
+  </main>
+  <script>
+    const prompt = document.querySelector('#prompt-textarea');
+    const observer = new MutationObserver(() => {
+      const text = prompt.innerText || prompt.textContent || '';
+      if (!text || globalThis.autoSubmitScheduled) return;
+      globalThis.autoSubmitScheduled = true;
+      window.setTimeout(() => {
+        globalThis.submitted = text;
+        globalThis.sendClicks = (globalThis.sendClicks || 0) + 1;
+        const message = document.createElement('article');
+        message.setAttribute('data-message-author-role', 'user');
+        message.textContent = text;
+        document.querySelector('#messages').appendChild(message);
+        prompt.textContent = '';
+        const stop = document.createElement('button');
+        stop.type = 'button';
+        stop.dataset.testid = 'stop-button';
+        stop.setAttribute('aria-label', 'Stop generating');
+        stop.textContent = 'Stop';
+        document.querySelector('#composer-form').appendChild(stop);
+        history.pushState({}, '', '/c/auto-submitted-conversation');
+      }, 50);
+    });
+    observer.observe(prompt, { childList: true, characterData: true, subtree: true });
   </script>
 </body>
 </html>"#

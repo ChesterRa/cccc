@@ -51,8 +51,13 @@ def handle_actor_remove(
         actor_doc = find_actor(group, actor_id)
         if isinstance(actor_doc, dict):
             avatar_rel_path = str(actor_doc.get("avatar_asset_path") or "").strip()
+        is_web_model = isinstance(actor_doc, dict) and str(actor_doc.get("runtime") or "").strip() == "web_model"
+        if is_web_model:
+            browser_targets = group.doc.get("web_model_browser_targets")
+            if isinstance(browser_targets, dict):
+                browser_targets.pop(actor_id, None)
         remove_actor(group, actor_id)
-        if isinstance(actor_doc, dict) and str(actor_doc.get("runtime") or "").strip() == "web_model":
+        if is_web_model:
             try:
                 clear_web_model_chatgpt_browser_actor_runtime(group_id=group.group_id, actor_id=actor_id)
             except Exception:

@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import mimetypes
 import os
-import re
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 from time import monotonic
 from typing import IO, TYPE_CHECKING, Any, Protocol, cast
-from urllib.parse import SplitResult, parse_qsl, urlsplit
 
 import httpx
 
+from .._auth.account import authuser_query, format_authuser_value
 from .._callbacks import maybe_await_callback
 from .._env import get_base_url
 from .._idempotency import idempotent_create
@@ -28,7 +26,6 @@ from .._runtime.contracts import (
     Kernel,
     RpcCaller,
 )
-from ..auth import authuser_query, format_authuser_value
 from ..exceptions import (
     AuthError,
     NetworkError,
@@ -39,6 +36,51 @@ from ..exceptions import (
 from ..rpc import RPCError, RPCMethod, get_upload_url
 from ..rpc.types import SourceStatus
 from ..types import Source, SourceAddError
+
+# Decode/validation helpers live in ``_upload_decode``; re-exported here so the
+# historical ``notebooklm._source.upload.<helper>`` import surface (and the
+# ``SourceUploadPipeline`` body below) keep resolving them. Note: each helper
+# reads its module-level globals (e.g. ``urlsplit``, ``_SOURCE_ID_UUID_PATTERN``)
+# from ``_upload_decode``, so a test seam that patches such a global must target
+# ``_upload_decode`` — that is where the name is looked up — not this module.
+from ._upload_decode import (  # noqa: F401
+    _CONTEXTUAL_SOURCE_ID_FIELD_NAMES,
+    _HTML_UPLOAD_CONTENT_TYPES,
+    _HTML_UPLOAD_SUFFIXES,
+    _MEDIA_APPLICATION_CONTENT_TYPES,
+    _MEDIA_CONTENT_TYPE_PREFIXES,
+    _MEDIA_TRANSIENT_ERROR_TYPES,
+    _SOURCE_ID_ENVELOPE_MAX_DEPTH,
+    _SOURCE_ID_FIELD_NAMES,
+    _SOURCE_ID_UUID_PATTERN,
+    _SOURCE_LIMIT_HINT_FLOOR,
+    _SOURCE_NAME_FIELD_NAMES,
+    _STRICT_TRANSIENT_ERROR_TYPES,
+    _TIER_SOURCE_LIMITS_SUMMARY,
+    GetSourceLimit,
+    _build_invalid_argument_source_limit_hint,
+    _coerce_filename_candidate,
+    _coerce_source_id_candidate,
+    _default_port_for_scheme,
+    _extract_contextual_source_id_row_candidates,
+    _extract_prefixed_singleton_source_id_envelope,
+    _extract_register_file_source_id,
+    _extract_singleton_source_id_envelope,
+    _extract_source_id_field_candidates,
+    _looks_like_id_string,
+    _normalize_content_type,
+    _normalize_upload_path,
+    _redact_upload_url,
+    _redacted_upload_authority,
+    _register_response_shape_label,
+    _resolve_upload_content_type,
+    _source_context_names,
+    _transient_error_types_for_upload,
+    _unwrap_singleton_envelope,
+    _validate_resumable_upload_url,
+    _validate_upload_file_supported,
+    raise_for_upload_status,
+)
 from .listing import SourceLister
 from .polling import SourcePoller
 from .upload_payloads import (
@@ -51,24 +93,13 @@ if TYPE_CHECKING:
     from .._runtime.lifecycle import ClientLifecycle
     from .._transport_drain import TransportDrainTracker
 
-_SOURCE_ID_UUID_PATTERN = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
-_SOURCE_ID_FIELD_NAMES = frozenset({"SOURCE_ID", "source_id", "sourceId"})
-_CONTEXTUAL_SOURCE_ID_FIELD_NAMES = frozenset({"id"})
-_SOURCE_NAME_FIELD_NAMES = frozenset(
-    {"SOURCE_NAME", "source_name", "sourceName", "filename", "fileName", "name", "title"}
-)
-_SOURCE_ID_ENVELOPE_MAX_DEPTH = 8
-
 
 class AuthMetadata(Protocol):
     """Selected-account routing metadata required by upload flows.
 
-    Inlined from ``_runtime.contracts`` in issue #1327: the upload
-    pipeline is the only consumer, so this single-consumer Protocol lives
-    local to its owner per the ADR-0013 ≥2-feature promotion bar.
-    ``AuthTokens`` structurally satisfies it.
+    Inlined from ``_runtime.contracts`` (#1327): the upload pipeline is the only
+    consumer, so this single-consumer Protocol lives local to its owner (ADR-0013
+    ≥2-feature promotion bar). ``AuthTokens`` structurally satisfies it.
     """
 
     @property
@@ -81,13 +112,11 @@ class AuthMetadata(Protocol):
 class RpcCallback(Protocol):
     """RPC callback shape used by upload registration.
 
-    Structurally distinct from :class:`notebooklm._runtime.contracts.RpcCaller`:
-    this is a **callable** Protocol (``async def __call__(...)``) passed as a
-    keyword argument into :meth:`SourceUploadPipeline.register_file_source`,
-    while the shared ``RpcCaller`` is an **object** Protocol with an
-    ``.rpc_call(...)`` method. They are NOT interchangeable — the local
-    callable form is kept as a structural Protocol (not a ``Callable[...]``
-    alias) so mypy can flag keyword-name typos at call sites.
+    A **callable** Protocol (``async def __call__(...)``) passed as a keyword arg
+    into :meth:`SourceUploadPipeline.register_file_source` — distinct from the
+    shared **object** Protocol ``RpcCaller`` (``.rpc_call(...)``); kept as a
+    structural Protocol (not a ``Callable[...]`` alias) so mypy flags keyword-name
+    typos at call sites.
     """
 
     async def __call__(
@@ -103,136 +132,10 @@ class RpcCallback(Protocol):
     ) -> Any: ...
 
 
-GetSourceLimit = Callable[[], Awaitable[int | None]]
-
-
 _INVALID_ARGUMENT_RPC_CODE = 3
-_SOURCE_LIMIT_HINT_FLOOR = 50
-_TIER_SOURCE_LIMITS_SUMMARY = "50/100/300/600"
 # Preserve the historical ``notebooklm._sources`` log channel after moving
 # upload choreography into this module.
 module_logger = logging.getLogger("notebooklm").getChild("_sources")
-
-
-def _normalize_upload_path(path: str) -> str:
-    return (path or "/").rstrip("/") + "/"
-
-
-def _default_port_for_scheme(scheme: str) -> int | None:
-    if scheme == "https":
-        return 443
-    if scheme == "http":
-        return 80
-    return None
-
-
-def _redacted_upload_authority(parsed: SplitResult) -> str | None:
-    host = parsed.hostname
-    if host is None:
-        return None
-
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
-
-    port = parsed.port
-    port_suffix = f":{port}" if port is not None else ""
-    return f"{host}{port_suffix}"
-
-
-def _redact_upload_url(upload_url: str) -> str:
-    """Return a log-safe representation of a resumable upload URL."""
-    try:
-        parsed = urlsplit(upload_url)
-        authority = _redacted_upload_authority(parsed)
-    except ValueError:
-        return "[REDACTED_UPLOAD_URL]"
-    if not parsed.scheme or authority is None:
-        return "[REDACTED_UPLOAD_URL]"
-    suffix = "?..." if parsed.query else ""
-    return f"{parsed.scheme}://{authority}{parsed.path}{suffix}"
-
-
-def _validate_resumable_upload_url(upload_url: str) -> str:
-    """Validate that a resumable upload URL targets the configured upload endpoint."""
-    try:
-        parsed = urlsplit(upload_url)
-        actual_port = parsed.port or _default_port_for_scheme(parsed.scheme)
-        expected = urlsplit(get_upload_url())
-        expected_port = expected.port or _default_port_for_scheme(expected.scheme)
-    except ValueError as exc:
-        raise ValidationError("Upload URL is not valid") from exc
-
-    if parsed.scheme != "https":
-        raise ValidationError("Upload URL must use https")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValidationError("Upload URL must not contain credentials")
-    if parsed.hostname is None:
-        raise ValidationError("Upload URL must include a host")
-    if parsed.hostname != expected.hostname or actual_port != expected_port:
-        raise ValidationError("Upload URL host is not trusted")
-    if _normalize_upload_path(parsed.path) != _normalize_upload_path(expected.path):
-        raise ValidationError("Upload URL path is not trusted")
-    upload_ids = [
-        value
-        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
-        if key.lower() == "upload_id"
-    ]
-    if len(upload_ids) != 1 or not upload_ids[0]:
-        raise ValidationError("Upload URL must include exactly one non-empty upload_id")
-
-    return upload_url
-
-
-async def _build_invalid_argument_source_limit_hint(
-    *,
-    source_count: int | None,
-    get_source_limit: GetSourceLimit | None,
-    logger: Any,
-) -> str:
-    """Build a best-effort hint for ADD_SOURCE_FILE status code 3 failures."""
-    source_limit: int | None = None
-    if get_source_limit is not None:
-        try:
-            source_limit = await get_source_limit()
-        except Exception:  # noqa: BLE001 - hint lookup must not mask the upload error.
-            logger.debug(
-                "register_file_source: source-limit lookup failed; continuing without limit hint",
-                exc_info=True,
-            )
-
-    if source_limit is not None and source_limit <= 0:
-        source_limit = None
-
-    if source_count is not None and source_limit is not None:
-        if source_count >= source_limit:
-            return (
-                f" Notebook currently has {source_count}/{source_limit} sources, "
-                "so this likely means the notebook has reached its tier-specific "
-                "per-notebook source limit. Delete sources or try a fresh notebook, "
-                "then retry."
-            )
-        return (
-            f" Notebook currently has {source_count}/{source_limit} sources, below "
-            "the advertised account limit. If the file is valid, try the same add "
-            "in a fresh notebook to distinguish file rejection from notebook state."
-        )
-
-    if source_count is not None and source_count >= _SOURCE_LIMIT_HINT_FLOOR:
-        return (
-            f" Notebook currently has {source_count} sources; status code 3 can "
-            "indicate the notebook is at or near the tier-specific per-notebook "
-            f"source limit ({_TIER_SOURCE_LIMITS_SUMMARY}). Delete sources or "
-            "try a fresh notebook, then retry."
-        )
-
-    if source_limit is not None:
-        return (
-            f" Advertised source limit for this tier is {source_limit}; compare "
-            "it with this notebook's source count. Status code 3 can indicate a "
-            "per-notebook source-limit rejection."
-        )
-
-    return ""
 
 
 class AsyncClientFactory(Protocol):
@@ -249,19 +152,6 @@ class AsyncClientFactory(Protocol):
 ListSources = Callable[[str], Awaitable[list[Source]]]
 QueueWaitRecorder = Callable[[float], None]
 
-_MEDIA_CONTENT_TYPE_PREFIXES = ("audio/", "video/")
-_MEDIA_APPLICATION_CONTENT_TYPES = frozenset(
-    {
-        "application/mp4",
-        "application/ogg",
-        "application/x-matroska",
-    }
-)
-_MEDIA_TRANSIENT_ERROR_TYPES: tuple[int | None, ...] = (10, 0, None)
-_STRICT_TRANSIENT_ERROR_TYPES: tuple[int | None, ...] = ()
-_HTML_UPLOAD_SUFFIXES = frozenset({".html", ".htm", ".xhtml", ".xht"})
-_HTML_UPLOAD_CONTENT_TYPES = frozenset({"text/html", "application/xhtml+xml"})
-
 
 # Single-loop-per-client invariant per ADR-0004; not safe for multi-loop fan-out.
 _BACKGROUND_CANCEL_TASKS: set[asyncio.Task[None]] = set()
@@ -270,213 +160,6 @@ _BACKGROUND_CANCEL_TASKS: set[asyncio.Task[None]] = set()
 def _retain_background_cancel_task(task: asyncio.Task[None]) -> None:
     _BACKGROUND_CANCEL_TASKS.add(task)
     task.add_done_callback(_BACKGROUND_CANCEL_TASKS.discard)
-
-
-def _extract_register_file_source_id(result: Any, filename: str) -> str | None:
-    """Locate the SOURCE_ID string in an ADD_SOURCE_FILE response.
-
-    Only trusted ADD_SOURCE_FILE shapes are accepted: explicit source-id fields
-    and the legacy singleton list envelope (``[[id]]`` / ``[[[[id]]]]``).
-    Arbitrary nested ids are intentionally ignored so ambiguous responses fall
-    through to the post-register source-list probe.
-    """
-    field_candidates = _extract_source_id_field_candidates(result, filename)
-    if len(field_candidates) == 1:
-        return field_candidates[0]
-    if len(field_candidates) > 1:
-        return None
-
-    row_candidates = _extract_contextual_source_id_row_candidates(result, filename)
-    if len(row_candidates) == 1:
-        return row_candidates[0]
-    if len(row_candidates) > 1:
-        return None
-
-    prefixed_candidate = _extract_prefixed_singleton_source_id_envelope(result, filename)
-    if prefixed_candidate is not None:
-        return prefixed_candidate
-
-    return _extract_singleton_source_id_envelope(result, filename)
-
-
-def _extract_source_id_field_candidates(result: Any, filename: str) -> list[str]:
-    candidates: list[str] = []
-    seen: set[str] = set()
-
-    def add_candidate(value: Any) -> None:
-        candidate = _coerce_source_id_candidate(value, filename)
-        if candidate is not None and candidate not in seen:
-            candidates.append(candidate)
-            seen.add(candidate)
-
-    def walk(node: Any, depth: int) -> None:
-        if depth > _SOURCE_ID_ENVELOPE_MAX_DEPTH:
-            return
-        if isinstance(node, dict):
-            names = _source_context_names(node)
-            matched_context = bool(names) and any(
-                _coerce_filename_candidate(name) == filename for name in names
-            )
-            mismatched_context = bool(names) and not matched_context
-            for key, value in node.items():
-                if not isinstance(key, str):
-                    continue
-                if (
-                    key in _SOURCE_ID_FIELD_NAMES
-                    and not mismatched_context
-                    and (depth == 0 or matched_context)
-                ) or (key in _CONTEXTUAL_SOURCE_ID_FIELD_NAMES and matched_context):
-                    add_candidate(value)
-            for value in node.values():
-                walk(value, depth + 1)
-        elif isinstance(node, list):
-            for child in node:
-                walk(child, depth + 1)
-
-    walk(result, 0)
-    return candidates
-
-
-def _extract_singleton_source_id_envelope(result: Any, filename: str) -> str | None:
-    node, depth = _unwrap_singleton_envelope(result)
-    if depth == 0:
-        return None
-
-    return _coerce_source_id_candidate(node, filename)
-
-
-def _extract_prefixed_singleton_source_id_envelope(result: Any, filename: str) -> str | None:
-    if not isinstance(result, list) or len(result) != 2 or result[0] is not None:
-        return None
-
-    return _extract_singleton_source_id_envelope(result[1], filename)
-
-
-def _extract_contextual_source_id_row_candidates(result: Any, filename: str) -> list[str]:
-    candidates: list[str] = []
-    seen: set[str] = set()
-
-    def add_candidate(value: Any) -> None:
-        candidate = _coerce_source_id_candidate(value, filename)
-        if candidate is not None and candidate not in seen:
-            candidates.append(candidate)
-            seen.add(candidate)
-
-    def walk(node: Any, depth: int) -> None:
-        if depth > _SOURCE_ID_ENVELOPE_MAX_DEPTH:
-            return
-        if isinstance(node, list):
-            if len(node) >= 2:
-                if _coerce_filename_candidate(node[1]) == filename:
-                    add_candidate(node[0])
-                if _coerce_filename_candidate(node[0]) == filename:
-                    add_candidate(node[1])
-            for child in node:
-                walk(child, depth + 1)
-        elif isinstance(node, dict):
-            for value in node.values():
-                walk(value, depth + 1)
-
-    walk(result, 0)
-    return candidates
-
-
-def _coerce_filename_candidate(value: Any) -> str | None:
-    value, _depth = _unwrap_singleton_envelope(value)
-    if not isinstance(value, str):
-        return None
-    return value.strip()
-
-
-def _coerce_source_id_candidate(value: Any, filename: str) -> str | None:
-    value, _depth = _unwrap_singleton_envelope(value)
-    if not isinstance(value, str):
-        return None
-    if len(value) > 1000:
-        return None
-    candidate = value.strip()
-    if not candidate or candidate == filename:
-        return None
-    if _SOURCE_ID_UUID_PATTERN.match(candidate) or _looks_like_id_string(candidate):
-        return candidate
-    return None
-
-
-def _source_context_names(node: dict[Any, Any]) -> list[Any]:
-    return [
-        value
-        for key, value in node.items()
-        if isinstance(key, str) and key in _SOURCE_NAME_FIELD_NAMES
-    ]
-
-
-def _unwrap_singleton_envelope(value: Any) -> tuple[Any, int]:
-    depth = 0
-    while isinstance(value, list) and len(value) == 1 and depth < _SOURCE_ID_ENVELOPE_MAX_DEPTH:
-        value = value[0]
-        depth += 1
-    return value, depth
-
-
-def _register_response_shape_label(result: Any) -> str:
-    if isinstance(result, dict):
-        return "object"
-    if isinstance(result, list):
-        return "array"
-    if isinstance(result, str):
-        return "string"
-    if result is None:
-        return "null"
-    return type(result).__name__
-
-
-def _looks_like_id_string(candidate: str) -> bool:
-    """Heuristic for the non-UUID fallback in file-source id extraction."""
-    if len(candidate) < 4:
-        return False
-    if any(c in candidate for c in " \t/"):
-        return False
-    return any(c.isdigit() or c in "-_" for c in candidate)
-
-
-def _resolve_upload_content_type(file_path: Path, mime_type: str | None) -> str:
-    """Return the content type for the Scotty resumable-upload start request."""
-    if mime_type is not None:
-        content_type = mime_type.strip()
-        if not content_type:
-            raise ValidationError("mime_type cannot be empty or whitespace-only")
-        return content_type
-
-    guessed, _encoding = mimetypes.guess_type(file_path.name)
-    return guessed or "application/octet-stream"
-
-
-def _normalize_content_type(content_type: str) -> str:
-    return content_type.split(";", 1)[0].strip().lower()
-
-
-def _transient_error_types_for_upload(content_type: str) -> tuple[int | None, ...]:
-    """Return source status=ERROR transient policy for this upload."""
-    normalized = _normalize_content_type(content_type)
-    if (
-        normalized.startswith(_MEDIA_CONTENT_TYPE_PREFIXES)
-        or normalized in _MEDIA_APPLICATION_CONTENT_TYPES
-    ):
-        return _MEDIA_TRANSIENT_ERROR_TYPES
-    return _STRICT_TRANSIENT_ERROR_TYPES
-
-
-def _validate_upload_file_supported(file_path: Path, content_type: str) -> None:
-    """Reject local file types known to fail NotebookLM's upload endpoint."""
-    normalized = _normalize_content_type(content_type)
-    if (
-        file_path.suffix.lower() in _HTML_UPLOAD_SUFFIXES
-        or normalized in _HTML_UPLOAD_CONTENT_TYPES
-    ):
-        raise ValidationError(
-            "HTML file uploads are not supported by NotebookLM's upload endpoint: "
-            f"{file_path.name}. Convert the page to .txt, .md, or .pdf first, then retry."
-        )
 
 
 class SourceUploadPipeline(LoopBoundPrimitive):
@@ -508,6 +191,8 @@ class SourceUploadPipeline(LoopBoundPrimitive):
         self._async_client_factory = async_client_factory
         self._max_concurrent_uploads = normalize_max_concurrent_uploads(max_concurrent_uploads)
         self._upload_semaphore: asyncio.Semaphore | None = None
+        # Bounds concurrent Drive auto-route downloads (#1884); loop-bound.
+        self._download_semaphore: asyncio.Semaphore | None = None
         # ``_bound_loop`` + ``set_bound_loop`` come from the
         # :class:`~notebooklm._loop_bound.LoopBoundPrimitive` base; this pipeline
         # overrides :meth:`_on_loop_rebind` to discard the cached
@@ -532,14 +217,10 @@ class SourceUploadPipeline(LoopBoundPrimitive):
     ) -> None:
         """Adopt ``SourcesAPI``'s shared lister/poller as the single owner.
 
-        Called from ``SourcesAPI.__init__``
-        (alongside :meth:`configure_source_limit_lookup`) so the pipeline's
-        source-lifecycle verbs (``list_sources`` / ``get_source`` /
-        ``wait_until_ready`` / ``wait_until_registered``) delegate to the
-        SAME ``SourceLister`` / ``SourcePoller`` instances the public
-        ``SourcesAPI`` uses, instead of parallel copies built in the
-        pipeline constructor. Direct callers that never run through
-        ``SourcesAPI`` keep the freshly-constructed defaults.
+        Called from ``SourcesAPI.__init__`` so the pipeline's source-lifecycle
+        verbs delegate to the SAME ``SourceLister`` / ``SourcePoller`` instances
+        the public ``SourcesAPI`` uses, not parallel copies. Direct callers that
+        never run through ``SourcesAPI`` keep the freshly-constructed defaults.
         """
         self._lister = lister
         self._poller = poller
@@ -549,7 +230,14 @@ class SourceUploadPipeline(LoopBoundPrimitive):
         return self._upload_timeout if self._upload_timeout is not None else default
 
     def _client_factory(self) -> AsyncClientFactory:
-        return self._async_client_factory or httpx.AsyncClient
+        if self._async_client_factory is not None:
+            return self._async_client_factory
+        # Keep the upload leg on the SAME transport as the main session — the
+        # /upload/ endpoint 500s on a curl_cffi-session + httpx-upload mix
+        # (fingerprint/session correlation).
+        from .._curl_cffi_transport import resolve_transport_factory
+
+        return resolve_transport_factory()
 
     def _authuser_query(self) -> str:
         return authuser_query(self._auth.authuser, self._auth.account_email)
@@ -568,56 +256,71 @@ class SourceUploadPipeline(LoopBoundPrimitive):
             return httpx.Cookies()
         return cast(httpx.Cookies, cookies)
 
+    def live_cookies(self) -> httpx.Cookies:
+        """Public accessor for the freshest live cookie jar (post-rotation, #1884).
+
+        Exposes :meth:`_live_cookies` so ``SourcesAPI.add_drive_file`` can
+        authenticate a SERVER-SIDE Drive download with the SAME ``.google.com``
+        master jar the upload leg uses (kept fresh by keepalive rotation, unlike
+        the on-disk cookies) — without reaching a private method across the seam.
+        """
+        return self._live_cookies()
+
     def _on_loop_rebind(
         self,
         old: asyncio.AbstractEventLoop | None,
         new: asyncio.AbstractEventLoop | None,
     ) -> None:
-        """Discard the cached upload semaphore when the bound loop changes.
+        """Discard the cached upload/download semaphores when the bound loop changes.
 
         Fires from :meth:`~notebooklm._loop_bound.LoopBoundPrimitive.set_bound_loop`
-        only on a real loop change (and before ``_bound_loop`` is updated), so a
-        stale semaphore bound to the old loop is never reused after a rebind.
-        ``set_bound_loop`` is thus self-consistent even when called outside the
-        ``open()`` path; production also calls :meth:`reset_after_open` right
-        after, making the discard idempotent there. This hook only governs the
-        semaphore *rebuild*; cross-loop *use* is rejected by the lifecycle's
-        ``assert_bound_loop`` at the top of :meth:`add_file`.
+        only on a real loop change, so a stale semaphore bound to the old loop is
+        never reused after a rebind (production also calls :meth:`reset_after_open`
+        right after, making the discard idempotent). Cross-loop *use* is rejected
+        by the lifecycle's ``assert_bound_loop``.
         """
         self._upload_semaphore = None
+        self._download_semaphore = None
 
     def reset_after_open(self) -> None:
         """Discard the lazy upload semaphore so a reopened client rebinds it.
 
-        Called from :meth:`ClientLifecycle.open` (alongside the
-        per-collaborator ``set_bound_loop`` propagation) so a client that was
-        closed and reopened on a *different* event loop builds a fresh
-        ``asyncio.Semaphore`` on the new loop instead of reusing the stale one
-        bound to the old (now-dead) loop. On Python 3.10/3.11 reusing the
-        stale semaphore can raise "bound to a different event loop" or mispark
-        waiters; on 3.12+ the breakage is largely masked, but resetting keeps
-        the behaviour consistent across versions.
-
-        Mirrors :meth:`notebooklm._client_composed.ClientComposed.reset_after_open`.
-        Deliberately narrow: dropping the reference is enough because the
-        semaphore is reconstructed lazily on the next
-        :meth:`get_upload_semaphore` call from inside the new loop.
-        ``max_concurrent_uploads`` is left untouched.
+        Called from :meth:`ClientLifecycle.open` so a client closed and reopened
+        on a *different* event loop builds a fresh ``asyncio.Semaphore`` on the new
+        loop instead of reusing the stale one bound to the old (now-dead) loop
+        (which on 3.10/3.11 can raise "bound to a different event loop" or mispark
+        waiters). Mirrors ``ClientComposed.reset_after_open``; the semaphore is
+        rebuilt lazily on the next :meth:`get_upload_semaphore` call.
         """
         self._upload_semaphore = None
+        self._download_semaphore = None
 
     def get_upload_semaphore(self) -> asyncio.Semaphore:
         """Return the Sources-owned upload semaphore, creating it on first use.
 
-        The semaphore caps the section that opens the source FD, registers the
-        source, starts the resumable upload, and streams the body. Lazy
-        construction keeps ``SourceUploadPipeline`` usable outside a running
-        event loop. On post-finalize cancellation, the shielded finalize task
-        may briefly keep an FD open after ``add_file`` exits the semaphore.
+        Caps the FD-open + register + resumable-upload + body-stream section. Lazy
+        construction keeps the pipeline usable outside a running event loop.
         """
         if self._upload_semaphore is None:
             self._upload_semaphore = asyncio.Semaphore(self._max_concurrent_uploads)
         return self._upload_semaphore
+
+    def get_download_semaphore(self) -> asyncio.Semaphore:
+        """Return the Drive auto-route download semaphore (#1884), lazily built.
+
+        A SEPARATE pool from the upload semaphore (gating the whole download→upload
+        op can't deadlock against ``add_file``'s own slot). Asserts loop ownership
+        FIRST (the download seam, as ``add_file`` is the upload seam) so a
+        cross-loop ``add_drive_file`` fails before it touches this primitive (#1196).
+        """
+        self._lifecycle.assert_bound_loop()
+        if self._download_semaphore is None:
+            self._download_semaphore = asyncio.Semaphore(self._max_concurrent_uploads)
+        return self._download_semaphore
+
+    def authuser_value(self) -> str:
+        """Account-routing value for Google URLs (#1884), matching the upload leg."""
+        return format_authuser_value(self._auth.authuser, self._auth.account_email)
 
     async def add_file(
         self,
@@ -768,21 +471,13 @@ class SourceUploadPipeline(LoopBoundPrimitive):
         """Register a file source intent and get SOURCE_ID.
 
         Uses the same probe-then-create idempotency pattern as ``add_url`` /
-        ``add_drive``. The ADD_SOURCE_FILE RPC is mutating: a
-        5xx / network failure between server-side commit and client-side
-        response could otherwise duplicate the source on a naive retry.
-
-        Probe semantics: unlike ``add_url`` (where URL equality is a stable
-        dedupe key) or ``add_drive`` (where the Drive file_id is unique
-        server-side), filenames are NOT identity-bearing — two distinct
-        uploads of ``report.pdf`` are legitimately two separate sources.
-        To avoid mis-matching a pre-existing source from an earlier upload,
-        the probe captures a baseline of source IDs *before* the first
-        create attempt and filters probe matches to IDs that are NOT in
-        the baseline (the "new since the create started" set). An
-        ambiguous match (>1 new source with the same filename, e.g. a
-        concurrent uploader added one) raises ``SourceAddError`` rather
-        than guessing.
+        ``add_drive`` (the ADD_SOURCE_FILE RPC is mutating, so a 5xx/network
+        failure between commit and response could duplicate on a naive retry).
+        Because filenames are NOT identity-bearing (two uploads of ``report.pdf``
+        are legitimately distinct), the probe captures a baseline of source IDs
+        BEFORE the first create and only matches IDs new since then; an ambiguous
+        match (>1 new source, e.g. a concurrent uploader) raises ``SourceAddError``
+        rather than guessing.
         """
         params = build_register_file_source_params(filename, notebook_id)
         if rpc_call is None:
@@ -854,7 +549,8 @@ class SourceUploadPipeline(LoopBoundPrimitive):
                     ),
                 )
             if len(matches) == 1:
-                return matches[0].id
+                (match,) = matches  # exactly one (len==1 guard); unpack, not matches[0]
+                return match.id
             if len(matches) > 1:
                 raise SourceAddError(
                     filename,
@@ -1064,7 +760,9 @@ class SourceUploadPipeline(LoopBoundPrimitive):
                 headers=request.headers,
                 content=request.body,
             )
-            response.raise_for_status()
+            # Classify a rejection (e.g. an unsupported ``.pub`` → HTTP 400) instead of
+            # leaking a raw ``httpx.HTTPStatusError`` to callers (#1892).
+            raise_for_upload_status(response, filename)
 
             upload_url = response.headers.get("x-goog-upload-url")
             if not upload_url:
@@ -1148,8 +846,26 @@ class SourceUploadPipeline(LoopBoundPrimitive):
                     cookies=self._live_cookies(),
                 ) as client:
                     finalize_started = True
-                    response = await client.post(upload_url, headers=headers, content=file_stream())
-                    response.raise_for_status()
+                    # The curl_cffi transport streams the request body from disk via
+                    # low-level libcurl (no full-file buffer); httpx streams natively
+                    # through the async-generator ``content=`` path. isinstance (not
+                    # duck-typing) because test mocks auto-spawn any attribute.
+                    from .._curl_cffi_transport import CurlCffiAsyncClient
+
+                    if isinstance(client, CurlCffiAsyncClient) and total_bytes is not None:
+                        source = path_fallback if path_fallback is not None else file_obj
+                        response = await client.stream_upload(
+                            upload_url, source, total_bytes=total_bytes, headers=headers
+                        )
+                        if on_progress is not None:
+                            await maybe_await_callback(on_progress, progress_total, progress_total)
+                    else:
+                        response = await client.post(
+                            upload_url, headers=headers, content=file_stream()
+                        )
+                    # The finalize POST can also be rejected upstream (propagates via
+                    # ``asyncio.shield`` below); classify it too (#1892).
+                    raise_for_upload_status(response, diag_name)
 
             def _on_finalize_done(t: asyncio.Task[None]) -> None:
                 if path_fallback is None:

@@ -154,6 +154,15 @@ impl Client {
         Ok(())
     }
 
+    pub fn refresh_source(&self, notebook_id: &str, source_id: &str) -> Result<()> {
+        self.rpc_allow_null(
+            rpc::REFRESH_SOURCE,
+            refresh_source_params(source_id),
+            &format!("/notebook/{notebook_id}"),
+        )?;
+        Ok(())
+    }
+
     pub fn rename_source(&self, notebook_id: &str, source_id: &str, title: &str) -> Result<()> {
         self.rpc_allow_null(
             rpc::UPDATE_SOURCE,
@@ -226,7 +235,7 @@ impl Client {
             return Err(Error::Authentication);
         }
         if status.as_u16() == 429 {
-            return Err(Error::Refused("HTTP 429".into()));
+            return Err(Error::RateLimited("HTTP 429".into()));
         }
         let raw = response.error_for_status()?.text()?;
         chat::decode(&raw)
@@ -248,4 +257,22 @@ fn template_block() -> Value {
         null,
         [1, null, null, null, null, null, null, null, null, null, [1]]
     ])
+}
+
+fn refresh_source_params(source_id: &str) -> Value {
+    json!([null, [source_id], [2]])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refresh_source_uses_v080_wire_contract() {
+        assert_eq!(
+            refresh_source_params("source-1"),
+            json!([null, ["source-1"], [2]])
+        );
+        assert_eq!(rpc::REFRESH_SOURCE, "FLmJqe");
+    }
 }

@@ -9,7 +9,8 @@ use sha2::{Digest, Sha256};
 use crate::AppState;
 use crate::api::ApiError;
 use crate::browser_surface::{
-    PromptSubmissionOutcome, conversation_url_for_target, stored_verified_submission_evidence,
+    BOUND_CONVERSATION_ERROR_MARKER, PromptSubmissionOutcome, conversation_url_for_target,
+    is_chatgpt_url, stored_verified_submission_evidence,
 };
 
 use super::web_model_browser::key;
@@ -40,6 +41,12 @@ const WEB_TRANSPORT_NOTE: &str = "[CCCC] Web transport:\n\
 struct BootstrapSeed {
     text: String,
     digest: String,
+}
+
+struct DeliveryAttempt<'a> {
+    turn_id: &'a str,
+    event_ids: Value,
+    delivery_id: &'a str,
 }
 
 pub(super) enum DeliveryOutcome {
@@ -235,6 +242,64 @@ async fn deliver_once(
     }
     let target = load_target(state, group_id, actor_id)?;
     let target_url = target["url"].as_str().unwrap_or("");
+    if target["last_delivery_status"] == "submitting" {
+        let message = "browser delivery was interrupted after its at-most-once dispatch fence; the message will not be redelivered automatically";
+        let evidence = json!({
+            "submitted":false,
+            "submission_evidence":"interrupted_dispatch",
+            "error":message
+        });
+        return complete_ambiguous_attempt(
+            state,
+            group_id,
+            actor_id,
+            DeliveryAttempt {
+                turn_id: required(&target, "last_delivery_turn_id")?,
+                event_ids: target["last_delivery_event_ids"].clone(),
+                delivery_id: required(&target, "last_delivery_id")?,
+            },
+            evidence,
+            message,
+        )
+        .await;
+    }
+    if target["last_delivery_status"] == "legacy_recovery_submitting" {
+        let message = "legacy browser recovery was interrupted after dispatch began; the committed message will not be submitted again";
+        update_target(
+            state,
+            group_id,
+            actor_id,
+            json!({
+                "last_delivery_status":"submission_ambiguous",
+                "last_delivery_at":cccc_contracts::utc_now(),
+                "last_submission_evidence":{
+                    "submitted":false,
+                    "submission_evidence":"interrupted_legacy_dispatch",
+                    "error":message
+                },
+                "last_error":message
+            }),
+        )?;
+        record_connector(
+            state,
+            group_id,
+            actor_id,
+            "ambiguous",
+            target["last_delivery_turn_id"].as_str().unwrap_or(""),
+            message,
+        )?;
+        if target["kind"] == "new_chat" {
+            return resolve_pending_new_chat(
+                state,
+                group_id,
+                actor_id,
+                session_key,
+                &load_target(state, group_id, actor_id)?,
+            )
+            .await;
+        }
+        return Ok(DeliveryOutcome::Ambiguous);
+    }
     if target_url.is_empty() && target["kind"] != "new_chat" {
         return Ok(DeliveryOutcome::Idle);
     }
@@ -246,7 +311,7 @@ async fn deliver_once(
         // conversation target can therefore continue with later turns without retrying it. A new
         // chat must remain fenced until its conversation URL can be recovered.
         if target["kind"] == "new_chat" {
-            return Ok(DeliveryOutcome::Ambiguous);
+            return resolve_pending_new_chat(state, group_id, actor_id, session_key, &target).await;
         }
     }
     if is_legacy_pending_delivery(&target) {
@@ -279,7 +344,14 @@ async fn deliver_once(
         let reconciled = load_target(state, group_id, actor_id)?;
         if reconciled["last_delivery_status"] == "submission_ambiguous" {
             if reconciled["kind"] == "new_chat" {
-                return Ok(DeliveryOutcome::Ambiguous);
+                return resolve_pending_new_chat(
+                    state,
+                    group_id,
+                    actor_id,
+                    session_key,
+                    &reconciled,
+                )
+                .await;
             }
         } else {
             if reconciled["kind"] == "new_chat" {
@@ -302,6 +374,35 @@ async fn deliver_once(
         )
     {
         return resolve_pending_new_chat(state, group_id, actor_id, session_key, &target).await;
+    }
+    if target["kind"] == "existing_chat" && is_chatgpt_url(target_url) {
+        if let Err(error) = state
+            .browser_surfaces
+            .align_chatgpt_conversation_target(
+                session_key,
+                target_url,
+                std::time::Duration::from_secs(5),
+            )
+            .await
+        {
+            let message = error.to_string();
+            update_target(
+                state,
+                group_id,
+                actor_id,
+                json!({
+                    "last_delivery_status":"failed",
+                    "last_submission_evidence":{
+                        "submitted":false,
+                        "submission_evidence":"bound_conversation_unavailable",
+                        "error":message.as_str()
+                    },
+                    "last_error":message.as_str()
+                }),
+            )?;
+            record_connector(state, group_id, actor_id, "failed", "", &message)?;
+            return Ok(DeliveryOutcome::Stopped);
+        }
     }
     let wait = daemon_call(
         state,
@@ -362,81 +463,75 @@ async fn deliver_once(
         }
         Ok(PromptSubmissionOutcome::Ambiguous(browser)) => {
             let message = "browser submission was attempted but could not be verified; this message will not be redelivered automatically";
-            let complete = complete_args(
+            return complete_ambiguous_attempt(
+                state,
                 group_id,
                 actor_id,
-                turn_id,
-                turn["event_ids"].clone(),
-                &delivery_id,
-            );
-            let completion = daemon_call(state, "web_model_runtime_complete_turn", complete).await;
-            let completion_status = if completion.is_ok() {
-                "submission_ambiguous"
-            } else {
-                "submission_ambiguous_completion_pending"
-            };
-            let completion_error = completion
-                .as_ref()
-                .err()
-                .map(ToString::to_string)
-                .unwrap_or_default();
+                DeliveryAttempt {
+                    turn_id,
+                    event_ids: turn["event_ids"].clone(),
+                    delivery_id: &delivery_id,
+                },
+                browser,
+                message,
+            )
+            .await;
+        }
+        Err(error) if error.to_string().contains(BOUND_CONVERSATION_ERROR_MARKER) => {
+            let message = error.to_string();
             update_target(
                 state,
                 group_id,
                 actor_id,
                 json!({
-                    "last_delivery_status":completion_status,
-                    "last_delivery_turn_id":turn_id,
-                    "last_delivery_event_ids":turn["event_ids"],
-                    "last_delivery_reconcile_attempts":0,
-                    "last_delivery_at":cccc_contracts::utc_now(),
-                    "last_submission_evidence":browser,
-                    "last_error":if completion_error.is_empty() {message} else {&completion_error}
+                    "last_delivery_status":"failed",
+                    "last_submission_evidence":{
+                        "submitted":false,
+                        "submission_evidence":"bound_conversation_unavailable",
+                        "error":message.as_str()
+                    },
+                    "last_error":message.as_str()
                 }),
             )?;
-            if completion.is_ok() {
-                record_connector(state, group_id, actor_id, "ambiguous", turn_id, message)?;
-            }
-            tracing::warn!(
-                group_id,
-                actor_id,
-                turn_id,
-                cursor_committed = completion.is_ok(),
-                "Web-model browser submission could not be verified; the attempted message will not be redelivered automatically"
-            );
-            return Ok(DeliveryOutcome::Ambiguous);
+            record_connector(state, group_id, actor_id, "failed", turn_id, &message)?;
+            return Ok(DeliveryOutcome::Stopped);
         }
         Err(error) => {
-            update_target(
+            let message = format!(
+                "browser delivery failed after its at-most-once dispatch fence: {error}; this message will not be redelivered automatically"
+            );
+            let evidence = json!({
+                "submitted":false,
+                "submission_evidence":"browser_error_after_dispatch_fence",
+                "error":error.to_string()
+            });
+            return complete_ambiguous_attempt(
                 state,
                 group_id,
                 actor_id,
-                json!({"last_delivery_status":"failed","last_error":error.to_string()}),
-            )?;
-            record_connector(state, group_id, actor_id, "failed", "", &error.to_string())?;
-            return Err(ApiError::unavailable(
-                "web_model_delivery_failed",
-                error.to_string(),
-            ));
+                DeliveryAttempt {
+                    turn_id,
+                    event_ids: turn["event_ids"].clone(),
+                    delivery_id: &delivery_id,
+                },
+                evidence,
+                &message,
+            )
+            .await;
         }
     };
-    if let Some(seed) = &bootstrap_seed {
-        mark_bootstrap_seed_delivered(state, group_id, actor_id, target_url, seed)?;
-    }
-    let mut pending_new_chat_bind = target["kind"] == "new_chat";
-    if pending_new_chat_bind {
-        if let Some(conversation_url) = state
-            .browser_surfaces
-            .wait_for_conversation_url(session_key, target_url, std::time::Duration::from_secs(15))
-            .await
-            .map_err(|error| {
-                ApiError::unavailable("web_model_conversation_bind_failed", error.to_string())
-            })?
-        {
-            bind_new_chat_target(state, group_id, actor_id, &conversation_url)?;
-            pending_new_chat_bind = false;
-        }
-    }
+    update_target(
+        state,
+        group_id,
+        actor_id,
+        completion_pending_patch(
+            turn_id,
+            turn["event_ids"].clone(),
+            browser.clone(),
+            bootstrap_seed.as_ref(),
+            target_url,
+        ),
+    )?;
     let complete = complete_args(
         group_id,
         actor_id,
@@ -460,12 +555,35 @@ async fn deliver_once(
         );
         return Ok(DeliveryOutcome::Ambiguous);
     }
+    let mut pending_new_chat_bind = target["kind"] == "new_chat";
+    let mut bind_error = String::new();
+    if pending_new_chat_bind {
+        match state
+            .browser_surfaces
+            .wait_for_conversation_url(session_key, target_url, std::time::Duration::from_secs(15))
+            .await
+        {
+            Ok(Some(conversation_url)) => {
+                if let Err(error) =
+                    bind_new_chat_target(state, group_id, actor_id, &conversation_url)
+                {
+                    bind_error = error.to_string();
+                } else {
+                    pending_new_chat_bind = false;
+                }
+            }
+            Ok(None) => {}
+            Err(error) => bind_error = error.to_string(),
+        }
+    }
     let final_status = if pending_new_chat_bind {
         "pending_new_chat_bind"
     } else {
         "submitted"
     };
-    let final_error = if pending_new_chat_bind {
+    let final_error = if !bind_error.is_empty() {
+        bind_error.as_str()
+    } else if pending_new_chat_bind {
         "conversation_url_pending"
     } else {
         ""
@@ -493,6 +611,75 @@ async fn deliver_once(
     update_target(state, group_id, actor_id, final_patch)?;
     record_connector(state, group_id, actor_id, "submitted", turn_id, "")?;
     Ok(DeliveryOutcome::Submitted)
+}
+
+async fn complete_ambiguous_attempt(
+    state: &AppState,
+    group_id: &str,
+    actor_id: &str,
+    attempt: DeliveryAttempt<'_>,
+    browser: Value,
+    message: &str,
+) -> Result<DeliveryOutcome, ApiError> {
+    update_target(
+        state,
+        group_id,
+        actor_id,
+        json!({
+            "last_delivery_status":"submission_ambiguous_completion_pending",
+            "last_delivery_turn_id":attempt.turn_id,
+            "last_delivery_event_ids":attempt.event_ids.clone(),
+            "last_delivery_reconcile_attempts":0,
+            "last_delivery_at":cccc_contracts::utc_now(),
+            "last_submission_evidence":browser,
+            "last_error":message
+        }),
+    )?;
+    let complete = complete_args(
+        group_id,
+        actor_id,
+        attempt.turn_id,
+        attempt.event_ids,
+        attempt.delivery_id,
+    );
+    let completion = daemon_call(state, "web_model_runtime_complete_turn", complete).await;
+    let completion_status = if completion.is_ok() {
+        "submission_ambiguous"
+    } else {
+        "submission_ambiguous_completion_pending"
+    };
+    let completion_error = completion
+        .as_ref()
+        .err()
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    update_target(
+        state,
+        group_id,
+        actor_id,
+        json!({
+            "last_delivery_status":completion_status,
+            "last_error":if completion_error.is_empty() {message} else {&completion_error}
+        }),
+    )?;
+    if completion.is_ok() {
+        record_connector(
+            state,
+            group_id,
+            actor_id,
+            "ambiguous",
+            attempt.turn_id,
+            message,
+        )?;
+    }
+    tracing::warn!(
+        group_id,
+        actor_id,
+        turn_id = attempt.turn_id,
+        cursor_committed = completion.is_ok(),
+        "Web-model browser submission could not be verified; the attempted message will not be redelivered automatically"
+    );
+    Ok(DeliveryOutcome::Ambiguous)
 }
 
 async fn recover_verified_ambiguous_submission(
@@ -873,6 +1060,31 @@ fn bootstrap_seed_digest(seed: &str) -> String {
     digest[..20].to_owned()
 }
 
+fn completion_pending_patch(
+    turn_id: &str,
+    event_ids: Value,
+    browser: Value,
+    bootstrap_seed: Option<&BootstrapSeed>,
+    target_url: &str,
+) -> Value {
+    let mut patch = json!({
+        "last_delivery_status":"completion_ambiguous",
+        "last_delivery_turn_id":turn_id,
+        "last_delivery_event_ids":event_ids,
+        "last_delivery_reconcile_attempts":0,
+        "last_delivery_at":cccc_contracts::utc_now(),
+        "last_submission_evidence":browser,
+        "last_error":"cursor_completion_pending"
+    });
+    if let Some(seed) = bootstrap_seed {
+        patch["bootstrap_seed_delivered_at"] = json!(cccc_contracts::utc_now());
+        patch["bootstrap_seed_version"] = json!(BOOTSTRAP_SEED_VERSION);
+        patch["bootstrap_seed_digest"] = json!(seed.digest);
+        patch["bootstrap_seed_conversation_url"] = json!(target_url);
+    }
+    patch
+}
+
 fn mark_bootstrap_seed_delivered(
     state: &AppState,
     group_id: &str,
@@ -963,7 +1175,8 @@ mod tests {
 
     use super::{
         BOOTSTRAP_SEED_VERSION, bootstrap_seed_digest, browser_delivery_id, build_browser_prompt,
-        compatibility_image_for_delivery, deferred_retry_delay, replacement_turn_id,
+        compatibility_image_for_delivery, completion_pending_patch, deferred_retry_delay,
+        replacement_turn_id,
     };
 
     #[test]
@@ -1096,6 +1309,42 @@ mod tests {
         )
         .expect("rebound prompt");
         assert!(rebound_seed.is_some());
+    }
+
+    #[test]
+    fn completion_evidence_persists_bootstrap_before_cursor_reconciliation() {
+        let turn = json!({
+            "coalesced_text":"[cccc] message hello",
+            "system_prompt":"[CCCC] You are web1 in group test"
+        });
+        let url = "https://chatgpt.com/c/test";
+        let (_, seed) = build_browser_prompt(
+            &turn,
+            &json!({}),
+            url,
+            "web1",
+            "webdelivery:web1:one",
+            "event-one",
+        )
+        .expect("browser prompt");
+        let seed = seed.expect("bootstrap seed");
+        let patch = completion_pending_patch(
+            "webturn:web1:one",
+            json!(["event-one"]),
+            json!({"submitted":true}),
+            Some(&seed),
+            url,
+        );
+
+        assert_eq!(patch["last_delivery_status"], "completion_ambiguous");
+        assert_eq!(patch["bootstrap_seed_version"], BOOTSTRAP_SEED_VERSION);
+        assert_eq!(patch["bootstrap_seed_digest"], seed.digest);
+        assert_eq!(patch["bootstrap_seed_conversation_url"], url);
+        assert!(
+            patch["bootstrap_seed_delivered_at"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
     }
 
     #[test]

@@ -2074,7 +2074,7 @@
         },
         "save_to_space": {
           "type": "boolean",
-          "default": true
+          "default": false
         },
         "output_path": {
           "type": "string"

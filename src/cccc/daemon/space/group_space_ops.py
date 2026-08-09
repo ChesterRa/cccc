@@ -451,6 +451,21 @@ def _default_artifact_output_path(
     return str(target)
 
 
+def _preflight_artifact_output_destination(*, group: Any, output_path: str) -> None:
+    """Validate the local save destination before creating a remote artifact."""
+    explicit = str(output_path or "").strip()
+    if explicit:
+        parent = Path(explicit).expanduser().parent
+    else:
+        space_root = resolve_space_root_from_group(group, create=True)
+        if space_root is None:
+            raise ValueError("space_root_unavailable (attach scope first or provide output_path)")
+        parent = Path(space_root) / "artifacts"
+    parent.mkdir(parents=True, exist_ok=True)
+    if not parent.is_dir():
+        raise ValueError(f"artifact output parent is not a directory: {parent}")
+
+
 def _require_group(group_id: str):
     gid = str(group_id or "").strip()
     if not gid:
@@ -1881,8 +1896,8 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
     output_path = str(args.get("output_path") or "").strip()
     output_format = str(args.get("output_format") or "").strip().lower()
     artifact_id = str(args.get("artifact_id") or "").strip()
-    save_to_space = _bool_or_default(args.get("save_to_space"), default=True)
-    wait_for_completion = _bool_or_default(args.get("wait"), default=True)
+    save_to_space = _bool_or_default(args.get("save_to_space"), default=False)
+    wait_for_completion = _bool_or_default(args.get("wait"), default=False)
     fresh = _bool_or_default(args.get("fresh"), default=False)
     timeout_seconds = _float_or_default(args.get("timeout_seconds"), default=600.0, lo=10.0, hi=3600.0)
     initial_interval = _float_or_default(args.get("initial_interval"), default=2.0, lo=0.5, hi=60.0)
@@ -1998,6 +2013,9 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
                     "download_result": download_result,
                 },
             )
+
+        if save_to_space:
+            _preflight_artifact_output_destination(group=group, output_path=output_path)
 
         options = options_raw if isinstance(options_raw, dict) else {}
         lane_key = _space_lane_key(

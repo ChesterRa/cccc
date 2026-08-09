@@ -168,7 +168,9 @@ async def enumerate_accounts(
             account (cookies expired or invalid).
         httpx.HTTPError: If the HTTP transport fails.
     """
-    async with httpx.AsyncClient(
+    from .._curl_cffi_transport import resolve_transport_factory
+
+    async with resolve_transport_factory()(
         cookies=cookie_jar,
         follow_redirects=True,
         timeout=httpx.Timeout(10.0, read=60.0),

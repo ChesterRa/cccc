@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from typing import Any
 from urllib.parse import parse_qs
 
@@ -25,10 +26,56 @@ from .upload_payloads import build_template_block
 ListSources = Callable[[str], Awaitable[list[Source]]]
 WaitUntilReady = Callable[..., Awaitable[Source]]
 RawSourceAdder = Callable[[str, str], Awaitable[Any]]
+RenameSource = Callable[[str, str, str], Awaitable[Source | None]]
 ParseUrl = Callable[[str], Any]
 ExtractVideoId = Callable[[Any, str], str | None]
 ValidateVideoId = Callable[[str], bool]
 YoutubeDetector = Callable[[str], bool]
+
+
+async def honor_requested_title(
+    rename: RenameSource,
+    notebook_id: str,
+    source: Source,
+    requested_title: str | None,
+    logger: logging.Logger,
+) -> Source:
+    """Best-effort post-add rename so an explicit ``title`` survives backend
+    re-derivation (#1960).
+
+    YouTube, native Google Drive, and web-page imports re-derive the display
+    title server-side (from the video / Drive / page metadata), silently
+    discarding the ``title`` sent with the add. Live-verified (URL, YouTube, and
+    Drive): the backend derives the title *synchronously* — the added source comes
+    back already carrying the re-derived title — so a follow-up ``rename`` lands
+    after that derivation and sticks. When an explicit ``title`` differs from the
+    one the add returned, issue the rename so the requested title wins.
+
+    Non-fatal by contract: the add already succeeded, so a rename failure keeps
+    the added source (with its upstream title) and logs a warning rather than
+    raising — callers detect the miss by comparing the returned ``source.title``
+    against the title they requested (the MCP tool surfaces this).
+    """
+    if not requested_title:
+        return source
+    requested = requested_title.strip()
+    if not requested or source.title == requested:
+        return source
+    try:
+        renamed = await rename(notebook_id, source.id, requested)
+    except (RPCError, NetworkError):
+        logger.warning(
+            "Source %s added but rename to %r failed; keeping upstream title %r",
+            source.id,
+            requested,
+            source.title,
+            exc_info=True,
+        )
+        return source
+    # UPDATE_SOURCE's echo can be sparse (id + title only), so returning it wholesale
+    # would drop url / kind / status. Keep the fully-hydrated added source and swap in
+    # just the new title — mirrors the file-upload rename (``_source/upload.py``).
+    return replace(source, title=(renamed.title if renamed else None) or requested)
 
 
 class SourceAddService:
@@ -154,6 +201,13 @@ class SourceAddService:
                 source_path=f"/notebook/{notebook_id}",
                 operation_variant="text",
             )
+        except (AuthError, RateLimitError, ServerError, NetworkError):
+            # Preserve transport-level signals so callers can act on the
+            # specific type (AuthError -> re-login, RateLimitError -> back-off
+            # with retry_after, ServerError -> transient retry) instead of
+            # receiving everything collapsed into SourceAddError — the same
+            # ADR-0019 catch ordering add_url and add_drive use.
+            raise
         except RPCError as e:
             raise SourceAddError(
                 title,
@@ -193,6 +247,14 @@ class SourceAddService:
         otherwise duplicate the source on a naive retry. The probe matches
         by ``file_id`` substring against ``source.url`` (Drive URLs embed
         the file_id, e.g. ``https://docs.google.com/document/d/<id>/edit``).
+
+        .. note::
+           The ``title`` is sent on the wire but **ignored** for native Drive
+           imports: NotebookLM re-derives the display title from live Drive
+           metadata, so the returned source keeps the file's Drive name
+           regardless of what you pass here. Call
+           :meth:`~notebooklm._sources.SourcesAPI.rename` after the add if you
+           need a specific title.
         """
         logger.debug("Adding Drive source to notebook %s: %s", notebook_id, title)
         source_data = [
@@ -241,7 +303,15 @@ class SourceAddService:
 
             if result is None:
                 raise SourceAddError(
-                    title, message=f"API returned no data for Drive source: {title}"
+                    title,
+                    message=(
+                        f"API returned no data for Drive source: {title} "
+                        f"(mime_type={mime_type!r}). This Drive file type may not be "
+                        "importable via Drive — NotebookLM's Drive import supports "
+                        "Google-native Docs/Slides/Sheets + PDF only. If it is an "
+                        "upload-only type (e.g. epub/docx/txt/md/rtf/odt/csv), "
+                        "download it and add it as a `file` source instead."
+                    ),
                 )
             return Source.from_api_response(result, method_id=RPCMethod.ADD_SOURCE.value)
 
@@ -334,14 +404,24 @@ class SourceAddService:
         path_prefixes = ("shorts", "embed", "live", "v")
         path_segments = parsed.path.lstrip("/").split("/")
 
-        if len(path_segments) >= 2 and path_segments[0].lower() in path_prefixes:
-            return path_segments[1].strip()
+        # Unpack instead of indexing ``path_segments[0]`` / ``[1]``: these are
+        # URL path segments, not an RPC payload, but the positional-RPC ratchet
+        # is type-blind, so the unpack keeps the benign string parse off the
+        # flagged ``name[int]`` shape (semantics identical to the prior
+        # ``len(...) >= 2`` + index reads).
+        if len(path_segments) >= 2:
+            prefix, segment, *_rest = path_segments
+            if prefix.lower() in path_prefixes:
+                return segment.strip()
 
         if parsed.query:
             query_params = parse_qs(parsed.query)
             v_param = query_params.get("v", [])
-            if v_param and v_param[0]:
-                return v_param[0].strip()
+            # ``next(iter(...))`` instead of ``v_param[0]`` for the same
+            # type-blind-ratchet reason; ``v_param`` is the parse_qs value list.
+            first_v = next(iter(v_param), None)
+            if first_v:
+                return first_v.strip()
 
         return None
 

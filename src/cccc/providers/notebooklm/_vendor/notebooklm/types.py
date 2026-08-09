@@ -15,6 +15,7 @@ from ._types import sources as _source_types
 from ._types.artifacts import (
     Artifact,
     ArtifactType,
+    GenerationState,
     GenerationStatus,
     ReportSuggestion,
 )
@@ -22,22 +23,25 @@ from ._types.chat import (
     AskResult,
     ChatMode,
     ChatReference,
+    ChatSettings,
     ConversationTurn,
 )
 from ._types.common import (
     AccountLimits,
-    AccountTier,
     CitedSourceSelection,
     ClientMetricsSnapshot,
     ConnectionLimits,
     RpcTelemetryEvent,
     UnknownTypeWarning,
+    UserSettings,
 )
+from ._types.labels import Label
 from ._types.mind_maps import MindMap, MindMapKind
 from ._types.notebooks import (
     Notebook,
     NotebookDescription,
     NotebookMetadata,
+    PromptSuggestion,
     SourceSummary,
     SuggestedTopic,
 )
@@ -69,6 +73,8 @@ from .exceptions import (
     ArtifactParseError,
     ArtifactPendingTimeoutError,
     ArtifactTimeoutError,
+    LabelError,
+    LabelNotFoundError,
     SourceAddError,
     SourceError,
     SourceNotFoundError,
@@ -134,6 +140,8 @@ _CITED_SOURCE_SELECTION_TYPE_HINT_GLOBALS = (ResearchSourceInput,)
 
 __all__ = [
     # Dataclasses
+    "AccountLimits",
+    "UserSettings",
     "CitedSourceSelection",
     "ConnectionLimits",
     "ClientMetricsSnapshot",
@@ -146,13 +154,17 @@ __all__ = [
     "SourceFulltext",
     "SourceSummary",
     "Artifact",
+    "GenerationState",
     "GenerationStatus",
     "ReportSuggestion",
     "Note",
+    "Label",
     "ConversationTurn",
     "ChatReference",
     "AskResult",
     "ChatMode",
+    "ChatSettings",
+    "PromptSuggestion",
     "SharedUser",
     "ShareStatus",
     # Research / mind-map / source-guide typed returns
@@ -179,6 +191,8 @@ __all__ = [
     "ArtifactTimeoutError",
     "ArtifactPendingTimeoutError",
     "ArtifactInProgressTimeoutError",
+    "LabelError",
+    "LabelNotFoundError",
     # Warnings
     "UnknownTypeWarning",
     # User-facing type enums (str enums for .kind property)
@@ -215,12 +229,12 @@ __all__ = [
 
 for _public_common_type in (
     AccountLimits,
-    AccountTier,
     CitedSourceSelection,
     ClientMetricsSnapshot,
     ConnectionLimits,
     RpcTelemetryEvent,
     UnknownTypeWarning,
+    UserSettings,
 ):
     _public_common_type.__module__ = __name__
 del _public_common_type
@@ -232,8 +246,11 @@ for _public_moved_type in (
     AskResult,
     ChatMode,
     ChatReference,
+    ChatSettings,
     ConversationTurn,
+    GenerationState,
     GenerationStatus,
+    Label,
     MindMap,
     MindMapKind,
     MindMapResult,
@@ -241,6 +258,7 @@ for _public_moved_type in (
     Notebook,
     NotebookDescription,
     NotebookMetadata,
+    PromptSuggestion,
     ReportSuggestion,
     ResearchSource,
     ResearchStart,

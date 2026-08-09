@@ -20,7 +20,7 @@ import time
 import zlib
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from ..daemon.browser.projected_browser_runtime import (
     _wait_cdp_endpoint,
@@ -59,6 +59,7 @@ CDP_CONNECT_TIMEOUT_MS = 5000
 DEFAULT_BROWSER_DELIVERY_TIMEOUT_SECONDS = 120.0
 CHATGPT_SUBMIT_DEFERRED_MARKER = "chatgpt_submit_deferred:"
 CHATGPT_SUBMIT_DEFERRED_ERROR = f"{CHATGPT_SUBMIT_DEFERRED_MARKER} ChatGPT is responding and no safe Send prompt control is available"
+CHATGPT_BOUND_TARGET_ERROR_MARKER = "chatgpt_bound_conversation_unavailable:"
 _COMPATIBILITY_IMAGE_B64 = (
     "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAKUlEQVR42u3OIQEAAAACIP+f1hkW"
     "WEB6FgEBAQEBAQEBAQEBAQEBgXdgl/rw4tnPBf0AAAAASUVORK5CYII="
@@ -156,10 +157,15 @@ def _normalize_chatgpt_url(value: Any, *, require_conversation: bool = False) ->
     path = str(parsed.path or "/")
     if require_conversation:
         parts = [part for part in path.split("/") if part]
-        has_conversation_id = any(
-            part == "c" and index + 1 < len(parts) for index, part in enumerate(parts)
+        conversation_id = next(
+            (
+                unquote(parts[index + 1]).strip()
+                for index, part in enumerate(parts)
+                if part == "c" and index + 1 < len(parts)
+            ),
+            "",
         )
-        if not has_conversation_id:
+        if not conversation_id or conversation_id.upper().startswith("WEB:"):
             return ""
     netloc = host if not port or port == 443 else f"{host}:{port}"
     return urlunsplit(("https", netloc, path, "", ""))
@@ -169,14 +175,56 @@ def _conversation_url_from_tab(value: Any) -> str:
     return _normalize_chatgpt_url(value, require_conversation=True)
 
 
+def _has_chatgpt_conversation_route(value: Any) -> bool:
+    normalized = _normalize_chatgpt_url(value)
+    if not normalized:
+        return False
+    parts = [part for part in urlsplit(normalized).path.split("/") if part]
+    return any(
+        part == "c" and index + 1 < len(parts)
+        for index, part in enumerate(parts)
+    )
+
+
 def _wait_for_conversation_url(page: Any, *, timeout_seconds: float = 15.0) -> str:
     deadline = time.time() + max(1.0, float(timeout_seconds))
+    candidate = ""
+    consecutive = 0
     while time.time() < deadline:
         url = _conversation_url_from_tab(str(getattr(page, "url", "") or ""))
         if url:
-            return url
+            if url == candidate:
+                consecutive += 1
+            else:
+                candidate = url
+                consecutive = 1
+            if consecutive >= 2:
+                return url
+        else:
+            candidate = ""
+            consecutive = 0
         time.sleep(0.25)
-    return _conversation_url_from_tab(str(getattr(page, "url", "") or ""))
+    return ""
+
+
+def _wait_for_bound_conversation_url(
+    page: Any, target_url: Any, *, timeout_seconds: float = 5.0
+) -> str:
+    expected = _conversation_url_from_tab(target_url)
+    if not expected:
+        return ""
+    deadline = time.time() + max(0.5, float(timeout_seconds))
+    consecutive = 0
+    while time.time() < deadline:
+        observed = _conversation_url_from_tab(str(getattr(page, "url", "") or ""))
+        if observed == expected:
+            consecutive += 1
+            if consecutive >= 2:
+                return observed
+        else:
+            consecutive = 0
+        time.sleep(0.25)
+    return ""
 
 
 def _safe_token(value: str, fallback: str) -> str:
@@ -322,9 +370,13 @@ def _canonical_browser_target(
 def _session_patch_from_canonical_target(target: dict[str, Any]) -> dict[str, Any]:
     kind = str((target or {}).get("kind") or "").strip().lower()
     if kind == "existing_chat":
-        conversation_url = _conversation_url_from_tab(target.get("url"))
+        raw_conversation_url = str(target.get("url") or "").strip()
+        conversation_url = _conversation_url_from_tab(raw_conversation_url)
         selection = {
             "conversation_url": conversation_url,
+            "invalid_conversation_url": raw_conversation_url
+            if raw_conversation_url and not conversation_url
+            else "",
             "pending_new_chat_bind": False,
             "pending_new_chat_url": "",
             "pending_new_chat_bind_started_at": "",
@@ -341,6 +393,7 @@ def _session_patch_from_canonical_target(target: dict[str, Any]) -> dict[str, An
         )
         selection = {
             "conversation_url": "",
+            "invalid_conversation_url": "",
             "pending_new_chat_bind": True,
             "pending_new_chat_url": _normalize_chatgpt_url(target.get("url"))
             or CHATGPT_URL,
@@ -353,6 +406,7 @@ def _session_patch_from_canonical_target(target: dict[str, Any]) -> dict[str, An
     else:
         selection = {
             "conversation_url": "",
+            "invalid_conversation_url": "",
             "pending_new_chat_bind": False,
             "pending_new_chat_url": "",
             "pending_new_chat_bind_started_at": "",
@@ -1582,6 +1636,37 @@ def _raise_submission_unverified(
     )
 
 
+def _classify_deferred_submission(
+    page: Any,
+    selector: str,
+    prompt: str,
+    *,
+    attempted_action: str,
+    deferred_error: str,
+    baseline_url: str,
+) -> dict[str, Any]:
+    if _submission_echo_found(page, prompt):
+        return {
+            "input_selector": selector,
+            "send_selector": attempted_action,
+            "submission_evidence": "message_echo",
+        }
+    observed_url = str(getattr(page, "url", "") or "").strip()
+    if baseline_url and observed_url and observed_url != baseline_url:
+        _raise_submission_unverified(
+            page,
+            selector,
+            attempted_action=attempted_action,
+        )
+    if _prompt_present_in_any_composer(page, prompt, selector):
+        raise _SubmitDeferredState(deferred_error)
+    _raise_submission_unverified(
+        page,
+        selector,
+        attempted_action=attempted_action,
+    )
+
+
 def _wait_after_submit_action(
     page: Any,
     selector: str,
@@ -1828,6 +1913,7 @@ def _submit_prompt(
     )
     submit_deadline = time.time() + submit_budget
     attachment_evidence: dict[str, Any] = {}
+    baseline_url = str(getattr(page, "url", "") or "").strip()
 
     def _with_attachment(result: dict[str, Any]) -> dict[str, Any]:
         if not attachment_evidence:
@@ -1890,12 +1976,26 @@ def _submit_prompt(
             raise RuntimeError(
                 "ChatGPT compatibility image attachment timed out before it started"
             )
-        attachment_evidence = _attach_compatibility_image(
-            page,
-            Path(attachment_path),
-            delivery_id=delivery_id,
-            timeout_seconds=attachment_timeout,
-        )
+        try:
+            attachment_evidence = _attach_compatibility_image(
+                page,
+                Path(attachment_path),
+                delivery_id=delivery_id,
+                timeout_seconds=attachment_timeout,
+            )
+        except Exception as exc:
+            if CHATGPT_SUBMIT_DEFERRED_MARKER not in str(exc).lower():
+                raise
+            return _with_attachment(
+                _classify_deferred_submission(
+                    page,
+                    selector,
+                    prompt,
+                    attempted_action="attachment:file_input_dispatch",
+                    deferred_error=str(exc),
+                    baseline_url=baseline_url,
+                )
+            )
     settle_seconds = min(
         0.5,
         max(
@@ -1916,8 +2016,17 @@ def _submit_prompt(
             send_selector = _click_send(
                 page, input_selector=selector, timeout_seconds=max(0.5, click_timeout)
             )
-    except _SubmitDeferredState:
-        raise
+    except _SubmitDeferredState as exc:
+        return _with_attachment(
+            _classify_deferred_submission(
+                page,
+                selector,
+                prompt,
+                attempted_action="send_control:deferred",
+                deferred_error=str(exc),
+                baseline_url=baseline_url,
+            )
+        )
     except _UnsafeSubmitState:
         raise
     except Exception:
@@ -1928,7 +2037,16 @@ def _submit_prompt(
             return _with_attachment(result)
         _raise_submission_unverified(page, selector, attempted_action=send_selector)
     if _chatgpt_running_visible(page):
-        raise _SubmitDeferredState(CHATGPT_SUBMIT_DEFERRED_ERROR)
+        return _with_attachment(
+            _classify_deferred_submission(
+                page,
+                selector,
+                prompt,
+                attempted_action="send_control:running",
+                deferred_error=CHATGPT_SUBMIT_DEFERRED_ERROR,
+                baseline_url=baseline_url,
+            )
+        )
     request_submit = _request_submit_composer(page)
     if request_submit:
         result = _wait_after_action(request_submit)
@@ -1936,7 +2054,16 @@ def _submit_prompt(
             return _with_attachment(result)
         _raise_submission_unverified(page, selector, attempted_action=request_submit)
     if _chatgpt_running_visible(page):
-        raise _SubmitDeferredState(CHATGPT_SUBMIT_DEFERRED_ERROR)
+        return _with_attachment(
+            _classify_deferred_submission(
+                page,
+                selector,
+                prompt,
+                attempted_action="form.requestSubmit:running",
+                deferred_error=CHATGPT_SUBMIT_DEFERRED_ERROR,
+                baseline_url=baseline_url,
+            )
+        )
     page.keyboard.press("Enter")
     result = _wait_after_action("keyboard:Enter")
     if result is not None:
@@ -2052,6 +2179,9 @@ def _stale_submitting_delivery(session: dict[str, Any]) -> bool:
 
 def _chatgpt_delivery_target_snapshot(session: dict[str, Any]) -> dict[str, Any]:
     conversation_url = _conversation_url_from_tab(session.get("conversation_url"))
+    invalid_conversation_url = str(
+        session.get("invalid_conversation_url") or ""
+    ).strip()
     pending_new_chat = bool(session.get("pending_new_chat_bind"))
     pending_submitted = bool(session.get("pending_new_chat_submitted"))
     pending_url = (
@@ -2117,6 +2247,19 @@ def _chatgpt_delivery_target_snapshot(session: dict[str, Any]) -> dict[str, Any]
             session.get("bootstrap_seed_conversation_url") or ""
         ).strip(),
     }
+    if invalid_conversation_url:
+        return {
+            "state": "invalid_existing_chat",
+            "kind": "none",
+            "url": invalid_conversation_url,
+            "saved_at": saved_at,
+            "next_delivery": "blocked",
+            "label": "Rebind ChatGPT chat",
+            "detail": "The saved ChatGPT URL is provisional or invalid and cannot receive deliveries.",
+            "submitted_at": "",
+            "delivery_id": "",
+            **delivery_state,
+        }
     if conversation_url:
         return {
             "state": "bound_existing_chat",
@@ -2231,10 +2374,33 @@ def build_chatgpt_web_model_health_snapshot(
         browser_reason = "Open ChatGPT to sign in or inspect the page."
 
     delivery_target = _chatgpt_delivery_target_snapshot(session)
-    conversation_url = str(session.get("conversation_url") or "").strip()
+    conversation_url = _conversation_url_from_tab(session.get("conversation_url"))
+    invalid_conversation_url = str(
+        session.get("invalid_conversation_url") or ""
+    ).strip()
+    observed_conversation_url = _conversation_url_from_tab(url)
+    target_mismatch = bool(
+        active
+        and conversation_url
+        and observed_conversation_url != conversation_url
+    )
     pending_new_chat = bool(session.get("pending_new_chat_bind"))
     pending_new_chat_url = str(session.get("pending_new_chat_url") or "").strip()
-    if conversation_url:
+    if invalid_conversation_url:
+        target_state = "invalid"
+        target_label = "Rebind ChatGPT chat"
+        target_reason = (
+            "The saved ChatGPT URL is provisional or invalid and cannot receive deliveries."
+        )
+        target_url = invalid_conversation_url
+    elif target_mismatch:
+        target_state = "unavailable"
+        target_label = "Saved chat unavailable"
+        target_reason = (
+            "The live ChatGPT page does not match the saved conversation; delivery is blocked until it is reopened or rebound."
+        )
+        target_url = conversation_url
+    elif conversation_url:
         target_state = "bound"
         target_label = str(delivery_target.get("label") or "Bound chat")
         target_reason = str(
@@ -2340,7 +2506,7 @@ def build_chatgpt_web_model_health_snapshot(
         next_action = _health_next_action(
             "none", "Submitting to ChatGPT", delivery_reason
         )
-    elif target_state == "missing":
+    elif target_state in {"missing", "invalid", "unavailable"}:
         next_action = _health_next_action(
             "bind_chat", "Choose a target ChatGPT chat", target_reason
         )
@@ -2453,6 +2619,9 @@ def _session_payload(
         else [],
         "last_tab_url": str(state.get("last_tab_url") or ""),
         "conversation_url": str(state.get("conversation_url") or ""),
+        "invalid_conversation_url": str(
+            state.get("invalid_conversation_url") or ""
+        ),
         "pending_new_chat_bind": bool(state.get("pending_new_chat_bind")),
         "pending_new_chat_url": str(state.get("pending_new_chat_url") or ""),
         "pending_new_chat_bind_started_at": str(

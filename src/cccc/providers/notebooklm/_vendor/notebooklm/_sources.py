@@ -11,16 +11,17 @@ from urllib.parse import urlparse
 
 import httpx
 
-from ._deprecation import future_errors_enabled
-from ._lookup import resolve_get
+from ._lookup import unwrap_or_raise
+from ._row_adapters.sources import interpret_source_freshness
 from ._runtime.config import DEFAULT_MAX_CONCURRENT_UPLOADS
 from ._runtime.contracts import RpcCaller
 from ._settings import build_get_user_settings_params, extract_account_limits
 from ._source import upload as _source_upload
-from ._source.add import SourceAddService
+from ._source.add import SourceAddService, honor_requested_title
 from ._source.content import SourceContentRenderer
+from ._source.drive_import import DriveFetcher, DriveImportService
 from ._source.listing import SourceLister
-from ._source.polling import SourcePoller
+from ._source.polling import SourcePoller, SourceWaitResult
 from ._source.upload import SourceUploadPipeline
 from ._source.upload_payloads import build_rename_source_params
 from ._types.research import SourceGuide
@@ -89,11 +90,10 @@ class SourcesAPI:
                 :meth:`add_file` uploads. The semaphore is owned by this
                 Sources upload pipeline, not by the shared core/session.
         """
-        # ``upload_timeout`` and ``max_concurrent_uploads`` are accepted for
-        # API stability — the actual upload pipeline that honors them is
-        # constructed by the :class:`NotebookLMClient` composition root and
-        # injected via ``uploader=``. They are stored here only as historical
-        # attributes for callers that introspect the instance.
+        # ``upload_timeout`` / ``max_concurrent_uploads`` are accepted for API
+        # stability but honored by the injected ``uploader=`` pipeline (built by
+        # the :class:`NotebookLMClient` composition root); stored here only as
+        # historical attributes for callers that introspect the instance.
         self._rpc = rpc
         self._adder = SourceAddService()
         self._content = SourceContentRenderer(self._rpc, logger=logger)
@@ -103,10 +103,10 @@ class SourcesAPI:
         self._max_concurrent_uploads = max_concurrent_uploads
         self._uploader = uploader
         self._uploader.configure_source_limit_lookup(self._get_source_limit)
-        # Single owner for the source-lifecycle verbs: the upload pipeline
-        # delegates its ``list_sources`` / ``get_source`` / ``wait_*`` verbs
-        # to the SAME ``SourceLister`` / ``SourcePoller`` instances this API
-        # uses, rather than re-constructing parallel copies (issue #1205).
+        # Single owner for the source-lifecycle verbs: the upload pipeline reuses
+        # the SAME ``SourceLister`` / ``SourcePoller`` instances this API uses for
+        # its ``list_sources`` / ``get_source`` / ``wait_*`` verbs rather than
+        # re-constructing parallel copies (issue #1205).
         self._uploader.configure_source_lifecycle(
             lister=self._lister,
             poller=self._poller,
@@ -139,16 +139,15 @@ class SourcesAPI:
 
         Args:
             notebook_id: The notebook ID.
-            strict: Raise RPCError on malformed source-list responses instead
-                of returning an empty list. Intended for internal flows where
-                a malformed snapshot must not be treated as an empty notebook.
+            strict: Retained for call-site clarity; malformed source-list
+                responses always raise ``RPCError``. Empty notebooks return ``[]``.
 
         Returns:
             List of Source objects.
         """
         return await self._lister.list(notebook_id, strict=strict)
 
-    async def get(self, notebook_id: str, source_id: str) -> Source | None:
+    async def get(self, notebook_id: str, source_id: str) -> Source:
         """Get details of a specific source.
 
         Args:
@@ -156,32 +155,27 @@ class SourcesAPI:
             source_id: The source ID.
 
         Returns:
-            Source object with current status, or None if not found.
+            The :class:`~notebooklm.types.Source` with its current status.
 
-        .. deprecated:: 0.7.0
-            Returning ``None`` for a missing source is deprecated and emits a
-            :class:`DeprecationWarning`. In **v0.8.0** this method will raise
-            :class:`~notebooklm.exceptions.SourceNotFoundError` instead, to match
-            ``notebooks.get`` (issue #1247); wrap in ``try/except
-            SourceNotFoundError`` to keep handling missing sources. Suppress with
-            ``NOTEBOOKLM_QUIET_DEPRECATIONS``, or set ``NOTEBOOKLM_FUTURE_ERRORS=1``
-            to preview the v0.8.0 raise now.
+        Raises:
+            SourceNotFoundError: If no source with ``source_id`` exists (matches
+                ``notebooks.get``; issue #1247). Use :meth:`get_or_none` for the
+                sanctioned ``None``-on-miss lookup.
         """
-        # ``resolve_get`` single-sources the warn-vs-raise decision (#1247);
+        # ``unwrap_or_raise`` single-sources the raise-on-miss decision (#1247);
         # internal callers needing the silent lookup use ``get_or_none``.
-        return resolve_get(
+        return unwrap_or_raise(
             await self.get_or_none(notebook_id, source_id),
-            not_found=SourceNotFoundError(source_id),
-            resource="source",
+            SourceNotFoundError(source_id),
         )
 
     async def get_or_none(self, notebook_id: str, source_id: str) -> Source | None:
         """Get a source by ID, returning ``None`` when it does not exist.
 
         The sanctioned ``None``-on-miss lookup (ADR-0019): unlike :meth:`get`
-        — which is slated to raise :class:`~notebooklm.exceptions.SourceNotFoundError`
-        on a miss in v0.8.0 (issue #1247) — this returns ``None`` for a genuine
-        absence and emits no deprecation warning. Transport, auth, and decode
+        — which now raises :class:`~notebooklm.exceptions.SourceNotFoundError`
+        on a miss (#1247) — this returns ``None`` for a genuine absence and
+        emits no deprecation warning. Transport, auth, and decode
         faults are **not** swallowed; only a real "not found" yields ``None``.
 
         Args:
@@ -197,9 +191,7 @@ class SourcesAPI:
             list_sources=self.list,
         )
 
-    # Internal optional-lookup alias: the readiness pollers and CLI service
-    # layer probe for a source without tripping the public ``get`` deprecation
-    # warning. Kept as a stable private name so those call sites need no churn.
+    # Internal silent lookup for pollers/service code avoiding public ``get()`` misses.
     _get_or_none = get_or_none
 
     async def wait_until_ready(
@@ -214,8 +206,10 @@ class SourcesAPI:
     ) -> Source:
         """Wait for a source to become ready.
 
-        Polls the source status until it becomes READY or ERROR, or timeout.
-        Uses exponential backoff to reduce API load.
+        Polls until READY, terminal ERROR, or timeout. Configured transient
+        source types (audio/media and unclassified by default) keep polling
+        through status=ERROR because NotebookLM can report it briefly during
+        transcription/classification.
 
         Args:
             notebook_id: The notebook ID.
@@ -224,6 +218,8 @@ class SourcesAPI:
             initial_interval: Initial polling interval in seconds (default: 1).
             max_interval: Maximum polling interval in seconds (default: 10).
             backoff_factor: Multiplier for polling interval (default: 1.5).
+            transient_error_types: Source type codes whose status=ERROR is
+                transient; ``None`` uses the default media/unclassified policy.
 
         Returns:
             The ready Source object.
@@ -249,7 +245,38 @@ class SourcesAPI:
             max_interval=max_interval,
             backoff_factor=backoff_factor,
             transient_error_types=transient_error_types,
-            get_source=self._get_or_none,
+            get_source=self.get_or_none,
+            sleep=asyncio.sleep,
+            monotonic=monotonic,
+            logger=logger,
+        )
+
+    async def wait_all_until_ready(
+        self,
+        notebook_id: str,
+        source_ids: builtins.list[str],
+        timeout: float = 120.0,
+        initial_interval: float = 1.0,
+        max_interval: float = 10.0,
+        backoff_factor: float = 1.5,
+        transient_error_types: tuple[int | None, ...] | None = None,
+    ) -> builtins.list[SourceWaitResult]:
+        """Wait for many sources with ONE notebook snapshot per poll tick.
+
+        Returns one result per id, in input order; terminal per-source failures
+        (:class:`SourceNotFoundError` / :class:`SourceProcessingError` /
+        :class:`SourceTimeoutError`) are RETURNED, not raised. See
+        :meth:`SourcePoller.wait_all_until_ready`.
+        """
+        return await self._poller.wait_all_until_ready(
+            notebook_id,
+            source_ids,
+            timeout=timeout,
+            initial_interval=initial_interval,
+            max_interval=max_interval,
+            backoff_factor=backoff_factor,
+            transient_error_types=transient_error_types,
+            list_sources=self.list,
             sleep=asyncio.sleep,
             monotonic=monotonic,
             logger=logger,
@@ -302,7 +329,7 @@ class SourcesAPI:
             max_interval=max_interval,
             backoff_factor=backoff_factor,
             transient_error_types=transient_error_types,
-            get_source=self._get_or_none,
+            get_source=self.get_or_none,
             sleep=asyncio.sleep,
             monotonic=monotonic,
             logger=logger,
@@ -356,6 +383,7 @@ class SourcesAPI:
         *,
         wait: bool = False,
         wait_timeout: float = 120.0,
+        title: str | None = None,
     ) -> Source:
         """Add a URL source to a notebook.
 
@@ -366,20 +394,17 @@ class SourcesAPI:
             url: The URL to add.
             wait: If True, wait for source to be ready before returning.
             wait_timeout: Maximum seconds to wait if wait=True (default: 120).
+            title: Optional display title. YouTube/web-page imports re-derive it
+                server-side; a supplied one is honored via best-effort :meth:`rename`
+                (non-fatal; #1960).
 
         Returns:
             The created Source object. If wait=False, status may be PROCESSING.
 
         Example:
-            # Add and wait for processing
             source = await client.sources.add_url(nb_id, url, wait=True)
-
-            # Or add without waiting (for batch operations)
-            source = await client.sources.add_url(nb_id, url)
-            # ... add more sources ...
-            await client.sources.wait_for_sources(nb_id, [s.id for s in sources])
         """
-        return await self._adder.add_url(
+        source = await self._adder.add_url(
             notebook_id,
             url,
             wait=wait,
@@ -392,6 +417,7 @@ class SourcesAPI:
             is_youtube_url=is_youtube_url,
             logger=logger,
         )
+        return await honor_requested_title(self.rename, notebook_id, source, title, logger)
 
     async def add_text(
         self,
@@ -457,83 +483,40 @@ class SourcesAPI:
         title: str | None = None,
         on_progress: Callable[[int, int], object] | None = None,
     ) -> Source:
-        """Add a file source to a notebook using resumable upload.
+        """Add a file source to a notebook using Google's resumable upload.
 
-        Uses Google's resumable upload protocol:
-        1. Register source intent with RPC → get SOURCE_ID
-        2. Start upload session with SOURCE_ID (get upload URL)
-        3. Stream upload file content (memory-efficient for large files)
-        4. Optionally rename the source if a custom ``title`` was supplied
-           (the file-add RPC has no title slot, so a follow-up
-           ``UPDATE_SOURCE`` is the only way to set one).
-
-        Concurrency / FD lifecycle:
-            ``add_file`` enters a drain-tracked ``operation_scope("upload:0")``
-            before waiting on the Sources-owned semaphore, so graceful
-            shutdown tracks both active and semaphore-queued uploads.
-            The upload section runs under the Sources-owned upload
-            pipeline semaphore, which bounds simultaneous in-flight
-            uploads at ``max_concurrent_uploads`` (default 4).
-            Each in-flight upload holds **one open file descriptor** for
-            the duration of the upload, so the cap doubles as an
-            FD-exhaustion guard. The file is opened ONCE during validation
-            and the resulting FD is held across the size-check, RPC
-            registration, upload-session start, and streamed body POST —
-            closing the TOCTOU window where the path could have been
-            replaced between two separate ``open()`` calls. A
-            ``try``/``with`` guarantees the FD is released on every exit
-            path, including ``CancelledError``.
+        Registers the source, opens an upload session, streams the file body
+        (memory-efficient for large files), and — if a custom ``title`` is given —
+        issues a follow-up ``UPDATE_SOURCE`` rename (the file-add RPC has no title
+        slot). Uploads run under the Sources-owned semaphore
+        (``max_concurrent_uploads``, default 4), which also caps open file
+        descriptors; the path is resolved before admission and opened exactly once
+        (a single open pins the bytes, so a later path swap cannot alter the upload).
 
         Args:
             notebook_id: The notebook ID.
             file_path: Path to the file to upload.
-            mime_type: Optional content type for the upload start handshake.
-                When omitted, the MIME type is inferred from the filename
-                extension. Supplying a value overrides inference.
-            title: Optional display title. When provided and different from the
-                source filename, a rename is issued after upload so the source
-                appears with this title in the UI and API responses. Leading and
-                trailing whitespace is stripped; empty titles are rejected. If
-                the post-upload rename fails, the upload is preserved, a warning
-                is logged, and the returned source keeps the filename title.
-
-                Important: supplying a non-default title forces a brief
-                registration wait (~seconds) for the source to become visible
-                server-side *before* the rename is issued, even when
-                ``wait=False``. The UPDATE_SOURCE RPC silently no-ops against
-                an unregistered source, so blocking here is the only way to
-                honor the caller's intent. This narrow wait completes once
-                the source's status is non-ERROR (or transient-ERROR for
-                audio); it does NOT wait for full processing. See #388.
-            wait: If True, wait for source to be fully ready before returning.
-                Note that supplying ``title`` also forces a narrow pre-rename
-                registration wait regardless of this flag — see the ``title``
-                parameter above.
-            wait_timeout: Maximum seconds to wait if ``wait=True``. Also bounds
-                the narrow registration wait triggered by a custom ``title``;
-                that wait returns on the first PROCESSING/READY poll so it
-                completes in seconds for typical sources regardless of this
-                value. Default: 120.
-            on_progress: Optional sync or async callback invoked as
-                ``on_progress(bytes_sent, total_bytes)`` during the streaming
-                upload body. Callback exceptions propagate and abort the
-                upload, matching normal application callback semantics.
+            mime_type: Content type for the upload handshake; inferred from the
+                filename extension when omitted.
+            title: Optional display title. When set and different from the
+                filename, a rename is issued after upload (whitespace stripped;
+                empty rejected). A non-default title forces a brief registration
+                wait before the rename even when ``wait=False`` — UPDATE_SOURCE
+                no-ops against an unregistered source (#388); a failed rename is
+                logged and the filename title is kept.
+            wait: If True, wait for the source to be fully ready before returning.
+            wait_timeout: Max seconds to wait if ``wait=True`` (also bounds the
+                narrow registration wait above). Default: 120.
+            on_progress: Optional sync/async ``on_progress(bytes_sent, total)``
+                callback during the upload body; its exceptions abort the upload.
 
         Returns:
             The created Source object. If wait=False, status may be PROCESSING.
 
-        Supported file types:
-            - PDF: application/pdf
-            - Text: text/plain
-            - Markdown: text/markdown
-            - EPUB: application/epub+zip
-            - Word: application/vnd.openxmlformats-officedocument.wordprocessingml.document
-
         Raises:
             ValidationError: If the path is not a regular file, the title is
-                empty, or the upload is an HTML-family file that NotebookLM's
-                upload endpoint rejects. Convert saved web pages to text,
-                Markdown, or PDF before calling this method.
+                empty, or the file is an HTML-family type the upload endpoint
+                rejects (convert to text/Markdown/PDF first).
         """
         return await self._uploader.add_file(
             notebook_id,
@@ -560,7 +543,9 @@ class SourcesAPI:
         Args:
             notebook_id: The notebook ID.
             file_id: The Google Drive file ID.
-            title: Display title for the source.
+            title: Display title. Native Drive imports re-derive the title from
+                live Drive metadata server-side, so a supplied ``title`` is honored
+                via a best-effort follow-up :meth:`rename` (non-fatal; #1960).
             mime_type: MIME type of the Drive document. Common values:
                 - application/vnd.google-apps.document (Google Docs)
                 - application/vnd.google-apps.presentation (Slides)
@@ -576,14 +561,10 @@ class SourcesAPI:
             from notebooklm.types import DriveMimeType
 
             source = await client.sources.add_drive(
-                notebook_id,
-                file_id="1abc123xyz",
-                title="My Document",
-                mime_type=DriveMimeType.GOOGLE_DOC.value,
-                wait=True,  # Wait for processing
-            )
+                notebook_id, file_id="1abc123xyz", title="My Document",
+                mime_type=DriveMimeType.GOOGLE_DOC.value, wait=True)
         """
-        return await self._adder.add_drive(
+        source = await self._adder.add_drive(
             notebook_id,
             file_id,
             title,
@@ -595,6 +576,54 @@ class SourcesAPI:
             wait_until_ready=self.wait_until_ready,
             logger=logger,
         )
+        return await honor_requested_title(self.rename, notebook_id, source, title, logger)
+
+    async def add_drive_file(
+        self,
+        notebook_id: str,
+        document_id: str,
+        *,
+        title: str | None = None,
+        wait: bool = False,
+        wait_timeout: float = 120.0,
+    ) -> Source:
+        """Auto-route an upload-only Google Drive file: download it, then upload (#1884).
+
+        Covers the upload-only Drive file types (epub/docx/txt/md/rtf/odt/csv/tsv/pdf);
+        a Drive PDF can also go by reference via :meth:`add_drive`. Fetches the file
+        SERVER-SIDE using the same live ``.google.com`` cookie jar the upload leg
+        uses (so it works in stdio AND remote MCP mode with no ``upload_required``
+        detour), then streams it through :meth:`add_file`. Native Docs/Slides/
+        Sheets are out of scope (not downloadable) — they raise a
+        :class:`~notebooklm.exceptions.ValidationError` pointing at :meth:`add_drive`.
+
+        Args:
+            notebook_id: The notebook ID.
+            document_id: A raw Drive file id or a Drive share URL (``/d/<id>``,
+                ``/file/d/<id>/…``, or ``?id=<id>``).
+            title: Optional display title; defaults to the file's Drive name.
+            wait: If True, wait for the source to be ready before returning.
+            wait_timeout: Maximum seconds to wait if ``wait=True`` (default: 120).
+
+        Raises:
+            ValidationError: unparseable id/URL, an upload-unsupported type
+                (HTML/other), or a native (non-downloadable) Google Doc/Slides/Sheet.
+        """
+        service = DriveImportService(
+            fetch=DriveFetcher(
+                cookies_provider=self._uploader.live_cookies,
+                authuser=self._uploader.authuser_value(),
+            ),
+            add_file=self.add_file,
+        )
+        # Gate the whole download→upload op on a DEDICATED download semaphore (not
+        # the upload one — ``add_file`` needs that, so reusing it would deadlock) so
+        # concurrent remote-MCP calls can't each buffer a 200 MiB temp and exhaust
+        # disk; at most ``max_concurrent_uploads`` temps exist at once.
+        async with self._uploader.get_download_semaphore():
+            return await service.add_drive_file(
+                notebook_id, document_id, title=title, wait=wait, wait_timeout=wait_timeout
+            )
 
     async def delete(self, notebook_id: str, source_id: str) -> None:
         """Delete a source from a notebook.
@@ -638,23 +667,25 @@ class SourcesAPI:
             return_object: When ``True`` (default), return the renamed
                 :class:`~notebooklm.types.Source` (preferring the
                 ``UPDATE_SOURCE`` echo, fetching only on a null echo). When
-                ``False``, return ``None`` without hydrating. Under the v0.8.0
-                preview ``False`` still returns ``None`` but adds miss-detection
-                (the flag gates detection, not return — see ``Raises``).
+                ``False``, return ``None`` without hydrating. Miss-detection
+                runs in both modes (``False`` returns ``None`` but raises a miss).
 
         Returns:
             The renamed :class:`~notebooklm.types.Source`, or ``None`` when
             ``return_object=False``.
 
         Raises:
-            SourceNotFoundError: if the source does not exist (detected via a
-                content/list fetch, not a 404). Always when ``return_object=True``;
-                also on ``False`` under ``NOTEBOOKLM_FUTURE_ERRORS``.
+            SourceNotFoundError: if the source does not exist (a content/list
+                fetch, not a 404, detects it), in both ``return_object`` modes.
 
         .. versionchanged:: 0.7.0
             **Breaking change:** no longer fabricates an unverified
             ``Source(id, title)`` on a null echo; it hydrates and raises
             :class:`SourceNotFoundError` (#1255), plus ``return_object``.
+
+        .. versionchanged:: 0.8.0
+            **Breaking change:** ``return_object=False`` now runs the existence
+            preflight on a null echo too, raising on a miss (#1362).
         """
         logger.debug("Renaming source %s to: %s", source_id, new_title)
         params = build_rename_source_params(source_id, new_title)
@@ -667,16 +698,15 @@ class SourcesAPI:
         if result and return_object:
             return Source.from_api_response(result, method_id=RPCMethod.UPDATE_SOURCE.value)
         # Null echo: hydrate via the internal lookup (never public ``get()`` —
-        # #1247) so a miss raises. ``False`` skips it when existence is proven
-        # (echo) or flag-off; the v0.8.0 preview (#1362) runs it to detect a miss.
-        if not return_object and (result or not future_errors_enabled()):
+        # #1247) so a miss raises; v0.8.0 (#1362) runs it to detect a miss.
+        if not return_object and result:
             return None
         source = await self._get_or_none(notebook_id, source_id)
         if source is None:
             raise SourceNotFoundError(source_id, method_id=RPCMethod.UPDATE_SOURCE.value)
         return None if not return_object else source
 
-    async def refresh(self, notebook_id: str, source_id: str) -> bool:
+    async def refresh(self, notebook_id: str, source_id: str) -> None:
         """Refresh a source to get updated content (for URL/Drive sources).
 
         Args:
@@ -684,9 +714,11 @@ class SourcesAPI:
             source_id: The source ID to refresh.
 
         Returns:
-            ``True`` if refresh was initiated (failures raise first, so it is
-            uninformative). Under ``NOTEBOOKLM_FUTURE_ERRORS`` (#1290) returns
-            ``None``; ``-> bool`` stays until v0.8.0.
+            ``None`` on success; any failure raises first.
+
+        .. versionchanged:: 0.8.0
+            **Breaking change:** returns ``None`` (not always-``True``); the
+            ``-> bool`` annotation is dropped (#1290).
         """
         params = [None, [source_id], [2]]
         await self._rpc.rpc_call(
@@ -695,10 +727,7 @@ class SourcesAPI:
             source_path=f"/notebook/{notebook_id}",
             allow_null=True,
         )
-        # v0.8.0 preview (#1290): uninformative ``True`` -> ``None`` (runtime-only).
-        if future_errors_enabled():
-            return None  # type: ignore[return-value]
-        return True
+        return None
 
     async def check_freshness(self, notebook_id: str, source_id: str) -> bool:
         """Check if a source needs to be refreshed.
@@ -709,6 +738,11 @@ class SourcesAPI:
 
         Returns:
             True if source is fresh, False if it needs refresh.
+
+        Raises:
+            DecodingError: If the freshness payload has a structurally
+                unrecognized shape (schema drift) — so callers can tell a miss
+                from drift instead of a silent "stale" (#1344).
         """
         params = [None, [source_id], [2]]
         result = await self._rpc.rpc_call(
@@ -717,21 +751,7 @@ class SourcesAPI:
             source_path=f"/notebook/{notebook_id}",
             allow_null=True,
         )
-        # Shapes by source type: ``[]`` or ``[[null, true, [id]]]`` = fresh
-        # (URL / Drive); bare ``True`` = fresh; bare ``False`` = stale.
-        if result is True:
-            return True
-        if result is False:
-            return False
-        if isinstance(result, list):
-            # Empty array means fresh
-            if len(result) == 0:
-                return True
-            # Check for nested structure [[null, true, ...]] from Drive sources
-            first = result[0]
-            if isinstance(first, list) and len(first) > 1 and first[1] is True:
-                return True
-        return False
+        return interpret_source_freshness(result)
 
     async def get_guide(self, notebook_id: str, source_id: str) -> SourceGuide:
         """Get AI-generated summary and keywords for a specific source.
@@ -746,12 +766,9 @@ class SourcesAPI:
         Returns:
             A :class:`~notebooklm._types.research.SourceGuide` with:
                 - ``summary``: AI-generated summary with **bold** keywords (markdown)
-                - ``keywords``: tuple of topic keyword strings (``guide["keywords"]``
-                  still yields a ``list`` for back-compat)
+                - ``keywords``: tuple of topic keyword strings
 
-            Use attribute access (``guide.summary``). Legacy
-            ``guide["summary"]`` dict-subscript access still works (with a
-            ``DeprecationWarning``) until v0.8.0.
+            Use attribute access (``guide.summary``, ``guide.keywords``).
         """
         return await self._content.get_guide(notebook_id, source_id)
 
@@ -780,8 +797,9 @@ class SourcesAPI:
             SourceNotFoundError: If the source is not found or returns no data.
 
         Note:
-            Source type codes: 1=google_docs, 2=google_other, 3=pdf, 4=pasted_text,
-            5=web_page, 8=generated_text, 9=youtube
+            Source type codes include: 1=google_docs, 2=google_slides, 3=pdf,
+            4=pasted_text, 5=web_page, 8=markdown, 9=youtube, 10=media,
+            11=docx, 13=image, 14=google_spreadsheet, 16=csv, 17=epub.
 
             The ``"markdown"`` format works by requesting the HTML rendition
             from the API (params ``[3],[3]`` instead of ``[2],[2]``) and
@@ -793,9 +811,7 @@ class SourcesAPI:
             output_format=output_format,
         )
 
-    # =========================================================================
-    # Private helper methods
-    # =========================================================================
+    # --- Private helper methods ---
 
     def _extract_all_text(self, data: builtins.list, max_depth: int = 100) -> builtins.list[str]:
         """Recursively extract all text strings from nested arrays.
@@ -870,11 +886,10 @@ class SourcesAPI:
         client sees a 5xx / network error. The probe-then-retry loop
         in ``add_url`` owns recovery via ``idempotent_create``.
         """
-        # allow_null=False mirrors _register_file_source — ADD_SOURCE on
-        # success returns the new source row. A null result with a status
-        # code at wrb.fr[5] is the #407 / #474 mode; allow_null=True would
-        # swallow that diagnostic. The decoder now raises RPCError with the
-        # status code so add_url can wrap it into SourceAddError with detail.
+        # allow_null=False (mirrors _register_file_source): ADD_SOURCE returns the
+        # new source row on success. A null result with a status code at wrb.fr[5]
+        # is the #407 / #474 mode; allow_null=True would swallow that diagnostic,
+        # so the decoder raises RPCError with the code for add_url to wrap.
         return await self._adder.add_youtube_source(
             notebook_id,
             url,
@@ -937,60 +952,22 @@ class SourcesAPI:
     ) -> None:
         """Stream upload file content to the resumable upload URL.
 
-        Uses streaming to avoid loading the entire file into memory,
-        which is important for large PDFs and documents.
-
-        File-descriptor contract:
-          When called from ``add_file`` (the production path), ``file_obj``
-          is an already-open ``IO[bytes]`` and this helper TAKES OWNERSHIP
-          of the FD lifecycle: a done-callback on the shielded finalize
-          task closes the FD when streaming completes — success, error,
-          OR after the post-finalize background-drain branch from the
-          cancellation contract below. Ownership transfer is required
-          because the shielded background task may outlive the caller's
-          ``add_file`` invocation under post-finalize cancel; if the
-          caller closed the FD on cancel, the still-running background
-          POST would read from a closed FD and abort, breaking the
-          dangling-session guarantee.
-
-          A legacy ``Path`` argument is still accepted; the helper opens
-          + closes the FD itself in that branch. ``add_file`` never
-          takes that path — the Path branch exists only for the
-          existing direct-call unit tests in
-          ``tests/unit/test_sources_upload.py``.
-
-        Cancellation contract:
-          - The finalize POST is wrapped in ``asyncio.shield``. If a
-            ``CancelledError`` arrives while the finalize POST is in
-            flight, the inner Task keeps running so the server-side
-            session reaches a known terminal state instead of dangling.
-            The cancel is then re-raised to the caller.
-          - If the cancel arrives BEFORE the finalize POST is dispatched
-            (e.g. while the local ``httpx.AsyncClient`` is being
-            constructed), a best-effort ``X-Goog-Upload-Command: cancel``
-            POST is fired against the same resumable upload URL via
-            ``asyncio.create_task``. The cleanup task is not awaited —
-            re-raising must not block on best-effort cleanup. The cleanup
-            runs on a detached task with no outer await chain, so a
-            caller-level cancel cannot reach it; no explicit shield is
-            needed at that layer (see ``_cancel_upload_session`` docstring).
+        Thin delegator to :meth:`SourceUploadPipeline.upload_file_streaming`,
+        which owns and documents the full contract: memory-safe streaming, the
+        file-descriptor ownership transfer under the shielded finalize task, and
+        the two-branch cancellation handling (in-flight finalize shielded +
+        re-raised; pre-dispatch cancel fires a best-effort Scotty cancel POST).
+        The legacy ``Path`` ``file_obj`` branch exists only for the direct-call
+        unit tests in ``tests/unit/test_sources_upload.py``.
 
         Args:
-            upload_url: The resumable upload URL from _start_resumable_upload.
-            file_obj: An open binary file object positioned at the bytes to
-                upload, or (legacy) a ``Path`` the helper will open itself.
-                When ``add_file`` is the caller, this is always the open
-                FD and OWNERSHIP TRANSFERS to this helper (see
-                file-descriptor contract above). Passing a ``Path`` is
-                only supported for direct unit tests that bypass
-                ``add_file``.
-            filename: Optional filename used for diagnostic logging.
-                Defaults to ``"<file>"`` when not supplied.
-            on_progress: Optional sync or async callback invoked as
-                ``on_progress(bytes_sent, total_bytes)`` as chunks are yielded.
-            total_bytes: Total bytes expected. Required for the add_file FD
-                path; inferred from the path for legacy direct-call tests when
-                omitted.
+            upload_url: The resumable upload URL from ``_start_resumable_upload``.
+            file_obj: An open binary file object (ownership transfers to the
+                pipeline) positioned at the bytes to upload, or a legacy ``Path``.
+            filename: Optional filename for diagnostic logging.
+            on_progress: Optional ``on_progress(bytes_sent, total_bytes)`` callback.
+            total_bytes: Total bytes expected (required for the FD path; inferred
+                from the path for legacy direct-call tests).
         """
         return await self._uploader.upload_file_streaming(
             upload_url,

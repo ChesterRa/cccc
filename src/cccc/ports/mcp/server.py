@@ -1225,7 +1225,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 kind=str(arguments.get("kind") or ""),
                 options=parsed["options"],
                 wait=coerce_bool(arguments.get("wait"), default=False),
-                save_to_space=coerce_bool(arguments.get("save_to_space"), default=True),
+                save_to_space=coerce_bool(arguments.get("save_to_space"), default=False),
                 output_path=str(arguments.get("output_path") or ""),
                 output_format=str(arguments.get("output_format") or ""),
                 artifact_id=str(arguments.get("artifact_id") or ""),

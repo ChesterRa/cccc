@@ -8,8 +8,10 @@ from typing import Any
 
 import httpx
 
-from .._row_adapters.artifacts import ArtifactRow
+from .._row_adapters.artifacts import ArtifactRow, unwrap_artifact_rows
+from .._row_adapters.notes import NoteRow
 from .._runtime.contracts import RpcCaller
+from ..exceptions import DecodingError
 from ..rpc import (
     FLASHCARDS_VARIANT,
     INTERACTIVE_MIND_MAP_VARIANT,
@@ -18,7 +20,7 @@ from ..rpc import (
     RPCError,
     RPCMethod,
 )
-from ..types import Artifact, ArtifactNotReadyError, ArtifactType
+from ..types import Artifact, ArtifactNotFoundError, ArtifactNotReadyError, ArtifactType
 
 logger = logging.getLogger(__name__)
 
@@ -102,18 +104,26 @@ class ArtifactListingService:
             allow_null=True,
         )
         # LIST_ARTIFACTS returns either a wrapped single-element envelope
-        # (``[[row1, row2, ...]]``) or an already-flat list of rows. Bind the
-        # inner element once so the wrap probe reads ``inner[0]`` (single-level)
-        # instead of a chained ``result[0][0]`` descent. The wrapped case is
-        # detected by a single outer element whose first inner element is itself
-        # a list (a row); an empty inner list is also treated as wrapped.
-        if isinstance(result, list) and len(result) == 1 and isinstance(result[0], list):
-            inner = result[0]
-            if not inner or isinstance(inner[0], list):
-                return inner
+        # (``[[row1, row2, ...]]``) or an already-flat list of rows. The wrap
+        # probe (``result[0]`` / ``inner[0]``) is centralised in
+        # ``unwrap_artifact_rows`` so the envelope-position knowledge lives in
+        # one place (issue #1491); it returns the flat rows unchanged for the
+        # already-flat shape.
         if isinstance(result, list):
-            return result
-        return []
+            return unwrap_artifact_rows(
+                result,
+                method_id=RPCMethod.LIST_ARTIFACTS.value,
+                source="ArtifactListingService.list_raw",
+            )
+        if not result:
+            return []
+        # A truthy non-list payload is schema drift, not an empty notebook —
+        # raise so callers can tell a miss from drift instead of an empty list.
+        raise DecodingError(
+            "Unrecognized LIST_ARTIFACTS payload shape",
+            raw_response=repr(result),
+            method_id=RPCMethod.LIST_ARTIFACTS.value,
+        )
 
     async def list_artifacts(
         self,
@@ -168,6 +178,10 @@ class ArtifactListingService:
             try:
                 mind_map_rows = await list_mind_maps(notebook_id)
                 artifacts.extend(self._filter_mind_map_artifacts(mind_map_rows, artifact_type))
+            except DecodingError:
+                # Schema drift is not a transient outage: surface it (#1344)
+                # rather than masking drifted mind-map rows as "no mind maps".
+                raise
             except (RPCError, httpx.HTTPError) as e:
                 # Network/API errors - log and continue with studio artifacts so
                 # users still see audio/video/reports when the mind-map endpoint
@@ -213,6 +227,38 @@ class ArtifactListingService:
             if artifact.id == artifact_id:
                 return artifact
         return None
+
+    async def get_prompt(
+        self,
+        notebook_id: str,
+        artifact_id: str,
+        *,
+        list_raw: ListRawCallback,
+        list_mind_maps: ListMindMapsCallback | None = None,
+    ) -> str | None:
+        """Return the generation prompt for a single studio artifact.
+
+        Looks the artifact up in the studio listing (any status — the prompt is
+        stored at creation, so failed artifacts carry it too) and reads its
+        prompt through :attr:`ArtifactRow.generation_prompt`.
+
+        Returns ``None`` when the artifact exists but has no readable prompt
+        (e.g. a type whose prompt slot is absent), or when ``artifact_id``
+        belongs to a note-backed mind map (not in the studio listing) and
+        ``list_mind_maps`` is provided and confirms the id exists there.
+
+        Raises :class:`ArtifactNotFoundError` when no studio artifact matches
+        ``artifact_id`` and either ``list_mind_maps`` is ``None`` or the id is
+        absent from the mind-map listing too.
+        """
+        row = find_artifact_row_by_id(await list_raw(notebook_id), artifact_id)
+        if row is not None:
+            return row.generation_prompt
+        if list_mind_maps is not None:
+            mind_map_rows = await list_mind_maps(notebook_id)
+            if any(NoteRow(m).id == artifact_id for m in mind_map_rows):
+                return None
+        raise ArtifactNotFoundError(artifact_id, method_id=RPCMethod.LIST_ARTIFACTS.value)
 
     def select_artifact(
         self,
@@ -277,7 +323,11 @@ class ArtifactListingService:
         # the ``test_handles_none_at_timestamp_position_without_typeerror``
         # contract).
         filtered.sort(key=lambda row: row.created_at_raw or 0, reverse=True)
-        return filtered[0]
+        # ``filtered`` is a non-empty list of typed ``ArtifactRow`` objects (not
+        # a raw RPC payload); take the most-recent head via ``head, *_ = filtered``
+        # so this typed-sequence pick is not the ``name[int]`` RPC-row shape.
+        head, *_ = filtered  # typed ArtifactRow head; unpack avoids the name[int] ratchet
+        return head
 
     def _filter_studio_artifacts(
         self,

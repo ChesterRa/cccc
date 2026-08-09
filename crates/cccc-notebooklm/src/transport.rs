@@ -53,7 +53,7 @@ impl Client {
             return Err(Error::Authentication);
         }
         if status.as_u16() == 429 {
-            return Err(Error::Refused("HTTP 429".into()));
+            return Err(Error::RateLimited("HTTP 429".into()));
         }
         let raw = response.error_for_status()?.text()?;
         rpc::decode(&raw, rpc_id, allow_null)

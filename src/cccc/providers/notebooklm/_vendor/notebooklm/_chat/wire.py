@@ -11,17 +11,27 @@ import json
 import logging
 import math
 import re
+import reprlib
 from dataclasses import dataclass, replace
 from typing import Any, NoReturn, Protocol
 from urllib.parse import quote, urlencode
 
+from .._auth.account import format_authuser_value
 from .._env import get_default_bl, get_default_language
-from ..auth import format_authuser_value
+from .._row_adapters.chat import (
+    AnswerRow,
+    CitationDetail,
+    CitationRow,
+    ErrorPayloadRow,
+    PassageRow,
+    StreamFrameRow,
+    TextLeafRow,
+)
 from ..exceptions import ChatError, ChatResponseParseError, UnknownRPCMethodError
 from ..rpc._safe_index import safe_index
 from ..rpc.decoder import strip_anti_xssi
 from ..rpc.encoder import nest_source_ids
-from ..rpc.types import get_query_url
+from ..rpc.types import RPCMethod, get_query_url
 from ..types import ChatReference
 
 # Deliberate: use the ``notebooklm._chat`` logger namespace (not this module's)
@@ -34,6 +44,7 @@ logger = logging.getLogger("notebooklm._chat")
 # and rely on these labels to localize schema drift in raised
 # ``UnknownRPCMethodError`` diagnostics (ADR-0011).
 _CHUNK_SOURCE = "_chat_wire._extract_chunk_with_parseable"
+_CITATION_SOURCE = "_chat_wire.parse_citations"
 
 _UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -239,7 +250,11 @@ def parse_streaming_chat_response(response_text: str) -> StreamingChatParseResul
     # Assign citation numbers without mutating the dataclass instances in place
     # (prepares for an eventual ``frozen=True`` sweep on public domain types).
     # The list is rebuilt — externally identical to the prior mutation since
-    # only ``citation_number`` ever changes here.
+    # only ``citation_number`` ever changes here. ``parse_citations`` already
+    # stamps raw wire ordinals; the ``is None`` guard deliberately preserves
+    # them (a skipped malformed row leaves a hole so [N] markers never shift
+    # onto the wrong citation) — the dense fill applies only to refs that
+    # arrived unnumbered.
     final_refs = [
         replace(ref, citation_number=idx) if ref.citation_number is None else ref
         for idx, ref in enumerate(final_refs, start=1)
@@ -294,26 +309,43 @@ def _extract_chunk_with_parseable(
         # The batchexecute stream emits ``["er", rpc_id, code, ...]`` frames
         # when the RPC itself failed; the old parser only inspected
         # ``"wrb.fr"`` frames, so a server error collapsed into the generic
-        # "no parseable chunks" / "empty response" failure. ``item[0]`` is a
-        # guaranteed index here (``len(item) >= 2``) so the ``safe_index``
-        # descent is byte-for-byte identical on the happy path and only raises
-        # if the frame tag slot itself drifted out from under us.
-        tag = safe_index(item, 0, method_id=None, source=_CHUNK_SOURCE)
+        # "no parseable chunks" / "empty response" failure. ``StreamFrameRow``
+        # centralises the ``item[0]`` / ``item[2]`` / ``item[5]`` frame reads
+        # (issue #1491). ``frame.tag`` is the one guaranteed slot
+        # (``len(item) >= 2``) so its ``safe_index`` descent is byte-for-byte
+        # identical on the happy path and only raises if the tag slot drifted.
+        frame = StreamFrameRow(item)
+        tag = frame.tag
         if tag == "er":
             _raise_chat_error_frame(item)
 
         if tag != "wrb.fr" or len(item) < 3:
             continue
 
-        inner_json = item[2]
+        inner_json = frame.inner_json
         if not isinstance(inner_json, str):
-            # item[2] is null — check item[5] for a server-side error payload.
-            # Don't flip ``parseable`` here: a null inner_json without a
-            # recognized error payload is not a successfully decoded
-            # envelope. The error-payload path raises, so flow only
-            # reaches the next iteration when item[5] was absent/unusable.
-            if len(item) > 5 and isinstance(item[5], list):
-                raise_if_rate_limited(item[5])
+            # item[2] is null — this ``wrb.fr`` carries no answer JSON. In real
+            # traffic that only happens when the server rejected the request and
+            # put a status/error payload at item[5] instead (a successful
+            # answer/heartbeat frame always has a *string* at item[2]; no live
+            # capture has ever shown a null-item[2] ``wrb.fr`` on success).
+            # Surface it rather than silently skipping, which collapsed every
+            # rejection into the generic "no parseable chunks" failure
+            # (issue #1472). The error code is NOT the ``["e", ...]`` /
+            # ``["di", ...]`` / ``["af.httprm", ...]`` frames elsewhere in the
+            # response — those are batchexecute stream bookkeeping and their
+            # trailing number is a running byte count, not a code.
+            #
+            # Don't flip ``parseable`` here: a null inner_json is not a
+            # successfully decoded envelope. Both raise paths below are
+            # ``NoReturn``, and any present payload (``is not None`` — even an
+            # empty ``[]``, which ``_raise_chat_rejection`` reports without a
+            # status) is treated as a rejection, so flow only reaches the next
+            # iteration when item[5] was absent or a non-list.
+            error_payload = frame.error_payload
+            if error_payload is not None:
+                raise_if_rate_limited(error_payload)
+                _raise_chat_rejection(error_payload)
             continue
 
         try:
@@ -359,34 +391,20 @@ def _extract_chunk_with_parseable(
                     data_at_failure=repr(first)[:200],
                 )
             if len(first) > 0:
-                # Load-bearing answer-text leaf. ``first`` already holds
-                # ``inner_data[0]`` and the ``len(first) > 0`` guard makes
-                # ``first[0]`` valid, so reuse it instead of re-traversing from
-                # ``inner_data``: byte-for-byte identical on the happy path,
-                # with a more localized ``(0,)`` drift path under drift.
-                text = safe_index(first, 0, method_id=None, source=_CHUNK_SOURCE)
-                if not isinstance(text, str) or not text:
+                # The populated record is wrapped in an ``AnswerRow`` so every
+                # leaf read (text / answer-marker / server-conv-id / citations)
+                # goes through one named position contract in
+                # ``_row_adapters/chat.py`` instead of scattered single-level
+                # subscripts here (issue #1491). ``text`` is the load-bearing
+                # answer leaf; an absent/empty/non-string leaf legitimately means
+                # "no answer in this chunk" (heartbeat-ish), so fall through.
+                answer = AnswerRow(first)
+                text = answer.text
+                if text is None:
                     continue
 
-                # ``first[4]`` is the optional type/flags block; its trailing
-                # element being ``1`` marks an answer record. Bind it so the flag
-                # read is a single-level ``type_block[-1]`` index rather than a
-                # chained ``first[4][-1]`` descent. An absent block legitimately
-                # means "not an answer" (non-answer records carry no type block).
-                type_block = first[4] if len(first) > 4 and isinstance(first[4], list) else None
-                is_answer = type_block is not None and len(type_block) > 0 and type_block[-1] == 1
-
-                # ``first[2]`` is the optional server-conversation-id block; bind
-                # it so the id read is a single-level ``conv_block[0]`` index
-                # rather than a chained ``first[2][0]`` descent. An absent/empty
-                # block legitimately means "no server conversation id present".
-                server_conv_id: str | None = None
-                conv_block = first[2] if len(first) > 2 and isinstance(first[2], list) else None
-                if conv_block and isinstance(conv_block[0], str):
-                    server_conv_id = conv_block[0]
-
                 refs = parse_citations(first)
-                return text, is_answer, refs, server_conv_id, parseable
+                return text, answer.is_answer, refs, answer.server_conversation_id, parseable
         # inner_json decoded but the record didn't yield usable answer data
         # — either the outer ``isinstance(inner_data, list) and len > 0``
         # guard failed (dict, empty list, non-list) OR the inner
@@ -398,6 +416,29 @@ def _extract_chunk_with_parseable(
         # "API drift" / ``ChatResponseParseError``.
 
     return None, False, refs, None, parseable
+
+
+def _raise_chat_rejection(error_payload: list) -> NoReturn:
+    """Surface a ``wrb.fr`` request-rejection (status at item[5]) as a ``ChatError``.
+
+    A streamed-chat ``wrb.fr`` frame with a null inner JSON (no answer) but a
+    non-empty payload at item[5] is a server rejection — e.g. an over-long
+    question yields ``["wrb.fr", None, None, None, None, [3]]`` (issue #1472),
+    where ``[3]`` is a grpc-style status (``3`` == ``INVALID_ARGUMENT``). The
+    caller has already run :func:`raise_if_rate_limited` for the richer
+    ``UserDisplayableError`` shape, so this is the catch-all for the bare-status
+    rejection that previously collapsed into the generic "no parseable chunks"
+    error. The status is echoed so callers see the real failure. ``ErrorPayloadRow``
+    centralises the ``error_payload[0]`` position (issue #1491).
+    """
+    status = ErrorPayloadRow(error_payload).status_code
+    detail = f" (status {status!r})" if status is not None else ""
+    raise ChatError(
+        f"Chat request was rejected by the server{detail}. "
+        "This usually means the request was malformed or too large — most often "
+        "an over-long question past the server-side size limit; shorten it and "
+        "try again."
+    )
 
 
 def _raise_chat_error_frame(item: list) -> NoReturn:
@@ -416,8 +457,9 @@ def _raise_chat_error_frame(item: list) -> NoReturn:
     """
     # The error code is optional enrichment — its absence must not be treated
     # as schema drift (an ``"er"`` frame is itself the error signal), so read
-    # the slot with an explicit length guard rather than ``safe_index``.
-    code = item[2] if len(item) > 2 else None
+    # the slot via ``StreamFrameRow.error_code`` (length-guarded, not
+    # ``safe_index``) which centralises the ``item[2]`` position (issue #1491).
+    code = StreamFrameRow(item).error_code
     detail = f" (code {code!r})" if code is not None else ""
     raise ChatError(
         f"Chat request failed: the server returned an error frame{detail}. "
@@ -430,14 +472,16 @@ def raise_if_rate_limited(error_payload: list) -> None:
     """Raise ``ChatError`` if the payload contains a UserDisplayableError."""
     try:
         # Structure: [8, None, [["type.googleapis.com/.../UserDisplayableError", ...]]]
-        if len(error_payload) > 2 and isinstance(error_payload[2], list):
-            for entry in error_payload[2]:
-                if isinstance(entry, list) and entry and isinstance(entry[0], str):
-                    if "UserDisplayableError" in entry[0]:
-                        raise ChatError(
-                            "Chat request was rate limited or rejected by the API. "
-                            "Wait a few seconds and try again."
-                        )
+        # ``ErrorPayloadRow`` centralises the ``error_payload[2]`` entries read
+        # and the per-entry ``entry[0]`` type-string read (issue #1491).
+        row = ErrorPayloadRow(error_payload)
+        for entry in row.entries:
+            entry_type = ErrorPayloadRow.entry_type(entry)
+            if entry_type is not None and "UserDisplayableError" in entry_type:
+                raise ChatError(
+                    "Chat request was rate limited or rejected by the API. "
+                    "Wait a few seconds and try again."
+                )
     except ChatError:
         raise
     except Exception:
@@ -448,53 +492,104 @@ def raise_if_rate_limited(error_payload: list) -> None:
 
 
 def parse_citations(first: list) -> list[ChatReference]:
-    """Parse citation details from a streamed-chat response structure."""
-    try:
-        if len(first) <= 4 or not isinstance(first[4], list):
-            return []
-        type_info = first[4]
-        if len(type_info) <= 3 or not isinstance(type_info[3], list):
-            return []
+    """Parse citation details from a streamed-chat response structure.
 
-        refs: list[ChatReference] = []
-        for cite in type_info[3]:
-            ref = parse_single_citation(cite)
-            if ref is not None:
-                refs.append(ref)
-        return refs
-    except (IndexError, TypeError, AttributeError) as e:
-        logger.debug(
-            "Citation parsing failed (API structure may have changed): %s",
-            e,
-            exc_info=True,
+    Absence-vs-malformed policy (#1505 continuity). Citations are *secondary*
+    payload riding on a usable answer, so loudness is tiered:
+
+    * **Absence is silent** — an answer with no citations is the common case
+      (real traffic routinely sends ``None`` in the ``first[4][3]`` slot):
+      no/short type block and falsy citation slots return ``[]`` with zero
+      logging, via ``AnswerRow.citations`` (issue #1491).
+    * **Container drift RAISES** — a non-list ``first`` (the answer row) or a
+      truthy non-list citation container is structural wire drift; it raises
+      :class:`UnknownRPCMethodError`, matching this parser's existing raise
+      for the ``inner_data[0]`` non-list case and the
+      ``unwrap_conversation_turns`` container raise (#1505): a reshaped
+      container means the payload can no longer be trusted, so it must not
+      silently degrade to "answer without citations".
+    * **Per-row malformed WARNS and skips** — a citation entry that is present
+      but unusable (wrong shape/type at a slot, no extractable source id, or
+      an unexpected error while decoding it) logs at least one bounded
+      ``WARNING`` (``reprlib`` previews; a deep malformed source-id tree may
+      additionally emit the UUID max-recursion warning), then drops only that
+      row; surviving citations are still returned so one bad row never
+      destroys a good answer's remaining citations.
+
+    Survivors keep their **raw wire ordinal** as ``citation_number`` (1-based
+    position in the citation container), NOT a dense re-count. The answer
+    text's literal ``[N]`` markers refer to raw positions, so re-densifying
+    after a skip would silently re-anchor ``[N]`` onto a *different* citation
+    (e.g. save-as-note anchoring the wrong chunk). A skipped row instead
+    leaves a hole: its marker resolves to no reference and downstream
+    consumers drop that anchor rather than mis-anchoring. With nothing
+    skipped, raw ordinals equal the dense numbering this parser always
+    produced. The final assignment in :func:`parse_streaming_chat_response`
+    preserves non-``None`` numbers, so the ordinals survive unchanged.
+
+    The pre-hardening behavior swallowed *every* citation drift at DEBUG and
+    returned ``[]`` — a Google reshape degraded to "answers with no
+    citations" invisibly.
+    """
+    if not isinstance(first, list):
+        # Same structural-drift signal ``_extract_chunk_with_parseable``
+        # raises for a non-list answer row; reachable only via direct calls
+        # since the stream parser already enforces it before delegating here.
+        raise UnknownRPCMethodError(
+            f"Streamed chat answer row is not a list (got {type(first).__name__})",
+            method_id=None,
+            path=(0,),
+            source=_CITATION_SOURCE,
+            data_at_failure=reprlib.repr(first),
         )
-        return []
+    refs: list[ChatReference] = []
+    for raw_idx, cite in enumerate(AnswerRow(first).citations, start=1):
+        try:
+            ref = parse_single_citation(cite)
+        except (IndexError, TypeError, AttributeError) as exc:
+            # These three cover the current call graph: parse_single_citation
+            # and its CitationRow/CitationDetail adapters use length-guarded
+            # positional access throughout (no dict access, no int()/explicit
+            # raises), so ValueError/KeyError are unreachable. Revisit this
+            # tuple if those adapters ever gain either.
+            logger.warning(
+                "Skipping malformed citation entry (%s: %s; cite=%s) [%s]",
+                type(exc).__name__,
+                exc,
+                reprlib.repr(cite),
+                _CITATION_SOURCE,
+            )
+            continue
+        if ref is None:
+            logger.warning(
+                "Skipping unusable citation entry (no parsable detail or source id; cite=%s) [%s]",
+                reprlib.repr(cite),
+                _CITATION_SOURCE,
+            )
+            continue
+        # Raw wire ordinal, not a dense re-count — see the docstring: the
+        # answer's literal [N] markers point at raw positions, so a skipped
+        # row must leave a hole rather than shift survivors onto wrong markers.
+        refs.append(replace(ref, citation_number=raw_idx))
+    return refs
 
 
 def parse_single_citation(cite: Any) -> ChatReference | None:
     """Parse a single citation entry into a ``ChatReference``."""
-    if not isinstance(cite, list) or len(cite) < 2:
+    # ``CitationRow`` centralises the ``cite[0][0]`` chunk-id and ``cite[1]``
+    # detail-block position knowledge (issue #1491); a malformed entry yields
+    # ``detail is None`` here, matching the old "skip unusable citation" guard.
+    row = CitationRow(cite)
+    detail = row.detail
+    if detail is None:
         return None
+    cite_inner = detail.raw_list
 
-    cite_inner = cite[1]
-    if not isinstance(cite_inner, list):
-        return None
-
-    source_id_data = cite_inner[5] if len(cite_inner) > 5 else None
-    source_id = extract_uuid_from_nested(source_id_data)
+    source_id = extract_uuid_from_nested(detail.source_id_data)
     if source_id is None:
         return None
 
-    # ``cite[0]`` is the optional chunk-id block; bind it so the id read is a
-    # single-level ``chunk_block[0]`` index rather than a chained ``cite[0][0]``
-    # descent. An absent/empty block legitimately means "no chunk id" (the
-    # citation is kept; chunk_id stays None).
-    chunk_id = None
-    chunk_block = cite[0]
-    if isinstance(chunk_block, list) and chunk_block:
-        first_item = chunk_block[0]
-        if isinstance(first_item, str):
-            chunk_id = first_item
+    chunk_id = row.chunk_id
 
     cited_text, start_char, end_char = extract_text_passages(cite_inner)
     answer_start_char, answer_end_char = extract_answer_range(cite_inner)
@@ -524,15 +619,10 @@ def extract_answer_range(cite_inner: list) -> tuple[int | None, int | None]:
     semantically paired and one without the other is meaningless to
     downstream consumers.
     """
-    if len(cite_inner) <= 3 or not isinstance(cite_inner[3], list):
-        return None, None
-    outer = cite_inner[3]
-    if not outer or not isinstance(outer[0], list):
-        return None, None
-    inner = outer[0]
-    if len(inner) < 3:
-        return None, None
-    start, end = inner[1], inner[2]
+    # ``CitationDetail.answer_range`` centralises the ``cite_inner[3][0]``
+    # descent (``[None, start, end]``) and returns ``(None, None)`` for every
+    # malformed shape the old inline guards rejected (issue #1491).
+    start, end = CitationDetail(cite_inner).answer_range()
     # bool is an int subclass in Python; reject it explicitly. Treat positions
     # as paired — one without the other (or invalid ordering) is unusable.
     if (
@@ -555,9 +645,11 @@ def extract_score(cite_inner: list) -> float | None:
     [0.0, 1.0]. The bound check keeps the contract documented on the field
     enforceable for downstream consumers.
     """
-    if len(cite_inner) <= 2:
+    # ``CitationDetail.raw_score`` centralises the ``cite_inner[2]`` read
+    # (issue #1491); a short detail block yields ``None`` (no score).
+    raw = CitationDetail(cite_inner).raw_score
+    if raw is None:
         return None
-    raw = cite_inner[2]
     if isinstance(raw, bool):  # bool is a subclass of int in Python; reject
         return None
     if isinstance(raw, (int, float)):
@@ -577,26 +669,24 @@ def extract_text_passages(cite_inner: list) -> tuple[str | None, int | None, int
     never trips on a half-populated source range. The cited text (if any) is
     still returned.
     """
-    if len(cite_inner) <= 4 or not isinstance(cite_inner[4], list):
-        return None, None, None
-
+    # ``CitationDetail.passages`` centralises the ``cite_inner[4]`` descent and
+    # ``PassageRow`` the per-passage ``passage_wrapper[0]`` / ``passage_data[0..2]``
+    # reads (issue #1491); absent/short shapes degrade to ``[]`` / ``None``.
     texts: list[str] = []
     start_char: int | None = None
     end_char: int | None = None
 
-    for passage_wrapper in cite_inner[4]:
-        if not isinstance(passage_wrapper, list) or not passage_wrapper:
-            continue
-        passage_data = passage_wrapper[0]
-        if not isinstance(passage_data, list) or len(passage_data) < 3:
+    for passage_wrapper in CitationDetail(cite_inner).passages:
+        passage = PassageRow(passage_wrapper)
+        if not passage.is_well_formed:
             continue
 
-        if start_char is None and isinstance(passage_data[0], int):
-            start_char = passage_data[0]
-        if isinstance(passage_data[1], int):
-            end_char = passage_data[1]
+        if start_char is None and isinstance(passage.start_char, int):
+            start_char = passage.start_char
+        if isinstance(passage.end_char, int):
+            end_char = passage.end_char
 
-        collect_texts_from_nested(passage_data[2], texts)
+        collect_texts_from_nested(passage.text_payload, texts)
 
     cited_text = " ".join(texts) if texts else None
     # Drop a half-populated range so the ChatReference invariant accepts it.
@@ -621,9 +711,12 @@ def collect_texts_from_nested(nested: Any, texts: list[str]) -> None:
         if not isinstance(nested_group, list):
             continue
         for inner in nested_group:
-            if not isinstance(inner, list) or len(inner) < 3:
+            # ``TextLeafRow`` centralises the ``inner[2]`` text-payload read and
+            # the ``len(inner) >= 3`` well-formedness guard (issue #1491).
+            leaf = TextLeafRow(inner)
+            if not leaf.is_well_formed:
                 continue
-            text_val = inner[2]
+            text_val = leaf.text_value
             if isinstance(text_val, str) and text_val.strip():
                 texts.append(text_val.strip())
             elif isinstance(text_val, list):
@@ -651,3 +744,39 @@ def extract_uuid_from_nested(data: Any, max_depth: int = 10) -> str | None:
                 return result
 
     return None
+
+
+def _extract_next_turn_content(next_turn: Any) -> str | None:
+    """Extract the response content from a streaming-chat next_turn frame.
+
+    The ``khqZz`` (``GET_CONVERSATION_TURNS``) response packs each AI answer
+    as ``turn[4][0][0]`` — three nested wrappers around the answer text. The
+    descent goes through :func:`safe_index` under strict decoding (the only
+    mode since the ``NOTEBOOKLM_STRICT_DECODE=0`` opt-out was retired in
+    v0.7.0; rationale in ADR-0011): a genuine descent failure raises
+    :class:`~notebooklm.exceptions.UnknownRPCMethodError` so callers fail
+    fast on Google-side shape drift.
+
+    ``next_turn`` is a validated answer row (a list with ``len > 4`` and the
+    answer role code — see ``ConversationTurnRow.is_answer``). Returns the
+    answer-text string, or ``None`` when the leaf descends successfully to a
+    non-string value (the caller's empty-answer fallback).
+    """
+    content = safe_index(
+        next_turn,
+        4,
+        0,
+        0,
+        method_id=RPCMethod.GET_CONVERSATION_TURNS.value,
+        source="_chat._extract_next_turn_content",
+    )
+    if not isinstance(content, str):
+        # A non-string leaf at a structurally-valid path is normalised to
+        # ``None`` so the caller's empty-answer fallback fires uniformly. This
+        # is distinct from shape drift, which safe_index raises on.
+        logger.debug(
+            "next_turn content is not a string (type=%s); treating as drift",
+            type(content).__name__,
+        )
+        return None
+    return content

@@ -70,11 +70,13 @@ from .context import (
     RPC_CONTEXT_DISABLE_INTERNAL_RETRIES,
     RPC_CONTEXT_LOG_LABEL,
     RPC_CONTEXT_REFRESH_BUDGET,
+    RPC_CONTEXT_RETRY_DEADLINE,
 )
 from .core import NextCall, RpcRequest, RpcResponse, materialize_rpc_request
 
 if TYPE_CHECKING:
     from .._client_metrics import ClientMetrics
+    from .._deadline import RuntimeDeadline
 
 
 class AuthRefreshMiddleware:
@@ -95,18 +97,16 @@ class AuthRefreshMiddleware:
       reaches into the coordinator directly; this keeps the seam thin
       and testable.
     - ``is_auth_error``: predicate that decides whether an exception is
-      an auth failure (HTTP 400 / 401 / 403). Production wires
-      :func:`notebooklm._runtime.helpers.is_auth_error` through a lambda
-      that resolves it via the canonical module's globals at call time,
-      so ``monkeypatch.setattr("notebooklm._runtime.helpers.is_auth_error",
-      ...)`` reaches the chain live; tests that build the middleware
+      an auth failure (HTTP 400 / 401 / 403). Production wires a closure
+      over ``ClientSeams.is_auth_error`` so rebinding
+      ``client._seams.is_auth_error`` / ``seams.is_auth_error`` after
+      construction steers the chain; tests that build the middleware
       directly typically pass the function itself.
     - ``refresh_callback_enabled``: a zero-arg callable returning ``True``
-      iff a refresh callback is wired on the host. Production wires
-      ``lambda: self._auth_coord._refresh_callback is not None`` so a
+      iff a refresh callback is wired on the coordinator. Production wires
+      ``lambda: collaborators.auth_coord.has_refresh_callback`` so a
       client built without ``refresh_callback`` skips the refresh path
-      entirely (matches the legacy leaf gate on
-      ``host._refresh_callback is not None``).
+      entirely.
     - ``refresh_retry_delay``: zero-arg callable returning the
       post-refresh sleep duration. Production wires
       ``lambda: chain_host._refresh_retry_delay`` so a test that mutates
@@ -248,6 +248,18 @@ class AuthRefreshMiddleware:
             # closure must keep it after that point.
             original_auth_error = exc
 
+            # The logical call's aggregate deadline, seeded by the RPC executor
+            # (issue #1873). Passing it clamps the post-refresh sleep to the
+            # time remaining since T0 so a ``refresh_retry_delay`` larger than
+            # the remaining budget cannot re-POST past the logical call's
+            # deadline — mirroring the decode-time refresh path in
+            # ``RpcExecutor.try_refresh_and_retry``. Absent (chat path) → the
+            # historical unclamped delay is slept.
+            retry_deadline = cast(
+                "RuntimeDeadline | None",
+                request.context.get(RPC_CONTEXT_RETRY_DEADLINE),
+            )
+
             # Shared refresh body (log → refresh → on-failure raise → sleep →
             # log → metric). Refresh failure wraps the original auth
             # ``HTTPStatusError`` in ``TransportAuthExpired`` — the chain's
@@ -263,6 +275,7 @@ class AuthRefreshMiddleware:
                 log_label=log_label,
                 logger=self._logger,
                 metrics=self._metrics,
+                retry_deadline=retry_deadline,
             )
 
             # Mark AFTER a successful refresh (a refresh failure raised above

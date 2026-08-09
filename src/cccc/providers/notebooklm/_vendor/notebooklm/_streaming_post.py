@@ -40,7 +40,7 @@ async def stream_post_with_size_cap(
     body: PostBody,
     headers: dict[str, str] | None,
     timeout: httpx.Timeout | float | None = None,
-    max_bytes: int = MAX_RPC_RESPONSE_BYTES,
+    max_bytes: int | None = None,
 ) -> httpx.Response:
     """Issue a streaming POST and buffer the body with a running size guard.
 
@@ -57,6 +57,9 @@ async def stream_post_with_size_cap(
     ``exc.response.headers`` intact (the response headers arrive before any body
     chunk, so reading them does not require consuming the stream).
     """
+    if max_bytes is None:
+        max_bytes = MAX_RPC_RESPONSE_BYTES
+
     stream_kwargs: dict[str, Any] = {"content": body}
     if headers:
         stream_kwargs["headers"] = headers

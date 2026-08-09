@@ -6,8 +6,12 @@ pub enum Error {
     InvalidCredential(String),
     #[error("NotebookLM authentication expired or was rejected")]
     Authentication,
-    #[error("NotebookLM request was rate limited or refused: {0}")]
+    #[error("NotebookLM request was refused: {0}")]
     Refused(String),
+    #[error("NotebookLM request was rate limited: {0}")]
+    RateLimited(String),
+    #[error("NotebookLM operation timed out: {0}")]
+    Timeout(String),
     #[error("NotebookLM transport failed: {0}")]
     Transport(#[from] reqwest::Error),
     #[error("NotebookLM RPC {rpc_id} failed: {message}")]

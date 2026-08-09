@@ -35,6 +35,17 @@ pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let mut updated = 0_u64;
     let mut unchanged = 0_u64;
     for path in files {
+        let file_size = std::fs::metadata(&path).map_err(OpError::io)?.len();
+        if file_size > MAX_LOCAL_FILE_SIZE_BYTES {
+            return Err(OpError::new(
+                "space_source_file_too_large",
+                format!(
+                    "sync source exceeds the {} byte limit: {}",
+                    MAX_LOCAL_FILE_SIZE_BYTES,
+                    path.display()
+                ),
+            ));
+        }
         let relative = path
             .strip_prefix(&root_path)
             .unwrap_or(&path)

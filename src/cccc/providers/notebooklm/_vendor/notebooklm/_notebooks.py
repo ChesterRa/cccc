@@ -1,15 +1,20 @@
 """Notebook operations API."""
 
 import logging
+import reprlib
 from typing import Any
 
-from ._deprecation import warn_deprecated
 from ._idempotency import idempotent_create
 from ._notebook_metadata import (
     NotebookMetadataService,
     NotebookSourceLister,
     create_default_source_lister,
 )
+from ._notebook_payloads import (
+    _PROMPT_SUGGESTIONS_DEFAULT_MODE,
+    build_prompt_suggestions_params,
+)
+from ._row_adapters.notebooks import PromptSuggestionRow, unwrap_prompt_suggestions
 from ._row_adapters.sources import SourceRow
 from ._runtime.contracts import RpcCaller
 from ._settings import build_get_user_settings_params, extract_account_limits
@@ -17,15 +22,24 @@ from ._sharing_manager import ShareManager
 from ._source.upload_payloads import build_template_block
 from .exceptions import (
     AuthError,
+    DecodingError,
     NetworkError,
     NotebookLimitError,
     NotebookNotFoundError,
     RateLimitError,
     RPCError,
     ServerError,
+    ValidationError,
 )
 from .rpc import RPCMethod, safe_index
-from .types import AccountLimits, Notebook, NotebookDescription, NotebookMetadata, SuggestedTopic
+from .types import (
+    AccountLimits,
+    Notebook,
+    NotebookDescription,
+    NotebookMetadata,
+    PromptSuggestion,
+    SuggestedTopic,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +54,20 @@ def build_create_notebook_params(title: str) -> list[Any]:
     tail that migrated backends now reject with ``status=3`` (#1546).
     """
     return [title, None, None, build_template_block()]
+
+
+def build_get_notebook_params(notebook_id: str) -> list[Any]:
+    """Return the canonical GET_NOTEBOOK (``rLM1Ne``) RPC payload.
+
+    The Gemini-3.5 rollout migrated the read path's trailing template block from
+    the flat ``[2]`` to the same nested :func:`build_template_block` wrapper the
+    write path adopted in #1548 (issue #1549). Live-verified forward-compatible:
+    the nested shape returns a byte-identical decoded notebook (notebook id /
+    title and every ``SourceRow``) as the flat ``[2]`` on an un-migrated account,
+    so it is safe across cohorts. The trailing ``None, 0`` is unchanged — only
+    the template block at position 2 is migrated (the narrow scope #1549 tracks).
+    """
+    return [notebook_id, None, build_template_block(), None, 0]
 
 
 def _extract_summary(outer: Any) -> str:
@@ -68,7 +96,13 @@ def _extract_summary(outer: Any) -> str:
     # routine "no summary yet" case — return "" without logging drift.
     if outer is None:
         return ""
-    if isinstance(outer, list) and (not outer or outer[0] is None):
+    if isinstance(outer, list) and (
+        not outer
+        or safe_index(
+            outer, 0, method_id=RPCMethod.SUMMARIZE.value, source="_notebooks._extract_summary"
+        )
+        is None
+    ):
         return ""
     # Descend outer[0][0] via safe_index. A scalar ``outer`` or a malformed
     # ``outer[0]`` (present, non-None, but not the expected list) raises drift
@@ -113,7 +147,9 @@ def _extract_suggested_topics(outer: Any) -> list[SuggestedTopic]:
         logger.debug("_extract_suggested_topics: Partial description — no outer[1] slot")
         return []
 
-    topics_container = outer[1]
+    topics_container = safe_index(
+        outer, 1, method_id=RPCMethod.SUMMARIZE.value, source="_notebooks._extract_suggested_topics"
+    )
     if not isinstance(topics_container, list) or len(topics_container) == 0:
         logger.debug(
             "_extract_suggested_topics: Partial description — outer[1] is empty or non-list"
@@ -143,10 +179,25 @@ def _extract_suggested_topics(outer: Any) -> list[SuggestedTopic]:
                 type(topic).__name__,
             )
             continue
+        # ``topic`` is guarded to a list of len >= 2 above, so these slot reads
+        # cannot fail; ``safe_index`` keeps the position knowledge on the
+        # schema-drift seam without changing behaviour.
+        question = safe_index(
+            topic,
+            0,
+            method_id=RPCMethod.SUMMARIZE.value,
+            source="_notebooks._extract_suggested_topics",
+        )
+        prompt = safe_index(
+            topic,
+            1,
+            method_id=RPCMethod.SUMMARIZE.value,
+            source="_notebooks._extract_suggested_topics",
+        )
         topics.append(
             SuggestedTopic(
-                question=str(topic[0]) if topic[0] else "",
-                prompt=str(topic[1]) if topic[1] else "",
+                question=str(question) if question else "",
+                prompt=str(prompt) if prompt else "",
             )
         )
     return topics
@@ -245,28 +296,43 @@ class NotebooksAPI:
         # Schema-drift detection points: log WARNING at each isinstance/len
         # guard that fails on a non-empty response (real drift surfaces here,
         # not at the safety-net except below).
+        # ``notebook_data`` is a non-empty list here (guarded above), so the
+        # ``[0]`` read cannot fail; the ``[1]`` read below is gated by
+        # ``len(notebook_info) > 1``. Both descents route through ``safe_index``
+        # — the sanctioned schema-drift seam — so position knowledge stays out
+        # of open-coded subscripts. The reads are all length-guarded, so
+        # ``safe_index`` never actually raises here; the ``except`` below remains
+        # defense-in-depth (now genuinely unreachable, as noted).
+        method_id = RPCMethod.GET_NOTEBOOK.value
         try:
-            if not isinstance(notebook_data[0], list):
+            notebook_info = safe_index(
+                notebook_data, 0, method_id=method_id, source="NotebooksAPI.get_source_ids"
+            )
+            if not isinstance(notebook_info, list):
                 # notebook_data is already known to be a non-empty list here
                 # (guarded by `if not notebook_data` above).
                 logger.warning(
                     "get_source_ids: notebook_data[0] shape unexpected for %s "
                     "(schema drift?). top-type=%s",
                     notebook_id,
-                    type(notebook_data[0]).__name__,
+                    type(notebook_info).__name__,
                 )
                 return source_ids
 
-            notebook_info = notebook_data[0]
-            if not (len(notebook_info) > 1 and isinstance(notebook_info[1], list)):
+            sources = (
+                safe_index(
+                    notebook_info, 1, method_id=method_id, source="NotebooksAPI.get_source_ids"
+                )
+                if len(notebook_info) > 1
+                else None
+            )
+            if not isinstance(sources, list):
                 logger.warning(
                     "get_source_ids: notebook_info[1] not list for %s (schema drift?). len=%d",
                     notebook_id,
                     len(notebook_info),
                 )
                 return source_ids
-
-            sources = notebook_info[1]
             for source in sources:
                 if not (isinstance(source, list) and source):
                     continue
@@ -297,8 +363,95 @@ class NotebooksAPI:
 
         return source_ids
 
+    async def suggest_prompts(
+        self,
+        notebook_id: str,
+        *,
+        source_ids: list[str] | None = None,
+        mode: int = _PROMPT_SUGGESTIONS_DEFAULT_MODE,
+        query: str | None = None,
+    ) -> list[PromptSuggestion]:
+        """Get AI-suggested prompts for a notebook.
+
+        Backed by ``GeneratePromptSuggestions`` (``otmP3b``): a *general*
+        notebook-prompt endpoint whose ``mode`` selects the product surface to
+        suggest for. With the default ``mode=4`` the server suggests chat
+        questions to ask :meth:`ChatAPI.ask`; other modes target other surfaces
+        (critique, audio/debate, quiz, flashcards). The server returns a short
+        list of ``{title, prompt}`` suggestions, each ``prompt`` a ready-to-send
+        multi-line instruction.
+
+        Args:
+            notebook_id: The notebook to suggest prompts for.
+            source_ids: Source ids to scope the suggestions to. ``None``
+                (default) uses **all** of the notebook's sources.
+            mode: The required ``C0`` int "mode/surface" enum, inclusive range
+                ``1..10`` (``0`` / omitted makes the server return ``INTERNAL``).
+                It selects which studio surface/format the prompts are written for
+                (#1726, live-verified): ``1`` audio deep-dive, ``2`` audio brief,
+                ``3`` video explainer, ``4`` (default) chat "ask about the content"
+                questions, ``5`` audio critique, ``6`` audio debate, ``8`` quiz,
+                ``9`` flashcards, ``10`` video short (``7`` unidentified). Stays a
+                plain int, not a named enum, since the bundle exposes the values
+                but not Google's member names. See
+                ``_PROMPT_SUGGESTIONS_DEFAULT_MODE`` for the full map + method.
+            query: Optional free-text steer for the kind of prompts to suggest.
+                An empty / whitespace-only string is treated as no steer.
+
+        Returns:
+            A list of :class:`~notebooklm.types.PromptSuggestion`. An empty /
+            degenerate server response yields ``[]`` (suggestions are
+            best-effort UI sugar — an absent payload does not raise).
+
+        Raises:
+            ValidationError: if ``mode`` is outside the inclusive ``1..10`` range
+                (caught before any network call, so a bad mode never costs an
+                RPC).
+
+        .. versionadded:: 0.8.0
+        """
+        logger.debug("Suggesting prompts for notebook %s (mode=%d)", notebook_id, mode)
+        # Validate the mode up front (before the source-id fetch) so a bad value
+        # fails fast without a wasted round-trip; the builder's ValueError is
+        # re-raised as the public ValidationError for a uniform error contract.
+        try:
+            build_prompt_suggestions_params(notebook_id, [], mode=mode)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+        if source_ids is None:
+            source_ids = await self.get_source_ids(notebook_id)
+
+        params = build_prompt_suggestions_params(notebook_id, source_ids, mode=mode, query=query)
+        result = await self._rpc.rpc_call(
+            RPCMethod.SUGGEST_PROMPTS,
+            params,
+            source_path=f"/notebook/{notebook_id}",
+            allow_null=True,
+        )
+
+        rows = unwrap_prompt_suggestions(result, source="suggest_prompts")
+        # ``is_well_formed`` only gates on row LENGTH (>= 2 slots), not on the
+        # field values, mirroring ``ReportSuggestionRow``: a length-ok row whose
+        # title/prompt degrade to "" (a non-string leaf) still maps to a
+        # ``PromptSuggestion("", "")``. Real traffic always carries string
+        # leaves, so this is a best-effort tolerance for a degenerate server
+        # payload, not an expected output — callers should not treat an empty
+        # title/prompt as meaningful.
+        return [
+            PromptSuggestion(title=row.title, prompt=row.prompt)
+            for row in map(PromptSuggestionRow, rows)
+            if row.is_well_formed
+        ]
+
     async def list(self) -> list[Notebook]:
-        """List all notebooks.
+        """List notebooks (most-recently-viewed first).
+
+        .. note::
+            The backing RPC is ``ListRecentlyViewedProjects`` — results are
+            ordered most-recently-viewed first (live-observed). It is not
+            independently confirmed whether this can ever omit an *owned*
+            notebook; in practice it matches the set shown on the NotebookLM
+            home page.
 
         Returns:
             List of Notebook objects.
@@ -307,10 +460,36 @@ class NotebooksAPI:
         params = [None, 1, None, [2]]
         result = await self._rpc.rpc_call(RPCMethod.LIST_NOTEBOOKS, params)
 
-        if result and isinstance(result, list) and len(result) > 0:
-            raw_notebooks = result[0] if isinstance(result[0], list) else result
-            return [Notebook.from_api_response(nb) for nb in raw_notebooks]
-        return []
+        # LIST_NOTEBOOKS responses arrive as a single-element envelope whose
+        # first element is the notebook-row list (``[[row1, row2, ...]]``).
+        # The wrap probe mirrors the fail-loud dispatch in
+        # ``_artifact/listing.py::list_raw``: an empty/``None`` payload and a
+        # ``None`` row-list slot are legitimate "no notebooks" shapes (soft
+        # ``[]``), while a truthy payload that doesn't match the envelope — a
+        # non-list payload, or a truthy non-list where the row list belongs —
+        # is schema drift and raises ``DecodingError`` instead of flowing
+        # garbage rows into ``Notebook.from_api_response`` (which would
+        # silently fabricate empty-id notebooks).
+        if not result:
+            return []
+        if isinstance(result, list):
+            # ``result`` is a non-empty list here (guarded above), so this ``[0]``
+            # read cannot fail; ``safe_index`` keeps the envelope-unwrap position
+            # knowledge on the sanctioned schema-drift seam.
+            raw_notebooks = safe_index(
+                result, 0, method_id=RPCMethod.LIST_NOTEBOOKS.value, source="NotebooksAPI.list"
+            )
+            if isinstance(raw_notebooks, list):
+                return [Notebook.from_api_response(nb) for nb in raw_notebooks]
+            if raw_notebooks is None:
+                return []
+        raise DecodingError(
+            "Unrecognized LIST_NOTEBOOKS payload shape",
+            # reprlib bounds the preview without materialising the full repr
+            # of a large/deep payload (mirrors safe_index's own truncation).
+            raw_response=reprlib.repr(result),
+            method_id=RPCMethod.LIST_NOTEBOOKS.value,
+        )
 
     async def create(self, title: str) -> Notebook:
         """Create a new notebook.
@@ -411,7 +590,12 @@ class NotebooksAPI:
                 return None
             matches = [nb for nb in current if nb.id not in baseline_ids and nb.title == title]
             if len(matches) == 1:
-                return matches[0]
+                # ``matches`` is a list of typed ``Notebook`` objects (NOT a raw
+                # RPC payload) — tuple unpacking reads the single match
+                # without the ``name[int]`` shape that the positional-decode gate
+                # (rightly) flags only for genuine payload descents.
+                (match,) = matches  # exactly one (len==1 guard); unpack avoids name[int]
+                return match
             if len(matches) > 1:
                 # Ambiguous: more than one new notebook with this title
                 # appeared during the call. We cannot safely pick one;
@@ -501,14 +685,21 @@ class NotebooksAPI:
                 ``title``) for unknown IDs rather than a proper RPC error, so
                 this method post-validates the parsed response.
         """
-        params = [notebook_id, None, [2], None, 0]
+        params = build_get_notebook_params(notebook_id)
         result = await self._rpc.rpc_call(
             RPCMethod.GET_NOTEBOOK,
             params,
             source_path=f"/notebook/{notebook_id}",
         )
-        # get_notebook returns [nb_info, ...] where nb_info contains the notebook data
-        nb_info = result[0] if result and isinstance(result, list) and len(result) > 0 else []
+        # get_notebook returns [nb_info, ...] where nb_info contains the notebook
+        # data. The ``[0]`` read is fully guarded (truthy + list + non-empty), so
+        # ``safe_index`` cannot raise here; it keeps the envelope-unwrap position
+        # on the sanctioned schema-drift seam.
+        nb_info = (
+            safe_index(result, 0, method_id=RPCMethod.GET_NOTEBOOK.value, source="NotebooksAPI.get")
+            if result and isinstance(result, list) and len(result) > 0
+            else []
+        )
         # Guard the empty-payload case BEFORE parsing. ``Notebook.from_api_response``
         # currently tolerates ``[]`` but a future tightening could turn that into
         # an ``IndexError`` that would surface as a confusing crash instead of
@@ -567,6 +758,8 @@ class NotebooksAPI:
             no longer enters its block.
         """
         logger.debug("Deleting notebook: %s", notebook_id)
+        # DELETE_NOTEBOOK is the live ``DeleteProjects`` (batch-capable: the
+        # leading slot is a list of ids); we delete a single notebook per call.
         params = [[notebook_id], [2]]
         await self._rpc.rpc_call(RPCMethod.DELETE_NOTEBOOK, params)
 
@@ -581,6 +774,10 @@ class NotebooksAPI:
             The renamed Notebook object (fetched after rename).
         """
         logger.debug("Renaming notebook %s to: %s", notebook_id, new_title)
+        # RENAME_NOTEBOOK is the live ``MutateProject``, a generic notebook
+        # mutator: the same RPC sets the title here, chat config in
+        # ``ChatAPI.configure``, and the share view-level in
+        # ``SharingAPI.set_view_level`` — each with a different params shape.
         # Payload format discovered via browser traffic capture:
         # [notebook_id, [[null, null, null, [null, new_title]]]]
         params = [notebook_id, [[None, None, None, [None, new_title]]]]
@@ -616,13 +813,25 @@ class NotebooksAPI:
         # identically to ``get_description`` (single source of truth — #1485).
         if not isinstance(result, list) or not result:
             return ""
-        return _extract_summary(result[0])
+        # ``result`` is a non-empty list here; ``safe_index`` keeps the
+        # envelope-unwrap position on the schema-drift seam (cannot raise here).
+        return _extract_summary(
+            safe_index(
+                result, 0, method_id=RPCMethod.SUMMARIZE.value, source="NotebooksAPI.get_summary"
+            )
+        )
 
     async def get_description(self, notebook_id: str) -> NotebookDescription:
         """Get AI-generated summary and suggested topics for a notebook.
 
         This provides a high-level overview of what the notebook contains,
         similar to what's shown in the Chat panel when opening a notebook.
+
+        .. note::
+            The backing RPC is ``GenerateNotebookGuide`` — it produces the
+            notebook *guide*: a short summary plus suggested starter questions
+            (each ``SuggestedTopic`` carries the question and its chat prompt),
+            rather than a freeform summary alone.
 
         Args:
             notebook_id: The notebook ID.
@@ -653,7 +862,14 @@ class NotebooksAPI:
         # (`_extract_summary` / `_extract_suggested_topics`) so the deep
         # index access stays auditable when Google's shape drifts.
         if result and isinstance(result, list) and len(result) > 0:
-            outer = result[0]
+            # ``result`` is a non-empty list here (guarded); ``safe_index`` keeps
+            # the envelope-unwrap position on the schema-drift seam.
+            outer = safe_index(
+                result,
+                0,
+                method_id=RPCMethod.SUMMARIZE.value,
+                source="NotebooksAPI.get_description",
+            )
             summary = _extract_summary(outer)
             suggested_topics = _extract_suggested_topics(outer)
 
@@ -684,69 +900,19 @@ class NotebooksAPI:
         Returns:
             Raw API response data.
         """
-        params = [notebook_id, None, [2], None, 0]
+        params = build_get_notebook_params(notebook_id)
         return await self._rpc.rpc_call(
             RPCMethod.GET_NOTEBOOK,
             params,
             source_path=f"/notebook/{notebook_id}",
         )
 
-    async def share(
-        self, notebook_id: str, public: bool = True, artifact_id: str | None = None
-    ) -> dict:
-        """Toggle notebook sharing.
-
-        .. deprecated:: 0.5.0
-            Use :meth:`client.sharing.set_public` instead, which is the
-            canonical notebook-level public-sharing toggle and is paired
-            with the rest of the sharing surface (``add_user``,
-            ``set_view_level``, ``get_status``). This wrapper is
-            preserved as a no-behavior-change shim and will be removed
-            in a future major release.
-
-        Migration::
-
-            # before
-            await client.notebooks.share(notebook_id, public=True)
-
-            # after
-            await client.sharing.set_public(notebook_id, True)
-
-        Note: This method uses SHARE_ARTIFACT for artifact-level sharing.
-        For notebook-level sharing with user management, use client.sharing instead:
-
-            await client.sharing.set_public(notebook_id, True)
-            await client.sharing.add_user(notebook_id, email, SharePermission.VIEWER)
-
-        Sharing is a NOTEBOOK-LEVEL setting. When enabled, ALL artifacts in the
-        notebook become accessible via their URLs.
-
-        Args:
-            notebook_id: The notebook ID.
-            public: If True, enable sharing. If False, disable sharing.
-            artifact_id: Optional artifact ID for generating a deep-link URL.
-
-        Returns:
-            Dict with 'public' status, 'url', and 'artifact_id'.
-        """
-        warn_deprecated(
-            "NotebooksAPI.share() is deprecated; use client.sharing.set_public() "
-            "for the canonical notebook-level public-sharing toggle (paired with "
-            "client.sharing.add_user(), set_view_level(), get_status()). Return "
-            "shape is unchanged in this release; the wrapper will be removed in "
-            "a future major release.",
-            # No pinned removal version yet (re-pin tracked by #1363); the
-            # message already says "a future major release".
-            removal=None,
-            stacklevel=3,
-        )
-        return await self._share_manager.share(notebook_id, public, artifact_id)
-
     def get_share_url(self, notebook_id: str, artifact_id: str | None = None) -> str:
         """Get share URL for a notebook or artifact.
 
         This does NOT toggle sharing - it just returns the URL format.
-        Use share() to enable/disable sharing.
+        Use :meth:`SharingAPI.set_public` (``client.sharing.set_public``) to
+        enable/disable sharing.
 
         Args:
             notebook_id: The notebook ID.

@@ -71,6 +71,7 @@ impl Source {
         let type_code = metadata
             .and_then(|value| value.get(4))
             .and_then(Value::as_i64);
+        let mime = metadata.and_then(|value| source_mime(value));
         let url = metadata
             .and_then(|value| nested_string(value.get(7)).or_else(|| nested_string(value.get(5))));
         let status_code = row
@@ -82,7 +83,7 @@ impl Source {
         Ok(Self {
             id,
             title,
-            kind: source_kind(type_code).into(),
+            kind: source_kind(type_code, mime).into(),
             status: match status_code {
                 1 => "processing",
                 3 => "error",
@@ -153,7 +154,20 @@ fn nested_string(value: Option<&Value>) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn source_kind(code: Option<i64>) -> &'static str {
+fn source_mime(metadata: &[Value]) -> Option<&str> {
+    metadata.get(19).and_then(Value::as_str).or_else(|| {
+        metadata
+            .get(9)
+            .and_then(Value::as_array)
+            .and_then(|descriptor| descriptor.get(2))
+            .and_then(Value::as_str)
+    })
+}
+
+fn source_kind(code: Option<i64>, mime: Option<&str>) -> &'static str {
+    if code == Some(14) && mime == Some("application/pdf") {
+        return "pdf";
+    }
     match code {
         Some(1) => "google_docs",
         Some(2) => "google_slides",
@@ -216,5 +230,22 @@ mod tests {
         assert_eq!(source.id, "s1");
         assert_eq!(source.status, "ready");
         assert_eq!(source.url.as_deref(), Some("https://example.test"));
+    }
+
+    #[test]
+    fn disambiguates_drive_pdf_from_native_sheet() {
+        let mut pdf_metadata = vec![Value::Null; 20];
+        pdf_metadata[4] = json!(14);
+        pdf_metadata[19] = json!("application/pdf");
+        let pdf = Source::parse_entry(&json!([["pdf-1"], "Drive PDF", pdf_metadata, [null, 2]]))
+            .expect("drive pdf");
+        assert_eq!(pdf.kind, "pdf");
+
+        let mut sheet_metadata = vec![Value::Null; 20];
+        sheet_metadata[4] = json!(14);
+        sheet_metadata[9] = json!(["drive-id", 1, "application/vnd.google-apps.spreadsheet", ""]);
+        let sheet = Source::parse_entry(&json!([["sheet-1"], "Sheet", sheet_metadata, [null, 2]]))
+            .expect("sheet");
+        assert_eq!(sheet.kind, "google_spreadsheet");
     }
 }

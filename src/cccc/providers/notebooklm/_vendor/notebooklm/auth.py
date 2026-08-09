@@ -17,14 +17,14 @@ Usage:
     async with NotebookLMClient(auth) as client:
         ...
 
-    # For authenticated downloads
-    cookies = load_httpx_cookies()
-    async with httpx.AsyncClient(cookies=cookies) as client:
-        response = await client.get(url)
+    # For authenticated artifact downloads, use the client's download methods
+    # (e.g. ``await client.artifacts.download_audio(...)``) rather than building
+    # an httpx client by hand.
 
 Security Notes:
     - Storage state files contain sensitive session cookies
-    - Path traversal protection is enforced on all file operations
+    - Profile names are constrained by ``notebooklm.paths`` to prevent
+      profile-directory traversal; explicit storage paths are used as provided
 """
 
 import logging
@@ -44,6 +44,20 @@ from ._auth import psidts_recovery as _auth_psidts_recovery
 from ._auth import refresh as _auth_refresh
 from ._auth import storage as _auth_storage
 from ._auth import tokens as _auth_tokens
+
+# Master-token (headless) auth. Re-exported here as the public boundary the CLI
+# consumes (cli/ may not import private ``_auth.*`` modules — see
+# tests/_guardrails/test_cli_boundary.py) and as the documented programmatic
+# headless-auth surface (docs/python-api.md). Blessed in ``__all__`` below.
+from ._auth.master_token import (  # noqa: F401
+    MasterTokenError,
+    exchange_master_token,
+    generate_android_id,
+    mint_cookies,
+    persist_minted_jar,
+    read_master_token,
+    write_master_token,
+)
 from ._auth.tokens import AuthTokens
 from .paths import get_storage_path  # noqa: F401  # kept as a module-level compat alias
 
@@ -106,61 +120,51 @@ _is_allowed_cookie_domain = _cookie_policy._is_allowed_cookie_domain
 
 
 # Public surface for ``from notebooklm.auth import *`` and for downstream
-# static-analysis tools (mypy, ruff F401 checks). This is the audited set of
-# names externally imported by the package, tests, docs, and the CLI as of
-# 2026-05-17. Underscore-prefixed names remain accessible on the module — some
-# tests reach for them as whitebox affordances — but are intentionally NOT
-# blessed here. See ``tests/unit/test_public_surface.py``: two complementary
-# tests pin this list — ``test_auth_module_has_expected_all`` snapshot-checks
-# the exact ordering, and ``test_auth_all_matches_external_imports_audit``
-# AST-scans ``src/``, ``tests/``, ``docs/`` to fail if a new public name is
-# imported externally without being added here.
+# static-analysis tools (mypy, ruff F401 checks). ``notebooklm.auth.*`` is internal
+# (docs/stability.md) except the documented power-user imports plus the cohesive
+# operations the CLI/_app need across the public boundary. The 23 core/test-only
+# re-exports de-blessed in #1592 were removed from this list but remain importable
+# as module attributes for back-compat — first-party code now imports them from
+# their ``notebooklm._auth.<sub>`` home, and one ``removed-export`` allowance each
+# lives in scripts/api-compat-allowlist.json. Underscore-prefixed names remain
+# accessible on the module as whitebox test affordances but are intentionally NOT
+# blessed here. See ``tests/_guardrails/test_public_surface.py``:
+# ``test_auth_module_has_expected_all`` snapshot-checks the exact ordering, and
+# ``test_auth_all_matches_external_imports_audit`` AST-scans ``src/``/``tests/``/
+# ``docs/`` to fail if a public name is imported externally from ``notebooklm.auth``
+# without being added here.
 __all__ = [
     "Account",
-    "advance_cookie_snapshot_after_save",
-    "ALLOWED_COOKIE_DOMAINS",
     "AuthTokens",
-    "authuser_query",
     "build_cookie_jar",
     "build_httpx_cookies_from_storage",
     "clear_account_metadata",
     "convert_rookiepy_cookies_to_storage_state",
     "cookie_names_from_storage",
-    "CookieSaveResult",
-    "CookieSnapshot",
-    "CookieSnapshotKey",
-    "CookieSnapshotValue",
     "enumerate_accounts",
+    "exchange_master_token",
     "extract_cookies_from_storage",
     "extract_cookies_with_domains",
-    "extract_csrf_from_html",
     "extract_email_from_html",
-    "extract_session_id_from_html",
-    "extract_wiz_field",
-    "fetch_tokens",
+    "fetch_tokens_passive",
     "fetch_tokens_with_domains",
-    "format_authuser_value",
+    "generate_android_id",
     "get_account_email_for_storage",
     "get_authuser_for_storage",
     "GOOGLE_REGIONAL_CCTLDS",
-    "KEEPALIVE_ROTATE_URL",
-    "load_auth_from_storage",
-    "load_httpx_cookies",
-    "MINIMUM_REQUIRED_COOKIES",
+    "MasterTokenError",
+    "mint_cookies",
     "missing_cookies_hint",
-    "normalize_cookie_map",
-    "NOTEBOOKLM_DISABLE_KEEPALIVE_POKE_ENV",
-    "NOTEBOOKLM_REFRESH_CMD_ENV",
-    "NOTEBOOKLM_REFRESH_CMD_USE_SHELL_ENV",
     "OPTIONAL_COOKIE_DOMAINS",
     "OPTIONAL_COOKIE_DOMAINS_BY_LABEL",
+    "persist_minted_jar",
     "read_account_metadata",
-    "recover_psidts_in_memory",
+    "read_account_metadata_from_storage_state",
+    "read_master_token",
     "REQUIRED_COOKIE_DOMAINS",
-    "save_cookies_to_storage",
-    "snapshot_cookie_jar",
     "validate_with_recovery",
     "write_account_metadata",
+    "write_master_token",
 ]
 
 
@@ -182,10 +186,11 @@ _validate_required_cookies = _cookie_policy._validate_required_cookies
 
 
 # WIZ field token extraction (CSRF, session ID, generic WIZ data) lives in
-# ``notebooklm._auth.extraction``. Re-exported here so the public surface
-# (``notebooklm.auth.extract_csrf_from_html`` etc., listed in ``__all__``) and
-# white-box test affordances (``_safe_url``, ``_build_wiz_field_patterns``)
-# keep resolving against ``notebooklm.auth``.
+# ``notebooklm._auth.extraction``. Re-exported here so ``extract_csrf_from_html``
+# / ``extract_session_id_from_html`` / ``extract_wiz_field`` (de-blessed from
+# ``__all__`` in #1592 but kept importable) and white-box test affordances
+# (``_safe_url``, ``_build_wiz_field_patterns``) keep resolving against
+# ``notebooklm.auth``.
 _build_wiz_field_patterns = _auth_extraction._build_wiz_field_patterns
 _safe_url = _auth_extraction._safe_url
 extract_csrf_from_html = _auth_extraction.extract_csrf_from_html
@@ -206,6 +211,7 @@ _account_context_path = _auth_account._account_context_path
 extract_email_from_html = _auth_account.extract_email_from_html
 _probe_authuser = _auth_account._probe_authuser
 read_account_metadata = _auth_account.read_account_metadata
+read_account_metadata_from_storage_state = _auth_account.read_account_metadata_from_storage_state
 get_authuser_for_storage = _auth_account.get_authuser_for_storage
 get_account_email_for_storage = _auth_account.get_account_email_for_storage
 format_authuser_value = _auth_account.format_authuser_value
@@ -226,16 +232,16 @@ async def enumerate_accounts(
 
 
 # ``load_auth_from_storage`` lives in ``_auth/tokens.py`` (see ADR-0014).
-# This module re-exports it so ``notebooklm.auth.load_auth_from_storage``
-# stays a stable public import.
+# Re-exported so ``notebooklm.auth.load_auth_from_storage`` stays importable
+# (de-blessed from ``__all__`` in #1592; first-party callers use ``_auth.tokens``).
 load_auth_from_storage = _auth_tokens.load_auth_from_storage
 
 
-# Env-var name constants live in ``notebooklm._auth.paths``. Re-exported so
-# both the public surface (``NOTEBOOKLM_REFRESH_CMD_ENV``,
-# ``NOTEBOOKLM_REFRESH_CMD_USE_SHELL_ENV`` — listed in ``__all__``) and the
-# white-box surface (``_REFRESH_ATTEMPTED_ENV``, used by tests) keep resolving
-# against ``notebooklm.auth``.
+# Env-var name constants live in ``notebooklm._auth.paths``. Re-exported so both
+# ``NOTEBOOKLM_REFRESH_CMD_ENV`` / ``NOTEBOOKLM_REFRESH_CMD_USE_SHELL_ENV``
+# (de-blessed from ``__all__`` in #1592 but kept importable) and the white-box
+# surface (``_REFRESH_ATTEMPTED_ENV``, used by tests) keep resolving against
+# ``notebooklm.auth``.
 NOTEBOOKLM_REFRESH_CMD_ENV = _auth_paths.NOTEBOOKLM_REFRESH_CMD_ENV
 NOTEBOOKLM_REFRESH_CMD_USE_SHELL_ENV = _auth_paths.NOTEBOOKLM_REFRESH_CMD_USE_SHELL_ENV
 _REFRESH_ATTEMPTED_ENV = _auth_paths._REFRESH_ATTEMPTED_ENV
@@ -245,8 +251,8 @@ _REFRESH_ATTEMPTED_ENV = _auth_paths._REFRESH_ATTEMPTED_ENV
 # Rotation throttle + ``RotateCookies`` POST bodies live in
 # ``notebooklm._auth.keepalive``. Re-exported here so every name that was
 # previously module-level on ``notebooklm.auth`` (constants, the per-loop /
-# per-profile lock registry, the public ``KEEPALIVE_ROTATE_URL`` listed in
-# ``__all__``, and white-box helpers like ``_poke_session`` /
+# per-profile lock registry, ``KEEPALIVE_ROTATE_URL`` (de-blessed from ``__all__``
+# in #1592 but kept importable), and white-box helpers like ``_poke_session`` /
 # ``_rotate_cookies``) keeps resolving against this module. Tests that
 # need to substitute a moved body should patch the canonical home directly
 # (``_auth.keepalive.X``) — production code no longer mirrors writes
@@ -280,9 +286,9 @@ _rotate_cookies = _auth_keepalive._rotate_cookies
 # ``notebooklm._auth.psidts_recovery._recover_psidts_inline``.
 _recover_psidts_inline = _auth_psidts_recovery._recover_psidts_inline
 # In-memory variant for the browser-cookies extraction path (issue #990).
-# Public because CLI services (which must not import underscore-prefixed names
-# from notebooklm public modules) need access. Mutates the caller's rookiepy
-# cookie list in place; no file lock / throttle.
+# De-blessed from ``__all__`` in #1592 (kept importable); it has no first-party
+# importer today. Mutates the caller's rookiepy cookie list in place; no file
+# lock / throttle.
 recover_psidts_in_memory = _auth_psidts_recovery.recover_psidts_in_memory
 # Validate-with-recovery convenience: convert + validate rookiepy cookies and
 # transparently retry through ``recover_psidts_in_memory`` on the recoverable
@@ -302,11 +308,11 @@ _rotation_lock_path = _auth_paths._rotation_lock_path
 
 
 # --- Refresh-cmd + token-fetch entry points ---------------------------------
-# All refresh coordination and the public ``fetch_tokens`` /
-# ``fetch_tokens_with_domains`` entry points live in
-# ``notebooklm._auth.refresh``. Re-exported so the public surface
-# (``fetch_tokens`` + ``fetch_tokens_with_domains`` listed in ``__all__``) and
-# the white-box surface (lock registries, ContextVar, ``_run_refresh_cmd``
+# All refresh coordination and the token-fetch entry points live in
+# ``notebooklm._auth.refresh``. Re-exported so the kept public
+# ``fetch_tokens_with_domains`` / ``fetch_tokens_passive`` entry points,
+# ``fetch_tokens`` (de-blessed from ``__all__`` in #1592 but kept importable),
+# and the white-box surface (lock registries, ContextVar, ``_run_refresh_cmd``
 # carrying the redaction logic, etc.) keep resolving against
 # ``notebooklm.auth``. Tests that need to substitute a moved body should
 # patch the canonical home directly (``_auth.refresh.X``) — production
@@ -328,3 +334,4 @@ _fetch_tokens_with_refresh = _auth_refresh._fetch_tokens_with_refresh
 _fetch_tokens_with_jar = _auth_refresh._fetch_tokens_with_jar
 fetch_tokens = _auth_refresh.fetch_tokens
 fetch_tokens_with_domains = _auth_refresh.fetch_tokens_with_domains
+fetch_tokens_passive = _auth_refresh.fetch_tokens_passive

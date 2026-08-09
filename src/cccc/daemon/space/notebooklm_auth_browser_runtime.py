@@ -14,6 +14,7 @@ _SESSION_KEY = "notebooklm"
 _CHANNEL_CANDIDATES = ("chrome", "msedge")
 _GOOGLE_COOKIE_URLS = (
     "https://notebooklm.google.com",
+    "https://notebook.google.com",
     "https://accounts.google.com",
     "https://www.google.com",
 )

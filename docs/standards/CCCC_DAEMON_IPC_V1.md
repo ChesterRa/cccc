@@ -4047,6 +4047,12 @@ Result:
 }
 ```
 
+Capability matrices are implementation-specific runtime truth. Callers MUST NOT
+assume an ingest source type or asynchronous behavior that is absent from the
+returned matrix. An implementation MUST fail an unavailable operation with
+`capability_unavailable`; it MUST NOT silently coerce a file, URL, YouTube, or
+Drive source into pasted text.
+
 #### `group_space_bind`
 
 Bind/unbind a group lane to a provider remote notebook.
@@ -4219,6 +4225,10 @@ Result (`action=refresh` | `rename` | `delete`):
 }
 ```
 
+`action=refresh` MUST invoke the provider refresh mutation. Re-listing the
+source without refreshing it is not a successful refresh result. A successful
+NotebookLM refresh reports `refresh_result.refreshed=true`.
+
 #### `group_space_artifact`
 
 List/generate/download provider artifacts (NotebookLM studio outputs) on `lane="work"`.
@@ -4235,10 +4245,10 @@ Args:
   action?: "list" | "generate" | "download"
   kind?: "audio" | "video" | "report" | "study_guide" | "quiz" | "flashcards" | "infographic" | "slide_deck" | "data_table" | "mind_map"
   options?: Record<string, unknown> // for action=generate
-  wait?: boolean // action=generate only
-  save_to_space?: boolean // generate/download auto-save behavior
+  wait?: boolean // action=generate only; default false
+  save_to_space?: boolean // generate/download local-save behavior; default false
   output_path?: string // optional local path override
-  output_format?: "json" | "markdown" | "html" // quiz/flashcards
+  output_format?: "json" | "markdown" | "html" | "pdf" | "pptx" | "csv"
   artifact_id?: string // optional explicit download target
   timeout_seconds?: number // generate+wait only
   initial_interval?: number // generate+wait only
@@ -4248,6 +4258,31 @@ Args:
 ```
 
 Result (`action=list|generate|download`) mirrors the lane-targeted binding and includes `lane: "work"`.
+
+Generation defaults to `wait=false` and `save_to_space=false`, so a normal
+request does not hold a group mutation lane while polling a remote provider and
+does not perform an implicit local write. When `wait=false`, an implementation
+without a background artifact worker MAY
+return after remote generation starts with `saved_to_space=false`; the caller
+can later list or download the artifact. It MUST NOT claim that a local file was
+saved. `wait=true` plus `save_to_space=true` performs the wait and local save
+before returning or reports a provider timeout/failure.
+
+When `save_to_space=true`, the implementation MUST validate the local
+destination and kind/format download capability before creating the remote
+artifact. Unsupported kind/format combinations fail with
+`capability_unavailable` without provider-side generation. Authenticated media
+downloads MUST require HTTPS and validate an explicit provider host allowlist
+for both the initial URL and every redirect hop.
+
+Common provider error semantics:
+- `space_provider_not_configured`: required provider credentials or binding configuration is absent; non-transient.
+- `space_provider_auth_invalid`: credentials are malformed, expired, or rejected; non-transient until re-authentication.
+- `space_provider_not_found`: requested remote resource is absent; non-transient and does not degrade the whole provider.
+- `space_provider_compat_mismatch`: provider response schema cannot be decoded; non-transient and degrades the provider until compatibility is restored.
+- `space_provider_timeout`: request or provider-side wait timed out; transient and does not by itself degrade the provider.
+- `space_provider_rate_limited`: provider refused work because of quota/rate limits; transient and does not by itself degrade the provider.
+- `space_provider_upstream_error`: another provider transport/RPC failure occurred; retryability depends on the operation and provider response.
 
 #### `group_space_jobs`
 

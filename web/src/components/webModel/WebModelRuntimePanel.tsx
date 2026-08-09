@@ -109,6 +109,8 @@ function buildChatGptBlock(session: WebModelBrowserSession | null): StatusBlock 
 function targetLabelValue(raw: string, state: string): string {
   const label = raw.trim();
   if (state === "missing") return "No target";
+  if (state === "invalid") return "Rebind chat";
+  if (state === "unavailable") return "Chat unavailable";
   if (state === "new_chat_pending") {
     if (label.toLowerCase().includes("binding")) return "Binding new chat";
     return "New chat next";
@@ -129,7 +131,7 @@ function buildTargetBlock(session: WebModelBrowserSession | null): StatusBlock {
       label: "Target",
       value: targetLabelValue(String(health.target.label || ""), state),
       detail: String(health.target.reason || "").trim() || "ChatGPT delivery target.",
-      tone: state === "missing" ? "needs" : "ready",
+      tone: ["missing", "invalid", "unavailable"].includes(state) ? "needs" : "ready",
     };
   }
   if (session?.conversation_url) {

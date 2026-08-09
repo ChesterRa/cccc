@@ -12,12 +12,23 @@ import time
 from collections.abc import Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit, urlunsplit
 
 from . import research as _research_pub
-from ._deprecation import deprecated_kwarg, future_errors_enabled, warn_deprecated
 from ._notebook_metadata import NotebookSourceLister, create_default_source_lister
+from ._research_import import (
+    _imported_result,
+    _imported_source_entry,
+    _is_importable_report_source,
+    _merge_imported_sources,
+    _no_import_verification_url_entry_count,
+    _normalize_import_verification_url,
+    _partition_requested_sources,
+    _requested_import_verification_urls,
+    _source_import_verification_url,
+    _validate_research_task_provenance,
+)
 from ._research_task_parser import parse_research_task_models
+from ._row_adapters.research import ImportedSourceRow, ResearchStartRow, unwrap_import_rows
 from ._runtime.contracts import RpcCaller
 from ._types.research import (
     ResearchSource,
@@ -27,12 +38,16 @@ from ._types.research import (
     ResearchTask,
 )
 from .exceptions import (
+    AmbiguousResearchTaskError,
+    AuthError,
     DecodingError,
     NetworkError,
-    ResearchTaskMismatchError,
+    RateLimitError,
+    ResearchStartUnavailableError,
     ResearchTimeoutError,
     RPCError,
     RPCTimeoutError,
+    ServerError,
     ValidationError,
 )
 from .rpc import RPCMethod
@@ -52,71 +67,13 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# Sentinel marking "the canonical ``initial_interval`` keyword was not passed"
-# in ``wait_for_completion``. The deprecated ``interval`` keyword keeps its
-# original default of ``5`` (so the public-API compatibility audit sees an
-# unchanged signature), while ``initial_interval`` is a newly-added keyword
-# that defaults to this sentinel. Resolution prefers ``initial_interval`` when
-# the caller supplied it and otherwise falls back to ``interval``.
+# Sentinel for "``initial_interval`` not passed" in ``wait_for_completion``. Kept
+# as ``object()`` (not literal ``5.0``) so the public-API compat default-repr
+# check sees no changed-default break; unset resolves to the default below.
 _INITIAL_INTERVAL_UNSET: Any = object()
 
-# Original default cadence for the legacy ``interval`` keyword (seconds between
-# status checks). Preserved verbatim so default-shape callers keep the same
-# behavior and the API-compat audit sees no default change.
+# Default poll cadence (seconds) when ``initial_interval`` is unset.
 _DEFAULT_RESEARCH_POLL_INTERVAL = 5.0
-
-
-# ---------------------------------------------------------------------------
-# IMPORT_RESEARCH timeout-verification helpers
-#
-# IMPORT_RESEARCH is classified NON_IDEMPOTENT_NO_RETRY in IDEMPOTENCY_REGISTRY
-# (see #808): the executor will surface the first 5xx/timeout to the caller
-# rather than retry blindly, because the wire protocol has no client-token
-# slot and a naive retry duplicates every source. ``ResearchAPI``'s
-# verification path sidesteps that constraint by snapshotting baseline
-# sources before the call and matching post-call ``sources.list`` URLs
-# against the request — disambiguating "server already committed but the
-# response was lost" from "request truly failed". These helpers mirror the
-# CLI-only logic that originally landed in PR #321 / #327; they live in the
-# library now so Python API consumers get the same deep-research fix the
-# CLI does (issue #315).
-# ---------------------------------------------------------------------------
-
-
-def _normalize_import_verification_url(url: str) -> str:
-    """Lowercase scheme + host and strip a trailing slash for comparison.
-
-    Distinct from ``notebooklm.research.normalize_citation_url`` (used for
-    matching URLs cited inside report markdown): this variant drops the URL
-    fragment because the server stores fragments stripped, and skips the
-    trailing-punctuation strip because these URLs come from a structured
-    ``sources.list`` payload rather than free-form markdown.
-    """
-    parsed = urlsplit(url)
-    return urlunsplit(
-        (
-            parsed.scheme.lower(),
-            parsed.netloc.lower(),
-            parsed.path.rstrip("/"),
-            parsed.query,
-            "",
-        )
-    )
-
-
-def _source_import_verification_url(source: ResearchSource) -> str | None:
-    url = source.url
-    if not url:
-        return None
-    return _normalize_import_verification_url(url)
-
-
-def _requested_import_verification_urls(sources: Sequence[ResearchSource]) -> set[str]:
-    return {url for source in sources if (url := _source_import_verification_url(source))}
-
-
-def _no_import_verification_url_entry_count(sources: Sequence[ResearchSource]) -> int:
-    return sum(1 for source in sources if _source_import_verification_url(source) is None)
 
 
 def _coerce_research_source(source: ResearchSourceInput) -> ResearchSource:
@@ -129,35 +86,20 @@ def _coerce_research_sources(sources: Sequence[ResearchSourceInput]) -> list[Res
     return [_coerce_research_source(source) for source in sources]
 
 
-def _is_importable_report_source(
-    source_input: ResearchSourceInput,
-    source: ResearchSource,
-) -> bool:
-    """Preserve the public-dict report predicate from the legacy importer."""
-    if not source.is_report or not source.report_markdown:
-        return False
-    if isinstance(source_input, ResearchSource):
-        return isinstance(source.title, str)
-    return isinstance(source_input.get("title"), str) and isinstance(
-        source_input.get("report_markdown"), str
+def _is_deep_start_null_result_error(exc: RPCError) -> bool:
+    method_id = RPCMethod.START_DEEP_RESEARCH.value
+    # The decoder raises one of two stable messages for a wrb.fr null payload,
+    # with or without an attached status code (see ``rpc/decoder.py``). We match
+    # on those stable phrases rather than the obfuscated method id / raw status
+    # code, which the decoder deliberately keeps OUT of the human-readable
+    # message (#1921). If the wording drifts, fall through and re-raise the
+    # original RPCError rather than overclassifying unrelated failures.
+    null_result_markers = ("rejected this request", "returned an empty result")
+    return (
+        exc.method_id == method_id
+        and method_id in exc.found_ids
+        and any(marker in str(exc).lower() for marker in null_result_markers)
     )
-
-
-def _imported_source_entry(source: Source) -> dict[str, str]:
-    return {"id": source.id, "title": source.title or source.url or ""}
-
-
-def _merge_imported_sources(
-    imported: list[dict[str, str]],
-    verified_imported: list[dict[str, str]],
-    verified_imported_ids: set[str],
-) -> list[dict[str, str]]:
-    if not verified_imported:
-        return imported
-    return [
-        *verified_imported,
-        *(entry for entry in imported if entry.get("id") not in verified_imported_ids),
-    ]
 
 
 class ResearchAPI:
@@ -285,32 +227,21 @@ class ResearchAPI:
         *,
         notebook_id: str,
         task_id: str | None,
-        warn_on_ambiguous: bool,
+        raise_on_ambiguous: bool,
     ) -> list[ResearchTask]:
         # Task-id discriminator: when supplied, filter parsed_tasks down to
         # the matched task so callers iterating ``tasks`` don't see siblings.
-        # When omitted but multiple tasks are in flight, surface the latent
-        # cross-wire hazard via a DeprecationWarning while preserving legacy
-        # latest-task selection.
+        # When omitted but multiple tasks are in flight, the selection is
+        # ambiguous (which task did the caller mean?), so raise instead of
+        # silently guessing the latest task (ADR-0019: "ambiguous -> raise,
+        # never silently guess"). A single in-flight task with no task_id is
+        # unambiguous and still returned silently for convenience.
         if task_id is not None:
             return [task for task in parsed_tasks if task.task_id == task_id]
-        if warn_on_ambiguous and len(parsed_tasks) > 1:
-            warn_deprecated(
-                (
-                    f"ResearchAPI.poll(notebook_id={notebook_id!r}) returned "
-                    f"{len(parsed_tasks)} in-flight tasks but no task_id "
-                    f"discriminator was supplied. The latest task is "
-                    f"returned for back-compat, but this is ambiguous and "
-                    f"may surface results for the wrong task. Pass "
-                    f"task_id=<id> (from research.start) to select "
-                    f"explicitly. The None default will be removed in a "
-                    f"future major release."
-                ),
-                # No pinned removal version yet (re-pin tracked by #1363); the
-                # message already says "a future major release".
-                removal=None,
-                # caller -> poll -> _select_polled_tasks -> warn_deprecated.
-                stacklevel=4,
+        if raise_on_ambiguous and len(parsed_tasks) > 1:
+            raise AmbiguousResearchTaskError(
+                notebook_id=notebook_id,
+                task_ids=[task.task_id for task in parsed_tasks],
             )
         return parsed_tasks
 
@@ -330,7 +261,7 @@ class ResearchAPI:
         query: str,
         source: str = "web",
         mode: str = "fast",
-    ) -> ResearchStart | None:
+    ) -> ResearchStart:
         """Start a research session.
 
         Args:
@@ -341,16 +272,19 @@ class ResearchAPI:
 
         Returns:
             A :class:`~notebooklm._types.research.ResearchStart` (``task_id`` /
-            ``report_id`` / ``notebook_id`` / ``query`` / ``mode``), or ``None``
-            when the backend returned no task (legacy ``result["task_id"]`` dict
-            access still works with a warning until v0.8.0). Under
-            ``NOTEBOOKLM_FUTURE_ERRORS`` (#1342) an empty/non-list payload or
-            falsey ``task_id`` raises ``DecodingError`` instead.
+            ``report_id`` / ``notebook_id`` / ``query`` / ``mode``).
 
         Raises:
             ValidationError: If source/mode combination is invalid.
-            DecodingError: Under the v0.8.0 preview, on an empty/non-list payload
-                or falsey ``task_id`` (no task created).
+            ResearchStartUnavailableError: If deep research returns no run.
+            DecodingError: On a "couldn't-start" payload — an empty/non-list
+                result or a falsey ``task_id`` (no task created); #1342.
+
+        .. versionchanged:: 0.8.0
+            **Breaking change:** a "couldn't-start" payload now raises
+            :class:`DecodingError` instead of returning ``None``, and the return
+            type narrows from ``ResearchStart | None`` to ``ResearchStart``
+            (#1342).
         """
         logger.debug(
             "Starting %s research in notebook %s: %s",
@@ -371,6 +305,10 @@ class ResearchAPI:
         # 1 = Web, 2 = Drive
         source_type = 1 if source_lower == "web" else 2
 
+        # The whole research feature is Google's "DiscoverSources" pipeline:
+        # fast -> DiscoverSourcesManifold, deep -> DiscoverSourcesAsync,
+        # POLL_RESEARCH -> ListDiscoverSourcesJob, IMPORT_RESEARCH ->
+        # FinishDiscoverSourcesRun. "Research" is our label for that pipeline.
         if mode_lower == "fast":
             params = [[query, source_type], None, 1, notebook_id]
             rpc_id = RPCMethod.START_FAST_RESEARCH
@@ -378,21 +316,36 @@ class ResearchAPI:
             params = [None, [1], [query, source_type], 5, notebook_id]
             rpc_id = RPCMethod.START_DEEP_RESEARCH
 
-        result = await self._rpc.rpc_call(
-            rpc_id,
-            params,
-            source_path=f"/notebook/{notebook_id}",
-        )
+        try:
+            result = await self._rpc.rpc_call(
+                rpc_id,
+                params,
+                source_path=f"/notebook/{notebook_id}",
+            )
+        except (AuthError, RateLimitError, ServerError, NetworkError):
+            raise
+        except RPCError as exc:
+            if mode_lower == "deep" and _is_deep_start_null_result_error(exc):
+                raise ResearchStartUnavailableError(
+                    notebook_id,
+                    mode_lower,
+                    method_id=exc.method_id,
+                    raw_response=exc.raw_response,
+                    rpc_code=exc.rpc_code,
+                    found_ids=exc.found_ids,
+                ) from exc
+            raise
 
         if result and isinstance(result, list) and len(result) > 0:
-            task_id = result[0]
-            # v0.8.0 preview (#1342): a falsey ``task_id`` means no task was
-            # created — raise (mirrors ``_parse_generation_result``'s missing id).
-            if not task_id and future_errors_enabled():
+            start_row = ResearchStartRow(result)
+            task_id = start_row.task_id_raw
+            # v0.8.0 (#1342): a falsey ``task_id`` means no task was created —
+            # raise (mirrors ``_parse_generation_result``'s missing id).
+            if not task_id:
                 raise DecodingError(
                     f"research.start returned no task id: {result!r}", method_id=rpc_id.value
                 )
-            report_id = result[1] if len(result) > 1 else None
+            report_id = start_row.report_id
             return ResearchStart(
                 task_id=task_id,
                 report_id=report_id,
@@ -400,12 +353,10 @@ class ResearchAPI:
                 query=query,
                 mode=mode_lower,
             )
-        # v0.8.0 preview (#1342): an empty / non-list payload is couldn't-start.
-        if future_errors_enabled():
-            raise DecodingError(
-                "research.start returned an empty / non-list payload", method_id=rpc_id.value
-            )
-        return None
+        # v0.8.0 (#1342): an empty / non-list payload is couldn't-start — raise.
+        raise DecodingError(
+            "research.start returned an empty / non-list payload", method_id=rpc_id.value
+        )
 
     async def poll(
         self,
@@ -421,11 +372,16 @@ class ResearchAPI:
                 When set, the returned ``task_id`` / ``status`` / ``query`` /
                 ``sources`` / ``summary`` / ``report`` fields describe the
                 matched task, and ``tasks`` contains only that task. When
-                ``None`` and multiple tasks are in flight, a
-                :class:`DeprecationWarning` is emitted and the *latest* task is
-                returned (legacy behavior); a single in-flight task is silent.
-                Migration: pass the ``task_id`` from :meth:`start` on every
-                ``poll`` — the ``None`` default is removed in a future major.
+                ``None`` and two or more tasks are in flight, the selection is
+                ambiguous and an
+                :class:`~notebooklm.exceptions.AmbiguousResearchTaskError` is
+                raised — pass the ``task_id`` from :meth:`start` to select
+                explicitly. A single in-flight task is returned silently.
+
+        .. versionchanged:: 0.8.0
+            ``task_id=None`` with two or more in-flight tasks now raises
+            ``AmbiguousResearchTaskError`` instead of warning and returning the
+            latest task (signature unchanged; single task still returned).
 
         Returns:
             A :class:`~notebooklm._types.research.ResearchTask` for the selected
@@ -442,8 +398,7 @@ class ResearchAPI:
             - ``task.tasks``: all parsed research tasks visible at this poll
               (filtered to the matched task when ``task_id`` is set)
 
-            Legacy ``result["status"]`` dict access still works (with a warning)
-            until v0.8.0; prefer ``result.status``.
+            Use attribute access (``result.status``).
 
             When a non-empty ``task_id`` is supplied but no in-flight task
             matches, the return is ``ResearchTask.not_found(task_id)`` (status
@@ -456,23 +411,23 @@ class ResearchAPI:
             await self._poll_task_models(notebook_id),
             notebook_id=notebook_id,
             task_id=task_id,
-            # The ambiguity warning only applies to the unfiltered (task_id is
-            # None) path; when a discriminator is pinned, _select_polled_tasks
-            # filters before the warn branch. Gating it here matches
-            # wait_for_completion and keeps the intent explicit.
-            warn_on_ambiguous=task_id is None,
+            # Ambiguity raise applies only to the unfiltered (task_id is None)
+            # path; a pinned discriminator filters before the raise. Matches
+            # wait_for_completion.
+            raise_on_ambiguous=task_id is None,
         )
 
         if parsed_tasks:
-            return self._public_poll_result(parsed_tasks[0], parsed_tasks)
+            # ``parsed_tasks`` is a typed ``list[ResearchTask]``; the unpack avoids
+            # a ``name[int]`` positional read on a decoded payload.
+            first_task, *_ = parsed_tasks
+            return self._public_poll_result(first_task, parsed_tasks)
 
-        # A concrete pinned ``task_id`` that matched nothing is a poll-observed
-        # absence of that specific task — a typed ``NOT_FOUND`` sentinel
-        # carrying the requested id. A falsy ``task_id`` (``None`` for the
-        # unfiltered poll, or the degenerate empty string) is not a meaningful
-        # discriminator, so it stays ``NO_RESEARCH`` ("nothing in flight") and
-        # preserves the legacy empty-poll dict shape. See ADR-0019 Rule 4
-        # (#1346).
+        # A pinned ``task_id`` that matched nothing is a poll-observed absence —
+        # a typed ``NOT_FOUND`` sentinel carrying the id. A falsy ``task_id``
+        # (``None`` or empty string) is no discriminator, so it stays
+        # ``NO_RESEARCH`` and preserves the legacy empty-poll shape (ADR-0019
+        # Rule 4, #1346).
         if task_id:
             return ResearchTask.not_found(task_id)
 
@@ -484,7 +439,6 @@ class ResearchAPI:
         task_id: str | None = None,
         *,
         timeout: float = 1800,
-        interval: float = 5,
         initial_interval: float = _INITIAL_INTERVAL_UNSET,
     ) -> ResearchTask:
         """Poll until research reaches a terminal state or times out.
@@ -497,20 +451,15 @@ class ResearchAPI:
         Args:
             notebook_id: The notebook ID.
             task_id: Optional research task discriminator. Pass the value
-                returned by :meth:`start` when available.
+                returned by :meth:`start` when available. When ``None`` and two
+                or more tasks are in flight on the first poll,
+                :class:`~notebooklm.exceptions.AmbiguousResearchTaskError` is
+                raised; a single in-flight task is selected and pinned silently.
             timeout: Maximum seconds to wait.
             initial_interval: Seconds between status checks (default: 5). This
                 is the canonical poll-interval keyword, matching
                 :meth:`SourcesAPI.wait_until_ready` and
                 :meth:`ArtifactsAPI.wait_for_completion`.
-            interval: **Deprecated** alias for ``initial_interval`` (removed in
-                v0.8.0). Passing a non-default value emits a
-                :class:`DeprecationWarning`; passing both a non-default
-                ``interval`` and an explicit ``initial_interval`` raises
-                :class:`TypeError`. Default-shape calls stay silent — note that
-                ``interval=5`` (the exact default) does *not* warn, since it is
-                indistinguishable from not passing the keyword at all; only
-                non-default ``interval`` values trigger the migration prompt.
 
         Returns:
             The final :meth:`poll` result (a
@@ -522,53 +471,32 @@ class ResearchAPI:
             ``NOT_FOUND`` — a pinned task that is temporarily absent from a poll
             is treated as a transient replication-lag condition and keeps
             polling until it appears, reaches a terminal state, or times out.
-            Legacy ``result["status"]`` dict-subscript access still works (with
-            a ``DeprecationWarning``) until v0.8.0.
+            Use attribute access (``result.status``).
 
         Raises:
+            AmbiguousResearchTaskError: If ``task_id`` is ``None`` and two or
+                more tasks are in flight on the first poll (pass ``task_id``).
             ResearchTimeoutError: If research does not reach a terminal status
                 before ``timeout`` elapses. Subclass of
                 :class:`WaitTimeoutError` and the built-in :class:`TimeoutError`,
                 so ``except TimeoutError`` continues to catch it.
             ValueError: If ``timeout`` is negative or the poll interval is not
                 positive.
-            TypeError: If both a non-default ``interval`` and an explicit
-                ``initial_interval`` are passed, or if the resolved poll
-                interval is not a number.
+            TypeError: If the resolved poll interval is not a number.
         """
-        # ``interval`` keeps its original default of ``5`` so the public-API
-        # compatibility audit sees no signature change; we treat it as
-        # "provided" only when the caller changed it from that default. This
-        # keeps default-shape calls silent while still warning on legacy use.
-        legacy_interval: Any = (
-            interval if interval != _DEFAULT_RESEARCH_POLL_INTERVAL else _INITIAL_INTERVAL_UNSET
-        )
-        resolved_interval = deprecated_kwarg(
-            legacy_interval,
-            initial_interval,
-            old="interval",
-            new="initial_interval",
-            owner="ResearchAPI.wait_for_completion",
-            sentinel=_INITIAL_INTERVAL_UNSET,
-            stacklevel=3,
-        )
-        # Only the sentinel means "neither keyword supplied" — fall back to the
-        # default cadence. An *explicit* non-numeric value (e.g. interval=None
-        # or initial_interval="1") is a caller bug; fail fast with TypeError
-        # rather than silently coercing it back to the default, matching the
-        # old ``interval`` path which would have raised on such a value.
-        if resolved_interval is _INITIAL_INTERVAL_UNSET:
+        # Unset sentinel → default cadence. An *explicit* non-numeric value
+        # (``None``, ``"1"``) is a caller bug: fail fast with TypeError rather
+        # than silently coercing it back to the default.
+        if initial_interval is _INITIAL_INTERVAL_UNSET:
             poll_interval = _DEFAULT_RESEARCH_POLL_INTERVAL
-        elif isinstance(resolved_interval, bool) or not isinstance(resolved_interval, (int, float)):
+        elif isinstance(initial_interval, bool) or not isinstance(initial_interval, (int, float)):
             raise TypeError("poll interval must be a number")
         else:
-            poll_interval = float(resolved_interval)
+            poll_interval = float(initial_interval)
 
         if timeout < 0:
             raise ValueError("timeout must be non-negative")
         if poll_interval <= 0:
-            # Neutral wording: the caller may have used the deprecated
-            # ``interval`` alias rather than ``initial_interval``.
             raise ValueError("poll interval must be positive")
 
         loop = asyncio.get_running_loop()
@@ -580,9 +508,9 @@ class ResearchAPI:
                 await self._poll_task_models(notebook_id),
                 notebook_id=notebook_id,
                 task_id=pinned_task_id,
-                warn_on_ambiguous=pinned_task_id is None,
+                raise_on_ambiguous=pinned_task_id is None,
             )
-            selected_task = parsed_tasks[0] if parsed_tasks else None
+            selected_task = next(iter(parsed_tasks), None)
             if pinned_task_id is None and selected_task is not None:
                 pinned_task_id = selected_task.task_id
 
@@ -610,6 +538,54 @@ class ResearchAPI:
             sleep_for = min(poll_interval, timeout - elapsed)
             if sleep_for > 0:
                 await asyncio.sleep(sleep_for)
+
+    async def cancel(self, notebook_id: str, run_id: str) -> None:
+        """Cancel an in-flight research (DiscoverSources) run.
+
+        Fire-and-forget. An IN_PROGRESS run transitions to a terminal
+        ``FAILED`` state shortly after this call; cancelling an
+        already-terminal run is a silent no-op.
+
+        Args:
+            notebook_id: Routing context only (sets the request ``source-path``).
+                **Not a scoping or authorization boundary**: the server keys the
+                cancel solely on ``run_id`` — live-verified that a valid
+                ``run_id`` is cancelled even when ``notebook_id`` names a
+                different / non-existent notebook (or is empty). Pass the run's
+                real notebook for correct routing, but do not rely on it to
+                prevent cancelling a run from the "wrong" notebook.
+            run_id: The **poll-level** run id — i.e. ``task.task_id`` from
+                :meth:`poll` (equivalently ``ResearchTask.task_id``). For a
+                **deep** research run started via :meth:`start`, this is the
+                ``report_id`` returned by ``start`` — live-verified: deep's
+                ``start().task_id`` is a *sessionId* that :meth:`poll` reports as
+                ``NOT_FOUND``, and cancelling with it is a silent no-op (the run
+                keeps running); only ``report_id`` actually stops a deep run. For
+                a **fast** run it is ``start().task_id`` (fast returns no
+                ``report_id``). When in doubt, pass the ``task_id`` surfaced by
+                :meth:`poll` — for both modes that is the value the server
+                accepts.
+
+        Returns:
+            ``None``. This is **fire-and-forget**: the server returns an empty
+            payload (``[]``) unconditionally and does **not** validate ``run_id``
+            (an unknown / garbage id also yields ``[]``), so the response carries
+            no success signal and this method never raises on an unknown id. The
+            only way to confirm a cancel took effect is to :meth:`poll`
+            afterward — live-verified that a cancelled IN_PROGRESS run surfaces
+            as ``FAILED`` within a few seconds, and that re-cancelling an
+            already-terminal run is a silent no-op.
+        """
+        logger.debug("Cancelling research run %s in notebook %s", run_id, notebook_id)
+        # Field 3 carries the run id; the optional field-1 client context is
+        # omitted to match ``_poll_task_models`` (``[None, None, <id>]``). Routed
+        # through ``self._rpc_call`` so a post-construction override of the RPC
+        # caller (advanced tests / instrumentation) is honoured.
+        await self._rpc_call(
+            RPCMethod.CANCEL_RESEARCH,
+            [None, None, run_id],
+            source_path=f"/notebook/{notebook_id}",
+        )
 
     async def import_sources(
         self,
@@ -646,28 +622,12 @@ class ResearchAPI:
             notebook_id,
         )
 
-        # Per-source ``research_task_id`` must match the caller's
-        # ``task_id`` when both are present. A mismatch is the wire-crossing
-        # bug — importing under the wrong task would mis-attribute
-        # provenance. We do this scan BEFORE the multi-task batch check so
-        # callers get the precise diagnostic (which mismatched source +
-        # which task) instead of the generic "multiple tasks" message.
-        for source in source_models:
-            source_task_id = source.research_task_id
-            if source_task_id and source_task_id != task_id:
-                raise ResearchTaskMismatchError(
-                    task_id=task_id,
-                    source_research_task_id=source_task_id,
-                )
-
-        research_task_ids = {
-            source.research_task_id for source in source_models if source.research_task_id
-        }
-        if len(research_task_ids) > 1:
-            raise ValidationError(
-                "Cannot import sources from multiple research tasks in one batch."
-            )
-        effective_task_id = next(iter(research_task_ids), task_id)
+        # Per-source ``research_task_id`` provenance: mismatches raise, a
+        # multi-task batch is refused, and the effective import task id is
+        # returned. Shared with ``import_sources_with_verification`` (which runs
+        # it up front, before the #1961 idempotency pre-filter) so provenance is
+        # validated even for entries the pre-filter would drop.
+        effective_task_id = _validate_research_task_provenance(source_models, task_id)
 
         report_source_indexes = {
             index
@@ -703,31 +663,22 @@ class ResearchAPI:
             self._build_web_import_entry(src.url, src.title) for src in valid_sources
         )
 
-        params = [None, [1], effective_task_id, notebook_id, source_array]
-
         result = await self._rpc.rpc_call(
             RPCMethod.IMPORT_RESEARCH,
-            params,
+            [None, [1], effective_task_id, notebook_id, source_array],
             source_path=f"/notebook/{notebook_id}",
         )
-
         imported = []
-        if result and isinstance(result, list):
-            # Unwrap an ``[[src1, ...]]`` envelope via ``first[0]`` (not chained).
-            if len(result) > 0 and isinstance(result[0], list) and len(result[0]) > 0:
-                first = result[0]
-                if isinstance(first[0], list):
-                    result = first
-
-            for src_data in result:
-                if isinstance(src_data, list) and len(src_data) >= 2:
-                    # Absent/non-list id envelope legitimately means "skip" (id None).
-                    id_envelope = src_data[0]
-                    src_id = (
-                        id_envelope[0] if id_envelope and isinstance(id_envelope, list) else None
-                    )
-                    if src_id:
-                        imported.append({"id": src_id, "title": src_data[1]})
+        # ``unwrap_import_rows`` centralises the ``[[src1, ...]]`` envelope probe
+        # behind the research row adapter; an unrecognised shape → ``[]``.
+        for src_data in unwrap_import_rows(result):
+            row = ImportedSourceRow(src_data)
+            if not row.is_well_formed:
+                continue
+            # An absent / non-list id envelope legitimately means "skip" (id None).
+            src_id = row.source_id
+            if src_id:
+                imported.append({"id": src_id, "title": row.title_slot})
 
         return imported
 
@@ -741,6 +692,7 @@ class ResearchAPI:
         initial_delay: float = 5,
         backoff_factor: float = 2,
         max_delay: float = 60,
+        allow_duplicate: bool = False,
     ) -> list[dict[str, str]]:
         """Import sources with timeout-tolerant verification.
 
@@ -749,9 +701,21 @@ class ResearchAPI:
         deep-research payloads and a one-shot call times out at the client
         even when the server has already committed.
 
+        Idempotency (#1961): unless ``allow_duplicate`` is true, requested
+        sources whose normalized URL already exists among the notebook's
+        current sources are pre-filtered out of *every* import attempt (not
+        just the timeout-retry path), so re-importing the same completed task
+        does not duplicate its sources. Report / pasted-text entries have no
+        dedupable URL and are always imported. The return value is a plain
+        ``list`` of the *newly-imported* entries; callers wanting the skipped
+        set read ``already_present`` off it (see :class:`_ImportedResearchSources`).
+        When the baseline snapshot fails, or ``allow_duplicate`` is true, no
+        pre-filter is applied (historical behavior).
+
         Lifecycle:
 
-        1. Snapshot baseline source IDs via ``client.sources.list``.
+        1. Snapshot baseline sources via ``client.sources.list`` (also the URL
+           set used for the idempotency pre-filter above).
         2. Call :meth:`import_sources`.
         3. On :class:`RPCTimeoutError`, probe ``client.sources.list`` again:
            - If every requested URL appears among *new* (post-baseline)
@@ -776,9 +740,15 @@ class ResearchAPI:
             RPCTimeoutError: If retries exhaust the ``max_elapsed`` budget.
         """
         if not sources:
-            return []
+            return _imported_result([], [])
         source_inputs: list[ResearchSourceInput] = list(sources)
         source_models = _coerce_research_sources(sources)
+
+        # Validate research-task provenance on the FULL requested set up front —
+        # before the #1961 idempotency pre-filter can drop already-present
+        # entries — so a source carrying the wrong ``research_task_id`` is
+        # rejected even when its URL already exists in the notebook.
+        _validate_research_task_provenance(source_models, task_id)
 
         started_at = time.monotonic()
         delay = initial_delay
@@ -786,15 +756,11 @@ class ResearchAPI:
         verified_imported: list[dict[str, str]] = []
         verified_imported_ids: set[str] = set()
 
-        requested_urls_norm = _requested_import_verification_urls(source_models)
-        # Track how many non-URL entries (research reports, pasted text) the
-        # request includes so concurrent no-URL additions cannot inflate the
-        # synthesized return after a timeout.
-        requested_no_url_count = _no_import_verification_url_entry_count(source_models)
-
         # Anchor verified-success on URLs of *new* sources (not on a
         # baseline→current URL delta) so concurrent additions from another
-        # session and pre-existing URLs cannot satisfy the check.
+        # session and pre-existing URLs cannot satisfy the check. The same
+        # snapshot doubles as the idempotency pre-filter baseline (#1961).
+        baseline: list[Source] | None
         baseline_ids: set[str] | None
         try:
             baseline = await self._source_lister.list(notebook_id, strict=True)
@@ -802,16 +768,57 @@ class ResearchAPI:
         except (NetworkError, RPCError) as snapshot_exc:
             logger.warning(
                 "Pre-import sources.list snapshot failed for %s: %s; "
-                "verified-success path disabled for this call",
+                "verified-success path and idempotency pre-filter disabled for this call",
                 notebook_id,
                 snapshot_exc,
             )
+            baseline = None
             baseline_ids = None
+
+        # Idempotency pre-filter (#1961): drop requested sources whose normalized
+        # URL already exists in the notebook so a repeat import does not
+        # duplicate them. Runs up front on every attempt — the timeout-retry
+        # path below already filters already-present URLs; this generalizes that
+        # to the happy path. Skipped when the caller opts into duplicates or the
+        # baseline snapshot failed (can't tell what's already present).
+        already_present: list[dict[str, str]] = []
+        if not allow_duplicate and baseline is not None:
+            existing_by_norm_url: dict[str, Source] = {}
+            for existing in baseline:
+                if existing.url:
+                    existing_by_norm_url.setdefault(
+                        _normalize_import_verification_url(existing.url), existing
+                    )
+            source_inputs, source_models, already_present = _partition_requested_sources(
+                source_inputs, source_models, existing_by_norm_url
+            )
+            if already_present:
+                logger.info(
+                    "Idempotent research import into %s: skipping %d source(s) already "
+                    "present by URL; importing %d new source(s)",
+                    notebook_id,
+                    len(already_present),
+                    len(source_models),
+                )
+            # Every requested source was already present — nothing new to
+            # import. Return without an RPC (and without entering the
+            # timeout-retry loop), reporting the skipped set.
+            if not source_inputs:
+                return _imported_result([], already_present)
+
+        requested_urls_norm = _requested_import_verification_urls(source_models)
+        # Track how many non-URL entries (research reports, pasted text) the
+        # request includes so concurrent no-URL additions cannot inflate the
+        # synthesized return after a timeout.
+        requested_no_url_count = _no_import_verification_url_entry_count(source_models)
 
         while True:
             try:
                 imported = await self.import_sources(notebook_id, task_id, source_inputs)
-                return _merge_imported_sources(imported, verified_imported, verified_imported_ids)
+                return _imported_result(
+                    _merge_imported_sources(imported, verified_imported, verified_imported_ids),
+                    already_present,
+                )
             except RPCTimeoutError:
                 elapsed = time.monotonic() - started_at
                 remaining = max_elapsed - elapsed
@@ -856,8 +863,11 @@ class ResearchAPI:
                                 elif not src.url and remaining_no_url > 0:
                                     timeout_verified.append(_imported_source_entry(src))
                                     remaining_no_url -= 1
-                            return _merge_imported_sources(
-                                timeout_verified, verified_imported, verified_imported_ids
+                            return _imported_result(
+                                _merge_imported_sources(
+                                    timeout_verified, verified_imported, verified_imported_ids
+                                ),
+                                already_present,
                             )
                         source_norms = [
                             (
@@ -869,27 +879,30 @@ class ResearchAPI:
                                 source_inputs, source_models, strict=True
                             )
                         ]
-                        # Filter for retry: drop already-present URLs.
-                        # Additionally, when *any* URL was verified
-                        # committed, drop no-URL entries (deep-research
-                        # reports): reports are appended FIRST in the
-                        # IMPORT_RESEARCH payload (see
-                        # ``_build_report_import_entry`` usage in
-                        # ``import_sources``), so a URL newly observed after
-                        # this attempt implies the report committed too.
-                        # Pre-existing URLs only de-dupe URL entries; they do
-                        # not prove this request committed no-URL reports.
-                        # Without this guard,
-                        # each retry duplicates the report server-side.
-                        # When no URL committed, keep no-URL entries —
-                        # the report's fate is unknown and the
-                        # report-only attempt cap further down bounds
-                        # the worst case.
+                        # Filter for retry: drop already-present URLs. Also, when
+                        # *any* URL committed, drop no-URL entries (deep-research
+                        # reports are appended FIRST in the IMPORT_RESEARCH payload,
+                        # so a newly-observed URL implies the report committed too —
+                        # without this guard each retry duplicates it server-side).
+                        # Pre-existing URLs only de-dupe URL entries. When no URL
+                        # committed, keep no-URL entries (report fate unknown; the
+                        # report-only attempt cap below bounds the worst case).
                         drop_no_url_entries = bool(committed_urls_norm)
+                        # Drop-for-retry anchor: normally a URL already present in
+                        # the notebook (baseline OR committed by this call) is
+                        # dropped to avoid duplicate inflation. But under
+                        # ``allow_duplicate`` the caller explicitly opted to re-add
+                        # baseline URLs, so anchor on the post-baseline
+                        # ``new_urls_norm`` — only URLs THIS attempt committed are
+                        # dropped; a pre-existing baseline URL is still retried and
+                        # re-added, not silently treated as "already done" (#1961
+                        # codex review). #1934 safety holds in both modes: a URL
+                        # committed by this attempt is never retried.
+                        retry_present_urls = new_urls_norm if allow_duplicate else current_urls_norm
                         filtered_source_pairs = [
                             (source_input, source)
                             for source_input, source, url in source_norms
-                            if url not in current_urls_norm
+                            if url not in retry_present_urls
                             and not (drop_no_url_entries and url is None)
                         ]
                         if len(filtered_source_pairs) != len(source_models):
@@ -919,8 +932,11 @@ class ResearchAPI:
                                     "skipping retry to avoid duplicate inflation",
                                     notebook_id,
                                 )
-                                return _merge_imported_sources(
-                                    [], verified_imported, verified_imported_ids
+                                return _imported_result(
+                                    _merge_imported_sources(
+                                        [], verified_imported, verified_imported_ids
+                                    ),
+                                    already_present,
                                 )
                             logger.warning(
                                 "IMPORT_RESEARCH timed out for notebook %s after "

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, ClassVar
 
+from .._types.common import _datetime_from_timestamp
 from ..rpc import RPCMethod, safe_index
 
 __all__ = ["NoteRow"]
@@ -75,6 +77,15 @@ class NoteRow:
     # where ``row[1]`` is a list of length 5).
     _INNER_CONTENT_POS: ClassVar[int] = 1
     _INNER_TITLE_POS: ClassVar[int] = 4
+    # Creation-timestamp descent inside the *current* inner envelope:
+    # ``row[1][2][2][0]``. The inner metadata block sits at ``inner[2]``
+    # (``_INNER_META_POS``); within it the ``[seconds, nanos]`` timestamp
+    # list is at ``metadata[2]`` (``_META_TIMESTAMP_POS``); the epoch
+    # seconds are ``ts[0]`` (``_TS_SECONDS_POS``). This is the SAME slot
+    # ``Artifact.from_mind_map`` decodes at ``data[1][2][2][0]``.
+    _INNER_META_POS: ClassVar[int] = 2
+    _META_TIMESTAMP_POS: ClassVar[int] = 2
+    _TS_SECONDS_POS: ClassVar[int] = 0
     # Soft-delete sentinel value at ``_STATUS_POS``.
     _DELETED_SENTINEL: ClassVar[int] = 2
 
@@ -106,12 +117,33 @@ class NoteRow:
             and self._raw[self._STATUS_POS] == self._DELETED_SENTINEL
         )
 
+    @property
+    def has_unrecognized_tombstone(self) -> bool:
+        """Whether the content slot is ``None`` without the soft-delete sentinel.
+
+        A live note / mind-map row always carries content at position 1; the
+        only legitimate ``None``-content shape on the wire is the soft-delete
+        tombstone ``[id, None, 2]`` (see :attr:`is_deleted`). A ``None``
+        content slot that is NOT the recognised tombstone — a short
+        ``[id, None]`` row, or a drifted sentinel value at position 2 —
+        therefore signals tombstone drift: were Google to move the sentinel,
+        every deleted row would silently leak as live. Consumers
+        (``Artifact.from_mind_map``) WARN on this predicate before falling
+        through to their historical treat-as-live behavior, rather than
+        leaking silently (#1485 absence-vs-malformed policy).
+
+        ``False`` for rows too short to carry the content slot (no content
+        slot is genuine absence, not a null content value).
+        """
+        if len(self._raw) <= self._CONTENT_POS:
+            return False
+        return self._raw[self._CONTENT_POS] is None and not self.is_deleted
+
     # ---- Multi-shape content / title dispatch ----------------------------
-    # Both descents short-circuit on the legacy ``str``-at-position-1
-    # shape *before* invoking ``safe_index`` so the legitimate legacy
-    # path emits no DeprecationWarning. The current shape's inner
-    # descent flows through ``safe_index`` so strict mode raises on
-    # genuine inner-shape drift.
+    # Both descents short-circuit on the legacy ``str``-at-position-1 shape
+    # before invoking ``safe_index`` so legitimate legacy rows remain accepted
+    # shapes, not schema drift. The current shape's inner descent flows through
+    # ``safe_index`` so genuine inner-shape drift raises.
 
     @property
     def content(self) -> str | None:
@@ -199,6 +231,91 @@ class NoteRow:
             source="NoteRow.title",
         )
         return value if isinstance(value, str) else ""
+
+    # ---- Creation timestamp (current shape only) -------------------------
+    # The timestamp lives inside the *current* inner envelope at
+    # ``row[1][2][2][0]`` — the exact slot ``Artifact.from_mind_map``
+    # already decodes. Legacy ``[id, content_string]`` rows have no
+    # metadata sub-structure (``row[1]`` is a string), so absence there is
+    # genuine soft absence, not drift: descend only when the inner
+    # envelope is a list long enough to carry the metadata block, mirroring
+    # the length-guard-then-``safe_index`` style of :attr:`content` /
+    # :attr:`title` and :class:`ArtifactRow`.
+
+    @property
+    def created_at_raw(self) -> int | float | None:
+        """Raw creation timestamp (seconds since epoch) at ``row[1][2][2][0]``.
+
+        Exposed separately from :attr:`created_at` (mirroring
+        :attr:`ArtifactRow.created_at_raw`) so callers that need a
+        TZ-invariant value — e.g. golden tests pinning the decoded epoch —
+        read it without round-tripping through a host-local
+        :class:`~datetime.datetime`.
+
+        Returns ``None`` when:
+
+        * the row is too short to carry ``row[1]`` (short / empty row), or
+        * ``row[1]`` is a ``str`` (legacy shape — no metadata block) or
+          ``None`` (deleted) or otherwise not a list, or
+        * the inner envelope is too short to carry the metadata block at
+          ``[2]``, or the metadata block / timestamp list are absent /
+          too short, or
+        * the resulting value is not numeric.
+
+        Absence stays soft (legacy / short / pre-timestamp rows simply
+        have no creation time); the descent through a *present* inner list
+        flows through ``safe_index`` so genuine inner-shape drift surfaces
+        in strict mode, consistent with the repo's absence-vs-malformed
+        policy (#1485).
+        """
+        if len(self._raw) <= self._CONTENT_POS:
+            return None
+        inner = self._raw[self._CONTENT_POS]
+        # Legacy (``str``) / deleted (``None``) / non-list shapes carry no
+        # metadata block — genuine absence, not drift.
+        if not isinstance(inner, list) or len(inner) <= self._INNER_META_POS:
+            return None
+        metadata_block = safe_index(
+            inner,
+            self._INNER_META_POS,
+            method_id=self.method_id,
+            source="NoteRow.created_at_raw",
+        )
+        # Some legitimate inner envelopes have a non-list metadata slot
+        # (e.g. an int row-status marker) or one too short to carry the
+        # timestamp list — those predate / omit the timestamp and are not
+        # drift, so length-guard before descending further.
+        if not isinstance(metadata_block, list) or len(metadata_block) <= self._META_TIMESTAMP_POS:
+            return None
+        ts_list = safe_index(
+            metadata_block,
+            self._META_TIMESTAMP_POS,
+            method_id=self.method_id,
+            source="NoteRow.created_at_raw",
+        )
+        if not isinstance(ts_list, list) or len(ts_list) <= self._TS_SECONDS_POS:
+            return None
+        value = safe_index(
+            ts_list,
+            self._TS_SECONDS_POS,
+            method_id=self.method_id,
+            source="NoteRow.created_at_raw",
+        )
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+    @property
+    def created_at(self) -> datetime | None:
+        """Creation timestamp as a :class:`~datetime.datetime`, or ``None``.
+
+        Wraps :attr:`created_at_raw` and converts via
+        :func:`_datetime_from_timestamp`, which returns ``None`` for
+        out-of-range / non-numeric values. Mirrors
+        :attr:`ArtifactRow.created_at`.
+        """
+        raw = self.created_at_raw
+        if raw is None:
+            return None
+        return _datetime_from_timestamp(raw)
 
     # ---- Mind-map content classification ---------------------------------
 

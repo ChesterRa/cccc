@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
+use crate::browser_surface::{
+    conversation_target_matches, is_chatgpt_url, normalized_chatgpt_conversation_url,
+};
 
 pub(super) const TARGETS_KEY: &str = "web_model_browser_targets";
 const DELIVERY_PREFERENCES_KEY: &str = "web_model_delivery_preferences";
@@ -94,7 +97,35 @@ pub(super) async fn ensure_open_for_actor(
         .browser_surfaces
         .ensure_open_system(&key(group_id, actor_id), &profile, &open_url, width, height)
         .await
-        .map_err(|error| ApiError::bad(format!("{error:#}")))
+        .map_err(|error| ApiError::bad(format!("{error:#}")))?;
+    let session_key = key(group_id, actor_id);
+    match target["kind"].as_str() {
+        Some("existing_chat") if is_chatgpt_url(&open_url) => {
+            if normalized_chatgpt_conversation_url(&open_url).is_some()
+                && let Err(error) = state
+                    .browser_surfaces
+                    .align_chatgpt_conversation_target(
+                        &session_key,
+                        &open_url,
+                        std::time::Duration::from_secs(5),
+                    )
+                    .await
+            {
+                tracing::warn!(group_id, actor_id, %error, "saved ChatGPT conversation could not be opened");
+            }
+        }
+        Some("existing_chat" | "new_chat") => {
+            if let Err(error) = state
+                .browser_surfaces
+                .navigate_to_url(&session_key, &open_url)
+                .await
+            {
+                tracing::warn!(group_id, actor_id, %error, "saved Web-model target could not be opened");
+            }
+        }
+        _ => {}
+    }
+    Ok(state.browser_surfaces.info(&session_key).await)
 }
 
 async fn close(State(state): State<AppState>, Json(body): Json<Value>) -> ApiResult {
@@ -141,6 +172,13 @@ async fn bind_current(State(state): State<AppState>, Json(body): Json<Value>) ->
     } else {
         if !url.starts_with("http://") && !url.starts_with("https://") {
             return Err(ApiError::bad("a browser conversation URL is required"));
+        }
+        if is_chatgpt_url(&url) {
+            url = normalized_chatgpt_conversation_url(&url).ok_or_else(|| {
+                ApiError::bad(
+                    "ChatGPT is still assigning the final conversation URL; wait for a stable /c/... address and save again",
+                )
+            })?;
         }
         json!({"state":"bound_existing_chat","kind":"existing_chat","url":url,"saved_at":utc_now(),"next_delivery":"existing_chat"})
     };
@@ -230,7 +268,7 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
     let mut surface = state.browser_surfaces.info(&session_key).await;
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
     let targets = integration_state::group_get(&store, group_id, TARGETS_KEY).map_err(io_error)?;
-    let target = targets.get(actor_id).cloned().unwrap_or_else(|| json!({}));
+    let mut target = targets.get(actor_id).cloned().unwrap_or_else(|| json!({}));
     let preferences = integration_state::group_get(&store, group_id, DELIVERY_PREFERENCES_KEY)
         .map_err(io_error)?;
     let stored_preference = preferences
@@ -277,13 +315,42 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
         .as_str()
         .or_else(|| surface["url"].as_str())
         .unwrap_or("");
-    let kind = target["kind"].as_str().unwrap_or("");
+    let kind = target["kind"].as_str().unwrap_or("").to_owned();
+    let stored_target_url = target["url"].as_str().unwrap_or("").to_owned();
+    let chatgpt_existing = kind == "existing_chat" && is_chatgpt_url(&stored_target_url);
+    let normalized_target_url = chatgpt_existing
+        .then(|| normalized_chatgpt_conversation_url(&stored_target_url))
+        .flatten();
+    let invalid_target = chatgpt_existing && normalized_target_url.is_none();
+    let target_mismatch = active
+        && normalized_target_url
+            .as_deref()
+            .is_some_and(|expected| !conversation_target_matches(expected, url));
     let conversation_url = if kind == "existing_chat" {
-        target["url"].as_str().unwrap_or("")
+        if chatgpt_existing {
+            normalized_target_url.clone().unwrap_or_default()
+        } else {
+            stored_target_url.clone()
+        }
     } else {
-        ""
+        String::new()
     };
     let pending_new_chat_bind = kind == "new_chat";
+    if invalid_target {
+        target["state"] = json!("invalid_existing_chat");
+        target["kind"] = json!("none");
+        target["next_delivery"] = json!("blocked");
+        target["label"] = json!("Rebind ChatGPT chat");
+        target["detail"] =
+            json!("The saved ChatGPT URL is provisional or invalid and cannot receive deliveries.");
+    } else if target_mismatch {
+        target["state"] = json!("existing_chat_unavailable");
+        target["next_delivery"] = json!("blocked");
+        target["label"] = json!("Saved chat unavailable");
+        target["detail"] = json!(
+            "The live ChatGPT page does not match the saved conversation; delivery is blocked until it is reopened or rebound."
+        );
+    }
     let internal_delivery_status = target["last_delivery_status"].as_str().unwrap_or("");
     let delivery_status = match internal_delivery_status {
         "pending_new_chat_bind" => "pending",
@@ -326,27 +393,41 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
             | "legacy_submission_unverified"
             | "bound"
     );
-    let (target_state, target_label, target_reason) = match kind {
-        "existing_chat" => (
-            "bound",
-            "Existing ChatGPT chat",
-            "Next delivery goes to the saved ChatGPT conversation URL.",
-        ),
-        "new_chat" if internal_delivery_status == "pending_new_chat_bind" => (
-            "new_chat_pending",
-            "Binding new ChatGPT chat",
-            "The first prompt was submitted; CCCC is waiting for ChatGPT to expose the final /c/... URL.",
-        ),
-        "new_chat" => (
-            "new_chat_pending",
-            "New ChatGPT chat on next delivery",
-            "Next delivery starts a fresh ChatGPT chat, then binds its final /c/... URL.",
-        ),
-        _ => (
-            "missing",
-            "No target selected",
-            "Save an existing ChatGPT chat or choose new-chat delivery.",
-        ),
+    let (target_state, target_label, target_reason) = if invalid_target {
+        (
+            "invalid",
+            "Rebind ChatGPT chat",
+            "The saved ChatGPT URL is provisional or invalid and cannot receive deliveries.",
+        )
+    } else if target_mismatch {
+        (
+            "unavailable",
+            "Saved chat unavailable",
+            "The live ChatGPT page does not match the saved conversation; delivery is blocked until it is reopened or rebound.",
+        )
+    } else {
+        match kind.as_str() {
+            "existing_chat" => (
+                "bound",
+                "Existing ChatGPT chat",
+                "Next delivery goes to the saved ChatGPT conversation URL.",
+            ),
+            "new_chat" if internal_delivery_status == "pending_new_chat_bind" => (
+                "new_chat_pending",
+                "Binding new ChatGPT chat",
+                "The first prompt was submitted; CCCC is waiting for ChatGPT to expose the final /c/... URL.",
+            ),
+            "new_chat" => (
+                "new_chat_pending",
+                "New ChatGPT chat on next delivery",
+                "Next delivery starts a fresh ChatGPT chat, then binds its final /c/... URL.",
+            ),
+            _ => (
+                "missing",
+                "No target selected",
+                "Save an existing ChatGPT chat or choose new-chat delivery.",
+            ),
+        }
     };
     let (delivery_label, delivery_reason) = match delivery_state {
         "pending_bind" => (
@@ -406,7 +487,7 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
             "Sign in to ChatGPT",
             "Open ChatGPT and sign in with this browser profile.",
         )
-    } else if target_state == "missing" {
+    } else if matches!(target_state, "missing" | "invalid" | "unavailable") {
         ("bind_chat", "Choose a target ChatGPT chat", target_reason)
     } else if delivery_state == "pending_bind" {
         (
@@ -452,7 +533,7 @@ async fn payload(state: &AppState, group_id: &str, actor_id: &str, inspect: bool
         },
         "target":{
             "state":target_state,"label":target_label,"reason":target_reason,
-            "url":if conversation_url.is_empty(){target["url"].as_str().unwrap_or("")}else{conversation_url},
+            "url":if conversation_url.is_empty(){target["url"].as_str().unwrap_or("")}else{conversation_url.as_str()},
             "saved_at":target["saved_at"],"next_delivery":target["next_delivery"]
         },
         "delivery_target":target,
@@ -599,7 +680,13 @@ fn browser_open_url(target: &Value, provider_url: &str) -> String {
     let stored = target["url"].as_str().map(str::trim).unwrap_or_default();
     let stored_is_http =
         reqwest::Url::parse(stored).is_ok_and(|url| matches!(url.scheme(), "http" | "https"));
-    if matches!(target["kind"].as_str(), Some("existing_chat" | "new_chat")) && stored_is_http {
+    let stable_existing = target["kind"] != "existing_chat"
+        || !is_chatgpt_url(stored)
+        || normalized_chatgpt_conversation_url(stored).is_some();
+    if matches!(target["kind"].as_str(), Some("existing_chat" | "new_chat"))
+        && stored_is_http
+        && stable_existing
+    {
         stored.to_owned()
     } else {
         provider_url.to_owned()
@@ -721,6 +808,16 @@ mod tests {
         assert_eq!(
             browser_open_url(
                 &json!({"kind":"existing_chat","url":"javascript:alert(1)"}),
+                "https://chatgpt.com/",
+            ),
+            "https://chatgpt.com/"
+        );
+        assert_eq!(
+            browser_open_url(
+                &json!({
+                    "kind":"existing_chat",
+                    "url":"https://chatgpt.com/c/WEB:temporary"
+                }),
                 "https://chatgpt.com/",
             ),
             "https://chatgpt.com/"

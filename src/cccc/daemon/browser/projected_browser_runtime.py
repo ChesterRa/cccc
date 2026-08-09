@@ -1517,10 +1517,12 @@ class ProjectedBrowserSession:
         elif kind == "chatgpt_submit_prompt":
             from ...ports.web_model_browser_sidecar import (
                 CHATGPT_URL,
+                CHATGPT_BOUND_TARGET_ERROR_MARKER,
                 _conversation_url_from_tab,
                 _mark_page_pending_delivery,
                 _normalize_chatgpt_url,
                 _submit_prompt,
+                _wait_for_bound_conversation_url,
                 _wait_for_conversation_url,
             )
 
@@ -1530,6 +1532,14 @@ class ProjectedBrowserSession:
             target_url = _normalize_chatgpt_url(payload.get("target_url"))
             auto_bind_new_chat = bool(payload.get("auto_bind_new_chat"))
             delivery_id = str(payload.get("delivery_id") or "").strip()
+            expected_conversation_url = ""
+            if not auto_bind_new_chat:
+                expected_conversation_url = _conversation_url_from_tab(target_url)
+                if not expected_conversation_url:
+                    raise RuntimeError(
+                        f"{CHATGPT_BOUND_TARGET_ERROR_MARKER} saved ChatGPT conversation URL is provisional or invalid"
+                    )
+                target_url = expected_conversation_url
             page = runtime.page
             current_url = _normalize_chatgpt_url(str(getattr(page, "url", "") or ""))
             if target_url and current_url != target_url:
@@ -1539,6 +1549,15 @@ class ProjectedBrowserSession:
             current_chatgpt_url = _normalize_chatgpt_url(str(getattr(page, "url", "") or ""))
             if not current_chatgpt_url:
                 raise RuntimeError(f"ChatGPT sign-in required before delivery; current page is {str(getattr(page, 'url', '') or '')[:200]}")
+            if expected_conversation_url and not _wait_for_bound_conversation_url(
+                page, expected_conversation_url, timeout_seconds=5.0
+            ):
+                observed = _normalize_chatgpt_url(
+                    str(getattr(page, "url", "") or "")
+                )
+                raise RuntimeError(
+                    f"{CHATGPT_BOUND_TARGET_ERROR_MARKER} expected={expected_conversation_url} observed={observed or 'non-ChatGPT page'}"
+                )
             if auto_bind_new_chat:
                 _mark_page_pending_delivery(page, delivery_id)
             command_timeout_seconds = float(payload.get("command_timeout_seconds") or payload.get("input_timeout_seconds") or 30.0)
@@ -1552,13 +1571,14 @@ class ProjectedBrowserSession:
                 attachment_path=str(payload.get("attachment_path") or "").strip() or None,
                 delivery_id=delivery_id,
             )
-            conversation_url = _conversation_url_from_tab(str(getattr(page, "url", "") or ""))
-            if auto_bind_new_chat and not conversation_url:
+            if auto_bind_new_chat:
                 bind_timeout = max(0.2, command_deadline - time.time())
                 conversation_url = _wait_for_conversation_url(
                     page,
                     timeout_seconds=min(float(payload.get("new_chat_bind_timeout_seconds") or 20.0), bind_timeout),
                 )
+            else:
+                conversation_url = expected_conversation_url
             tab_url = str(getattr(page, "url", "") or "")
             pending_conversation_url = bool(auto_bind_new_chat and not conversation_url)
             conversation_url = conversation_url or ("" if pending_conversation_url else target_url)

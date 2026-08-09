@@ -41,7 +41,7 @@ The chain itself is reached by the transport through an injected
 ``chain_host._authed_post_chain`` live, late on every
 :meth:`perform_authed_post` call; this both breaks the construction
 cycle and preserves the long-standing test pattern of reassigning
-``core._chain_host._authed_post_chain`` to install a fake chain. The
+``core._composed.chain_host._authed_post_chain`` to install a fake chain. The
 :class:`AuthRefreshCoordinator` snapshot is reached via an injected
 ``snapshot_provider`` callable so :class:`RuntimeTransport` never has
 to hold a direct back-reference to the composition root.
@@ -62,8 +62,10 @@ from .._middleware.context import (
     RPC_CONTEXT_DISABLE_INTERNAL_RETRIES,
     RPC_CONTEXT_DISABLE_READ_TIMEOUT_RETRIES,
     RPC_CONTEXT_LOG_LABEL,
+    RPC_CONTEXT_MAX_RESPONSE_BYTES,
     RPC_CONTEXT_READ_TIMEOUT,
     RPC_CONTEXT_REFRESH_BUDGET,
+    RPC_CONTEXT_RETRY_DEADLINE,
     RPC_CONTEXT_RPC_METHOD,
     RPC_CONTEXT_RPC_QUEUE_WAIT_SECONDS,
 )
@@ -79,6 +81,7 @@ from .._transport_errors import raise_mapped_post_error
 if TYPE_CHECKING:
     from .._auth_refresh_retry import RefreshBudget
     from .._client_metrics import ClientMetrics
+    from .._deadline import RuntimeDeadline
     from .._kernel import Kernel
 
 
@@ -122,7 +125,7 @@ class RuntimeTransport:
         # :class:`MiddlewareChainHost` AFTER :class:`RuntimeTransport`
         # is constructed (the chain's leaf is :meth:`terminal`, so the
         # transport must exist first). Tests also reassign
-        # ``core._chain_host._authed_post_chain`` post-construction to
+        # ``core._composed.chain_host._authed_post_chain`` post-construction to
         # install a fake chain — going through a provider closure
         # (called late in :meth:`perform_authed_post`) ensures those
         # reassignments take effect on the next call without any
@@ -221,6 +224,9 @@ class RuntimeTransport:
         context = request.context
         log_label = context.get(RPC_CONTEXT_LOG_LABEL, "<unknown-chain-call>")
         read_timeout = context.get(RPC_CONTEXT_READ_TIMEOUT)
+        post_kwargs: dict[str, Any] = {}
+        if RPC_CONTEXT_MAX_RESPONSE_BYTES in context:
+            post_kwargs["max_response_bytes"] = context[RPC_CONTEXT_MAX_RESPONSE_BYTES]
         start = time.perf_counter()
         try:
             response = await self._kernel.post(
@@ -228,6 +234,7 @@ class RuntimeTransport:
                 headers=request.headers,
                 body=request.body,
                 read_timeout=read_timeout,
+                **post_kwargs,
             )
         except (httpx.HTTPStatusError, httpx.RequestError) as exc:
             raise_mapped_post_error(
@@ -246,7 +253,9 @@ class RuntimeTransport:
         disable_internal_retries: bool = False,
         rpc_method: str | None = None,
         refresh_budget: RefreshBudget | None = None,
+        retry_deadline: RuntimeDeadline | None = None,
         read_timeout: float | None = None,
+        max_response_bytes: int | None = None,
         disable_read_timeout_retries: bool = False,
     ) -> httpx.Response:
         """Authed POST entry point — routes through the middleware chain.
@@ -269,6 +278,16 @@ class RuntimeTransport:
         (issue #1205). Callers that drive the chain without a budget (the
         chat path) pass ``None``; the middleware then falls back to its
         per-chain ``RPC_CONTEXT_AUTH_REFRESHED`` boolean.
+
+        ``retry_deadline`` is an optional
+        :class:`notebooklm._deadline.RuntimeDeadline` seeded by the RPC
+        executor so the chain's :class:`RetryMiddleware` INHERITS the logical
+        call's aggregate retry deadline (anchored at T0) instead of minting a
+        fresh one at chain re-entry. This keeps the 429/5xx retry budget from
+        restarting across a decode-time auth-refresh retry (issue #1873).
+        Callers that drive the chain without an aggregate deadline (the chat
+        path) pass ``None``; ``RetryMiddleware`` then falls back to
+        ``_start_retry_deadline()``.
 
         Raises:
             RuntimeError: if the chain provider returns ``None``. The
@@ -294,6 +313,8 @@ class RuntimeTransport:
         }
         if read_timeout is not None:
             context[RPC_CONTEXT_READ_TIMEOUT] = read_timeout
+        if max_response_bytes is not None:
+            context[RPC_CONTEXT_MAX_RESPONSE_BYTES] = max_response_bytes
         if disable_read_timeout_retries:
             context[RPC_CONTEXT_DISABLE_READ_TIMEOUT_RETRIES] = True
         # Only seed the shared refresh budget when one is supplied. Callers
@@ -303,6 +324,12 @@ class RuntimeTransport:
         # ``RPC_CONTEXT_AUTH_REFRESHED`` boolean.
         if refresh_budget is not None:
             context[RPC_CONTEXT_REFRESH_BUDGET] = refresh_budget
+        # Only seed the aggregate retry deadline when one is supplied. Callers
+        # that drive the chain without an aggregate deadline (the chat path)
+        # leave the key ABSENT; ``RetryMiddleware`` then mints its own via
+        # ``_start_retry_deadline()`` (issue #1873).
+        if retry_deadline is not None:
+            context[RPC_CONTEXT_RETRY_DEADLINE] = retry_deadline
         snapshot = await self._snapshot_provider()
 
         request = materialize_rpc_request(

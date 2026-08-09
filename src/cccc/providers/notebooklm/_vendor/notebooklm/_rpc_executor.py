@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 
 import httpx
 
+from ._auth.account import format_authuser_value
 from ._auth_refresh_retry import RefreshBudget, refresh_and_count
 from ._deadline import RuntimeDeadline
 from ._env import get_default_language
@@ -29,7 +30,7 @@ from ._transport_errors import (
     TransportServerError,
     parse_retry_after,
 )
-from .auth import format_authuser_value
+from .exceptions import DecodingError
 from .rpc import (
     ClientError,
     NetworkError,
@@ -150,8 +151,8 @@ class RpcExecutor:
         # (``_is_retry=True``) inherits the parent's id so a single
         # decode-error → refresh → retry sequence appears under one
         # ``[req=<id>]`` in the logs. HTTP-status retries (auth + 429) happen
-        # inside ``_perform_authed_post`` without recursion, so they don't
-        # need this guard.
+        # inside ``RuntimeTransport.perform_authed_post`` without recursion, so
+        # they don't need this guard.
         if _is_retry:
             return await self._execute_once(
                 method,
@@ -258,6 +259,7 @@ class RpcExecutor:
                 disable_internal_retries=effective_disable_internal_retries,
                 rpc_method=method.name,
                 refresh_budget=_refresh_budget,
+                retry_deadline=_retry_deadline,
             )
         except TransportAuthExpired as exc:
             # Preserve the historical raw transport exception on refresh failure.
@@ -353,6 +355,17 @@ class RpcExecutor:
                 )
                 return refreshed
 
+            # Count only genuine wire-schema drift, not every decoded
+            # ``RPCError``. ``DecodingError`` (and its ``UnknownRPCMethodError``
+            # subclass, e.g. from ``safe_index``) means "Google reshaped a
+            # response"; a decoded ``RateLimitError`` / ``AuthError`` /
+            # ``*NotFoundError`` is a semantic outcome, not drift, and must not
+            # inflate the drift signal. This is the surfaced leg only — a decode
+            # error recovered by the refresh-and-retry above returns before
+            # reaching here, so it is correctly not counted.
+            if isinstance(exc, DecodingError):
+                self._metrics.increment(rpc_decode_errors=1)
+
             error_details = [type(exc).__name__]
             if exc.rpc_code is not None:
                 error_details.append(f"rpc_code={exc.rpc_code}")
@@ -377,6 +390,12 @@ class RpcExecutor:
             # this guard exists to remove.
             elapsed = time.perf_counter() - start
             logger.error("RPC %s failed after %.3fs: %s", method.name, elapsed, exc)
+            # Genuine shape drift: a malformed body or a missing key/index in
+            # the decoded payload. Count it under the dedicated drift signal
+            # before re-raising as ``RPCError`` (the wrap is the executor's
+            # single decode-boundary, so this is the one site for the wrapped
+            # case — symmetric with the surfaced ``DecodingError`` leg above).
+            self._metrics.increment(rpc_decode_errors=1)
             raise RPCError(
                 f"Failed to decode response for {method.name}: {exc}",
                 method_id=method.value,

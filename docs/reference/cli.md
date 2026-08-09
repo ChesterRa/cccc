@@ -253,6 +253,16 @@ Notes:
 - `language` / `lang` are not valid query options (put language requirement in query text).
 - Provider credentials are write-only; CLI/Web only return masked metadata.
 - `cccc space health` validates credential format and adapter compatibility.
+- The Python implementation vendors `notebooklm-py` v0.8.0. The experimental
+  Rust implementation uses a native protocol client and currently supports
+  direct `resource_ingest` only for `pasted_text`; use `cccc space sync` for
+  local `.md`/`.txt` files, or select Python for direct file/URL/YouTube/Drive
+  ingestion.
+- Artifact generation is asynchronous and does not save locally by default.
+  Request wait/save explicitly when a local artifact is required. Native Rust
+  download currently supports media, report/study-guide, infographic, and
+  slide-deck outputs; interactive quiz/flashcard/mind-map and data-table
+  downloads remain Python-only.
 - When a group is bound, curated `context_sync` exports are also auto-enqueued from `context_sync` updates.
 - `cccc space sync` performs two-way reconcile for Group Space:
   - local `repo/space/` files -> provider sources,

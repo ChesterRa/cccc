@@ -2,10 +2,11 @@
 
 Hides the two backends (note-backed JSON vs interactive studio-artifact) behind a
 single surface that dispatches each operation to the correct RPC family
-(issue #1256). Note-backed maps use the note RPCs (``GENERATE_MIND_MAP`` /
-``UPDATE_NOTE`` / ``DELETE_NOTE``); interactive maps use the studio-artifact RPCs
-(``CREATE_ARTIFACT`` type-4/variant-4 / ``RENAME_ARTIFACT`` / ``DELETE_ARTIFACT`` /
-``GET_INTERACTIVE_HTML``).
+(issue #1256). Note-backed generation uses ``GENERATE_MIND_MAP`` and then
+persists with note RPCs (``CREATE_NOTE`` / ``UPDATE_NOTE``); note-backed
+rename/delete use ``UPDATE_NOTE`` / ``DELETE_NOTE``. Interactive maps use the
+studio-artifact RPCs (``CREATE_ARTIFACT`` type-4/variant-4 /
+``RENAME_ARTIFACT`` / ``DELETE_ARTIFACT`` / ``GET_INTERACTIVE_HTML``).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import reprlib
 from typing import TYPE_CHECKING, Any
 
 from ._artifact.payloads import build_interactive_mind_map_artifact_params
-from ._lookup import resolve_get
+from ._lookup import unwrap_or_raise
 from ._row_adapters.notes import NoteRow
 from ._types.mind_maps import MindMap, MindMapKind
 from .exceptions import (
@@ -36,12 +37,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# The interactive (studio-artifact) mind map exposes its ``{"name", "children"}``
-# node tree at ``[0][9][3]`` of the ``GET_INTERACTIVE_HTML`` response (vs the HTML
-# body at ``[0][9][0]``). The leaf at ``[3]`` is the only position that may be
+# ``GET_INTERACTIVE_HTML`` is the live ``GetArtifact`` — a generic
+# single-artifact getter, not an interactive-HTML-specific endpoint. For an
+# interactive (studio-artifact) mind map its response carries the
+# ``{"name", "children"}`` node tree at ``[0][9][3]`` (vs the HTML body at
+# ``[0][9][0]``). The leaf at ``[3]`` is the only position that may be
 # legitimately absent during the brief window after completion before the
 # options block is fully populated.
 _INTERACTIVE_TREE_LEAF_POS = 3
+
+# ``CREATE_ARTIFACT`` returns the new artifact id wrapped as ``[[id, …]]``: the
+# inner row sits at ``[0]`` of the envelope and the id is that row's ``[0]``
+# leaf. Both descents are guarded for presence before ``safe_index`` reads them
+# (see ``_new_artifact_id``).
+_CREATE_ARTIFACT_ENVELOPE_POS = 0
+_CREATE_ARTIFACT_ID_POS = 0
 
 
 def extract_interactive_tree_leaf(result: Any, *, source: str) -> Any | None:
@@ -129,16 +139,36 @@ def _new_artifact_id(create_response: Any) -> str | None:
     """Pull the new artifact id out of a ``CREATE_ARTIFACT`` response (``[[id, …]]``).
 
     Returns ``None`` for a null/degenerate response (no generation task created);
-    the caller turns that into ``ArtifactFeatureUnavailableError``. Bind the inner
-    row to a local so the id read is a single-level ``inner[0]`` index rather than
-    a chained ``create_response[0][0]`` descent.
+    the caller turns that into ``ArtifactFeatureUnavailableError``. The two
+    envelope descents both go through ``safe_index`` *behind* a length guard that
+    proves the slot present, so the strict helper is a no-op on every reachable
+    input (it can only raise when the guarded slot is genuinely absent) while
+    keeping the soft "degenerate response → ``None``" contract: an empty / non-list
+    response, an empty / non-list ``inner`` row, or a non-``str`` id all return
+    ``None`` rather than raising. This centralises the ``[0]`` / ``[0][0]``
+    position knowledge on the shared ``safe_index`` seam instead of open-coding
+    ``create_response[0]`` / ``inner[0]`` reads (issue #1491).
     """
     if not isinstance(create_response, list) or not create_response:
         return None
-    inner = create_response[0]
-    if isinstance(inner, list) and inner and isinstance(inner[0], str):
-        return inner[0]
-    return None
+    # ``create_response`` is a non-empty list here, so this descent never raises;
+    # it routes the read through the shared drift seam for telemetry parity.
+    inner = safe_index(
+        create_response,
+        _CREATE_ARTIFACT_ENVELOPE_POS,
+        method_id=RPCMethod.CREATE_ARTIFACT.value,
+        source="_mind_maps_api._new_artifact_id",
+    )
+    if not isinstance(inner, list) or not inner:
+        return None
+    # ``inner`` is a non-empty list here, so this descent never raises either.
+    head = safe_index(
+        inner,
+        _CREATE_ARTIFACT_ID_POS,
+        method_id=RPCMethod.CREATE_ARTIFACT.value,
+        source="_mind_maps_api._new_artifact_id",
+    )
+    return head if isinstance(head, str) else None
 
 
 class MindMapsAPI:
@@ -157,6 +187,34 @@ class MindMapsAPI:
         self._artifacts = artifacts
         self._notebooks = notebooks
 
+    async def list_note_backed(self, notebook_id: str) -> builtins.list[MindMap]:
+        """List only the **note-backed** mind maps in a notebook.
+
+        A single ``GET_NOTES_AND_MIND_MAPS`` RPC — no ``LIST_ARTIFACTS`` — so
+        callers that only need the note-backed membership (e.g. the artifact
+        ``delete`` carve-out probe) pay exactly one round-trip. Returns
+        note-backed entries only (every ``kind`` is
+        :attr:`MindMapKind.NOTE_BACKED`); interactive (studio-artifact) maps
+        never appear here — use :meth:`list` for the union. Deleted rows
+        (status ``2``) are already excluded by the underlying
+        ``list_mind_maps`` classification, and ``MindMap.tree`` is populated
+        for free from the already-listed note content.
+        """
+        result: builtins.list[MindMap] = []
+        for row in await self._mind_maps.list_mind_maps(notebook_id):
+            note_row = NoteRow(row)
+            result.append(
+                MindMap(
+                    id=note_row.id,
+                    notebook_id=notebook_id,
+                    title=note_row.title,
+                    kind=MindMapKind.NOTE_BACKED,
+                    created_at=note_row.created_at,
+                    tree=_parse_tree(self._mind_maps.extract_content(row)),
+                )
+            )
+        return result
+
     async def list(self, notebook_id: str) -> builtins.list[MindMap]:
         """List all mind maps in a notebook — both backings, as distinct entries.
 
@@ -168,18 +226,9 @@ class MindMapsAPI:
         not "empty" — call :meth:`get_tree` with ``kind=INTERACTIVE`` to fetch
         an individual interactive tree.
         """
-        result: builtins.list[MindMap] = []
-        for row in await self._mind_maps.list_mind_maps(notebook_id):
-            note_row = NoteRow(row)
-            result.append(
-                MindMap(
-                    id=note_row.id,
-                    notebook_id=notebook_id,
-                    title=note_row.title,
-                    kind=MindMapKind.NOTE_BACKED,
-                    tree=_parse_tree(self._mind_maps.extract_content(row)),
-                )
-            )
+        # Shallow-copy so appending interactive entries can never mutate a list
+        # a (future) caching/overriding list_note_backed might share.
+        result: builtins.list[MindMap] = list(await self.list_note_backed(notebook_id))
         for art in await self._artifacts.list(notebook_id, ArtifactType.MIND_MAP):
             if art.is_interactive_mind_map:
                 result.append(
@@ -193,28 +242,23 @@ class MindMapsAPI:
                 )
         return result
 
-    async def get(self, notebook_id: str, mind_map_id: str) -> MindMap | None:
-        """Return the mind map with ``mind_map_id``, or ``None`` if absent.
+    async def get(self, notebook_id: str, mind_map_id: str) -> MindMap:
+        """Return the mind map with ``mind_map_id``.
 
-        .. deprecated:: 0.7.0
-            Returning ``None`` for a missing mind map is deprecated and emits a
-            :class:`DeprecationWarning`. In **v0.8.0** this method will raise
-            :class:`~notebooklm.exceptions.MindMapNotFoundError` instead, to
-            match ``notebooks.get`` (issue #1247). Wrap the call in
-            ``try/except MindMapNotFoundError`` to keep handling missing mind
-            maps, or use :meth:`get_or_none` for the sanctioned optional lookup.
-            Suppress the warning with ``NOTEBOOKLM_QUIET_DEPRECATIONS``, or set
-            ``NOTEBOOKLM_FUTURE_ERRORS=1`` to preview the v0.8.0 raise now.
+        Returns:
+            The :class:`~notebooklm.types.MindMap`.
+
+        Raises:
+            MindMapNotFoundError: If no mind map with ``mind_map_id`` exists
+                (matches ``notebooks.get``; issue #1247). Use :meth:`get_or_none`
+                for the sanctioned ``None``-on-miss lookup.
         """
-        # The warn-runway / raise decision is single-sourced in
-        # ``_lookup.resolve_get``: it warns and returns ``None`` today, or
-        # raises ``MindMapNotFoundError`` under ``NOTEBOOKLM_FUTURE_ERRORS``
-        # (the v0.8.0 flip, issue #1247). Internal callers that need the silent
-        # optional-lookup must use ``_get_or_none`` directly.
-        return resolve_get(
+        # ``_lookup.unwrap_or_raise`` single-sources the raise-on-miss decision
+        # (#1247). Internal callers that need the silent optional-lookup must
+        # use ``_get_or_none`` directly.
+        return unwrap_or_raise(
             await self.get_or_none(notebook_id, mind_map_id),
-            not_found=MindMapNotFoundError(mind_map_id),
-            resource="mind_map",
+            MindMapNotFoundError(mind_map_id),
         )
 
     async def get_or_none(self, notebook_id: str, mind_map_id: str) -> MindMap | None:
@@ -222,9 +266,9 @@ class MindMapsAPI:
 
         The sanctioned ``None``-on-miss lookup (ADR-0019), spanning both
         backings (note-backed JSON + interactive studio-artifact). Unlike
-        :meth:`get` — which is slated to raise
-        :class:`~notebooklm.exceptions.MindMapNotFoundError` on a miss in v0.8.0
-        (issue #1247) — this returns ``None`` for an absence and emits no
+        :meth:`get` — which now raises
+        :class:`~notebooklm.exceptions.MindMapNotFoundError` on a miss
+        (#1247) — this returns ``None`` for an absence and emits no
         deprecation warning. It scans :meth:`list`, so it reflects only what
         ``list`` confirms: a just-created interactive map whose variant slot has
         not yet populated is briefly excluded from ``list`` and therefore reads
@@ -246,7 +290,7 @@ class MindMapsAPI:
 
     # Private alias for internal optional-lookup callers, mirroring
     # ``sources``/``artifacts``/``notes``: the library calls ``_get_or_none``
-    # so it never trips its own ``get()`` deprecation warning (issue #1358).
+    # for a ``None``-on-miss lookup rather than the raising ``get()`` (#1358).
     _get_or_none = get_or_none
 
     async def generate(
@@ -268,9 +312,11 @@ class MindMapsAPI:
         a uniform surface). With ``wait=False`` it returns a pending
         :class:`MindMap` whose ``tree`` is ``None`` until completed.
 
-        ``language`` and ``instructions`` only apply to ``NOTE_BACKED`` maps; the
-        interactive ``CREATE_ARTIFACT`` payload does not accept them, so they are
-        ignored when ``kind=INTERACTIVE``.
+        ``instructions`` is a free-text prompt that steers generation; it is sent
+        for both kinds — note-backed via ``GENERATE_MIND_MAP`` and interactive at
+        the ``[9][1][2]`` prompt slot of ``CREATE_ARTIFACT`` (the same slot
+        quiz/flashcards use; the server honours it for variant 4, verified live).
+        ``language`` applies to the note-backed payload only.
 
         Raises:
             ArtifactFeatureUnavailableError: if the interactive
@@ -292,6 +338,7 @@ class MindMapsAPI:
                 notebook_id=notebook_id,
                 title=title,
                 kind=MindMapKind.NOTE_BACKED,
+                created_at=res.created_at,
                 tree=tree,
             )
 
@@ -303,7 +350,9 @@ class MindMapsAPI:
         # kwarg documents the no-variant default).
         create_response = await self._rpc.rpc_call(
             RPCMethod.CREATE_ARTIFACT,
-            build_interactive_mind_map_artifact_params(notebook_id, source_ids),
+            build_interactive_mind_map_artifact_params(
+                notebook_id, source_ids, instructions=instructions
+            ),
             source_path=f"/notebook/{notebook_id}",
             allow_null=True,
             operation_variant=None,
@@ -384,12 +433,9 @@ class MindMapsAPI:
                 across namespaces (ADR-0019; issues #1255, #1291).
 
         .. note::
-            Unlike ``notebooks``/``sources``/``artifacts`` rename — whose
-            absence detection rides on the hydrate re-fetch and is therefore
-            skipped under ``return_object=False`` — mind maps detect absence via
-            a content/list lookup *before* dispatching the rename RPC, so this
-            raises ``MindMapNotFoundError`` on a missing target **even with**
-            ``return_object=False``.
+            Mind maps detect absence via a content/list lookup before
+            dispatching the rename RPC, matching the v0.8.0 existence-preflight
+            contract for sources/artifacts rename.
 
         .. versionchanged:: 0.7.0
             **Breaking change:** previously returned ``None`` even on success.
@@ -433,7 +479,7 @@ class MindMapsAPI:
     ) -> MindMap | None:
         """Re-fetch the renamed map (or skip when ``return_object=False``).
 
-        A ``None`` from ``get`` here means the map is absent — surface it as
+        A ``None`` from ``_get_or_none`` here means the map is absent — surface it as
         the same ``MindMapNotFoundError`` the missing-target dispatch paths
         raise rather than returning a stale/absent object. For paths that
         pre-validate the id (auto-detect and explicit-interactive) this is a
@@ -443,9 +489,8 @@ class MindMapsAPI:
         """
         if not return_object:
             return None
-        # ``_get_or_none`` (not the public ``get``) so the internal re-fetch
-        # never trips ``get()``'s own None-on-miss deprecation warning when the
-        # map vanished between rename and re-fetch (issue #1358).
+        # ``_get_or_none`` is used so the internal re-fetch can convert a
+        # vanished map into ``MindMapNotFoundError`` itself.
         mind_map = await self._get_or_none(notebook_id, mind_map_id)
         if mind_map is None:
             raise MindMapNotFoundError(mind_map_id)

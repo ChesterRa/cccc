@@ -3,9 +3,10 @@ use cccc_core::space_credentials;
 use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Map, Value, json};
 use std::io;
+use std::path::Path;
 use uuid::Uuid;
 
-use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
+use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 
 mod artifacts;
 mod notebooklm;
@@ -16,10 +17,12 @@ mod sync;
 
 use state::*;
 
+const MAX_LOCAL_FILE_SIZE_BYTES: u64 = 200 * 1024 * 1024;
+
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "group_space_status" => status(home, request),
-        "group_space_capabilities" => capabilities(request),
+        "group_space_capabilities" => capabilities(home, request),
         "group_space_bind" => bind(home, request),
         "group_space_ingest" => operations::ingest(home, request),
         "group_space_query" => operations::query(home, request),
@@ -73,13 +76,73 @@ fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         }
     }))
 }
-fn capabilities(request: &DaemonRequest) -> OpResult {
+fn capabilities(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group_id = required_arg(request, "group_id")?;
     let provider = provider(request);
     require_notebooklm(&provider)?;
+    let group = GroupStore::new(home.clone())
+        .and_then(|store| store.load(&group_id))
+        .map_err(OpError::io)?;
+    let scope = group
+        .scopes
+        .iter()
+        .find(|scope| scope.scope_key == group.active_scope_key)
+        .or_else(|| group.scopes.first());
+    let space_root = scope
+        .map(|scope| Path::new(&scope.url).join("space"))
+        .unwrap_or_default();
     object(json!({
+        "group_id":group_id,
         "provider":provider,
+        "local_scope_attached":scope.is_some(),
+        "space_root":space_root,
+        "local_file_policy":{
+            "allowed_extensions":[".md",".txt"],
+            "max_file_size_bytes":MAX_LOCAL_FILE_SIZE_BYTES,
+            "unsupported_error_code":"space_source_unsupported_format",
+            "oversize_error_code":"space_source_file_too_large"
+        },
+        "ingest":{
+            "kinds":["context_sync","resource_ingest"],
+            "resource_ingest":{
+                "source_types":["pasted_text"],
+                "required_fields":{"pasted_text":["source_type","content"]},
+                "optional_fields":{"pasted_text":["title"]},
+                "aliases":{"text":"pasted_text"},
+                "examples":{"pasted_text":{"source_type":"pasted_text","content":"Design notes..."}}
+            }
+        },
+        "query":{
+            "options":{"source_ids":"Optional remote source_id list to constrain retrieval scope"},
+            "unsupported_options":{
+                "language":"Not supported by NotebookLM query API. Put language requirements in query text.",
+                "lang":"Alias of language; also unsupported for query."
+            },
+            "examples":{
+                "basic":{"query":"Summarize key decisions from the notebook."},
+                "scoped":{"query":"Summarize only this source.","options":{"source_ids":["src_123"]}}
+            }
+        },
+        "artifacts":{
+            "actions":["list","generate","download"],
+            "kinds":["audio","video","report","study_guide","quiz","flashcards","infographic","slide_deck","data_table","mind_map"],
+            "options":{
+                "language":"Preferred output language",
+                "instructions":"Provider-side generation instructions",
+                "source_ids":"Optional remote source_id list to constrain generation scope"
+            },
+            "aliases":{"slide":"slide_deck","slides":"slide_deck","deck":"slide_deck","study":"study_guide"},
+            "examples":{"generate_audio":{"action":"generate","kind":"audio","wait":true,"save_to_space":true}}
+        },
+        "notes":[
+            "Native Rust resource_ingest currently supports pasted_text only; unsupported source types fail explicitly.",
+            "Work and memory file sync upload .md/.txt content as pasted text.",
+            "Native Rust wait=false returns after remote generation starts; automatic background save is not yet available.",
+            "Native Rust artifact download currently supports audio, video, report/study guide, infographic, and slide deck outputs.",
+            "NotebookLM uses an unofficial upstream protocol and may require compatibility updates."
+        ],
         "capabilities":json!(["bind","ingest","query","sources","artifact","jobs","sync"]),
-        "unavailable_capabilities":json!([]),
+        "unavailable_capabilities":json!(["resource_ingest.file","resource_ingest.web_page","resource_ingest.youtube","resource_ingest.google_drive","artifact.download.quiz","artifact.download.flashcards","artifact.download.mind_map","artifact.download.data_table"]),
         "mode":"remote"
     }))
 }

@@ -499,6 +499,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
             self.assertEqual(kwargs.get("group_id"), "g_test")
             self.assertEqual(kwargs.get("by"), "peer1")
             self.assertFalse(bool(kwargs.get("wait")))
+            self.assertFalse(bool(kwargs.get("save_to_space")))
 
     def test_space_artifact_infers_generate_when_action_missing(self) -> None:
         from cccc.ports.mcp import server as mcp_server

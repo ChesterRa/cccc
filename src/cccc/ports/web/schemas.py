@@ -486,8 +486,8 @@ class GroupSpaceArtifactActionRequest(BaseModel):
     action: Literal["generate", "download"] = "generate"
     kind: str = Field(default="")
     options: Dict[str, Any] = Field(default_factory=dict)
-    wait: bool = True
-    save_to_space: bool = True
+    wait: bool = False
+    save_to_space: bool = False
     output_path: str = Field(default="")
     output_format: str = Field(default="")
     artifact_id: str = Field(default="")

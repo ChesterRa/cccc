@@ -135,6 +135,34 @@ def _open_url_for_actor(group_id: str, actor_id: str) -> str:
     return CHATGPT_URL
 
 
+def _saved_url_for_active_alignment(group_id: str, actor_id: str) -> str:
+    state = read_chatgpt_browser_state(group_id, actor_id)
+    if bool(state.get("pending_new_chat_bind")):
+        return _normalize_chatgpt_url(state.get("pending_new_chat_url")) or CHATGPT_URL
+    return _conversation_url_from_tab(state.get("conversation_url"))
+
+
+def _align_active_surface_to_saved_target(
+    group_id: str, actor_id: str, surface: dict[str, Any]
+) -> dict[str, Any]:
+    target_url = _saved_url_for_active_alignment(group_id, actor_id)
+    if not target_url:
+        return surface
+    current_url = _normalize_chatgpt_url(surface.get("url"))
+    if current_url == target_url:
+        return surface
+    try:
+        _MANAGER.execute(
+            key=_session_key(group_id, actor_id),
+            kind="navigate",
+            payload={"url": target_url},
+            timeout=35.0,
+        )
+    except Exception:
+        return surface
+    return _MANAGER.info(key=_session_key(group_id, actor_id))
+
+
 def _same_path(left: str | Path, right: str | Path) -> bool:
     try:
         return Path(left).expanduser().resolve() == Path(right).expanduser().resolve()
@@ -201,6 +229,9 @@ def open_web_model_chatgpt_browser_session(
     existing = _MANAGER.info(key=_session_key(group_id, actor_id))
     existing = _close_stale_starting_surface(group_id, actor_id, existing)
     if bool(existing.get("active")) and str(existing.get("state") or "").strip() in {"starting", "ready"}:
+        existing = _align_active_surface_to_saved_target(
+            group_id, actor_id, existing
+        )
         _record_projected_browser_state(group_id, actor_id, existing)
         ensure_web_model_browser_recovery_watcher(group_id, actor_id)
         return existing

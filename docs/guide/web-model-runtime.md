@@ -98,7 +98,7 @@ The delivery target panel separates the saved target from the current browser ta
 
 To use an existing conversation, open it in the embedded browser, choose `Use current browser chat`, then click `Save target`. To start fresh, choose `Start new chat on next delivery`, then click `Save target`; CCCC will deliver the first prompt to ChatGPT and bind the actor once ChatGPT creates the final `/c/...` URL. You can also paste a specific `https://chatgpt.com/c/...` URL and save it.
 
-Browser delivery never guesses between unrelated ChatGPT tabs. An existing chat is bound by saved URL; a new chat is a saved pending target until the first delivery produces a concrete ChatGPT conversation URL. The diagnostic `last_tab_url` is not a delivery target.
+Browser delivery never guesses between unrelated ChatGPT tabs. An existing chat is bound by saved URL; a new chat is a saved pending target until the first delivery produces a concrete ChatGPT conversation URL. ChatGPT may briefly expose a provisional `/c/WEB:...` route while creating a conversation; CCCC does not persist that route and waits for a stable final `/c/...` URL. Once that first delivery crosses the browser dispatch fence, CCCC only resolves and binds the pending target: a timeout or restart never resubmits the same batch to create another chat. For an existing-chat delivery, CCCC verifies that navigation finishes on the saved conversation before touching the composer; a redirect to the home page or another chat blocks delivery and leaves the batch unread. If the final URL cannot be recovered, the target remains pending until it is resolved or the user explicitly selects a new target. The diagnostic `last_tab_url` is not a delivery target.
 
 ### Optional manual check
 

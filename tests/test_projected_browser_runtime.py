@@ -728,6 +728,45 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         self.assertEqual(browser["cdp_port"], 4567)
         self.assertEqual(browser["pid"], 7654)
 
+    def test_chatgpt_submit_prompt_refuses_redirected_bound_conversation(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        page = _FakePage()
+        page.url = "https://chatgpt.com/"
+        projected = _FakeSubmitRuntime(page)
+        session = runtime.ProjectedBrowserSession(
+            session_key="test-browser-session",
+            profile_dir=runtime.Path("/tmp/projected-browser-test"),
+            url="https://chatgpt.com",
+            width=1280,
+            height=800,
+            headless=False,
+            channel_candidates=("chrome",),
+        )
+
+        with (
+            patch(
+                "cccc.ports.web_model_browser_sidecar._wait_for_bound_conversation_url",
+                return_value="",
+            ),
+            patch("cccc.ports.web_model_browser_sidecar._submit_prompt") as submit_prompt,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError, "chatgpt_bound_conversation_unavailable"
+            ):
+                session._apply_command(
+                    projected,
+                    "chatgpt_submit_prompt",
+                    {
+                        "prompt": "do not send this to a new chat",
+                        "target_url": "https://chatgpt.com/c/bound-session",
+                        "auto_bind_new_chat": False,
+                        "delivery_id": "delivery-mismatch",
+                    },
+                )
+
+        submit_prompt.assert_not_called()
+
     def test_chatgpt_submit_prompt_command_reports_pending_new_chat_bind(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime
 
