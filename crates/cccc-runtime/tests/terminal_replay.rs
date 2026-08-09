@@ -1,7 +1,10 @@
 use cccc_contracts::RunnerKind;
 use cccc_runtime::{HistoryConfig, LaunchSpec, RuntimeError};
 use std::collections::BTreeMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+const MARKER_TIMEOUT: Duration = Duration::from_secs(15);
+const MARKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 #[test]
 fn active_history_replays_raw_ansi_in_pages_and_excludes_completed_sessions() {
@@ -86,15 +89,23 @@ fn active_history_replays_raw_ansi_in_pages_and_excludes_completed_sessions() {
 }
 
 fn wait_for_marker(group_id: &str, actor_id: &str, marker: &str) {
-    for _ in 0..100 {
-        if cccc_runtime::retained_history(group_id, actor_id)
+    let deadline = Instant::now() + MARKER_TIMEOUT;
+    loop {
+        let history = cccc_runtime::retained_history(group_id, actor_id);
+        if history
+            .as_ref()
             .is_ok_and(|page| page.data.contains(marker))
         {
             return;
         }
-        std::thread::sleep(Duration::from_millis(20));
+        if Instant::now() >= deadline {
+            let status = cccc_runtime::status(group_id, actor_id);
+            panic!(
+                "terminal output did not contain {marker:?} within {MARKER_TIMEOUT:?}; status={status:?}; history={history:?}"
+            );
+        }
+        std::thread::sleep(MARKER_POLL_INTERVAL);
     }
-    panic!("terminal output did not contain {marker:?}");
 }
 
 #[cfg(unix)]
@@ -122,7 +133,7 @@ fn replay_command() -> Vec<String> {
         "-NoProfile".into(),
         "-NonInteractive".into(),
         "-Command".into(),
-        "[Console]::Out.Write('old conversation' + [char]13 + [char]10 + [char]27 + '[2J' + [char]27 + '[Hcurrent screen'); Start-Sleep -Seconds 5".into(),
+        "[Console]::Out.Write('old conversation' + [char]13 + [char]10 + [char]27 + '[2J' + [char]27 + '[Hcurrent screen'); [Console]::Out.Flush(); Start-Sleep -Seconds 5".into(),
     ]
 }
 
@@ -133,6 +144,6 @@ fn old_session_command() -> Vec<String> {
         "-NoProfile".into(),
         "-NonInteractive".into(),
         "-Command".into(),
-        "[Console]::Out.Write('old persisted session'); Start-Sleep -Seconds 5".into(),
+        "[Console]::Out.Write('old persisted session'); [Console]::Out.Flush(); Start-Sleep -Seconds 5".into(),
     ]
 }
