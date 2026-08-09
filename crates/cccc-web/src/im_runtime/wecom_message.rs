@@ -93,6 +93,9 @@ pub(super) fn parse_inbound(frame: &Value) -> Option<ParsedInbound> {
         }
         other => format!("[{other}]"),
     };
+    if !accepts_inbound(&body, &text) {
+        return None;
+    }
     attachments.retain(|attachment| !attachment.url.is_empty() || !attachment.media_id.is_empty());
     (!text.trim().is_empty() || !attachments.is_empty()).then_some(ParsedInbound {
         chat_id,
@@ -108,6 +111,25 @@ pub(super) fn parse_inbound(frame: &Value) -> Option<ParsedInbound> {
             text.trim().to_owned()
         },
         attachments,
+    })
+}
+
+fn accepts_inbound(body: &Value, text: &str) -> bool {
+    let chat_type = text_at(body, &["/chat_type", "/chattype"]).to_ascii_lowercase();
+    let is_group = matches!(chat_type.as_str(), "group" | "group_chat" | "2");
+    !is_group
+        || super::commands::is_recognized_command(text)
+        || ["/is_at_bot", "/is_mention_bot", "/is_at_bot_in_group"]
+            .into_iter()
+            .any(|path| truthy(body.pointer(path)))
+}
+
+fn truthy(value: Option<&Value>) -> bool {
+    value.is_some_and(|value| match value {
+        Value::Bool(value) => *value,
+        Value::Number(value) => value.as_i64().is_some_and(|value| value != 0),
+        Value::String(value) => matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true"),
+        _ => false,
     })
 }
 
@@ -286,6 +308,22 @@ mod tests {
         assert_eq!(mixed.text, "look");
         assert_eq!(mixed.attachments.len(), 1);
         assert_eq!(mixed.attachments[0].filename, "a.png");
+    }
+
+    #[test]
+    fn explicit_group_callbacks_require_a_command_or_bot_mention() {
+        let frame = |text: &str, mentioned: bool| {
+            json!({"body":{
+                "chatid":"group-chat","chat_type":"group","is_at_bot":mentioned,
+                "msgid":"msg","msgtype":"text","from":{"userid":"user"},
+                "text":{"content":text}
+            }})
+        };
+
+        assert!(parse_inbound(&frame("ambient message", false)).is_none());
+        assert!(parse_inbound(&frame("/status", false)).is_some());
+        assert!(parse_inbound(&frame("/weather", false)).is_none());
+        assert!(parse_inbound(&frame("addressed message", true)).is_some());
     }
 
     #[test]

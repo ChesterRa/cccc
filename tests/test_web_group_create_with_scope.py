@@ -104,6 +104,43 @@ class TestWebGroupCreateWithScope(unittest.TestCase):
         self.assertEqual(registry.groups, {})
         self.assertEqual(list((Path(self._home.name) / "groups").glob("g_*")), [])
 
+    def test_failed_second_creation_restores_previous_scope_default(self) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.kernel.registry import load_registry
+
+        with tempfile.TemporaryDirectory() as project:
+            with (
+                patch("cccc.ports.web.app.call_daemon", side_effect=self._call_daemon),
+                self._client() as client,
+            ):
+                first = client.post(
+                    "/api/v1/groups",
+                    json={"title": "first", "path": project, "by": "user"},
+                ).json()
+                first_id = str((first.get("result") or {}).get("group_id") or "")
+                self.assertTrue(first.get("ok"), first)
+                first_group = load_group(first_id)
+                self.assertIsNotNone(first_group)
+                assert first_group is not None
+                scope_key = str(first_group.doc["active_scope_key"])
+
+                with patch(
+                    "cccc.daemon.group.group_creation_ops.append_event",
+                    side_effect=OSError("ledger failed"),
+                ):
+                    second = client.post(
+                        "/api/v1/groups",
+                        json={"title": "second", "path": project, "by": "user"},
+                    ).json()
+
+            self.assertFalse(second.get("ok"), second)
+            registry = load_registry()
+            self.assertEqual(list(registry.groups), [first_id])
+            self.assertEqual(registry.defaults.get(scope_key), first_id)
+            self.assertEqual(
+                len(list((Path(self._home.name) / "groups").glob("g_*"))), 1
+            )
+
     def test_missing_path_preserves_legacy_group_create(self) -> None:
         with (
             patch("cccc.ports.web.app.call_daemon", side_effect=self._call_daemon),
@@ -136,9 +173,8 @@ class TestWebGroupCreateWithScope(unittest.TestCase):
                 self.assertFalse(response.json().get("ok"), response.text)
                 self.assertEqual(load_registry().groups, {})
 
-    def test_duplicate_scope_returns_existing_group_without_creating_another(
-        self,
-    ) -> None:
+    def test_same_scope_creates_independent_groups_and_latest_is_default(self) -> None:
+        from cccc.kernel.group import load_group
         from cccc.kernel.registry import load_registry
 
         with tempfile.TemporaryDirectory() as project:
@@ -150,17 +186,28 @@ class TestWebGroupCreateWithScope(unittest.TestCase):
                     "/api/v1/groups",
                     json={"title": "first", "path": project, "by": "user"},
                 ).json()
-                duplicate = client.post(
+                second = client.post(
                     "/api/v1/groups",
-                    json={"title": "duplicate", "path": project, "by": "user"},
+                    json={"title": "second", "path": project, "by": "user"},
                 ).json()
 
-        self.assertTrue(first.get("ok"), first)
-        self.assertFalse(duplicate.get("ok"), duplicate)
-        error = duplicate.get("error") or {}
-        self.assertEqual(error.get("code"), "scope_already_attached")
-        self.assertEqual(
-            (error.get("details") or {}).get("group_id"),
-            (first.get("result") or {}).get("group_id"),
-        )
-        self.assertEqual(len(load_registry().groups), 1)
+            self.assertTrue(first.get("ok"), first)
+            self.assertTrue(second.get("ok"), second)
+            first_id = str((first.get("result") or {}).get("group_id") or "")
+            second_id = str((second.get("result") or {}).get("group_id") or "")
+            self.assertTrue(first_id)
+            self.assertTrue(second_id)
+            self.assertNotEqual(first_id, second_id)
+            first_group = load_group(first_id)
+            second_group = load_group(second_id)
+            self.assertIsNotNone(first_group)
+            self.assertIsNotNone(second_group)
+            assert first_group is not None
+            assert second_group is not None
+            self.assertEqual(first_group.doc["scopes"], second_group.doc["scopes"])
+            registry = load_registry()
+            self.assertEqual(len(registry.groups), 2)
+            self.assertEqual(
+                registry.defaults[first_group.doc["scopes"][0]["scope_key"]],
+                second_id,
+            )

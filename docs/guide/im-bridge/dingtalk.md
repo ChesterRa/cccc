@@ -41,7 +41,7 @@ CCCC uses DingTalk Stream mode (persistent WebSocket connection) for inbound mes
 | `qyapi_chat_read` | Read group basic info |
 | `qyapi_chat_manage` | Manage group chats (create, update, send messages) |
 | `Card.Streaming.Write` | AI Card streaming writes |
-| `Card.Instance.Write` | Card instance writes |
+| `Card.Instance.Write` | Create and deliver AI Card instances |
 
 3. Click to enable each permission (no approval needed for internal apps)
 
@@ -122,7 +122,10 @@ im:
 1. Find the robot in your DingTalk application
 2. Add it to a group chat or start a direct conversation
 3. Send `/subscribe`
-4. Confirm the subscription
+4. Verify that the reply names the intended CCCC group
+5. Approve the one-time key in **Settings → IM Bridge → Pending Requests**
+
+If ordinary text says the chat is not authorized, the message reached the Rust worker but has not passed the binding gate. After approval, a direct chat accepts plain text without `/send`; `/send` is only needed to choose an explicit recipient. If `/subscribe` names another group, the same DingTalk application credential is active in a stale or duplicate worker; stop that worker or correct the credential assignment before approving the request.
 
 ## Usage
 
@@ -164,19 +167,17 @@ After subscribing, you will automatically receive:
 - Status updates
 - Error notifications
 
-Use `/verbose` to toggle whether you see agent-to-agent messages.
+Use `/verbose` (or `/verbose on`) to receive agent-to-agent messages, and `/verbose off` to stop receiving them.
 
 ### Message Types
 
-DingTalk supports various message types:
+DingTalk supports these message types through the Rust worker:
 
-- **Text**: Plain text messages
-- **Markdown**: Formatted text
-- **Link**: URL cards
-- **ActionCard**: Interactive cards with buttons
-- **AI Card Streaming**: Agent responses are delivered as AI Cards with a real-time typewriter effect. Content streams in progressively as it is generated. If streaming fails (e.g., card API unavailable), the message automatically falls back to plain text delivery.
+- **Text/Markdown**: Completed agent responses and notifications
+- **Image/File**: Outbound attachments uploaded through DingTalk OpenAPI
+- **AI Card Streaming**: User-facing agent responses are created as one card per authorized chat and updated progressively with a typewriter effect
 
-CCCC automatically selects the appropriate format.
+The Rust and Python workers consume `chat.stream` start/update/end frames, throttle intermediate full-snapshot writes, and always send the final frame. A chat suppresses the matching completed Markdown message only after its card finalization succeeds with the exact complete content; otherwise the completed message remains the fallback, so one failed, normalized, or overlong target does not affect other subscribed chats. Long final replies are delivered in lossless 4,096-character / 64-line chunks.
 
 ### File Sharing
 
@@ -195,7 +196,7 @@ Attach files to your message. DingTalk files are downloaded and stored in CCCC's
 | `/status` | Show group and agent status |
 | `/pause` | Pause message delivery |
 | `/resume` | Resume message delivery |
-| `/verbose` | Toggle verbose mode (see all agent messages) |
+| `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/help` | Show available commands |
 
 ## Troubleshooting

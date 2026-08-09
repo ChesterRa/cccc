@@ -158,7 +158,6 @@
   "saveSecretsAndRestartConfirm": "保存更改、应用密钥并重启 \"{{label}}\"？这将中断正在进行的工作。",
   "nothingToSave": "没有可保存的更改。",
   "savedRestartRequired": "已保存。请重启 \"{{label}}\" 以应用运行时/配置/密钥变更。",
-  "scopeAlreadyAttached": "此目录已有工作组，正在打开它。",
   "createdButFailedAttach": "已创建工作组但关联失败：{{message}}",
   "destGroupDifferent": "目标工作组必须与源工作组不同。",
   "relayTextEmpty": "转发消息内容为空。",

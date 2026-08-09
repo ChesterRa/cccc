@@ -831,6 +831,27 @@ class TestSendMessageAtResolution:
         assert captured_texts[1] == "B" * 32
         assert captured_at == [["staff_001"], None]
 
+    def test_chunking_preserves_original_whitespace(self, adapter: DingTalkAdapter) -> None:
+        chat_id = "cidGroupWhitespace"
+        adapter._session_webhook_cache[chat_id] = (
+            "https://webhook.example.com",
+            time.time() + 3600,
+        )
+        adapter.max_chars = 8
+        text = "\r\nfirst\tline\n\nlast  \n"
+        captured_texts: List[str] = []
+
+        def mock_webhook(self_adapter, url, chunk, at_user_ids=None):
+            _ = (self_adapter, url, at_user_ids)
+            captured_texts.append(chunk)
+            return True
+
+        with patch.object(type(adapter), "_send_via_webhook", mock_webhook):
+            ok = adapter.send_message(chat_id, text)
+
+        assert ok is True
+        assert "".join(captured_texts) == text
+
     def test_format_outbound_keeps_full_text_for_chunking(self, adapter: DingTalkAdapter) -> None:
         """format_outbound must not truncate before send_message can split."""
         long_text = "x" * (DINGTALK_MAX_MESSAGE_LENGTH + 64)
@@ -844,7 +865,7 @@ class TestSendMessageAtResolution:
 
 class TestStreamMessageSafety:
     def test_streaming_paths_reuse_safe_text_preparation(self, adapter: DingTalkAdapter) -> None:
-        """AI Card start/update/end should reuse the same safe text envelope."""
+        """A transformed card final must keep the exact plain-text fallback enabled."""
         fake_client = MagicMock()
         fake_client.create_card = AsyncMock(return_value="card_123")
         fake_client.update_card = AsyncMock(return_value=None)
@@ -862,7 +883,7 @@ class TestStreamMessageSafety:
             ok_end = adapter.end_stream(handle, text="raw final")
 
         assert ok_update is True
-        assert ok_end is True
+        assert ok_end is False
         assert safe_mock.call_args_list[0].args == ("raw start",)
         assert safe_mock.call_args_list[1].args == ("raw update",)
         assert safe_mock.call_args_list[2].args == ("raw final",)

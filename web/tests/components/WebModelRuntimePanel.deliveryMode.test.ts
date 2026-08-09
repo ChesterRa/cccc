@@ -8,15 +8,24 @@ import enChat from "../../src/i18n/locales/en/chat.json";
 import jaChat from "../../src/i18n/locales/ja/chat.json";
 import zhChat from "../../src/i18n/locales/zh/chat.json";
 
-const apiMock = vi.hoisted(() => ({ fetchSession: vi.fn(), updatePreference: vi.fn() }));
+const apiMock = vi.hoisted(() => ({
+  fetchConnectors: vi.fn(),
+  fetchSession: vi.fn(),
+  updatePreference: vi.fn(),
+}));
+const copyMock = vi.hoisted(() => vi.fn());
+const surfaceMock = vi.hoisted(() => vi.fn());
 
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
 vi.mock("../../src/services/api", () => ({
+  fetchWebModelConnectors: apiMock.fetchConnectors,
   fetchWebModelBrowserSession: apiMock.fetchSession,
   updateWebModelDeliveryPreference: apiMock.updatePreference,
   getWebModelBrowserSurfaceWebSocketUrl: () => "ws://example.test/browser",
 }));
+
+vi.mock("../../src/utils/copy", () => ({ copyTextToClipboard: copyMock }));
 
 vi.mock("../../src/stores", () => ({
   useModalStore: (selector: (state: { openSettingsTarget: () => void }) => unknown) =>
@@ -24,7 +33,10 @@ vi.mock("../../src/stores", () => ({
 }));
 
 vi.mock("../../src/components/browser/ProjectedBrowserSurfacePanel", () => ({
-  ProjectedBrowserSurfacePanel: () => null,
+  ProjectedBrowserSurfacePanel: (props: unknown) => {
+    surfaceMock(props);
+    return null;
+  },
 }));
 
 import { WebModelRuntimePanel } from "../../src/components/webModel/WebModelRuntimePanel";
@@ -35,7 +47,11 @@ describe("WebModelRuntimePanel delivery mode", () => {
 
   beforeEach(() => {
     apiMock.fetchSession.mockReset();
+    apiMock.fetchConnectors.mockReset();
     apiMock.updatePreference.mockReset();
+    copyMock.mockReset();
+    surfaceMock.mockReset();
+    apiMock.fetchConnectors.mockResolvedValue({ ok: true, result: { connectors: [] } });
     apiMock.fetchSession.mockResolvedValue({
       ok: true,
       result: {
@@ -57,12 +73,13 @@ describe("WebModelRuntimePanel delivery mode", () => {
     vi.restoreAllMocks();
   });
 
-  async function renderPanel(readOnly = false) {
+  async function renderPanel(readOnly = false, isRunning = true) {
     await act(async () => {
       root.render(
         createElement(WebModelRuntimePanel, {
           groupId: "group-1",
           actor: { id: "web-1" },
+          isRunning,
           isDark: false,
           isVisible: true,
           readOnly,
@@ -138,6 +155,45 @@ describe("WebModelRuntimePanel delivery mode", () => {
     expect(apiMock.updatePreference).not.toHaveBeenCalled();
   });
 
+  it("copies the actor-bound MCP URL directly from the runtime panel", async () => {
+    const mcpUrl = "https://cccc.example/mcp/web-model/wmc_test?token=secret";
+    apiMock.fetchConnectors.mockResolvedValue({
+      ok: true,
+      result: {
+        connectors: [
+          {
+            connector_id: "wmc_test",
+            group_id: "group-1",
+            actor_id: "web-1",
+            connector_url_with_token: mcpUrl,
+          },
+        ],
+      },
+    });
+    copyMock.mockResolvedValue(true);
+
+    await renderPanel();
+    await vi.waitFor(() => expect(host.textContent).toContain("webModelDelivery.copyMcpUrl"));
+    const copyButton = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="webModelDelivery.copyMcpUrl"]',
+    );
+    await act(async () => copyButton?.click());
+
+    expect(copyMock).toHaveBeenCalledWith(mcpUrl);
+    expect(host.textContent).toContain("webModelDelivery.mcpCopied");
+  });
+
+  it("does not open ChatGPT or expose a usable MCP action while the actor is stopped", async () => {
+    await renderPanel(false, false);
+
+    expect(surfaceMock).not.toHaveBeenCalled();
+    expect(host.textContent).toContain("webModelDelivery.actorStoppedSurface");
+    const mcpButton = host.querySelector<HTMLButtonElement>(
+      'button[aria-label="webModelDelivery.mcpStartFirstHint"]',
+    );
+    expect(mcpButton?.disabled).toBe(true);
+  });
+
   it("refreshes delivery status without triggering an inspect mutation", async () => {
     let poll: (() => void) | null = null;
     vi.spyOn(window, "setInterval").mockImplementation((handler) => {
@@ -184,6 +240,9 @@ describe("WebModelRuntimePanel delivery mode", () => {
       expect(delivery.modeImageCompatDescription).toBeTruthy();
       expect(delivery.modeHelp).toBeTruthy();
       expect(delivery.modeSaveFailed).toBeTruthy();
+      expect(delivery.copyMcpUrl).toBeTruthy();
+      expect(delivery.mcpStartFirstHint).toBeTruthy();
+      expect(delivery.actorStoppedSurface).toBeTruthy();
     }
   });
 });

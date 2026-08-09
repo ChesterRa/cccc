@@ -9,6 +9,9 @@ const keys = [
   "weixinSubscribeNeedsRunningBody",
   "weixinSubscribeNextBody",
   "weixinSubscribeBoundBody",
+  "weixinSetupStep1",
+  "weixinSetupStep2",
+  "weixinSetupStep3",
 ] as const;
 
 describe("Weixin automatic subscription copy", () => {

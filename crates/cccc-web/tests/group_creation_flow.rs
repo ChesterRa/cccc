@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 use tower::ServiceExt;
 
 #[tokio::test]
-async fn recent_list_create_and_attach_complete_as_one_user_flow() {
+async fn recent_list_and_repeated_scope_create_complete_as_one_user_flow() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let admin = AccessTokenStore::new(home.clone())
@@ -55,41 +55,52 @@ async fn recent_list_create_and_attach_complete_as_one_user_flow() {
         .expect("create response");
     assert_eq!(created.status(), StatusCode::OK);
     let created = body_json(created).await;
-    let group_id = created["result"]["group_id"].as_str().expect("group id");
+    let group_id = created["result"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
     assert_eq!(created["result"]["group"]["group_id"], group_id);
     let group = GroupStore::new(home.clone())
         .expect("store")
-        .load(group_id)
+        .load(&group_id)
         .expect("group");
     assert_eq!(group.scopes.len(), 1);
     assert_eq!(
         group.scopes[0].url,
         target.canonicalize().expect("target").to_string_lossy()
     );
-    let duplicate = app
+    let second = app
         .clone()
         .oneshot(
             Request::post("/api/v1/groups")
                 .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    json!({"title":"Duplicate","path":target,"by":"user"}).to_string(),
+                    json!({"title":"Second","path":target,"by":"user"}).to_string(),
                 ))
                 .expect("request"),
         )
         .await
-        .expect("duplicate response");
-    assert_eq!(duplicate.status(), StatusCode::BAD_REQUEST);
-    let duplicate = body_json(duplicate).await;
-    assert_eq!(duplicate["error"]["code"], "scope_already_attached");
-    assert_eq!(duplicate["error"]["details"]["group_id"], group_id);
+        .expect("second response");
+    assert_eq!(second.status(), StatusCode::OK);
+    let second = body_json(second).await;
+    let second_id = second["result"]["group_id"]
+        .as_str()
+        .expect("second group id")
+        .to_owned();
+    assert_ne!(second_id, group_id);
+    let second_group = GroupStore::new(home.clone())
+        .expect("store")
+        .load(&second_id)
+        .expect("second group");
+    assert_eq!(group.scopes[0], second_group.scopes[0]);
     assert_eq!(
         GroupStore::new(home.clone())
             .expect("store")
             .list()
             .expect("groups")
             .len(),
-        1
+        2
     );
 
     let _ = cccc_client::DaemonClient::new(home)

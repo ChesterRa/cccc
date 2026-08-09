@@ -93,10 +93,36 @@ impl OutputBuffer {
         }
     }
 
+    pub fn retained_tail_page(&self, limit: usize) -> HistoryPage {
+        let page_start = self.end.saturating_sub(limit.max(1) as u64).max(self.start);
+        let bytes = self.bytes_between(page_start, self.end);
+        let complete_len = complete_utf8_prefix_len(&bytes);
+        let page_end = page_start.saturating_add(complete_len as u64);
+        HistoryPage {
+            data: cursor_preserving_text(&bytes[..complete_len]),
+            start_cursor: page_start,
+            end_cursor: page_end,
+            has_more: page_start > self.start || page_end < self.end,
+            cursor_expired: false,
+        }
+    }
+
     pub fn page_since(&self, after: u64, limit: usize) -> HistoryPage {
-        let page_start = after.clamp(self.start, self.end);
-        let candidate_end = page_start.saturating_add(limit.max(1) as u64).min(self.end);
-        let lookahead_end = candidate_end.saturating_add(3).min(self.end);
+        self.page_since_until(after, self.end, limit)
+    }
+
+    pub(crate) fn page_since_until(
+        &self,
+        after: u64,
+        end_cursor: u64,
+        limit: usize,
+    ) -> HistoryPage {
+        let replay_end = end_cursor.clamp(self.start, self.end);
+        let page_start = after.clamp(self.start, replay_end);
+        let candidate_end = page_start
+            .saturating_add(limit.max(1) as u64)
+            .min(replay_end);
+        let lookahead_end = candidate_end.saturating_add(3).min(replay_end);
         let lookahead = self.bytes_between(page_start, lookahead_end);
         let candidate_len = candidate_end.saturating_sub(page_start) as usize;
         let mut requested_len = candidate_len;
@@ -109,7 +135,7 @@ impl OutputBuffer {
             data: cursor_preserving_text(&lookahead[..complete_len]),
             start_cursor: page_start,
             end_cursor: page_end,
-            has_more: page_end < self.end,
+            has_more: page_end < replay_end,
             cursor_expired: after < self.start,
         }
     }
@@ -118,6 +144,21 @@ impl OutputBuffer {
         self.chunks.clear();
         self.bytes = 0;
         self.start = self.end;
+    }
+
+    pub(crate) fn trim_to(&mut self, limit: usize) {
+        let retained_start = self.end.saturating_sub(limit as u64).max(self.start);
+        let retained = self.bytes_between(retained_start, self.end);
+        self.chunks.clear();
+        if !retained.is_empty() {
+            self.chunks.push_back(retained);
+        }
+        self.bytes = self.end.saturating_sub(retained_start) as usize;
+        self.start = retained_start;
+    }
+
+    pub(crate) const fn retained_bytes(&self) -> usize {
+        self.bytes
     }
 
     pub const fn bracketed_paste_enabled(&self) -> bool {

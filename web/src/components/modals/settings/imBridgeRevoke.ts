@@ -2,7 +2,7 @@ import type { ApiResponse } from "../../../services/api";
 
 type RevokeResponse = ApiResponse<{ revoked: boolean }>;
 
-export function imRevokeKey(chatId: string, threadId: number): string {
+export function imRevokeKey(chatId: string, threadId: number | string): string {
   return `${chatId}:${threadId}`;
 }
 

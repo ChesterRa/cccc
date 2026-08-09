@@ -18,7 +18,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ..base import IMAdapter
+from ..base import IMAdapter, OutboundStreamHandle
+from ..outbound_text import mark_stream_updated, split_text_chunks, stream_preview, stream_update_due
 from .attachments import parse_download_attachment
 from .chats import FeishuChatTitleResolver
 from .client import FeishuClient
@@ -27,7 +28,7 @@ from .files import prepare_upload_file
 from .identity import parse_bot_identity_response
 from .mapper import FeishuMessageMapper
 from .mentions import FeishuBotIdentity
-from .outbound import build_media_message_request, build_text_message_request
+from .outbound import build_media_message_request, build_text_message_request, build_update_text_message_request
 from .queue import FeishuMessageQueue
 from .rate_limiter import FeishuRateLimiter
 from .reactions import (
@@ -36,7 +37,7 @@ from .reactions import (
     parse_add_reaction_response,
     reaction_succeeded,
 )
-from .text import compose_safe_text
+from .text import FEISHU_MAX_MESSAGE_LENGTH, compose_safe_text
 from .webhook import normalize_webhook_event
 from .ws import FeishuWsListener
 
@@ -58,13 +59,14 @@ class FeishuAdapter(IMAdapter):
         "threads": "yes",
         "reactions": "yes",
         "typing": "no",
-        "streaming": "no",
+        "streaming": "yes",
         "voice_in": "no",
         "markdown": "partial",
     }
     capability_notes = {
         "threads": "root_id is preserved for replies when present",
         "reactions": "used for processing indicators where available",
+        "streaming": "messages are progressively updated with the message update API; overlong finals use lossless chunks",
     }
 
     def __init__(
@@ -330,21 +332,20 @@ class FeishuAdapter(IMAdapter):
         if not self._connected:
             return False
 
-        # Ensure message fits limit
-        safe_text = self._compose_safe(text)
-
-        # Rate limit
-        self._rate_limiter.wait_and_acquire(chat_id)
-
-        endpoint, body = build_text_message_request(chat_id, safe_text, thread_id=thread_id)
-
-        resp = self._api("POST", endpoint, body)
-
-        if resp.get("code") == 0:
-            return True
-
-        self._log(f"[send] Failed to chat {chat_id}: {resp.get('msg', 'unknown')}")
-        return False
+        chunks = split_text_chunks(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=FEISHU_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        for chunk in chunks:
+            self._rate_limiter.wait_and_acquire(chat_id)
+            endpoint, body = build_text_message_request(chat_id, chunk, thread_id=thread_id)
+            resp = self._api("POST", endpoint, body)
+            if resp.get("code") != 0:
+                self._log(f"[send] Failed to chat {chat_id}: {resp.get('msg', 'unknown')}")
+                return False
+        return True
 
     def _compose_safe(self, text: str) -> str:
         """Ensure message fits within Feishu limits."""
@@ -354,6 +355,95 @@ class FeishuAdapter(IMAdapter):
             max_lines=self.max_lines,
             summarize_fn=self.summarize,
         )
+
+    def begin_stream(
+        self,
+        chat_id: str,
+        stream_id: str,
+        *,
+        text: str = "",
+        thread_id: Optional[int] = None,
+    ) -> Optional[OutboundStreamHandle]:
+        if not self._connected:
+            return None
+        preview, _exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=FEISHU_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        self._rate_limiter.wait_and_acquire(chat_id)
+        endpoint, body = build_text_message_request(chat_id, preview, thread_id=thread_id)
+        response = self._api("POST", endpoint, body)
+        data = response.get("data") if isinstance(response.get("data"), dict) else {}
+        message_id = str(data.get("message_id") or "")
+        if response.get("code") != 0 or not message_id:
+            return None
+        return {
+            "stream_id": stream_id,
+            "platform_handle": {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "last_text": preview,
+                "update_count": 0,
+            },
+        }
+
+    def update_stream(
+        self,
+        handle: OutboundStreamHandle,
+        *,
+        text: str = "",
+        seq: int = 0,
+    ) -> bool:
+        _ = seq
+        preview, _exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=FEISHU_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        platform_handle = handle.get("platform_handle")
+        if not isinstance(platform_handle, dict):
+            return False
+        if platform_handle.get("last_text") == preview:
+            return True
+        if int(platform_handle.get("update_count") or 0) >= 19:
+            return True
+        if not stream_update_due(handle, interval=0.3):
+            return True
+        updated = self._update_stream_message(handle, preview)
+        if updated:
+            platform_handle["update_count"] = int(platform_handle.get("update_count") or 0) + 1
+            mark_stream_updated(handle)
+        return updated
+
+    def end_stream(self, handle: OutboundStreamHandle, *, text: str = "") -> bool:
+        preview, exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=FEISHU_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        return self._update_stream_message(handle, preview) and exact and bool(text)
+
+    def _update_stream_message(self, handle: OutboundStreamHandle, text: str) -> bool:
+        platform_handle = handle.get("platform_handle")
+        if not isinstance(platform_handle, dict):
+            return False
+        chat_id = str(platform_handle.get("chat_id") or "")
+        message_id = str(platform_handle.get("message_id") or "")
+        if not chat_id or not message_id:
+            return False
+        if platform_handle.get("last_text") == text:
+            return True
+        self._rate_limiter.wait_and_acquire(chat_id)
+        endpoint, body = build_update_text_message_request(message_id, text)
+        response = self._api("PUT", endpoint, body)
+        if response.get("code") != 0:
+            return False
+        platform_handle["last_text"] = text
+        return True
 
     def get_chat_title(self, chat_id: str) -> str:
         """Get chat title via API."""
@@ -416,9 +506,7 @@ class FeishuAdapter(IMAdapter):
 
         if resp.get("code") == 0:
             # Send caption as separate message if provided
-            if caption:
-                self.send_message(chat_id, caption, thread_id)
-            return True
+            return not caption or self.send_message(chat_id, caption, thread_id)
 
         self._log(f"[send_file] Send failed: {resp.get('msg', 'unknown')}")
         return False
@@ -466,8 +554,7 @@ class FeishuAdapter(IMAdapter):
 
     def format_outbound(self, by: str, to: List[str], text: str, is_system: bool = False) -> str:
         """Format message for Feishu display."""
-        formatted = super().format_outbound(by, to, text, is_system)
-        return self._compose_safe(formatted)
+        return super().format_outbound(by, to, text, is_system)
 
     # ===== WebSocket Event Handling (for webhook integration) =====
 

@@ -38,6 +38,7 @@ uv.lock
 .vscode/
 .env
 .tmp
+/tmp
 graphify-out
 
 # Local dev environments

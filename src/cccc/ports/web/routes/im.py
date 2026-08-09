@@ -11,17 +11,30 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 
-from ....daemon.im.im_bridge_ops import read_live_im_bridge_pid, sanitize_im_bridge_env, stop_im_bridges_for_group
+from ....daemon.im.im_bridge_ops import (
+    read_live_im_bridge_pid,
+    sanitize_im_bridge_env,
+    stop_im_bridges_for_group,
+)
 from ....kernel.group import load_group
 from ....paths import ensure_home
+from ....ports.im.auth import KeyManager
 from ....ports.im.config_schema import canonicalize_im_config
+from ....ports.im.subscribers import SubscriberManager
 from ....util.conv import coerce_bool
-from ....util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive, resolve_background_python_argv, supervised_process_popen_kwargs
+from ....util.process import (
+    SOFT_TERMINATE_SIGNAL,
+    best_effort_signal_pid,
+    pid_is_alive,
+    resolve_background_python_argv,
+    supervised_process_popen_kwargs,
+)
 from ..schemas import (
     IMActionRequest,
     IMBindRequest,
     IMPendingRejectRequest,
     IMSetRequest,
+    IMWeixinVerifyRequest,
     InboxReadRequest,
     RouteContext,
     check_group,
@@ -29,6 +42,10 @@ from ..schemas import (
     require_group,
 )
 from .actors import invalidate_readonly_actor_list
+
+
+_WEIXIN_ACTIVE_LOGIN_STATUSES = {"waiting_scan", "scanned", "need_verify_code"}
+_WEIXIN_LOGIN_AUTH_SOURCE = "weixin_login"
 
 
 def _weixin_state_paths(group: Any) -> Dict[str, Any]:
@@ -54,12 +71,54 @@ def _write_weixin_status(status_path: Path, data: Dict[str, Any]) -> None:
     )
 
 
-async def _refresh_weixin_login_status(group: Any, status: Dict[str, Any]) -> Dict[str, Any]:
+def _ensure_weixin_login_access(group: Any, user_id: str, *, force: bool) -> bool:
+    """Authorize and subscribe the QR-login user while preserving an explicit opt-out."""
+    chat_id = str(user_id or "").strip()
+    if not chat_id:
+        return False
+    state_dir = _weixin_state_paths(group)["state_dir"]
+    subscribers = SubscriberManager(state_dir)
+    existing = subscribers.get_subscriber(chat_id, 0)
+    if not force and existing is not None and not existing.subscribed:
+        return False
+    key_manager = KeyManager(state_dir)
+    if not key_manager.is_authorized(chat_id, 0):
+        key_manager.authorize_direct(chat_id, 0, "weixin", _WEIXIN_LOGIN_AUTH_SOURCE)
+    subscribers.subscribe(chat_id, chat_title=chat_id, thread_id=0, platform="weixin")
+    return True
+
+
+def _revoke_weixin_login_access(group: Any, user_id: str) -> None:
+    chat_id = str(user_id or "").strip()
+    if not chat_id:
+        return
+    state_dir = _weixin_state_paths(group)["state_dir"]
+    KeyManager(state_dir).revoke_direct(chat_id, 0, _WEIXIN_LOGIN_AUTH_SOURCE)
+    SubscriberManager(state_dir).unsubscribe(chat_id, 0)
+
+
+def _normalize_weixin_login_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    return {
+        "scaned": "scanned",
+        "need_verifycode": "need_verify_code",
+    }.get(status, status)
+
+
+async def _refresh_weixin_login_status(
+    group: Any,
+    status: Dict[str, Any],
+    *,
+    verify_code: Optional[str] = None,
+) -> Dict[str, Any]:
     """Poll the wechatbot QR state and persist credentials on confirmation."""
     current = dict(status or {})
     if current.get("logged_in"):
         return current
-    if str(current.get("status") or "").strip().lower() != "waiting_scan":
+    if (
+        _normalize_weixin_login_status(current.get("status"))
+        not in _WEIXIN_ACTIVE_LOGIN_STATUSES
+    ):
         return current
 
     qrcode = str(current.get("qrcode") or "").strip()
@@ -79,25 +138,37 @@ async def _refresh_weixin_login_status(group: Any, status: Dict[str, Any]) -> Di
         from wechatbot.types import Credentials
 
         api = ILinkApi()
-        result = await api.poll_qr_status(poll_base_url or FIXED_QR_BASE_URL, qrcode)
-        qr_status = str(result.get("status") or "").strip().lower()
+        if verify_code:
+            result = await api.poll_qr_status(
+                poll_base_url or FIXED_QR_BASE_URL, qrcode, verify_code
+            )
+        else:
+            result = await api.poll_qr_status(
+                poll_base_url or FIXED_QR_BASE_URL, qrcode
+            )
+        qr_status = _normalize_weixin_login_status(result.get("status"))
 
         if qr_status == "confirmed":
             token = str(result.get("bot_token") or "").strip()
             account_id = str(result.get("ilink_bot_id") or "").strip()
             user_id = str(result.get("ilink_user_id") or "").strip()
-            base_url = str(result.get("baseurl") or poll_base_url or FIXED_QR_BASE_URL).strip()
+            base_url = str(
+                result.get("baseurl") or poll_base_url or FIXED_QR_BASE_URL
+            ).strip()
             if not (token and account_id and user_id):
-                _write_weixin_status(status_path, {
-                    "status": "error",
-                    "logged_in": False,
-                    "account_id": "",
-                    "error": "Login confirmed but missing credentials",
-                    "user_id": "",
-                    "qrcode_url": "",
-                    "qrcode": "",
-                    "poll_base_url": "",
-                })
+                _write_weixin_status(
+                    status_path,
+                    {
+                        "status": "error",
+                        "logged_in": False,
+                        "account_id": "",
+                        "error": "Login confirmed but missing credentials",
+                        "user_id": "",
+                        "qrcode_url": "",
+                        "qrcode": "",
+                        "poll_base_url": "",
+                    },
+                )
                 return _read_weixin_status(group)
             await save_credentials(
                 Credentials(
@@ -108,45 +179,147 @@ async def _refresh_weixin_login_status(group: Any, status: Dict[str, Any]) -> Di
                 ),
                 paths["cred_path"],
             )
-            _write_weixin_status(status_path, {
-                "status": "logged_in",
-                "logged_in": True,
-                "account_id": account_id,
-                "error": "",
-                "user_id": user_id,
-                "qrcode_url": "",
-                "qrcode": "",
-                "poll_base_url": "",
-            })
+            auto_subscribed = _ensure_weixin_login_access(group, user_id, force=True)
+            _write_weixin_status(
+                status_path,
+                {
+                    "status": "logged_in",
+                    "logged_in": True,
+                    "account_id": account_id,
+                    "error": "",
+                    "user_id": user_id,
+                    "qrcode_url": "",
+                    "qrcode": "",
+                    "poll_base_url": "",
+                    "verification_required": False,
+                    "auto_subscribed": auto_subscribed,
+                },
+            )
         elif qr_status == "expired":
-            _write_weixin_status(status_path, {
-                "status": "expired",
-                "logged_in": False,
-                "error": "QR code expired, please regenerate",
-                "qrcode_url": "",
-                "qrcode": "",
-                "poll_base_url": "",
-            })
+            _write_weixin_status(
+                status_path,
+                {
+                    "status": "expired",
+                    "logged_in": False,
+                    "error": "QR code expired, please regenerate",
+                    "qrcode_url": "",
+                    "qrcode": "",
+                    "poll_base_url": "",
+                    "verification_required": False,
+                    "auto_subscribed": False,
+                },
+            )
+        elif qr_status == "scanned":
+            _write_weixin_status(
+                status_path,
+                {
+                    "status": "scanned",
+                    "logged_in": False,
+                    "qrcode_url": str(current.get("qrcode_url") or "").strip(),
+                    "qrcode": qrcode,
+                    "poll_base_url": poll_base_url or FIXED_QR_BASE_URL,
+                    "verification_required": False,
+                    "error": "",
+                },
+            )
+        elif qr_status == "need_verify_code":
+            _write_weixin_status(
+                status_path,
+                {
+                    "status": "need_verify_code",
+                    "logged_in": False,
+                    "qrcode_url": str(current.get("qrcode_url") or "").strip(),
+                    "qrcode": qrcode,
+                    "poll_base_url": poll_base_url or FIXED_QR_BASE_URL,
+                    "verification_required": True,
+                    "error": "",
+                },
+            )
         elif qr_status == "scaned_but_redirect":
             redirect_host = str(result.get("redirect_host") or "").strip()
-            next_base_url = f"https://{redirect_host}" if redirect_host else (poll_base_url or FIXED_QR_BASE_URL)
-            _write_weixin_status(status_path, {
-                "status": "waiting_scan",
-                "logged_in": False,
-                "qrcode_url": str(current.get("qrcode_url") or "").strip(),
-                "qrcode": qrcode,
-                "poll_base_url": next_base_url,
-                "error": "",
-            })
+            next_base_url = (
+                redirect_host
+                if redirect_host.startswith(("http://", "https://"))
+                else f"https://{redirect_host}"
+            )
+            if not redirect_host:
+                next_base_url = poll_base_url or FIXED_QR_BASE_URL
+            _write_weixin_status(
+                status_path,
+                {
+                    "status": "waiting_scan",
+                    "logged_in": False,
+                    "qrcode_url": str(current.get("qrcode_url") or "").strip(),
+                    "qrcode": qrcode,
+                    "poll_base_url": next_base_url,
+                    "verification_required": False,
+                    "error": "",
+                },
+            )
+        elif qr_status == "binded_redirect":
+            from wechatbot.auth import load_credentials
+
+            stored = await load_credentials(paths["cred_path"])
+            if stored is None:
+                _write_weixin_status(
+                    status_path,
+                    {
+                        "status": "error",
+                        "logged_in": False,
+                        "error": "Bot is already bound, but no local credentials were found",
+                        "qrcode_url": "",
+                        "qrcode": "",
+                        "poll_base_url": "",
+                        "verification_required": False,
+                        "auto_subscribed": False,
+                    },
+                )
+                return _read_weixin_status(group)
+            user_id = str(getattr(stored, "user_id", "") or "").strip()
+            auto_subscribed = _ensure_weixin_login_access(group, user_id, force=False)
+            _write_weixin_status(
+                status_path,
+                {
+                    "status": "logged_in",
+                    "logged_in": True,
+                    "account_id": str(getattr(stored, "account_id", "") or "").strip(),
+                    "user_id": user_id,
+                    "qrcode_url": "",
+                    "qrcode": "",
+                    "poll_base_url": "",
+                    "verification_required": False,
+                    "auto_subscribed": auto_subscribed,
+                    "error": "",
+                },
+            )
+        elif qr_status == "verify_code_blocked":
+            _write_weixin_status(
+                status_path,
+                {
+                    "status": "error",
+                    "logged_in": False,
+                    "error": "Verification code rejected too many times; generate a new QR code",
+                    "qrcode_url": "",
+                    "qrcode": "",
+                    "poll_base_url": "",
+                    "verification_required": False,
+                    "auto_subscribed": False,
+                },
+            )
         elif qr_status in {"error", "failed"}:
-            _write_weixin_status(status_path, {
-                "status": "error",
-                "logged_in": False,
-                "error": str(result.get("errmsg") or "login check failed"),
-                "qrcode_url": "",
-                "qrcode": "",
-                "poll_base_url": "",
-            })
+            _write_weixin_status(
+                status_path,
+                {
+                    "status": "error",
+                    "logged_in": False,
+                    "error": str(result.get("errmsg") or "login check failed"),
+                    "qrcode_url": "",
+                    "qrcode": "",
+                    "poll_base_url": "",
+                    "verification_required": False,
+                    "auto_subscribed": False,
+                },
+            )
     except Exception:
         return current
     return _read_weixin_status(group)
@@ -162,20 +335,29 @@ def _read_weixin_status(group: Any) -> Dict[str, Any]:
         "account_id": "",
         "qr_ascii": "",
         "error": "",
+        "auto_subscribed": False,
+        "verification_required": False,
         "running": False,
         "pid": None,
     }
+    credential_data: Dict[str, Any] = {}
     try:
         if paths["cred_path"].exists():
             loaded_creds = json.loads(paths["cred_path"].read_text(encoding="utf-8"))
-            if isinstance(loaded_creds, dict) and str(loaded_creds.get("token") or "").strip():
-                data.update({
-                    "status": "logged_in",
-                    "logged_in": True,
-                    "account_id": str(loaded_creds.get("accountId") or loaded_creds.get("account_id") or "").strip(),
-                    "user_id": str(loaded_creds.get("userId") or loaded_creds.get("user_id") or "").strip(),
-                    "error": "",
-                })
+            if (
+                isinstance(loaded_creds, dict)
+                and str(loaded_creds.get("token") or "").strip()
+            ):
+                credential_data = {
+                    "account_id": str(
+                        loaded_creds.get("accountId")
+                        or loaded_creds.get("account_id")
+                        or ""
+                    ).strip(),
+                    "user_id": str(
+                        loaded_creds.get("userId") or loaded_creds.get("user_id") or ""
+                    ).strip(),
+                }
     except Exception:
         pass
     if status_path.exists():
@@ -185,6 +367,34 @@ def _read_weixin_status(group: Any) -> Dict[str, Any]:
                 data.update(loaded)
         except Exception:
             pass
+    if credential_data:
+        data.update(credential_data)
+        data["logged_in"] = True
+        if _normalize_weixin_login_status(data.get("status")) in {
+            "not_logged_in",
+            "logged_out",
+            "waiting_scan",
+            "scanned",
+            "need_verify_code",
+            "expired",
+        }:
+            data["status"] = "logged_in"
+            data["error"] = ""
+            data["verification_required"] = False
+    elif _normalize_weixin_login_status(data.get("status")) == "logged_in":
+        data.update(
+            {
+                "status": "not_logged_in",
+                "logged_in": False,
+                "account_id": "",
+                "user_id": "",
+            }
+        )
+    user_id = str(data.get("user_id") or "").strip()
+    if data.get("logged_in") and user_id:
+        data["auto_subscribed"] = _ensure_weixin_login_access(
+            group, user_id, force=False
+        )
     if pid_path.exists():
         try:
             pid = int(pid_path.read_text(encoding="utf-8").strip())
@@ -235,34 +445,72 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         }
 
     @group_router.get("/inbox/{actor_id}")
-    async def inbox_list(group_id: str, actor_id: str, by: str = "user", limit: int = 50) -> Dict[str, Any]:
-        return await ctx.daemon({"op": "inbox_list", "args": {"group_id": group_id, "actor_id": actor_id, "by": by, "limit": int(limit)}})
+    async def inbox_list(
+        group_id: str, actor_id: str, by: str = "user", limit: int = 50
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "inbox_list",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "by": by,
+                    "limit": int(limit),
+                },
+            }
+        )
 
     @group_router.post("/inbox/{actor_id}/read")
-    async def inbox_mark_read(group_id: str, actor_id: str, req: InboxReadRequest) -> Dict[str, Any]:
+    async def inbox_mark_read(
+        group_id: str, actor_id: str, req: InboxReadRequest
+    ) -> Dict[str, Any]:
         return await ctx.daemon(
-            {"op": "inbox_mark_read", "args": {"group_id": group_id, "actor_id": actor_id, "event_id": req.event_id, "by": req.by}}
+            {
+                "op": "inbox_mark_read",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "event_id": req.event_id,
+                    "by": req.by,
+                },
+            }
         )
 
     @group_router.post("/start")
-    async def group_start(request: Request, group_id: str, by: str = "user") -> Dict[str, Any]:
+    async def group_start(
+        request: Request, group_id: str, by: str = "user"
+    ) -> Dict[str, Any]:
         await invalidate_readonly_actor_list(group_id)
-        result = await ctx.daemon({"op": "group_start", "args": {"group_id": group_id, "by": by, **_profile_auth_args(request)}})
+        result = await ctx.daemon(
+            {
+                "op": "group_start",
+                "args": {"group_id": group_id, "by": by, **_profile_auth_args(request)},
+            }
+        )
         await invalidate_readonly_actor_list(group_id)
         return result
 
     @group_router.post("/stop")
     async def group_stop(group_id: str, by: str = "user") -> Dict[str, Any]:
         await invalidate_readonly_actor_list(group_id)
-        result = await ctx.daemon({"op": "group_stop", "args": {"group_id": group_id, "by": by}})
+        result = await ctx.daemon(
+            {"op": "group_stop", "args": {"group_id": group_id, "by": by}}
+        )
         await invalidate_readonly_actor_list(group_id)
         return result
 
     @group_router.post("/state")
-    async def group_set_state(group_id: str, state: str, by: str = "user") -> Dict[str, Any]:
+    async def group_set_state(
+        group_id: str, state: str, by: str = "user"
+    ) -> Dict[str, Any]:
         """Set group state (active/idle/paused) to control automation behavior."""
         await invalidate_readonly_actor_list(group_id)
-        result = await ctx.daemon({"op": "group_set_state", "args": {"group_id": group_id, "state": state, "by": by}})
+        result = await ctx.daemon(
+            {
+                "op": "group_set_state",
+                "args": {"group_id": group_id, "state": state, "by": by},
+            }
+        )
         await invalidate_readonly_actor_list(group_id)
         return result
 
@@ -276,7 +524,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         check_group(request, group_id)
         group = load_group(group_id)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {group_id}",
+                },
+            )
 
         im_config = canonicalize_im_config(group.doc.get("im", {}))
         platform = im_config.get("platform") if im_config else None
@@ -291,7 +545,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if subscribers_path.exists():
             try:
                 subs = json.loads(subscribers_path.read_text(encoding="utf-8"))
-                subscriber_count = sum(1 for s in subs.values() if isinstance(s, dict) and s.get("subscribed"))
+                subscriber_count = sum(
+                    1
+                    for s in subs.values()
+                    if isinstance(s, dict) and s.get("subscribed")
+                )
             except Exception:
                 pass
 
@@ -300,12 +558,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             "result": {
                 "group_id": group_id,
                 "configured": bool(im_config),
-                "enabled": coerce_bool(im_config.get("enabled"), default=False) if im_config else False,
+                "enabled": coerce_bool(im_config.get("enabled"), default=False)
+                if im_config
+                else False,
                 "platform": platform,
                 "running": running,
                 "pid": pid,
                 "subscribers": subscriber_count,
-            }
+            },
         }
 
     @im_router.get("/api/im/config")
@@ -314,7 +574,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         check_group(request, group_id)
         group = load_group(group_id)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {group_id}",
+                },
+            )
 
         im_cfg = canonicalize_im_config(group.doc.get("im"))
         return {"ok": True, "result": {"group_id": group_id, "im": im_cfg}}
@@ -325,23 +591,43 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         check_group(request, group_id)
         group = load_group(group_id)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {group_id}",
+                },
+            )
         status = _read_weixin_status(group)
         status = await _refresh_weixin_login_status(group, status)
         return {"ok": True, "result": status}
 
     @im_router.post("/api/im/weixin/login/start")
-    async def im_weixin_login_start(request: Request, req: IMActionRequest) -> Dict[str, Any]:
+    async def im_weixin_login_start(
+        request: Request, req: IMActionRequest
+    ) -> Dict[str, Any]:
         """Start a Weixin QR login flow using the Python SDK."""
         check_group(request, req.group_id)
         group = load_group(req.group_id)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {req.group_id}",
+                },
+            )
 
         im_cfg = canonicalize_im_config(group.doc.get("im", {}))
         platform = str(im_cfg.get("platform") or "").strip().lower()
         if platform and platform != "weixin":
-            return {"ok": False, "error": {"code": "wrong_platform", "message": f"group IM platform is {platform}, not weixin"}}
+            return {
+                "ok": False,
+                "error": {
+                    "code": "wrong_platform",
+                    "message": f"group IM platform is {platform}, not weixin",
+                },
+            }
 
         paths = _weixin_state_paths(group)
         status = _read_weixin_status(group)
@@ -358,13 +644,23 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
             creds = await load_credentials(paths["cred_path"])
             if creds is not None:
-                _write_weixin_status(status_path, {
-                    "status": "logged_in",
-                    "logged_in": True,
-                    "account_id": str(getattr(creds, "account_id", "") or account_id),
-                    "user_id": str(getattr(creds, "user_id", "") or ""),
-                    "error": "",
-                })
+                _write_weixin_status(
+                    status_path,
+                    {
+                        "status": "logged_in",
+                        "logged_in": True,
+                        "account_id": str(
+                            getattr(creds, "account_id", "") or account_id
+                        ),
+                        "user_id": str(getattr(creds, "user_id", "") or ""),
+                        "auto_subscribed": _ensure_weixin_login_access(
+                            group,
+                            str(getattr(creds, "user_id", "") or ""),
+                            force=False,
+                        ),
+                        "error": "",
+                    },
+                )
                 return {"ok": True, "result": _read_weixin_status(group)}
 
             api = ILinkApi()
@@ -374,34 +670,101 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if not qr_url or not qrcode:
                 raise RuntimeError("wechatbot returned no QR code")
 
-            _write_weixin_status(status_path, {
-                "status": "waiting_scan",
-                "logged_in": False,
-                "account_id": account_id,
-                "qrcode_url": qr_url,
-                "qrcode": qrcode,
-                "poll_base_url": FIXED_QR_BASE_URL,
-                "error": "",
-            })
+            _write_weixin_status(
+                status_path,
+                {
+                    "status": "waiting_scan",
+                    "logged_in": False,
+                    "account_id": account_id,
+                    "qrcode_url": qr_url,
+                    "qrcode": qrcode,
+                    "poll_base_url": FIXED_QR_BASE_URL,
+                    "verification_required": False,
+                    "auto_subscribed": False,
+                    "error": "",
+                },
+            )
             return {"ok": True, "result": _read_weixin_status(group)}
         except Exception as e:
-            _write_weixin_status(status_path, {
-                "status": "error",
-                "logged_in": False,
-                "error": str(e),
-            })
+            _write_weixin_status(
+                status_path,
+                {
+                    "status": "error",
+                    "logged_in": False,
+                    "error": str(e),
+                },
+            )
             return {"ok": False, "error": {"code": "login_failed", "message": str(e)}}
 
+    @im_router.post("/api/im/weixin/login/verify")
+    async def im_weixin_login_verify(
+        request: Request, req: IMWeixinVerifyRequest
+    ) -> Dict[str, Any]:
+        """Submit the pairing code requested after scanning a Weixin QR code."""
+        check_group(request, req.group_id)
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {req.group_id}",
+                },
+            )
+
+        verify_code = str(req.verify_code or "").strip()
+        if not verify_code or any(char.isspace() for char in verify_code):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "invalid_verify_code",
+                    "message": "verify_code must be non-empty and contain no whitespace",
+                },
+            }
+
+        status = _read_weixin_status(group)
+        if (
+            _normalize_weixin_login_status(status.get("status")) != "need_verify_code"
+            or not str(status.get("qrcode") or "").strip()
+        ):
+            return {
+                "ok": False,
+                "error": {
+                    "code": "verify_not_required",
+                    "message": "Weixin login is not waiting for a verification code",
+                },
+            }
+        result = await _refresh_weixin_login_status(
+            group, status, verify_code=verify_code
+        )
+        return {"ok": True, "result": result}
+
     @im_router.post("/api/im/weixin/logout")
-    async def im_weixin_logout(request: Request, req: IMActionRequest) -> Dict[str, Any]:
+    async def im_weixin_logout(
+        request: Request, req: IMActionRequest
+    ) -> Dict[str, Any]:
         """Clear Weixin login state."""
         check_group(request, req.group_id)
         group = load_group(req.group_id)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {req.group_id}",
+                },
+            )
 
         im_cfg = canonicalize_im_config(group.doc.get("im", {}))
         paths = _weixin_state_paths(group)
+        status_before = _read_weixin_status(group)
+        user_id = str(status_before.get("user_id") or "").strip()
+        account_id = str(status_before.get("account_id") or "").strip()
+
+        if im_cfg:
+            im_cfg["enabled"] = False
+            group.doc["im"] = im_cfg
+            group.save()
         _stop_weixin_login_runner(group)
 
         def _killpg(pid: int, sig: signal.Signals) -> None:
@@ -418,19 +781,49 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
             await clear_credentials(paths["cred_path"])
         except Exception as e:
+            _write_weixin_status(
+                paths["status_path"],
+                {
+                    "status": "error",
+                    "logged_in": bool(status_before.get("logged_in")),
+                    "account_id": account_id,
+                    "user_id": user_id,
+                    "error": str(e),
+                    "qrcode_url": "",
+                    "qrcode": "",
+                    "poll_base_url": "",
+                    "verification_required": False,
+                    "auto_subscribed": bool(status_before.get("auto_subscribed")),
+                    "running": False,
+                    "pid": None,
+                },
+            )
             return {"ok": False, "error": {"code": "logout_failed", "message": str(e)}}
+
+        _revoke_weixin_login_access(group, user_id)
 
         try:
             paths["context_cache_path"].unlink(missing_ok=True)
         except Exception:
             pass
 
-        _write_weixin_status(paths["status_path"], {
-            "status": "logged_out",
-            "logged_in": False,
-            "account_id": "",
-            "error": "",
-        })
+        _write_weixin_status(
+            paths["status_path"],
+            {
+                "status": "logged_out",
+                "logged_in": False,
+                "account_id": "",
+                "user_id": "",
+                "qrcode_url": "",
+                "qrcode": "",
+                "poll_base_url": "",
+                "verification_required": False,
+                "auto_subscribed": False,
+                "running": False,
+                "pid": None,
+                "error": "",
+            },
+        )
         return {"ok": True, "result": _read_weixin_status(group)}
 
     @im_router.post("/api/im/set")
@@ -439,10 +832,20 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         check_group(request, req.group_id)
         group = load_group(req.group_id)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {req.group_id}",
+                },
+            )
 
         prev_im = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
-        prev_enabled = coerce_bool(prev_im.get("enabled"), default=False) if isinstance(prev_im, dict) else False
+        prev_enabled = (
+            coerce_bool(prev_im.get("enabled"), default=False)
+            if isinstance(prev_im, dict)
+            else False
+        )
 
         # Build IM config draft then canonicalize to keep storage shape stable.
         im_cfg: Dict[str, Any] = {"platform": str(req.platform or "").strip().lower()}
@@ -460,7 +863,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             im_cfg["files"] = {"enabled": True, "max_mb": default_max_mb}
 
         if isinstance(prev_im, dict) and "skip_pending_on_start" in prev_im:
-            im_cfg["skip_pending_on_start"] = coerce_bool(prev_im.get("skip_pending_on_start"), default=True)
+            im_cfg["skip_pending_on_start"] = coerce_bool(
+                prev_im.get("skip_pending_on_start"), default=True
+            )
 
         token_hint = str(req.bot_token_env or req.token_env or req.token or "").strip()
 
@@ -514,19 +919,31 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         check_group(request, req.group_id)
         group = load_group(req.group_id)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {req.group_id}",
+                },
+            )
 
         # 1. Stop bridge (pid file + orphan scan) via reusable helper
         def _killpg(pid: int, sig: signal.Signals) -> None:
             best_effort_signal_pid(pid, sig, include_group=True)
 
         stop_im_bridges_for_group(
-            ensure_home(), group_id=req.group_id, best_effort_killpg=_killpg,
+            ensure_home(),
+            group_id=req.group_id,
+            best_effort_killpg=_killpg,
         )
 
         # 2. Clean up IM state files (graceful — ignore missing files)
         state_dir = group.path / "state"
-        for fname in ("im_subscribers.json", "im_authorized_chats.json", "im_pending_keys.json"):
+        for fname in (
+            "im_subscribers.json",
+            "im_authorized_chats.json",
+            "im_pending_keys.json",
+        ):
             try:
                 (state_dir / fname).unlink(missing_ok=True)
             except Exception:
@@ -548,19 +965,34 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         check_group(request, req.group_id)
         group = load_group(req.group_id)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {req.group_id}",
+                },
+            )
 
         # Check if already running
         pid_path = group.path / "state" / "im_bridge.pid"
         if pid_path.exists():
             pid = read_live_im_bridge_pid(pid_path)
             if pid is not None:
-                return {"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={pid})"}}
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "already_running",
+                        "message": f"bridge already running (pid={pid})",
+                    },
+                }
 
         # Check IM config
         im_cfg = canonicalize_im_config(group.doc.get("im", {}))
         if not im_cfg:
-            return {"ok": False, "error": {"code": "no_im_config", "message": "no IM configuration"}}
+            return {
+                "ok": False,
+                "error": {"code": "no_im_config", "message": "no IM configuration"},
+            }
 
         # Persist desired run-state for restart/autostart.
         im_cfg["enabled"] = True
@@ -633,7 +1065,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if bot_token and bot_token_env:
                 env[bot_token_env] = bot_token
             elif bot_token:
-                default_env = {"telegram": "TELEGRAM_BOT_TOKEN", "slack": "SLACK_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
+                default_env = {
+                    "telegram": "TELEGRAM_BOT_TOKEN",
+                    "slack": "SLACK_BOT_TOKEN",
+                    "discord": "DISCORD_BOT_TOKEN",
+                }
                 env[default_env.get(platform, "BOT_TOKEN")] = bot_token
             if platform == "slack":
                 app_token_env = str(im_cfg.get("app_token_env") or "").strip()
@@ -660,7 +1096,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
             with log_path.open("a", encoding="utf-8") as log_file:
                 proc = subprocess.Popen(
-                    resolve_background_python_argv([sys.executable, "-m", "cccc.ports.im", req.group_id, platform]),
+                    resolve_background_python_argv(
+                        [sys.executable, "-m", "cccc.ports.im", req.group_id, platform]
+                    ),
                     stdout=log_file,
                     stderr=log_file,
                     **popen_kwargs,
@@ -682,7 +1120,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     }
 
                 pid_path.write_text(str(proc.pid), encoding="utf-8")
-                return {"ok": True, "result": {"group_id": req.group_id, "platform": platform, "pid": proc.pid}}
+                return {
+                    "ok": True,
+                    "result": {
+                        "group_id": req.group_id,
+                        "platform": platform,
+                        "pid": proc.pid,
+                    },
+                }
         except Exception as e:
             return {"ok": False, "error": {"code": "start_failed", "message": str(e)}}
 
@@ -692,7 +1137,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         check_group(request, req.group_id)
         group = load_group(req.group_id)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {req.group_id}",
+                },
+            )
 
         # Persist desired run-state for restart/autostart.
         raw_im_cfg = group.doc.get("im")
@@ -725,16 +1176,31 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     # ----- IM auth (bind / pending / list / revoke) -----
 
     @im_router.post("/api/im/bind")
-    async def im_bind(request: Request, req: Optional[IMBindRequest] = None, group_id: str = "", key: str = "") -> Dict[str, Any]:
+    async def im_bind(
+        request: Request,
+        req: Optional[IMBindRequest] = None,
+        group_id: str = "",
+        key: str = "",
+    ) -> Dict[str, Any]:
         """Bind a pending authorization key to authorize an IM chat."""
-        gid = str((req.group_id if isinstance(req, IMBindRequest) else group_id) or "").strip()
+        gid = str(
+            (req.group_id if isinstance(req, IMBindRequest) else group_id) or ""
+        ).strip()
         k = str((req.key if isinstance(req, IMBindRequest) else key) or "").strip()
         check_group(request, gid)
         if not gid:
-            raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "group_id is required"})
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "missing_group_id", "message": "group_id is required"},
+            )
         if not k:
-            raise HTTPException(status_code=400, detail={"code": "missing_key", "message": "key is required"})
-        resp = await ctx.daemon({"op": "im_bind_chat", "args": {"group_id": gid, "key": k}})
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "missing_key", "message": "key is required"},
+            )
+        resp = await ctx.daemon(
+            {"op": "im_bind_chat", "args": {"group_id": gid, "key": k}}
+        )
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
             code = str(err.get("code") or "bind_failed")
@@ -746,7 +1212,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def im_list_authorized(request: Request, group_id: str) -> Dict[str, Any]:
         """List authorized chats for a group (enriched with verbose status)."""
         check_group(request, group_id)
-        resp = await ctx.daemon({"op": "im_list_authorized", "args": {"group_id": group_id}})
+        resp = await ctx.daemon(
+            {"op": "im_list_authorized", "args": {"group_id": group_id}}
+        )
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
             raise HTTPException(status_code=400, detail=err)
@@ -754,6 +1222,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         group = load_group(group_id)
         if group is not None:
             from ....ports.im.subscribers import SubscriberManager
+
             sm = SubscriberManager(group.path / "state")
             authorized = (resp.get("result") or {}).get("authorized", [])
             for chat in authorized:
@@ -765,24 +1234,44 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return resp
 
     @im_router.post("/api/im/verbose")
-    async def im_set_verbose(request: Request, group_id: str, chat_id: str, verbose: bool, thread_id: int = 0) -> Dict[str, Any]:
+    async def im_set_verbose(
+        request: Request, group_id: str, chat_id: str, verbose: bool, thread_id: int = 0
+    ) -> Dict[str, Any]:
         """Set verbose mode for an IM subscriber."""
         check_group(request, group_id)
         group = load_group(group_id)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {group_id}",
+                },
+            )
         from ....ports.im.subscribers import SubscriberManager
+
         sm = SubscriberManager(group.path / "state")
         ok = sm.set_verbose(chat_id, verbose, thread_id)
         if not ok:
-            raise HTTPException(status_code=404, detail={"code": "subscriber_not_found", "message": "subscriber not found"})
-        return {"ok": True, "result": {"chat_id": chat_id, "thread_id": thread_id, "verbose": verbose}}
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "subscriber_not_found",
+                    "message": "subscriber not found",
+                },
+            )
+        return {
+            "ok": True,
+            "result": {"chat_id": chat_id, "thread_id": thread_id, "verbose": verbose},
+        }
 
     @im_router.get("/api/im/pending")
     async def im_list_pending(request: Request, group_id: str) -> Dict[str, Any]:
         """List pending bind requests for a group."""
         check_group(request, group_id)
-        resp = await ctx.daemon({"op": "im_list_pending", "args": {"group_id": group_id}})
+        resp = await ctx.daemon(
+            {"op": "im_list_pending", "args": {"group_id": group_id}}
+        )
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
             raise HTTPException(status_code=400, detail=err)
@@ -796,14 +1285,27 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         key: str = "",
     ) -> Dict[str, Any]:
         """Reject a pending bind request key."""
-        gid = str((req.group_id if isinstance(req, IMPendingRejectRequest) else group_id) or "").strip()
-        k = str((req.key if isinstance(req, IMPendingRejectRequest) else key) or "").strip()
+        gid = str(
+            (req.group_id if isinstance(req, IMPendingRejectRequest) else group_id)
+            or ""
+        ).strip()
+        k = str(
+            (req.key if isinstance(req, IMPendingRejectRequest) else key) or ""
+        ).strip()
         check_group(request, gid)
         if not gid:
-            raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "group_id is required"})
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "missing_group_id", "message": "group_id is required"},
+            )
         if not k:
-            raise HTTPException(status_code=400, detail={"code": "missing_key", "message": "key is required"})
-        resp = await ctx.daemon({"op": "im_reject_pending", "args": {"group_id": gid, "key": k}})
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "missing_key", "message": "key is required"},
+            )
+        resp = await ctx.daemon(
+            {"op": "im_reject_pending", "args": {"group_id": gid, "key": k}}
+        )
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
             code = str(err.get("code") or "reject_failed")
@@ -812,10 +1314,21 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return resp
 
     @im_router.post("/api/im/revoke")
-    async def im_revoke(request: Request, group_id: str, chat_id: str, thread_id: int = 0) -> Dict[str, Any]:
+    async def im_revoke(
+        request: Request, group_id: str, chat_id: str, thread_id: int = 0
+    ) -> Dict[str, Any]:
         """Revoke authorization for a chat."""
         check_group(request, group_id)
-        resp = await ctx.daemon({"op": "im_revoke_chat", "args": {"group_id": group_id, "chat_id": chat_id, "thread_id": thread_id}})
+        resp = await ctx.daemon(
+            {
+                "op": "im_revoke_chat",
+                "args": {
+                    "group_id": group_id,
+                    "chat_id": chat_id,
+                    "thread_id": thread_id,
+                },
+            }
+        )
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
             raise HTTPException(status_code=400, detail=err)

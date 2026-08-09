@@ -32,9 +32,11 @@ from typing import Any, Dict, List, Optional
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from .base import IMAdapter, OutboundStreamHandle
+from .outbound_text import mark_stream_updated, split_text_chunks, stream_update_due, utf8_stream_preview
 
 # WeCom API limits
 WECOM_MAX_MESSAGE_LENGTH = 2048
+WECOM_MAX_STREAM_BYTES = 20_480
 DEFAULT_MAX_CHARS = 2048
 DEFAULT_MAX_LINES = 64
 
@@ -1155,35 +1157,36 @@ class WecomAdapter(IMAdapter):
         if not self._connected:
             return False
 
-        safe_text = self._compose_safe(text)
-        self._rate_limiter.wait_and_acquire(chat_id)
-
-        if not self._get_reply_req_id(chat_id) and not self._get_response_url(chat_id):
-            ok = self._send_active_body(
-                chat_id,
-                {
-                    "msgtype": "markdown",
-                    "markdown": {"content": safe_text},
-                },
-            )
-            if ok:
-                self._log(f"[send] Sent via active send (chat={chat_id})")
-            return ok
-
-        ok = self._send_reply_body(
-            chat_id,
-            {
-                "msgtype": "stream",
-                "stream": {
-                    "id": self._next_stream_id(),
-                    "finish": True,
-                    "content": safe_text,
-                },
-            },
+        chunks = split_text_chunks(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=WECOM_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
         )
-        if ok:
-            self._log(f"[send] Sent via WS respond (chat={chat_id})")
-        return ok
+        has_reply_ref = bool(self._get_reply_req_id(chat_id) or self._get_response_url(chat_id))
+        for chunk in chunks:
+            self._rate_limiter.wait_and_acquire(chat_id)
+            if has_reply_ref:
+                ok = self._send_reply_body(
+                    chat_id,
+                    {
+                        "msgtype": "stream",
+                        "stream": {
+                            "id": self._next_stream_id(),
+                            "finish": True,
+                            "content": chunk,
+                        },
+                    },
+                )
+            else:
+                ok = self._send_active_body(
+                    chat_id,
+                    {"msgtype": "markdown", "markdown": {"content": chunk}},
+                )
+            if not ok:
+                return False
+        self._log(f"[send] Sent {len(chunks)} message chunk(s) (chat={chat_id})")
+        return True
 
     def download_attachment(self, attachment: Dict[str, Any]) -> bytes:
         download_url = str(
@@ -1295,11 +1298,9 @@ class WecomAdapter(IMAdapter):
         if not ok:
             return False
 
-        safe_caption = self._compose_safe(caption)
-        if safe_caption:
-            if not self.send_message(chat_id, safe_caption):
-                self._log(f"[send_file] Media sent but caption follow-up failed (chat={chat_id})")
-
+        if caption and not self.send_message(chat_id, caption):
+            self._log(f"[send_file] Media sent but caption follow-up failed (chat={chat_id})")
+            return False
         return True
 
     # -- Step 11: Streaming reply --
@@ -1326,12 +1327,17 @@ class WecomAdapter(IMAdapter):
             self._log(f"[stream] No callback req_id/response_url for chat={chat_id}")
             return None
 
+        safe_text, _exact = utf8_stream_preview(
+            text,
+            max_bytes=WECOM_MAX_STREAM_BYTES,
+            placeholder="",
+        )
         stream_body = {
             "msgtype": "stream",
             "stream": {
                 "id": stream_id,
                 "finish": False,
-                "content": text,
+                "content": safe_text,
             },
         }
         if text:
@@ -1371,21 +1377,33 @@ class WecomAdapter(IMAdapter):
             return False
         _ = seq
 
+        if not stream_update_due(handle, interval=0.2):
+            return True
+
+        safe_text, _exact = utf8_stream_preview(
+            text,
+            max_bytes=WECOM_MAX_STREAM_BYTES,
+            placeholder="",
+        )
+
         body = {
             "msgtype": "stream",
             "stream": {
                 "id": stream_id,
                 "finish": False,
-                "content": text,
+                "content": safe_text,
             },
         }
         if chat_id and not response_url:
             response_url = self._get_response_url(chat_id)
-        return self._send_reply_body_with_ref(
+        updated = self._send_reply_body_with_ref(
             req_id=req_id,
             response_url=response_url,
             body=body,
         )
+        if updated:
+            mark_stream_updated(handle)
+        return updated
 
     def end_stream(
         self,
@@ -1404,12 +1422,17 @@ class WecomAdapter(IMAdapter):
         if (not req_id and not response_url) or not stream_id:
             return False
 
+        safe_text, exact = utf8_stream_preview(
+            text,
+            max_bytes=WECOM_MAX_STREAM_BYTES,
+            placeholder="",
+        )
         body = {
             "msgtype": "stream",
             "stream": {
                 "id": stream_id,
                 "finish": True,
-                "content": text,
+                "content": safe_text,
             },
         }
         if chat_id and not response_url:
@@ -1421,7 +1444,7 @@ class WecomAdapter(IMAdapter):
         )
         if ok:
             self._log(f"[stream] end_stream OK (stream={handle.get('stream_id', '')})")
-        return ok
+        return ok and exact
 
     # -- Step 13: get_chat_title + enhanced disconnect --
 

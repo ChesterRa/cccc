@@ -20,7 +20,9 @@ def parse_bot_identity_response(resp: Dict[str, Any], *, configured_name: str = 
         return FeishuBotIdentityResult(False, FeishuBotIdentity(), msg)
 
     data = resp.get("data") if isinstance(resp.get("data"), dict) else {}
-    bot = data.get("bot") if isinstance(data.get("bot"), dict) else data
+    top_level_bot = resp.get("bot")
+    bot = top_level_bot if isinstance(top_level_bot, dict) else data.get("bot")
+    bot = bot if isinstance(bot, dict) else data
     if not isinstance(bot, dict):
         return FeishuBotIdentityResult(False, FeishuBotIdentity(), "response did not include bot data")
 

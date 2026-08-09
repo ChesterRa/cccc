@@ -2546,6 +2546,7 @@ document.querySelector('[data-testid="send-button"]').addEventListener('click', 
         _, cleanup = self._with_home()
         try:
             with (
+                patch.object(web_model_browser_session.sys, "platform", "linux"),
                 patch.object(
                     web_model_browser_session._MANAGER,
                     "open",
@@ -2571,9 +2572,71 @@ document.querySelector('[data-testid="send-button"]').addEventListener('click', 
             )
             self.assertEqual(kwargs.get("system_profile_subdir"), "")
             self.assertEqual(kwargs.get("require_system_browser_cdp"), True)
+            self.assertEqual(kwargs.get("headless"), False)
             close_browser.assert_called_once_with("g-test", "peer1")
         finally:
             cleanup()
+
+    def test_projected_chatgpt_session_is_headless_on_macos(self) -> None:
+        from cccc.daemon.actors import web_model_browser_session
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        _, cleanup = self._with_home()
+        try:
+            sidecar.record_chatgpt_browser_process_state(
+                {
+                    "pid": 1234,
+                    "cdp_port": 9222,
+                    "profile_dir": str(
+                        sidecar.chatgpt_browser_profile_dir("g-test", "peer1")
+                    ),
+                    "visibility": "projected",
+                }
+            )
+            with (
+                patch.object(web_model_browser_session.sys, "platform", "darwin"),
+                patch.dict(os.environ, {}, clear=True),
+                patch.object(
+                    web_model_browser_session._MANAGER,
+                    "open",
+                    return_value={
+                        "active": True,
+                        "state": "ready",
+                        "metadata": {"cdp_port": 9445, "headless": True},
+                    },
+                ) as open_session,
+                patch.object(
+                    web_model_browser_session,
+                    "close_chatgpt_browser_session",
+                    return_value={"active": False},
+                ) as close_browser,
+            ):
+                web_model_browser_session.open_web_model_chatgpt_browser_session(
+                    group_id="g-test",
+                    actor_id="peer1",
+                    width=1280,
+                    height=800,
+                )
+
+            kwargs = open_session.call_args.kwargs
+            self.assertEqual(kwargs.get("headless"), True)
+            self.assertEqual(kwargs.get("require_system_browser_cdp"), True)
+            self.assertEqual(kwargs.get("existing_cdp_port"), 0)
+            close_browser.assert_called_once_with("g-test", "peer1")
+        finally:
+            cleanup()
+
+    def test_macos_headless_policy_can_be_disabled_for_login_repair(self) -> None:
+        from cccc.daemon.actors.web_model_browser_launch_policy import (
+            use_headless_projected_browser,
+        )
+
+        with patch.dict(
+            os.environ,
+            {"CCCC_WEB_MODEL_BROWSER_HEADLESS": "0"},
+            clear=True,
+        ):
+            self.assertFalse(use_headless_projected_browser(platform="darwin"))
 
     def test_projected_chatgpt_session_opens_bound_conversation(self) -> None:
         from cccc.daemon.actors import web_model_browser_session
@@ -2964,6 +3027,7 @@ document.querySelector('[data-testid="send-button"]').addEventListener('click', 
                 },
             }
             with (
+                patch.object(web_model_browser_session.sys, "platform", "linux"),
                 patch.object(
                     web_model_browser_session._MANAGER,
                     "info",

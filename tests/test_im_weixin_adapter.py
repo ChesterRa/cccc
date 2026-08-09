@@ -130,6 +130,29 @@ class TestWeixinAdapterSendMessage(unittest.TestCase):
             loop_thread.join(timeout=2)
             loop.close()
 
+    def test_send_message_splits_long_text_without_loss(self) -> None:
+        from cccc.ports.im.adapters.weixin import WeixinAdapter
+
+        adapter = WeixinAdapter(max_chars=3)
+        adapter._connected = True
+        adapter._bot = type("Bot", (), {"send": AsyncMock()})()
+
+        loop = asyncio.new_event_loop()
+        adapter._loop = loop
+        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+        loop_thread.start()
+
+        try:
+            text = "你好🙂abcdef"
+            self.assertTrue(adapter.send_message("chat-1", text))
+            chunks = [call.args[1] for call in adapter._bot.send.await_args_list]
+            self.assertEqual("".join(chunks), text)
+            self.assertTrue(all(len(chunk) <= 3 for chunk in chunks))
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            loop_thread.join(timeout=2)
+            loop.close()
+
     def test_send_message_returns_false_when_disconnected(self) -> None:
         from cccc.ports.im.adapters.weixin import WeixinAdapter
 

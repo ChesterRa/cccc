@@ -62,6 +62,9 @@ def handle_actor_remove(
                 clear_web_model_chatgpt_browser_actor_runtime(group_id=group.group_id, actor_id=actor_id)
             except Exception:
                 pass
+            refreshed_group = load_group(group.group_id)
+            if refreshed_group is not None:
+                group = refreshed_group
         codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
         claude_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
         pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)

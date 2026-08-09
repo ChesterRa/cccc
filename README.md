@@ -375,7 +375,7 @@ cccc im start
 | WeCom / 企业微信 | ✅ Supported |
 | Weixin / 微信 | ✅ Supported |
 
-> DingTalk and WeCom support streaming replies (AI Card and aibot streaming respectively); other platforms deliver final messages.
+> Telegram, Slack, Discord, Feishu, DingTalk, and WeCom support progressive replies; overlong results fall back to lossless final-message chunks. Weixin delivers lossless final messages and currently supports direct bot chats only.
 
 From any supported platform, use plain text or `/send @foreman <message>` for normal coordination, reserve `/send @all <message>` for true broadcasts, use `/status` to check group health, and use `/pause` / `/resume` to control operations — all from your phone.
 

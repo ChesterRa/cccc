@@ -158,7 +158,6 @@
   "saveSecretsAndRestartConfirm": "Save changes, apply secrets, and restart \"{{label}}\" now? This will interrupt any running work.",
   "nothingToSave": "No changes to save.",
   "savedRestartRequired": "Saved. Restart \"{{label}}\" to apply runtime/profile/secret changes.",
-  "scopeAlreadyAttached": "This directory already has a working group. Opening it instead.",
   "createdButFailedAttach": "Created group but failed to attach: {{message}}",
   "destGroupDifferent": "Destination group must be different from the source group.",
   "relayTextEmpty": "Relay message text is empty.",

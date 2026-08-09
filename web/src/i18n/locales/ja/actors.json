@@ -158,7 +158,6 @@
   "saveSecretsAndRestartConfirm": "変更を保存し、シークレットを適用して、「{{label}}」を今すぐ再起動しますか？これにより、実行中の作業が中断されます。",
   "nothingToSave": "保存する変更がありません。",
   "savedRestartRequired": "保存しました。ランタイム/プロファイル/シークレットの変更を反映するには「{{label}}」を再起動してください。",
-  "scopeAlreadyAttached": "このディレクトリにはすでに作業グループがあります。代わりにそれを開きます。",
   "createdButFailedAttach": "グループを作成しましたが、接続できませんでした： {{message}}",
   "destGroupDifferent": "宛先グループは送信元グループとは異なる必要があります。",
   "relayTextEmpty": "リレーメッセージのテキストが空です。",

@@ -1,5 +1,6 @@
 use super::{
-    authorize_transcript, render_tail, snapshot, tail, tail_render_options, trailing_chars, write,
+    authorize_transcript, render_tail, replay, snapshot, tail, tail_render_options, trailing_chars,
+    write,
 };
 use cccc_contracts::{Actor, DaemonRequest, RunnerKind};
 use cccc_core::{GroupStore, HomeLayout};
@@ -188,6 +189,60 @@ fn terminal_snapshot_returns_a_rendered_screen_at_the_raw_end_cursor() {
             .ends_with("current")
     );
     assert_eq!(result["end_cursor"].as_u64(), Some(raw.end_cursor));
+    assert!(result.get("history").is_none());
+    let _ = cccc_runtime::stop(&group_id, actor_id);
+}
+
+#[test]
+fn terminal_replay_preserves_current_session_raw_ansi() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    let group_id = format!("g_history_{}", uuid::Uuid::new_v4().simple());
+    let actor_id = "history-peer";
+    cccc_runtime::start(LaunchSpec {
+        group_id: group_id.clone(),
+        actor_id: actor_id.into(),
+        runner: RunnerKind::Pty,
+        command: vec![
+            "sh".into(),
+            "-c".into(),
+            "printf 'old conversation\\r\\n\\033[2J\\033[Hcurrent screen'; sleep 2".into(),
+        ],
+        cwd: temp.path().into(),
+        env: BTreeMap::new(),
+        cols: 80,
+        rows: 24,
+    })
+    .expect("start");
+    for _ in 0..50 {
+        let retained = cccc_runtime::retained_history(&group_id, actor_id).expect("history");
+        if retained.data.contains("current screen") {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let request = DaemonRequest {
+        v: 1,
+        op: "terminal_replay".into(),
+        args: json!({
+            "group_id": group_id,
+            "actor_id": actor_id,
+            "limit_bytes": 512 * 1024,
+            "strip_ansi": false,
+        })
+        .as_object()
+        .cloned()
+        .expect("args"),
+    };
+
+    let result = replay(&home, &request).expect("raw terminal replay");
+    let raw = result["history"]["data"].as_str().unwrap_or_default();
+
+    assert!(raw.contains("old conversation"), "raw history was {raw:?}");
+    assert!(raw.contains("\u{1b}[2J"), "raw history was {raw:?}");
+    assert!(raw.contains("current screen"), "raw history was {raw:?}");
+    assert_eq!(result["history"]["start_cursor"], 0);
+    assert_eq!(result["history"]["cursor_expired"], false);
     let _ = cccc_runtime::stop(&group_id, actor_id);
 }
 

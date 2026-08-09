@@ -19,7 +19,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import IMAdapter
+from .base import IMAdapter, OutboundStreamHandle
+from .outbound_text import mark_stream_updated, split_text_chunks, stream_preview, stream_update_due
+from ..commands import is_recognized_command
 
 # Slack limits
 SLACK_MAX_MESSAGE_LENGTH = 4000  # Slack blocks limit, text limit is higher but 4000 is safe
@@ -41,12 +43,13 @@ class SlackAdapter(IMAdapter):
         "threads": "no",
         "reactions": "no",
         "typing": "no",
-        "streaming": "no",
+        "streaming": "yes",
         "voice_in": "no",
         "markdown": "partial",
     }
     capability_notes = {
         "threads": "thread_ts is not wired through the adapter yet",
+        "streaming": "messages are progressively updated with chat.update; overlong finals use lossless chunks",
     }
 
     def __init__(
@@ -204,8 +207,13 @@ class SlackAdapter(IMAdapter):
             if self._bot_user_id:
                 mentioned = f"<@{self._bot_user_id}>" in text
 
-            # In non-private channels, require an explicit bot mention to route messages.
-            if chat_type != "private" and not mentioned:
+            # Known CCCC commands are safe to route without a mention; unrelated
+            # slash commands in shared channels remain isolated.
+            if (
+                chat_type != "private"
+                and not mentioned
+                and not is_recognized_command(text)
+            ):
                 return
             if not text and not attachments:
                 return
@@ -283,14 +291,16 @@ class SlackAdapter(IMAdapter):
         if not text:
             return True
 
-        # Ensure message fits Slack limit
-        safe_text = self._compose_safe(text)
+        chunks = split_text_chunks(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=SLACK_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
 
         try:
-            self._web_client.chat_postMessage(
-                channel=str(chat_id),
-                text=safe_text,
-            )
+            for chunk in chunks:
+                self._web_client.chat_postMessage(channel=str(chat_id), text=chunk)
             return True
         except Exception as e:
             self._log(f"[error] send_message to {chat_id}: {e}")
@@ -320,6 +330,14 @@ class SlackAdapter(IMAdapter):
         if not self._connected or not self._web_client:
             return False
 
+        caption_chunks = split_text_chunks(
+            caption,
+            max_chars=self.max_chars,
+            hard_limit=SLACK_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        initial_comment = caption_chunks[0] if len(caption_chunks) == 1 else ""
+
         try:
             with file_path.open("rb") as f:
                 if hasattr(self._web_client, "files_upload_v2"):
@@ -327,7 +345,7 @@ class SlackAdapter(IMAdapter):
                         channel=str(chat_id),
                         file=f,
                         filename=str(filename or file_path.name or "file"),
-                        initial_comment=str(caption or ""),
+                        initial_comment=initial_comment,
                     )
                 else:
                     # Backward-compat for older slack_sdk.
@@ -335,8 +353,10 @@ class SlackAdapter(IMAdapter):
                         channels=str(chat_id),
                         file=f,
                         filename=str(filename or file_path.name or "file"),
-                        initial_comment=str(caption or ""),
+                        initial_comment=initial_comment,
                     )
+            if caption and not initial_comment:
+                return self.send_message(chat_id, caption)
             return True
         except Exception as e:
             self._log(f"[error] send_file to {chat_id}: {e}")
@@ -350,6 +370,92 @@ class SlackAdapter(IMAdapter):
             summarized = summarized[: SLACK_MAX_MESSAGE_LENGTH - 1] + "…"
 
         return summarized
+
+    def begin_stream(
+        self,
+        chat_id: str,
+        stream_id: str,
+        *,
+        text: str = "",
+        thread_id: Optional[int] = None,
+    ) -> Optional[OutboundStreamHandle]:
+        _ = thread_id
+        if not self._connected or not self._web_client:
+            return None
+        preview, _exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=SLACK_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        try:
+            response = self._web_client.chat_postMessage(channel=str(chat_id), text=preview)
+            if hasattr(response, "get") and response.get("ok") is False:
+                return None
+            timestamp = response.get("ts") if hasattr(response, "get") else None
+            if not timestamp:
+                return None
+            return {
+                "stream_id": stream_id,
+                "platform_handle": {
+                    "channel": str(chat_id),
+                    "ts": str(timestamp),
+                    "last_text": preview,
+                },
+            }
+        except Exception as e:
+            self._log(f"[stream] begin failed for {chat_id}: {e}")
+            return None
+
+    def update_stream(
+        self,
+        handle: OutboundStreamHandle,
+        *,
+        text: str = "",
+        seq: int = 0,
+    ) -> bool:
+        _ = seq
+        preview, _exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=SLACK_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        if not stream_update_due(handle, interval=0.5):
+            return True
+        updated = self._update_stream_message(handle, preview)
+        if updated:
+            mark_stream_updated(handle)
+        return updated
+
+    def end_stream(self, handle: OutboundStreamHandle, *, text: str = "") -> bool:
+        preview, exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=SLACK_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        return self._update_stream_message(handle, preview) and exact and bool(text)
+
+    def _update_stream_message(self, handle: OutboundStreamHandle, text: str) -> bool:
+        platform_handle = handle.get("platform_handle")
+        if not isinstance(platform_handle, dict) or not self._web_client:
+            return False
+        channel = str(platform_handle.get("channel") or "")
+        timestamp = str(platform_handle.get("ts") or "")
+        if not channel or not timestamp:
+            return False
+        if platform_handle.get("last_text") == text:
+            return True
+        try:
+            response = self._web_client.chat_update(channel=channel, ts=timestamp, text=text)
+            if hasattr(response, "get") and response.get("ok") is False:
+                return False
+            platform_handle["last_text"] = text
+            return True
+        except Exception as e:
+            self._log(f"[stream] update failed for {channel}: {e}")
+            return False
 
     def get_chat_title(self, chat_id: str) -> str:
         """Get channel name via API."""
@@ -365,5 +471,4 @@ class SlackAdapter(IMAdapter):
 
     def format_outbound(self, by: str, to: List[str], text: str, is_system: bool = False) -> str:
         """Format message for Slack display."""
-        formatted = super().format_outbound(by, to, text, is_system)
-        return self._compose_safe(formatted)
+        return super().format_outbound(by, to, text, is_system)

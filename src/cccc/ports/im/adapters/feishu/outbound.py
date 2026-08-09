@@ -25,6 +25,19 @@ def build_text_message_request(
     return MESSAGE_ENDPOINT, body
 
 
+def build_update_text_message_request(
+    message_id: str,
+    text: str,
+) -> Tuple[str, Dict[str, Any]]:
+    return (
+        f"/im/v1/messages/{message_id}",
+        {
+            "msg_type": "text",
+            "content": json.dumps({"text": text}, ensure_ascii=False),
+        },
+    )
+
+
 def build_media_message_request(
     chat_id: str,
     *,

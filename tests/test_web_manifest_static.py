@@ -106,7 +106,7 @@ class TestWebManifestStatic(unittest.TestCase):
                 mock.patch.dict(os.environ, {}, clear=False),
             ):
                 os.environ.pop("CCCC_WEB_DIST", None)
-                self.assertEqual(web_app._resolve_web_dist_dir(), source_dist)
+                self.assertEqual(web_app._resolve_web_dist_dir(), source_dist.resolve())
 
     def test_installed_package_uses_packaged_web_dist(self) -> None:
         from cccc.ports.web import app as web_app
@@ -123,7 +123,7 @@ class TestWebManifestStatic(unittest.TestCase):
                 mock.patch.dict(os.environ, {}, clear=False),
             ):
                 os.environ.pop("CCCC_WEB_DIST", None)
-                self.assertEqual(web_app._resolve_web_dist_dir(), packaged_dist)
+                self.assertEqual(web_app._resolve_web_dist_dir(), packaged_dist.resolve())
 
     @pytest.mark.packaged_web_dist
     def test_packaged_ui_dist_contains_remote_pairing_flow(self) -> None:

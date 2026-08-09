@@ -12,6 +12,7 @@ import { HoverTooltip } from "../HoverTooltip";
 import { InfoIcon, RefreshIcon, SettingsIcon } from "../Icons";
 import { ProjectedBrowserSurfacePanel } from "../browser/ProjectedBrowserSurfacePanel";
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
+import { WebModelMcpShortcut } from "./WebModelMcpShortcut";
 
 type Tone = "ready" | "needs" | "neutral" | "error";
 
@@ -20,6 +21,7 @@ type StatusBlock = { label: string; value: string; detail: string; tone: Tone };
 interface WebModelRuntimePanelProps {
   groupId: string;
   actor: Actor;
+  isRunning: boolean;
   isDark: boolean;
   isVisible: boolean;
   readOnly?: boolean;
@@ -313,6 +315,7 @@ function shouldShowActivity(block: StatusBlock, queuedCount: number): boolean {
 export function WebModelRuntimePanel({
   groupId,
   actor,
+  isRunning,
   isDark,
   isVisible,
   readOnly,
@@ -327,7 +330,7 @@ export function WebModelRuntimePanel({
   const actorId = String(actor.id || "").trim();
   currentSelectionRef.current = { groupId, actorId };
   const queuedCount = Math.max(0, Number(actor.web_model_queued_count || 0));
-  const canControlSurface = Boolean(isVisible && !readOnly && groupId && actorId);
+  const canControlSurface = Boolean(isVisible && isRunning && !readOnly && groupId && actorId);
 
   useEffect(() => {
     if (!isVisible || !groupId || !actorId) {
@@ -476,7 +479,13 @@ export function WebModelRuntimePanel({
     !session?.ready || (!session?.conversation_url && !session?.pending_new_chat_bind);
   const nextAction = session?.health_snapshot?.next_action;
   const recommendedAction = String(nextAction?.recommended || "none").trim();
-  const surfaceDisabledMessage = readOnly ? "Browser view is unavailable in read-only mode." : "";
+  const surfaceDisabledMessage = !isVisible
+    ? ""
+    : readOnly
+      ? t("webModelDelivery.browserReadOnly")
+      : !isRunning
+        ? t("webModelDelivery.actorStoppedSurface")
+        : "";
   const showActivity = shouldShowActivity(activityBlock, queuedCount);
   const nextSummary =
     recommendedAction && recommendedAction !== "none"
@@ -661,10 +670,18 @@ export function WebModelRuntimePanel({
                 </dl>
               </PopoverContent>
             </Popover>
+            <WebModelMcpShortcut
+              groupId={groupId}
+              actorId={actorId}
+              actorRunning={isRunning}
+              isVisible={isVisible}
+              readOnly={readOnly}
+              onOpenSettings={openSettings}
+            />
             <button
               type="button"
               onClick={reloadChatGptPage}
-              disabled={Boolean(busyAction)}
+              disabled={Boolean(busyAction) || !isRunning}
               className={iconButtonClass(false)}
               title="Restart ChatGPT browser"
               aria-label="Restart ChatGPT browser"

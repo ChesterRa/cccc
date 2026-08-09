@@ -212,15 +212,13 @@ class DingTalkMediaService:
         if webhook:
             webhook_url, _expires_at = webhook
             if self.send_file_via_webhook(webhook_url, raw, safe_fn, is_image):
-                self._send_caption(chat_id, caption, mention_user_ids)
-                return True
+                return self._send_caption(chat_id, caption, mention_user_ids)
             self._log("[send_file] Webhook failed, falling back to API...")
         else:
             self._log("[send_file] No cached sessionWebhook; using API.")
 
         if self.send_file_via_api(chat_id, raw, safe_fn, is_image):
-            self._send_caption(chat_id, caption, mention_user_ids)
-            return True
+            return self._send_caption(chat_id, caption, mention_user_ids)
 
         self._log(f"[send_file] All methods failed for chat {chat_id}")
         return False
@@ -230,9 +228,8 @@ class DingTalkMediaService:
         chat_id: str,
         caption: str,
         mention_user_ids: Optional[List[str]],
-    ) -> None:
-        if caption:
-            self._send_message(chat_id, caption, mention_user_ids)
+    ) -> bool:
+        return not caption or self._send_message(chat_id, caption, mention_user_ids)
 
 
 def _safe_filename(filename: str) -> str:

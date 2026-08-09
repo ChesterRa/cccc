@@ -146,10 +146,16 @@ For direct messages:
 
 ### Sending Messages to Agents
 
-In channels, @mention the bot first, then use the `/send` command:
+In channels, @mention the bot for ordinary text:
 
 ```
 @YourBotName /send Please implement the user authentication module
+```
+
+Recognized CCCC commands such as `/send`, `/status`, and `/subscribe` may be sent without an @mention. Unrelated slash commands remain ignored:
+
+```
+/send Please implement the user authentication module
 ```
 
 In direct messages with the bot, you can use `/send` directly:
@@ -159,7 +165,7 @@ In direct messages with the bot, you can use `/send` directly:
 ```
 
 ::: warning Important
-- In channels, you must @mention the bot before the message is routed
+- In channels, ordinary text and files require @mention; recognized CCCC slash commands do not
 - After mentioning the bot, plain text is treated as implicit send to foreman
 - Use `/send` when you need explicit recipients like `@all` or `@peers`
 :::
@@ -181,15 +187,19 @@ After subscribing, you will automatically receive:
 - Status updates
 - Error notifications
 
-Use `/verbose` to toggle whether you see agent-to-agent messages.
+Use `/verbose` (or `/verbose on`) to receive agent-to-agent messages, and `/verbose off` to stop receiving them.
 
 ### Thread Replies
 
-Reply in threads to keep conversations organized. CCCC preserves thread context.
+Reply in threads to keep conversations organized. Authorization and outbound delivery retain the parent `thread_ts`; files are also completed into that same thread.
 
 ### File Sharing
 
 Attach files to your message. They're uploaded to CCCC's blob storage, then forwarded to agents.
+
+Multiple outbound files are allocated and uploaded separately, then finalized in one Slack message. The response text appears once as the initial comment; invalid files do not cause the text fallback to disappear.
+
+Agent output is updated progressively with `chat.update`. Completed replies longer than the safe Slack message size are delivered in lossless 4,000-character chunks, and an overlong stream preview never suppresses those final chunks.
 
 ## Commands Reference
 
@@ -204,7 +214,7 @@ Attach files to your message. They're uploaded to CCCC's blob storage, then forw
 | `/status` | Show group and agent status |
 | `/pause` | Pause delivery |
 | `/resume` | Resume delivery |
-| `/verbose` | Toggle verbose mode |
+| `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/help` | Show help |
 
 ## Troubleshooting

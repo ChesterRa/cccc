@@ -65,6 +65,21 @@ class LifecycleAdapter(DummyAdapter):
         return True
 
 
+class OutcomeLifecycleAdapter(LifecycleAdapter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.outcomes: List[IMProcessingOutcome] = []
+
+    def on_processing_complete(
+        self,
+        context: IMProcessingContext,
+        outcome: IMProcessingOutcome,
+        handle: Optional[str],
+    ) -> None:
+        self.outcomes.append(outcome)
+        super().on_processing_complete(context, outcome, handle)
+
+
 def test_processing_lifecycle_starts_and_completes_reaction() -> None:
     from cccc.ports.im.lifecycle import IMProcessingLifecycle
 
@@ -88,6 +103,83 @@ def test_processing_lifecycle_refreshes_typing_actions() -> None:
     lifecycle.refresh()
 
     assert ("chat-1", "typing") in adapter.actions
+
+
+def test_processing_lifecycle_queues_multiple_messages_in_the_same_thread() -> None:
+    from cccc.ports.im.lifecycle import IMProcessingLifecycle
+
+    adapter = LifecycleAdapter()
+    lifecycle = IMProcessingLifecycle(adapter)
+
+    lifecycle.start(chat_id="chat-1", thread_id=7, message_id="msg-1", source_event_id="event-1")
+    lifecycle.start(chat_id="chat-1", thread_id=7, message_id="msg-2", source_event_id="event-2")
+    lifecycle.complete("chat-1", IMProcessingOutcome.SUCCESS, thread_id=7, reply_to="event-1")
+    lifecycle.complete("chat-1", IMProcessingOutcome.SUCCESS, thread_id=7, reply_to="event-2")
+
+    assert adapter.removed == [
+        ("msg-1", "msg-1:"),
+        ("msg-2", "msg-2:"),
+    ]
+
+
+def test_processing_lifecycle_correlates_completion_by_reply_to() -> None:
+    from cccc.ports.im.lifecycle import IMProcessingLifecycle
+
+    adapter = LifecycleAdapter()
+    lifecycle = IMProcessingLifecycle(adapter)
+
+    lifecycle.start(chat_id="chat-1", message_id="msg-1", source_event_id="event-1")
+    lifecycle.start(chat_id="chat-1", message_id="msg-2", source_event_id="event-2")
+    lifecycle.complete("chat-1", reply_to="event-1")
+    lifecycle.complete("chat-1", reply_to="event-1")
+    lifecycle.complete("chat-1", reply_to="event-2")
+
+    assert adapter.removed == [
+        ("msg-1", "msg-1:"),
+        ("msg-2", "msg-2:"),
+    ]
+
+
+def test_user_facing_recipient_tokens_include_protocol_aliases() -> None:
+    from cccc.ports.im.bridge import _is_user_facing_targets
+
+    assert _is_user_facing_targets([])
+    assert _is_user_facing_targets(["user"])
+    assert _is_user_facing_targets(["@user"])
+    assert _is_user_facing_targets(["@all"])
+    assert not _is_user_facing_targets(["@peers"])
+    assert not _is_user_facing_targets(["foreman"])
+
+
+def test_processing_lifecycle_isolates_threads_in_the_same_chat() -> None:
+    from cccc.ports.im.lifecycle import IMProcessingLifecycle
+
+    adapter = LifecycleAdapter()
+    lifecycle = IMProcessingLifecycle(adapter)
+
+    lifecycle.start(chat_id="chat-1", thread_id=1, message_id="thread-1")
+    lifecycle.start(chat_id="chat-1", thread_id=2, message_id="thread-2")
+    lifecycle.complete("chat-1", IMProcessingOutcome.SUCCESS, thread_id=2)
+    lifecycle.complete("chat-1", IMProcessingOutcome.SUCCESS, thread_id=1)
+
+    assert adapter.removed == [
+        ("thread-2", "thread-2:"),
+        ("thread-1", "thread-1:"),
+    ]
+
+
+def test_processing_lifecycle_expires_stale_queue_entries() -> None:
+    from cccc.ports.im.lifecycle import IMProcessingLifecycle
+
+    adapter = OutcomeLifecycleAdapter()
+    lifecycle = IMProcessingLifecycle(adapter, processing_timeout_seconds=0)
+
+    lifecycle.start(chat_id="chat-1", thread_id=7, message_id="stale")
+    lifecycle.refresh()
+    lifecycle.complete("chat-1", IMProcessingOutcome.SUCCESS, thread_id=7)
+
+    assert adapter.removed == [("stale", "stale:")]
+    assert adapter.outcomes == [IMProcessingOutcome.FAILURE]
 
 
 def test_prepare_inbound_content_uses_attachment_title_when_text_empty(tmp_path) -> None:

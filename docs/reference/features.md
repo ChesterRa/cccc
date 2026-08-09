@@ -59,7 +59,9 @@ Delivery format:
 
 ### Streaming Events
 
-The `chat.stream` event type represents real-time streaming content from agents. Stream events are used only for user-facing progressive rendering (e.g., AI Card typewriter effect on DingTalk) and are **not** delivered to actor inboxes.
+The `chat.stream` event type represents real-time streaming content from agents. Both the Rust worker and the Python compatibility worker progressively update Telegram, Slack, Discord, and Feishu messages, DingTalk AI Cards, and WeCom native stream replies. Every stream frame carries an immutable sender-title snapshot when available, and all adapters render the same actor prefix used by the completed `chat.message`, so successful stream deduplication never removes the reply's author identity. Weixin currently uses completed-message delivery because its SDK has no stable editable-message contract. Stream events are **not** delivered to actor inboxes.
+
+Progressive rendering is never the durability boundary. Every platform falls back to the completed `chat.message`; replies beyond a provider's single-message limit are split on Unicode-safe boundaries and delivered losslessly. A failed or truncated preview cannot suppress the final fallback.
 
 | Event | Direction | Description |
 |-------|-----------|-------------|
@@ -68,7 +70,7 @@ The `chat.stream` event type represents real-time streaming content from agents.
 ### Design Principles
 
 - **1 Group = 1 Bot**: Simple, isolated, easy to understand
-- **Explicit subscription**: Chat must `/subscribe` before receiving messages
+- **Explicit authorization**: Standard bot chats use `/subscribe`; the account confirming a Weixin QR login is authorized automatically
 - **Ports are thin**: Only do message forwarding; daemon is the only state source
 
 ### Supported Platforms
@@ -81,7 +83,7 @@ The `chat.stream` event type represents real-time streaming content from agents.
 | Feishu/Lark | ✅ Complete | `feishu_app_id_env` + `feishu_app_secret_env` |
 | DingTalk | ✅ Complete | `dingtalk_app_key_env` + `dingtalk_app_secret_env` (+ optional `dingtalk_robot_code_env`) |
 | WeCom | ✅ Complete | Web-configured Bot ID / Secret flow |
-| Weixin / WeChat | ✅ Complete | Web-configured account/login flow |
+| Weixin / WeChat | ✅ Complete | Web-configured account/login flow (direct chats only) |
 
 ### Configuration
 
@@ -106,17 +108,19 @@ im:
 | `/send @<agent> <message>` | Send to a specific agent |
 | `/send @all <message>` | Broadcast to all agents |
 | `/send @peers <message>` | Send to non-foreman agents |
-| `/subscribe` | Subscribe, start receiving messages |
+| `/subscribe` | Request chat authorization (not required for the Weixin QR-login account) |
 | `/unsubscribe` | Unsubscribe |
-| `/verbose` | Toggle verbose mode |
+| `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/status` | Show group status |
 | `/pause` / `/resume` | Pause/resume message delivery |
 | `/help` | Show help |
 
 Notes:
-- In direct chats and in group chats where the bot is @mentioned, plain text is treated as implicit send to the default recipient policy (default: foreman).
+- Confirming a Weixin QR login immediately authorizes the scanning account. The bridge repairs that authorization when restoring stored credentials, so no binding key, manual approval, or `/subscribe` step is required.
+- In direct chats, and on group-capable platforms where the bot is @mentioned, plain text is treated as implicit send to the default recipient policy (default: foreman). Weixin currently supports direct bot chats only.
+- A recognized CCCC slash command counts as an explicit bot address and may be used without @mention in group chats; ordinary group text and files still require @mention. Rust and Python use the same rule, including Feishu.
 - Reserve `/send @all <message>` for true broadcasts, announcements, or urgent shared constraints.
-- In channels (Slack/Discord), mention the bot and then use `/send` (to avoid platform slash-commands).
+- In channels (Slack/Discord), @mention the bot for plain text; a recognized CCCC slash command can address it directly.
 - You can configure the default recipient behavior in Web UI: Settings → Messaging → Default Recipient.
 
 ### CLI Commands

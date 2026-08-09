@@ -2,8 +2,9 @@ use super::feishu_inbound::materialize_resources;
 use super::feishu_outbound::FeishuOutbound;
 use super::processing_reactions::FeishuReactions;
 use super::{
-    InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, resolve_credential,
-    spawn_outbound, string,
+    InboundDecision, InboundMetadata, completes_processing, dispatch_inbound_with,
+    inbound_decision_for_thread, is_outbound_or_stream, processing_reply_to, resolve_credential,
+    spawn_outbound_matching, string, target_key,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -11,8 +12,8 @@ use lark_channel::lark_openapi::{
     OpenApiClient, ReqwestOpenApiTransport, TokioTungsteniteWebSocketTransport, WebSocketEventAck,
 };
 use lark_channel::{
-    ChannelConfig, ChannelEvent, Domain, EventLoop, EventLoopOptions, MessageSender,
-    MessageSenderType, OpenApiWebSocketEventConnector, Recipient,
+    ChannelConfig, ChannelEvent, Domain, EventLoop, EventLoopOptions, MessageChatType, MessageId,
+    MessageMention, MessageSender, MessageSenderType, OpenApiWebSocketEventConnector, Recipient,
 };
 use serde_json::{Map, Value};
 use std::time::Duration;
@@ -35,10 +36,11 @@ pub(super) async fn start(
     }
     let base_url = channel_config.base_url().to_string();
     let openapi = OpenApiClient::new(channel_config, ReqwestOpenApiTransport::new());
-    openapi
+    let tenant_token = openapi
         .tenant_access_token()
         .await
         .map_err(|error| format!("Feishu credential verification failed: {error}"))?;
+    let bot_open_id = load_bot_open_id(&base_url, &tenant_token).await?;
     let sender = MessageSender::new(openapi.clone());
     let reactions = FeishuReactions::new(reqwest::Client::new(), openapi.clone(), base_url.clone());
     let outbound_sender = FeishuOutbound::new(
@@ -63,6 +65,7 @@ pub(super) async fn start(
     let inbound_sender = sender.clone();
     let inbound_http = reqwest::Client::new();
     let inbound_reactions = reactions.clone();
+    let inbound_bot_open_id = bot_open_id;
     let connection = tokio::spawn(async move {
         let result = event_loop
             .run(move |event| {
@@ -74,6 +77,7 @@ pub(super) async fn start(
                 let http = inbound_http.clone();
                 let base_url = base_url.clone();
                 let reactions = inbound_reactions.clone();
+                let bot_open_id = inbound_bot_open_id.clone();
                 async move {
                     let ChannelEvent::Message(message) = event.event else {
                         return Ok(WebSocketEventAck::ok());
@@ -81,24 +85,48 @@ pub(super) async fn start(
                     if message.sender.sender_type == MessageSenderType::Bot {
                         return Ok(WebSocketEventAck::ok());
                     }
-                    let text = message.text.trim();
+                    let text =
+                        strip_leading_bot_mentions(&message.text, &message.mentions, &bot_open_id);
+                    if !accepts_feishu_message(&message, &bot_open_id, text) {
+                        return Ok(WebSocketEventAck::ok());
+                    }
                     if text.is_empty() && message.resources.is_empty() {
                         return Ok(WebSocketEventAck::ok());
                     }
-                    match inbound_decision(&home, &group_id, PLATFORM, &message.chat_id, text).await
+                    let thread_id = message
+                        .root_id
+                        .as_deref()
+                        .or(message.parent_id.as_deref())
+                        .unwrap_or_default();
+                    match inbound_decision_for_thread(
+                        &home,
+                        &group_id,
+                        PLATFORM,
+                        &message.chat_id,
+                        thread_id,
+                        text,
+                    )
+                    .await
                     {
                         InboundDecision::Forward => {}
                         InboundDecision::Reply(body) => {
-                            if let Err(error) = sender
-                                .text_message(Recipient::Chat(message.chat_id.clone()), &body)
-                                .send()
-                                .await
-                            {
+                            let result = if thread_id.is_empty() {
+                                sender
+                                    .text_message(Recipient::Chat(message.chat_id.clone()), &body)
+                                    .send()
+                                    .await
+                            } else {
+                                sender
+                                    .text_reply(MessageId(thread_id.to_owned()), &body)
+                                    .reply_in_thread(true)
+                                    .send()
+                                    .await
+                            };
+                            if let Err(error) = result {
                                 tracing::warn!(%error, "failed to send Feishu command reply");
                             }
                             return Ok(WebSocketEventAck::ok());
                         }
-                        InboundDecision::Ignore => return Ok(WebSocketEventAck::ok()),
                     }
                     let attachments = materialize_resources(
                         &home,
@@ -113,7 +141,9 @@ pub(super) async fn start(
                         return Ok(WebSocketEventAck::ok());
                     }
                     let message_id = message.message_id.clone();
-                    if let Err(error) = dispatch_inbound_with(
+                    let processing_key = target_key(&message.chat_id, thread_id);
+                    reactions.start(&processing_key, &message_id).await;
+                    match dispatch_inbound_with(
                         &daemon,
                         &group_id,
                         PLATFORM,
@@ -122,14 +152,19 @@ pub(super) async fn start(
                         text,
                         InboundMetadata {
                             message_id: message_id.clone(),
+                            thread_id: thread_id.to_owned(),
                             attachments,
                         },
                     )
                     .await
                     {
-                        tracing::warn!(%error, "failed to dispatch Feishu IM message");
-                    } else {
-                        reactions.start(&message.chat_id, &message_id).await;
+                        Ok(source_event_id) => {
+                            reactions.bind_message(&processing_key, &message_id, source_event_id);
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "failed to dispatch Feishu IM message");
+                            reactions.abort_message(&processing_key, &message_id).await;
+                        }
                     }
                     Ok(WebSocketEventAck::ok())
                 }
@@ -139,21 +174,254 @@ pub(super) async fn start(
             tracing::error!(%error, "Feishu IM event loop stopped");
         }
     });
+    let reaction_cleanup = reactions.cleanup_task();
     let outbound_reactions = reactions;
-    let outbound = spawn_outbound(
+    let outbound = spawn_outbound_matching(
         home,
         group_id.to_owned(),
+        PLATFORM,
         ledger_events,
         outbound_sender,
+        is_outbound_or_stream,
         move |sender, targets, event| {
             let reactions = outbound_reactions.clone();
             async move {
-                sender.send(&targets, &event).await;
-                for chat_id in targets {
-                    reactions.complete(&chat_id).await;
+                let delivered = sender.send(&targets, &event).await;
+                if completes_processing(&event) {
+                    let reply_to = processing_reply_to(&event);
+                    for target in targets {
+                        if !delivered.contains(&target.key()) {
+                            tracing::warn!(chat_id = %target.chat_id, "Feishu final response was not delivered");
+                        }
+                        reactions.complete(&target.key(), reply_to).await;
+                    }
                 }
             }
         },
     );
-    Ok(vec![connection, outbound])
+    Ok(vec![connection, outbound, reaction_cleanup])
+}
+
+async fn load_bot_open_id(base_url: &str, token: &str) -> Result<String, String> {
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/open-apis/bot/v3/info",
+            base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|error| format!("Feishu bot identity request failed: {error}"))?;
+    let status = response.status();
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("Feishu bot identity response is invalid: {error}"))?;
+    let open_id = parse_bot_open_id(&value);
+    if status.is_success() && value.get("code").and_then(Value::as_i64) == Some(0) {
+        return open_id
+            .map(str::to_owned)
+            .ok_or_else(|| "Feishu bot identity response has no open_id".to_owned());
+    }
+    Err(value
+        .get("msg")
+        .and_then(Value::as_str)
+        .unwrap_or("Feishu bot identity request failed")
+        .to_owned())
+}
+
+fn parse_bot_open_id(value: &Value) -> Option<&str> {
+    value
+        .pointer("/bot/open_id")
+        .or_else(|| value.pointer("/data/bot/open_id"))
+        .or_else(|| value.pointer("/data/open_id"))
+        .or_else(|| value.get("bot_open_id"))
+        .or_else(|| value.pointer("/data/bot_open_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn accepts_feishu_message(
+    message: &lark_channel::NormalizedMessage,
+    bot_open_id: &str,
+    text: &str,
+) -> bool {
+    message.chat_type == MessageChatType::P2p
+        || super::commands::is_recognized_command(text)
+        || message.mentions_bot(bot_open_id)
+}
+
+fn strip_leading_bot_mentions<'a>(
+    text: &'a str,
+    mentions: &[MessageMention],
+    bot_open_id: &str,
+) -> &'a str {
+    let mut text = text.trim();
+    loop {
+        let Some(prefix_len) = mentions
+            .iter()
+            .filter(|mention| {
+                mention.mentioned_type == MessageSenderType::Bot && mention.open_id == bot_open_id
+            })
+            .find_map(|mention| leading_mention_len(text, mention))
+        else {
+            return text;
+        };
+        text = text[prefix_len..].trim_start();
+    }
+}
+
+fn leading_mention_len(text: &str, mention: &MessageMention) -> Option<usize> {
+    let name = mention.name.as_deref().map(str::trim).unwrap_or("");
+    let prefix_len = if !name.is_empty() {
+        if name.starts_with('@') && text.starts_with(name) {
+            name.len()
+        } else if text.starts_with('@') && text[1..].starts_with(name) {
+            name.len() + 1
+        } else {
+            0
+        }
+    } else if !mention.key.is_empty() && text.starts_with(&mention.key) {
+        mention.key.len()
+    } else {
+        0
+    };
+    if prefix_len == 0 {
+        return None;
+    }
+    text[prefix_len..]
+        .chars()
+        .next()
+        .is_none_or(char::is_whitespace)
+        .then_some(prefix_len)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bot_identity_parser_accepts_feishu_standard_top_level_bot() {
+        let value = serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "bot": { "open_id": " ou_standard " }
+        });
+
+        assert_eq!(parse_bot_open_id(&value), Some("ou_standard"));
+    }
+
+    #[test]
+    fn bot_identity_parser_keeps_legacy_wrapped_shapes() {
+        assert_eq!(
+            parse_bot_open_id(&serde_json::json!({
+                "data": { "bot": { "open_id": "ou_nested" } }
+            })),
+            Some("ou_nested")
+        );
+        assert_eq!(
+            parse_bot_open_id(&serde_json::json!({
+                "data": { "bot_open_id": "ou_flat" }
+            })),
+            Some("ou_flat")
+        );
+    }
+
+    fn message(
+        chat_type: MessageChatType,
+        mentions: Vec<MessageMention>,
+    ) -> lark_channel::NormalizedMessage {
+        lark_channel::NormalizedMessage {
+            message_id: "om_1".into(),
+            chat_id: "oc_1".into(),
+            chat_type,
+            sender_id: "ou_user".into(),
+            sender: Default::default(),
+            message_type: "text".into(),
+            text: "hello".into(),
+            raw_content: String::new(),
+            content: None,
+            root_id: None,
+            parent_id: None,
+            thread_id: None,
+            mentions,
+            resources: Vec::new(),
+            raw: Value::Null,
+        }
+    }
+
+    fn mention(name: &str, mentioned_type: MessageSenderType) -> MessageMention {
+        MessageMention {
+            key: format!("@_{name}"),
+            open_id: format!("ou_{name}"),
+            user_id: None,
+            union_id: None,
+            name: Some(name.to_owned()),
+            mentioned_type,
+        }
+    }
+
+    #[test]
+    fn leading_bot_mentions_are_removed_before_command_parsing() {
+        let mentions = vec![mention("CCCC Bot", MessageSenderType::Bot)];
+
+        assert_eq!(
+            strip_leading_bot_mentions(
+                "  @CCCC Bot   /send @all hello  ",
+                &mentions,
+                "ou_CCCC Bot",
+            ),
+            "/send @all hello"
+        );
+    }
+
+    #[test]
+    fn user_mentions_and_non_prefix_bot_mentions_are_preserved() {
+        let mentions = vec![
+            mention("CCCC Bot", MessageSenderType::Bot),
+            mention("Alice", MessageSenderType::User),
+        ];
+
+        assert_eq!(
+            strip_leading_bot_mentions("@Alice hello @CCCC Bot", &mentions, "ou_CCCC Bot"),
+            "@Alice hello @CCCC Bot"
+        );
+    }
+
+    #[test]
+    fn groups_require_a_command_or_the_current_bot_mention() {
+        let current = mention("CCCC Bot", MessageSenderType::Bot);
+        let other = mention("Other Bot", MessageSenderType::Bot);
+        assert!(!accepts_feishu_message(
+            &message(MessageChatType::Group, Vec::new()),
+            &current.open_id,
+            "hello",
+        ));
+        assert!(!accepts_feishu_message(
+            &message(MessageChatType::Group, vec![other]),
+            &current.open_id,
+            "hello",
+        ));
+        assert!(accepts_feishu_message(
+            &message(MessageChatType::Group, vec![current.clone()]),
+            &current.open_id,
+            "hello",
+        ));
+        assert!(accepts_feishu_message(
+            &message(MessageChatType::Group, Vec::new()),
+            &current.open_id,
+            "/status",
+        ));
+        assert!(!accepts_feishu_message(
+            &message(MessageChatType::Group, Vec::new()),
+            &current.open_id,
+            "/weather",
+        ));
+        assert!(accepts_feishu_message(
+            &message(MessageChatType::P2p, Vec::new()),
+            &current.open_id,
+            "hello",
+        ));
+    }
 }

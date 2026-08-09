@@ -34,6 +34,8 @@ If you plan to use the bot in group chats, disable group privacy so the bot can 
 1. Send `/mybots` to BotFather
 2. Select your bot → **Bot Settings** → **Group Privacy**
 3. Set to **Disabled**
+
+The bot still stays silent on unrelated group traffic while the chat is unauthorized or paused. Use a bot command such as `/subscribe` or `/resume`, or explicitly @mention the bot, when you need feedback.
 :::
 
 ## Step 2: Configure CCCC
@@ -145,6 +147,8 @@ Please implement the login feature
 
 ::: tip Implicit Send
 When you @mention the bot (in groups) or send a direct message, plain text is automatically treated as `/send` to the foreman. You only need the explicit `/send` command when targeting specific agents like `@all` or `@peers`.
+
+Recognized CCCC commands such as `/send`, `/status`, and `/subscribe` may be sent in a group without @mentioning the bot. Commands for other bots or unknown integrations remain ignored unless the CCCC bot is explicitly addressed.
 :::
 
 ### Targeting Specific Agents
@@ -164,11 +168,13 @@ After authorization, you will automatically receive:
 - Status updates
 - Error notifications
 
-Use `/verbose` to toggle whether you see agent-to-agent messages.
+Use `/verbose` (or `/verbose on`) to receive agent-to-agent messages, and `/verbose off` to stop receiving them.
+
+Agent output is updated progressively in one Telegram message when possible. Completed replies longer than Telegram's single-message limit are delivered in lossless 4,096-character chunks. Topic subscriptions retain `message_thread_id`, so replies and outbound files stay in the topic where `/subscribe` was approved.
 
 ### File Attachments
 
-Attach files to your message. They're downloaded and stored in CCCC's blob storage, then forwarded to agents.
+Attach files to your message. They're downloaded and stored in CCCC's blob storage, then forwarded to agents. Agent-generated images and files are also uploaded back to every authorized Telegram target.
 
 ## Commands Reference
 
@@ -183,7 +189,7 @@ Attach files to your message. They're downloaded and stored in CCCC's blob stora
 | `/status` | Show group and agent status |
 | `/pause` | Pause message delivery |
 | `/resume` | Resume message delivery |
-| `/verbose` | Toggle verbose mode (see all agent messages) |
+| `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/help` | Show available commands |
 
 ## Troubleshooting
@@ -221,7 +227,7 @@ Your token is invalid. Get a new one from BotFather:
 
 Telegram has rate limits. If you're sending many messages:
 - Messages may be delayed
-- Consider using `/verbose` to disable verbose mode and reduce traffic
+- Use `/verbose off` to disable verbose mode and reduce traffic
 
 ## Security Notes
 

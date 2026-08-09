@@ -41,6 +41,7 @@ Copyable scope configuration:
       "im:message.group_at_msg:readonly",
       "im:message.p2p_msg:readonly",
       "im:message:send_as_bot",
+      "im:message:update",
       "im:message:readonly",
       "im:resource"
     ]
@@ -53,6 +54,7 @@ Copyable scope configuration:
 | `im:message.group_at_msg:readonly` | Receive group messages that mention the bot |
 | `im:message.p2p_msg:readonly` | Receive direct messages sent to the bot |
 | `im:message:send_as_bot` | Send CCCC replies as the bot |
+| `im:message:update` | Progressively edit a response message; final-message fallback still works without it |
 | `im:message:readonly` | Read inbound message metadata/content needed by the bridge |
 | `im:resource` | Upload and download Feishu message images/files |
 :::
@@ -206,6 +208,8 @@ Or use the explicit `/send` command for specifying recipients:
 When you @mention the bot (in groups) or send a direct message, plain text is automatically treated as `/send` to the foreman. You only need the explicit `/send` command when targeting specific agents like `@all` or `@peers`.
 :::
 
+Even if the app is granted the broader `im:message.group_msg` event scope, CCCC ignores ambient group traffic. A recognized CCCC slash command is an explicit bot address and can be sent without an @mention; ordinary group text or attachments must explicitly mention the current bot. Direct chats continue to accept plain text. Rust and Python workers enforce the same rule.
+
 ### Targeting Specific Agents
 
 Use `@mention` syntax with the `/send` command:
@@ -223,7 +227,9 @@ After subscribing, you will automatically receive:
 - Status updates
 - Error notifications
 
-Use `/verbose` to toggle whether you see agent-to-agent messages.
+Use `/verbose` (or `/verbose on`) to receive agent-to-agent messages, and `/verbose off` to stop receiving them.
+
+Agent output is updated progressively through Feishu's edit-message API (up to the provider's edit limit). Completed replies are delivered in lossless 30,720-character chunks when needed. Replies started inside a Feishu thread retain the root message target.
 
 ### File Sharing
 
@@ -242,7 +248,7 @@ Attach files to your message. Feishu files are downloaded and stored in CCCC's b
 | `/status` | Show group and agent status |
 | `/pause` | Pause message delivery |
 | `/resume` | Resume message delivery |
-| `/verbose` | Toggle verbose mode (see all agent messages) |
+| `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/help` | Show available commands |
 
 ## Troubleshooting

@@ -16,7 +16,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .base import IMAdapter
+from .base import IMAdapter, OutboundStreamHandle
+from .outbound_text import mark_stream_updated, split_text_chunks, stream_preview, stream_update_due
+from ..commands import is_recognized_command
 
 # Discord limits
 DISCORD_MAX_MESSAGE_LENGTH = 2000
@@ -66,12 +68,13 @@ class DiscordAdapter(IMAdapter):
         "threads": "no",
         "reactions": "no",
         "typing": "no",
-        "streaming": "no",
+        "streaming": "yes",
         "voice_in": "no",
         "markdown": "partial",
     }
     capability_notes = {
         "threads": "Discord thread targets are not wired through the adapter yet",
+        "streaming": "messages are progressively updated with message edits; overlong finals use lossless chunks",
     }
 
     def __init__(
@@ -208,8 +211,9 @@ class DiscordAdapter(IMAdapter):
                 except Exception:
                     directed = False
 
-            # In non-private channels, require an explicit bot mention to route messages.
-            if not directed:
+            # Known CCCC commands are safe to route without a mention; unrelated
+            # slash commands in shared channels remain isolated.
+            if not directed and not is_recognized_command(text):
                 return
             if not text and not attachments:
                 return
@@ -310,18 +314,24 @@ class DiscordAdapter(IMAdapter):
         if not text:
             return True
 
-        safe_text = self._compose_safe(text)
+        chunks = split_text_chunks(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=DISCORD_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
 
         try:
             async def do_send():
                 channel = await self._resolve_channel(chat_id)
-                if channel:
-                    await channel.send(safe_text)
-                    return True
-                return False
+                if not channel:
+                    return False
+                for chunk in chunks:
+                    await channel.send(chunk)
+                return True
 
             future = asyncio.run_coroutine_threadsafe(do_send(), self._loop)
-            return future.result(timeout=10)
+            return future.result(timeout=max(10, min(120, len(chunks) * 10)))
         except Exception as e:
             self._log(f"[error] send_message to {chat_id}: {e}")
             return False
@@ -349,7 +359,13 @@ class DiscordAdapter(IMAdapter):
         if not self._connected or not self._client or not self._loop:
             return False
 
-        safe_text = self._compose_safe(caption) if caption else ""
+        caption_chunks = split_text_chunks(
+            caption,
+            max_chars=self.max_chars,
+            hard_limit=DISCORD_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        safe_text = caption_chunks[0] if len(caption_chunks) == 1 else ""
 
         try:
             import discord
@@ -366,6 +382,9 @@ class DiscordAdapter(IMAdapter):
                 except Exception:
                     f = discord.File(fp=str(file_path))
                 await channel.send(content=safe_text or None, file=f)
+                if caption and not safe_text:
+                    for chunk in caption_chunks:
+                        await channel.send(chunk)
                 return True
 
             future = asyncio.run_coroutine_threadsafe(do_send(), self._loop)
@@ -382,6 +401,91 @@ class DiscordAdapter(IMAdapter):
             summarized = summarized[: DISCORD_MAX_MESSAGE_LENGTH - 1] + "…"
 
         return summarized
+
+    def begin_stream(
+        self,
+        chat_id: str,
+        stream_id: str,
+        *,
+        text: str = "",
+        thread_id: Optional[int] = None,
+    ) -> Optional[OutboundStreamHandle]:
+        _ = thread_id
+        if not self._connected or not self._client or not self._loop:
+            return None
+        preview, _exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=DISCORD_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+
+        async def do_begin():
+            channel = await self._resolve_channel(chat_id)
+            return await channel.send(preview) if channel else None
+
+        try:
+            message = asyncio.run_coroutine_threadsafe(do_begin(), self._loop).result(timeout=10)
+        except Exception as e:
+            self._log(f"[stream] begin failed for {chat_id}: {e}")
+            return None
+        if message is None:
+            return None
+        return {
+            "stream_id": stream_id,
+            "platform_handle": {"message": message, "last_text": preview},
+        }
+
+    def update_stream(
+        self,
+        handle: OutboundStreamHandle,
+        *,
+        text: str = "",
+        seq: int = 0,
+    ) -> bool:
+        _ = seq
+        preview, _exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=DISCORD_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        if not stream_update_due(handle, interval=0.5):
+            return True
+        updated = self._edit_stream_message(handle, preview)
+        if updated:
+            mark_stream_updated(handle)
+        return updated
+
+    def end_stream(self, handle: OutboundStreamHandle, *, text: str = "") -> bool:
+        preview, exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=DISCORD_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        return self._edit_stream_message(handle, preview) and exact and bool(text)
+
+    def _edit_stream_message(self, handle: OutboundStreamHandle, text: str) -> bool:
+        platform_handle = handle.get("platform_handle")
+        if not isinstance(platform_handle, dict) or not self._loop or platform_handle.get("message") is None:
+            return False
+        if platform_handle.get("last_text") == text:
+            return True
+        message = platform_handle["message"]
+
+        async def do_edit():
+            return await message.edit(content=text)
+
+        try:
+            updated = asyncio.run_coroutine_threadsafe(do_edit(), self._loop).result(timeout=10)
+            if updated is not None:
+                platform_handle["message"] = updated
+            platform_handle["last_text"] = text
+            return True
+        except Exception as e:
+            self._log(f"[stream] update failed: {e}")
+            return False
 
     def get_chat_title(self, chat_id: str) -> str:
         """Get channel name."""
@@ -402,5 +506,4 @@ class DiscordAdapter(IMAdapter):
 
     def format_outbound(self, by: str, to: List[str], text: str, is_system: bool = False) -> str:
         """Format message for Discord display."""
-        formatted = super().format_outbound(by, to, text, is_system)
-        return self._compose_safe(formatted)
+        return super().format_outbound(by, to, text, is_system)

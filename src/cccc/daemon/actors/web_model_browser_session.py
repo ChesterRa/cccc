@@ -26,6 +26,7 @@ from ...ports.web_model_browser_sidecar import (
     record_chatgpt_browser_state,
     reset_chatgpt_browser_actor_runtime_state,
 )
+from .web_model_browser_launch_policy import use_headless_projected_browser
 from .web_model_browser_recovery_watcher import (
     ensure_web_model_browser_recovery_watcher,
     stop_all_web_model_browser_recovery_watchers,
@@ -67,12 +68,13 @@ def _record_projected_browser_state(group_id: str, actor_id: str, snapshot: dict
     if cdp_port <= 0:
         return
     profile_dir = chatgpt_browser_profile_dir(group_id, actor_id)
+    visibility = "headless" if bool(meta.get("headless")) else "projected"
     process_update = {
         "pid": int(meta.get("pid") or 0),
         "cdp_port": cdp_port,
         "browser_binary": str(meta.get("browser_binary") or ""),
         "profile_dir": str(profile_dir),
-        "visibility": "projected",
+        "visibility": visibility,
         "display": str(meta.get("display") or ""),
         "display_owned": bool(meta.get("display_owned")),
         "display_owner": str(meta.get("display_owner") or ""),
@@ -199,7 +201,12 @@ def _close_stale_starting_surface(group_id: str, actor_id: str, surface: dict[st
     return _MANAGER.info(key=_session_key(group_id, actor_id))
 
 
-def _adoptable_shared_browser_state(group_id: str, actor_id: str) -> dict[str, Any]:
+def _adoptable_shared_browser_state(
+    group_id: str,
+    actor_id: str,
+    *,
+    headless: bool,
+) -> dict[str, Any]:
     state = read_chatgpt_browser_process_state()
     port = int(state.get("cdp_port") or 0)
     if port <= 0:
@@ -207,6 +214,9 @@ def _adoptable_shared_browser_state(group_id: str, actor_id: str) -> dict[str, A
     expected_profile = chatgpt_browser_profile_dir(group_id, actor_id)
     recorded_profile = str(state.get("profile_dir") or "").strip()
     if recorded_profile and not _same_path(recorded_profile, expected_profile):
+        return {}
+    recorded_visibility = str(state.get("visibility") or "").strip().lower()
+    if bool(headless) != (recorded_visibility == "headless"):
         return {}
     if sys.platform.startswith("linux") and not (
         bool(state.get("display_owned"))
@@ -238,7 +248,12 @@ def open_web_model_chatgpt_browser_session(
 
     profile_dir = chatgpt_browser_profile_dir(group_id, actor_id)
     start_url = _open_url_for_actor(group_id, actor_id)
-    adopt_state = _adoptable_shared_browser_state(group_id, actor_id)
+    headless = use_headless_projected_browser()
+    adopt_state = _adoptable_shared_browser_state(
+        group_id,
+        actor_id,
+        headless=headless,
+    )
     if not adopt_state:
         _close_prior_browser_state(group_id, actor_id)
     state = _MANAGER.open(
@@ -247,7 +262,7 @@ def open_web_model_chatgpt_browser_session(
         url=start_url,
         width=width,
         height=height,
-        headless=False,
+        headless=headless,
         channel_candidates=_CHANNEL_CANDIDATES,
         system_profile_subdir="",
         require_system_browser_cdp=True,
@@ -262,7 +277,7 @@ def open_web_model_chatgpt_browser_session(
             url=start_url,
             width=width,
             height=height,
-            headless=False,
+            headless=headless,
             channel_candidates=_CHANNEL_CANDIDATES,
             system_profile_subdir="",
             require_system_browser_cdp=True,
@@ -421,13 +436,14 @@ def _submit_prompt_via_web_model_chatgpt_browser_session_locked(
     )
     browser = result.get("browser") if isinstance(result.get("browser"), dict) else {}
     tab_url = str(browser.get("tab_url") or browser.get("conversation_url") or target_url or surface.get("url") or CHATGPT_URL)
+    surface_meta = _metadata(surface)
     record_chatgpt_browser_process_state(
         {
             "last_tab_url": tab_url,
             "cdp_port": int(browser.get("cdp_port") or (_metadata(surface).get("cdp_port") or 0)),
             "pid": int(browser.get("pid") or (_metadata(surface).get("pid") or 0)),
             "profile_dir": str(browser.get("profile_dir") or chatgpt_browser_profile_dir(group_id, actor_id)),
-            "visibility": "projected",
+            "visibility": "headless" if bool(surface_meta.get("headless")) else "projected",
         }
     )
     record_chatgpt_browser_state(

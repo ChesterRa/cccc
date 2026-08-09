@@ -336,6 +336,19 @@ pub(super) fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> Op
         message_validation::normalize(home, &group, &mut data)?;
         super::messaging_recipients::normalize_chat_data(&group, &by, &mut data)?;
         group = wake_idle_group(home, group, &by)?;
+    } else if kind == "system.notify" {
+        match data.get("im_visibility") {
+            None | Some(Value::Null) => {
+                data.insert("im_visibility".into(), json!("internal"));
+            }
+            Some(Value::String(value)) if matches!(value.as_str(), "internal" | "public") => {}
+            Some(_) => {
+                return Err(OpError::new(
+                    "invalid_im_visibility",
+                    "im_visibility must be internal or public",
+                ));
+            }
+        }
     }
     let event = append(home, &group.group_id, kind, &by, data)?;
     let delivery = actor_delivery::dispatch(home, &group, &event);

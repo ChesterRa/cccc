@@ -83,6 +83,8 @@ def _rollback(
     group_id: str,
     prepared: _PreparedDirectory,
     *,
+    scope_key: str,
+    previous_default: str,
     previous_active: str,
     restore_active: bool,
 ) -> list[str]:
@@ -96,6 +98,13 @@ def _rollback(
         delete_group(load_registry(), group_id=group_id, publish=False)
     except Exception as exc:
         failures.append(f"group: {exc}")
+    try:
+        registry = load_registry()
+        if previous_default and not str(registry.defaults.get(scope_key) or "").strip():
+            registry.defaults[scope_key] = previous_default
+            registry.save()
+    except Exception as exc:
+        failures.append(f"scope default: {exc}")
     registry = load_registry()
     if group_id in registry.groups or group_id in registry.defaults.values():
         failures.append("registry still references created group")
@@ -117,25 +126,15 @@ def create_group_with_scope(args: Dict[str, Any]) -> DaemonResponse:
 
     with _CREATE_LOCK:
         group_id = ""
+        scope_key = ""
+        previous_default = ""
         restore_active = False
         previous_active = str(active_store.load_active().get("active_group_id") or "")
         try:
             scope = detect_scope(prepared.path)
+            scope_key = scope.scope_key
             registry = load_registry()
-            existing = str(registry.defaults.get(scope.scope_key) or "").strip()
-            if existing:
-                failures = _remove_created_directory(prepared)
-                if failures:
-                    return _error(
-                        "rollback_failed",
-                        f"scope already attached; rollback failed: {'; '.join(failures)}",
-                        details={"original_code": "scope_already_attached"},
-                    )
-                return _error(
-                    "scope_already_attached",
-                    "project directory is already attached to a group",
-                    details={"group_id": existing},
-                )
+            previous_default = str(registry.defaults.get(scope_key) or "").strip()
             group = create_group(
                 registry,
                 title=str(args.get("title") or "working-group"),
@@ -165,6 +164,8 @@ def create_group_with_scope(args: Dict[str, Any]) -> DaemonResponse:
                 failures = _rollback(
                     group_id,
                     prepared,
+                    scope_key=scope_key,
+                    previous_default=previous_default,
                     previous_active=previous_active,
                     restore_active=restore_active,
                 )

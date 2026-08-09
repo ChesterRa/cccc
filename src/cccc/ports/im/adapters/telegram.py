@@ -22,10 +22,12 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .base import IMAdapter
+from .base import IMAdapter, OutboundStreamHandle
+from .outbound_text import mark_stream_updated, split_text_chunks, stream_preview, stream_update_due
 
 # Telegram API limits
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+TELEGRAM_MAX_CAPTION_LENGTH = 1024
 DEFAULT_MAX_CHARS = 4096
 DEFAULT_MAX_LINES = 64
 
@@ -82,13 +84,14 @@ class TelegramAdapter(IMAdapter):
         "threads": "yes",
         "reactions": "yes",
         "typing": "yes",
-        "streaming": "no",
+        "streaming": "yes",
         "voice_in": "no",
         "markdown": "partial",
     }
     capability_notes = {
         "files_in": "documents/photos are accepted; voice/audio updates are not parsed yet",
         "threads": "forum topics are preserved with message_thread_id",
+        "streaming": "messages are progressively updated with editMessageText; overlong finals use lossless chunks",
     }
 
     def __init__(
@@ -330,8 +333,13 @@ class TelegramAdapter(IMAdapter):
         if not self._connected:
             return False
 
-        # Telegram caption length is limited; we keep it short.
-        safe_caption = self._compose_safe(caption) if caption else ""
+        caption_chunks = split_text_chunks(
+            caption,
+            max_chars=min(self.max_chars, TELEGRAM_MAX_CAPTION_LENGTH),
+            hard_limit=TELEGRAM_MAX_CAPTION_LENGTH,
+            max_lines=self.max_lines,
+        )
+        safe_caption = caption_chunks[0] if len(caption_chunks) == 1 else ""
 
         # Rate limit
         self._rate_limiter.wait_and_acquire(str(chat_id))
@@ -381,10 +389,16 @@ class TelegramAdapter(IMAdapter):
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = resp.read().decode("utf-8", errors="replace")
                 out = json.loads(data)
-                return bool(out.get("ok"))
+                sent = bool(out.get("ok"))
         except Exception as e:
             self._log(f"[send_file] failed: {e}")
             return False
+
+        if not sent:
+            return False
+        if caption and not safe_caption:
+            return self.send_message(chat_id, caption, thread_id=thread_id)
+        return True
 
     def send_message(
         self,
@@ -406,14 +420,17 @@ class TelegramAdapter(IMAdapter):
         if not text:
             return True
 
-        # Ensure message fits Telegram limit
-        safe_text = self._compose_safe(text)
-
-        # Rate limit
-        self._rate_limiter.wait_and_acquire(str(chat_id))
-
-        # Send with retry
-        return self._send_with_retry(str(chat_id), safe_text, thread_id=thread_id)
+        chunks = split_text_chunks(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=TELEGRAM_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        for chunk in chunks:
+            self._rate_limiter.wait_and_acquire(str(chat_id))
+            if not self._send_with_retry(str(chat_id), chunk, thread_id=thread_id):
+                return False
+        return True
 
     def _compose_safe(self, text: str) -> str:
         """Ensure message fits within Telegram limits."""
@@ -425,6 +442,105 @@ class TelegramAdapter(IMAdapter):
             summarized = summarized[: TELEGRAM_MAX_MESSAGE_LENGTH - 1] + "…"
 
         return summarized
+
+    def begin_stream(
+        self,
+        chat_id: str,
+        stream_id: str,
+        *,
+        text: str = "",
+        thread_id: Optional[int] = None,
+    ) -> Optional[OutboundStreamHandle]:
+        if not self._connected:
+            return None
+        preview, _exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=TELEGRAM_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        params: Dict[str, Any] = {
+            "chat_id": str(chat_id),
+            "text": preview,
+            "disable_web_page_preview": True,
+        }
+        if thread_id:
+            try:
+                topic_id = int(thread_id)
+            except (TypeError, ValueError):
+                topic_id = 0
+            if topic_id > 0:
+                params["message_thread_id"] = topic_id
+        self._rate_limiter.wait_and_acquire(str(chat_id))
+        response = self._api("sendMessage", params, timeout=15)
+        result = response.get("result") if isinstance(response.get("result"), dict) else {}
+        message_id = result.get("message_id")
+        if not response.get("ok") or message_id is None:
+            return None
+        return {
+            "stream_id": stream_id,
+            "platform_handle": {
+                "chat_id": str(chat_id),
+                "message_id": message_id,
+                "last_text": preview,
+            },
+        }
+
+    def update_stream(
+        self,
+        handle: OutboundStreamHandle,
+        *,
+        text: str = "",
+        seq: int = 0,
+    ) -> bool:
+        _ = seq
+        preview, _exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=TELEGRAM_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        if not stream_update_due(handle, interval=0.8):
+            return True
+        updated = self._edit_stream_message(handle, preview)
+        if updated:
+            mark_stream_updated(handle)
+        return updated
+
+    def end_stream(self, handle: OutboundStreamHandle, *, text: str = "") -> bool:
+        preview, exact = stream_preview(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=TELEGRAM_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
+        return self._edit_stream_message(handle, preview) and exact and bool(text)
+
+    def _edit_stream_message(self, handle: OutboundStreamHandle, text: str) -> bool:
+        platform_handle = handle.get("platform_handle")
+        if not isinstance(platform_handle, dict):
+            return False
+        chat_id = str(platform_handle.get("chat_id") or "")
+        message_id = platform_handle.get("message_id")
+        if not chat_id or message_id is None:
+            return False
+        if platform_handle.get("last_text") == text:
+            return True
+        self._rate_limiter.wait_and_acquire(chat_id)
+        response = self._api(
+            "editMessageText",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+                "disable_web_page_preview": True,
+            },
+            timeout=15,
+        )
+        if not response.get("ok"):
+            return False
+        platform_handle["last_text"] = text
+        return True
 
     def _send_with_retry(self, chat_id: str, text: str, thread_id: Optional[int] = None, retries: int = 1) -> bool:
         """Send message with retry on failure."""
@@ -566,6 +682,4 @@ class TelegramAdapter(IMAdapter):
 
     def format_outbound(self, by: str, to: List[str], text: str, is_system: bool = False) -> str:
         """Format message for Telegram display."""
-        # Use base implementation but ensure it fits
-        formatted = super().format_outbound(by, to, text, is_system)
-        return self._compose_safe(formatted)
+        return super().format_outbound(by, to, text, is_system)

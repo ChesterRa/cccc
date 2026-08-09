@@ -93,7 +93,9 @@ fn attach_with(
 pub fn detach(store: &GroupStore, group_id: &str, scope_key: &str) -> io::Result<GroupDoc> {
     detach_with(store, group_id, scope_key, |result| {
         Registry::mutate(store.home(), |registry| {
-            registry.defaults.remove(scope_key);
+            if registry.defaults.get(scope_key).map(String::as_str) == Some(group_id) {
+                registry.defaults.remove(scope_key);
+            }
             if let Some(meta) = registry.groups.get_mut(group_id) {
                 meta.default_scope_key.clone_from(&result.active_scope_key);
             }
@@ -266,6 +268,34 @@ mod tests {
 
         assert_eq!(detached.active_scope_key, "s_next");
         assert_eq!(detached.actors[0].default_scope_key, "s_next");
+    }
+
+    #[test]
+    fn detaching_shared_scope_from_non_default_group_preserves_current_default() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let first = store.create("first", "").expect("first group");
+        let second = store.create("second", "").expect("second group");
+        let scope = Scope {
+            scope_key: "s_shared".into(),
+            url: temp.path().to_string_lossy().into_owned(),
+            label: "shared".into(),
+            git_remote: String::new(),
+        };
+        attach(&store, &first.group_id, scope.clone()).expect("attach first");
+        attach(&store, &second.group_id, scope).expect("attach second");
+
+        let detached = detach(&store, &first.group_id, "s_shared").expect("detach first");
+
+        assert!(detached.scopes.is_empty());
+        assert_eq!(
+            Registry::load(store.home())
+                .expect("registry")
+                .defaults
+                .get("s_shared"),
+            Some(&second.group_id)
+        );
     }
 
     #[test]

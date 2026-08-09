@@ -110,6 +110,11 @@ def parse_message(text: str) -> ParsedCommand:
     return ParsedCommand(type=CommandType.MESSAGE, text=text, mentions=mentions, args=[])
 
 
+def is_recognized_command(text: str) -> bool:
+    """Return whether text is a CCCC slash command understood by this worker."""
+    return parse_message(text).type != CommandType.MESSAGE
+
+
 def _extract_mentions(text: str) -> List[str]:
     """
     Extract @mentions from text.

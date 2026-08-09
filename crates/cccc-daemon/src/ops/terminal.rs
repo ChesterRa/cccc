@@ -10,6 +10,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "terminal_status" => status(request),
         "terminal_tail" => tail(home, request),
         "terminal_snapshot" => snapshot(home, request),
+        "terminal_replay" => replay(home, request),
         "terminal_history" => history(home, request),
         "terminal_since" => since(home, request),
         "terminal_write" => write(home, request),
@@ -36,13 +37,8 @@ fn tail(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let (group_id, actor_id) = ids(request)?;
     authorize_transcript(home, request, &group_id, &actor_id)?;
     let max_chars = integer(request, "max_chars", 8_000).clamp(1, 2_000_000);
-    let page = super::terminal_history_source::retained(
-        home,
-        &group_id,
-        &actor_id,
-        max_chars.max(512 * 1024),
-    )
-    .map_err(runtime_error)?;
+    let page = super::terminal_history_source::retained_full(home, &group_id, &actor_id)
+        .map_err(runtime_error)?;
     let (strip_ansi, compact) = tail_render_options(request);
     let text = render_tail(&page.data, max_chars, strip_ansi, compact);
     object(json!({
@@ -72,6 +68,22 @@ fn snapshot(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "start_cursor": page.start_cursor,
         "end_cursor": page.end_cursor,
     }))
+}
+
+fn replay(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let (group_id, actor_id) = ids(request)?;
+    authorize_transcript(home, request, &group_id, &actor_id)?;
+    let after = request
+        .args
+        .get("after")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let end_cursor = request.args.get("end_cursor").and_then(Value::as_u64);
+    let limit = integer(request, "limit_bytes", 512 * 1024).clamp(1, 2_000_000);
+    let (page, replay_end_cursor) =
+        cccc_runtime::active_history_replay(&group_id, &actor_id, after, end_cursor, limit)
+            .map_err(runtime_error)?;
+    object(json!({"history": page, "replay_end_cursor": replay_end_cursor}))
 }
 
 fn render_tail(text: &str, max_chars: usize, strip_ansi: bool, compact: bool) -> String {

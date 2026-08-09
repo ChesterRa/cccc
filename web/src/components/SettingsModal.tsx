@@ -31,6 +31,7 @@ import {
   saveAndStartIMBridge,
   saveIMConfigDraft,
 } from "./modals/settings/imBridgeConfig";
+import { shouldPollWeixinLogin } from "./modals/settings/weixinLoginPolling";
 import { useModalA11y } from "../hooks/useModalA11y";
 import { copyTextToClipboard } from "../utils/copy";
 
@@ -374,7 +375,10 @@ export function SettingsModal({
   useEffect(() => {
     if (!isOpen || !groupId || imPlatform !== "weixin") return;
     let cancelled = false;
+    let loading = false;
     const loadWeixinStatus = async () => {
+      if (loading) return;
+      loading = true;
       try {
         const resp = await api.fetchWeixinLoginStatus(groupId);
         if (cancelled) return;
@@ -389,11 +393,15 @@ export function SettingsModal({
         if (!cancelled) {
           setWeixinLoginStatus(toWeixinErrorStatus(t("imBridge.weixinStatusLoadFailed")));
         }
+      } finally {
+        loading = false;
       }
     };
     void loadWeixinStatus();
-    // Only poll while waiting for QR scan; stop once logged in or idle
-    const needsPoll = weixinLoginStatus?.status === "waiting_scan";
+    const needsPoll = shouldPollWeixinLogin({
+      running: weixinLoginStatus?.running ?? false,
+      status: weixinLoginStatus?.status ?? "",
+    });
     if (!needsPoll)
       return () => {
         cancelled = true;
@@ -405,7 +413,15 @@ export function SettingsModal({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [isOpen, groupId, imPlatform, weixinLoginStatus?.status, t, toWeixinErrorStatus]);
+  }, [
+    isOpen,
+    groupId,
+    imPlatform,
+    weixinLoginStatus?.running,
+    weixinLoginStatus?.status,
+    t,
+    toWeixinErrorStatus,
+  ]);
 
   useEffect(() => {
     if (imPlatform !== "weixin") {
@@ -820,6 +836,7 @@ export function SettingsModal({
       const resp = await api.logoutWeixin(groupId);
       if (resp.ok) {
         setWeixinLoginStatus(resp.result ?? null);
+        await loadIMStatus();
       } else {
         setWeixinLoginStatus(
           toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinLogoutFailed")),
@@ -828,6 +845,26 @@ export function SettingsModal({
     } catch (e) {
       setWeixinLoginStatus(toWeixinErrorStatus(t("imBridge.weixinLogoutFailed")));
       console.error("Failed to logout weixin:", e);
+    } finally {
+      setImBusy(false);
+    }
+  };
+
+  const handleVerifyWeixin = async (verifyCode: string) => {
+    if (!groupId) return;
+    setImBusy(true);
+    try {
+      const resp = await api.verifyWeixinLogin(groupId, verifyCode);
+      if (resp.ok) {
+        setWeixinLoginStatus(resp.result ?? null);
+      } else {
+        setWeixinLoginStatus(
+          toWeixinErrorStatus(resp.error?.message || t("imBridge.weixinVerifyFailed")),
+        );
+      }
+    } catch (e) {
+      setWeixinLoginStatus(toWeixinErrorStatus(t("imBridge.weixinVerifyFailed")));
+      console.error("Failed to verify weixin login:", e);
     } finally {
       setImBusy(false);
     }
@@ -1298,6 +1335,7 @@ export function SettingsModal({
                     setImWeixinAccountId={setImWeixinAccountId}
                     weixinLoginStatus={weixinLoginStatus}
                     onStartWeixinLogin={handleStartWeixinLogin}
+                    onVerifyWeixin={handleVerifyWeixin}
                     onLogoutWeixin={handleLogoutWeixin}
                     imBusy={imBusy}
                     onSaveConfig={handleSaveIMConfig}

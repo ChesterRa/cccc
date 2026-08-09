@@ -13,6 +13,7 @@ Kinds:
 - status_change: actor/group status change
 - error: system error
 """
+
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
@@ -21,19 +22,20 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 NotifyKind = Literal[
-    "nudge",           # Remind about unread messages
-    "keepalive",       # Remind to continue work
-    "help_nudge",      # Ask actor to refresh cccc_help
-    "actor_idle",      # Actor idle alert (to foreman)
-    "silence_check",   # Group silence alert (to foreman)
-    "auto_idle",       # Group auto-idled after repeated silence checks
-    "automation",      # User-defined automation rule notification
-    "status_change",   # Status change notification
-    "error",           # Error notification
-    "info",            # Informational notification
+    "nudge",  # Remind about unread messages
+    "keepalive",  # Remind to continue work
+    "help_nudge",  # Ask actor to refresh cccc_help
+    "actor_idle",  # Actor idle alert (to foreman)
+    "silence_check",  # Group silence alert (to foreman)
+    "auto_idle",  # Group auto-idled after repeated silence checks
+    "automation",  # User-defined automation rule notification
+    "status_change",  # Status change notification
+    "error",  # Error notification
+    "info",  # Informational notification
 ]
 
 NotifyPriority = Literal["low", "normal", "high", "urgent"]
+NotifyImVisibility = Literal["internal", "public"]
 
 
 class SystemNotifyData(BaseModel):
@@ -49,6 +51,9 @@ class SystemNotifyData(BaseModel):
 
     # Target
     target_actor_id: Optional[str] = None  # Target actor (None = broadcast)
+
+    # External delivery. Internal is fail-closed for old and newly added producers.
+    im_visibility: NotifyImVisibility = "internal"
 
     # Context
     context: Dict[str, Any] = Field(default_factory=dict)
@@ -66,6 +71,6 @@ class NotifyAckData(BaseModel):
     """Notification acknowledgement payload."""
 
     notify_event_id: str  # The acknowledged notify event_id
-    actor_id: str         # Actor who acknowledged
+    actor_id: str  # Actor who acknowledged
 
     model_config = ConfigDict(extra="forbid")

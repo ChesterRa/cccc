@@ -1193,6 +1193,12 @@ def handle_stream_emit(args: Dict[str, Any]) -> DaemonResponse:
         to = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
     reply_to = str(args.get("reply_to") or "").strip() or None
     client_id = str(args.get("client_id") or "").strip() or None
+    sender = find_actor(group, by)
+    sender_title = (
+        str(sender.get("title") or "").strip()
+        if isinstance(sender, dict)
+        else ""
+    )
 
     data = ChatStreamData(
         stream_id=stream_id,
@@ -1202,6 +1208,7 @@ def handle_stream_emit(args: Dict[str, Any]) -> DaemonResponse:
         seq=seq,
         to=to,
         reply_to=reply_to,
+        sender_title=sender_title or None,
         client_id=client_id,
     )
 

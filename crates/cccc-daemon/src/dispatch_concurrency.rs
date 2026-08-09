@@ -139,6 +139,13 @@ mod tests {
             Access::GroupRead(group_id) if group_id == "g_one"
         ));
         assert!(matches!(
+            access(&request(
+                "terminal_replay",
+                json!({"group_id":"g_one","actor_id":"peer1"})
+            )),
+            Access::GroupRead(group_id) if group_id == "g_one"
+        ));
+        assert!(matches!(
             access(&request("send", json!({"group_id":"g_one"}))),
             Access::GroupWrite(group_id) if group_id == "g_one"
         ));

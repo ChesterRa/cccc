@@ -16,6 +16,7 @@ import {
   matchesWebModelActorSelection,
   resolveWebModelActorSelection,
 } from "../../../utils/webModelSelection";
+import { webModelConnectorMcpUrl } from "../../../utils/webModelConnector";
 import { ProjectedBrowserSurfacePanel } from "../../browser/ProjectedBrowserSurfacePanel";
 import {
   dangerButtonClass,
@@ -64,29 +65,6 @@ function formatTime(value?: string): string {
   } catch {
     return String(value || "");
   }
-}
-
-function connectorUrlWithToken(connectorUrl: string, secret: string): string {
-  const url = String(connectorUrl || "").trim();
-  const token = String(secret || "").trim();
-  if (!url || !token) return "";
-  try {
-    const parsed = new URL(url);
-    parsed.searchParams.set("token", token);
-    return parsed.toString();
-  } catch {
-    const sep = url.includes("?") ? "&" : "?";
-    return `${url}${sep}token=${encodeURIComponent(token)}`;
-  }
-}
-
-function connectorMcpUrl(connector?: api.WebModelConnector | null, secret?: string): string {
-  const stored = String(connector?.connector_url_with_token || "").trim();
-  if (stored) return stored;
-  return connectorUrlWithToken(
-    String(connector?.connector_url || "").trim(),
-    String(secret || "").trim(),
-  );
 }
 
 function connectorActivityLabel(connector: api.WebModelConnector, wm: Translate): string {
@@ -371,7 +349,7 @@ export default function WebModelConnectorsTab({
     : "";
   const selectedActorRunning = Boolean(selectedActor?.running);
   const queuedCount = webModelQueuedCount(selectedActor);
-  const selectedMcpUrl = connectorMcpUrl(selectedConnector || null);
+  const selectedMcpUrl = webModelConnectorMcpUrl(selectedConnector || null);
   const selectedConnectorUrl = String(selectedConnector?.connector_url || "").trim();
   const selectedMcpUrlForValidation = selectedMcpUrl || selectedConnectorUrl;
   const mcpUrlLocalWarning =

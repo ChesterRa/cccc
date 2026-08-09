@@ -7,7 +7,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use super::terminal_ws_protocol::{daemon_call, frame, handle_input};
-use super::terminal_ws_replay::{initial_output, poll_output};
+use super::terminal_ws_replay::{initial_output, poll_output, replay_output};
 use crate::AppState;
 
 const MAX_CONSECUTIVE_POLL_FAILURES: usize = 20;
@@ -59,7 +59,15 @@ async fn serve(
         json!({"group_id":group_id,"actor_id":actor_id}),
     )
     .await;
-    if !status.as_ref().is_some_and(|response| response.ok) {
+    if !status.as_ref().is_some_and(|response| {
+        response.ok
+            && response
+                .result
+                .get("session")
+                .and_then(|session| session.get("running"))
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+    }) {
         let error = status.and_then(|response| response.error).map_or_else(
             || json!({"code":"actor_not_running","message":"actor is not running"}),
             |error| json!({"code":error.code,"message":error.message}),
@@ -99,6 +107,38 @@ async fn serve(
         return;
     }
     let mut cursor = initial.next_cursor;
+    let replay_end_cursor = initial.replay_end_cursor;
+    while cursor < replay_end_cursor {
+        let Some(output) = replay_output(
+            &state,
+            &group_id,
+            &actor_id,
+            Some(cursor),
+            Some(replay_end_cursor),
+        )
+        .await
+        else {
+            send_terminal_error(
+                &mut socket,
+                "daemon_unavailable",
+                "Terminal history replay was interrupted.",
+            )
+            .await;
+            return;
+        };
+        if output.next_cursor <= cursor {
+            break;
+        }
+        cursor = output.next_cursor;
+        if !output.data.is_empty()
+            && socket
+                .send(Message::Binary(frame(b'1', &output.data).into()))
+                .await
+                .is_err()
+        {
+            return;
+        }
+    }
     let mut consecutive_poll_failures = 0;
     let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

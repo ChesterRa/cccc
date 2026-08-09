@@ -3321,10 +3321,16 @@ Args:
   title?: string
   message?: string
   target_actor_id?: string | null
+  im_visibility?: "internal" | "public" // default: "internal"
   requires_ack?: boolean
   context?: Record<string, unknown>
 }
 ```
+
+`system.notify` is internal by default. An IM bridge may forward it only when
+`im_visibility="public"`; actor-targeted notifications are never eligible for
+external IM delivery. Producers must opt in explicitly instead of relying on
+`to`, `actor_id`, or `target_actor_id` inference.
 
 Result:
 ```ts
@@ -3368,9 +3374,9 @@ gap-free.
 
 #### `terminal_snapshot`
 
-Return a bounded ANSI screen snapshot and the exact raw cursor boundary used to render it. This is
-the native Web terminal's attach-time operation; callers still use `terminal_since` for subsequent
-raw output.
+Return a bounded rendered screen snapshot and the exact raw cursor boundary used to render it.
+This operation is intended for diagnostics; interactive clients use `terminal_replay` so they can
+rebuild scrollback from the original ANSI stream.
 
 Args:
 ```ts
@@ -3384,6 +3390,37 @@ Result:
 
 The implementation MUST apply the same group transcript visibility policy as `terminal_tail` and
 `terminal_history`.
+
+#### `terminal_replay`
+
+Return one bounded page of raw ANSI output from the active PTY session's in-memory ring. This
+operation MUST NOT read the durable archive or a completed session. The first request atomically
+captures a UTF-8-complete `replay_end_cursor`. Callers pass that value back as `end_cursor` on every
+following page, so output produced during replay cannot extend the initial replay loop.
+
+Args:
+```ts
+{ group_id: string; actor_id: string; by?: string; after?: number; end_cursor?: number; limit_bytes?: number }
+```
+
+Result:
+```ts
+{
+  replay_end_cursor: number
+  history: {
+    data: string
+    start_cursor: number
+    end_cursor: number
+    has_more: boolean
+    cursor_expired: boolean
+  }
+}
+```
+
+The default page limit is 512 KiB. `history.has_more` is relative to the fixed
+`replay_end_cursor`, not the moving live tail. The implementation MUST apply the same group
+transcript visibility policy as `terminal_tail` and must leave an incomplete UTF-8 suffix for a
+later live page.
 
 #### `terminal_history`
 

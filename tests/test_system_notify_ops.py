@@ -29,7 +29,9 @@ class TestSystemNotifyOps(unittest.TestCase):
     def test_system_notify_and_notify_ack(self) -> None:
         _, cleanup = self._with_home()
         try:
-            create, _ = self._call("group_create", {"title": "sys-notify", "topic": "", "by": "user"})
+            create, _ = self._call(
+                "group_create", {"title": "sys-notify", "topic": "", "by": "user"}
+            )
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -61,35 +63,56 @@ class TestSystemNotifyOps(unittest.TestCase):
                 },
             )
             self.assertTrue(notify.ok, getattr(notify, "error", None))
-            notify_event = (notify.result or {}).get("event") if isinstance(notify.result, dict) else {}
+            notify_event = (
+                (notify.result or {}).get("event")
+                if isinstance(notify.result, dict)
+                else {}
+            )
             self.assertIsInstance(notify_event, dict)
             assert isinstance(notify_event, dict)
             self.assertEqual(str(notify_event.get("kind") or ""), "system.notify")
-            notify_data = notify_event.get("data") if isinstance(notify_event.get("data"), dict) else {}
+            notify_data = (
+                notify_event.get("data")
+                if isinstance(notify_event.get("data"), dict)
+                else {}
+            )
             self.assertIsInstance(notify_data, dict)
             assert isinstance(notify_data, dict)
             self.assertEqual(str(notify_data.get("kind") or ""), "info")
             self.assertEqual(str(notify_data.get("priority") or ""), "normal")
+            self.assertEqual(str(notify_data.get("im_visibility") or ""), "internal")
 
             notify_event_id = str(notify_event.get("id") or "").strip()
             self.assertTrue(notify_event_id)
 
             ack, _ = self._call(
                 "notify_ack",
-                {"group_id": group_id, "actor_id": "peer1", "notify_event_id": notify_event_id, "by": "peer1"},
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "notify_event_id": notify_event_id,
+                    "by": "peer1",
+                },
             )
             self.assertTrue(ack.ok, getattr(ack, "error", None))
-            ack_event = (ack.result or {}).get("event") if isinstance(ack.result, dict) else {}
+            ack_event = (
+                (ack.result or {}).get("event") if isinstance(ack.result, dict) else {}
+            )
             self.assertIsInstance(ack_event, dict)
             assert isinstance(ack_event, dict)
             self.assertEqual(str(ack_event.get("kind") or ""), "system.notify_ack")
         finally:
             cleanup()
 
-    def test_normal_priority_notify_queues_and_flushes_for_running_pty_actor(self) -> None:
+    def test_normal_priority_notify_queues_and_flushes_for_running_pty_actor(
+        self,
+    ) -> None:
         _, cleanup = self._with_home()
         try:
-            create, _ = self._call("group_create", {"title": "sys-notify-delivery", "topic": "", "by": "user"})
+            create, _ = self._call(
+                "group_create",
+                {"title": "sys-notify-delivery", "topic": "", "by": "user"},
+            )
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -107,11 +130,19 @@ class TestSystemNotifyOps(unittest.TestCase):
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
 
-            with patch("cccc.daemon.messaging.delivery.pty_runner.SUPERVISOR.actor_running", return_value=True), patch(
-                "cccc.daemon.messaging.delivery.queue_system_notify"
-            ) as queue_mock, patch(
-                "cccc.daemon.messaging.delivery.flush_pending_messages", return_value=True
-            ) as flush_mock:
+            with (
+                patch(
+                    "cccc.daemon.messaging.delivery.pty_runner.SUPERVISOR.actor_running",
+                    return_value=True,
+                ),
+                patch(
+                    "cccc.daemon.messaging.delivery.queue_system_notify"
+                ) as queue_mock,
+                patch(
+                    "cccc.daemon.messaging.delivery.flush_pending_messages",
+                    return_value=True,
+                ) as flush_mock,
+            ):
                 notify, _ = self._call(
                     "system_notify",
                     {
@@ -138,7 +169,9 @@ class TestSystemNotifyOps(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_voice_secretary_input_notify_delivery_supports_legacy_pointer(self) -> None:
+    def test_voice_secretary_input_notify_delivery_supports_legacy_pointer(
+        self,
+    ) -> None:
         from cccc.contracts.v1 import SystemNotifyData
         from cccc.daemon.messaging.delivery import render_system_notify_delivery_text
 
@@ -168,7 +201,9 @@ class TestSystemNotifyOps(unittest.TestCase):
         self.assertIn("cccc_voice_secretary_document", text)
         self.assertNotIn("source_chars", text)
 
-    def test_voice_secretary_input_notify_delivery_uses_inline_envelope_when_available(self) -> None:
+    def test_voice_secretary_input_notify_delivery_uses_inline_envelope_when_available(
+        self,
+    ) -> None:
         from cccc.contracts.v1 import SystemNotifyData
         from cccc.daemon.messaging.delivery import render_system_notify_delivery_text
 
@@ -237,7 +272,10 @@ class TestSystemNotifyOps(unittest.TestCase):
     def test_system_notify_accepts_auto_idle_kind(self) -> None:
         _, cleanup = self._with_home()
         try:
-            create, _ = self._call("group_create", {"title": "sys-notify-auto-idle", "topic": "", "by": "user"})
+            create, _ = self._call(
+                "group_create",
+                {"title": "sys-notify-auto-idle", "topic": "", "by": "user"},
+            )
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -269,10 +307,18 @@ class TestSystemNotifyOps(unittest.TestCase):
                 },
             )
             self.assertTrue(notify.ok, getattr(notify, "error", None))
-            notify_event = (notify.result or {}).get("event") if isinstance(notify.result, dict) else {}
+            notify_event = (
+                (notify.result or {}).get("event")
+                if isinstance(notify.result, dict)
+                else {}
+            )
             self.assertIsInstance(notify_event, dict)
             assert isinstance(notify_event, dict)
-            notify_data = notify_event.get("data") if isinstance(notify_event.get("data"), dict) else {}
+            notify_data = (
+                notify_event.get("data")
+                if isinstance(notify_event.get("data"), dict)
+                else {}
+            )
             self.assertIsInstance(notify_data, dict)
             assert isinstance(notify_data, dict)
             self.assertEqual(str(notify_data.get("kind") or ""), "auto_idle")

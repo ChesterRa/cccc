@@ -79,6 +79,8 @@ pub struct ChatStreamData {
     #[serde(default)]
     pub reply_to: Option<String>,
     #[serde(default)]
+    pub sender_title: Option<String>,
+    #[serde(default)]
     pub client_id: Option<String>,
 }
 
@@ -100,7 +102,7 @@ fn snapshot_mode() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::ChatMessageData;
+    use super::{ChatMessageData, ChatStreamData};
 
     #[test]
     fn chat_message_contract_carries_peer_insight() {
@@ -113,5 +115,18 @@ mod tests {
             message.insight.as_deref(),
             Some("reconsider the dependency boundary")
         );
+    }
+
+    #[test]
+    fn chat_stream_contract_carries_sender_title_snapshot() {
+        let stream: ChatStreamData = serde_json::from_value(serde_json::json!({
+            "stream_id":"stream-1",
+            "op":"update",
+            "text":"partial",
+            "sender_title":"Review Bot"
+        }))
+        .expect("stream contract");
+
+        assert_eq!(stream.sender_title.as_deref(), Some("Review Bot"));
     }
 }

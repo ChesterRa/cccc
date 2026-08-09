@@ -1063,6 +1063,48 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
         launched.close()
         self.assertTrue(browser_proc.terminated or browser_proc.killed)
 
+    def test_macos_headless_system_browser_stays_in_background(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        browser_proc = _FakeProc()
+        fake_cm = _FakePlaywrightCM()
+        with patch.object(runtime.sys, "platform", "darwin"), patch.object(
+            runtime, "ensure_sync_playwright", return_value=lambda: fake_cm
+        ), patch.object(
+            runtime,
+            "_system_browser_binaries",
+            return_value=[
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+            ],
+        ), patch.object(runtime, "_pick_free_port", return_value=9445), patch.object(
+            runtime, "_wait_cdp_endpoint", return_value=True
+        ), patch.object(
+            runtime.subprocess, "Popen", return_value=browser_proc
+        ) as popen, patch.dict(runtime.os.environ, {}, clear=True):
+            launched = runtime.launch_projected_browser_runtime(
+                profile_dir=runtime.Path("/tmp/projected-browser-macos-headless"),
+                url="https://chatgpt.com",
+                width=1280,
+                height=800,
+                headless=True,
+                channel_candidates=("chrome",),
+                require_system_browser_cdp=True,
+            )
+
+        cmd = list(popen.call_args.args[0])
+        self.assertIn("--headless=new", cmd)
+        self.assertIn("https://chatgpt.com", cmd)
+        self.assertFalse(any(str(arg).startswith("--app=") for arg in cmd))
+        self.assertNotIn("--window-position=0,0", cmd)
+        self.assertEqual(
+            fake_cm.playwright.chromium.connect_calls,
+            [("http://127.0.0.1:9445", {"timeout": 15000})],
+        )
+        metadata = getattr(launched, "metadata", {}) or {}
+        self.assertEqual(metadata.get("headless"), True)
+        launched.close()
+        self.assertTrue(browser_proc.terminated or browser_proc.killed)
+
     def test_headed_launch_prefers_system_browser_cdp_when_available(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime
 

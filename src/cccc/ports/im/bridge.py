@@ -59,6 +59,23 @@ def _is_env_var_name(value: str) -> bool:
 
 
 _PRESERVED_RECIPIENT_TOKENS = frozenset({"user", "@user", "@all", "@peers", "@foreman"})
+_USER_FACING_RECIPIENT_TOKENS = frozenset({"user", "@user", "@all"})
+_MAX_ACTIVE_OUTBOUND_STREAMS = 1024
+_MAX_COMPLETED_OUTBOUND_STREAMS = 4096
+
+
+def _is_user_facing_targets(raw_targets: Any) -> bool:
+    """Return whether recipients include the external user/broadcast audience."""
+    if raw_targets is None or raw_targets == "":
+        targets: List[Any] = []
+    elif isinstance(raw_targets, (list, tuple, set, frozenset)):
+        targets = list(raw_targets)
+    else:
+        targets = [raw_targets]
+    normalized = {
+        str(target or "").strip() for target in targets if str(target or "").strip()
+    }
+    return not normalized or bool(normalized & _USER_FACING_RECIPIENT_TOKENS)
 
 
 def _acquire_singleton_lock(lock_path: Path) -> Optional[Any]:
@@ -211,7 +228,9 @@ class LedgerWatcher:
 
             # Read new data
             if size > self._offset:
-                with open(self.ledger_path, "r", encoding="utf-8", errors="replace") as f:
+                with open(
+                    self.ledger_path, "r", encoding="utf-8", errors="replace"
+                ) as f:
                     f.seek(self._offset)
                     chunk = f.read()
 
@@ -300,7 +319,9 @@ class IMBridge:
         # to adapters instead of letting adapters guess from their own caches.
         self._mention_targets: Dict[str, List[str]] = {}
 
-    def _should_process_inbound(self, *, chat_id: str, thread_id: int, message_id: str) -> bool:
+    def _should_process_inbound(
+        self, *, chat_id: str, thread_id: int, message_id: str
+    ) -> bool:
         """
         Return True if this inbound message should be processed.
 
@@ -322,7 +343,9 @@ class IMBridge:
         # Opportunistic pruning (keep memory bounded without extra deps).
         if len(self._seen_inbound) > 2048:
             cutoff = now - 3600.0  # 1h
-            self._seen_inbound = {k: ts for k, ts in self._seen_inbound.items() if ts >= cutoff}
+            self._seen_inbound = {
+                k: ts for k, ts in self._seen_inbound.items() if ts >= cutoff
+            }
             if len(self._seen_inbound) > 4096:
                 self._seen_inbound.clear()
 
@@ -417,7 +440,11 @@ class IMBridge:
         for msg in messages:
             chat_id = str(msg.get("chat_id") or "").strip()
             text = str(msg.get("text") or "")
-            attachments = msg.get("attachments") if isinstance(msg.get("attachments"), list) else []
+            attachments = (
+                msg.get("attachments")
+                if isinstance(msg.get("attachments"), list)
+                else []
+            )
             chat_title = str(msg.get("chat_title") or "")
             from_user = str(msg.get("from_user") or "user")
             from_user_id = str(msg.get("from_user_id") or "")
@@ -429,26 +456,34 @@ class IMBridge:
             message_id = str(msg.get("message_id") or "").strip()
 
             if not text and not attachments:
-                self._log(f"[inbound] Empty text and no attachments, raw msg keys: {list(msg.keys())}, text field: {repr(msg.get('text'))}")
+                self._log(
+                    f"[inbound] Empty text and no attachments, raw msg keys: {list(msg.keys())}, text field: {repr(msg.get('text'))}"
+                )
                 continue
             if self._is_historical_inbound(msg):
                 self._log(
                     f"[inbound] Dropped historical message chat={chat_id} thread={thread_id} message_id={message_id}"
                 )
                 continue
-            if not self._should_process_inbound(chat_id=chat_id, thread_id=thread_id, message_id=message_id):
+            if not self._should_process_inbound(
+                chat_id=chat_id, thread_id=thread_id, message_id=message_id
+            ):
                 continue
             self._inbound_count += 1
             self._remember_mention_targets(chat_id, thread_id, msg)
 
             # Authorization check: unauthorized chats may only /subscribe.
-            self._log(f"[inbound] Checking auth for chat_id={chat_id} thread={thread_id}")
+            self._log(
+                f"[inbound] Checking auth for chat_id={chat_id} thread={thread_id}"
+            )
             if not self.key_manager.is_authorized(chat_id, thread_id):
                 parsed_pre = parse_message(text)
                 if parsed_pre.type == CommandType.SUBSCRIBE:
                     self._handle_subscribe(chat_id, chat_title, thread_id=thread_id)
                 else:
-                    self._log(f"[auth] Dropped message from unauthorized chat={chat_id} thread={thread_id}")
+                    self._log(
+                        f"[auth] Dropped message from unauthorized chat={chat_id} thread={thread_id}"
+                    )
                 continue
 
             # Parse command
@@ -476,7 +511,11 @@ class IMBridge:
             elif parsed.type == CommandType.HELP:
                 self._handle_help(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.SEND:
-                mention_user_ids = msg.get("mention_user_ids") if isinstance(msg.get("mention_user_ids"), list) else []
+                mention_user_ids = (
+                    msg.get("mention_user_ids")
+                    if isinstance(msg.get("mention_user_ids"), list)
+                    else []
+                )
                 self._handle_message(
                     chat_id,
                     parsed,
@@ -494,12 +533,20 @@ class IMBridge:
                 # (Telegram groups may contain unrelated /commands; we only reply when routed/private.)
                 if text.lstrip().startswith("/"):
                     if routed or chat_type in ("private",):
-                        self.adapter.send_message(chat_id, "❓ Unknown command. Use /help.", thread_id=thread_id)
+                        self.adapter.send_message(
+                            chat_id,
+                            "❓ Unknown command. Use /help.",
+                            thread_id=thread_id,
+                        )
                     continue
 
                 # When routed (@bot or DM), treat plain text as implicit /send.
                 if routed or chat_type in ("private",):
-                    mention_user_ids = msg.get("mention_user_ids") if isinstance(msg.get("mention_user_ids"), list) else []
+                    mention_user_ids = (
+                        msg.get("mention_user_ids")
+                        if isinstance(msg.get("mention_user_ids"), list)
+                        else []
+                    )
                     # Build a SEND-like ParsedCommand so _handle_message can extract leading explicit targets.
                     implicit_args = parsed.text.split() if parsed.text else []
                     implicit_send = ParsedCommand(
@@ -607,7 +654,18 @@ class IMBridge:
     def _stream_target_key(chat_id: str, thread_id: int) -> str:
         return f"{chat_id}:{int(thread_id or 0)}"
 
-    def _remember_mention_targets(self, chat_id: str, thread_id: int, msg: Dict[str, Any]) -> None:
+    def _trim_outbound_stream_state(self) -> None:
+        """Bound abandoned streams while preserving final-message fallback."""
+        while len(self._active_streams) > _MAX_ACTIVE_OUTBOUND_STREAMS:
+            self._active_streams.pop(next(iter(self._active_streams)), None)
+        while len(self._completed_stream_targets) > _MAX_COMPLETED_OUTBOUND_STREAMS:
+            self._completed_stream_targets.pop(
+                next(iter(self._completed_stream_targets)), None
+            )
+
+    def _remember_mention_targets(
+        self, chat_id: str, thread_id: int, msg: Dict[str, Any]
+    ) -> None:
         """Cache the latest explicit mention target for this chat/thread."""
         target_key = self._stream_target_key(chat_id, thread_id)
         raw_ids = msg.get("mention_user_ids")
@@ -654,7 +712,12 @@ class IMBridge:
             return None
         return list(cached)
 
-    def _forward_stream_event(self, event: Dict[str, Any]) -> None:
+    def _forward_stream_event(
+        self,
+        event: Dict[str, Any],
+        *,
+        actor_labels: Optional[Dict[str, str]] = None,
+    ) -> None:
         """Forward a chat.stream event to subscribed chats via adapter streaming methods.
 
         Two-level cache: _active_streams[stream_id][target_key] = handle,
@@ -679,8 +742,24 @@ class IMBridge:
         if not stream_id or not op:
             return
 
+        display_labels = actor_labels or self._actor_display_map()
+        by = str(event.get("by") or "").strip()
+        sender_title = str(data.get("sender_title") or "").strip()
+        display_by = sender_title or self._display_actor_token(by, display_labels)
+        display_to = [
+            self._display_actor_token(str(target), display_labels)
+            for target in (to if isinstance(to, list) else [])
+            if str(target or "").strip()
+        ]
+        stream_text = self.adapter.format_outbound(
+            display_by,
+            display_to,
+            text if text else "…",
+            False,
+        )
+
         # E3 fix: filter by to field — reuse _should_forward-compatible logic.
-        is_user_facing = not to or "user" in to
+        is_user_facing = _is_user_facing_targets(to)
 
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
         subscribed = self.subscribers.get_subscribed_targets(platform=platform)
@@ -697,22 +776,32 @@ class IMBridge:
 
             if op == "start":
                 try:
-                    handle = self.adapter.begin_stream(sub.chat_id, stream_id, text=text, thread_id=sub.thread_id)
+                    handle = self.adapter.begin_stream(
+                        sub.chat_id,
+                        stream_id,
+                        text=stream_text,
+                        thread_id=sub.thread_id,
+                    )
                 except Exception:
-                    self._log(f"[stream] begin_stream exception for stream={stream_id} target={target_key}, degrading to plain text")
+                    self._log(
+                        f"[stream] begin_stream exception for stream={stream_id} target={target_key}, degrading to plain text"
+                    )
                     handle = None
                 if handle is not None:
                     targets = self._active_streams.setdefault(stream_id, {})
                     targets[target_key] = handle
+                    self._trim_outbound_stream_state()
             elif op == "update":
                 targets = self._active_streams.get(stream_id)
                 if targets is not None:
                     handle = targets.get(target_key)
                     if handle is not None:
                         try:
-                            self.adapter.update_stream(handle, text=text, seq=seq)
+                            self.adapter.update_stream(handle, text=stream_text, seq=seq)
                         except Exception:
-                            self._log(f"[stream] update_stream exception for stream={stream_id} target={target_key} seq={seq}, frame dropped")
+                            self._log(
+                                f"[stream] update_stream exception for stream={stream_id} target={target_key} seq={seq}, frame dropped"
+                            )
             elif op == "end":
                 targets = self._active_streams.get(stream_id)
                 if targets is not None:
@@ -720,17 +809,26 @@ class IMBridge:
                     if handle is not None:
                         end_ok = False
                         try:
-                            end_ok = bool(self.adapter.end_stream(handle, text=text))
+                            end_ok = bool(
+                                self.adapter.end_stream(handle, text=stream_text)
+                            )
                         except Exception:
-                            self._log(f"[stream] end_stream exception for stream={stream_id} target={target_key}")
+                            self._log(
+                                f"[stream] end_stream exception for stream={stream_id} target={target_key}"
+                            )
                         if end_ok and text:
-                            completed = self._completed_stream_targets.setdefault(stream_id, set())
+                            completed = self._completed_stream_targets.setdefault(
+                                stream_id, set()
+                            )
                             completed.add(target_key)
+                            self._trim_outbound_stream_state()
                         targets.pop(target_key, None)
                         if not targets:
                             self._active_streams.pop(stream_id, None)
 
-    def _forward_event(self, event: Dict[str, Any], *, actor_labels: Optional[Dict[str, str]] = None) -> None:
+    def _forward_event(
+        self, event: Dict[str, Any], *, actor_labels: Optional[Dict[str, str]] = None
+    ) -> None:
         """Forward a ledger event to subscribed chats."""
         kind = event.get("kind", "")
         by = event.get("by", "")
@@ -742,7 +840,7 @@ class IMBridge:
 
         # Route streaming events to dedicated handler
         if kind == "chat.stream":
-            self._forward_stream_event(event)
+            self._forward_stream_event(event, actor_labels=actor_labels)
             return
 
         # Determine if we should forward
@@ -754,7 +852,7 @@ class IMBridge:
 
         # Get message details
         data = event.get("data", {})
-        text = data.get("text", "")
+        text = data.get("text") or (data.get("message") if is_system else "")
         insight = data.get("insight") if is_chat else None
         projected_text = append_peer_perspective(str(text or ""), insight)
         perspective_only = append_peer_perspective("", insight)
@@ -782,7 +880,10 @@ class IMBridge:
 
         # Determine if this event is user-facing (to:user or broadcast).
         # Agent-to-agent messages should NOT cancel typing indicators.
-        is_user_facing = not to or "user" in to
+        is_user_facing = _is_user_facing_targets(to)
+        reply_to = (
+            str(data.get("reply_to") or "").strip() if isinstance(data, dict) else ""
+        )
         display_labels = actor_labels or self._actor_display_map()
 
         for sub in subscribed:
@@ -792,7 +893,9 @@ class IMBridge:
                 continue
 
             target_key = self._stream_target_key(sub.chat_id, sub.thread_id)
-            skip_text_due_to_stream = bool(_streamed_targets and target_key in _streamed_targets)
+            skip_text_due_to_stream = bool(
+                _streamed_targets and target_key in _streamed_targets
+            )
 
             verbose = bool(sub.verbose)
 
@@ -808,12 +911,16 @@ class IMBridge:
                 if str(t or "").strip()
             ]
             formatted = (
-                self.adapter.format_outbound(display_by, display_to, projected_text, is_system)
+                self.adapter.format_outbound(
+                    display_by, display_to, projected_text, is_system
+                )
                 if projected_text
                 else ""
             )
             streamed_perspective = (
-                self.adapter.format_outbound(display_by, display_to, perspective_only, is_system)
+                self.adapter.format_outbound(
+                    display_by, display_to, perspective_only, is_system
+                )
                 if skip_text_due_to_stream and perspective_only
                 else ""
             )
@@ -824,10 +931,16 @@ class IMBridge:
             )
 
             # Try file delivery first (if any attachments)
-            sent_any_file = False
-            delivered_user_facing = False
-            file_cfg = (self.group.doc.get("im") or {}) if isinstance(self.group.doc.get("im"), dict) else {}
-            files_cfg = file_cfg.get("files") if isinstance(file_cfg.get("files"), dict) else {}
+            text_delivered = skip_text_due_to_stream
+            delivered_user_facing = bool(skip_text_due_to_stream and is_user_facing)
+            file_cfg = (
+                (self.group.doc.get("im") or {})
+                if isinstance(self.group.doc.get("im"), dict)
+                else {}
+            )
+            files_cfg = (
+                file_cfg.get("files") if isinstance(file_cfg.get("files"), dict) else {}
+            )
             files_enabled = coerce_bool(files_cfg.get("enabled"), default=True)
             platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
             default_max_mb = 20 if platform in ("telegram", "slack") else 10
@@ -838,7 +951,7 @@ class IMBridge:
             max_bytes = max(0, max_mb) * 1024 * 1024
 
             if files_enabled and isinstance(attachments, list):
-                for i, a in enumerate(attachments):
+                for a in attachments:
                     if not isinstance(a, dict):
                         continue
                     rel_path = str(a.get("path") or "").strip()
@@ -846,7 +959,9 @@ class IMBridge:
                         continue
                     # Only handle blobs (state/blobs/*).
                     try:
-                        abs_path = resolve_blob_attachment_path(self.group, rel_path=rel_path)
+                        abs_path = resolve_blob_attachment_path(
+                            self.group, rel_path=rel_path
+                        )
                     except Exception:
                         continue
                     try:
@@ -857,7 +972,7 @@ class IMBridge:
                         # Skip oversized files (no fallback).
                         continue
                     title = str(a.get("title") or abs_path.name or "file")
-                    cap = formatted if (i == 0 and formatted and not skip_text_due_to_stream) else ""
+                    cap = formatted if formatted and not text_delivered else ""
                     ok = False
                     try:
                         ok = bool(
@@ -873,14 +988,20 @@ class IMBridge:
                     except Exception:
                         ok = False
                     if ok:
-                        sent_any_file = True
+                        if cap:
+                            text_delivered = True
                         if is_user_facing:
                             delivered_user_facing = True
 
-            # If we didn't send any files, or if there's text with no files, send message.
-            if formatted and not sent_any_file and not skip_text_due_to_stream:
+            # Deliver the body once: as the first successful file caption, or as
+            # a standalone message when every candidate file/caption failed.
+            if formatted and not text_delivered:
                 if mention_user_ids is None:
-                    sent_msg = bool(self.adapter.send_message(sub.chat_id, formatted, thread_id=sub.thread_id))
+                    sent_msg = bool(
+                        self.adapter.send_message(
+                            sub.chat_id, formatted, thread_id=sub.thread_id
+                        )
+                    )
                 else:
                     sent_msg = bool(
                         self.adapter.send_message(
@@ -890,6 +1011,8 @@ class IMBridge:
                             mention_user_ids=mention_user_ids,
                         )
                     )
+                if sent_msg:
+                    text_delivered = True
                 if sent_msg and is_user_facing:
                     delivered_user_facing = True
 
@@ -898,7 +1021,9 @@ class IMBridge:
             if streamed_perspective:
                 if mention_user_ids is None:
                     sent_perspective = bool(
-                        self.adapter.send_message(sub.chat_id, streamed_perspective, thread_id=sub.thread_id)
+                        self.adapter.send_message(
+                            sub.chat_id, streamed_perspective, thread_id=sub.thread_id
+                        )
                     )
                 else:
                     sent_perspective = bool(
@@ -915,14 +1040,31 @@ class IMBridge:
             # Remove typing indicator only after outbound delivery for this event
             # is actually completed for this chat.
             if delivered_user_facing:
-                self._remove_typing_indicator(sub.chat_id)
+                self._remove_typing_indicator(
+                    sub.chat_id, sub.thread_id, reply_to=reply_to
+                )
 
     def _should_forward(self, event: Dict[str, Any], verbose: bool) -> bool:
         """Determine if event should be forwarded based on verbose setting."""
         kind = event.get("kind", "")
 
-        # System notifications always forwarded
+        # System notifications are fail-closed unless their producer explicitly
+        # opted into external delivery. Actor-targeted notices stay internal.
         if kind == "system.notify":
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            if str(data.get("im_visibility") or "internal").strip().lower() != "public":
+                return False
+            if any(
+                str(data.get(key) or "").strip()
+                for key in ("target_actor_id", "actor_id")
+            ):
+                return False
+            targets = data.get("to")
+            if isinstance(targets, list) and targets:
+                return any(
+                    str(target or "").strip() in {"user", "@user", "@all"}
+                    for target in targets
+                )
             return True
 
         # Chat messages
@@ -936,7 +1078,7 @@ class IMBridge:
                 return True
 
             # Non-verbose: only forward to:user messages
-            if "user" in to or not to:
+            if _is_user_facing_targets(to):
                 return True
 
             return False
@@ -947,7 +1089,9 @@ class IMBridge:
     # Command Handlers
     # =========================================================================
 
-    def _handle_subscribe(self, chat_id: str, chat_title: str, thread_id: int = 0) -> None:
+    def _handle_subscribe(
+        self, chat_id: str, chat_title: str, thread_id: int = 0
+    ) -> None:
         """Handle /subscribe command."""
         # Reload auth state on-demand as subscribe semantics depend on current
         # authorization truth (bind/revoke can happen in daemon/web concurrently).
@@ -970,13 +1114,20 @@ class IMBridge:
                 f"Key expires in 10 minutes.",
                 thread_id=thread_id,
             )
-            self._log(f"[subscribe] Pending auth key generated for chat={chat_id} thread={thread_id}")
+            self._log(
+                f"[subscribe] Pending auth key generated for chat={chat_id} thread={thread_id}"
+            )
             return
 
         was_subscribed = self.subscribers.is_subscribed(chat_id, thread_id=thread_id)
-        sub = self.subscribers.subscribe(chat_id, chat_title, thread_id=thread_id, platform=platform)
+        sub = self.subscribers.subscribe(
+            chat_id, chat_title, thread_id=thread_id, platform=platform
+        )
         verbose_str = "on" if sub.verbose else "off"
-        platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
+        platform = (
+            str(getattr(self.adapter, "platform", "") or "").strip().lower()
+            or "telegram"
+        )
         if platform == "telegram":
             tip = "Tip: in groups @mention the bot, and in DM plain text is sent to foreman by default."
         elif platform in ("slack", "discord"):
@@ -986,15 +1137,14 @@ class IMBridge:
         target_label = self.group.doc.get("title", self.group.group_id)
         group_id = self.group.group_id
         if was_subscribed:
-            headline = f"✅ Already authorized for this chat ({target_label} [{group_id}])"
+            headline = (
+                f"✅ Already authorized for this chat ({target_label} [{group_id}])"
+            )
         else:
             headline = f"✅ Subscribed to {target_label} [{group_id}]"
         self.adapter.send_message(
             chat_id,
-            f"{headline}\n"
-            f"Verbose mode: {verbose_str}\n"
-            f"{tip}\n"
-            f"Use /help for commands.",
+            f"{headline}\nVerbose mode: {verbose_str}\n{tip}\nUse /help for commands.",
             thread_id=thread_id,
         )
         self._log(f"[subscribe] chat={chat_id} thread={thread_id} title={chat_title}")
@@ -1007,27 +1157,47 @@ class IMBridge:
         was_subscribed = self.subscribers.unsubscribe(chat_id, thread_id=thread_id)
         self.key_manager.revoke(chat_id, thread_id)
         if was_subscribed:
-            self.adapter.send_message(chat_id, "👋 Unsubscribed and authorization revoked. Use /subscribe to re-authenticate.", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id,
+                "👋 Unsubscribed and authorization revoked. Use /subscribe to re-authenticate.",
+                thread_id=thread_id,
+            )
         else:
-            self.adapter.send_message(chat_id, "ℹ️ You were not subscribed. Authorization revoked.", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id,
+                "ℹ️ You were not subscribed. Authorization revoked.",
+                thread_id=thread_id,
+            )
         self._log(f"[unsubscribe] chat={chat_id} thread={thread_id} (auth revoked)")
 
     def _handle_verbose(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /verbose command (toggle)."""
         new_value = self.subscribers.toggle_verbose(chat_id, thread_id=thread_id)
         if new_value is None:
-            self.adapter.send_message(chat_id, "ℹ️ Please /subscribe first.", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id, "ℹ️ Please /subscribe first.", thread_id=thread_id
+            )
         else:
-            status = "ON - showing all messages" if new_value else "OFF - showing only messages to you"
-            self.adapter.send_message(chat_id, f"👁 Verbose mode: {status}", thread_id=thread_id)
+            status = (
+                "ON - showing all messages"
+                if new_value
+                else "OFF - showing only messages to you"
+            )
+            self.adapter.send_message(
+                chat_id, f"👁 Verbose mode: {status}", thread_id=thread_id
+            )
         self._log(f"[verbose] chat={chat_id} thread={thread_id} new_value={new_value}")
 
     def _handle_status(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /status command."""
         # Get group info
-        resp = self._daemon({"op": "group_show", "args": {"group_id": self.group.group_id}})
+        resp = self._daemon(
+            {"op": "group_show", "args": {"group_id": self.group.group_id}}
+        )
         if not resp.get("ok"):
-            self.adapter.send_message(chat_id, "❌ Failed to get status", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id, "❌ Failed to get status", thread_id=thread_id
+            )
             return
 
         group_data = resp.get("result", {}).get("group", {})
@@ -1036,7 +1206,9 @@ class IMBridge:
         running = resp.get("result", {}).get("running", False)
 
         # Get actors
-        actors_resp = self._daemon({"op": "actor_list", "args": {"group_id": self.group.group_id}})
+        actors_resp = self._daemon(
+            {"op": "actor_list", "args": {"group_id": self.group.group_id}}
+        )
         actors = []
         if actors_resp.get("ok"):
             actors = actors_resp.get("result", {}).get("actors", [])
@@ -1057,14 +1229,20 @@ class IMBridge:
             "capabilities": capabilities,
         }
 
-        status_text = format_status(group_title, group_state, running, actors, im_status=im_status)
+        status_text = format_status(
+            group_title, group_state, running, actors, im_status=im_status
+        )
         self.adapter.send_message(chat_id, status_text, thread_id=thread_id)
 
     def _handle_context(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /context command."""
-        resp = self._daemon({"op": "context_get", "args": {"group_id": self.group.group_id}})
+        resp = self._daemon(
+            {"op": "context_get", "args": {"group_id": self.group.group_id}}
+        )
         if not resp.get("ok"):
-            self.adapter.send_message(chat_id, "❌ Failed to get context", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id, "❌ Failed to get context", thread_id=thread_id
+            )
             return
 
         context = resp.get("result", {})
@@ -1073,68 +1251,116 @@ class IMBridge:
 
     def _handle_pause(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /pause command."""
-        resp = self._daemon({
-            "op": "group_set_state",
-            "args": {"group_id": self.group.group_id, "state": "paused", "by": "user"},
-        })
+        resp = self._daemon(
+            {
+                "op": "group_set_state",
+                "args": {
+                    "group_id": self.group.group_id,
+                    "state": "paused",
+                    "by": "user",
+                },
+            }
+        )
         if resp.get("ok"):
-            self.adapter.send_message(chat_id, "⏸ Group paused. Message delivery stopped.", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id,
+                "⏸ Group paused. Message delivery stopped.",
+                thread_id=thread_id,
+            )
         else:
             error = resp.get("error", {}).get("message", "unknown error")
-            self.adapter.send_message(chat_id, f"❌ Failed to pause: {error}", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id, f"❌ Failed to pause: {error}", thread_id=thread_id
+            )
         self._log(f"[pause] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
     def _handle_resume(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /resume command."""
-        resp = self._daemon({
-            "op": "group_set_state",
-            "args": {"group_id": self.group.group_id, "state": "active", "by": "user"},
-        })
+        resp = self._daemon(
+            {
+                "op": "group_set_state",
+                "args": {
+                    "group_id": self.group.group_id,
+                    "state": "active",
+                    "by": "user",
+                },
+            }
+        )
         if resp.get("ok"):
-            self.adapter.send_message(chat_id, "▶️ Group resumed. Message delivery active.", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id,
+                "▶️ Group resumed. Message delivery active.",
+                thread_id=thread_id,
+            )
         else:
             error = resp.get("error", {}).get("message", "unknown error")
-            self.adapter.send_message(chat_id, f"❌ Failed to resume: {error}", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id, f"❌ Failed to resume: {error}", thread_id=thread_id
+            )
         self._log(f"[resume] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
     def _handle_launch(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /launch command."""
-        resp = self._daemon({
-            "op": "group_start",
-            "args": {"group_id": self.group.group_id, "by": "user"},
-        })
+        resp = self._daemon(
+            {
+                "op": "group_start",
+                "args": {"group_id": self.group.group_id, "by": "user"},
+            }
+        )
         if resp.get("ok"):
-            self.adapter.send_message(chat_id, "🚀 Launching all agents...", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id, "🚀 Launching all agents...", thread_id=thread_id
+            )
         else:
             error = resp.get("error", {}).get("message", "unknown error")
-            self.adapter.send_message(chat_id, f"❌ Failed to launch: {error}", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id, f"❌ Failed to launch: {error}", thread_id=thread_id
+            )
         self._log(f"[launch] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
     def _handle_quit(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /quit command."""
-        resp = self._daemon({
-            "op": "group_stop",
-            "args": {"group_id": self.group.group_id, "by": "user"},
-        })
+        resp = self._daemon(
+            {
+                "op": "group_stop",
+                "args": {"group_id": self.group.group_id, "by": "user"},
+            }
+        )
         if resp.get("ok"):
-            self.adapter.send_message(chat_id, "🛑 Stopping all agents...", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id, "🛑 Stopping all agents...", thread_id=thread_id
+            )
         else:
             error = resp.get("error", {}).get("message", "unknown error")
-            self.adapter.send_message(chat_id, f"❌ Failed to quit: {error}", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id, f"❌ Failed to quit: {error}", thread_id=thread_id
+            )
         self._log(f"[quit] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
     def _handle_help(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /help command."""
-        platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
-        self.adapter.send_message(chat_id, format_help(platform=platform), thread_id=thread_id)
+        platform = (
+            str(getattr(self.adapter, "platform", "") or "").strip().lower()
+            or "telegram"
+        )
+        self.adapter.send_message(
+            chat_id, format_help(platform=platform), thread_id=thread_id
+        )
 
     def _refresh_typing_actions(self) -> None:
         """Refresh active platform processing indicators."""
         self._processing_lifecycle.refresh()
 
-    def _remove_typing_indicator(self, chat_id: str) -> None:
+    def _remove_typing_indicator(
+        self, chat_id: str, thread_id: int = 0, *, reply_to: str = ""
+    ) -> None:
         """Complete the processing indicator for a chat, if any."""
-        self._processing_lifecycle.complete(chat_id, IMProcessingOutcome.SUCCESS)
+        self._processing_lifecycle.complete(
+            chat_id,
+            IMProcessingOutcome.SUCCESS,
+            thread_id=thread_id,
+            reply_to=reply_to,
+        )
 
     def _handle_message(
         self,
@@ -1153,8 +1379,14 @@ class IMBridge:
         # Reload group from disk to reflect latest enabled/actor state.
         group = load_group(self.group.group_id)
         if group is None:
-            self.adapter.send_message(chat_id, "❌ Failed to send: group not found (bridge stopped).", thread_id=thread_id)
-            self._log(f"[message] chat={chat_id} thread={thread_id} error=group_not_found (stopping bridge)")
+            self.adapter.send_message(
+                chat_id,
+                "❌ Failed to send: group not found (bridge stopped).",
+                thread_id=thread_id,
+            )
+            self._log(
+                f"[message] chat={chat_id} thread={thread_id} error=group_not_found (stopping bridge)"
+            )
             self.stop()
             return
 
@@ -1162,7 +1394,11 @@ class IMBridge:
         to: List[str] = []
         args = list(parsed.args or [])
         # Known-recipient set for validating @targets in args.
-        _actor_ids = {str(a.get("id") or "").strip() for a in list_actors(group) if isinstance(a, dict)}
+        _actor_ids = {
+            str(a.get("id") or "").strip()
+            for a in list_actors(group)
+            if isinstance(a, dict)
+        }
         _valid_selectors = {"@all", "@peers", "@foreman", "user"}
         while args:
             head = str(args[0] or "").strip()
@@ -1174,7 +1410,9 @@ class IMBridge:
                 # Unknown @tokens (e.g. IM bot mentions like @BotName) stop consumption
                 # so they fall through to message text instead of failing as invalid recipients.
                 tokens = [t.strip() for t in head.split(",") if t.strip()]
-                if all(t in _valid_selectors or t.lstrip("@") in _actor_ids for t in tokens):
+                if all(
+                    t in _valid_selectors or t.lstrip("@") in _actor_ids for t in tokens
+                ):
                     args.pop(0)
                     to.extend(tokens)
                     continue
@@ -1195,7 +1433,9 @@ class IMBridge:
         try:
             canonical_to = resolve_recipient_tokens(group, to)
         except Exception as e:
-            self.adapter.send_message(chat_id, f"❌ Invalid recipient: {e}", thread_id=thread_id)
+            self.adapter.send_message(
+                chat_id, f"❌ Invalid recipient: {e}", thread_id=thread_id
+            )
             return
         if to and not canonical_to:
             self.adapter.send_message(
@@ -1246,16 +1486,22 @@ class IMBridge:
                     f"⚠️ No agents match the recipient(s): {wanted}. Run /status to check available agents.",
                     thread_id=thread_id,
                 )
-                self._log(f"[message] chat={chat_id} thread={thread_id} skipped (no targets) to={canonical_to}")
+                self._log(
+                    f"[message] chat={chat_id} thread={thread_id} skipped (no targets) to={canonical_to}"
+                )
                 return
-            self._log(f"[message] chat={chat_id} thread={thread_id} auto-wake candidates: {disabled_matches}")
+            self._log(
+                f"[message] chat={chat_id} thread={thread_id} auto-wake candidates: {disabled_matches}"
+            )
 
         prepared = prepare_inbound_content(
             group=group,
             adapter=self.adapter,
             text=msg_text,
             attachments=attachments,
-            send_warning=lambda warning: self.adapter.send_message(chat_id, warning, thread_id=thread_id),
+            send_warning=lambda warning: self.adapter.send_message(
+                chat_id, warning, thread_id=thread_id
+            ),
         )
         msg_text = prepared.text
         stored_attachments = prepared.attachments
@@ -1264,37 +1510,56 @@ class IMBridge:
             # Nothing left to send (all attachments were ignored / failed).
             return
 
-        cleaned_mention_user_ids = [str(item).strip() for item in (mention_user_ids or []) if str(item).strip()]
+        cleaned_mention_user_ids = [
+            str(item).strip() for item in (mention_user_ids or []) if str(item).strip()
+        ]
 
-        resp = self._daemon({
-            "op": "send",
-            "args": {
-                "group_id": self.group.group_id,
-                "text": msg_text,
-                "by": "user",
-                "to": canonical_to,
-                "path": "",
-                "attachments": stored_attachments,
-                "source_platform": str(getattr(self.adapter, "platform", "") or "").strip() or None,
-                "source_user_name": from_user or None,
-                "source_user_id": from_user_id or None,
-                "mention_user_ids": cleaned_mention_user_ids or None,
-            },
-        })
+        resp = self._daemon(
+            {
+                "op": "send",
+                "args": {
+                    "group_id": self.group.group_id,
+                    "text": msg_text,
+                    "by": "user",
+                    "to": canonical_to,
+                    "path": "",
+                    "attachments": stored_attachments,
+                    "source_platform": str(
+                        getattr(self.adapter, "platform", "") or ""
+                    ).strip()
+                    or None,
+                    "source_user_name": from_user or None,
+                    "source_user_id": from_user_id or None,
+                    "mention_user_ids": cleaned_mention_user_ids or None,
+                },
+            }
+        )
 
         if not resp.get("ok"):
             err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
             code = str(err.get("code") or "").strip()
             message = str(err.get("message") or "unknown error")
             suffix = " (bridge stopped)" if code == "group_not_found" else ""
-            self.adapter.send_message(chat_id, f"❌ Failed to send: {message}{suffix}", thread_id=thread_id)
-            self._log(f"[message] chat={chat_id} thread={thread_id} error={code}:{message}")
+            self.adapter.send_message(
+                chat_id, f"❌ Failed to send: {message}{suffix}", thread_id=thread_id
+            )
+            self._log(
+                f"[message] chat={chat_id} thread={thread_id} error={code}:{message}"
+            )
             if code == "group_not_found":
                 # Fatal misconfig: prevent spamming and competing bot pollers.
                 self.stop()
         else:
             # Add typing indicator to show that the message is being processed.
-            self._processing_lifecycle.start(chat_id=chat_id, thread_id=thread_id, message_id=message_id)
+            result = resp.get("result") if isinstance(resp.get("result"), dict) else {}
+            event = result.get("event") if isinstance(result.get("event"), dict) else {}
+            source_event_id = str(event.get("id") or "").strip()
+            self._processing_lifecycle.start(
+                chat_id=chat_id,
+                thread_id=thread_id,
+                message_id=message_id,
+                source_event_id=source_event_id,
+            )
             self._log(
                 f"[message] chat={chat_id} thread={thread_id} from={from_user}({from_user_id}) to={canonical_to} len={len(msg_text)} files={len(stored_attachments)}"
             )
@@ -1477,12 +1742,16 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         ).strip()
     else:
         # Telegram/Discord: single token
-        token_env_raw = str(im_config.get("token_env") or im_config.get("bot_token_env") or "").strip()
+        token_env_raw = str(
+            im_config.get("token_env") or im_config.get("bot_token_env") or ""
+        ).strip()
         token_env = token_env_raw if _is_env_var_name(token_env_raw) else ""
         if token_env:
             bot_token = os.environ.get(token_env, "").strip()
         if not bot_token:
-            bot_token = str(im_config.get("token") or im_config.get("bot_token") or "").strip()
+            bot_token = str(
+                im_config.get("token") or im_config.get("bot_token") or ""
+            ).strip()
         if not bot_token and token_env_raw and not token_env:
             # Common misconfig: raw token pasted into *_env field.
             bot_token = token_env_raw
@@ -1516,16 +1785,24 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         lock_identity = f"{platform.lower()}|token={bot_token or ''}"
     token_material = lock_identity
     token_fingerprint = hashlib.sha256(token_material.encode("utf-8")).hexdigest()[:12]
-    token_lock_path = ensure_home() / "locks" / f"im_bridge_{platform.lower()}_{token_fingerprint}.lock"
+    token_lock_path = (
+        ensure_home()
+        / "locks"
+        / f"im_bridge_{platform.lower()}_{token_fingerprint}.lock"
+    )
     token_lock_file = _acquire_singleton_lock(token_lock_path)
     if token_lock_file is None:
         other_pid = ""
         try:
-            other_pid = token_lock_path.read_text(encoding="utf-8").strip().splitlines()[0]
+            other_pid = (
+                token_lock_path.read_text(encoding="utf-8").strip().splitlines()[0]
+            )
         except Exception:
             other_pid = ""
         pid_hint = f" (pid={other_pid})" if other_pid else ""
-        print(f"[error] Another {platform} bridge is already running for this credential set{pid_hint}")
+        print(
+            f"[error] Another {platform} bridge is already running for this credential set{pid_hint}"
+        )
         print("Stop it before starting a new bridge, or use different credentials.")
         sys.exit(1)
 
@@ -1547,20 +1824,28 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
     if platform.lower() == "telegram":
         adapter = TelegramAdapter(token=bot_token, log_path=log_path)
     elif platform.lower() == "slack":
-        adapter = SlackAdapter(bot_token=bot_token, app_token=app_token, log_path=log_path)
+        adapter = SlackAdapter(
+            bot_token=bot_token, app_token=app_token, log_path=log_path
+        )
     elif platform.lower() == "discord":
         adapter = DiscordAdapter(token=bot_token, log_path=log_path)
     elif platform.lower() == "feishu":
         from .adapters.feishu import FeishuAdapter
+
         adapter = FeishuAdapter(
             app_id=feishu_app_id,
             app_secret=feishu_app_secret,
             domain=str(im_config.get("feishu_domain") or "https://open.feishu.cn"),
-            bot_name=str(im_config.get("feishu_bot_name") or os.environ.get("FEISHU_BOT_NAME") or "cccc"),
+            bot_name=str(
+                im_config.get("feishu_bot_name")
+                or os.environ.get("FEISHU_BOT_NAME")
+                or "cccc"
+            ),
             log_path=log_path,
         )
     elif platform.lower() == "dingtalk":
         from .adapters.dingtalk import DingTalkAdapter
+
         adapter = DingTalkAdapter(
             app_key=dingtalk_app_key,
             app_secret=dingtalk_app_secret,
@@ -1570,6 +1855,7 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         )
     elif platform.lower() == "wecom":
         from .adapters.wecom import WecomAdapter
+
         adapter = WecomAdapter(
             bot_id=wecom_bot_id,
             secret=wecom_secret,
@@ -1578,6 +1864,7 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         )
     elif platform.lower() == "weixin":
         from .adapters.weixin import WeixinAdapter
+
         adapter = WeixinAdapter(
             account_id=weixin_account_id,
             log_path=log_path,
@@ -1643,14 +1930,20 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python -m cccc.ports.im.bridge <group_id> [platform]")
-        print("  platform: telegram (default), slack, discord, feishu (Feishu/Lark), dingtalk, wecom, weixin")
+        print(
+            "  platform: telegram (default), slack, discord, feishu (Feishu/Lark), dingtalk, wecom, weixin"
+        )
         print("")
         print("Environment variables:")
         print("  Telegram: TELEGRAM_BOT_TOKEN")
         print("  Slack:    SLACK_BOT_TOKEN, SLACK_APP_TOKEN (optional)")
         print("  Discord:  DISCORD_BOT_TOKEN")
-        print("  Feishu/Lark: FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_DOMAIN (optional: feishu|lark|https://...)")
-        print("  DingTalk: DINGTALK_APP_KEY, DINGTALK_APP_SECRET, DINGTALK_ROBOT_CODE (optional)")
+        print(
+            "  Feishu/Lark: FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_DOMAIN (optional: feishu|lark|https://...)"
+        )
+        print(
+            "  DingTalk: DINGTALK_APP_KEY, DINGTALK_APP_SECRET, DINGTALK_ROBOT_CODE (optional)"
+        )
         print("  WeCom:    WECOM_BOT_ID, WECOM_SECRET")
         print("  Weixin:   CCCC_IM_WEIXIN_ACCOUNT_ID (optional)")
         sys.exit(1)

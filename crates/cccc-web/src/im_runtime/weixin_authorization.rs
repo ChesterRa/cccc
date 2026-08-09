@@ -57,23 +57,51 @@ pub(super) fn revoke_login_authorization(
     .map_err(|error| error.to_string())
 }
 
+pub(super) fn login_authorization_subscription(
+    home: &HomeLayout,
+    group_id: &str,
+    user_id: &str,
+) -> Result<Option<bool>, String> {
+    let store = GroupStore::new(home.clone()).map_err(|error| error.to_string())?;
+    let state = cccc_core::integration_state::group_get(&store, group_id, "im_bridge")
+        .map_err(|error| error.to_string())?;
+    let matching = match state.get("authorized") {
+        Some(Value::Array(items)) => items.iter().find(|item| matches_user(item, user_id)),
+        Some(Value::Object(items)) => items.values().find(|item| matches_user(item, user_id)),
+        _ => None,
+    };
+    Ok(matching.map(|item| item["subscribed"].as_bool().unwrap_or(true)))
+}
+
 fn upsert_authorized(state: &mut Map<String, Value>, user_id: &str, entry: Value) {
     let authorized = state
         .entry("authorized".to_owned())
         .or_insert_with(|| json!([]));
     match authorized {
         Value::Array(items) => {
-            if !items.iter().any(|item| matches_user(item, user_id)) {
+            if let Some(item) = items.iter_mut().find(|item| matches_user(item, user_id)) {
+                activate(item);
+            } else {
                 items.push(entry);
             }
         }
         Value::Object(items) => {
-            if !items.values().any(|item| matches_user(item, user_id)) {
+            if let Some(item) = items.values_mut().find(|item| matches_user(item, user_id)) {
+                activate(item);
+            } else {
                 items.insert(format!("{PLATFORM}:{user_id}"), entry);
             }
         }
         _ => *authorized = Value::Array(vec![entry]),
     }
+}
+
+fn activate(item: &mut Value) {
+    let Some(item) = item.as_object_mut() else {
+        return;
+    };
+    item.insert("paused".into(), Value::Bool(false));
+    item.insert("subscribed".into(), Value::Bool(true));
 }
 
 fn remove_matching(value: Option<&mut Value>, user_id: &str, auto_only: bool) {
@@ -133,6 +161,30 @@ mod tests {
         assert_eq!(state["authorized"].as_array().expect("authorized").len(), 1);
         assert_eq!(state["authorized"][0]["authorization_source"], SOURCE);
         assert!(state["pending"].as_array().expect("pending").is_empty());
+    }
+
+    #[test]
+    fn qr_login_reactivates_an_existing_authorization() {
+        let (_temp, home, group_id) = setup();
+        let store = GroupStore::new(home.clone()).expect("store");
+        cccc_core::integration_state::group_update(&store, &group_id, "im_bridge", |value| {
+            *value = json!({"authorized":[{
+                "chat_id":"wx-user","platform":"weixin","paused":true,
+                "subscribed":false,"verbose":true,"authorization_source":"weixin_login"
+            }]});
+            Ok(())
+        })
+        .expect("state");
+
+        ensure_login_authorized(&home, &group_id, "wx-user").expect("authorize");
+
+        let state =
+            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
+        let authorized = state["authorized"].as_array().expect("authorized");
+        assert_eq!(authorized.len(), 1);
+        assert_eq!(authorized[0]["paused"], false);
+        assert_eq!(authorized[0]["subscribed"], true);
+        assert_eq!(authorized[0]["verbose"], true);
     }
 
     #[test]

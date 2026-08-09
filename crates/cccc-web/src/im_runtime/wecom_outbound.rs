@@ -1,3 +1,5 @@
+use super::outbound_attachment::safe_filename;
+use super::outbound_chunks::split_message;
 use super::{outbound_text, wecom_client::WecomClient};
 use cccc_contracts::Event;
 use cccc_core::HomeLayout;
@@ -30,21 +32,26 @@ impl WecomOutbound {
     pub(super) async fn send(&self, targets: Vec<String>, event: Event) {
         if event.kind == "chat.stream" {
             self.send_stream(targets, &event).await;
-        } else if event.kind == "chat.message" {
+        } else if matches!(event.kind.as_str(), "chat.message" | "system.notify") {
             self.send_message(targets, &event).await;
         }
     }
 
     async fn send_stream(&self, targets: Vec<String>, event: &Event) {
-        if !user_facing(event) {
-            return;
-        }
         let op = string_data(event, "op");
         let stream_id = string_data(event, "stream_id");
         if stream_id.is_empty() || !matches!(op.as_str(), "start" | "update" | "end") {
             return;
         }
-        let text = truncate_utf8(&string_data(event, "text"), 20_480);
+        let raw_text = raw_string_data(event, "text");
+        let body = outbound_text(event, true).unwrap_or_default();
+        let stream_is_complete = !raw_text.is_empty() && body.len() <= 20_480;
+        let preview_body = if raw_text.is_empty() {
+            format!("{body}…")
+        } else {
+            body
+        };
+        let text = truncate_utf8(&preview_body, 20_480);
         for chat_id in targets {
             let key = (stream_id.clone(), chat_id.clone());
             let req_id = if op == "start" {
@@ -91,7 +98,7 @@ impl WecomOutbound {
                         .expect("WeCom stream registry poisoned")
                         .remove(&key);
                 }
-            } else if finish && !text.is_empty() {
+            } else if finish && stream_is_complete && !text.is_empty() {
                 self.mark_completed(key.clone());
             }
             if finish {
@@ -104,10 +111,7 @@ impl WecomOutbound {
     }
 
     async fn send_message(&self, targets: Vec<String>, event: &Event) {
-        if !user_facing(event) {
-            return;
-        }
-        let body = ordinary_message_payload(event);
+        let bodies = ordinary_message_payloads(event);
         let attachments = event
             .data
             .get("attachments")
@@ -137,7 +141,7 @@ impl WecomOutbound {
             let title = attachment
                 .get("title")
                 .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
+                .and_then(safe_filename)
                 .or_else(|| path.file_name().and_then(|value| value.to_str()))
                 .unwrap_or("file");
             let mime = attachment
@@ -175,7 +179,7 @@ impl WecomOutbound {
             }
         }
 
-        let Some(body) = body else {
+        if bodies.is_empty() {
             if !stream_id.is_empty() {
                 let mut completed = self
                     .completed
@@ -186,7 +190,7 @@ impl WecomOutbound {
                 }
             }
             return;
-        };
+        }
         for chat_id in targets {
             let streamed = !stream_id.is_empty()
                 && self
@@ -197,9 +201,11 @@ impl WecomOutbound {
             if streamed {
                 continue;
             }
-            self.throttle(&chat_id).await;
-            if let Err(error) = self.send_body(&chat_id, body.clone()).await {
-                tracing::warn!(%error, %chat_id, "failed to send WeCom message");
+            for body in &bodies {
+                self.throttle(&chat_id).await;
+                if let Err(error) = self.send_body(&chat_id, body.clone()).await {
+                    tracing::warn!(%error, %chat_id, "failed to send WeCom message");
+                }
             }
         }
     }
@@ -265,38 +271,28 @@ impl WecomOutbound {
     }
 }
 
-fn ordinary_message_payload(event: &Event) -> Option<Value> {
-    let content = outbound_text(event, true).map(|text| truncate_message(&text))?;
-    Some(json!({"msgtype":"markdown","markdown":{"content":content}}))
-}
-
-fn user_facing(event: &Event) -> bool {
-    event
-        .data
-        .get("to")
-        .and_then(Value::as_array)
-        .is_none_or(|targets| {
-            targets.is_empty() || targets.iter().any(|target| target.as_str() == Some("user"))
+fn ordinary_message_payloads(event: &Event) -> Vec<Value> {
+    outbound_text(event, true)
+        .map(|text| {
+            split_message(&text, 2_048, Some(64))
+                .into_iter()
+                .map(|content| json!({"msgtype":"markdown","markdown":{"content":content}}))
+                .collect()
         })
+        .unwrap_or_default()
 }
 
 fn string_data(event: &Event, key: &str) -> String {
+    raw_string_data(event, key).trim().to_owned()
+}
+
+fn raw_string_data(event: &Event, key: &str) -> String {
     event
         .data
         .get(key)
         .and_then(Value::as_str)
         .unwrap_or_default()
-        .trim()
         .to_owned()
-}
-
-fn truncate_message(value: &str) -> String {
-    let mut lines: Vec<&str> = value.lines().take(64).collect();
-    let truncated_lines = value.lines().count() > lines.len();
-    if truncated_lines {
-        lines.push("... (truncated)");
-    }
-    truncate_utf8(&lines.join("\n"), 2_048)
 }
 
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {
@@ -330,8 +326,8 @@ mod tests {
 
     #[test]
     fn ordinary_message_payload_prefers_trimmed_sender_title() {
-        let payload = ordinary_message_payload(&chat_message(Some(" Review Bot "), "result"))
-            .expect("chat.message payload");
+        let payloads = ordinary_message_payloads(&chat_message(Some(" Review Bot "), "result"));
+        let payload = &payloads[0];
 
         assert_eq!(payload["markdown"]["content"], "**Review Bot**\n\nresult");
     }
@@ -339,25 +335,32 @@ mod tests {
     #[test]
     fn ordinary_message_payload_falls_back_to_actor_id() {
         for sender_title in [None, Some(" \t\n ")] {
-            let payload = ordinary_message_payload(&chat_message(sender_title, "result"))
-                .expect("chat.message payload");
+            let payloads = ordinary_message_payloads(&chat_message(sender_title, "result"));
+            let payload = &payloads[0];
 
             assert_eq!(payload["markdown"]["content"], "**actor-id**\n\nresult");
         }
     }
 
     #[test]
-    fn ordinary_message_payload_truncates_after_sender_wrapping() {
-        let payload =
-            ordinary_message_payload(&chat_message(Some("Review Bot"), &"你".repeat(1_000)))
-                .expect("chat.message payload");
-        let content = payload["markdown"]["content"]
-            .as_str()
-            .expect("markdown content");
+    fn ordinary_message_payload_splits_without_losing_long_unicode_text() {
+        let text = "你".repeat(3_000);
+        let payloads = ordinary_message_payloads(&chat_message(Some("Review Bot"), &text));
+        let content = payloads
+            .iter()
+            .map(|payload| payload["markdown"]["content"].as_str().expect("content"))
+            .collect::<String>();
 
-        assert!(content.starts_with("**Review Bot**\n\n"));
-        assert!(content.ends_with("... (truncated)"));
-        assert!(content.len() <= 2_048);
+        assert!(payloads.len() > 1);
+        assert_eq!(content, format!("**Review Bot**\n\n{text}"));
+    }
+
+    #[test]
+    fn stream_text_preserves_leading_and_trailing_whitespace() {
+        let mut event = Event::new("chat.stream", "group");
+        event.data.insert("text".into(), json!("  exact reply\n"));
+
+        assert_eq!(raw_string_data(&event, "text"), "  exact reply\n");
     }
 
     #[test]
@@ -366,14 +369,5 @@ mod tests {
         let truncated = truncate_utf8(&text, 2_048);
         assert!(truncated.len() <= 2_048);
         assert!(truncated.ends_with("... (truncated)"));
-    }
-
-    #[test]
-    fn only_user_facing_events_are_forwarded() {
-        let mut event = Event::new("chat.stream", "g");
-        event.data.insert("to".into(), json!(["peer"]));
-        assert!(!user_facing(&event));
-        event.data.insert("to".into(), json!(["user"]));
-        assert!(user_facing(&event));
     }
 }

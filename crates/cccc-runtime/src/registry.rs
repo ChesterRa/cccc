@@ -4,6 +4,10 @@ use crate::session_history::SessionHistory;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
+const COMPLETED_HISTORY_COUNT: usize = 64;
+const COMPLETED_HISTORY_BYTES: usize = 256 * 1024;
+const COMPLETED_HISTORY_TOTAL_BYTES: usize = 8 * 1024 * 1024;
+
 pub(crate) type Key = (String, String);
 pub(crate) type SharedSession = Arc<Mutex<Session>>;
 
@@ -35,6 +39,7 @@ pub(crate) fn with_session<T>(
 struct CompletedHistories {
     entries: HashMap<Key, SessionHistory>,
     order: VecDeque<Key>,
+    total_bytes: usize,
 }
 
 fn completed() -> &'static Mutex<CompletedHistories> {
@@ -43,13 +48,26 @@ fn completed() -> &'static Mutex<CompletedHistories> {
 }
 
 pub(crate) fn remember_history(key: Key, history: SessionHistory) -> Result<(), RuntimeError> {
+    history.trim_retained(COMPLETED_HISTORY_BYTES)?;
+    let history_bytes = history.retained_bytes()?;
     let mut completed = completed().lock().map_err(|_| RuntimeError::Poisoned)?;
-    completed.entries.insert(key.clone(), history);
+    if let Some(previous) = completed.entries.insert(key.clone(), history) {
+        completed.total_bytes = completed
+            .total_bytes
+            .saturating_sub(previous.retained_bytes()?);
+    }
+    completed.total_bytes = completed.total_bytes.saturating_add(history_bytes);
     completed.order.retain(|candidate| candidate != &key);
     completed.order.push_back(key);
-    while completed.order.len() > 64 {
+    while completed.order.len() > COMPLETED_HISTORY_COUNT
+        || completed.total_bytes > COMPLETED_HISTORY_TOTAL_BYTES
+    {
         if let Some(expired) = completed.order.pop_front() {
-            completed.entries.remove(&expired);
+            if let Some(history) = completed.entries.remove(&expired) {
+                completed.total_bytes = completed
+                    .total_bytes
+                    .saturating_sub(history.retained_bytes()?);
+            }
         }
     }
     Ok(())
@@ -72,7 +90,11 @@ pub(crate) fn completed_history(
 
 pub(crate) fn discard_completed(key: &Key) -> Result<(), RuntimeError> {
     let mut completed = completed().lock().map_err(|_| RuntimeError::Poisoned)?;
-    completed.entries.remove(key);
+    if let Some(history) = completed.entries.remove(key) {
+        completed.total_bytes = completed
+            .total_bytes
+            .saturating_sub(history.retained_bytes()?);
+    }
     completed.order.retain(|candidate| candidate != key);
     Ok(())
 }

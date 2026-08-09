@@ -74,7 +74,8 @@ fn create_using(
     })?;
     let group_store = store(home)
         .map_err(|error| cleanup_directory(&directory, error, "group store initialization"))?;
-    reject_duplicate_scope(home, &directory, &detected.scope_key)?;
+    let scope_key = detected.scope_key.clone();
+    let previous_default = previous_default_group(home, &directory, &scope_key)?;
 
     let title = string_arg(request, "title").unwrap_or_else(|| detected.label.clone());
     let topic = string_arg(request, "topic").unwrap_or_default();
@@ -86,33 +87,27 @@ fn create_using(
             "group_id": group.group_id,
             "group": super::group_runtime::group(group),
         })),
-        Err(failure) => Err(rollback_create(&group_store, &directory, failure, steps)),
+        Err(failure) => Err(rollback_create(
+            home,
+            &group_store,
+            &directory,
+            &scope_key,
+            previous_default.as_deref(),
+            failure,
+            steps,
+        )),
     }
 }
 
-fn reject_duplicate_scope(
+fn previous_default_group(
     home: &HomeLayout,
     directory: &PreparedDirectory,
     scope_key: &str,
-) -> Result<(), OpError> {
+) -> Result<Option<String>, OpError> {
     let registry = Registry::load(home)
         .map_err(OpError::io)
         .map_err(|error| cleanup_directory(directory, error, "registry read"))?;
-    let Some(group_id) = registry.defaults.get(scope_key) else {
-        return Ok(());
-    };
-    let mut error = OpError::new(
-        "scope_already_attached",
-        "project directory is already attached to a group",
-    );
-    error
-        .details
-        .insert("group_id".into(), Value::String(group_id.clone()));
-    Err(cleanup_directory(
-        directory,
-        error,
-        "duplicate scope detection",
-    ))
+    Ok(registry.defaults.get(scope_key).cloned())
 }
 
 struct CreateFailure {
@@ -141,15 +136,38 @@ fn finish_create(
 }
 
 fn rollback_create(
+    home: &HomeLayout,
     store: &GroupStore,
     directory: &PreparedDirectory,
+    scope_key: &str,
+    previous_default: Option<&str>,
     failure: CreateFailure,
     steps: &impl CreationSteps,
 ) -> OpError {
     if let Err(rollback) = steps.rollback(store, &failure.group_id) {
         return rollback_error(failure.error, "group", rollback);
     }
+    if let Err(rollback) = restore_previous_default(home, scope_key, previous_default) {
+        return rollback_error(failure.error, "scope default", rollback);
+    }
     cleanup_directory(directory, failure.error, "project directory")
+}
+
+fn restore_previous_default(
+    home: &HomeLayout,
+    scope_key: &str,
+    previous_default: Option<&str>,
+) -> io::Result<()> {
+    Registry::mutate(home, |registry| {
+        if !registry.defaults.contains_key(scope_key)
+            && let Some(group_id) = previous_default.filter(|group_id| !group_id.is_empty())
+        {
+            registry
+                .defaults
+                .insert(scope_key.to_owned(), group_id.to_owned());
+        }
+        Ok(())
+    })
 }
 
 fn cleanup_directory(directory: &PreparedDirectory, original: OpError, stage: &str) -> OpError {

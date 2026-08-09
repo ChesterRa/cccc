@@ -153,8 +153,9 @@ Agents can read and update this shared context.
 Administrators can use **Create Group → Browse** to select a directory on the machine
 running the CCCC daemon. Project paths must be absolute (or start with `~`). Entering
 one missing final directory creates that exact directory when its parent already
-exists; relative paths and missing parent chains are rejected. A directory already
-attached to another group opens that existing group instead of creating a duplicate.
+exists; relative paths and missing parent chains are rejected. The same directory can
+be attached to multiple independent groups; the newest attachment becomes the default
+group for later path-based lookup without changing the older groups.
 
 Group creation, scope attachment, ledger registration, and active-group selection are
 one compensated operation. Each committed file is read back against the exact value

@@ -330,15 +330,26 @@ def _wait_cdp_endpoint(port: int, *, timeout_seconds: float) -> bool:
     return False
 
 
-def _browser_app_launch_args(url: str, *, width: int, height: int) -> list[str]:
+def _browser_app_launch_args(
+    url: str,
+    *,
+    width: int,
+    height: int,
+    headless: bool = False,
+) -> list[str]:
     args = [
         f"--window-size={max(1024, int(width))},{max(768, int(height))}",
-        "--window-position=0,0",
         "--force-device-scale-factor=1",
     ]
+    if bool(headless):
+        args.insert(0, "--headless=new")
+    else:
+        args.insert(1, "--window-position=0,0")
     target = str(url or "").strip()
-    if target:
+    if target and not bool(headless):
         args.append(f"--app={target}")
+    elif target:
+        args.append(target)
     else:
         args.append("about:blank")
     return args
@@ -922,6 +933,7 @@ def launch_projected_browser_runtime(
                     "cdp_port": existing_port,
                     "profile_dir": str(metadata.get("profile_dir") or profile_dir),
                     "adopted": True,
+                    "headless": bool(headless),
                     "display_owned": display_owned,
                     "display_owner": "cccc_xvfb" if display_owned else "",
                 }
@@ -989,13 +1001,16 @@ def launch_projected_browser_runtime(
             display_owned = True
     browser_display = str(browser_env.get("DISPLAY") or "").strip()
     display_owner = "cccc_xvfb" if display_owned else ""
-    browser_app_args = _browser_app_launch_args(str(url or ""), width=width, height=height)
+    browser_app_args = _browser_app_launch_args(
+        str(url or ""),
+        width=width,
+        height=height,
+        headless=headless,
+    )
     if display_owned:
         browser_app_args.insert(0, "--ozone-platform=x11")
 
     def _launch_system_browser_once(channel: str) -> PlaywrightProjectedRuntime | None:
-        if bool(headless):
-            return None
         binaries = _system_browser_binaries(channel)
         if not binaries:
             return None
@@ -1035,6 +1050,7 @@ def launch_projected_browser_runtime(
                             "display": browser_display,
                             "display_owned": bool(display_owned),
                             "display_owner": display_owner,
+                            "headless": bool(headless),
                             "started_at": utc_now_iso(),
                         }
                     )
@@ -1072,6 +1088,7 @@ def launch_projected_browser_runtime(
                         "display": browser_display,
                         "display_owned": bool(display_owned),
                         "display_owner": display_owner,
+                        "headless": bool(headless),
                     },
                     cleanup_callbacks=[lambda proc=proc: _terminate_process(proc), *cleanup_callbacks],
                 )
@@ -1135,6 +1152,7 @@ def launch_projected_browser_runtime(
                 "display": browser_display,
                 "display_owned": bool(display_owned),
                 "display_owner": display_owner,
+                "headless": bool(headless),
             },
             cleanup_callbacks=cleanup_callbacks,
         )

@@ -152,6 +152,43 @@ fn every_failed_stage_restores_all_visible_creation_state() {
 }
 
 #[test]
+fn failed_second_creation_restores_previous_scope_default() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let target = temp.path().join("project");
+    let first = dispatch(&home, &request(json!({"title":"first","path":target})));
+    assert!(first.ok, "{:?}", first.error);
+    let first_id = first.result["group_id"]
+        .as_str()
+        .expect("first id")
+        .to_owned();
+    let store = GroupStore::new(home.clone()).expect("store");
+    let first_group = store.load(&first_id).expect("first group");
+    let scope_key = first_group.active_scope_key.clone();
+
+    let failure = create_using(
+        &home,
+        &request(json!({"title":"second","path":target})),
+        &FaultingSteps {
+            fail_at: FailAt::Ledger,
+            rollback_fails: false,
+        },
+    )
+    .expect_err("second creation failure");
+
+    assert_eq!(failure.code, "io_error");
+    assert_eq!(store.list().expect("groups").len(), 1);
+    assert_eq!(
+        Registry::load(&home)
+            .expect("registry")
+            .defaults
+            .get(&scope_key),
+        Some(&first_id)
+    );
+    assert_eq!(active::get(&home).expect("active"), Some(first_id));
+}
+
+#[test]
 fn rollback_failure_is_never_hidden_as_the_original_stage_error() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

@@ -112,8 +112,53 @@ class KeyManager:
         ck = self._chat_key(chat_id, thread_id)
         return ck in self._authorized
 
-    def authorize(self, chat_id: str, thread_id: int, platform: str, key_used: str) -> None:
+    def authorize(
+        self, chat_id: str, thread_id: int, platform: str, key_used: str
+    ) -> None:
         """Mark a chat as authorized and remove the consumed key."""
+        self._store_authorization(
+            chat_id,
+            thread_id,
+            platform,
+            authorization_source="binding_key",
+            key_used=key_used,
+        )
+        self._pending.pop(key_used, None)
+        self._save_pending()
+
+    def authorize_direct(
+        self, chat_id: str, thread_id: int, platform: str, source: str
+    ) -> None:
+        """Authorize a chat through an explicit non-key trust flow."""
+        self._store_authorization(
+            chat_id,
+            thread_id,
+            platform,
+            authorization_source=str(source or "direct").strip() or "direct",
+            key_used="",
+        )
+
+    def revoke_direct(self, chat_id: str, thread_id: int, source: str) -> bool:
+        """Revoke a direct authorization only when its source matches."""
+        ck = self._chat_key(chat_id, thread_id)
+        entry = self._authorized.get(ck)
+        if not isinstance(entry, dict) or str(
+            entry.get("authorization_source") or ""
+        ) != str(source or ""):
+            return False
+        del self._authorized[ck]
+        self._save_authorized()
+        return True
+
+    def _store_authorization(
+        self,
+        chat_id: str,
+        thread_id: int,
+        platform: str,
+        *,
+        authorization_source: str,
+        key_used: str,
+    ) -> None:
         ck = self._chat_key(chat_id, thread_id)
         self._authorized[ck] = {
             "chat_id": str(chat_id),
@@ -121,10 +166,9 @@ class KeyManager:
             "platform": str(platform or ""),
             "authorized_at": time.time(),
             "key_used": str(key_used),
+            "authorization_source": str(authorization_source),
         }
-        self._pending.pop(key_used, None)
         self._save_authorized()
-        self._save_pending()
 
     def revoke(self, chat_id: str, thread_id: int) -> bool:
         """Revoke authorization. Returns ``True`` if the chat was authorized."""
@@ -148,15 +192,17 @@ class KeyManager:
         for key, entry in self._pending.items():
             created_at = float(entry.get("created_at", 0) or 0)
             expires_at = created_at + KEY_TTL_SECONDS
-            items.append({
-                "key": str(key),
-                "chat_id": str(entry.get("chat_id") or ""),
-                "thread_id": int(entry.get("thread_id") or 0),
-                "platform": str(entry.get("platform") or ""),
-                "created_at": created_at,
-                "expires_at": expires_at,
-                "expires_in_seconds": max(0, int(expires_at - now)),
-            })
+            items.append(
+                {
+                    "key": str(key),
+                    "chat_id": str(entry.get("chat_id") or ""),
+                    "thread_id": int(entry.get("thread_id") or 0),
+                    "platform": str(entry.get("platform") or ""),
+                    "created_at": created_at,
+                    "expires_at": expires_at,
+                    "expires_in_seconds": max(0, int(expires_at - now)),
+                }
+            )
         items.sort(key=lambda item: float(item.get("created_at") or 0), reverse=True)
         return items
 
@@ -183,7 +229,8 @@ class KeyManager:
         """Remove expired pending keys (best-effort, no save)."""
         now = time.time()
         expired = [
-            k for k, v in self._pending.items()
+            k
+            for k, v in self._pending.items()
             if now - float(v.get("created_at", 0)) > KEY_TTL_SECONDS
         ]
         for k in expired:

@@ -3,17 +3,18 @@ import { apiJson } from "./base";
 
 export interface IMAuthorizedChat {
   chat_id: string;
-  thread_id: number;
+  thread_id: number | string;
   platform: string;
   authorized_at: number;
   key_used?: string;
   verbose?: boolean;
+  authorization_source?: string;
 }
 
 export interface IMPendingRequest {
   key: string;
   chat_id: string;
-  thread_id: number;
+  thread_id: number | string;
   platform: string;
   created_at: number;
   expires_at: number;
@@ -103,6 +104,13 @@ export async function startWeixinLogin(groupId: string) {
   });
 }
 
+export async function verifyWeixinLogin(groupId: string, verifyCode: string) {
+  return apiJson<WeixinLoginStatus>("/api/im/weixin/login/verify", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId, verify_code: verifyCode }),
+  });
+}
+
 export async function logoutWeixin(groupId: string) {
   return apiJson<WeixinLoginStatus>("/api/im/weixin/logout", {
     method: "POST",
@@ -122,7 +130,7 @@ export async function fetchIMPending(groupId: string) {
   );
 }
 
-export async function revokeIMChat(groupId: string, chatId: string, threadId: number = 0) {
+export async function revokeIMChat(groupId: string, chatId: string, threadId: number | string = 0) {
   return apiJson<{ revoked: boolean; unsubscribed?: boolean }>(
     `/api/im/revoke?group_id=${encodeURIComponent(groupId)}&chat_id=${encodeURIComponent(chatId)}&thread_id=${threadId}`,
     { method: "POST" },
@@ -137,19 +145,19 @@ export async function rejectIMPending(groupId: string, key: string) {
 }
 
 export async function bindIMChat(groupId: string, key: string) {
-  return apiJson<{ chat_id: string; thread_id: number; platform: string }>("/api/im/bind", {
-    method: "POST",
-    body: JSON.stringify({ group_id: groupId, key }),
-  });
+  return apiJson<{ chat_id: string; thread_id: number | string; platform: string }>(
+    "/api/im/bind",
+    { method: "POST", body: JSON.stringify({ group_id: groupId, key }) },
+  );
 }
 
 export async function setIMVerbose(
   groupId: string,
   chatId: string,
   verbose: boolean,
-  threadId: number = 0,
+  threadId: number | string = 0,
 ) {
-  return apiJson<{ chat_id: string; thread_id: number; verbose: boolean }>(
+  return apiJson<{ chat_id: string; thread_id: number | string; verbose: boolean }>(
     `/api/im/verbose?group_id=${encodeURIComponent(groupId)}&chat_id=${encodeURIComponent(chatId)}&verbose=${verbose}&thread_id=${threadId}`,
     { method: "POST" },
   );

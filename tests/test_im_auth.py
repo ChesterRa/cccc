@@ -65,6 +65,13 @@ class TestKeyManagerBasic(unittest.TestCase):
         # Key should be consumed.
         self.assertIsNone(self.km.get_pending_key(key))
 
+    def test_direct_authorization_tracks_source_and_revokes_selectively(self) -> None:
+        self.km.authorize_direct("wx-user", 0, "weixin", "weixin_qr_login")
+        self.assertTrue(self.km.is_authorized("wx-user", 0))
+        self.assertFalse(self.km.revoke_direct("wx-user", 0, "another_source"))
+        self.assertTrue(self.km.revoke_direct("wx-user", 0, "weixin_qr_login"))
+        self.assertFalse(self.km.is_authorized("wx-user", 0))
+
     def test_revoke_removes_authorization(self) -> None:
         key = self.km.generate_key("123", 0, "telegram")
         self.km.authorize("123", 0, "telegram", key)
@@ -209,6 +216,7 @@ class TestMCPImBind(unittest.TestCase):
 
     def test_toolspecs_contains_cccc_im_bind(self) -> None:
         from cccc.ports.mcp.toolspecs import MCP_TOOLS
+
         names = [t["name"] for t in MCP_TOOLS]
         self.assertIn("cccc_im_bind", names)
 
@@ -259,8 +267,12 @@ class TestImRevokeSemantics(unittest.TestCase):
         self.assertTrue(sm.is_subscribed("chat1", 0))
 
         fake_group = SimpleNamespace(path=self.group_path)
-        with patch("cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)):
-            resp = im_ops.handle_im_revoke_chat({"group_id": "g_demo", "chat_id": "chat1", "thread_id": 0})
+        with patch(
+            "cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)
+        ):
+            resp = im_ops.handle_im_revoke_chat(
+                {"group_id": "g_demo", "chat_id": "chat1", "thread_id": 0}
+            )
 
         self.assertTrue(resp.ok, getattr(resp, "error", None))
         result = resp.result if isinstance(resp.result, dict) else {}
@@ -279,7 +291,9 @@ class TestImRevokeSemantics(unittest.TestCase):
         km = KeyManager(self.state_dir)
         key = km.generate_key("chat2", 0, "telegram")
         fake_group = SimpleNamespace(path=self.group_path)
-        with patch("cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)):
+        with patch(
+            "cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)
+        ):
             resp = im_ops.handle_im_list_pending({"group_id": "g_demo"})
 
         self.assertTrue(resp.ok, getattr(resp, "error", None))
@@ -295,7 +309,9 @@ class TestImRevokeSemantics(unittest.TestCase):
         km = KeyManager(self.state_dir)
         key = km.generate_key("chat3", 0, "telegram")
         fake_group = SimpleNamespace(path=self.group_path)
-        with patch("cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)):
+        with patch(
+            "cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)
+        ):
             first = im_ops.handle_im_reject_pending({"group_id": "g_demo", "key": key})
             second = im_ops.handle_im_reject_pending({"group_id": "g_demo", "key": key})
 
@@ -311,7 +327,9 @@ class TestImRevokeSemantics(unittest.TestCase):
 
         km = KeyManager(self.state_dir)
         fake_group = SimpleNamespace(path=self.group_path)
-        with patch("cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)):
+        with patch(
+            "cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)
+        ):
             resp = im_ops.handle_im_reject_pending({"group_id": "g_demo", "key": ""})
 
         self.assertFalse(resp.ok)
@@ -331,9 +349,13 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
             self.sent_messages: list[tuple[str, str, int]] = []
             self.formatted_calls: list[tuple[str, list[str], str, bool]] = []
 
-        def format_outbound(self, by: str, to: object, text: str, is_system: bool) -> str:
+        def format_outbound(
+            self, by: str, to: object, text: str, is_system: bool
+        ) -> str:
             to_list = [str(item) for item in to] if isinstance(to, list) else []
-            self.formatted_calls.append((str(by), to_list, str(text or ""), bool(is_system)))
+            self.formatted_calls.append(
+                (str(by), to_list, str(text or ""), bool(is_system))
+            )
             return str(text or "")
 
         def send_file(
@@ -444,7 +466,11 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
             {
                 "kind": "chat.message",
                 "by": "foreman",
-                "data": {"text": "review this", "to": ["@all", "peer_a"], "attachments": []},
+                "data": {
+                    "text": "review this",
+                    "to": ["@all", "peer_a"],
+                    "attachments": [],
+                },
             }
         ]
         bridge._process_outbound()
@@ -453,6 +479,150 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         by, to, _text, _is_system = adapter.formatted_calls[0]
         self.assertEqual(by, "Captain")
         self.assertEqual(to, ["@all", "Reviewer"])
+
+    def test_system_notify_requires_explicit_public_im_visibility(self) -> None:
+        from cccc.ports.im.bridge import IMBridge
+
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={"title": "demo", "im": {}},
+        )
+        bridge = IMBridge(group=fake_group, adapter=self._FakeAdapter())
+
+        self.assertFalse(
+            bridge._should_forward({"kind": "system.notify", "data": {}}, False)
+        )
+        self.assertFalse(
+            bridge._should_forward(
+                {"kind": "system.notify", "data": {"im_visibility": "internal"}},
+                True,
+            )
+        )
+        self.assertTrue(
+            bridge._should_forward(
+                {"kind": "system.notify", "data": {"im_visibility": "public"}},
+                False,
+            )
+        )
+        self.assertFalse(
+            bridge._should_forward(
+                {
+                    "kind": "system.notify",
+                    "data": {"im_visibility": "public", "target_actor_id": "peer"},
+                },
+                True,
+            )
+        )
+
+    def test_public_system_notify_forwards_message_body(self) -> None:
+        from cccc.ports.im.bridge import IMBridge
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        km = KeyManager(self.state_dir)
+        sm = SubscriberManager(self.state_dir)
+        key = km.generate_key("chat_auth", 0, "telegram")
+        km.authorize("chat_auth", 0, "telegram", key)
+        sm.subscribe("chat_auth", chat_title="auth", thread_id=0, platform="telegram")
+
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={"title": "demo", "im": {}},
+        )
+        adapter = self._FakeAdapter()
+        bridge = IMBridge(group=fake_group, adapter=adapter)
+
+        bridge._forward_event(
+            {
+                "kind": "system.notify",
+                "by": "system",
+                "data": {
+                    "message": "Deployment completed",
+                    "im_visibility": "public",
+                },
+            }
+        )
+
+        self.assertEqual(
+            adapter.sent_messages,
+            [("chat_auth", "Deployment completed", 0)],
+        )
+        self.assertEqual(
+            adapter.formatted_calls,
+            [("system", [], "Deployment completed", True)],
+        )
+
+    def test_first_successful_attachment_carries_body_after_invalid_candidate(
+        self,
+    ) -> None:
+        from cccc.ports.im.bridge import IMBridge
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        class _SlackFileAdapter(self._FakeAdapter):
+            platform = "slack"
+
+            def __init__(self) -> None:
+                super().__init__()
+                self.file_captions: list[str] = []
+
+            def send_file(
+                self,
+                chat_id: str,
+                file_path: Path,
+                filename: str,
+                caption: str = "",
+                thread_id: int = 0,
+                mention_user_ids=None,
+            ) -> bool:
+                _ = (chat_id, file_path, filename, thread_id, mention_user_ids)
+                self.file_captions.append(caption)
+                return True
+
+        key_manager = KeyManager(self.state_dir)
+        key = key_manager.generate_key("chat_auth", 0, "slack")
+        key_manager.authorize("chat_auth", 0, "slack", key)
+        SubscriberManager(self.state_dir).subscribe(
+            "chat_auth",
+            chat_title="auth",
+            thread_id=0,
+            platform="slack",
+        )
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={"title": "demo", "im": {}},
+        )
+        adapter = _SlackFileAdapter()
+        bridge = IMBridge(group=fake_group, adapter=adapter)
+        bridge.watcher.poll = lambda: [  # type: ignore[method-assign]
+            {
+                "kind": "chat.message",
+                "by": "foreman",
+                "data": {
+                    "text": "body survives",
+                    "to": ["user"],
+                    "attachments": [
+                        {"path": "", "title": "invalid.txt"},
+                        {"path": "state/blobs/valid.txt", "title": "valid.txt"},
+                    ],
+                },
+            }
+        ]
+        sample_file = self.state_dir / "valid.txt"
+        sample_file.write_text("ok", encoding="utf-8")
+
+        with patch(
+            "cccc.ports.im.bridge.resolve_blob_attachment_path",
+            return_value=sample_file,
+        ):
+            bridge._process_outbound()
+
+        self.assertEqual(adapter.file_captions, ["body survives"])
+        self.assertEqual(adapter.sent_messages, [])
 
     def test_typing_indicator_removed_once_after_multi_file_delivery(self) -> None:
         from cccc.ports.im.bridge import IMBridge
@@ -499,16 +669,22 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         adapter = _FileOkAdapter()
         bridge = IMBridge(group=fake_group, adapter=adapter)
 
-        bridge._processing_lifecycle.start(chat_id="chat_auth", message_id="chat_auth:1")
+        bridge._processing_lifecycle.start(
+            chat_id="chat_auth", message_id="chat_auth:1"
+        )
         removed: list[str] = []
 
         original_complete = bridge._processing_lifecycle.complete
 
-        def _complete(chat_id, outcome=None):  # type: ignore[no-untyped-def]
+        def _complete(chat_id, outcome=None, *, thread_id=0, reply_to=""):  # type: ignore[no-untyped-def]
             removed.append(str(chat_id))
             if outcome is None:
-                return original_complete(chat_id)
-            return original_complete(chat_id, outcome)
+                return original_complete(
+                    chat_id, thread_id=thread_id, reply_to=reply_to
+                )
+            return original_complete(
+                chat_id, outcome, thread_id=thread_id, reply_to=reply_to
+            )
 
         bridge._processing_lifecycle.complete = _complete  # type: ignore[method-assign]
 
@@ -529,7 +705,10 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
 
         sample_file = self.state_dir / "sample.txt"
         sample_file.write_text("ok", encoding="utf-8")
-        with patch("cccc.ports.im.bridge.resolve_blob_attachment_path", return_value=sample_file):
+        with patch(
+            "cccc.ports.im.bridge.resolve_blob_attachment_path",
+            return_value=sample_file,
+        ):
             bridge._process_outbound()
 
         self.assertEqual(len(adapter.file_calls), 2)
@@ -558,13 +737,25 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         def _daemon(req: dict) -> dict:
             op = str(req.get("op") or "")
             if op == "group_show":
-                return {"ok": True, "result": {"group": {"title": "demo", "state": "active"}, "running": True}}
+                return {
+                    "ok": True,
+                    "result": {
+                        "group": {"title": "demo", "state": "active"},
+                        "running": True,
+                    },
+                }
             if op == "actor_list":
                 return {
                     "ok": True,
                     "result": {
                         "actors": [
-                            {"id": "foreman", "title": "Planner", "role": "foreman", "running": True, "runtime": "codex"}
+                            {
+                                "id": "foreman",
+                                "title": "Planner",
+                                "role": "foreman",
+                                "running": True,
+                                "runtime": "codex",
+                            }
                         ]
                     },
                 }
@@ -588,7 +779,9 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
 
         class _MessageFailAdapter(self._FakeAdapter):
             def send_message(self, chat_id: str, text: str, thread_id: int = 0) -> bool:
-                self.sent_messages.append((str(chat_id), str(text), int(thread_id or 0)))
+                self.sent_messages.append(
+                    (str(chat_id), str(text), int(thread_id or 0))
+                )
                 return False
 
         km = KeyManager(self.state_dir)
@@ -606,16 +799,22 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         adapter = _MessageFailAdapter()
         bridge = IMBridge(group=fake_group, adapter=adapter)
 
-        bridge._processing_lifecycle.start(chat_id="chat_auth", message_id="chat_auth:1")
+        bridge._processing_lifecycle.start(
+            chat_id="chat_auth", message_id="chat_auth:1"
+        )
         removed: list[str] = []
 
         original_complete = bridge._processing_lifecycle.complete
 
-        def _complete(chat_id, outcome=None):  # type: ignore[no-untyped-def]
+        def _complete(chat_id, outcome=None, *, thread_id=0, reply_to=""):  # type: ignore[no-untyped-def]
             removed.append(str(chat_id))
             if outcome is None:
-                return original_complete(chat_id)
-            return original_complete(chat_id, outcome)
+                return original_complete(
+                    chat_id, thread_id=thread_id, reply_to=reply_to
+                )
+            return original_complete(
+                chat_id, outcome, thread_id=thread_id, reply_to=reply_to
+            )
 
         bridge._processing_lifecycle.complete = _complete  # type: ignore[method-assign]
 
@@ -631,7 +830,9 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         self.assertEqual(len(adapter.sent_messages), 1)
         self.assertEqual(removed, [])
 
-    def test_subscribe_reloads_auth_state_and_avoids_stale_authorized_decision(self) -> None:
+    def test_subscribe_reloads_auth_state_and_avoids_stale_authorized_decision(
+        self,
+    ) -> None:
         from cccc.ports.im.bridge import IMBridge
 
         km = KeyManager(self.state_dir)
@@ -657,8 +858,9 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         _chat_id, text, _thread_id = adapter.sent_messages[0]
         self.assertIn("Authorization required", text)
 
-
-    def test_unsubscribe_reloads_auth_state_and_revokes_daemon_authorized_chat(self) -> None:
+    def test_unsubscribe_reloads_auth_state_and_revokes_daemon_authorized_chat(
+        self,
+    ) -> None:
         """Unsubscribe must reload auth from disk so it can revoke chats authorized by daemon."""
         from cccc.ports.im.bridge import IMBridge
 
@@ -690,6 +892,7 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
 
 try:
     from cccc.daemon.im.im_ops import _load_km
+
     _HAS_DAEMON_DEPS = True
 except ImportError:
     _HAS_DAEMON_DEPS = False
