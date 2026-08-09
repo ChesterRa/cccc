@@ -13,9 +13,7 @@ describe("ChatGPT Web Model target draft model", () => {
     expect(isChatGptConversationUrl("https://chatgpt.com/c/WEB:temporary")).toBe(false);
     expect(isChatGptConversationUrl("https://chatgpt.com/c/WEB%3Atemporary")).toBe(false);
     expect(
-      liveBrowserConversationUrlFromSession({
-        tab_url: "https://chatgpt.com/c/WEB:temporary",
-      }),
+      liveBrowserConversationUrlFromSession({ tab_url: "https://chatgpt.com/c/WEB:temporary" }),
     ).toBe("");
   });
 
