@@ -5,6 +5,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MARKER_TIMEOUT: Duration = Duration::from_secs(15);
 const MARKER_POLL_INTERVAL: Duration = Duration::from_millis(20);
+const CURSOR_POSITION_QUERY: &str = "\u{1b}[6n";
+const CURSOR_POSITION_RESPONSE: &[u8] = b"\x1b[1;1R";
 
 #[test]
 fn active_history_replays_raw_ansi_in_pages_and_excludes_completed_sessions() {
@@ -90,13 +92,18 @@ fn active_history_replays_raw_ansi_in_pages_and_excludes_completed_sessions() {
 
 fn wait_for_marker(group_id: &str, actor_id: &str, marker: &str) {
     let deadline = Instant::now() + MARKER_TIMEOUT;
+    let mut replied_to_cursor_query = false;
     loop {
         let history = cccc_runtime::retained_history(group_id, actor_id);
-        if history
-            .as_ref()
-            .is_ok_and(|page| page.data.contains(marker))
-        {
-            return;
+        if let Ok(page) = &history {
+            if page.data.contains(marker) {
+                return;
+            }
+            if !replied_to_cursor_query && page.data.contains(CURSOR_POSITION_QUERY) {
+                cccc_runtime::write(group_id, actor_id, CURSOR_POSITION_RESPONSE)
+                    .expect("reply to terminal cursor-position query");
+                replied_to_cursor_query = true;
+            }
         }
         if Instant::now() >= deadline {
             let status = cccc_runtime::status(group_id, actor_id);
