@@ -18,11 +18,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .base import IMAdapter
+from .outbound_text import split_text_chunks
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_CHARS = 4000
 DEFAULT_MAX_LINES = 64
+WEIXIN_MAX_MESSAGE_LENGTH = 4000
 
 
 class WeixinAdapter(IMAdapter):
@@ -378,10 +380,16 @@ class WeixinAdapter(IMAdapter):
             return False
 
         chat_id = str(chat_id or "").strip()
-        safe_text = self._compose_safe(text)
+        chunks = split_text_chunks(
+            text,
+            max_chars=self.max_chars,
+            hard_limit=WEIXIN_MAX_MESSAGE_LENGTH,
+            max_lines=self.max_lines,
+        )
 
         try:
-            self._run_async(self._bot.send(chat_id, safe_text))
+            for chunk in chunks:
+                self._run_async(self._bot.send(chat_id, chunk))
             return True
         except Exception as e:
             self._log(f"[send] failed for chat={chat_id}: {e}")
@@ -417,7 +425,7 @@ class WeixinAdapter(IMAdapter):
             self._run_async(self._bot.send_media(chat_id, content))
 
             if caption:
-                self._run_async(self._bot.send(chat_id, self._compose_safe(caption)))
+                return self.send_message(chat_id, caption)
             return True
         except Exception as e:
             self._log(f"[send_file] failed for chat={chat_id}: {e}")

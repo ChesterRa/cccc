@@ -63,8 +63,8 @@ pub enum ImAction {
     Revoke {
         #[arg(long)]
         chat_id: String,
-        #[arg(long, default_value_t = 0)]
-        thread_id: i64,
+        #[arg(long, default_value = "0")]
+        thread_id: String,
         #[arg(long = "group")]
         group_id: Option<String>,
     },

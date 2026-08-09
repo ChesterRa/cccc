@@ -122,6 +122,7 @@ class ChatStreamData(BaseModel):
     # IM semantics
     to: List[str] = Field(default_factory=list)
     reply_to: Optional[str] = None
+    sender_title: Optional[str] = None  # Immutable label snapshot for streamed rendering
 
     # Metadata
     client_id: Optional[str] = None

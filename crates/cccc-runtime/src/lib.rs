@@ -13,7 +13,8 @@ mod transcript_reader;
 
 pub use command::{default_command, detect_runtimes};
 pub use history_access::{
-    bracketed_paste_enabled, clear, history, history_since, retained_history,
+    active_history_replay, active_history_since, bracketed_paste_enabled, clear, history,
+    history_since, retained_history, retained_history_tail,
 };
 pub use manager::{
     reap, resize, start, start_with_history, status, stop, stop_all, stop_if_started_at, submit,

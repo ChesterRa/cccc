@@ -752,6 +752,24 @@ class TestWecomSendMessage(unittest.TestCase):
         self.assertEqual(payload["body"]["msgtype"], "markdown")
         self.assertEqual(payload["body"]["markdown"]["content"], "hello")
 
+    def test_send_long_text_uses_lossless_message_chunks(self):
+        adapter = self._make_adapter()
+        adapter.max_chars = 4
+        adapter._rate_limiter.wait_and_acquire = lambda _chat_id: None
+        contents = []
+
+        def send_active(_chat_id, body, **_kwargs):
+            contents.append(body["markdown"]["content"])
+            return True
+
+        with patch.object(adapter, "_send_active_body", side_effect=send_active):
+            text = "你好🙂abcdef"
+            result = adapter.send_message("conv_1", text)
+
+        self.assertTrue(result)
+        self.assertEqual("".join(contents), text)
+        self.assertTrue(all(len(chunk) <= 4 for chunk in contents))
+
     def test_send_returns_false_when_ws_fails(self):
         adapter = self._make_adapter()
         adapter._store_reply_ref("conv_1", "req_test")
@@ -1241,6 +1259,31 @@ class TestWecomStreaming(unittest.TestCase):
         payload = mock_post.call_args[0][1]
         self.assertTrue(payload["stream"]["finish"])
         self.assertEqual(payload["stream"]["content"], "")
+
+    def test_overlong_stream_end_keeps_final_message_fallback_enabled(self):
+        adapter = self._make_adapter()
+        handle = {
+            "stream_id": "s1",
+            "platform_handle": {
+                "chat_id": "conv_1",
+                "req_id": "req-1",
+                "response_url": "",
+                "stream_id": "s1",
+            },
+        }
+        captured = []
+
+        def send_with_ref(**kwargs):
+            captured.append(kwargs["body"])
+            return True
+
+        with patch.object(adapter, "_send_reply_body_with_ref", side_effect=send_with_ref):
+            result = adapter.end_stream(handle, text="你" * 7000)
+
+        self.assertFalse(result)
+        content = captured[0]["stream"]["content"]
+        self.assertLessEqual(len(content.encode("utf-8")), 20_480)
+        self.assertNotIn("�", content)
 
     def test_update_stream_fails_with_empty_handle(self):
         adapter = self._make_adapter()

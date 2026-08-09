@@ -11,8 +11,12 @@ from ...kernel.ledger import append_event
 from .delivery import emit_system_notify
 
 
-def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
-    return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
+def _error(
+    code: str, message: str, *, details: Optional[Dict[str, Any]] = None
+) -> DaemonResponse:
+    return DaemonResponse(
+        ok=False, error=DaemonError(code=code, message=message, details=(details or {}))
+    )
 
 
 def handle_system_notify(
@@ -27,6 +31,7 @@ def handle_system_notify(
     title = str(args.get("title") or "").strip()
     message = str(args.get("message") or "").strip()
     target_actor_id = str(args.get("target_actor_id") or "").strip() or None
+    im_visibility = str(args.get("im_visibility") or "internal").strip().lower()
     requires_ack = coerce_bool(args.get("requires_ack"))
     context = args.get("context") if isinstance(args.get("context"), dict) else {}
 
@@ -36,12 +41,25 @@ def handle_system_notify(
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
 
-    valid_kinds = {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "auto_idle", "automation", "status_change", "error", "info"}
+    valid_kinds = {
+        "nudge",
+        "keepalive",
+        "help_nudge",
+        "actor_idle",
+        "silence_check",
+        "auto_idle",
+        "automation",
+        "status_change",
+        "error",
+        "info",
+    }
     valid_priorities = {"low", "normal", "high", "urgent"}
     if kind not in valid_kinds:
         kind = "info"
     if priority not in valid_priorities:
         priority = "normal"
+    if im_visibility not in {"internal", "public"}:
+        im_visibility = "internal"
 
     notify = SystemNotifyData(
         kind=kind,
@@ -49,6 +67,7 @@ def handle_system_notify(
         title=title,
         message=message,
         target_actor_id=target_actor_id,
+        im_visibility=im_visibility,
         requires_ack=requires_ack,
         context=context,
     )

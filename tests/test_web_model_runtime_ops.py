@@ -655,7 +655,10 @@ class TestWebModelRuntimeOps(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             payload = calls[0]
             attachment = Path(str(payload.get("attachment_path") or ""))
-            self.assertEqual(attachment.parent, Path(home) / "cache" / "web-model")
+            self.assertEqual(
+                attachment.parent,
+                (Path(home) / "cache" / "web-model").resolve(),
+            )
             self.assertTrue(attachment.name.startswith("cccc-mcp-compat-"))
             self.assertTrue(attachment.name.endswith(".png"))
             self.assertTrue(attachment.read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))

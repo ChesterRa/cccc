@@ -219,6 +219,21 @@ class TestBridgeStreamDegradation(unittest.TestCase):
             })
             self.assertNotIn("s3", bridge._active_streams)
             self.assertIn("s3", bridge._completed_stream_targets)
+
+            bridge._remove_typing_indicator = MagicMock()
+            bridge._forward_event({
+                "kind": "chat.message",
+                "by": "agent-1",
+                "data": {
+                    "text": "final",
+                    "to": ["user"],
+                    "stream_id": "s3",
+                    "attachments": [],
+                },
+            })
+            bridge._remove_typing_indicator.assert_called_once_with(
+                "chat1", 0, reply_to=""
+            )
         finally:
             cleanup()
 
@@ -250,6 +265,24 @@ class TestBridgeStreamDegradation(unittest.TestCase):
             })
             self.assertEqual(len(adapter.sent_messages), 1)
             self.assertEqual(adapter.sent_messages[0]["text"], "[agent-1] final fallback")
+        finally:
+            cleanup()
+
+    def test_abandoned_stream_state_is_bounded(self) -> None:
+        adapter = FailUpdateAdapter()
+        bridge, cleanup = self._make_bridge(adapter)
+        try:
+            bridge._active_streams = {
+                f"active-{index}": {} for index in range(1025)
+            }
+            bridge._completed_stream_targets = {
+                f"done-{index}": {"chat1:0"} for index in range(4097)
+            }
+
+            bridge._trim_outbound_stream_state()
+
+            self.assertEqual(len(bridge._active_streams), 1024)
+            self.assertEqual(len(bridge._completed_stream_targets), 4096)
         finally:
             cleanup()
 

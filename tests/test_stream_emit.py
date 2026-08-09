@@ -26,6 +26,7 @@ class TestStreamEmit(unittest.TestCase):
 
     def test_stream_start_generates_stream_id(self) -> None:
         from cccc.daemon.messaging.chat_ops import handle_stream_emit
+        from cccc.kernel.actors import add_actor
         from cccc.kernel.group import create_group
         from cccc.kernel.registry import load_registry
 
@@ -33,6 +34,13 @@ class TestStreamEmit(unittest.TestCase):
         try:
             reg = load_registry()
             group = create_group(reg, title="stream-test")
+            add_actor(
+                group,
+                actor_id="agent-1",
+                title="Stream Agent",
+                enabled=False,
+                runner="headless",
+            )
             resp = handle_stream_emit({
                 "group_id": group.group_id,
                 "by": "agent-1",
@@ -49,6 +57,7 @@ class TestStreamEmit(unittest.TestCase):
             self.assertEqual(data["op"], "start")
             self.assertEqual(data["stream_id"], result["stream_id"])
             self.assertEqual(data["text"], "hello")
+            self.assertEqual(data["sender_title"], "Stream Agent")
         finally:
             cleanup()
 

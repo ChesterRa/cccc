@@ -1,16 +1,19 @@
+use super::discord_gateway_proxy::GatewayRelay;
 use super::discord_inbound::materialize_attachments;
 use super::discord_outbound::DiscordOutbound;
 use super::discord_reactions::DiscordReactions;
 use super::worker::Stopper;
 use super::{
-    InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, resolve_credential,
-    spawn_outbound, string,
+    InboundDecision, InboundMetadata, completes_processing, dispatch_inbound_with,
+    inbound_decision, is_outbound_or_stream, processing_reply_to, resolve_credential,
+    spawn_outbound_matching, string, target_key,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
 use serde_json::{Map, Value};
-use serenity::all::{ChannelId, GatewayIntents, Message, Ready, RoleId, UserId};
+use serenity::all::{GatewayIntents, Message, Ready, RoleId, UserId};
 use serenity::async_trait;
+use serenity::gateway::GatewayError;
 use serenity::http::Http;
 use serenity::prelude::{Context, EventHandler};
 use std::sync::Arc;
@@ -55,66 +58,112 @@ pub(super) async fn start(
         .event_handler(handler)
         .await
         .map_err(|error| format!("Discord gateway setup failed: {error}"))?;
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let mut gateway_relay =
+        super::discord_gateway_proxy::start_from_env(shutdown_rx.clone()).await?;
+    if let Some(relay) = &gateway_relay {
+        *client.ws_url.lock().await = relay.local_url.clone();
+    }
     let shard_manager = Arc::clone(&client.shard_manager);
     let connection_shards = Arc::clone(&shard_manager);
-    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+    let mut connection_shutdown_rx = shutdown_rx;
+    let (connection_error_tx, connection_error_rx) = oneshot::channel();
     let mut connection = tokio::spawn(async move {
         tokio::select! {
             result = client.start() => {
                 if let Err(error) = result {
                     tracing::error!(%error, "Discord IM gateway stopped");
+                    let _ = connection_error_tx.send(describe_gateway_error(&error));
                 }
             }
-            changed = shutdown_rx.changed() => {
-                if changed.is_ok() && *shutdown_rx.borrow() {
+            changed = connection_shutdown_rx.changed() => {
+                if changed.is_ok() && *connection_shutdown_rx.borrow() {
                     connection_shards.shutdown_all().await;
                 }
             }
         }
     });
-    match tokio::time::timeout(READY_TIMEOUT, ready_rx).await {
-        Ok(Ok(())) => {}
-        Ok(Err(_)) => {
-            shard_manager.shutdown_all().await;
-            finish_connection(&mut connection).await;
-            return Err("Discord gateway stopped before READY".into());
+    let startup = tokio::time::timeout(READY_TIMEOUT, async {
+        tokio::select! {
+            ready = ready_rx => ready.map_err(|_| "Discord gateway stopped before READY".to_owned()),
+            error = connection_error_rx => Err(error.unwrap_or_else(|_| "Discord gateway stopped before READY".to_owned())),
         }
-        Err(_) => {
-            shard_manager.shutdown_all().await;
-            finish_connection(&mut connection).await;
-            return Err("Discord gateway READY timed out after 30 seconds".into());
+    })
+    .await;
+    let startup_error = match startup {
+        Ok(Ok(())) => None,
+        Ok(Err(error)) => Some(error),
+        Err(_) => Some(
+            gateway_relay
+                .as_ref()
+                .and_then(GatewayRelay::latest_error)
+                .map_or_else(
+                    || "Discord gateway READY timed out after 30 seconds".to_owned(),
+                    |error| format!("Discord gateway READY timed out after 30 seconds: {error}"),
+                ),
+        ),
+    };
+    if let Some(error) = startup_error {
+        let _ = shutdown_tx.send(true);
+        shard_manager.shutdown_all().await;
+        finish_connection(&mut connection).await;
+        if let Some(relay) = &mut gateway_relay {
+            finish_connection(&mut relay.task).await;
         }
+        return Err(error);
     }
     let stopper: Stopper = Arc::new(move || {
         let _ = shutdown_tx.send(true);
     });
     let outbound_sender = DiscordOutbound::new(home.clone(), group_id, http);
+    let reaction_cleanup = reactions.cleanup_task();
     let outbound_reactions = reactions;
-    let outbound = spawn_outbound(
+    let outbound = spawn_outbound_matching(
         home,
         group_id.to_owned(),
+        PLATFORM,
         ledger_events,
         outbound_sender,
+        is_outbound_or_stream,
         move |sender, targets, event| {
             let reactions = outbound_reactions.clone();
             async move {
-                for chat_id in targets {
-                    let Ok(channel_id) = chat_id.parse::<u64>() else {
-                        reactions.fail(&chat_id).await;
-                        continue;
-                    };
-                    if let Err(error) = sender.send_target(ChannelId::new(channel_id), &event).await
-                    {
+                let completes_processing = completes_processing(&event);
+                let reply_to = processing_reply_to(&event).map(str::to_owned);
+                for target in targets {
+                    let key = target.key();
+                    if let Err(error) = sender.send_target(&target, &event).await {
                         tracing::warn!(%error, "failed to send Discord IM message");
-                        reactions.fail(&chat_id).await;
-                    } else {
-                        reactions.complete(&chat_id).await;
+                        if completes_processing {
+                            reactions.fail(&key, reply_to.as_deref()).await;
+                        }
+                    } else if completes_processing {
+                        reactions.complete(&key, reply_to.as_deref()).await;
                     }
                 }
             }
         },
     );
-    Ok((vec![connection, outbound], stopper))
+    let mut tasks = vec![connection, outbound, reaction_cleanup];
+    if let Some(relay) = gateway_relay {
+        tasks.push(relay.task);
+    }
+    Ok((tasks, stopper))
+}
+
+fn describe_gateway_error(error: &serenity::Error) -> String {
+    match error {
+        serenity::Error::Gateway(GatewayError::DisallowedGatewayIntents) => {
+            "Discord gateway rejected MESSAGE_CONTENT intent; enable Message Content Intent in the Discord Developer Portal".into()
+        }
+        serenity::Error::Gateway(GatewayError::InvalidGatewayIntents) => {
+            "Discord gateway rejected invalid intents".into()
+        }
+        serenity::Error::Gateway(GatewayError::InvalidAuthentication) => {
+            "Discord gateway rejected the bot token; reset the token and update CCCC".into()
+        }
+        _ => format!("Discord gateway stopped before READY: {error}"),
+    }
 }
 
 async fn finish_connection(connection: &mut JoinHandle<()>) {
@@ -180,9 +229,9 @@ impl EventHandler for Handler {
                 }
                 return;
             }
-            InboundDecision::Ignore => return,
         }
-        self.reactions.start(&chat_id, &message).await;
+        let processing_key = target_key(&chat_id, "");
+        self.reactions.start(&processing_key, &message).await;
         let attachments = materialize_attachments(
             &self.home,
             &self.group_id,
@@ -191,10 +240,12 @@ impl EventHandler for Handler {
         )
         .await;
         if text.is_empty() && attachments.is_empty() {
-            self.reactions.fail_message(&chat_id, message.id).await;
+            self.reactions
+                .fail_message(&processing_key, message.id)
+                .await;
             return;
         }
-        if let Err(error) = dispatch_inbound_with(
+        match dispatch_inbound_with(
             &self.daemon,
             &self.group_id,
             PLATFORM,
@@ -203,13 +254,22 @@ impl EventHandler for Handler {
             text,
             InboundMetadata {
                 message_id: message.id.to_string(),
+                thread_id: String::new(),
                 attachments,
             },
         )
         .await
         {
-            tracing::warn!(%error, "failed to dispatch Discord IM message");
-            self.reactions.fail_message(&chat_id, message.id).await;
+            Ok(source_event_id) => {
+                self.reactions
+                    .bind_message(&processing_key, message.id, source_event_id);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "failed to dispatch Discord IM message");
+                self.reactions
+                    .fail_message(&processing_key, message.id)
+                    .await;
+            }
         }
     }
 
@@ -261,7 +321,9 @@ fn accepts_channel_message(
     explicitly_addressed: bool,
     normalized_text: &str,
 ) -> bool {
-    is_direct_message || explicitly_addressed || normalized_text.starts_with('/')
+    is_direct_message
+        || explicitly_addressed
+        || super::commands::is_recognized_command(normalized_text)
 }
 
 #[cfg(test)]
@@ -303,7 +365,17 @@ mod tests {
     fn guilds_accept_mentions_and_commands_but_not_unaddressed_chat() {
         assert!(accepts_channel_message(false, true, "hello"));
         assert!(accepts_channel_message(false, false, "/subscribe"));
+        assert!(!accepts_channel_message(false, false, "/weather"));
         assert!(!accepts_channel_message(false, false, "hello"));
         assert!(accepts_channel_message(true, false, "hello"));
+    }
+
+    #[test]
+    fn gateway_errors_explain_required_user_actions() {
+        let disallowed = serenity::Error::Gateway(GatewayError::DisallowedGatewayIntents);
+        assert!(describe_gateway_error(&disallowed).contains("Message Content Intent"));
+
+        let invalid_token = serenity::Error::Gateway(GatewayError::InvalidAuthentication);
+        assert!(describe_gateway_error(&invalid_token).contains("reset the token"));
     }
 }

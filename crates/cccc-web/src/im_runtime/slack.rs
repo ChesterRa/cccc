@@ -1,7 +1,7 @@
 use super::slack_outbound::SlackOutbound;
 use super::{
-    InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, resolve_credential,
-    spawn_outbound, string,
+    InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision_for_thread,
+    is_outbound_or_stream, resolve_credential, spawn_outbound_matching, string,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -101,11 +101,13 @@ pub(super) async fn start(
     });
     let outbound_sender =
         SlackOutbound::new(home.clone(), group_id, http.clone(), bot_token.clone());
-    let outbound = spawn_outbound(
+    let outbound = spawn_outbound_matching(
         home,
         group_id.to_owned(),
+        PLATFORM,
         ledger_events,
         outbound_sender,
+        is_outbound_or_stream,
         |sender, targets, event| async move {
             sender.send(&targets, &event).await;
         },
@@ -194,6 +196,11 @@ async fn socket_loop(context: SlackSocketContext, initial_endpoint: String) {
             }
             let chat_id = event.get("channel").and_then(Value::as_str).unwrap_or("");
             let sender = event.get("user").and_then(Value::as_str).unwrap_or("user");
+            let thread_id = event
+                .get("thread_ts")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .trim();
             let raw_text = event
                 .get("text")
                 .and_then(Value::as_str)
@@ -201,10 +208,10 @@ async fn socket_loop(context: SlackSocketContext, initial_endpoint: String) {
                 .trim();
             let has_files = super::slack_inbound::has_files(event);
             let mentioned = raw_text.contains(&format!("<@{bot_user_id}>"));
-            if !is_private_channel(event, chat_id) && !mentioned {
+            let text = strip_leading_bot_mentions(raw_text, &bot_user_id);
+            if !accepts_slack_message(is_private_channel(event, chat_id), mentioned, text) {
                 continue;
             }
-            let text = strip_leading_bot_mentions(raw_text, &bot_user_id);
             if chat_id.is_empty() || (text.is_empty() && !has_files) {
                 continue;
             }
@@ -213,22 +220,29 @@ async fn socket_loop(context: SlackSocketContext, initial_endpoint: String) {
             } else {
                 text
             };
-            match inbound_decision(&home, &group_id, PLATFORM, chat_id, decision_text).await {
+            match inbound_decision_for_thread(
+                &home,
+                &group_id,
+                PLATFORM,
+                chat_id,
+                thread_id,
+                decision_text,
+            )
+            .await
+            {
                 InboundDecision::Forward => {}
                 InboundDecision::Reply(body) => {
-                    if let Err(error) = slack_call(
-                        &http,
-                        &bot_token,
-                        "chat.postMessage",
-                        json!({"channel":chat_id,"text":body}),
-                    )
-                    .await
+                    let mut reply = json!({"channel":chat_id,"text":body});
+                    if !thread_id.is_empty() {
+                        reply["thread_ts"] = json!(thread_id);
+                    }
+                    if let Err(error) =
+                        slack_call(&http, &bot_token, "chat.postMessage", reply).await
                     {
                         tracing::warn!(%error, "failed to send Slack command reply");
                     }
                     continue;
                 }
-                InboundDecision::Ignore => continue,
             }
             let attachments =
                 super::slack_inbound::materialize_files(&home, &group_id, &http, &bot_token, event)
@@ -242,6 +256,7 @@ async fn socket_loop(context: SlackSocketContext, initial_endpoint: String) {
                 text,
                 InboundMetadata {
                     message_id: super::slack_inbound::message_id(event),
+                    thread_id: thread_id.to_owned(),
                     attachments,
                 },
             )
@@ -268,6 +283,10 @@ fn strip_leading_bot_mentions<'a>(raw: &'a str, bot_user_id: &str) -> &'a str {
         text = remainder.trim_start();
     }
     text
+}
+
+fn accepts_slack_message(is_private: bool, mentioned: bool, text: &str) -> bool {
+    is_private || mentioned || super::commands::is_recognized_command(text)
 }
 
 async fn retry_transient<T, Operation, OperationFuture>(
@@ -414,5 +433,14 @@ mod tests {
             &json!({"channel_type":"channel"}),
             "C123"
         ));
+    }
+
+    #[test]
+    fn channel_commands_do_not_require_a_bot_mention() {
+        assert!(accepts_slack_message(false, false, "/subscribe"));
+        assert!(!accepts_slack_message(false, false, "/weather"));
+        assert!(!accepts_slack_message(false, false, "ordinary text"));
+        assert!(accepts_slack_message(false, true, "ordinary text"));
+        assert!(accepts_slack_message(true, false, "ordinary text"));
     }
 }

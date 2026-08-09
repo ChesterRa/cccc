@@ -258,6 +258,7 @@ data: {
   title?: string
   message?: string
   target_actor_id?: string | null                   // null = broadcast
+  im_visibility?: "internal" | "public"            // default "internal"
   context?: Record<string, unknown>                 // implementation-defined
   requires_ack?: boolean                            // default false
   related_event_id?: string | null                  // optional correlation
@@ -267,6 +268,7 @@ data: {
 **Rules**
 - Clients MUST ignore unknown `data.kind` values within `system.notify` (open enum).
 - Implementations MAY enforce an allowlist of `data.kind` values, but should not assume clients understand new kinds.
+- External IM bridges MUST fail closed: a `system.notify` is eligible for IM delivery only when `im_visibility="public"`. Missing, invalid, or `internal` values stay inside CCCC. Actor-targeted notifications remain internal even if a malformed producer also marks them public.
 
 ### 7.2 `system.notify_ack`
 

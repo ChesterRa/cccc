@@ -806,6 +806,7 @@ export function AgentTab({
                 <WebModelRuntimePanel
                   groupId={groupId}
                   actor={actor}
+                  isRunning={isRunning}
                   isDark={isDark}
                   isVisible={isVisible}
                   readOnly={readOnly}

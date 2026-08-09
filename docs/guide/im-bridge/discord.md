@@ -133,10 +133,16 @@ cccc im start
 
 ### Sending Messages to Agents
 
-In channels, @mention the bot first, then use the `/send` command:
+In channels, @mention the bot for ordinary text:
 
 ```
 @YourBotName /send Please review the latest pull request
+```
+
+Recognized CCCC commands such as `/send`, `/status`, and `/subscribe` may be sent without an @mention. Unrelated slash commands remain ignored:
+
+```
+/send Please review the latest pull request
 ```
 
 In direct messages with the bot, you can use `/send` directly:
@@ -146,7 +152,7 @@ In direct messages with the bot, you can use `/send` directly:
 ```
 
 ::: warning Important
-- In channels, you must @mention the bot before the message is routed
+- In channels, ordinary text and files require @mention; recognized CCCC slash commands do not
 - After mentioning the bot, plain text is treated as implicit send to foreman
 - Use `/send` when you need explicit recipients like `@all` or `@peers`
 :::
@@ -168,11 +174,13 @@ After subscribing, you will automatically receive:
 - Status updates
 - Error notifications
 
-Use `/verbose` to toggle whether you see agent-to-agent messages.
+Use `/verbose` (or `/verbose on`) to receive agent-to-agent messages, and `/verbose off` to stop receiving them.
+
+Agent output is updated progressively by editing the initial Discord message. Completed replies longer than Discord's single-message limit are delivered in lossless 2,000-character chunks.
 
 ### Thread Support
 
-Create threads for focused discussions. CCCC tracks thread context.
+Create threads for focused discussions. Discord threads are channels, so CCCC naturally authorizes and replies to the specific thread channel.
 
 ### File Attachments
 
@@ -195,7 +203,7 @@ CCCC formats responses with Discord embeds for better readability when appropria
 | `/status` | Show group and agent status |
 | `/pause` | Pause message delivery |
 | `/resume` | Resume message delivery |
-| `/verbose` | Toggle verbose mode (see all agent messages) |
+| `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/help` | Show available commands |
 
 ## Slash Commands (Optional)
@@ -231,6 +239,29 @@ Enable Message Content Intent:
 2. Enable **Message Content Intent**
 3. Save changes
 4. Restart the bridge
+
+### "Gateway READY timed out" Error
+
+The Discord Gateway uses a WebSocket connection. If Discord is only reachable through a proxy, set the proxy before starting CCCC. The Rust implementation supports HTTP CONNECT and SOCKS5 proxy URLs and respects `NO_PROXY`.
+
+macOS/Linux:
+
+```bash
+export HTTPS_PROXY="http://127.0.0.1:7890"
+cccc im stop
+cccc im start
+```
+
+Windows PowerShell:
+
+```powershell
+$env:HTTPS_PROXY = "http://127.0.0.1:7890"
+[Environment]::SetEnvironmentVariable("HTTPS_PROXY", $env:HTTPS_PROXY, "User")
+cccc im stop
+cccc im start
+```
+
+Use a `socks5://` URL instead when connecting through a SOCKS5 proxy. Restart the CCCC process after changing a persistent environment variable. If the error instead names `MESSAGE_CONTENT`, enable **Message Content Intent** in the Developer Portal.
 
 ### Bot is offline
 

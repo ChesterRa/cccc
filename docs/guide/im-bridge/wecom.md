@@ -126,7 +126,7 @@ After authorization, the chat can send and receive messages normally.
 ## Step 5: Verify Basic Reachability
 
 1. Send a plain text message to the robot in a direct chat
-2. In a group chat, @mention the robot before sending your message
+2. In a group chat, @mention the robot before sending ordinary text; recognized CCCC commands such as `/status` and `/subscribe` may be sent directly, while unrelated slash commands are ignored
 3. Confirm the bridge log shows inbound activity:
 
 ```bash
@@ -150,6 +150,8 @@ Current limitations:
 
 - non-text inbound messages include text placeholders such as `[image]`, `[file: name]`, `[voice]`, or `[video]` alongside attachment metadata
 - inline stream image replies are limited to PNG/JPEG payloads that fit WeCom's stream item size limit; other attachments use media upload first
+
+Both workers coalesce rapid full-snapshot updates and always finalize the native stream. If a stream preview exceeds WeCom's byte limit, the completed reply remains enabled and is delivered in lossless 2,048-character / 64-line chunks instead of being mistaken for an already-complete stream.
 
 The adapter implementation lives in:
 

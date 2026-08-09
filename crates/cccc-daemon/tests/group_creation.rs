@@ -1,6 +1,6 @@
 use cccc_contracts::DaemonRequest;
 use cccc_core::{GroupStore, HomeLayout};
-use cccc_core::{Registry, active, ledger};
+use cccc_core::{Registry, active};
 use serde_json::{Value, json};
 
 fn request(op: &str, args: Value) -> DaemonRequest {
@@ -51,7 +51,7 @@ fn create_with_scope_is_visible_only_after_attach_succeeds() {
 }
 
 #[test]
-fn duplicate_scope_is_rejected_without_changing_persisted_state() {
+fn same_scope_can_create_distinct_groups_and_latest_is_default() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     let target = temp.path().join("project");
@@ -64,32 +64,42 @@ fn duplicate_scope_is_rejected_without_changing_persisted_state() {
         ),
     );
     assert!(first.ok, "{:?}", first.error);
-    let first_id = first.result["group_id"].as_str().expect("first id");
+    let first_id = first.result["group_id"]
+        .as_str()
+        .expect("first id")
+        .to_owned();
     let store = GroupStore::new(home.clone()).expect("store");
-    let registry_before = Registry::load(&home).expect("registry");
-    let active_before = active::get(&home).expect("active");
-    let ledger_before =
-        ledger::read_all(&store.ledger_path(first_id).expect("ledger")).expect("ledger events");
 
-    let duplicate = cccc_daemon::handle_request(
+    let second = cccc_daemon::handle_request(
         &home,
         &request(
             "group_create_with_scope",
-            json!({"title":"duplicate","path":target}),
+            json!({"title":"second","path":target}),
         ),
     );
 
-    assert!(!duplicate.ok);
-    let error = duplicate.error.expect("duplicate error");
-    assert_eq!(error.code, "scope_already_attached");
-    assert_eq!(error.details["group_id"], first_id);
-    assert_eq!(store.list().expect("groups").len(), 1);
-    assert_eq!(Registry::load(&home).expect("registry"), registry_before);
-    assert_eq!(active::get(&home).expect("active"), active_before);
+    assert!(second.ok, "{:?}", second.error);
+    let second_id = second.result["group_id"]
+        .as_str()
+        .expect("second id")
+        .to_owned();
+    assert_ne!(second_id, first_id);
+    let first_group = store.load(&first_id).expect("first group");
+    let second_group = store.load(&second_id).expect("second group");
+    assert_eq!(first_group.title, "first");
+    assert_eq!(second_group.title, "second");
+    assert_eq!(first_group.scopes.len(), 1);
+    assert_eq!(second_group.scopes.len(), 1);
+    assert_eq!(first_group.scopes[0], second_group.scopes[0]);
+    assert_eq!(store.list().expect("groups").len(), 2);
     assert_eq!(
-        ledger::read_all(&store.ledger_path(first_id).expect("ledger")).expect("ledger events"),
-        ledger_before
+        Registry::load(&home)
+            .expect("registry")
+            .defaults
+            .get(&first_group.scopes[0].scope_key),
+        Some(&second_id)
     );
+    assert_eq!(active::get(&home).expect("active"), Some(second_id));
     assert_eq!(std::fs::read_dir(&target).expect("target").count(), 0);
 }
 

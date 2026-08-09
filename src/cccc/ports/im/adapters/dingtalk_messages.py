@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .outbound_text import split_text_chunks
+
 DINGTALK_MAX_MESSAGE_LENGTH = 4096
 DEFAULT_MAX_CHARS = 4096
 DEFAULT_MAX_LINES = 64
@@ -95,60 +97,13 @@ def split_message_chunks(
     max_chars: int = DEFAULT_MAX_CHARS,
     max_lines: int = DEFAULT_MAX_LINES,
 ) -> List[str]:
-    """Split long outbound text into DingTalk-sized chunks."""
-    normalized = normalize_text(text)
-    if not normalized:
-        return []
-
-    max_chars = max(1, min(int(max_chars or DINGTALK_MAX_MESSAGE_LENGTH), DINGTALK_MAX_MESSAGE_LENGTH))
-    max_lines = max(1, int(max_lines or DEFAULT_MAX_LINES))
-    chunks: List[str] = []
-    current_lines: List[str] = []
-    current_chars = 0
-
-    def flush() -> None:
-        nonlocal current_lines, current_chars
-        if not current_lines:
-            return
-        chunk = "\n".join(current_lines).strip()
-        if chunk:
-            chunks.append(chunk)
-        current_lines = []
-        current_chars = 0
-
-    def push_line(line: str) -> None:
-        nonlocal current_chars
-        sep = 1 if current_lines else 0
-        current_lines.append(line)
-        current_chars += len(line) + sep
-
-    for raw_line in normalized.split("\n"):
-        remaining = raw_line
-        while True:
-            if not current_lines and len(remaining) > max_chars:
-                chunks.append(remaining[:max_chars])
-                remaining = remaining[max_chars:]
-                if not remaining:
-                    break
-                continue
-
-            needs_new_chunk = False
-            if current_lines and len(current_lines) >= max_lines:
-                needs_new_chunk = True
-            else:
-                sep = 1 if current_lines else 0
-                if current_chars + len(remaining) + sep > max_chars:
-                    needs_new_chunk = True
-
-            if needs_new_chunk:
-                flush()
-                continue
-
-            push_line(remaining)
-            break
-
-    flush()
-    return chunks
+    """Split outbound text without normalizing or dropping any content."""
+    return split_text_chunks(
+        text,
+        max_chars=max_chars,
+        hard_limit=DINGTALK_MAX_MESSAGE_LENGTH,
+        max_lines=max_lines,
+    )
 
 
 def parse_event_time(raw: Any) -> float:

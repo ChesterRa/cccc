@@ -94,7 +94,6 @@ pub(super) async fn start(
                     });
                     continue;
                 }
-                InboundDecision::Ignore => continue,
             }
             let attachments =
                 materialize_attachments(&inbound_home, &inbound_group, &message.attachments).await;
@@ -107,6 +106,7 @@ pub(super) async fn start(
                 &message.text,
                 InboundMetadata {
                     message_id: message.message_id,
+                    thread_id: String::new(),
                     attachments,
                 },
             )
@@ -120,11 +120,17 @@ pub(super) async fn start(
     let outbound = spawn_outbound_matching(
         home,
         group_id.to_owned(),
+        PLATFORM,
         ledger_events,
         outbound_sender,
         is_outbound_or_stream,
         |sender, targets, event| async move {
-            sender.send(targets, event).await;
+            sender
+                .send(
+                    targets.into_iter().map(|target| target.chat_id).collect(),
+                    event,
+                )
+                .await;
         },
     );
     Ok((vec![connection, inbound, outbound], sdk))

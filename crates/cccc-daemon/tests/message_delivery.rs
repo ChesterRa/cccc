@@ -78,6 +78,7 @@ async fn serializes_delivery_notifies_and_advances_cursor() {
     assert_eq!(first.result["delivery"]["state"], "queued");
     assert_eq!(second.result["delivery"]["queued"], 1);
     assert_eq!(notify.result["delivery"]["state"], "queued");
+    assert_eq!(notify.result["event"]["data"]["im_visibility"], "internal");
     assert_eq!(reply.result["delivery"]["state"], "queued");
 
     wait_for(&client, &group_id, "FOURTH:[cccc] user → peer1 (reply:").await;
@@ -921,7 +922,9 @@ fn message_domain_contracts_cover_install_ack_idle_stream_and_validation() {
     call(
         &home,
         "actor_add",
-        json!({"group_id":group_id,"actor_id":"worker","by":"user"}),
+        json!({
+            "group_id":group_id,"actor_id":"worker","title":"Stream Worker","by":"user"
+        }),
     );
     let store = GroupStore::new(home.clone()).expect("store");
     store
@@ -991,6 +994,10 @@ fn message_domain_contracts_cover_install_ack_idle_stream_and_validation() {
     );
     let stream_id = start.result["stream_id"].as_str().expect("stream id");
     assert!(!stream_id.is_empty());
+    assert_eq!(
+        start.result["event"]["data"]["sender_title"],
+        "Stream Worker"
+    );
     let update = call(
         &home,
         "stream_emit",

@@ -20,6 +20,13 @@ pub fn add_sender_snapshot(group: &GroupDoc, by: &str, data: &mut Map<String, Va
     insert_snapshot(data, "sender_avatar_path", actor.avatar_asset_path.clone());
 }
 
+pub fn add_sender_title_snapshot(group: &GroupDoc, by: &str, data: &mut Map<String, Value>) {
+    let Some(actor) = actors::find(group, by) else {
+        return;
+    };
+    insert_snapshot(data, "sender_title", actor.title.clone());
+}
+
 pub fn add_reply_snapshot(target: &Event, data: &mut Map<String, Value>) {
     let Some(text) = target.data.get("text").and_then(Value::as_str) else {
         return;

@@ -94,7 +94,9 @@ class TestWebImStart(unittest.TestCase):
             argv = list(popen.call_args.args[0])
             kwargs = dict(popen.call_args.kwargs)
 
-            self.assertEqual(argv, [sys.executable, "-m", "cccc.ports.im", gid, "telegram"])
+            self.assertEqual(
+                argv, [sys.executable, "-m", "cccc.ports.im", gid, "telegram"]
+            )
             self.assertIs(kwargs.get("stdin"), subprocess.DEVNULL)
             self.assertTrue(bool(kwargs.get("close_fds")))
             self.assertEqual(str(kwargs.get("cwd") or ""), home)
@@ -111,7 +113,6 @@ class TestWebImStart(unittest.TestCase):
                 self.assertEqual(fh.read().strip(), "4321")
         finally:
             cleanup()
-
 
     def test_im_start_wecom_injects_credentials_into_env(self) -> None:
         from cccc.ports.web.app import create_app
@@ -145,7 +146,9 @@ class TestWebImStart(unittest.TestCase):
             self.assertEqual(child_env.get("WECOM_SECRET"), "sec456")
 
             argv = list(popen.call_args.args[0])
-            self.assertEqual(argv, [sys.executable, "-m", "cccc.ports.im", gid, "wecom"])
+            self.assertEqual(
+                argv, [sys.executable, "-m", "cccc.ports.im", gid, "wecom"]
+            )
         finally:
             cleanup()
 
@@ -223,13 +226,19 @@ class TestWebImStart(unittest.TestCase):
                 lock_paths.append(str(lock_path))
                 return _DummyLockFile()
 
-            with patch("cccc.ports.im.bridge._acquire_singleton_lock", side_effect=fake_acquire):
+            with patch(
+                "cccc.ports.im.bridge._acquire_singleton_lock", side_effect=fake_acquire
+            ):
                 with patch("cccc.ports.im.bridge.IMBridge", _FakeBridge):
                     start_bridge(gid, "wecom")
 
             self.assertGreaterEqual(len(lock_paths), 2)
-            token_fingerprint = hashlib.sha256("wecom|bot_id=corp123".encode("utf-8")).hexdigest()[:12]
-            self.assertTrue(lock_paths[0].endswith(f"im_bridge_wecom_{token_fingerprint}.lock"))
+            token_fingerprint = hashlib.sha256(
+                "wecom|bot_id=corp123".encode("utf-8")
+            ).hexdigest()[:12]
+            self.assertTrue(
+                lock_paths[0].endswith(f"im_bridge_wecom_{token_fingerprint}.lock")
+            )
         finally:
             cleanup()
 
@@ -271,12 +280,17 @@ class TestWebImStart(unittest.TestCase):
                 fake_pkg = types.ModuleType("wechatbot")
                 fake_pkg.__path__ = []  # mark as package
 
-                with patch.dict(sys.modules, {
-                    "wechatbot": fake_pkg,
-                    "wechatbot.auth": fake_auth,
-                    "wechatbot.protocol": fake_protocol,
-                }):
-                    start_resp = client.post("/api/im/weixin/login/start", json={"group_id": gid})
+                with patch.dict(
+                    sys.modules,
+                    {
+                        "wechatbot": fake_pkg,
+                        "wechatbot.auth": fake_auth,
+                        "wechatbot.protocol": fake_protocol,
+                    },
+                ):
+                    start_resp = client.post(
+                        "/api/im/weixin/login/start", json={"group_id": gid}
+                    )
 
                 self.assertEqual(start_resp.status_code, 200)
                 payload = start_resp.json()
@@ -330,7 +344,9 @@ class TestWebImStart(unittest.TestCase):
                 async def _unexpected_save_credentials(*args, **kwargs):
                     _ = args
                     _ = kwargs
-                    raise AssertionError("credentials should not be saved when confirmed payload is incomplete")
+                    raise AssertionError(
+                        "credentials should not be saved when confirmed payload is incomplete"
+                    )
 
                 class _Credentials:
                     def __init__(self, **kwargs) -> None:
@@ -346,13 +362,18 @@ class TestWebImStart(unittest.TestCase):
                 fake_pkg = types.ModuleType("wechatbot")
                 fake_pkg.__path__ = []  # mark as package
 
-                with patch.dict(sys.modules, {
-                    "wechatbot": fake_pkg,
-                    "wechatbot.auth": fake_auth,
-                    "wechatbot.protocol": fake_protocol,
-                    "wechatbot.types": fake_types,
-                }):
-                    status_resp = client.get(f"/api/im/weixin/login/status?group_id={gid}")
+                with patch.dict(
+                    sys.modules,
+                    {
+                        "wechatbot": fake_pkg,
+                        "wechatbot.auth": fake_auth,
+                        "wechatbot.protocol": fake_protocol,
+                        "wechatbot.types": fake_types,
+                    },
+                ):
+                    status_resp = client.get(
+                        f"/api/im/weixin/login/status?group_id={gid}"
+                    )
 
                 self.assertEqual(status_resp.status_code, 200)
                 payload = status_resp.json()
@@ -362,6 +383,190 @@ class TestWebImStart(unittest.TestCase):
                 self.assertFalse(bool(result.get("logged_in")))
                 self.assertIn("missing credentials", str(result.get("error") or ""))
                 self.assertFalse((state_dir / "im_weixin_credentials.json").exists())
+        finally:
+            cleanup()
+
+    def test_im_weixin_verification_confirms_and_authorizes_scanning_user(self) -> None:
+        from cccc.ports.im.auth import KeyManager
+        from cccc.ports.im.subscribers import SubscriberManager
+        from cccc.ports.web.app import create_app
+
+        home, cleanup = self._with_home()
+        try:
+            gid = self._create_group("im-weixin-verify")
+            state_dir = Path(home) / "groups" / gid / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            (state_dir / "im_weixin_login.json").write_text(
+                json.dumps(
+                    {
+                        "status": "waiting_scan",
+                        "logged_in": False,
+                        "qrcode": "qr-token-verify",
+                        "qrcode_url": "https://example.test/qr",
+                        "poll_base_url": "https://example.test",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            poll_calls: list[tuple[str, str, str | None]] = []
+            poll_results = [
+                {"status": "need_verifycode"},
+                {
+                    "status": "confirmed",
+                    "bot_token": "token-1",
+                    "ilink_bot_id": "bot-1",
+                    "ilink_user_id": "wx-user-1",
+                    "baseurl": "https://example.test",
+                },
+            ]
+
+            class _FakeApi:
+                async def poll_qr_status(
+                    self,
+                    base_url: str,
+                    qrcode: str,
+                    verify_code: str | None = None,
+                ):
+                    poll_calls.append((base_url, qrcode, verify_code))
+                    return poll_results.pop(0)
+
+            class _Credentials:
+                def __init__(self, **kwargs) -> None:
+                    for key, value in kwargs.items():
+                        setattr(self, key, value)
+
+            async def _save_credentials(creds, path: Path | None = None):
+                assert path is not None
+                path.write_text(
+                    json.dumps(
+                        {
+                            "token": creds.token,
+                            "baseUrl": creds.base_url,
+                            "accountId": creds.account_id,
+                            "userId": creds.user_id,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            async def _load_credentials(path: Path | None = None):
+                _ = path
+                return None
+
+            fake_auth = types.ModuleType("wechatbot.auth")
+            fake_auth.FIXED_QR_BASE_URL = "https://ilinkai.weixin.qq.com"
+            fake_auth.load_credentials = _load_credentials
+            fake_auth.save_credentials = _save_credentials
+            fake_protocol = types.ModuleType("wechatbot.protocol")
+            fake_protocol.ILinkApi = _FakeApi
+            fake_types = types.ModuleType("wechatbot.types")
+            fake_types.Credentials = _Credentials
+            fake_pkg = types.ModuleType("wechatbot")
+            fake_pkg.__path__ = []
+
+            with TestClient(create_app()) as client:
+                set_resp = client.post(
+                    "/api/im/set",
+                    json={"group_id": gid, "platform": "weixin"},
+                )
+                self.assertTrue(bool(set_resp.json().get("ok")))
+                with patch.dict(
+                    sys.modules,
+                    {
+                        "wechatbot": fake_pkg,
+                        "wechatbot.auth": fake_auth,
+                        "wechatbot.protocol": fake_protocol,
+                        "wechatbot.types": fake_types,
+                    },
+                ):
+                    status_resp = client.get(
+                        f"/api/im/weixin/login/status?group_id={gid}"
+                    )
+                    self.assertEqual(
+                        (status_resp.json().get("result") or {}).get("status"),
+                        "need_verify_code",
+                    )
+                    verify_resp = client.post(
+                        "/api/im/weixin/login/verify",
+                        json={"group_id": gid, "verify_code": "246810"},
+                    )
+
+            payload = verify_resp.json()
+            self.assertTrue(bool(payload.get("ok")), payload)
+            result = payload.get("result") or {}
+            self.assertEqual(result.get("status"), "logged_in")
+            self.assertTrue(bool(result.get("auto_subscribed")))
+            self.assertEqual(
+                poll_calls[-1], ("https://example.test", "qr-token-verify", "246810")
+            )
+            self.assertTrue(KeyManager(state_dir).is_authorized("wx-user-1", 0))
+            self.assertTrue(SubscriberManager(state_dir).is_subscribed("wx-user-1", 0))
+        finally:
+            cleanup()
+
+    def test_im_weixin_logout_persists_disabled_and_revokes_qr_access(self) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.ports.im.auth import KeyManager
+        from cccc.ports.im.subscribers import SubscriberManager
+        from cccc.ports.web.app import create_app
+
+        home, cleanup = self._with_home()
+        try:
+            gid = self._create_group("im-weixin-logout")
+            with TestClient(create_app()) as client:
+                set_resp = client.post(
+                    "/api/im/set",
+                    json={"group_id": gid, "platform": "weixin"},
+                )
+                self.assertTrue(bool(set_resp.json().get("ok")))
+
+                group = load_group(gid)
+                assert group is not None
+                group.doc["im"]["enabled"] = True
+                group.save()
+                state_dir = Path(home) / "groups" / gid / "state"
+                state_dir.mkdir(parents=True, exist_ok=True)
+                (state_dir / "im_weixin_credentials.json").write_text(
+                    json.dumps(
+                        {
+                            "token": "token-logout",
+                            "baseUrl": "https://example.test",
+                            "accountId": "bot-logout",
+                            "userId": "wx-user-logout",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                key_manager = KeyManager(state_dir)
+                key_manager.authorize_direct(
+                    "wx-user-logout", 0, "weixin", "weixin_login"
+                )
+                SubscriberManager(state_dir).subscribe(
+                    "wx-user-logout",
+                    chat_title="wx-user-logout",
+                    thread_id=0,
+                    platform="weixin",
+                )
+
+                with patch(
+                    "cccc.ports.web.routes.im.stop_im_bridges_for_group", return_value=0
+                ):
+                    logout_resp = client.post(
+                        "/api/im/weixin/logout", json={"group_id": gid}
+                    )
+
+            payload = logout_resp.json()
+            self.assertTrue(bool(payload.get("ok")), payload)
+            self.assertEqual((payload.get("result") or {}).get("status"), "logged_out")
+            self.assertFalse((state_dir / "im_weixin_credentials.json").exists())
+            self.assertFalse(KeyManager(state_dir).is_authorized("wx-user-logout", 0))
+            self.assertFalse(
+                SubscriberManager(state_dir).is_subscribed("wx-user-logout", 0)
+            )
+            persisted_group = load_group(gid)
+            assert persisted_group is not None
+            self.assertFalse(bool((persisted_group.doc.get("im") or {}).get("enabled")))
         finally:
             cleanup()
 

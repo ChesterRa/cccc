@@ -91,10 +91,16 @@ class TestBridgeStreamForwarding(unittest.TestCase):
             bridge._forward_stream_event({
                 "kind": "chat.stream",
                 "by": "agent-1",
-                "data": {"op": "start", "stream_id": "s1", "text": "hello"},
+                "data": {
+                    "op": "start",
+                    "stream_id": "s1",
+                    "text": "hello",
+                    "sender_title": "Stream Agent",
+                },
             })
             self.assertEqual(len(adapter.streams_started), 1)
             self.assertEqual(adapter.streams_started[0]["stream_id"], "s1")
+            self.assertEqual(adapter.streams_started[0]["text"], "[Stream Agent] hello")
             self.assertIn("s1", bridge._active_streams)
         finally:
             cleanup()
@@ -116,7 +122,7 @@ class TestBridgeStreamForwarding(unittest.TestCase):
                 "data": {"op": "update", "stream_id": "s2", "text": "chunk", "seq": 1},
             })
             self.assertEqual(len(adapter.streams_updated), 1)
-            self.assertEqual(adapter.streams_updated[0]["text"], "chunk")
+            self.assertEqual(adapter.streams_updated[0]["text"], "[agent-1] chunk")
             self.assertEqual(adapter.streams_updated[0]["seq"], 1)
         finally:
             cleanup()
@@ -141,7 +147,7 @@ class TestBridgeStreamForwarding(unittest.TestCase):
             self.assertNotIn("s3", bridge._active_streams)
             self.assertIn("s3", bridge._completed_stream_targets)
             self.assertEqual(len(adapter.streams_ended), 1)
-            self.assertEqual(adapter.streams_ended[0]["text"], "final")
+            self.assertEqual(adapter.streams_ended[0]["text"], "[agent-1] final")
         finally:
             cleanup()
 
@@ -166,7 +172,7 @@ class TestBridgeStreamForwarding(unittest.TestCase):
             self.assertNotIn("s3-empty", bridge._active_streams)
             self.assertNotIn("s3-empty", bridge._completed_stream_targets)
             self.assertEqual(len(adapter.streams_ended), 1)
-            self.assertEqual(adapter.streams_ended[0]["text"], "")
+            self.assertEqual(adapter.streams_ended[0]["text"], "[agent-1] …")
 
             bridge._forward_event({
                 "kind": "chat.message",

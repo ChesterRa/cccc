@@ -214,13 +214,15 @@ describe("ChatComposer destination group boundaries", () => {
     expect(composerSource).toContain("mentionOverlay");
   });
 
-  it("renders selected # and @ mentions with a clear overlay highlight", () => {
+  it("renders mention highlights without changing inline text metrics", () => {
     expect(composerSource).toContain(
-      "bg-sky-400/25 px-1 text-transparent ring-1 ring-inset ring-sky-300/60",
+      "bg-sky-400/25 text-transparent ring-1 ring-inset ring-sky-300/60",
     );
     expect(composerSource).toContain(
-      "bg-violet-400/25 px-1 text-transparent ring-1 ring-inset ring-violet-300/60",
+      "bg-violet-400/25 text-transparent ring-1 ring-inset ring-violet-300/60",
     );
+    expect(composerSource).not.toMatch(/bg-sky-400\/25[^"]*\bpx-/);
+    expect(composerSource).not.toMatch(/bg-violet-400\/25[^"]*\bpx-/);
   });
 
   it("keeps textarea fixed while only the mention overlay tracks scroll", () => {

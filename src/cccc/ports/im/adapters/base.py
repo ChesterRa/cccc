@@ -62,6 +62,7 @@ class IMProcessingContext:
     thread_id: int = 0
     message_id: str = ""
     platform: str = "unknown"
+    source_event_id: str = ""
 
 
 class IMAdapter(ABC):

@@ -35,7 +35,7 @@ pub(super) fn emit(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let data = json!({
+    let mut data = json!({
         "stream_id":stream_id,
         "op":operation,
         "mode":string_arg(request, "mode").unwrap_or_else(|| "snapshot".into()),
@@ -49,6 +49,7 @@ pub(super) fn emit(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     .as_object()
     .cloned()
     .unwrap_or_default();
+    super::super::message_metadata::add_sender_title_snapshot(&group, &by, &mut data);
     let event = super::append(home, &group.group_id, "chat.stream", &by, data)?;
     object(json!({"event":event,"stream_id":stream_id}))
 }

@@ -22,6 +22,7 @@ pub fn notify_event(
         "rule_id": rule_id,
         "text": message,
         "to": rule.get("to").cloned().unwrap_or_else(|| json!(["@all"])),
+        "im_visibility": "public",
         "priority": action.and_then(|action| action.get("priority")).cloned().unwrap_or_else(|| json!("normal")),
     })
     .as_object()

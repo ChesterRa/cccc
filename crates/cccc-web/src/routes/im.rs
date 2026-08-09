@@ -23,7 +23,7 @@ struct GroupQuery {
     #[serde(default)]
     chat_id: String,
     #[serde(default)]
-    thread_id: i64,
+    thread_id: String,
     #[serde(default)]
     verbose: bool,
 }
@@ -38,6 +38,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/im/stop", post(stop))
         .route("/api/im/weixin/login/status", get(weixin_status))
         .route("/api/im/weixin/login/start", post(weixin_start))
+        .route("/api/im/weixin/login/verify", post(weixin_verify))
         .route("/api/im/weixin/logout", post(weixin_logout))
         .route("/api/im/authorized", get(authorized))
         .route("/api/im/pending", get(pending))
@@ -241,7 +242,23 @@ async fn weixin_start(
     ensure_access(&principal, &group_id)?;
     let status = state
         .im_workers
-        .start_weixin_login(&group_id)
+        .start_weixin_login(&state.home, &group_id)
+        .await
+        .map_err(ApiError::bad)?;
+    Ok(success(status))
+}
+
+async fn weixin_verify(
+    State(state): State<AppState>,
+    Extension(principal): Extension<Principal>,
+    Json(body): Json<Value>,
+) -> ApiResult {
+    let group_id = required(&body, "group_id")?;
+    let verify_code = required(&body, "verify_code")?;
+    ensure_access(&principal, &group_id)?;
+    let status = state
+        .im_workers
+        .verify_weixin_login(&state.home, &group_id, &verify_code)
         .await
         .map_err(ApiError::bad)?;
     Ok(success(status))
@@ -254,9 +271,12 @@ async fn weixin_logout(
 ) -> ApiResult {
     let group_id = required(&body, "group_id")?;
     ensure_access(&principal, &group_id)?;
-    Ok(success(
-        state.im_workers.logout_weixin(&state.home, &group_id).await,
-    ))
+    let status = state
+        .im_workers
+        .logout_weixin(&state.home, &group_id)
+        .await
+        .map_err(ApiError::bad)?;
+    Ok(success(status))
 }
 
 async fn authorized(
@@ -268,6 +288,7 @@ async fn authorized(
     let value = load(&state, &query.group_id)?;
     let mut authorized = array_field(&value, "authorized");
     super::im_authorization::enrich_verbose(&mut authorized, &array_field(&value, "subscribers"));
+    super::im_authorization::retain_active(&mut authorized);
     Ok(success(json!({"authorized":authorized})))
 }
 
@@ -341,7 +362,7 @@ async fn revoke(
         Ok(super::im_authorization::revoke(
             object(value),
             &query.chat_id,
-            query.thread_id,
+            &query.thread_id,
         ))
     })?;
     Ok(success(
@@ -359,7 +380,7 @@ async fn verbose(
         super::im_authorization::set_verbose(
             object(value),
             &query.chat_id,
-            query.thread_id,
+            &query.thread_id,
             query.verbose,
         )
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "authorized chat not found"))
@@ -515,14 +536,12 @@ fn normalize_im_items(value: Option<&Value>, include_key: bool) -> Vec<Value> {
                 } else {
                     let (chat_id, thread_id) = key
                         .rsplit_once(':')
-                        .and_then(|(chat_id, thread)| {
-                            thread.parse::<i64>().ok().map(|thread| (chat_id, thread))
-                        })
-                        .unwrap_or((key.as_str(), 0));
+                        .filter(|(chat_id, thread)| !chat_id.is_empty() && !thread.is_empty())
+                        .map_or((key.as_str(), Value::from(0)), |(chat_id, thread)| {
+                            (chat_id, Value::from(thread))
+                        });
                     object.entry("chat_id").or_insert_with(|| json!(chat_id));
-                    object
-                        .entry("thread_id")
-                        .or_insert_with(|| json!(thread_id));
+                    object.entry("thread_id").or_insert(thread_id);
                 }
             }
             item
@@ -549,8 +568,14 @@ fn status_payload(group_id: &str, value: &Value) -> Value {
         "adapter_available":value["adapter_available"].as_bool().unwrap_or(false),
         "last_error":value.get("last_error").cloned().unwrap_or(Value::Null),
         "pid":value.get("pid").cloned().unwrap_or(Value::Null),
-        "subscribers":array_field(value,"authorized").len()
+        "subscribers":active_authorization_count(value)
     })
+}
+
+fn active_authorization_count(value: &Value) -> usize {
+    let mut authorized = normalize_im_items(value.get("authorized"), false);
+    super::im_authorization::retain_active(&mut authorized);
+    authorized.len()
 }
 
 fn ensure_access(principal: &Principal, group_id: &str) -> Result<(), ApiError> {
@@ -569,7 +594,9 @@ fn object(value: &mut Value) -> &mut Map<String, Value> {
 
 fn array_mut<'a>(state: &'a mut Map<String, Value>, key: &str) -> &'a mut Vec<Value> {
     let value = state.entry(key).or_insert_with(|| json!([]));
-    if !value.is_array() {
+    if value.is_object() {
+        *value = Value::Array(normalize_im_items(Some(value), key == "pending"));
+    } else if !value.is_array() {
         *value = json!([]);
     }
     value.as_array_mut().expect("array initialized")
@@ -747,5 +774,17 @@ mod tests {
             "WeCom authentication failed: invalid secret"
         );
         assert_eq!(stored["running"], false);
+    }
+
+    #[test]
+    fn status_excludes_unsubscribed_weixin_tombstones() {
+        let state = json!({
+            "authorized":[
+                {"chat_id":"wx-old","platform":"weixin","subscribed":false},
+                {"chat_id":"tg-live","platform":"telegram"}
+            ]
+        });
+
+        assert_eq!(status_payload("group", &state)["subscribers"], 1);
     }
 }

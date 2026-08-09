@@ -418,8 +418,8 @@ export function ChatComposer({
       parts.push(escapeHtml(composerText.slice(cursor, token.start)));
       const className =
         token.kind === "group"
-          ? "rounded-md bg-sky-400/25 px-1 text-transparent ring-1 ring-inset ring-sky-300/60"
-          : "rounded-md bg-violet-400/25 px-1 text-transparent ring-1 ring-inset ring-violet-300/60";
+          ? "rounded-md bg-sky-400/25 text-transparent ring-1 ring-inset ring-sky-300/60"
+          : "rounded-md bg-violet-400/25 text-transparent ring-1 ring-inset ring-violet-300/60";
       parts.push(
         `<mark class="${className}">${escapeHtml(composerText.slice(token.start, token.end))}</mark>`,
       );

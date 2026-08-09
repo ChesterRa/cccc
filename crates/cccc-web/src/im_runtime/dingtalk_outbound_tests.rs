@@ -81,7 +81,7 @@ async fn test_sender(
     mode: ServerMode,
 ) -> (
     tempfile::TempDir,
-    DingTalkAttachmentSender,
+    DingTalkOutboundSender,
     mpsc::UnboundedReceiver<(String, HeaderMap, Value)>,
     mpsc::UnboundedReceiver<CapturedUpload>,
 ) {
@@ -106,7 +106,7 @@ async fn test_sender(
         .await
         .expect("server");
     });
-    let sender = DingTalkAttachmentSender {
+    let sender = DingTalkOutboundSender {
         home,
         group_id: group.group_id,
         media: std::sync::Arc::new(FakeMedia { uploads: upload_tx }),
@@ -148,6 +148,14 @@ async fn partial_target_failure_is_aggregated_and_queryable() {
         .await;
     persist_failures(&sender.home, &sender.group_id, &report);
     assert_eq!(report.delivered_targets, 1);
+    assert_eq!(
+        report.delivered_chat_ids,
+        std::collections::HashSet::from(["cid-group".to_owned()])
+    );
+    assert_eq!(
+        report.failed_chat_ids,
+        std::collections::HashSet::from(["cid-private".to_owned()])
+    );
     assert_eq!(report.failures.len(), 1);
     assert_eq!(report.failures[0].stage, "send");
 
@@ -175,7 +183,7 @@ async fn invalid_routes_are_reported_without_upload_or_wrong_endpoint_fallback()
     let (_temp, sender, mut requests, _uploads) = test_sender(ServerMode::Success).await;
     let blob = cccc_core::blobs::store(&sender.home, &sender.group_id, b"file").expect("blob");
     let report = sender
-        .send(
+        .send_attachments(
             &[
                 target("1", "cid-private", ""),
                 target("2", "", ""),
@@ -202,7 +210,7 @@ async fn openapi_file_and_image_payloads_preserve_the_accepted_contract() {
         cccc_core::blobs::store(&sender.home, &sender.group_id, readme).expect("blob");
     let png_blob = cccc_core::blobs::store(&sender.home, &sender.group_id, png).expect("blob");
     let report = sender
-        .send(
+        .send_attachments(
             &targets,
             &[
                 json!({"path":readme_blob.path,"title":"README.zh-CN.md","mime_type":"text/markdown"}),
@@ -211,6 +219,11 @@ async fn openapi_file_and_image_payloads_preserve_the_accepted_contract() {
         )
         .await;
     assert_eq!(report.delivered_targets, 4);
+    assert_eq!(
+        report.delivered_chat_ids,
+        std::collections::HashSet::from(["cid-private".to_owned(), "cid-group".to_owned()])
+    );
+    assert!(report.failed_chat_ids.is_empty());
     assert!(report.failures.is_empty());
     assert_eq!(
         uploads.recv().await.expect("file upload"),
@@ -257,4 +270,74 @@ async fn openapi_file_and_image_payloads_preserve_the_accepted_contract() {
             key => panic!("unexpected msgKey: {key}"),
         }
     }
+}
+
+#[tokio::test]
+async fn proactive_markdown_fallback_supports_group_and_direct_targets() {
+    let (_temp, sender, mut requests, mut uploads) = test_sender(ServerMode::Success).await;
+    let delivered = sender
+        .send_text(
+            &[
+                target("2", "cid-group", ""),
+                target("1", "cid-private", "staff-1"),
+            ],
+            "final fallback",
+        )
+        .await;
+    assert_eq!(
+        delivered,
+        std::collections::HashSet::from(["cid-group".to_owned(), "cid-private".to_owned()])
+    );
+    assert!(uploads.try_recv().is_err());
+
+    let mut captured = Vec::new();
+    while let Ok(request) = requests.try_recv() {
+        captured.push(request);
+    }
+    assert_eq!(captured.len(), 2);
+    for (path, headers, body) in captured {
+        assert_eq!(headers["x-acs-dingtalk-access-token"], "access-token");
+        assert_eq!(body["robotCode"], "callback-robot");
+        assert_eq!(body["msgKey"], "sampleMarkdown");
+        let params: Value = serde_json::from_str(
+            body["msgParam"]
+                .as_str()
+                .expect("markdown params must be a JSON string"),
+        )
+        .expect("valid markdown params");
+        assert_eq!(params, json!({"title":"CCCC","text":"final fallback"}));
+        if path == OTO_ENDPOINT {
+            assert_eq!(body["userIds"], json!(["staff-1"]));
+        } else {
+            assert_eq!(path, GROUP_ENDPOINT);
+            assert_eq!(body["openConversationId"], "cid-group");
+        }
+    }
+}
+
+#[tokio::test]
+async fn proactive_markdown_fallback_preserves_every_long_unicode_chunk() {
+    let (_temp, sender, mut requests, _uploads) = test_sender(ServerMode::Success).await;
+    let text = "你".repeat(MAX_MESSAGE_CHARS + 900);
+
+    let delivered = sender
+        .send_text(&[target("2", "cid-group", "")], &text)
+        .await;
+
+    assert_eq!(
+        delivered,
+        std::collections::HashSet::from(["cid-group".to_owned()])
+    );
+    let mut received = String::new();
+    let mut chunks = 0;
+    while let Ok((_path, _headers, body)) = requests.try_recv() {
+        let params: Value =
+            serde_json::from_str(body["msgParam"].as_str().expect("params")).expect("valid params");
+        let chunk = params["text"].as_str().expect("text");
+        assert!(chunk.chars().count() <= MAX_MESSAGE_CHARS);
+        received.push_str(chunk);
+        chunks += 1;
+    }
+    assert!(chunks > 1);
+    assert_eq!(received, text);
 }

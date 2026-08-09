@@ -1,6 +1,7 @@
 use cccc_core::{GroupStore, HomeLayout};
 use serde::Serialize;
 use serde_json::{Value, json};
+use std::collections::HashSet;
 
 #[derive(Debug, Serialize)]
 pub(super) struct DeliveryFailure {
@@ -11,6 +12,8 @@ pub(super) struct DeliveryFailure {
 #[derive(Debug, Default, Serialize)]
 pub(super) struct AttachmentDeliveryReport {
     pub(super) delivered_targets: usize,
+    pub(super) delivered_chat_ids: HashSet<String>,
+    pub(super) failed_chat_ids: HashSet<String>,
     pub(super) failures: Vec<DeliveryFailure>,
 }
 

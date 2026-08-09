@@ -40,6 +40,7 @@ from .dingtalk_messages import (
 from .dingtalk_reactions import DingTalkReactionService
 from .dingtalk_sender import DingTalkSender
 from .dingtalk_session import DingTalkConversationStore
+from .outbound_text import split_text_chunks
 
 
 class DingTalkAdapter(IMAdapter):
@@ -1032,7 +1033,13 @@ class DingTalkAdapter(IMAdapter):
                 return False
             safe_text = self._prepare_stream_text(text)
             self._run_async(client.finalize_card(str(card_instance_id), safe_text))
-            return True
+            exact_chunks = split_text_chunks(
+                text,
+                max_chars=self.max_chars,
+                hard_limit=DINGTALK_MAX_MESSAGE_LENGTH,
+                max_lines=self.max_lines,
+            )
+            return bool(text) and safe_text == text and len(exact_chunks) == 1
         except Exception:
             self._log(f"[stream] end_stream failed for stream={handle.get('stream_id', '')}")
             return False

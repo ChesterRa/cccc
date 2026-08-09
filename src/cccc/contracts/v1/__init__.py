@@ -4,7 +4,15 @@ from .async_result import (
     DEFAULT_ASYNC_COMPLETION_SIGNAL,
     build_async_result_fields,
 )
-from .actor import Actor, ActorRole, ActorSubmit, AgentRuntime, HeadlessState, RunnerKind, RuntimeStateSource
+from .actor import (
+    Actor,
+    ActorRole,
+    ActorSubmit,
+    AgentRuntime,
+    HeadlessState,
+    RunnerKind,
+    RuntimeStateSource,
+)
 from .actor_profile import ActorProfile, ActorProfileRef
 from .assistant import (
     AssistantKind,
@@ -18,7 +26,13 @@ from .assistant import (
     AssistantVoiceRequestData,
     BuiltinAssistant,
 )
-from .automation import AutomationAction, AutomationRule, AutomationRuleSet, AutomationSnippetCatalog, AutomationTrigger
+from .automation import (
+    AutomationAction,
+    AutomationRule,
+    AutomationRuleSet,
+    AutomationSnippetCatalog,
+    AutomationTrigger,
+)
 from .event import Event
 from .group_space import (
     SpaceBinding,
@@ -48,7 +62,13 @@ from .message import (
     SUGGESTED_USER_MESSAGE_MAX_CHARS,
     normalize_insight,
 )
-from .notify import NotifyAckData, NotifyKind, NotifyPriority, SystemNotifyData
+from .notify import (
+    NotifyAckData,
+    NotifyImVisibility,
+    NotifyKind,
+    NotifyPriority,
+    SystemNotifyData,
+)
 from .presentation import (
     PresentationCard,
     PresentationCardType,
@@ -110,6 +130,7 @@ __all__ = [
     "SpaceQueueSummary",
     "HeadlessState",
     "NotifyAckData",
+    "NotifyImVisibility",
     "NotifyKind",
     "NotifyPriority",
     "PresentationCard",

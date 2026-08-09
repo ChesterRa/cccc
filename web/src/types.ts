@@ -1425,6 +1425,8 @@ export type WeixinLoginStatus = {
   qrcode_url?: string;
   qr_ascii?: string;
   error?: string;
+  auto_subscribed?: boolean;
+  verification_required?: boolean;
   running: boolean;
   pid?: number | null;
   updated_at?: string;

@@ -2,19 +2,59 @@ use dingtalk_stream::DingTalkStreamClient;
 use lark_channel::lark_openapi::{OpenApiClient, ReqwestOpenApiTransport};
 use reqwest::{Client, Url};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+use std::future::Future;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use teloxide::prelude::*;
+use teloxide::requests::Request;
 use teloxide::types::{MessageId, ReactionType};
+use tokio::task::JoinHandle;
 
 const FEISHU_PROCESSING_EMOJI: &str = "OnIt";
 const TELEGRAM_PROCESSING_EMOJI: &str = "👀";
 const DINGTALK_PROCESSING_EMOJI: &str = "🤔Thinking";
 const DINGTALK_SUCCESS_EMOJI: &str = "🥳Done";
+const DINGTALK_FAILURE_EMOJI: &str = "❌Failed";
 const DINGTALK_API_BASE: &str = "https://api.dingtalk.com";
+const PROCESSING_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const PROCESSING_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
+const REACTION_REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub(super) fn spawn_processing_cleanup<F, Fut>(cleanup: F) -> JoinHandle<()>
+where
+    F: Fn() -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(PROCESSING_CLEANUP_INTERVAL);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            cleanup().await;
+        }
+    })
+}
+
+pub(super) async fn reaction_request<T, E>(
+    request: impl Future<Output = Result<T, E>>,
+) -> Result<T, String>
+where
+    E: std::fmt::Display,
+{
+    tokio::time::timeout(REACTION_REQUEST_TIMEOUT, request)
+        .await
+        .map_err(|_| "processing reaction request timed out after 5 seconds".to_owned())?
+        .map_err(|error| error.to_string())
+}
 
 #[derive(Clone)]
-struct Active<T>(Arc<Mutex<HashMap<String, T>>>);
+pub(super) struct Active<T>(Arc<Mutex<HashMap<String, VecDeque<Timed<T>>>>>);
+
+struct Timed<T> {
+    value: T,
+    expires_at: Instant,
+}
 
 impl<T> Default for Active<T> {
     fn default() -> Self {
@@ -23,18 +63,74 @@ impl<T> Default for Active<T> {
 }
 
 impl<T> Active<T> {
-    fn insert(&self, chat_id: String, value: T) {
+    pub(super) fn push(&self, key: String, value: T) {
         self.0
             .lock()
             .expect("processing state poisoned")
-            .insert(chat_id, value);
+            .entry(key)
+            .or_default()
+            .push_back(Timed {
+                value,
+                expires_at: Instant::now() + PROCESSING_TIMEOUT,
+            });
     }
 
-    fn take(&self, chat_id: &str) -> Option<T> {
+    pub(super) fn take_next(&self, key: &str) -> Option<T> {
+        self.take_where(key, |_| true)
+    }
+
+    pub(super) fn take_where(&self, key: &str, predicate: impl Fn(&T) -> bool) -> Option<T> {
+        let mut active = self.0.lock().expect("processing state poisoned");
+        let queue = active.get_mut(key)?;
+        let index = queue.iter().position(|item| predicate(&item.value))?;
+        let value = queue.remove(index).map(|item| item.value);
+        if queue.is_empty() {
+            active.remove(key);
+        }
+        value
+    }
+
+    pub(super) fn update_where(
+        &self,
+        key: &str,
+        predicate: impl Fn(&T) -> bool,
+        update: impl FnOnce(&mut T),
+    ) -> bool {
+        let mut active = self.0.lock().expect("processing state poisoned");
+        let Some(item) = active
+            .get_mut(key)
+            .and_then(|queue| queue.iter_mut().find(|item| predicate(&item.value)))
+        else {
+            return false;
+        };
+        update(&mut item.value);
+        true
+    }
+
+    pub(super) fn len(&self, key: &str) -> usize {
         self.0
             .lock()
             .expect("processing state poisoned")
-            .remove(chat_id)
+            .get(key)
+            .map_or(0, VecDeque::len)
+    }
+
+    pub(super) fn take_expired(&self) -> Vec<T> {
+        self.take_expired_at(Instant::now())
+    }
+
+    fn take_expired_at(&self, now: Instant) -> Vec<T> {
+        let mut active = self.0.lock().expect("processing state poisoned");
+        let mut expired = Vec::new();
+        for queue in active.values_mut() {
+            while queue.front().is_some_and(|item| item.expires_at <= now) {
+                if let Some(item) = queue.pop_front() {
+                    expired.push(item.value);
+                }
+            }
+        }
+        active.retain(|_, queue| !queue.is_empty());
+        expired
     }
 }
 
@@ -50,6 +146,7 @@ pub(super) struct FeishuReactions {
 struct FeishuReaction {
     message_id: String,
     reaction_id: String,
+    source_event_id: Option<String>,
 }
 
 impl FeishuReactions {
@@ -66,26 +163,66 @@ impl FeishuReactions {
         }
     }
 
-    pub(super) async fn start(&self, chat_id: &str, message_id: &str) {
-        match self.add(message_id).await {
-            Ok(reaction_id) => self.active.insert(
-                chat_id.to_owned(),
-                FeishuReaction {
-                    message_id: message_id.to_owned(),
-                    reaction_id,
-                },
-            ),
+    pub(super) async fn start(&self, key: &str, message_id: &str) {
+        match reaction_request(self.add(message_id)).await {
+            Ok(reaction_id) => {
+                self.active.push(
+                    key.to_owned(),
+                    FeishuReaction {
+                        message_id: message_id.to_owned(),
+                        reaction_id,
+                        source_event_id: None,
+                    },
+                );
+            }
             Err(error) => {
                 tracing::warn!(%error, %message_id, "failed to add Feishu processing reaction")
             }
         }
     }
 
-    pub(super) async fn complete(&self, chat_id: &str) {
-        let Some(reaction) = self.active.take(chat_id) else {
+    pub(super) fn bind_message(&self, key: &str, message_id: &str, source_event_id: String) {
+        if source_event_id.is_empty() {
+            return;
+        }
+        self.active.update_where(
+            key,
+            |reaction| reaction.message_id == message_id,
+            |reaction| reaction.source_event_id = Some(source_event_id),
+        );
+    }
+
+    pub(super) async fn complete(&self, key: &str, reply_to: Option<&str>) {
+        let reaction = take_for_reply(&self.active, key, reply_to, |reaction| {
+            reaction.source_event_id.as_deref()
+        });
+        self.remove_active(reaction).await;
+    }
+
+    pub(super) async fn abort_message(&self, key: &str, message_id: &str) {
+        let reaction = self
+            .active
+            .take_where(key, |reaction| reaction.message_id == message_id);
+        self.remove_active(reaction).await;
+    }
+
+    pub(super) fn cleanup_task(&self) -> JoinHandle<()> {
+        let reactions = self.clone();
+        spawn_processing_cleanup(move || {
+            let reactions = reactions.clone();
+            async move {
+                for reaction in reactions.active.take_expired() {
+                    reactions.remove_active(Some(reaction)).await;
+                }
+            }
+        })
+    }
+
+    async fn remove_active(&self, reaction: Option<FeishuReaction>) {
+        let Some(reaction) = reaction else {
             return;
         };
-        if let Err(error) = self.remove(&reaction).await {
+        if let Err(error) = reaction_request(self.remove(&reaction)).await {
             tracing::warn!(%error, message_id = %reaction.message_id, "failed to remove Feishu processing reaction");
         }
     }
@@ -170,9 +307,15 @@ fn feishu_reaction_url(
 #[derive(Clone)]
 pub(super) struct TelegramReactions {
     bot: Bot,
-    active: Active<(ChatId, MessageId)>,
+    active: Active<TelegramReaction>,
 }
 
+#[derive(Clone)]
+struct TelegramReaction {
+    chat_id: ChatId,
+    message_id: MessageId,
+    source_event_id: Option<String>,
+}
 impl TelegramReactions {
     pub(super) fn new(bot: Bot) -> Self {
         Self {
@@ -181,28 +324,80 @@ impl TelegramReactions {
         }
     }
 
-    pub(super) async fn start(&self, chat_id: ChatId, message_id: MessageId) {
+    pub(super) async fn start(&self, key: &str, chat_id: ChatId, message_id: MessageId) {
         let reaction = ReactionType::Emoji {
             emoji: TELEGRAM_PROCESSING_EMOJI.into(),
         };
-        match self
-            .bot
-            .set_message_reaction(chat_id, message_id)
-            .reaction([reaction])
-            .await
+        match reaction_request(
+            self.bot
+                .set_message_reaction(chat_id, message_id)
+                .reaction([reaction])
+                .send(),
+        )
+        .await
         {
-            Ok(_) => self
-                .active
-                .insert(chat_id.0.to_string(), (chat_id, message_id)),
+            Ok(_) => {
+                self.active.push(
+                    key.to_owned(),
+                    TelegramReaction {
+                        chat_id,
+                        message_id,
+                        source_event_id: None,
+                    },
+                );
+            }
             Err(error) => tracing::warn!(%error, "failed to add Telegram processing reaction"),
         }
     }
 
-    pub(super) async fn complete(&self, chat_id: &str) {
-        let Some((chat_id, message_id)) = self.active.take(chat_id) else {
+    pub(super) fn bind_message(&self, key: &str, message_id: MessageId, source_event_id: String) {
+        if source_event_id.is_empty() {
+            return;
+        }
+        self.active.update_where(
+            key,
+            |reaction| reaction.message_id == message_id,
+            |reaction| reaction.source_event_id = Some(source_event_id),
+        );
+    }
+
+    pub(super) async fn complete(&self, key: &str, reply_to: Option<&str>) {
+        let reaction = take_for_reply(&self.active, key, reply_to, |reaction| {
+            reaction.source_event_id.as_deref()
+        });
+        self.remove_active(reaction).await;
+    }
+
+    pub(super) async fn abort_message(&self, key: &str, message_id: MessageId) {
+        let reaction = self
+            .active
+            .take_where(key, |reaction| reaction.message_id == message_id);
+        self.remove_active(reaction).await;
+    }
+
+    pub(super) fn cleanup_task(&self) -> JoinHandle<()> {
+        let reactions = self.clone();
+        spawn_processing_cleanup(move || {
+            let reactions = reactions.clone();
+            async move {
+                for reaction in reactions.active.take_expired() {
+                    reactions.remove_active(Some(reaction)).await;
+                }
+            }
+        })
+    }
+
+    async fn remove_active(&self, reaction: Option<TelegramReaction>) {
+        let Some(reaction) = reaction else {
             return;
         };
-        if let Err(error) = self.bot.set_message_reaction(chat_id, message_id).await {
+        if let Err(error) = reaction_request(
+            self.bot
+                .set_message_reaction(reaction.chat_id, reaction.message_id)
+                .send(),
+        )
+        .await
+        {
             tracing::warn!(%error, "failed to remove Telegram processing reaction");
         }
     }
@@ -220,6 +415,7 @@ pub(super) struct DingTalkReactions {
 struct DingTalkReaction {
     message_id: String,
     conversation_id: String,
+    source_event_id: Option<String>,
 }
 
 impl DingTalkReactions {
@@ -232,30 +428,83 @@ impl DingTalkReactions {
         }
     }
 
-    pub(super) async fn start(&self, conversation_id: &str, message_id: &str) {
+    pub(super) async fn start(&self, key: &str, conversation_id: &str, message_id: &str) {
         if message_id.is_empty() {
             return;
         }
         let reaction = DingTalkReaction {
             message_id: message_id.into(),
             conversation_id: conversation_id.into(),
+            source_event_id: None,
         };
-        match self.send(&reaction, DINGTALK_PROCESSING_EMOJI, false).await {
-            Ok(()) => self.active.insert(conversation_id.into(), reaction),
+        match reaction_request(self.send(&reaction, DINGTALK_PROCESSING_EMOJI, false)).await {
+            Ok(()) => {
+                self.active.push(key.into(), reaction);
+            }
             Err(error) => {
                 tracing::warn!(%error, %message_id, "failed to add DingTalk processing reaction")
             }
         }
     }
 
-    pub(super) async fn complete(&self, conversation_id: &str) {
-        let Some(reaction) = self.active.take(conversation_id) else {
+    pub(super) fn bind_message(&self, key: &str, message_id: &str, source_event_id: String) {
+        if source_event_id.is_empty() {
+            return;
+        }
+        self.active.update_where(
+            key,
+            |reaction| reaction.message_id == message_id,
+            |reaction| reaction.source_event_id = Some(source_event_id),
+        );
+    }
+
+    pub(super) async fn complete(&self, key: &str, reply_to: Option<&str>) {
+        let reaction = take_for_reply(&self.active, key, reply_to, |reaction| {
+            reaction.source_event_id.as_deref()
+        });
+        self.finish(reaction, Some(DINGTALK_SUCCESS_EMOJI)).await;
+    }
+
+    pub(super) async fn fail(&self, key: &str, reply_to: Option<&str>) {
+        let reaction = take_for_reply(&self.active, key, reply_to, |reaction| {
+            reaction.source_event_id.as_deref()
+        });
+        self.finish(reaction, Some(DINGTALK_FAILURE_EMOJI)).await;
+    }
+
+    pub(super) async fn fail_message(&self, key: &str, message_id: &str) {
+        let reaction = self
+            .active
+            .take_where(key, |reaction| reaction.message_id == message_id);
+        self.finish(reaction, Some(DINGTALK_FAILURE_EMOJI)).await;
+    }
+
+    pub(super) fn cleanup_task(&self) -> JoinHandle<()> {
+        let reactions = self.clone();
+        spawn_processing_cleanup(move || {
+            let reactions = reactions.clone();
+            async move {
+                for reaction in reactions.active.take_expired() {
+                    reactions
+                        .finish(Some(reaction), Some(DINGTALK_FAILURE_EMOJI))
+                        .await;
+                }
+            }
+        })
+    }
+
+    async fn finish(&self, reaction: Option<DingTalkReaction>, replacement: Option<&str>) {
+        let Some(reaction) = reaction else {
             return;
         };
-        if let Err(error) = self.send(&reaction, DINGTALK_PROCESSING_EMOJI, true).await {
+        if let Err(error) =
+            reaction_request(self.send(&reaction, DINGTALK_PROCESSING_EMOJI, true)).await
+        {
             tracing::warn!(%error, message_id = %reaction.message_id, "failed to recall DingTalk processing reaction");
         }
-        if let Err(error) = self.send(&reaction, DINGTALK_SUCCESS_EMOJI, false).await {
+        if let Some(replacement) = replacement
+            && let Err(error) = reaction_request(self.send(&reaction, replacement, false)).await
+        {
             tracing::warn!(%error, message_id = %reaction.message_id, "failed to add DingTalk completion reaction");
         }
     }
@@ -297,6 +546,19 @@ impl DingTalkReactions {
                 body.chars().take(300).collect::<String>()
             ))
         }
+    }
+}
+
+fn take_for_reply<T>(
+    active: &Active<T>,
+    key: &str,
+    reply_to: Option<&str>,
+    source_event_id: impl for<'a> Fn(&'a T) -> Option<&'a str>,
+) -> Option<T> {
+    match reply_to.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(reply_to) => active.take_where(key, |item| source_event_id(item) == Some(reply_to)),
+        None if active.len(key) == 1 => active.take_next(key),
+        None => None,
     }
 }
 
@@ -370,11 +632,76 @@ mod tests {
     }
 
     #[test]
-    fn active_processing_is_replaced_per_chat_and_taken_once() {
+    fn active_processing_is_queued_and_can_remove_a_specific_item() {
         let active = Active::default();
-        active.insert("chat".into(), "first");
-        active.insert("chat".into(), "second");
-        assert_eq!(active.take("chat"), Some("second"));
-        assert_eq!(active.take("chat"), None);
+        active.push("chat".into(), "first");
+        active.push("chat".into(), "second");
+        active.push("chat".into(), "third");
+        assert_eq!(
+            active.take_where("chat", |item| *item == "second"),
+            Some("second")
+        );
+        assert_eq!(active.take_next("chat"), Some("first"));
+        assert_eq!(active.take_next("chat"), Some("third"));
+        assert_eq!(active.take_next("chat"), None);
+    }
+
+    #[test]
+    fn processing_completion_is_correlated_and_not_fifo_guessed() {
+        #[derive(Debug, PartialEq)]
+        struct Pending {
+            message: &'static str,
+            source_event_id: Option<&'static str>,
+        }
+
+        let active = Active::default();
+        active.push(
+            "chat".into(),
+            Pending {
+                message: "first",
+                source_event_id: Some("event-1"),
+            },
+        );
+        active.push(
+            "chat".into(),
+            Pending {
+                message: "second",
+                source_event_id: Some("event-2"),
+            },
+        );
+
+        assert_eq!(
+            take_for_reply(&active, "chat", Some("event-1"), |item| item
+                .source_event_id),
+            Some(Pending {
+                message: "first",
+                source_event_id: Some("event-1"),
+            })
+        );
+        assert_eq!(
+            take_for_reply(&active, "chat", Some("event-1"), |item| item
+                .source_event_id),
+            None
+        );
+        assert_eq!(
+            take_for_reply(&active, "chat", Some("event-2"), |item| item
+                .source_event_id),
+            Some(Pending {
+                message: "second",
+                source_event_id: Some("event-2"),
+            })
+        );
+    }
+
+    #[test]
+    fn expired_processing_state_is_removed_from_the_registry() {
+        let active = Active::default();
+        active.push("chat".into(), "pending");
+
+        assert_eq!(
+            active.take_expired_at(Instant::now() + PROCESSING_TIMEOUT + Duration::from_secs(1)),
+            vec!["pending"]
+        );
+        assert_eq!(active.len("chat"), 0);
     }
 }

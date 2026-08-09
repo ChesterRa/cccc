@@ -111,6 +111,59 @@ impl SessionHistory {
             .map(|state| state.output.retained_page())
     }
 
+    pub(crate) fn retained_tail_page(&self, limit: usize) -> Result<HistoryPage, RuntimeError> {
+        self.state
+            .lock()
+            .map_err(|_| RuntimeError::Poisoned)
+            .map(|state| state.output.retained_tail_page(limit))
+    }
+
+    pub(crate) fn active_page_since(
+        &self,
+        after: u64,
+        limit: usize,
+    ) -> Result<HistoryPage, RuntimeError> {
+        self.state
+            .lock()
+            .map_err(|_| RuntimeError::Poisoned)
+            .map(|state| state.output.page_since(after, limit))
+    }
+
+    pub(crate) fn active_replay_page(
+        &self,
+        after: u64,
+        end_cursor: Option<u64>,
+        limit: usize,
+    ) -> Result<(HistoryPage, u64), RuntimeError> {
+        self.state
+            .lock()
+            .map_err(|_| RuntimeError::Poisoned)
+            .map(|state| {
+                let complete_end = state.output.retained_page().end_cursor;
+                let replay_end = end_cursor.map_or(complete_end, |cursor| cursor.min(complete_end));
+                (
+                    state.output.page_since_until(after, replay_end, limit),
+                    replay_end,
+                )
+            })
+    }
+
+    pub(crate) fn trim_retained(&self, limit: usize) -> Result<(), RuntimeError> {
+        self.state
+            .lock()
+            .map_err(|_| RuntimeError::Poisoned)?
+            .output
+            .trim_to(limit);
+        Ok(())
+    }
+
+    pub(crate) fn retained_bytes(&self) -> Result<usize, RuntimeError> {
+        self.state
+            .lock()
+            .map_err(|_| RuntimeError::Poisoned)
+            .map(|state| state.output.retained_bytes())
+    }
+
     pub(crate) fn clear(&self) -> Result<(), RuntimeError> {
         let mut state = self.state.lock().map_err(|_| RuntimeError::Poisoned)?;
         state.output.clear();

@@ -1,9 +1,12 @@
 use super::dingtalk_inbound::{DingTalkAttachmentDownloader, has_attachments, inbound_text};
-use super::dingtalk_outbound::{DingTalkAttachmentSender, DingTalkTarget};
+use super::dingtalk_outbound::{DingTalkOutboundSender, DingTalkTarget};
+use super::dingtalk_streaming::DingTalkCardStreamer;
+use super::outbound_chunks::fits_message;
 use super::processing_reactions::DingTalkReactions;
 use super::{
-    InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision, outbound_text,
-    resolve_credential, spawn_outbound, string,
+    AuthorizedChat, InboundDecision, InboundMetadata, completes_processing, dispatch_inbound_with,
+    inbound_decision, is_outbound_or_stream, outbound_text, processing_reply_to,
+    resolve_credential, spawn_outbound_matching, string,
 };
 use async_trait::async_trait;
 use cccc_client::DaemonClient;
@@ -47,7 +50,6 @@ pub(super) async fn start(
         ),
         reactions: reactions.clone(),
     };
-    let media = DingTalkStreamClient::builder(credential.clone()).build();
     let mut stream = DingTalkStreamClient::builder(credential)
         .register_callback_handler(ChatbotMessage::TOPIC, handler)
         .build();
@@ -61,20 +63,29 @@ pub(super) async fn start(
             tracing::error!(%error, "DingTalk IM stream stopped");
         }
     });
-    let outbound = spawn_outbound(
+    let reaction_cleanup = reactions.cleanup_task();
+    let outbound = spawn_outbound_matching(
         home.clone(),
         group_id.to_owned(),
+        PLATFORM,
         ledger_events,
         OutboundSender {
-            attachments: DingTalkAttachmentSender::new(home, group_id, media, robot_code),
+            outbound: DingTalkOutboundSender::new(
+                home,
+                group_id,
+                Arc::clone(&inbound_media),
+                robot_code.clone(),
+            ),
+            cards: DingTalkCardStreamer::new(Arc::clone(&inbound_media), robot_code),
             sessions,
             reactions,
         },
+        is_outbound_or_stream,
         |sender, authorized, event| async move {
             send_outbound(&sender, authorized, event).await;
         },
     );
-    Ok(vec![connection, outbound])
+    Ok(vec![connection, outbound, reaction_cleanup])
 }
 
 #[derive(Clone)]
@@ -147,9 +158,6 @@ impl CallbackHandler for Handler {
                     }
                 };
             }
-            InboundDecision::Ignore => {
-                return (AckMessage::STATUS_OK, "ignored unauthorized chat".into());
-            }
         }
         let message_id = message.message_id.clone().unwrap_or_default();
         let attachments = self
@@ -163,6 +171,10 @@ impl CallbackHandler for Handler {
             .sender_staff_id
             .or(message.sender_id)
             .unwrap_or_else(|| "user".into());
+        // Register processing feedback before dispatching the message. The daemon can produce an
+        // outbound reply before `dispatch_inbound_with` returns; starting the reaction afterwards
+        // lets the completion event win the race and leaves a stale Thinking reaction behind.
+        self.reactions.start(&chat_id, &chat_id, &message_id).await;
         match dispatch_inbound_with(
             &self.daemon,
             &self.group_id,
@@ -172,16 +184,21 @@ impl CallbackHandler for Handler {
             &text,
             InboundMetadata {
                 message_id: message_id.clone(),
+                thread_id: String::new(),
                 attachments,
             },
         )
         .await
         {
-            Ok(()) => {
-                self.reactions.start(&chat_id, &message_id).await;
+            Ok(source_event_id) => {
+                self.reactions
+                    .bind_message(&chat_id, &message_id, source_event_id);
                 (AckMessage::STATUS_OK, "OK".into())
             }
-            Err(error) => (AckMessage::STATUS_SYSTEM_EXCEPTION, error),
+            Err(error) => {
+                self.reactions.fail_message(&chat_id, &message_id).await;
+                (AckMessage::STATUS_SYSTEM_EXCEPTION, error)
+            }
         }
     }
 }
@@ -215,12 +232,25 @@ struct SessionWebhook {
 }
 
 struct OutboundSender {
-    attachments: DingTalkAttachmentSender,
+    outbound: DingTalkOutboundSender,
+    cards: DingTalkCardStreamer,
     sessions: Arc<Mutex<HashMap<String, SessionWebhook>>>,
     reactions: DingTalkReactions,
 }
 
-async fn send_outbound(sender: &OutboundSender, authorized: Vec<String>, event: Event) {
+async fn send_outbound(sender: &OutboundSender, authorized: Vec<AuthorizedChat>, event: Event) {
+    let completes_processing = completes_processing(&event);
+    let reply_to = processing_reply_to(&event).map(str::to_owned);
+    let authorized: HashSet<String> = authorized
+        .into_iter()
+        .map(|target| target.chat_id)
+        .collect();
+    if event.kind == "chat.stream" {
+        let targets = known_authorized_chats(&sender.sessions, &authorized);
+        sender.cards.send(&targets, &event).await;
+        return;
+    }
+
     let body = outbound_text(&event, true);
     let attachments = event
         .data
@@ -228,32 +258,80 @@ async fn send_outbound(sender: &OutboundSender, authorized: Vec<String>, event: 
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    let stream_id = event
+        .data
+        .get("stream_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    let streamed_targets = sender.cards.take_completed_targets(stream_id);
     if body.is_none() && attachments.is_empty() {
         return;
     }
-    let authorized: HashSet<String> = authorized.into_iter().collect();
-    let attachment_targets = known_authorized_chats(&sender.sessions, &authorized);
-    sender
-        .attachments
-        .send(&attachment_targets, &attachments)
+    let targets = known_authorized_chats(&sender.sessions, &authorized);
+    let attachment_report = sender
+        .outbound
+        .send_attachments(&targets, &attachments)
         .await;
-    let targets = live_webhooks(&sender.sessions, &authorized);
-    let http = reqwest::Client::new();
+    let mut text_delivered_targets = streamed_targets;
+    let has_body = body.is_some();
 
     if let Some(body) = body {
         let payload = json!({
             "msgtype":"markdown",
             "markdown":{"title":"CCCC","text":body}
         });
-        for url in targets {
-            if let Err(error) = post_webhook(&http, &url, &payload).await {
-                tracing::warn!(%error, "failed to send DingTalk IM message");
+        let http = reqwest::Client::new();
+        for (chat_id, url) in live_webhooks(&sender.sessions, &authorized) {
+            if text_delivered_targets.contains(&chat_id) {
+                continue;
+            }
+            if !fits_message(&body, 4_096, Some(64)) {
+                continue;
+            }
+            match post_webhook(&http, &url, &payload).await {
+                Ok(()) => {
+                    text_delivered_targets.insert(chat_id);
+                }
+                Err(error) => {
+                    tracing::warn!(%error, %chat_id, "failed to send DingTalk IM webhook; falling back to OpenAPI");
+                }
+            }
+        }
+        let fallback_targets = pending_text_targets(targets, &text_delivered_targets);
+        text_delivered_targets.extend(sender.outbound.send_text(&fallback_targets, &body).await);
+    }
+    if completes_processing {
+        for chat_id in authorized {
+            if delivery_succeeded(
+                &chat_id,
+                has_body,
+                &text_delivered_targets,
+                !attachments.is_empty(),
+                &attachment_report,
+            ) {
+                sender
+                    .reactions
+                    .complete(&chat_id, reply_to.as_deref())
+                    .await;
+            } else {
+                sender.reactions.fail(&chat_id, reply_to.as_deref()).await;
             }
         }
     }
-    for chat_id in authorized {
-        sender.reactions.complete(&chat_id).await;
-    }
+}
+
+fn delivery_succeeded(
+    chat_id: &str,
+    has_body: bool,
+    text_delivered: &HashSet<String>,
+    has_attachments: bool,
+    attachments: &super::dingtalk_outbound_report::AttachmentDeliveryReport,
+) -> bool {
+    (!has_body || text_delivered.contains(chat_id))
+        && (!has_attachments
+            || (attachments.delivered_chat_ids.contains(chat_id)
+                && !attachments.failed_chat_ids.contains(chat_id)))
 }
 
 async fn post_webhook(http: &reqwest::Client, url: &str, payload: &Value) -> Result<(), String> {
@@ -279,14 +357,13 @@ async fn post_webhook(http: &reqwest::Client, url: &str, payload: &Value) -> Res
 fn live_webhooks(
     sessions: &Mutex<HashMap<String, SessionWebhook>>,
     authorized: &HashSet<String>,
-) -> Vec<String> {
+) -> Vec<(String, String)> {
     let now = chrono::Utc::now().timestamp();
-    let mut sessions = sessions.lock().expect("DingTalk session registry poisoned");
-    sessions.retain(|_, session| session.expires_at > now);
+    let sessions = sessions.lock().expect("DingTalk session registry poisoned");
     sessions
         .iter()
-        .filter(|(chat_id, _)| authorized.contains(*chat_id))
-        .map(|(_, session)| session.url.clone())
+        .filter(|(chat_id, session)| authorized.contains(*chat_id) && session.expires_at > now)
+        .map(|(chat_id, session)| (chat_id.clone(), session.url.clone()))
         .collect()
 }
 
@@ -305,6 +382,16 @@ fn known_authorized_chats(
             conversation_type: session.conversation_type.clone(),
             user_id: session.user_id.clone(),
         })
+        .collect()
+}
+
+fn pending_text_targets(
+    targets: Vec<DingTalkTarget>,
+    delivered: &HashSet<String>,
+) -> Vec<DingTalkTarget> {
+    targets
+        .into_iter()
+        .filter(|target| !delivered.contains(&target.chat_id))
         .collect()
 }
 
@@ -417,6 +504,38 @@ mod tests {
     }
 
     #[test]
+    fn mixed_delivery_requires_both_text_and_all_attachments() {
+        let chat_id = "chat-1";
+        let text_delivered = HashSet::from([chat_id.to_owned()]);
+        let mut attachments =
+            super::super::dingtalk_outbound_report::AttachmentDeliveryReport::default();
+        attachments.delivered_chat_ids.insert(chat_id.to_owned());
+        assert!(delivery_succeeded(
+            chat_id,
+            true,
+            &text_delivered,
+            true,
+            &attachments
+        ));
+
+        attachments.failed_chat_ids.insert(chat_id.to_owned());
+        assert!(!delivery_succeeded(
+            chat_id,
+            true,
+            &text_delivered,
+            true,
+            &attachments
+        ));
+        assert!(!delivery_succeeded(
+            chat_id,
+            true,
+            &HashSet::new(),
+            true,
+            &attachments
+        ));
+    }
+
+    #[test]
     fn session_webhook_is_persisted_before_authorization() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -438,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn outbound_webhooks_are_limited_to_authorized_live_sessions() {
+    fn outbound_delivery_falls_back_for_expired_authorized_sessions() {
         let future = chrono::Utc::now().timestamp() + 60;
         let past = chrono::Utc::now().timestamp() - 60;
         let sessions = Mutex::new(HashMap::from([
@@ -477,15 +596,47 @@ mod tests {
             &sessions,
             &HashSet::from(["allowed".to_owned(), "expired".to_owned()]),
         );
-        assert_eq!(urls, vec!["https://example.test/allowed"]);
         assert_eq!(
-            known_authorized_chats(
-                &sessions,
-                &HashSet::from(["allowed".to_owned(), "weixin-chat".to_owned()])
-            ),
+            urls,
+            vec![(
+                "allowed".to_owned(),
+                "https://example.test/allowed".to_owned()
+            )]
+        );
+        let mut targets = known_authorized_chats(
+            &sessions,
+            &HashSet::from(["allowed".to_owned(), "expired".to_owned()]),
+        );
+        targets.sort_by(|left, right| left.chat_id.cmp(&right.chat_id));
+        assert_eq!(
+            targets,
+            vec![
+                DingTalkTarget {
+                    chat_id: "allowed".into(),
+                    robot_code: "allowed-robot".into(),
+                    conversation_type: "2".into(),
+                    user_id: String::new(),
+                },
+                DingTalkTarget {
+                    chat_id: "expired".into(),
+                    robot_code: "expired-robot".into(),
+                    conversation_type: "2".into(),
+                    user_id: String::new(),
+                },
+            ]
+        );
+        let webhook_delivered = urls
+            .into_iter()
+            .map(|(chat_id, _)| chat_id)
+            .collect::<HashSet<_>>();
+        let mut card_or_webhook_delivered = webhook_delivered.clone();
+        card_or_webhook_delivered.insert("expired".into());
+        assert!(pending_text_targets(targets.clone(), &card_or_webhook_delivered).is_empty());
+        assert_eq!(
+            pending_text_targets(targets, &webhook_delivered),
             vec![DingTalkTarget {
-                chat_id: "allowed".into(),
-                robot_code: "allowed-robot".into(),
+                chat_id: "expired".into(),
+                robot_code: "expired-robot".into(),
                 conversation_type: "2".into(),
                 user_id: String::new(),
             }]

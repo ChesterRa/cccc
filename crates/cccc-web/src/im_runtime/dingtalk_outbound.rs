@@ -1,18 +1,23 @@
 use super::dingtalk_outbound_media::AttachmentMedia;
 use super::dingtalk_outbound_report::{AttachmentDeliveryReport, persist_failures};
+use super::outbound_attachment::safe_filename;
+use super::outbound_chunks::split_message;
 use cccc_core::HomeLayout;
 use dingtalk_stream::DingTalkStreamClient;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 const MAX_ATTACHMENT_BYTES: u64 = 10 * 1024 * 1024;
 const OPENAPI_BASE: &str = "https://api.dingtalk.com";
 const OTO_ENDPOINT: &str = "/v1.0/robot/oToMessages/batchSend";
 const GROUP_ENDPOINT: &str = "/v1.0/robot/groupMessages/send";
+const MAX_MESSAGE_CHARS: usize = 4_096;
+const MAX_MESSAGE_LINES: usize = 64;
 type TargetRoute<'a> = (&'static str, &'a str, bool);
 
-pub(super) struct DingTalkAttachmentSender {
+pub(super) struct DingTalkOutboundSender {
     home: HomeLayout,
     group_id: String,
     media: Arc<dyn AttachmentMedia>,
@@ -21,7 +26,7 @@ pub(super) struct DingTalkAttachmentSender {
     robot_code: String,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct DingTalkTarget {
     pub(super) chat_id: String,
     pub(super) robot_code: String,
@@ -29,24 +34,24 @@ pub(super) struct DingTalkTarget {
     pub(super) user_id: String,
 }
 
-impl DingTalkAttachmentSender {
+impl DingTalkOutboundSender {
     pub(super) fn new(
         home: HomeLayout,
         group_id: &str,
-        media: DingTalkStreamClient,
+        media: Arc<DingTalkStreamClient>,
         robot_code: String,
     ) -> Self {
         Self {
             home,
             group_id: group_id.into(),
-            media: Arc::new(media),
+            media,
             http: reqwest::Client::new(),
             openapi_base: OPENAPI_BASE.into(),
             robot_code,
         }
     }
 
-    pub(super) async fn send(
+    pub(super) async fn send_attachments(
         &self,
         targets: &[DingTalkTarget],
         attachments: &[Value],
@@ -56,13 +61,17 @@ impl DingTalkAttachmentSender {
         for target in targets {
             match route_target(target) {
                 Ok(route) => routes.push((target, route)),
-                Err(error) => report.fail("route", error),
+                Err(error) => {
+                    report.failed_chat_ids.insert(target.chat_id.clone());
+                    report.fail("route", error);
+                }
             }
         }
         for attachment in attachments {
             let item = match self.prepare(attachment).await {
                 Ok(item) => item,
                 Err(error) => {
+                    mark_routes_failed(&mut report, &routes);
                     report.fail("prepare", error);
                     continue;
                 }
@@ -78,6 +87,7 @@ impl DingTalkAttachmentSender {
             {
                 Ok(media_id) => media_id,
                 Err(error) => {
+                    mark_routes_failed(&mut report, &routes);
                     report.fail("upload", error);
                     continue;
                 }
@@ -86,6 +96,7 @@ impl DingTalkAttachmentSender {
             let token = match self.media.access_token().await {
                 Ok(token) => token,
                 Err(error) => {
+                    mark_routes_failed(&mut report, &routes);
                     report.fail("send", error);
                     continue;
                 }
@@ -94,6 +105,54 @@ impl DingTalkAttachmentSender {
         }
         persist_failures(&self.home, &self.group_id, &report);
         report
+    }
+
+    pub(super) async fn send_text(
+        &self,
+        targets: &[DingTalkTarget],
+        text: &str,
+    ) -> HashSet<String> {
+        let mut delivered = HashSet::new();
+        if text.trim().is_empty() {
+            return delivered;
+        }
+        let routes = targets
+            .iter()
+            .filter_map(|target| match route_target(target) {
+                Ok(route) => Some((target, route)),
+                Err(error) => {
+                    tracing::warn!(%error, chat_id = %target.chat_id, "failed to route DingTalk text fallback");
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        if routes.is_empty() {
+            return delivered;
+        }
+        let token = match self.media.access_token().await {
+            Ok(token) => token,
+            Err(error) => {
+                tracing::warn!(%error, "failed to authorize DingTalk text fallback");
+                return delivered;
+            }
+        };
+        for (target, route) in routes {
+            let mut target_delivered = false;
+            let mut target_failed = false;
+            for chunk in split_message(text, MAX_MESSAGE_CHARS, Some(MAX_MESSAGE_LINES)) {
+                let message = markdown_payload(&chunk);
+                if let Err(error) = self.post(&token, target, &route, &message).await {
+                    tracing::warn!(%error, chat_id = %target.chat_id, "failed to send DingTalk text fallback");
+                    target_failed = true;
+                } else {
+                    target_delivered = true;
+                }
+            }
+            if target_delivered && !target_failed {
+                delivered.insert(target.chat_id.clone());
+            }
+        }
+        delivered
     }
 
     async fn prepare(&self, value: &Value) -> Result<PreparedAttachment, String> {
@@ -142,8 +201,14 @@ impl DingTalkAttachmentSender {
     ) {
         for (target, route) in routes {
             match self.post(token, target, route, message).await {
-                Ok(()) => report.delivered_targets += 1,
-                Err(error) => report.fail("send", error),
+                Ok(()) => {
+                    report.delivered_targets += 1;
+                    report.delivered_chat_ids.insert(target.chat_id.clone());
+                }
+                Err(error) => {
+                    report.failed_chat_ids.insert(target.chat_id.clone());
+                    report.fail("send", error);
+                }
             }
         }
     }
@@ -187,6 +252,15 @@ impl DingTalkAttachmentSender {
         let body = response.bytes().await.map_err(|error| error.to_string())?;
         validate_openapi_response(status, &body)
     }
+}
+
+fn mark_routes_failed(
+    report: &mut AttachmentDeliveryReport,
+    routes: &[(&DingTalkTarget, TargetRoute<'_>)],
+) {
+    report
+        .failed_chat_ids
+        .extend(routes.iter().map(|(target, _)| target.chat_id.clone()));
 }
 
 fn route_target(target: &DingTalkTarget) -> Result<TargetRoute<'_>, String> {
@@ -268,9 +342,10 @@ fn attachment_payload(media_id: &str, filename: &str, is_image: bool) -> Value {
     json!({"msgKey":key,"msgParam":params})
 }
 
-fn safe_filename(value: &str) -> Option<&str> {
-    let value = value.trim();
-    (!value.is_empty() && !value.contains(['/', '\\'])).then_some(value)
+fn markdown_payload(text: &str) -> Value {
+    let params = serde_json::to_string(&json!({"title":"CCCC","text":text}))
+        .expect("DingTalk markdown params must serialize");
+    json!({"msgKey":"sampleMarkdown","msgParam":params})
 }
 
 #[cfg(test)]

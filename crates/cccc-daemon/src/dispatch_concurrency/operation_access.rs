@@ -87,6 +87,7 @@ pub(super) fn is_read_only(op: &str) -> bool {
             | "presentation_get"
             | "task_list"
             | "terminal_history"
+            | "terminal_replay"
             | "terminal_since"
             | "terminal_snapshot"
             | "terminal_status"

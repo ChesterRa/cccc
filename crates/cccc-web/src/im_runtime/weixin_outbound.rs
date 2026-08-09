@@ -1,4 +1,6 @@
 use super::inbound_attachments::MAX_ATTACHMENT_BYTES;
+use super::outbound_attachment::safe_filename;
+use super::outbound_chunks::split_message;
 use super::outbound_text;
 use async_trait::async_trait;
 use cccc_contracts::Event;
@@ -55,12 +57,15 @@ impl WeixinOutbound {
         }
         for user_id in targets {
             let context_token = sender.context_token(user_id);
-            if let Some(body) = body.as_deref()
-                && let Err(error) = sender
-                    .send_text(user_id, body, context_token.as_deref())
-                    .await
-            {
-                tracing::warn!(%error, %user_id, "failed to send Weixin IM message");
+            if let Some(body) = body.as_deref() {
+                for chunk in split_message(body, 4_000, None) {
+                    if let Err(error) = sender
+                        .send_text(user_id, &chunk, context_token.as_deref())
+                        .await
+                    {
+                        tracing::warn!(%error, %user_id, "failed to send Weixin IM message");
+                    }
+                }
             }
             for attachment in &prepared {
                 if let Err(error) = sender
@@ -112,16 +117,6 @@ struct PreparedAttachment {
     _temp: tempfile::TempDir,
     path: PathBuf,
     title: String,
-}
-
-fn safe_filename(value: &str) -> Option<&str> {
-    let value = value.trim();
-    let path = Path::new(value);
-    (!value.is_empty()
-        && value != "."
-        && value != ".."
-        && path.file_name().and_then(|name| name.to_str()) == Some(value))
-    .then_some(value)
 }
 
 #[async_trait]
@@ -290,5 +285,35 @@ mod tests {
             prepared.path.file_name().and_then(|name| name.to_str()),
             Some("file")
         );
+    }
+
+    #[tokio::test]
+    async fn long_unicode_reply_is_sent_in_lossless_chunks() {
+        let (_temp, outbound, _path) = setup();
+        let sender = FakeSender::default();
+        let text = "你".repeat(5_000);
+        let event: Event = serde_json::from_value(serde_json::json!({
+            "v":1,"id":"event","ts":"now","kind":"chat.message",
+            "group_id":"group","scope_key":"","by":"assistant",
+            "data":{"text":text,"sender_title":"Helpful Assistant","to":["user"]}
+        }))
+        .expect("event");
+
+        outbound
+            .send_with(&sender, &["wx-user".into()], &event)
+            .await;
+
+        let calls = sender.calls.lock().expect("calls");
+        let chunks = calls
+            .iter()
+            .map(|call| {
+                call.strip_prefix("text:wx-user:")
+                    .and_then(|call| call.strip_suffix(":token:wx-user"))
+                    .expect("text call")
+            })
+            .collect::<Vec<_>>();
+        assert!(chunks.len() > 1);
+        assert!(chunks.iter().all(|chunk| chunk.chars().count() <= 4_000));
+        assert_eq!(chunks.concat(), format!("Helpful Assistant\n\n{text}"));
     }
 }

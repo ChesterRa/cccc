@@ -79,6 +79,44 @@ describe("IMBridgeTab revoke loading identity", () => {
     expect(revokeButtons()[1].disabled).toBe(false);
   });
 
+  it("keeps the Weixin QR-login flow free of pairing controls", async () => {
+    vi.clearAllMocks();
+    const weixinProps = props();
+    weixinProps.imPlatform = "weixin";
+    weixinProps.imStatus = { ...weixinProps.imStatus!, platform: "weixin", subscribers: 1 };
+    weixinProps.weixinLoginStatus = {
+      status: "logged_in",
+      logged_in: true,
+      auto_subscribed: true,
+      running: false,
+    };
+    vi.mocked(api.fetchIMAuthorized).mockResolvedValue({
+      ok: true,
+      result: {
+        authorized: [
+          {
+            platform: "weixin",
+            chat_id: "wx-user",
+            thread_id: 0,
+            verbose: false,
+            authorized_at: 1,
+            authorization_source: "weixin_login",
+          },
+        ],
+      },
+    });
+
+    await act(async () => {
+      root.render(<IMBridgeTab {...weixinProps} />);
+    });
+
+    expect(api.fetchIMPending).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("/subscribe");
+    expect(container.textContent).not.toContain("Request Key");
+    expect(container.textContent).not.toContain("Pending Requests");
+    expect(container.textContent).not.toContain("Revoke");
+  });
+
   function revokeButtons(): HTMLButtonElement[] {
     return [...container.querySelectorAll("button")].filter(
       (button) => button.textContent === "Revoke" || button.textContent === "...",
@@ -125,6 +163,7 @@ function props(): ComponentProps<typeof IMBridgeTab> {
     setImWeixinAccountId: noop,
     weixinLoginStatus: null,
     onStartWeixinLogin: noop,
+    onVerifyWeixin: noop,
     onLogoutWeixin: noop,
     imBusy: false,
     onSaveConfig: noop,

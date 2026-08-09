@@ -10,7 +10,12 @@ from typing import Any, Awaitable, Callable, Dict, Literal, Optional, Union
 from fastapi import Depends, HTTPException, Path as FastApiPath, Request, WebSocket
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...contracts.v1.actor import ActorSubmit, AgentRuntime, RunnerKind, RuntimeStateSource
+from ...contracts.v1.actor import (
+    ActorSubmit,
+    AgentRuntime,
+    RunnerKind,
+    RuntimeStateSource,
+)
 from ...contracts.v1.automation import AutomationRule
 from ...kernel.access_tokens import list_access_tokens, lookup_access_token
 
@@ -239,7 +244,9 @@ class GroupSettingsRequest(BaseModel):
     help_nudge_interval_seconds: Optional[int] = None
     help_nudge_min_messages: Optional[int] = None
     min_interval_seconds: Optional[int] = None  # delivery throttle
-    auto_mark_on_delivery: Optional[bool] = None  # auto-mark messages as read after delivery
+    auto_mark_on_delivery: Optional[bool] = (
+        None  # auto-mark messages as read after delivery
+    )
 
     # Terminal transcript (group-scoped policy)
     terminal_transcript_visibility: Optional[Literal["off", "foreman", "all"]] = None
@@ -288,7 +295,9 @@ class AssistantVoiceRuntimeRemoveRequest(BaseModel):
 
 
 class AssistantVoiceRecordingLeaseRequest(BaseModel):
-    action: Literal["acquire", "heartbeat", "release", "status"] = Field(default="status")
+    action: Literal["acquire", "heartbeat", "release", "status"] = Field(
+        default="status"
+    )
     owner_id: str = Field(default="")
     lease_id: str = Field(default="")
     ttl_seconds: int = Field(default=30)
@@ -399,7 +408,13 @@ def _normalize_reply_required(v: Any) -> bool:
     return False
 
 
-def _safe_int(value: Any, *, default: int, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
+def _safe_int(
+    value: Any,
+    *,
+    default: int,
+    min_value: Optional[int] = None,
+    max_value: Optional[int] = None,
+) -> int:
     try:
         n = int(value)
     except Exception:
@@ -528,7 +543,9 @@ class GroupSpaceProviderAuthRequest(BaseModel):
 
 class IMSetRequest(BaseModel):
     group_id: str
-    platform: Literal["telegram", "slack", "discord", "feishu", "dingtalk", "wecom", "weixin"]
+    platform: Literal[
+        "telegram", "slack", "discord", "feishu", "dingtalk", "wecom", "weixin"
+    ]
     # Legacy single token field (backward compat for telegram/discord)
     token_env: str = ""
     token: str = ""
@@ -554,6 +571,11 @@ class IMActionRequest(BaseModel):
     group_id: str
 
 
+class IMWeixinVerifyRequest(BaseModel):
+    group_id: str
+    verify_code: str
+
+
 class IMBindRequest(BaseModel):
     group_id: str
     key: str
@@ -572,7 +594,10 @@ def _normalize_command(cmd: Union[str, list[str], None]) -> Optional[list[str]]:
         return shlex.split(s, posix=(os.name != "nt")) if s else []
     if isinstance(cmd, list) and all(isinstance(x, str) for x in cmd):
         return [str(x).strip() for x in cmd if str(x).strip()]
-    raise HTTPException(status_code=400, detail={"code": "invalid_command", "message": "invalid command"})
+    raise HTTPException(
+        status_code=400,
+        detail={"code": "invalid_command", "message": "invalid command"},
+    )
 
 
 @dataclass
@@ -592,7 +617,9 @@ class RouteContext:
 
 
 def _anonymous_principal() -> Any:
-    return SimpleNamespace(kind="anonymous", user_id="", allowed_groups=(), is_admin=False)
+    return SimpleNamespace(
+        kind="anonymous", user_id="", allowed_groups=(), is_admin=False
+    )
 
 
 def _tokens_enabled() -> bool:
@@ -600,7 +627,10 @@ def _tokens_enabled() -> bool:
 
 
 def _principal_kind(principal: Any) -> str:
-    return str(getattr(principal, "kind", "anonymous") or "anonymous").strip() or "anonymous"
+    return (
+        str(getattr(principal, "kind", "anonymous") or "anonymous").strip()
+        or "anonymous"
+    )
 
 
 def _principal_allowed_groups(principal: Any) -> tuple[str, ...]:
@@ -633,7 +663,14 @@ def check_admin(conn: Request | WebSocket) -> Any:
         return principal
     if _principal_kind(principal) == "user" and _principal_is_admin(principal):
         return principal
-    raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "admin access required", "details": {}})
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "permission_denied",
+            "message": "admin access required",
+            "details": {},
+        },
+    )
 
 
 def check_group(conn: Request | WebSocket, group_id: str) -> Any:
@@ -643,12 +680,26 @@ def check_group(conn: Request | WebSocket, group_id: str) -> Any:
     gid = str(group_id or "").strip()
     allowed_groups = _principal_allowed_groups(principal)
     if _principal_kind(principal) != "user":
-        raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "group access required", "details": {"group_id": gid}})
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "permission_denied",
+                "message": "group access required",
+                "details": {"group_id": gid},
+            },
+        )
     if _principal_is_admin(principal):
         return principal
     if gid and gid in allowed_groups:
         return principal
-    raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "group access denied", "details": {"group_id": gid}})
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "permission_denied",
+            "message": "group access denied",
+            "details": {"group_id": gid},
+        },
+    )
 
 
 def require_admin(request: Request) -> Any:
@@ -662,14 +713,23 @@ def require_user(request: Request) -> Any:
         return principal
     if _principal_kind(principal) == "user":
         return principal
-    raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "authentication required", "details": {}})
+    raise HTTPException(
+        status_code=403,
+        detail={
+            "code": "permission_denied",
+            "message": "authentication required",
+            "details": {},
+        },
+    )
 
 
 def require_group(request: Request, group_id: str = FastApiPath(...)) -> Any:
     return check_group(request, group_id)
 
 
-def filter_groups_for_principal(conn: Request | WebSocket, groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def filter_groups_for_principal(
+    conn: Request | WebSocket, groups: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
     principal = get_principal(conn)
     if not _tokens_enabled() or _principal_is_admin(principal):
         return groups
@@ -713,7 +773,11 @@ def resolve_websocket_principal(websocket: WebSocket) -> Any:
     return SimpleNamespace(
         kind="user",
         user_id=str(entry.get("user_id") or "").strip(),
-        allowed_groups=tuple(str(item or "").strip() for item in (entry.get("allowed_groups") or []) if str(item or "").strip()),
+        allowed_groups=tuple(
+            str(item or "").strip()
+            for item in (entry.get("allowed_groups") or [])
+            if str(item or "").strip()
+        ),
         is_admin=bool(entry.get("is_admin", False)),
     )
 

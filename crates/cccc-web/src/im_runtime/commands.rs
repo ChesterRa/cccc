@@ -3,11 +3,22 @@ use serde_json::{Value, json};
 use std::io;
 
 const SUBSCRIPTION_TTL_SECONDS: f64 = 600.0;
+const RECOGNIZED_COMMANDS: &[&str] = &[
+    "/subscribe",
+    "/sub",
+    "/unsubscribe",
+    "/unsub",
+    "/pause",
+    "/resume",
+    "/verbose",
+    "/status",
+    "/help",
+    "/send",
+];
 
 pub(super) enum InboundDecision {
     Forward,
     Reply(String),
-    Ignore,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -24,13 +35,27 @@ pub(super) async fn inbound_decision(
     chat_id: &str,
     text: &str,
 ) -> InboundDecision {
+    inbound_decision_for_thread(home, group_id, platform, chat_id, "", text).await
+}
+
+pub(super) async fn inbound_decision_for_thread(
+    home: &HomeLayout,
+    group_id: &str,
+    platform: &str,
+    chat_id: &str,
+    thread_id: &str,
+    text: &str,
+) -> InboundDecision {
     let home = home.clone();
     let group_id = group_id.to_owned();
     let platform = platform.to_owned();
     let chat_id = chat_id.to_owned();
+    let thread_id = thread_id.to_owned();
     let text = text.to_owned();
     match tokio::task::spawn_blocking(move || {
-        inbound_decision_blocking(&home, &group_id, &platform, &chat_id, &text)
+        inbound_decision_blocking_for_thread(
+            &home, &group_id, &platform, &chat_id, &thread_id, &text,
+        )
     })
     .await
     {
@@ -42,6 +67,7 @@ pub(super) async fn inbound_decision(
     }
 }
 
+#[cfg(test)]
 fn inbound_decision_blocking(
     home: &HomeLayout,
     group_id: &str,
@@ -49,43 +75,44 @@ fn inbound_decision_blocking(
     chat_id: &str,
     text: &str,
 ) -> InboundDecision {
-    let authorization = chat_authorization(home, group_id, platform, chat_id);
+    inbound_decision_blocking_for_thread(home, group_id, platform, chat_id, "", text)
+}
+
+fn inbound_decision_blocking_for_thread(
+    home: &HomeLayout,
+    group_id: &str,
+    platform: &str,
+    chat_id: &str,
+    thread_id: &str,
+    text: &str,
+) -> InboundDecision {
+    let authorization = chat_authorization(home, group_id, platform, chat_id, thread_id);
     let command = command_name(text);
+    let update_authorized = |update, success| {
+        if !authorization.authorized {
+            return InboundDecision::Reply(authorization_required(platform).into());
+        }
+        update_authorization(
+            home, group_id, platform, chat_id, thread_id, update, success,
+        )
+    };
     match command.as_str() {
-        "/subscribe" | "/sub" => subscribe(home, group_id, platform, chat_id, authorization),
+        "/subscribe" | "/sub" => {
+            subscribe(home, group_id, platform, chat_id, thread_id, authorization)
+        }
         "/unsubscribe" | "/unsub" => update_authorization(
             home,
             group_id,
             platform,
             chat_id,
+            thread_id,
             AuthorizedUpdate::Remove,
             "Subscription removed.",
         ),
-        "/pause" => authorized_update(
-            home,
-            group_id,
-            platform,
-            chat_id,
-            authorization,
-            AuthorizedUpdate::Paused(true),
-            "Subscription paused.",
-        ),
-        "/resume" => authorized_update(
-            home,
-            group_id,
-            platform,
-            chat_id,
-            authorization,
-            AuthorizedUpdate::Paused(false),
-            "Subscription resumed.",
-        ),
+        "/pause" => update_authorized(AuthorizedUpdate::Paused(true), "Subscription paused."),
+        "/resume" => update_authorized(AuthorizedUpdate::Paused(false), "Subscription resumed."),
         "/verbose" => match verbose_value(text) {
-            Ok(verbose) => authorized_update(
-                home,
-                group_id,
-                platform,
-                chat_id,
-                authorization,
+            Ok(verbose) => update_authorized(
                 AuthorizedUpdate::Verbose(verbose),
                 if verbose {
                     "Verbose delivery enabled."
@@ -99,20 +126,24 @@ fn inbound_decision_blocking(
             "CCCC subscription status: authorized={}, paused={}, verbose={}.",
             authorization.authorized, authorization.paused, authorization.verbose
         )),
-        "/help" => InboundDecision::Reply(help_text().into()),
+        "/help" => InboundDecision::Reply(help_text(platform).into()),
         "/send" if !authorization.authorized => {
-            InboundDecision::Reply("This chat is not authorized. Send /subscribe first.".into())
+            InboundDecision::Reply(authorization_required(platform).into())
         }
         "/send" if authorization.paused => {
             InboundDecision::Reply("This subscription is paused. Send /resume first.".into())
         }
         "/send" if send_has_payload(text) => InboundDecision::Forward,
         "/send" => InboundDecision::Reply("Usage: /send [@actor] <message>".into()),
-        command if command.starts_with('/') => {
-            InboundDecision::Reply(format!("Unknown command: {command}\n{}", help_text()))
+        command if command.starts_with('/') => InboundDecision::Reply(format!(
+            "Unknown command: {command}\n{}",
+            help_text(platform)
+        )),
+        _ if authorization.authorized && authorization.paused => {
+            InboundDecision::Reply("This subscription is paused. Send /resume to continue.".into())
         }
-        _ if authorization.authorized && !authorization.paused => InboundDecision::Forward,
-        _ => InboundDecision::Ignore,
+        _ if authorization.authorized => InboundDecision::Forward,
+        _ => InboundDecision::Reply(unauthorized_plain_text(home, group_id, platform)),
     }
 }
 
@@ -121,18 +152,28 @@ fn subscribe(
     group_id: &str,
     platform: &str,
     chat_id: &str,
+    thread_id: &str,
     authorization: ChatAuthorization,
 ) -> InboundDecision {
     if authorization.authorized {
+        let group_name = group_display_name(home, group_id);
         return InboundDecision::Reply(if authorization.paused {
-            "This chat is already authorized but paused. Send /resume to continue.".into()
+            format!(
+                "This chat is already authorized for CCCC group \"{group_name}\" but paused. Send /resume to continue."
+            )
         } else {
-            "This chat is already authorized.".into()
+            format!(
+                "This chat is already authorized for CCCC group \"{group_name}\". In direct chat, send plain text to reach @foreman; /send is only for explicit recipients."
+            )
         });
     }
-    match create_pending_subscription(home, group_id, platform, chat_id) {
+    if platform.eq_ignore_ascii_case("weixin") {
+        return InboundDecision::Reply(authorization_required(platform).into());
+    }
+    match create_pending_subscription(home, group_id, platform, chat_id, thread_id) {
         Ok(key) => InboundDecision::Reply(format!(
-            "CCCC pairing key: {key}\nThis key expires in 10 minutes. Approve it in Pending Requests or run: cccc im bind --key {key} --group {group_id}"
+            "CCCC pairing key: {key}\nRequest target: CCCC group \"{}\"\nThis key expires in 10 minutes. Approve it in Pending Requests or run: cccc im bind --key {key} --group {group_id}\nAfter approval, direct messages work as plain text; /send is only for explicit recipients.",
+            group_display_name(home, group_id)
         )),
         Err(error) => {
             tracing::warn!(%error, %group_id, %platform, %chat_id, "failed to create IM subscription request");
@@ -144,21 +185,13 @@ fn subscribe(
     }
 }
 
-fn authorized_update(
-    home: &HomeLayout,
-    group_id: &str,
-    platform: &str,
-    chat_id: &str,
-    authorization: ChatAuthorization,
-    update: AuthorizedUpdate,
-    success: &str,
-) -> InboundDecision {
-    if !authorization.authorized {
-        return InboundDecision::Reply(
-            "This chat is not authorized. Send /subscribe first.".into(),
-        );
-    }
-    update_authorization(home, group_id, platform, chat_id, update, success)
+fn group_display_name(home: &HomeLayout, group_id: &str) -> String {
+    GroupStore::new(home.clone())
+        .and_then(|store| store.load(group_id))
+        .ok()
+        .map(|group| group.title.trim().to_owned())
+        .filter(|title| !title.is_empty() && title != group_id)
+        .unwrap_or_else(|| group_id.to_owned())
 }
 
 fn update_authorization(
@@ -166,10 +199,11 @@ fn update_authorization(
     group_id: &str,
     platform: &str,
     chat_id: &str,
+    thread_id: &str,
     update: AuthorizedUpdate,
     success: &str,
 ) -> InboundDecision {
-    match persist_authorization_update(home, group_id, platform, chat_id, update) {
+    match persist_authorization_update(home, group_id, platform, chat_id, thread_id, update) {
         Ok(true) => InboundDecision::Reply(success.into()),
         Ok(false) => InboundDecision::Reply("This chat is not authorized.".into()),
         Err(error) => {
@@ -184,6 +218,7 @@ fn create_pending_subscription(
     group_id: &str,
     platform: &str,
     chat_id: &str,
+    thread_id: &str,
 ) -> Result<String, String> {
     let store = GroupStore::new(home.clone()).map_err(|error| error.to_string())?;
     let now = chrono::Utc::now().timestamp() as f64;
@@ -200,7 +235,8 @@ fn create_pending_subscription(
         items.retain(|item| item["expires_at"].as_f64().unwrap_or(0.0) > now);
         if let Some(key) = items.iter().find_map(|item| {
             (item["chat_id"].as_str() == Some(chat_id)
-                && item["platform"].as_str() == Some(platform))
+                && item["platform"].as_str() == Some(platform)
+                && super::normalized_thread_id(item.get("thread_id")) == thread_id.trim())
             .then(|| item["key"].as_str().map(str::to_owned))
             .flatten()
         }) {
@@ -213,7 +249,8 @@ fn create_pending_subscription(
             .take(12)
             .collect();
         items.push(json!({
-            "key":key,"chat_id":chat_id,"thread_id":0,"platform":platform,
+            "key":key,"chat_id":chat_id,
+            "thread_id":super::thread_id_value(thread_id),"platform":platform,
             "created_at":now,"expires_at":now+SUBSCRIPTION_TTL_SECONDS,
             "expires_in_seconds":SUBSCRIPTION_TTL_SECONDS as i64
         }));
@@ -227,6 +264,7 @@ fn chat_authorization(
     group_id: &str,
     platform: &str,
     chat_id: &str,
+    thread_id: &str,
 ) -> ChatAuthorization {
     let Ok(store) = GroupStore::new(home.clone()) else {
         return ChatAuthorization::default();
@@ -238,7 +276,7 @@ fn chat_authorization(
         .into_iter()
         .filter_map(|key| state.get(key))
         .flat_map(items)
-        .find(|item| matches_chat(item, platform, chat_id))
+        .find(|item| matches_chat(item, platform, chat_id, thread_id))
         .map(|item| ChatAuthorization {
             authorized: true,
             paused: item["paused"].as_bool().unwrap_or(false),
@@ -255,13 +293,14 @@ fn items(value: &Value) -> Box<dyn Iterator<Item = &Value> + '_> {
     }
 }
 
-fn matches_chat(item: &Value, platform: &str, chat_id: &str) -> bool {
+fn matches_chat(item: &Value, platform: &str, chat_id: &str, thread_id: &str) -> bool {
     item["chat_id"].as_str() == Some(chat_id)
+        && super::normalized_thread_id(item.get("thread_id")) == thread_id.trim()
         && item["subscribed"].as_bool().unwrap_or(true)
         && item["platform"]
             .as_str()
             .map(str::trim)
-            .is_none_or(|value| value.is_empty() || value == platform)
+            .is_none_or(|value| value.is_empty() || value.eq_ignore_ascii_case(platform))
 }
 
 #[derive(Clone, Copy)]
@@ -276,6 +315,7 @@ fn persist_authorization_update(
     group_id: &str,
     platform: &str,
     chat_id: &str,
+    thread_id: &str,
     update: AuthorizedUpdate,
 ) -> Result<bool, String> {
     let store = GroupStore::new(home.clone()).map_err(|error| error.to_string())?;
@@ -288,7 +328,7 @@ fn persist_authorization_update(
             let Some(items) = state.get_mut(key) else {
                 continue;
             };
-            changed |= update_items(items, platform, chat_id, update);
+            changed |= update_items(items, platform, chat_id, thread_id, update);
         }
         Ok(changed)
     })
@@ -299,29 +339,46 @@ fn update_items(
     items: &mut Value,
     platform: &str,
     chat_id: &str,
+    thread_id: &str,
     update: AuthorizedUpdate,
 ) -> bool {
     match items {
         Value::Array(items) => {
             if matches!(update, AuthorizedUpdate::Remove) {
+                if platform.eq_ignore_ascii_case("weixin")
+                    && let Some(item) = items
+                        .iter_mut()
+                        .find(|item| matches_chat(item, platform, chat_id, thread_id))
+                {
+                    item["subscribed"] = Value::Bool(false);
+                    return true;
+                }
                 let before = items.len();
-                items.retain(|item| !matches_chat(item, platform, chat_id));
+                items.retain(|item| !matches_chat(item, platform, chat_id, thread_id));
                 return before != items.len();
             }
             items
                 .iter_mut()
-                .find(|item| matches_chat(item, platform, chat_id))
+                .find(|item| matches_chat(item, platform, chat_id, thread_id))
                 .is_some_and(|item| apply_item_update(item, update))
         }
         Value::Object(items) => {
             if matches!(update, AuthorizedUpdate::Remove) {
+                if platform.eq_ignore_ascii_case("weixin")
+                    && let Some(item) = items
+                        .values_mut()
+                        .find(|item| matches_chat(item, platform, chat_id, thread_id))
+                {
+                    item["subscribed"] = Value::Bool(false);
+                    return true;
+                }
                 let before = items.len();
-                items.retain(|_, item| !matches_chat(item, platform, chat_id));
+                items.retain(|_, item| !matches_chat(item, platform, chat_id, thread_id));
                 return before != items.len();
             }
             items
                 .values_mut()
-                .find(|item| matches_chat(item, platform, chat_id))
+                .find(|item| matches_chat(item, platform, chat_id, thread_id))
                 .is_some_and(|item| apply_item_update(item, update))
         }
         _ => false,
@@ -347,6 +404,10 @@ fn command_name(text: &str) -> String {
         .to_ascii_lowercase()
 }
 
+pub(super) fn is_recognized_command(text: &str) -> bool {
+    RECOGNIZED_COMMANDS.contains(&command_name(text).as_str())
+}
+
 fn send_has_payload(text: &str) -> bool {
     text.trim()
         .split_once(char::is_whitespace)
@@ -362,8 +423,32 @@ fn verbose_value(text: &str) -> Result<bool, ()> {
     }
 }
 
-fn help_text() -> &'static str {
-    "Commands: /subscribe, /unsubscribe, /send <message>, /pause, /resume, /verbose [on|off], /status, /help"
+fn authorization_required(platform: &str) -> &'static str {
+    if platform.eq_ignore_ascii_case("weixin") {
+        "This Weixin account is not authorized. Scan and confirm the QR code in CCCC Settings; the scanning account is authorized automatically."
+    } else {
+        "This chat is not authorized. Send /subscribe first."
+    }
+}
+
+fn unauthorized_plain_text(home: &HomeLayout, group_id: &str, platform: &str) -> String {
+    let group_name = group_display_name(home, group_id);
+    if platform.eq_ignore_ascii_case("weixin") {
+        return format!(
+            "This Weixin account is not the QR-login account authorized for CCCC group \"{group_name}\". Scan and confirm the QR code in CCCC Settings; the scanning account can then send plain text directly."
+        );
+    }
+    format!(
+        "This chat is not authorized for CCCC group \"{group_name}\". Send /subscribe to request access. After approval, direct messages work as plain text; /send is only for explicit recipients."
+    )
+}
+
+fn help_text(platform: &str) -> &'static str {
+    if platform.eq_ignore_ascii_case("weixin") {
+        "Commands: /unsubscribe, /send <message>, /pause, /resume, /verbose [on|off], /status, /help"
+    } else {
+        "Commands: /subscribe, /unsubscribe, /send <message>, /pause, /resume, /verbose [on|off], /status, /help"
+    }
 }
 
 #[cfg(test)]
@@ -382,6 +467,23 @@ mod tests {
         match decision {
             InboundDecision::Reply(body) => body,
             _ => panic!("expected reply"),
+        }
+    }
+
+    #[test]
+    fn only_native_cccc_commands_are_recognized_for_group_routing() {
+        for command in [
+            "/subscribe",
+            "/sub",
+            "/unsubscribe@cccc_bot",
+            "/send @all hello",
+            "/status",
+            "/help",
+        ] {
+            assert!(is_recognized_command(command), "command={command}");
+        }
+        for command in ["/deploy", "/weather tomorrow", "hello", ""] {
+            assert!(!is_recognized_command(command), "command={command}");
         }
     }
 
@@ -410,6 +512,7 @@ mod tests {
             cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
         let key = state["pending"][0]["key"].as_str().expect("key");
         assert!(first.contains(key));
+        assert!(first.contains("CCCC group \"commands\""));
         let second = reply(inbound_decision_blocking(
             &home, &group_id, "telegram", "chat-1", "/sub",
         ));
@@ -417,6 +520,62 @@ mod tests {
         let state =
             cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
         assert_eq!(state["pending"].as_array().expect("pending").len(), 1);
+    }
+
+    #[test]
+    fn subscriptions_and_authorization_are_scoped_to_the_native_thread() {
+        let (_temp, home, store, group_id) = setup();
+        let _ = inbound_decision_blocking_for_thread(
+            &home,
+            &group_id,
+            "slack",
+            "channel-1",
+            "1710000000.100",
+            "/subscribe",
+        );
+        let _ = inbound_decision_blocking_for_thread(
+            &home,
+            &group_id,
+            "slack",
+            "channel-1",
+            "1710000000.200",
+            "/subscribe",
+        );
+        let state =
+            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
+        assert_eq!(state["pending"].as_array().expect("pending").len(), 2);
+        assert_eq!(state["pending"][0]["thread_id"], "1710000000.100");
+        assert_eq!(state["pending"][1]["thread_id"], "1710000000.200");
+
+        cccc_core::integration_state::group_update(&store, &group_id, "im_bridge", |state| {
+            state["authorized"] = json!([{
+                "chat_id":"channel-1","platform":"slack","thread_id":"1710000000.100"
+            }]);
+            Ok(())
+        })
+        .expect("authorize thread");
+        assert!(matches!(
+            inbound_decision_blocking_for_thread(
+                &home,
+                &group_id,
+                "slack",
+                "channel-1",
+                "1710000000.100",
+                "hello",
+            ),
+            InboundDecision::Forward
+        ));
+        assert!(matches!(
+            inbound_decision_blocking_for_thread(
+                &home,
+                &group_id,
+                "slack",
+                "channel-1",
+                "1710000000.200",
+                "hello",
+            ),
+            InboundDecision::Reply(_)
+        ));
     }
 
     #[test]
@@ -469,7 +628,38 @@ mod tests {
             "/unsubscribe",
         ));
         assert!(body.contains("removed"));
-        assert!(!super::super::authorized_chat_ids(&home, &group_id).contains("chat-1"));
+        assert!(
+            super::super::authorized_chats(&home, &group_id, "telegram")
+                .iter()
+                .all(|chat| chat.chat_id != "chat-1")
+        );
+    }
+
+    #[test]
+    fn weixin_unsubscribe_survives_automatic_authorization_recovery() {
+        let (_temp, home, store, group_id) = setup();
+        cccc_core::integration_state::group_update(&store, &group_id, "im_bridge", |state| {
+            *state = json!({"authorized":[{
+                "chat_id":"wx-user","platform":"weixin","thread_id":0,
+                "authorization_source":"weixin_login"
+            }]});
+            Ok(())
+        })
+        .expect("authorize");
+
+        let body = reply(inbound_decision_blocking(
+            &home,
+            &group_id,
+            "weixin",
+            "wx-user",
+            "/unsubscribe",
+        ));
+
+        assert!(body.contains("removed"));
+        let state =
+            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
+        assert_eq!(state["authorized"][0]["subscribed"], false);
+        assert!(super::super::authorized_chats(&home, &group_id, "weixin").is_empty());
     }
 
     #[test]
@@ -492,10 +682,13 @@ mod tests {
     #[test]
     fn ordinary_and_send_messages_obey_authorization() {
         let (_temp, home, store, group_id) = setup();
-        assert!(matches!(
-            inbound_decision_blocking(&home, &group_id, "telegram", "chat-1", "hello"),
-            InboundDecision::Ignore
+        let body = reply(inbound_decision_blocking(
+            &home, &group_id, "telegram", "chat-1", "hello",
         ));
+        assert!(body.contains("not authorized"));
+        assert!(body.contains("CCCC group \"commands\""));
+        assert!(!body.contains(&group_id));
+        assert!(body.contains("direct messages work as plain text"));
         authorize(&store, &group_id, false, false);
         assert!(matches!(
             inbound_decision_blocking(&home, &group_id, "telegram", "chat-1", "hello"),
@@ -505,6 +698,63 @@ mod tests {
             inbound_decision_blocking(&home, &group_id, "telegram", "chat-1", "/send"),
             InboundDecision::Reply(_)
         ));
+    }
+
+    #[test]
+    fn paused_plain_text_reports_the_paused_state() {
+        let (_temp, home, store, group_id) = setup();
+        authorize(&store, &group_id, true, false);
+
+        let body = reply(inbound_decision_blocking(
+            &home, &group_id, "telegram", "chat-1", "hello",
+        ));
+
+        assert!(body.contains("paused"));
+        assert!(body.contains("/resume"));
+        assert!(!body.contains("not authorized"));
+        assert!(!body.contains("/subscribe"));
+    }
+
+    #[test]
+    fn unauthorized_plain_text_has_consistent_feedback_on_subscription_platforms() {
+        let (_temp, home, _store, group_id) = setup();
+        for platform in [
+            "telegram", "slack", "discord", "feishu", "dingtalk", "wecom",
+        ] {
+            let body = reply(inbound_decision_blocking(
+                &home,
+                &group_id,
+                platform,
+                &format!("{platform}-chat"),
+                "hello",
+            ));
+            assert!(body.contains("not authorized"), "platform={platform}");
+            assert!(body.contains("/subscribe"), "platform={platform}");
+            assert!(
+                body.contains("CCCC group \"commands\""),
+                "platform={platform}"
+            );
+            assert!(body.contains("plain text"), "platform={platform}");
+        }
+    }
+
+    #[test]
+    fn unauthorized_weixin_account_is_directed_to_qr_login() {
+        let (_temp, home, store, group_id) = setup();
+        for text in ["hello", "/subscribe", "/send hello", "/resume", "/help"] {
+            let body = reply(inbound_decision_blocking(
+                &home, &group_id, "weixin", "wx-user", text,
+            ));
+            assert!(!body.contains("/subscribe"), "text={text}: {body}");
+        }
+        let body = reply(inbound_decision_blocking(
+            &home, &group_id, "weixin", "wx-user", "hello",
+        ));
+        assert!(body.contains("QR"));
+        assert!(body.contains("automatically") || body.contains("send plain text directly"));
+        let state =
+            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
+        assert!(state.get("pending").is_none());
     }
 
     #[test]

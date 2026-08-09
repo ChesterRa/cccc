@@ -4,6 +4,23 @@ from cccc.ports.im.adapters.feishu.identity import parse_bot_identity_response
 
 
 class TestFeishuBotIdentityParsing(unittest.TestCase):
+    def test_parses_feishu_standard_top_level_bot(self) -> None:
+        result = parse_bot_identity_response(
+            {
+                "code": 0,
+                "msg": "ok",
+                "bot": {
+                    "open_id": " ou_standard ",
+                    "app_name": " CCCC Bot ",
+                },
+            },
+            configured_name="cccc",
+        )
+
+        self.assertTrue(result.ok)
+        self.assertEqual(result.identity.open_id, "ou_standard")
+        self.assertEqual(result.identity.name, "CCCC Bot")
+
     def test_parses_nested_bot_identity_and_prefers_api_name(self) -> None:
         result = parse_bot_identity_response(
             {

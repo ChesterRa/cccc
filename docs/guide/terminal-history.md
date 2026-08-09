@@ -2,15 +2,15 @@
 
 Native PTY actors always keep terminal output in two bounded memory layers, with an optional durable third layer:
 
-- A 512 KiB in-memory hot buffer serves live WebSocket output, reconnects, and the initial screen snapshot.
-- A small completed-session cache keeps recently stopped sessions queryable without reopening files.
+- A configurable in-memory hot buffer serves live WebSocket output, reconnects, and the initial raw ANSI replay. It defaults to 10 MiB per actor, matching Python.
+- A completed-session cache keeps up to 256 KiB per stopped actor and 8 MiB total queryable without reopening files.
 - When durable persistence is enabled, an append-oriented rolling transcript under `CCCC_HOME/groups/<group_id>/state/terminal/<actor_id>/` preserves raw PTY bytes across actor and daemon restarts.
 
-Screen snapshots are derived from the hot ANSI stream so opening a busy TUI does not require replaying a complete transcript. WebSocket reconnects continue from an absolute byte cursor. When persistence is enabled, the durable transcript extends `/terminal/history` beyond the in-memory window and across daemon restarts; otherwise history is memory-only and bounded to the current daemon process.
+Fresh WebSocket attaches atomically capture the current PTY session's UTF-8-complete replay boundary, then stream retained raw ANSI history up to that fixed boundary in bounded 512 KiB pages. New output cannot make the initial loop chase a moving tail and starve keyboard input; once the boundary is reached, live polling and input handling run together. Reconnects continue from an absolute byte cursor and request only new output. Rendered screen snapshots remain available for diagnostics, but are not used to initialize the interactive terminal because TUI repaint sequences intentionally erase older frames. When persistence is enabled, the durable transcript extends `/terminal/history` beyond the in-memory window and across daemon restarts; durable output from earlier sessions is never injected into an interactive attach.
 
 ## Retention
 
-Durable capture is opt-in through `observability.terminal_transcript.enabled=true` and `observability.terminal_transcript.persist=true`. Both default to `false`, matching the Python implementation's memory-only default. `per_actor_bytes` defaults to 10 MiB and is clamped to 1 MiB through 200 MiB when persistence is active.
+Durable capture is opt-in through `observability.terminal_transcript.enabled=true` and `observability.terminal_transcript.persist=true`. Both default to `false`, matching the Python implementation's memory-only default. `per_actor_bytes` controls both the memory ring and, when enabled, durable retention. It defaults to 10 MiB; zero selects that default, and larger values are capped at 50,000,000 bytes like Python.
 
 ```yaml
 # CCCC_HOME/settings.yaml

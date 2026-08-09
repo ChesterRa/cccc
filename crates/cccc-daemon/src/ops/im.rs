@@ -228,22 +228,33 @@ fn status_payload(group_id: &str, value: &Value) -> Value {
         "adapter_available":value["adapter_available"].as_bool().unwrap_or(false),
         "last_error":value.get("last_error").cloned().unwrap_or(Value::Null),
         "pid":value.get("pid").cloned().unwrap_or(Value::Null),
-        "subscribers":value.get("authorized").and_then(Value::as_array).map_or(0,Vec::len)
+        "subscribers":active_authorization_count(value)
     })
+}
+
+fn active_authorization_count(value: &Value) -> usize {
+    let is_active = |item: &Value| item["subscribed"].as_bool() != Some(false);
+    match value.get("authorized") {
+        Some(Value::Array(items)) => items.iter().filter(|item| is_active(item)).count(),
+        Some(Value::Object(items)) => items.values().filter(|item| is_active(item)).count(),
+        _ => 0,
+    }
 }
 fn bind(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let key = required_arg(request, "key")?;
+    let now = chrono::Utc::now().timestamp() as f64;
     let item = update(home, &group_id, |state| {
         let pending = array(state, "pending");
-        let index = pending
-            .iter()
-            .position(|item| item["key"] == key)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "pending request not found"))?;
+        pending.retain(|item| item["expires_at"].as_f64().unwrap_or(0.0) > now);
+        let Some(index) = pending.iter().position(|item| item["key"] == key) else {
+            return Ok(None);
+        };
         let item = pending.remove(index);
         array(state, "authorized").push(item.clone());
-        Ok(item)
-    })?;
+        Ok(Some(item))
+    })?
+    .ok_or_else(|| OpError::new("invalid_key", "pending request not found or expired"))?;
     object(json!({"group_id":group_id,"authorized":item}))
 }
 fn list(home: &HomeLayout, request: &DaemonRequest, key: &str) -> OpResult {
@@ -268,18 +279,104 @@ fn revoke(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let thread_id = request
         .args
         .get("thread_id")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
+        .map(thread_id_value)
+        .unwrap_or_default();
     let revoked = update(home, &group_id, |state| {
-        let items = array(state, "authorized");
-        let before = items.len();
-        items.retain(|item| {
-            item["chat_id"] != chat_id || item["thread_id"].as_i64().unwrap_or(0) != thread_id
-        });
-        Ok(items.len() != before)
+        let mut revoked = false;
+        for key in ["authorized", "subscribers"] {
+            if let Some(items) = state.get_mut(key) {
+                revoked |= remove_chat_target(items, &chat_id, &thread_id);
+            }
+        }
+        Ok(revoked)
     })?;
     object(json!({"group_id":group_id,"revoked":revoked}))
 }
+
+fn remove_chat_target(items: &mut Value, chat_id: &str, thread_id: &str) -> bool {
+    match items {
+        Value::Array(items) => {
+            let mut changed = false;
+            items.retain_mut(|item| {
+                if !same_chat_target(item, chat_id, thread_id) {
+                    return true;
+                }
+                if is_weixin_target(item) {
+                    changed |= item["subscribed"].as_bool() != Some(false);
+                    item["subscribed"] = Value::Bool(false);
+                    true
+                } else {
+                    changed = true;
+                    false
+                }
+            });
+            changed
+        }
+        Value::Object(items) => {
+            let mut changed = false;
+            items.retain(|key, item| {
+                if !legacy_chat_key_matches(key, chat_id, thread_id)
+                    && !same_chat_target(item, chat_id, thread_id)
+                {
+                    return true;
+                }
+                if is_weixin_target(item) {
+                    changed |= item["subscribed"].as_bool() != Some(false);
+                    item["chat_id"] = json!(chat_id);
+                    item["thread_id"] = if thread_id.is_empty() {
+                        json!(0)
+                    } else {
+                        json!(thread_id)
+                    };
+                    item["subscribed"] = Value::Bool(false);
+                    true
+                } else {
+                    changed = true;
+                    false
+                }
+            });
+            changed
+        }
+        _ => false,
+    }
+}
+
+fn is_weixin_target(item: &Value) -> bool {
+    item["platform"]
+        .as_str()
+        .is_some_and(|platform| platform.eq_ignore_ascii_case("weixin"))
+}
+
+fn same_chat_target(item: &Value, chat_id: &str, thread_id: &str) -> bool {
+    item["chat_id"].as_str() == Some(chat_id)
+        && thread_id_value(&item["thread_id"]) == normalize_thread_id(thread_id)
+}
+
+fn legacy_chat_key_matches(key: &str, chat_id: &str, thread_id: &str) -> bool {
+    if !thread_id.is_empty() {
+        key == format!("{chat_id}:{thread_id}")
+    } else {
+        key == chat_id
+    }
+}
+
+fn thread_id_value(value: &Value) -> String {
+    match value {
+        Value::String(value) => normalize_thread_id(value),
+        Value::Number(value) => normalize_thread_id(&value.to_string()),
+        _ => String::new(),
+    }
+}
+
+fn normalize_thread_id(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() || value == "0" {
+        String::new()
+    } else {
+        value.to_owned()
+    }
+}
+
 fn load(home: &HomeLayout, group_id: &str) -> Result<Value, OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     integration_state::group_get(&store, group_id, KEY).map_err(OpError::io)
@@ -300,16 +397,49 @@ fn update<T>(
 }
 fn array<'a>(state: &'a mut Map<String, Value>, key: &str) -> &'a mut Vec<Value> {
     let value = state.entry(key).or_insert_with(|| json!([]));
-    if !value.is_array() {
+    if value.is_object() {
+        let object = std::mem::take(value)
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        *value = Value::Array(
+            object
+                .into_iter()
+                .map(|(object_key, mut item)| {
+                    let Some(fields) = item.as_object_mut() else {
+                        return item;
+                    };
+                    if key == "pending" {
+                        fields.entry("key").or_insert_with(|| json!(object_key));
+                    } else {
+                        let (chat_id, thread_id) = legacy_target_from_key(&object_key);
+                        fields.entry("chat_id").or_insert_with(|| json!(chat_id));
+                        fields.entry("thread_id").or_insert(thread_id);
+                    }
+                    item
+                })
+                .collect(),
+        );
+    } else if !value.is_array() {
         *value = json!([]);
     }
     value.as_array_mut().expect("array initialized")
 }
 
+fn legacy_target_from_key(key: &str) -> (String, Value) {
+    key.rsplit_once(':')
+        .filter(|(chat_id, thread_id)| !chat_id.is_empty() && !thread_id.is_empty())
+        .map_or_else(
+            || (key.to_owned(), json!(0)),
+            |(chat_id, thread_id)| (chat_id.to_owned(), json!(thread_id)),
+        )
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{delegate_start, url_host};
-    use cccc_core::{HomeLayout, settings};
+    use super::{KEY, bind, delegate_start, revoke, status_payload, url_host};
+    use cccc_contracts::DaemonRequest;
+    use cccc_core::{GroupStore, HomeLayout, integration_state, settings};
     use serde_json::json;
     use std::io::{Read, Write};
 
@@ -318,6 +448,195 @@ mod tests {
         assert_eq!(url_host("::1"), "[::1]");
         assert_eq!(url_host("[::1]"), "[::1]");
         assert_eq!(url_host("127.0.0.1"), "127.0.0.1");
+    }
+
+    #[test]
+    fn binding_rejects_expired_pending_keys() {
+        let temp = tempfile::tempdir().expect("temp");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("IM bind", "").expect("group");
+        let future = chrono::Utc::now().timestamp() as f64 + 3_600.0;
+        integration_state::group_update(&store, &group.group_id, KEY, |value| {
+            *value = json!({"pending":[
+                {"key":"expired","chat_id":"old","expires_at":0.0},
+                {"key":"active","chat_id":"new","expires_at":future}
+            ]});
+            Ok(())
+        })
+        .expect("state");
+
+        let request = |key: &str| DaemonRequest {
+            v: 1,
+            op: "im_bind_chat".into(),
+            args: json!({"group_id":group.group_id,"key":key})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+
+        let error = bind(&home, &request("expired")).expect_err("expired key must fail");
+        assert_eq!(error.code, "invalid_key");
+        assert!(error.message.contains("expired"));
+        let state = integration_state::group_get(&store, &group.group_id, KEY).expect("state");
+        assert_eq!(state["pending"].as_array().expect("pending").len(), 1);
+        let result = bind(&home, &request("active")).expect("active key binds");
+        assert_eq!(result["authorized"]["chat_id"], "new");
+    }
+
+    #[test]
+    fn binding_preserves_legacy_object_authorizations() {
+        let temp = tempfile::tempdir().expect("temp");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("Legacy IM bind", "").expect("group");
+        let future = chrono::Utc::now().timestamp() as f64 + 3_600.0;
+        integration_state::group_update(&store, &group.group_id, KEY, |value| {
+            *value = json!({
+                "authorized":{
+                    "old-chat":{"platform":"telegram"}
+                },
+                "pending":{"active":{
+                    "chat_id":"new-chat","thread_id":"1710000000.100",
+                    "platform":"slack","expires_at":future
+                }}
+            });
+            Ok(())
+        })
+        .expect("state");
+        let request = DaemonRequest {
+            v: 1,
+            op: "im_bind_chat".into(),
+            args: json!({"group_id":group.group_id,"key":"active"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+
+        bind(&home, &request).expect("bind");
+
+        let state = integration_state::group_get(&store, &group.group_id, KEY).expect("state");
+        let authorized = state["authorized"].as_array().expect("authorized");
+        assert_eq!(authorized.len(), 2);
+        assert!(authorized.iter().any(|item| item["chat_id"] == "old-chat"));
+        assert!(authorized.iter().any(|item| {
+            item["chat_id"] == "new-chat" && item["thread_id"] == "1710000000.100"
+        }));
+    }
+
+    #[test]
+    fn revoke_removes_both_authorization_and_subscription_state() {
+        let temp = tempfile::tempdir().expect("temp");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("IM revoke", "").expect("group");
+        integration_state::group_update(&store, &group.group_id, KEY, |value| {
+            *value = json!({
+                "authorized":[{"chat_id":"chat-1","thread_id":0}],
+                "subscribers":[{"chat_id":"chat-1","thread_id":0,"subscribed":true}]
+            });
+            Ok(())
+        })
+        .expect("state");
+        let request = DaemonRequest {
+            v: 1,
+            op: "im_revoke_chat".into(),
+            args: json!({"group_id":group.group_id,"chat_id":"chat-1"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+
+        let result = revoke(&home, &request).expect("revoke");
+
+        assert_eq!(result["revoked"], true);
+        let state = integration_state::group_get(&store, &group.group_id, KEY).expect("state");
+        assert!(
+            state["authorized"]
+                .as_array()
+                .expect("authorized")
+                .is_empty()
+        );
+        assert!(
+            state["subscribers"]
+                .as_array()
+                .expect("subscribers")
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn revoke_preserves_other_legacy_object_subscriptions() {
+        let temp = tempfile::tempdir().expect("temp");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("Legacy IM revoke", "").expect("group");
+        integration_state::group_update(&store, &group.group_id, KEY, |value| {
+            *value = json!({
+                "authorized":{
+                    "chat-1":{"chat_id":"chat-1","thread_id":0},
+                    "chat-2":{"chat_id":"chat-2","thread_id":0}
+                },
+                "subscribers":{
+                    "chat-1":{"thread_id":0,"subscribed":true},
+                    "chat-2":{"thread_id":0,"subscribed":true,"verbose":true}
+                }
+            });
+            Ok(())
+        })
+        .expect("state");
+        let request = DaemonRequest {
+            v: 1,
+            op: "im_revoke_chat".into(),
+            args: json!({"group_id":group.group_id,"chat_id":"chat-1"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+
+        let result = revoke(&home, &request).expect("revoke");
+
+        assert_eq!(result["revoked"], true);
+        let state = integration_state::group_get(&store, &group.group_id, KEY).expect("state");
+        assert_eq!(
+            state["authorized"],
+            json!({"chat-2":{"chat_id":"chat-2","thread_id":0}})
+        );
+        assert_eq!(
+            state["subscribers"],
+            json!({"chat-2":{"thread_id":0,"subscribed":true,"verbose":true}})
+        );
+    }
+
+    #[test]
+    fn revoke_preserves_weixin_unsubscribe_tombstone() {
+        let temp = tempfile::tempdir().expect("temp");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("Weixin revoke", "").expect("group");
+        integration_state::group_update(&store, &group.group_id, KEY, |value| {
+            *value = json!({"authorized":[{
+                "chat_id":"wx-user","thread_id":0,"platform":"weixin",
+                "subscribed":true,"authorization_source":"weixin_login"
+            }]});
+            Ok(())
+        })
+        .expect("state");
+        let request = DaemonRequest {
+            v: 1,
+            op: "im_revoke_chat".into(),
+            args: json!({"group_id":group.group_id,"chat_id":"wx-user"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+
+        let result = revoke(&home, &request).expect("revoke");
+
+        assert_eq!(result["revoked"], true);
+        let state = integration_state::group_get(&store, &group.group_id, KEY).expect("state");
+        assert_eq!(state["authorized"][0]["subscribed"], false);
+        assert_eq!(status_payload(&group.group_id, &state)["subscribers"], 0);
     }
 
     #[test]

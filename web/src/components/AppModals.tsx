@@ -87,13 +87,6 @@ interface AppModalsProps {
   canManageGroups: boolean;
 }
 
-function getErrorDetailGroupId(err: unknown): string {
-  if (!err || typeof err !== "object") return "";
-  const details = (err as { details?: unknown }).details;
-  if (!details || typeof details !== "object") return "";
-  return String((details as { group_id?: unknown }).group_id || "").trim();
-}
-
 function sortPresentationSlotIds(slotIds: string[]): string[] {
   return [...slotIds].sort((left, right) => {
     const leftIndex = Number(String(left || "").replace("slot-", "")) || 0;
@@ -1058,17 +1051,6 @@ export function AppModals({
     try {
       const resp = await api.createGroupWithScope(title, path);
       if (!resp.ok) {
-        if (resp.error?.code === "scope_already_attached") {
-          const existing = getErrorDetailGroupId(resp.error);
-          if (existing) {
-            showError(t("scopeAlreadyAttached"));
-            closeModal("createGroup");
-            resetCreateGroupForm();
-            await refreshGroups();
-            setSelectedGroupId(existing);
-            return;
-          }
-        }
         setDirBrowseError(`${resp.error.code}: ${resp.error.message}`);
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;

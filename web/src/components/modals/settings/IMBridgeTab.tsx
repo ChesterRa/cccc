@@ -57,6 +57,7 @@ interface IMBridgeTabProps {
   setImWeixinAccountId: (v: string) => void;
   weixinLoginStatus: WeixinLoginStatus | null;
   onStartWeixinLogin: () => void;
+  onVerifyWeixin: (verifyCode: string) => void;
   onLogoutWeixin: () => void;
   // Actions
   imBusy: boolean;
@@ -160,6 +161,7 @@ export function IMBridgeTab({
   setImWeixinAccountId,
   weixinLoginStatus,
   onStartWeixinLogin,
+  onVerifyWeixin,
   onLogoutWeixin,
   imBusy,
   onSaveConfig,
@@ -169,6 +171,7 @@ export function IMBridgeTab({
 }: IMBridgeTabProps) {
   const { t } = useTranslation("settings");
   const [weixinQrCopyState, setWeixinQrCopyState] = useState<"idle" | "done" | "failed">("idle");
+  const [weixinVerifyCode, setWeixinVerifyCode] = useState("");
   const sectionTitleClass = "text-sm font-semibold text-[var(--color-text-primary)]";
   const sectionHintClass = "mt-1 text-xs text-[var(--color-text-tertiary)]";
   const compactSecondaryButtonClass = secondaryButtonClass("sm");
@@ -181,6 +184,7 @@ export function IMBridgeTab({
   const weixinHasQr = !!String(weixinLoginStatus?.qrcode_url || "").trim();
   const weixinHasCustomAdvanced = !!String(imWeixinAccountId || "").trim();
   const bridgeCanStart = canStartIMBridge(imPlatform, weixinLoggedIn);
+  const usesAutomaticAuthorization = imPlatform === "weixin";
   const getBotTokenLabel = () => {
     switch (imPlatform) {
       case "telegram":
@@ -319,19 +323,23 @@ export function IMBridgeTab({
   const getWeixinStatusLabel = () => {
     if (weixinLoggedIn) return t("imBridge.weixinStatusLoggedIn");
     if (weixinStatus === "waiting_scan") return t("imBridge.weixinStatusWaitingScan");
+    if (weixinStatus === "scanned") return t("imBridge.weixinStatusScanned");
+    if (weixinStatus === "need_verify_code") return t("imBridge.weixinStatusNeedVerifyCode");
     if (weixinStatus === "starting_login") return t("imBridge.weixinStatusStarting");
     if (weixinStatus === "error") return t("imBridge.weixinStatusError");
     return t("imBridge.weixinNotLoggedIn");
   };
 
   const getWeixinHint = () => {
+    if (weixinStatus === "need_verify_code") return t("imBridge.weixinHintNeedVerifyCode");
+    if (weixinStatus === "scanned") return t("imBridge.weixinHintScanned");
     if (weixinHasQr || weixinStatus === "waiting_scan") return t("imBridge.weixinHintWaitingScan");
     if (weixinLoggedIn) return t("imBridge.weixinHintLoggedIn");
     if (weixinStatus === "error") return t("imBridge.weixinHintError");
     return t("imBridge.weixinHintIdle");
   };
 
-  const getWeixinSubscribeBodyKey = () => {
+  const getWeixinAuthorizationBodyKey = () => {
     if (weixinAuthorizedChatCount > 0) return "imBridge.weixinSubscribeBoundBody";
     if (!imStatus?.configured) return "imBridge.weixinSubscribeNeedsConfigBody";
     if (!imStatus.running) return "imBridge.weixinSubscribeNeedsRunningBody";
@@ -339,8 +347,12 @@ export function IMBridgeTab({
   };
 
   const loadIMAuthState = useCallback(async () => {
+    if (usesAutomaticAuthorization) {
+      await loadAuthorizedChats();
+      return;
+    }
     await Promise.all([loadAuthorizedChats(), loadPendingRequests()]);
-  }, [loadAuthorizedChats, loadPendingRequests]);
+  }, [loadAuthorizedChats, loadPendingRequests, usesAutomaticAuthorization]);
 
   useEffect(() => {
     if (imStatus?.configured) {
@@ -349,7 +361,7 @@ export function IMBridgeTab({
   }, [imStatus?.configured, loadIMAuthState, weixinLoggedIn]);
 
   useEffect(() => {
-    if (!imStatus?.configured) return;
+    if (!imStatus?.configured || usesAutomaticAuthorization) return;
     const timer = window.setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
@@ -357,9 +369,9 @@ export function IMBridgeTab({
       void loadPendingRequests({ silent: true });
     }, IM_PENDING_AUTO_REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [imStatus?.configured, loadPendingRequests]);
+  }, [imStatus?.configured, loadPendingRequests, usesAutomaticAuthorization]);
 
-  const handleRevoke = async (chatId: string, threadId: number) => {
+  const handleRevoke = async (chatId: string, threadId: number | string) => {
     if (!groupId) return;
     const key = imRevokeKey(chatId, threadId);
     setRevoking(key);
@@ -428,7 +440,11 @@ export function IMBridgeTab({
     }
   };
 
-  const handleToggleVerbose = async (chatId: string, threadId: number, verbose: boolean) => {
+  const handleToggleVerbose = async (
+    chatId: string,
+    threadId: number | string,
+    verbose: boolean,
+  ) => {
     if (!groupId) return;
     try {
       const resp = await api.setIMVerbose(groupId, chatId, verbose, threadId);
@@ -781,6 +797,36 @@ export function IMBridgeTab({
                         {weixinLoginStatus.qr_ascii}
                       </pre>
                     )}
+                    {(weixinLoginStatus?.verification_required ||
+                      weixinStatus === "need_verify_code") && (
+                      <div className="mt-3 flex flex-wrap items-end gap-2">
+                        <div className="min-w-48 flex-1">
+                          <label className={labelClass()}>{t("imBridge.weixinVerifyCode")}</label>
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            autoComplete="one-time-code"
+                            value={weixinVerifyCode}
+                            onChange={(event) => setWeixinVerifyCode(event.target.value.trim())}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" && weixinVerifyCode && !imBusy) {
+                                onVerifyWeixin(weixinVerifyCode);
+                              }
+                            }}
+                            placeholder={t("imBridge.weixinVerifyCodePlaceholder")}
+                            className={inputClass()}
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          disabled={imBusy || !weixinVerifyCode}
+                          onClick={() => onVerifyWeixin(weixinVerifyCode)}
+                          className={primaryButtonClass(imBusy)}
+                        >
+                          {t("imBridge.weixinVerifySubmit")}
+                        </button>
+                      </div>
+                    )}
                     <p className="text-xs mt-2 text-[var(--color-text-muted)]">{getWeixinHint()}</p>
                     {weixinLoggedIn && (
                       <div
@@ -791,7 +837,7 @@ export function IMBridgeTab({
                         </div>
                         <p className="mt-1 leading-relaxed">
                           <Trans
-                            i18nKey={getWeixinSubscribeBodyKey()}
+                            i18nKey={getWeixinAuthorizationBodyKey()}
                             ns="settings"
                             values={{ count: weixinAuthorizedChatCount }}
                             components={[
@@ -884,7 +930,7 @@ export function IMBridgeTab({
           </div>
 
           {/* Pending Requests */}
-          {imStatus?.configured && (
+          {imStatus?.configured && !usesAutomaticAuthorization && (
             <div className={settingsWorkspacePanelClass(_isDark)}>
               <div className="flex items-center justify-between">
                 <h3 className={sectionTitleClass}>
@@ -975,51 +1021,55 @@ export function IMBridgeTab({
                   {t("imBridge.authorizedChats", "Authorized Chats")}
                 </h3>
                 <div className="flex items-center gap-1">
-                  <button
-                    onClick={async () => {
-                      setAuthError("");
-                      setPendingError("");
-                      try {
-                        const ok = await copyTextToClipboard("/subscribe");
-                        if (ok) {
-                          setAuthInfo(
-                            t(
-                              "imBridge.requestCopied",
-                              "Copied /subscribe. Send it in your IM chat to request a key, then approve it from Pending Requests (or bind by key).",
-                            ),
-                          );
-                        } else {
-                          setAuthInfo(
-                            t(
-                              "imBridge.requestHint",
-                              "Step 1: In your IM chat, send /subscribe to request a temporary key. Step 2: the request will appear below in Pending Requests; click Approve (or paste the key in Bind). If foreman is online, you can forward the key and ask foreman to bind it for you.",
-                            ),
-                          );
-                        }
-                      } catch {
-                        setAuthInfo(
-                          t(
-                            "imBridge.requestHint",
-                            "Step 1: In your IM chat, send /subscribe to request a temporary key. Step 2: the request will appear below in Pending Requests; click Approve (or paste the key in Bind). If foreman is online, you can forward the key and ask foreman to bind it for you.",
-                          ),
-                        );
-                      }
-                    }}
-                    className={compactSecondaryButtonClass}
-                  >
-                    {t("imBridge.requestKey", "Request Key")}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowBindInput((v) => !v);
-                      setBindKey("");
-                      setAuthError("");
-                      setAuthInfo("");
-                    }}
-                    className={compactSecondaryButtonClass}
-                  >
-                    + {t("imBridge.bind", "Bind")}
-                  </button>
+                  {!usesAutomaticAuthorization && (
+                    <>
+                      <button
+                        onClick={async () => {
+                          setAuthError("");
+                          setPendingError("");
+                          try {
+                            const ok = await copyTextToClipboard("/subscribe");
+                            if (ok) {
+                              setAuthInfo(
+                                t(
+                                  "imBridge.requestCopied",
+                                  "Copied /subscribe. Send it in your IM chat to request a key, then approve it from Pending Requests (or bind by key).",
+                                ),
+                              );
+                            } else {
+                              setAuthInfo(
+                                t(
+                                  "imBridge.requestHint",
+                                  "Step 1: In your IM chat, send /subscribe to request a temporary key. Step 2: the request will appear below in Pending Requests; click Approve (or paste the key in Bind). If foreman is online, you can forward the key and ask foreman to bind it for you.",
+                                ),
+                              );
+                            }
+                          } catch {
+                            setAuthInfo(
+                              t(
+                                "imBridge.requestHint",
+                                "Step 1: In your IM chat, send /subscribe to request a temporary key. Step 2: the request will appear below in Pending Requests; click Approve (or paste the key in Bind). If foreman is online, you can forward the key and ask foreman to bind it for you.",
+                              ),
+                            );
+                          }
+                        }}
+                        className={compactSecondaryButtonClass}
+                      >
+                        {t("imBridge.requestKey", "Request Key")}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setShowBindInput((v) => !v);
+                          setBindKey("");
+                          setAuthError("");
+                          setAuthInfo("");
+                        }}
+                        className={compactSecondaryButtonClass}
+                      >
+                        + {t("imBridge.bind", "Bind")}
+                      </button>
+                    </>
+                  )}
                   <button
                     onClick={loadIMAuthState}
                     disabled={authLoading}
@@ -1030,7 +1080,7 @@ export function IMBridgeTab({
                 </div>
               </div>
 
-              {showBindInput && (
+              {showBindInput && !usesAutomaticAuthorization && (
                 <div
                   className={`${settingsWorkspaceSoftPanelClass(_isDark)} mt-3 flex items-center gap-2`}
                 >
@@ -1151,13 +1201,15 @@ export function IMBridgeTab({
                               ? t("imBridge.verboseAll", "All")
                               : t("imBridge.verboseUserOnly", "User only")}
                           </button>
-                          <button
-                            onClick={() => handleRevoke(chat.chat_id, chat.thread_id)}
-                            disabled={isRevoking}
-                            className={compactDangerButtonClass}
-                          >
-                            {isRevoking ? "..." : t("imBridge.revoke", "Revoke")}
-                          </button>
+                          {chat.authorization_source !== "weixin_login" && (
+                            <button
+                              onClick={() => handleRevoke(chat.chat_id, chat.thread_id)}
+                              disabled={isRevoking}
+                              className={compactDangerButtonClass}
+                            >
+                              {isRevoking ? "..." : t("imBridge.revoke", "Revoke")}
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -1173,10 +1225,20 @@ export function IMBridgeTab({
             <div className="mt-3 text-xs space-y-1 text-[var(--color-text-muted)]">
               <p>{t("imBridge.setupGuide")}</p>
               <ol className="list-decimal list-inside space-y-0.5 ml-2">
-                <li>{t("imBridge.setupStep1")}</li>
-                <li>{t("imBridge.setupStep2")}</li>
-                <li>{t("imBridge.setupStep3")}</li>
-                <li>{t("imBridge.setupStep4")}</li>
+                {usesAutomaticAuthorization ? (
+                  <>
+                    <li>{t("imBridge.weixinSetupStep1")}</li>
+                    <li>{t("imBridge.weixinSetupStep2")}</li>
+                    <li>{t("imBridge.weixinSetupStep3")}</li>
+                  </>
+                ) : (
+                  <>
+                    <li>{t("imBridge.setupStep1")}</li>
+                    <li>{t("imBridge.setupStep2")}</li>
+                    <li>{t("imBridge.setupStep3")}</li>
+                    <li>{t("imBridge.setupStep4")}</li>
+                  </>
+                )}
               </ol>
             </div>
           </div>

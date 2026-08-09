@@ -13,8 +13,10 @@ mod dingtalk_inbound;
 mod dingtalk_outbound;
 mod dingtalk_outbound_media;
 mod dingtalk_outbound_report;
+mod dingtalk_streaming;
 mod discord;
 mod discord_dedup;
+mod discord_gateway_proxy;
 mod discord_inbound;
 mod discord_outbound;
 mod discord_reactions;
@@ -22,7 +24,10 @@ mod feishu;
 mod feishu_inbound;
 mod feishu_outbound;
 mod inbound_attachments;
+mod outbound_attachment;
+mod outbound_chunks;
 mod outbound_message;
+mod outbound_stream_state;
 mod processing_reactions;
 mod slack;
 mod slack_inbound;
@@ -30,6 +35,7 @@ mod slack_outbound;
 mod state;
 mod telegram;
 mod telegram_inbound;
+mod telegram_outbound;
 mod wecom;
 mod wecom_client;
 mod wecom_media;
@@ -140,8 +146,12 @@ impl ImWorkerRegistry {
         }
     }
 
-    pub(crate) async fn start_weixin_login(&self, group_id: &str) -> Result<Value, String> {
-        self.weixin_logins.start(group_id).await
+    pub(crate) async fn start_weixin_login(
+        &self,
+        home: &HomeLayout,
+        group_id: &str,
+    ) -> Result<Value, String> {
+        self.weixin_logins.start(home, group_id).await
     }
 
     pub(crate) async fn weixin_login_status(
@@ -152,20 +162,51 @@ impl ImWorkerRegistry {
         self.weixin_logins.status(home, group_id).await
     }
 
-    pub(crate) async fn logout_weixin(&self, home: &HomeLayout, group_id: &str) -> Value {
+    pub(crate) async fn verify_weixin_login(
+        &self,
+        home: &HomeLayout,
+        group_id: &str,
+        verify_code: &str,
+    ) -> Result<Value, String> {
+        self.weixin_logins.verify(home, group_id, verify_code).await
+    }
+
+    pub(crate) async fn logout_weixin(
+        &self,
+        home: &HomeLayout,
+        group_id: &str,
+    ) -> Result<Value, String> {
         self.stop(group_id).await;
         self.weixin_logins.clear(group_id);
+        let store = GroupStore::new(home.clone()).map_err(|error| error.to_string())?;
+        cccc_core::integration_state::group_update(&store, group_id, "im_bridge", |value| {
+            if !value.is_object() {
+                *value = json!({});
+            }
+            let state = value.as_object_mut().expect("IM state initialized");
+            state.insert("enabled".into(), Value::Bool(false));
+            state.insert("running".into(), Value::Bool(false));
+            state.insert("adapter_available".into(), Value::Bool(false));
+            state.insert("pid".into(), Value::Null);
+            state.insert("last_error".into(), Value::Null);
+            state.insert("updated_at".into(), json!(cccc_contracts::utc_now()));
+            Ok(())
+        })
+        .map_err(|error| error.to_string())?;
         if let Some(user_id) = weixin_login::stored_user_id(home, group_id)
             && let Err(error) =
                 weixin_authorization::revoke_login_authorization(home, group_id, &user_id)
         {
-            tracing::warn!(%error, %group_id, "failed to revoke Weixin login authorization");
+            return Err(format!(
+                "failed to revoke Weixin login authorization: {error}"
+            ));
         }
-        weixin_login::remove_credentials(home, group_id);
-        json!({
+        weixin_login::remove_credentials(home, group_id)
+            .map_err(|error| format!("failed to remove Weixin credentials: {error}"))?;
+        Ok(json!({
             "status":"logged_out","logged_in":false,"running":false,
             "pid":null,"updated_at":cccc_contracts::utc_now()
-        })
+        }))
     }
 
     pub(crate) async fn start(
@@ -451,21 +492,31 @@ fn worker(tasks: Vec<JoinHandle<()>>, stopper: Stopper) -> WorkerHandles {
 pub(super) fn spawn_outbound<S, F, Fut>(
     home: HomeLayout,
     group_id: String,
+    platform: &'static str,
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
     sender: S,
     send: F,
 ) -> JoinHandle<()>
 where
     S: Send + Sync + 'static,
-    F: Fn(Arc<S>, Vec<String>, Event) -> Fut + Send + Sync + 'static,
+    F: Fn(Arc<S>, Vec<AuthorizedChat>, Event) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
-    spawn_outbound_matching(home, group_id, ledger_events, sender, is_outbound, send)
+    spawn_outbound_matching(
+        home,
+        group_id,
+        platform,
+        ledger_events,
+        sender,
+        is_outbound,
+        send,
+    )
 }
 
 pub(super) fn spawn_outbound_matching<S, P, F, Fut>(
     home: HomeLayout,
     group_id: String,
+    platform: &'static str,
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
     sender: S,
     matches: P,
@@ -474,7 +525,7 @@ pub(super) fn spawn_outbound_matching<S, P, F, Fut>(
 where
     S: Send + Sync + 'static,
     P: Fn(&Event) -> bool + Send + Sync + 'static,
-    F: Fn(Arc<S>, Vec<String>, Event) -> Fut + Send + Sync + 'static,
+    F: Fn(Arc<S>, Vec<AuthorizedChat>, Event) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
     let sender = Arc::new(sender);
@@ -491,8 +542,11 @@ where
             match receiver.recv().await {
                 Ok(event) => {
                     deliver_outbound(
-                        &home,
-                        &group_id,
+                        OutboundScope {
+                            home: &home,
+                            group_id: &group_id,
+                            platform,
+                        },
                         &sender,
                         &matches,
                         &send,
@@ -513,8 +567,11 @@ where
                         for event in page {
                             replay_cursor.clone_from(&event.id);
                             deliver_outbound(
-                                &home,
-                                &group_id,
+                                OutboundScope {
+                                    home: &home,
+                                    group_id: &group_id,
+                                    platform,
+                                },
                                 &sender,
                                 &matches,
                                 &send,
@@ -539,9 +596,15 @@ struct OutboundDeliveryState {
     cursor: Option<String>,
 }
 
+#[derive(Clone, Copy)]
+struct OutboundScope<'a> {
+    home: &'a HomeLayout,
+    group_id: &'a str,
+    platform: &'a str,
+}
+
 async fn deliver_outbound<S, P, F, Fut>(
-    home: &HomeLayout,
-    group_id: &str,
+    scope: OutboundScope<'_>,
     sender: &Arc<S>,
     matches: &P,
     send: &F,
@@ -550,7 +613,7 @@ async fn deliver_outbound<S, P, F, Fut>(
 ) where
     S: Send + Sync + 'static,
     P: Fn(&Event) -> bool + Send + Sync + 'static,
-    F: Fn(Arc<S>, Vec<String>, Event) -> Fut + Send + Sync + 'static,
+    F: Fn(Arc<S>, Vec<AuthorizedChat>, Event) -> Fut + Send + Sync + 'static,
     Fut: Future<Output = ()> + Send + 'static,
 {
     if !state.seen.insert(event.id.clone()) {
@@ -560,38 +623,118 @@ async fn deliver_outbound<S, P, F, Fut>(
     if !matches(&event) {
         return;
     }
+    if !event_visible_to_im(&event) {
+        return;
+    }
     if state.seen.len() > 8192 {
         state.seen.clear();
         state.seen.insert(event.id.clone());
     }
-    let home = home.clone();
-    let group_id = group_id.to_owned();
-    let targets = tokio::task::spawn_blocking(move || authorized_chat_ids(&home, &group_id))
+    let home = scope.home.clone();
+    let group_id = scope.group_id.to_owned();
+    let platform = scope.platform.to_owned();
+    let chats = tokio::task::spawn_blocking(move || authorized_chats(&home, &group_id, &platform))
         .await
-        .unwrap_or_default()
-        .into_iter()
-        .collect();
+        .unwrap_or_default();
+    let targets = delivery_targets(chats, &event);
     send(Arc::clone(sender), targets, event).await;
 }
 
+fn delivery_targets(chats: Vec<AuthorizedChat>, event: &Event) -> Vec<AuthorizedChat> {
+    chats
+        .into_iter()
+        .filter(|chat| event_is_user_facing(event) || chat.verbose)
+        .collect()
+}
+
 pub(super) fn is_outbound(event: &Event) -> bool {
-    event.kind == "chat.message"
+    matches!(event.kind.as_str(), "chat.message" | "system.notify")
         && event.by != "user"
         && !event.by.starts_with("im:")
         && event.data.get("transport").and_then(Value::as_str) != Some("im")
 }
 
 pub(super) fn is_outbound_or_stream(event: &Event) -> bool {
-    matches!(event.kind.as_str(), "chat.message" | "chat.stream")
-        && event.by != "user"
+    matches!(
+        event.kind.as_str(),
+        "chat.message" | "chat.stream" | "system.notify"
+    ) && event.by != "user"
         && !event.by.starts_with("im:")
         && event.data.get("transport").and_then(Value::as_str) != Some("im")
+}
+
+fn completes_processing(event: &Event) -> bool {
+    event.kind == "chat.message" && event_is_user_facing(event)
+}
+
+pub(super) fn processing_reply_to(event: &Event) -> Option<&str> {
+    event
+        .data
+        .get("reply_to")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn event_is_user_facing(event: &Event) -> bool {
+    event
+        .data
+        .get("to")
+        .and_then(Value::as_array)
+        .is_none_or(|targets| {
+            targets.is_empty()
+                || targets
+                    .iter()
+                    .any(|target| matches!(target.as_str(), Some("user" | "@user" | "@all")))
+        })
+}
+
+fn event_visible_to_im(event: &Event) -> bool {
+    if event.kind != "system.notify" {
+        return true;
+    }
+    if event.data.get("im_visibility").and_then(Value::as_str) != Some("public") {
+        return false;
+    }
+    if ["target_actor_id", "actor_id"].into_iter().any(|key| {
+        event
+            .data
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+    }) {
+        return false;
+    }
+    event_is_user_facing(event)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use cccc_core::ledger;
+
+    #[test]
+    fn only_final_chat_messages_complete_processing_feedback() {
+        for kind in ["chat.stream", "system.notify"] {
+            let event = Event::new(kind, "group");
+            assert!(!completes_processing(&event), "kind={kind}");
+        }
+        assert!(completes_processing(&Event::new("chat.message", "group")));
+
+        let mut peer_message = Event::new("chat.message", "group");
+        peer_message.data.insert("to".into(), json!(["@foreman"]));
+        assert!(!completes_processing(&peer_message));
+    }
+
+    #[test]
+    fn processing_reply_to_ignores_missing_and_blank_ids() {
+        let mut event = Event::new("chat.message", "group");
+        assert_eq!(processing_reply_to(&event), None);
+        event.data.insert("reply_to".into(), json!("  "));
+        assert_eq!(processing_reply_to(&event), None);
+        event.data.insert("reply_to".into(), json!(" event-1 "));
+        assert_eq!(processing_reply_to(&event), Some("event-1"));
+    }
     use std::sync::atomic::{AtomicBool, Ordering};
 
     #[tokio::test]
@@ -690,6 +833,88 @@ mod tests {
         assert!(!is_outbound(&actor));
         actor.by = "user".into();
         assert!(!is_outbound(&actor));
+
+        let mut notification = Event::new("system.notify", "g_test");
+        notification.by = "system".into();
+        assert!(is_outbound(&notification));
+    }
+
+    #[test]
+    fn actor_targeted_system_notifications_never_escape_to_im() {
+        let mut actor_notice = Event::new("system.notify", "g_test");
+        actor_notice.by = "system".into();
+        actor_notice.data = json!({
+            "actor_id":"peer-1",
+            "to":["peer-1"],
+            "im_visibility":"public",
+            "text":"You have an unread collaboration message."
+        })
+        .as_object()
+        .cloned()
+        .expect("data");
+        assert!(!event_visible_to_im(&actor_notice));
+
+        let mut direct_notice = Event::new("system.notify", "g_test");
+        direct_notice
+            .data
+            .insert("im_visibility".into(), json!("public"));
+        direct_notice
+            .data
+            .insert("target_actor_id".into(), json!("foreman"));
+        assert!(!event_visible_to_im(&direct_notice));
+
+        let implicit = Event::new("system.notify", "g_test");
+        assert!(!event_visible_to_im(&implicit));
+
+        let mut broadcast = Event::new("system.notify", "g_test");
+        broadcast
+            .data
+            .insert("im_visibility".into(), json!("public"));
+        broadcast.data.insert("to".into(), json!(["@all"]));
+        assert!(event_visible_to_im(&broadcast));
+    }
+
+    #[test]
+    fn non_verbose_targets_only_receive_user_facing_events() {
+        let targets = || {
+            vec![
+                AuthorizedChat {
+                    chat_id: "quiet".into(),
+                    thread_id: String::new(),
+                    verbose: false,
+                },
+                AuthorizedChat {
+                    chat_id: "verbose".into(),
+                    thread_id: String::new(),
+                    verbose: true,
+                },
+            ]
+        };
+        let mut peer = Event::new("chat.message", "g_test");
+        peer.data.insert("to".into(), json!(["peer"]));
+        assert_eq!(
+            delivery_targets(targets(), &peer)
+                .into_iter()
+                .map(|target| target.chat_id)
+                .collect::<Vec<_>>(),
+            vec!["verbose"]
+        );
+
+        peer.data.insert("to".into(), json!(["@user"]));
+        let mut user_targets = delivery_targets(targets(), &peer)
+            .into_iter()
+            .map(|target| target.chat_id)
+            .collect::<Vec<_>>();
+        user_targets.sort();
+        assert_eq!(user_targets, vec!["quiet", "verbose"]);
+
+        let notification = Event::new("system.notify", "g_test");
+        let mut notification_targets = delivery_targets(targets(), &notification)
+            .into_iter()
+            .map(|target| target.chat_id)
+            .collect::<Vec<_>>();
+        notification_targets.sort();
+        assert_eq!(notification_targets, vec!["quiet", "verbose"]);
     }
 
     #[tokio::test]
@@ -702,12 +927,19 @@ mod tests {
         ledger::append(&path, &Event::new("group.create", &group.group_id)).expect("cursor");
         let hub = crate::ledger_event_hub::LedgerEventHub::new(home.clone());
         let (sent, mut received) = tokio::sync::mpsc::unbounded_channel();
-        let task = spawn_outbound(home, group.group_id.clone(), hub, (), move |_, _, event| {
-            let sent = sent.clone();
-            async move {
-                sent.send(event.id).ok();
-            }
-        });
+        let task = spawn_outbound(
+            home,
+            group.group_id.clone(),
+            "telegram",
+            hub,
+            (),
+            move |_, _, event| {
+                let sent = sent.clone();
+                async move {
+                    sent.send(event.id).ok();
+                }
+            },
+        );
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         for index in 0..1_100 {
             let mut event = Event::new("chat.message", &group.group_id);
@@ -752,10 +984,15 @@ mod tests {
             inbound_decision(&home, &group.group_id, "telegram", "chat-1", "/subscribe").await,
             InboundDecision::Reply(_)
         ));
-        assert!(matches!(
-            inbound_decision(&home, &group.group_id, "telegram", "chat-2", "hello").await,
-            InboundDecision::Ignore
-        ));
+        let InboundDecision::Reply(body) =
+            inbound_decision(&home, &group.group_id, "telegram", "chat-2", "hello").await
+        else {
+            panic!("unauthorized plain text must receive binding guidance");
+        };
+        assert!(body.contains("not authorized"));
+        assert!(body.contains("CCCC group \"test\""));
+        assert!(!body.contains(&group.group_id));
+        assert!(body.contains("direct messages work as plain text"));
         let state = cccc_core::integration_state::group_get(&store, &group.group_id, "im_bridge")
             .expect("state");
         let pending = state["pending"].as_array().expect("pending");

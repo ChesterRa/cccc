@@ -20,6 +20,7 @@ pub(super) async fn start(
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
 ) -> Result<(Vec<JoinHandle<()>>, Arc<WeixinClient>), String> {
     let (token, base_url) = load_credentials(&home, group_id)?;
+    let _ = super::weixin_login::ensure_stored_login_authorized(&home, group_id)?;
     let mut builder = WeixinConfig::builder().token(token);
     if !base_url.is_empty() {
         builder = builder.base_url(base_url);
@@ -57,9 +58,14 @@ pub(super) async fn start(
     let outbound = spawn_outbound(
         home.clone(),
         group_id.to_owned(),
+        PLATFORM,
         ledger_events,
         WeixinOutbound::new(home, group_id, Arc::clone(&sdk)),
         |outbound, targets, event| async move {
+            let targets = targets
+                .into_iter()
+                .map(|target| target.chat_id)
+                .collect::<Vec<_>>();
             outbound.send(&targets, &event).await;
         },
     );
@@ -85,7 +91,6 @@ impl MessageHandler for Handler {
                 context.reply_text(&body).await?;
                 return Ok(());
             }
-            InboundDecision::Ignore => return Ok(()),
         }
         let attachments = materialize_media(&self.home, &self.group_id, context).await;
         if text.is_empty() && attachments.is_empty() {
@@ -100,6 +105,7 @@ impl MessageHandler for Handler {
             text,
             InboundMetadata {
                 message_id: context.message_id.clone(),
+                thread_id: String::new(),
                 attachments,
             },
         )
