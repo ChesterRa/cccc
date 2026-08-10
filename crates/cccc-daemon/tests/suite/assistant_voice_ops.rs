@@ -76,6 +76,8 @@ fn voice_input_is_durable_idempotent_and_delivered_to_internal_actor() {
     assert!(workspace.join("docs/voice-secretary/meeting.md").is_file());
     let duplicate = ok(&home, "assistant_voice_transcript_append", args);
     assert_eq!(duplicate.result["input_event_created"], false);
+    let assistant_state = &store.load(&group.group_id).expect("load").extra["assistants"];
+    assert_eq!(assistant_state["sessions"][0]["capture_mode"], "document");
 
     let read = ok(
         &home,
@@ -200,6 +202,439 @@ fn prompt_refine_round_trip_uses_distinct_input_and_draft_operations() {
         })
         .count();
     assert_eq!(notifications_after, notifications_before);
+}
+
+#[test]
+fn prompt_refine_reused_request_id_delivers_each_append_and_deduplicates_retries() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let first_args = json!({
+        "group_id":group_id,
+        "kind":"prompt_refine",
+        "request_id":"voice-prompt-reused",
+        "input_append_id":"voice-prompt-append-one",
+        "voice_transcript":"补充风险",
+        "composer_text":"检查方案"
+    });
+    let first = ok(&home, "assistant_voice_input_append", first_args.clone());
+    assert_eq!(first.result["input_event_created"], true);
+    assert_eq!(first.result["input_append_id"], "voice-prompt-append-one");
+
+    ok(
+        &home,
+        "assistant_voice_prompt_draft_submit",
+        json!({
+            "group_id":group_id,
+            "by":"assistant:voice_secretary",
+            "request_id":"voice-prompt-reused",
+            "draft_text":"补充风险后的方案"
+        }),
+    );
+    let retry = ok(&home, "assistant_voice_input_append", first_args);
+    assert_eq!(retry.result["input_event_created"], false);
+    assert_eq!(
+        store.load(&group_id).expect("load").extra["assistants"]["voice_prompt_drafts"]["voice-prompt-reused"]
+            ["status"],
+        "pending"
+    );
+
+    let second = ok(
+        &home,
+        "assistant_voice_input_append",
+        json!({
+            "group_id":group_id,
+            "kind":"prompt_refine",
+            "request_id":"voice-prompt-reused",
+            "input_append_id":"voice-prompt-append-two",
+            "voice_transcript":"再补充验收标准",
+            "composer_text":"检查方案"
+        }),
+    );
+    assert_eq!(second.result["input_event_created"], true);
+    assert_ne!(
+        first.result["input_event"]["segment_id"],
+        second.result["input_event"]["segment_id"]
+    );
+    let second_text = second.result["input_event"]["text"]
+        .as_str()
+        .expect("second input text");
+    assert!(second_text.contains("补充风险"));
+    assert!(second_text.contains("再补充验收标准"));
+
+    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    assert_eq!(
+        state["voice_prompt_requests"]["voice-prompt-reused"]["voice_transcripts"],
+        json!(["补充风险", "再补充验收标准"])
+    );
+    assert_eq!(
+        state["voice_prompt_drafts"]["voice-prompt-reused"]["status"],
+        "stale"
+    );
+    let events =
+        ledger::read_all(&store.ledger_path(&group_id).expect("ledger path")).expect("ledger");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.kind == "assistant.voice.input"
+                    && event.data["request_id"] == "voice-prompt-reused"
+            })
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn voice_instruction_round_trip_persists_and_reports_the_ask_reply() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let args = json!({
+        "group_id":group_id,
+        "kind":"voice_instruction",
+        "request_id":"voice-ask-weather",
+        "input_append_id":"voice-ask-weather-input",
+        "instruction":"厦门天气怎么样？",
+        "language":"mixed",
+        "trigger":{
+            "trigger_kind":"service_voice_instruction",
+            "target_kind":"secretary"
+        }
+    });
+    let input = ok(&home, "assistant_voice_document_instruction", args.clone());
+    assert_eq!(input.result["request_id"], "voice-ask-weather");
+    assert_eq!(input.result["input_event_created"], true);
+    assert_eq!(input.result["ask_request"]["status"], "pending");
+    assert_eq!(
+        input.result["input_event"]["text"],
+        "Task:\n厦门天气怎么样？"
+    );
+    assert_eq!(
+        input.result["input_event"]["metadata"]["target_kind"],
+        "secretary"
+    );
+    assert_eq!(
+        input.result["input_event"]["metadata"]["request_id"],
+        "voice-ask-weather"
+    );
+    assert_eq!(
+        input.result["input_event"]["trigger"]["intent_hint"],
+        "secretary_task"
+    );
+    assert!(input.result["input_event"]["trigger"]["instruction_policy"].is_object());
+
+    let retry = ok(&home, "assistant_voice_document_instruction", args);
+    assert_eq!(retry.result["input_event_created"], false);
+    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    assert_eq!(state["ask_requests"].as_array().map(Vec::len), Some(1));
+    assert_eq!(state["ask_requests"][0]["request_id"], "voice-ask-weather");
+    assert_eq!(state["assistant"]["lifecycle"], "working");
+
+    let feedback_args = json!({
+        "group_id":group_id,
+        "by":"voice-secretary",
+        "request_id":"voice-ask-weather",
+        "status":"done",
+        "reply_text":"厦门今天多云，外出注意防晒。",
+        "source_urls":["https://www.weather.com.cn/fujian/xiamen/"]
+    });
+    let feedback = ok(
+        &home,
+        "assistant_voice_instruction_feedback",
+        feedback_args.clone(),
+    );
+    assert_eq!(feedback.result["ask_request"]["status"], "done");
+    assert_eq!(
+        feedback.result["ask_request"]["reply_text"],
+        "厦门今天多云，外出注意防晒。"
+    );
+    assert_eq!(feedback.result["assistant"]["lifecycle"], "idle");
+    assert_eq!(feedback.result["event"]["kind"], "assistant.voice.request");
+
+    ok(&home, "assistant_voice_instruction_feedback", feedback_args);
+    let events =
+        ledger::read_all(&store.ledger_path(&group_id).expect("ledger path")).expect("ledger");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.kind == "assistant.voice.request"
+                    && event.data["request_id"] == "voice-ask-weather"
+            })
+            .count(),
+        1
+    );
+
+    let index = ok(&home, "assistant_index", json!({"group_id":group_id}));
+    assert_eq!(index.result["ask_requests"][0]["status"], "done");
+    assert_eq!(
+        index.result["latest_ask_request"]["reply_text"],
+        "厦门今天多云，外出注意防晒。"
+    );
+}
+
+#[test]
+fn voice_instruction_feedback_requires_an_existing_request_and_secretary_actor() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let forbidden = call(
+        &home,
+        "assistant_voice_instruction_feedback",
+        json!({
+            "group_id":group_id,
+            "by":"user",
+            "request_id":"voice-ask-missing",
+            "status":"done",
+            "reply_text":"不应写入"
+        }),
+    );
+    assert!(!forbidden.ok);
+    assert_eq!(
+        forbidden.error.as_ref().map(|error| error.code.as_str()),
+        Some("assistant_voice_instruction_feedback_forbidden")
+    );
+
+    let missing = call(
+        &home,
+        "assistant_voice_instruction_feedback",
+        json!({
+            "group_id":group_id,
+            "by":"voice-secretary",
+            "request_id":"voice-ask-missing",
+            "status":"done",
+            "reply_text":"不存在"
+        }),
+    );
+    assert!(!missing.ok);
+    assert_eq!(
+        missing.error.as_ref().map(|error| error.code.as_str()),
+        Some("voice_ask_request_not_found")
+    );
+}
+
+#[test]
+fn document_instruction_targets_an_existing_document_and_requires_a_report() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let saved = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,
+            "document_path":"docs/voice-secretary/release.md",
+            "content":"# 发布计划\n"
+        }),
+    );
+    let input = ok(
+        &home,
+        "assistant_voice_document_instruction",
+        json!({
+            "group_id":group_id,
+            "request_id":"voice-ask-document",
+            "input_append_id":"voice-ask-document-input",
+            "document_path":"docs/voice-secretary/release.md",
+            "instruction":"补充负责人和回滚步骤"
+        }),
+    );
+
+    assert_eq!(
+        input.result["document"]["document_id"],
+        saved.result["document"]["document_id"]
+    );
+    assert_eq!(
+        input.result["input_event"]["metadata"]["target_kind"],
+        "document"
+    );
+    assert_eq!(
+        input.result["input_event"]["trigger"]["intent_hint"],
+        "document_instruction"
+    );
+    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    assert_eq!(state["documents"].as_array().map(Vec::len), Some(1));
+    assert_eq!(state["ask_requests"][0]["target_kind"], "document");
+    assert_eq!(
+        state["ask_requests"][0]["document_path"],
+        "docs/voice-secretary/release.md"
+    );
+}
+
+#[test]
+fn archiving_document_removes_it_from_index_and_selects_the_next_active_document() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    let first = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,
+            "document_path":"docs/voice-secretary/first.md",
+            "content":"# First\n"
+        }),
+    );
+    let second = ok(
+        &home,
+        "assistant_voice_document_save",
+        json!({
+            "group_id":group_id,
+            "document_path":"docs/voice-secretary/second.md",
+            "content":"# Second\n"
+        }),
+    );
+    assert_eq!(
+        store.load(&group_id).expect("load").extra["assistants"]["active_document_id"],
+        second.result["document"]["document_id"]
+    );
+
+    let archived = ok(
+        &home,
+        "assistant_voice_document_archive",
+        json!({
+            "group_id":group_id,
+            "document_path":"docs/voice-secretary/second.md"
+        }),
+    );
+    assert_eq!(archived.result["document"]["status"], "archived");
+
+    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    assert_eq!(
+        state["active_document_id"],
+        first.result["document"]["document_id"]
+    );
+    assert_eq!(
+        state["active_document_path"],
+        "docs/voice-secretary/first.md"
+    );
+
+    cccc_core::integration_state::group_update(&store, &group_id, "assistants", |value| {
+        value["active_document_id"] = second.result["document"]["document_id"].clone();
+        value["active_document_path"] = json!("docs/voice-secretary/second.md");
+        Ok(())
+    })
+    .expect("seed legacy archived active target");
+
+    let index = ok(&home, "assistant_index", json!({"group_id":group_id}));
+    assert_eq!(index.result["documents"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+        index.result["documents"][0]["document_path"],
+        "docs/voice-secretary/first.md"
+    );
+    assert!(
+        index.result["documents_by_path"]
+            .get("docs/voice-secretary/second.md")
+            .is_none()
+    );
+    assert_eq!(
+        index.result["active_document_path"],
+        "docs/voice-secretary/first.md"
+    );
+    let repaired = &store.load(&group_id).expect("load").extra["assistants"];
+    assert_eq!(
+        repaired["active_document_id"],
+        first.result["document"]["document_id"]
+    );
+    assert_eq!(
+        repaired["active_document_path"],
+        "docs/voice-secretary/first.md"
+    );
+    let archived_select = call(
+        &home,
+        "assistant_voice_document_select",
+        json!({
+            "group_id":group_id,
+            "document_path":"docs/voice-secretary/second.md"
+        }),
+    );
+    assert!(!archived_select.ok);
+
+    let active = ok(
+        &home,
+        "assistant_voice_document_list",
+        json!({"group_id":group_id}),
+    );
+    assert_eq!(active.result["documents"].as_array().map(Vec::len), Some(1));
+    let all = ok(
+        &home,
+        "assistant_voice_document_list",
+        json!({"group_id":group_id,"include_archived":true}),
+    );
+    assert_eq!(all.result["documents"].as_array().map(Vec::len), Some(2));
+
+    ok(
+        &home,
+        "assistant_voice_document_archive",
+        json!({
+            "group_id":group_id,
+            "document_path":"docs/voice-secretary/first.md"
+        }),
+    );
+    cccc_core::integration_state::group_update(&store, &group_id, "assistants", |value| {
+        value["active_document_id"] = first.result["document"]["document_id"].clone();
+        value["active_document_path"] = json!("docs/voice-secretary/first.md");
+        Ok(())
+    })
+    .expect("seed legacy final archived target");
+    let empty_index = ok(&home, "assistant_index", json!({"group_id":group_id}));
+    assert_eq!(
+        empty_index.result["documents"].as_array().map(Vec::len),
+        Some(0)
+    );
+    assert_eq!(empty_index.result["active_document_id"], "");
+    assert_eq!(empty_index.result["active_document_path"], "");
+    let repaired_empty = &store.load(&group_id).expect("load").extra["assistants"];
+    assert_eq!(repaired_empty["active_document_id"], "");
+    assert_eq!(repaired_empty["active_document_path"], "");
+}
+
+#[test]
+fn semantic_voice_inputs_do_not_create_meeting_transcripts() {
+    let (temp, home, store, group_id) = enabled_voice_group();
+    let prompt = ok(
+        &home,
+        "assistant_voice_input_append",
+        json!({
+            "group_id":group_id,
+            "kind":"prompt_refine",
+            "request_id":"voice-prompt-storage",
+            "voice_transcript":"补充验收标准",
+            "composer_text":"检查方案"
+        }),
+    );
+    assert!(prompt.result["segment"].is_null());
+    assert!(prompt.result["segment_path"].is_null());
+    assert_eq!(
+        prompt.result["input_event"]["session_id"],
+        "voice-secretary-prompt-refine"
+    );
+
+    let instruction = ok(
+        &home,
+        "assistant_voice_document_instruction",
+        json!({
+            "group_id":group_id,
+            "instruction":"按负责人整理行动项"
+        }),
+    );
+    assert!(instruction.result["segment"].is_null());
+    assert_eq!(
+        instruction.result["input_event"]["session_id"],
+        "voice-secretary-user-instruction"
+    );
+
+    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    assert!(
+        state["sessions"]
+            .as_array()
+            .is_some_and(|sessions| sessions.is_empty())
+    );
+    assert!(
+        state["documents"]
+            .as_array()
+            .is_some_and(|documents| documents.is_empty())
+    );
+    assert!(
+        !temp
+            .path()
+            .join("workspace/docs/voice-secretary/meeting.md")
+            .exists()
+    );
+    let voice_root = home.root().join("voice-secretary").join(&group_id);
+    assert!(voice_root.join("inputs.jsonl").is_file());
+    assert!(!voice_root.join("voice-secretary-prompt-refine").exists());
+    assert!(!voice_root.join("voice-secretary-user-instruction").exists());
 }
 
 #[test]

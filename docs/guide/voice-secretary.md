@@ -35,6 +35,24 @@ worker pool, and sends `final_asr_text` before closing the recording connection.
 If final ASR fails, the live transcript remains available. An installed
 diarization model then adds speaker ranges in the background and emits an
 `assistant.voice.session` event when the result is ready.
+Speaker ranges are normalized to first-seen `Speaker 1..N` labels, tiny
+spurious clusters are absorbed into the nearest stable speaker, and adjacent
+same-speaker windows are merged within bounded durations. One offline
+recognizer is then reused to transcribe each speaker window independently. The
+complete sorted speaker timeline is retained; processing does not discard turns
+after a fixed segment count. The
+meeting view therefore restores per-speaker text instead of assigning one
+whole-recording transcript to whichever range contains its midpoint.
+Speaker identities are never synthesized by this post-processing: ranges and
+labels are published only after the native pyannote + 3D-Speaker clustering
+pipeline succeeds. A clustering or per-window ASR failure is reported as
+`diarization_failed`, and the saved raw transcript remains unlabeled.
+An unexpected WebSocket disconnect also flushes the owned temporary recording,
+runs final ASR, and durably appends the best available final transcript for
+document capture before starting speaker separation. Prompt, instruction, and
+direct-composer capture never create meeting artifacts or speaker-analysis jobs.
+The connection releases its recording lease only when the stored owner and lease
+ID still match, so stale connection cleanup cannot unlock a newer recorder.
 Only one native diarization job runs at a time. The sherpa-onnx diarization API
 requires one complete `f32` waveform, so this stage has a bounded, temporary
 full-recording memory peak; it reads directly from the recording file without
@@ -45,21 +63,30 @@ overwrite a newer recording.
 
 ## Durable Input
 
-Stable segments are appended to:
+Stable document-capture ASR segments are appended to:
 
 ```text
 ~/.cccc/voice-secretary/<group_id>/<session_id>/transcripts/segments.jsonl
 ```
 
-Semantic input is appended to `inputs.jsonl` before the daemon writes an
-`assistant.voice.input` event and a targeted `system.notify`. Segment IDs are
-idempotent, so browser retries do not duplicate document input. The internal
-actor reads unread batches through `cccc_voice_secretary_document`, edits the
+Prompt refinement and document instructions are semantic inputs, not meeting
+transcripts: they never create a session entry or a per-session transcript
+sidecar. Semantic input is appended only to `inputs.jsonl` before the daemon
+writes an `assistant.voice.input` event and a targeted `system.notify`. Segment
+identity is independent from the prompt request ID: one prompt request may
+accumulate several speech appends, while each append carries its own
+`input_append_id`. Retrying the same append reuses that ID and does not duplicate
+input or invalidate a pending draft; later speech keeps the request ID but uses a
+new append ID. The internal actor reads unread batches through
+`cccc_voice_secretary_document`, edits the
 repository document, and the daemon reconciles the Markdown content into the
 document index when assistants or documents are next read or selected. A changed
 file advances the indexed revision once; repeated reads are idempotent.
 The durable input log remains the idempotency source after the bounded session
 preview is trimmed, and interrupted ledger notification is completed on retry.
+Archived documents are retained in durable state but omitted from the working
+document projection. Archiving the current document selects the most recently
+updated remaining active document, or clears the active target when none remain.
 
 Only the `voice-secretary` actor may advance the unread input cursor. Document
 paths must be repository-relative Markdown paths; symbolic-link components are
@@ -74,6 +101,16 @@ text through
 `assistant_voice_prompt_draft_submit`. Draft submission updates only the
 existing request; it never appends another Voice Secretary input. Empty or
 non-substantive refinements use `no_op=true`.
+
+Instruction/Ask mode creates a durable pending `ask_requests` item atomically
+with its semantic input. The delivered notification renders an explicit work
+order with the target, request ID, and required MCP output instead of relying on
+the actor to infer routing from raw JSON. User-visible answers must be submitted
+through `cccc_voice_secretary_request(action="report")`; ordinary console text
+is not treated as a delivered reply. A report updates the Ask item, emits an
+`assistant.voice.request` ledger event, and lets the web client restore
+`reply_text` after refresh or reconnect. Exact input and report retries are
+idempotent.
 
 When Voice Secretary is disabled, microphone input remains available as direct
 dictation. Both Rust and Python local ASR paths accept the explicit `composer`

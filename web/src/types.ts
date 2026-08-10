@@ -976,6 +976,7 @@ export type AssistantVoiceDocumentMutationResult = {
   actor_notify_delivery_error?: string;
   event?: unknown;
   request_id?: string;
+  input_append_id?: string;
 };
 
 export type AssistantVoicePromptDraft = {
@@ -1026,6 +1027,7 @@ export type AssistantVoiceInputResult = {
   actor_notify_delivery_error?: string;
   event?: unknown;
   request_id?: string;
+  input_append_id?: string;
 };
 
 export type AssistantVoicePromptDraftMutationResult = {

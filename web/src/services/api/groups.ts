@@ -589,6 +589,7 @@ function normalizeAssistantVoiceDocumentMutationResult(
     actor_notify_delivery_error: asOptionalString(record.actor_notify_delivery_error) || undefined,
     event: record.event,
     request_id: asOptionalString(record.request_id) || undefined,
+    input_append_id: asOptionalString(record.input_append_id) || undefined,
   };
 }
 
@@ -611,6 +612,7 @@ function normalizeAssistantVoiceInputResult(
     actor_notify_delivery_error: asOptionalString(record.actor_notify_delivery_error) || undefined,
     event: record.event,
     request_id: asOptionalString(record.request_id) || undefined,
+    input_append_id: asOptionalString(record.input_append_id) || undefined,
   };
 }
 
@@ -1107,6 +1109,8 @@ export async function sendVoiceAssistantDocumentInstruction(
     instruction: string;
     sourceText?: string;
     documentPath?: string;
+    requestId?: string;
+    inputAppendId?: string;
     trigger?: Record<string, unknown>;
     by?: string;
   },
@@ -1122,6 +1126,8 @@ export async function sendVoiceAssistantDocumentInstruction(
         document_path: String(payload.documentPath || docPath).trim(),
         instruction: String(payload.instruction || ""),
         source_text: String(payload.sourceText || ""),
+        request_id: String(payload.requestId || ""),
+        input_append_id: String(payload.inputAppendId || ""),
         trigger: payload.trigger || {},
         by: String(payload.by || "user").trim() || "user",
       }),
@@ -1143,6 +1149,7 @@ export async function appendVoiceAssistantInput(
     voiceTranscript?: string;
     composerText?: string;
     requestId?: string;
+    inputAppendId?: string;
     operation?: string;
     composerContext?: Record<string, unknown>;
     composerSnapshotHash?: string;
@@ -1166,6 +1173,7 @@ export async function appendVoiceAssistantInput(
         voice_transcript: String(payload.voiceTranscript || ""),
         composer_text: String(payload.composerText || ""),
         request_id: String(payload.requestId || ""),
+        input_append_id: String(payload.inputAppendId || ""),
         operation: String(payload.operation || ""),
         composer_context: payload.composerContext || {},
         composer_snapshot_hash: String(payload.composerSnapshotHash || ""),

@@ -190,6 +190,28 @@ pub(super) fn renew(
     Ok(!result["lost"].as_bool().unwrap_or(true))
 }
 
+/// Release the lease owned by a completed WebSocket connection.
+///
+/// Ownership is checked atomically by `update`, so a stale connection cannot
+/// release a lease that has already been replaced by another recorder.
+pub(super) fn release(
+    home: &HomeLayout,
+    group_id: &str,
+    owner_id: &str,
+    lease_id: &str,
+) -> Result<bool, ApiError> {
+    let result = update(
+        home,
+        group_id,
+        &json!({
+            "action": "release",
+            "owner_id": owner_id,
+            "lease_id": lease_id,
+        }),
+    )?;
+    Ok(result["released"].as_bool().unwrap_or(false))
+}
+
 fn active_lease(stored: &Value, now_ms: i64) -> Option<Value> {
     stored.is_object().then(|| stored.clone()).filter(|lease| {
         lease["expires_at_ms"]
@@ -313,5 +335,9 @@ mod tests {
             .expect("renewed expiry");
         assert!(renewed_expiry > original_expiry);
         assert!(!renew(&home, &group.group_id, "tab-2", lease_id).expect("lost"));
+
+        assert!(release(&home, &group.group_id, "tab-1", lease_id).expect("release"));
+        assert!(current_private(&home).is_null());
+        assert!(!release(&home, &group.group_id, "tab-1", lease_id).expect("idempotent release"));
     }
 }

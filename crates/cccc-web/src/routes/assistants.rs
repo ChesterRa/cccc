@@ -25,6 +25,9 @@ mod voice_inference;
 mod voice_pcm_recording;
 mod voice_recording_lease;
 mod voice_runtime;
+mod voice_session;
+mod voice_speaker_transcript;
+mod voice_ws_lifecycle;
 
 const STORE_KEY: &str = "assistants";
 
@@ -378,6 +381,16 @@ async fn serve_transcription_ws(
             continue;
         };
         if command["type"] == "start" {
+            if session.is_some() || recording.is_some() {
+                let error = voice_asr::VoiceError {
+                    code: "recording_already_started",
+                    message: "the active recording must be stopped before starting another one"
+                        .into(),
+                    details: Map::new(),
+                };
+                let _ = send_voice_ws_error(&mut socket, &error).await;
+                break;
+            }
             if command["sample_rate"].as_i64().unwrap_or(16_000) != 16_000 {
                 let error = voice_asr::VoiceError {
                     code: "unsupported_sample_rate",
@@ -390,7 +403,8 @@ async fn serve_transcription_ws(
             client_session_id = command["session_id"].as_str().unwrap_or("").to_owned();
             document_path = command["document_path"].as_str().unwrap_or("").to_owned();
             language = command["language"].as_str().unwrap_or("").to_owned();
-            persist_secretary_transcript = command["dispatch_target"].as_str() != Some("composer");
+            persist_secretary_transcript =
+                voice_ws_lifecycle::persists_secretary_artifacts(&command);
             let home = state.home.clone();
             let selected = selected.clone();
             match tokio::task::spawn_blocking(move || {
@@ -484,11 +498,15 @@ async fn serve_transcription_ws(
                     .await;
                 if persist_secretary_transcript {
                     let status = voice_diarization::spawn(
-                        state.clone(),
-                        group_id.clone(),
-                        client_session_id.clone(),
-                        document_path.clone(),
-                        diarization_model.clone(),
+                        voice_diarization::DiarizationJob {
+                            state: state.clone(),
+                            group_id: group_id.clone(),
+                            session_id: client_session_id.clone(),
+                            document_path: document_path.clone(),
+                            diarization_model: diarization_model.clone(),
+                            transcript_model: selected.clone(),
+                            language: language.clone(),
+                        },
                         recording_file,
                     );
                     let payload = match status {
@@ -513,37 +531,26 @@ async fn serve_transcription_ws(
             break;
         }
     }
-    if persist_secretary_transcript
-        && !stopped
-        && let Some(mut active) = session.take()
-        && let Ok(Some(final_event)) = tokio::task::spawn_blocking(move || active.finish()).await
-        && let Some(text) = final_event["text"]
-            .as_str()
-            .filter(|value| !value.trim().is_empty())
+    if !stopped {
+        voice_ws_lifecycle::finalize_disconnect(
+            voice_ws_lifecycle::DisconnectContext {
+                state: state.clone(),
+                group_id: group_id.clone(),
+                client_session_id,
+                document_path,
+                language,
+                final_model_id: selected,
+                diarization_model_id: diarization_model,
+                persist_artifacts: persist_secretary_transcript,
+            },
+            session.take(),
+            recording.take(),
+        )
+        .await;
+    }
+    if let Err(error) = voice_recording_lease::release(&state.home, &group_id, &owner_id, &lease_id)
     {
-        let args = object(
-            json!({"group_id":group_id,"by":"user","session_id":if client_session_id.is_empty(){format!("ws_{}",short_id())}else{client_session_id},"segment_id":format!("ws-final-{}",short_id()),"text":text,"language":language,"document_path":document_path,"is_final":true,"flush":true,"trigger":{"trigger_kind":"websocket_disconnect","capture_mode":"service","recognition_backend":"assistant_service_local_asr"}}),
-        );
-        let result = state
-            .client
-            .call(&DaemonRequest {
-                v: 1,
-                op: "assistant_voice_transcript_append".into(),
-                args,
-            })
-            .await;
-        match result {
-            Ok(response) if response.ok => {}
-            Ok(response) => {
-                tracing::warn!(
-                    ?response.error,
-                    "final voice transcript was rejected during disconnect"
-                );
-            }
-            Err(error) => {
-                tracing::warn!(%error, "final voice transcript could not be delivered during disconnect");
-            }
-        }
+        tracing::warn!(%error, %group_id, %owner_id, "voice recording lease release failed");
     }
 }
 
@@ -582,10 +589,14 @@ async fn model_remove(
     ))
 }
 
-async fn latest_session(State(state): State<AppState>, Path(group_id): Path<String>) -> ApiResult {
+async fn latest_session(
+    State(state): State<AppState>,
+    Path(group_id): Path<String>,
+    Query(query): Query<DocumentQuery>,
+) -> ApiResult {
     let value = load(&state, &group_id)?;
     Ok(success(
-        json!({"group_id":group_id,"session":array(&value,"sessions").last().cloned()}),
+        json!({"group_id":group_id,"session":voice_session::latest_document_session(array(&value,"sessions"), &query.document_path)}),
     ))
 }
 async fn session(
@@ -593,26 +604,22 @@ async fn session(
     Path((group_id, session_id)): Path<(String, String)>,
 ) -> ApiResult {
     let value = load(&state, &group_id)?;
-    let session = array(&value, "sessions")
-        .iter()
-        .find(|item| item["session_id"] == session_id)
-        .cloned()
+    let session = voice_session::document_session_by_id(array(&value, "sessions"), &session_id)
         .ok_or_else(|| ApiError::not_found("voice session not found"))?;
     Ok(success(json!({"group_id":group_id,"session":session})))
 }
 async fn clear_latest_transcript(
     State(state): State<AppState>,
     Path(group_id): Path<String>,
-    Json(_body): Json<Value>,
+    Json(body): Json<Value>,
 ) -> ApiResult {
+    let document_path = body["document_path"].as_str().unwrap_or("").to_owned();
     let cleared = update(&state, &group_id, |value| {
         let sessions = array_mut(root(value), "sessions");
-        if let Some(session) = sessions.last_mut() {
-            session["segments"] = json!([]);
-            session["transcript"] = json!("");
-            return Ok(true);
-        }
-        Ok(false)
+        Ok(voice_session::clear_latest_document_session(
+            sessions,
+            &document_path,
+        ))
     })?;
     Ok(success(json!({"group_id":group_id,"cleared":cleared})))
 }

@@ -14,7 +14,10 @@ use tar::Archive;
 use uuid::Uuid;
 
 mod engine;
-pub use engine::{StreamingSession, diarize_pcm16_file, transcribe_file, transcribe_pcm16_file};
+pub use engine::{
+    StreamingSession, clean_transcript, diarize_pcm16_file, transcribe_file, transcribe_pcm16_file,
+    transcribe_pcm16_ranges,
+};
 
 const BUILTIN_MANIFEST: &str = include_str!("../../../resources/voice-models.default.json");
 pub const DEFAULT_OFFLINE_MODEL_ID: &str = "sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8";

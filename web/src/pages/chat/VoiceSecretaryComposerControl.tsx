@@ -5,7 +5,6 @@ import { useTranslation } from "react-i18next";
 import type {
   AssistantVoiceAskFeedback,
   AssistantVoiceDocument,
-  AssistantVoiceMeetingSession,
   AssistantVoicePromptDraft,
   AssistantServiceRuntime,
   AssistantVoiceTranscriptSegmentResult,
@@ -63,22 +62,39 @@ import {
   voiceActivityStreamItemFromPreview,
 } from "./voice-secretary/voiceActivityStreamModel";
 import {
+  assistantVoiceTimestampMs,
   askFeedbackDisplayText,
   compactVoiceTranscriptSummaryText,
+  downloadMarkdownDocument,
   displayAskFeedbackStatus,
+  findVoiceDocument,
+  formatVoiceActivityFullTimeMs,
+  formatVoiceActivityTimeMs,
   hasFinalAskReply,
   isActiveAskFeedbackStatus,
+  isLowValueBrowserSpeechFragment,
+  isVoicePromptRequestFresh,
+  mergeTranscriptChunks,
   nextUncommittedServiceTranscriptText,
+  normalizeBrowserTranscriptChunk,
+  normalizeVoiceRecognitionLanguageForBackend,
+  numberFromUnknown,
+  promptDraftApplyMode,
+  recordFromUnknown,
+  resolveVoiceDocumentPath,
+  visibleVoiceDocuments,
+  voiceDocumentDownloadFileName,
+  voiceDocumentKey,
+  voiceDocumentMatches,
+  voiceDocumentPath,
+  voiceLanguageOptionValues,
   voiceReplyDismissKey,
+  voiceTranscriptItemsFromMeetingSession,
 } from "./voice-secretary/voiceComposerUtils";
 import {
   resolveAutoOpenVoiceReplyBubbleRequestId,
   trackActiveVoiceReplyRequests,
 } from "./voice-secretary/voiceReplyBubbleModel";
-import {
-  voiceTranscriptSourceDetail,
-  voiceTranscriptSourceLabel,
-} from "./voice-secretary/voiceTranscriptSource";
 import {
   isMeaningfulVoiceDispatchText,
   voiceServiceStopDispatchKind,
@@ -223,7 +239,6 @@ const BROWSER_SPEECH_QUIET_RECOVERABLE_ERRORS = new Set([
   "audio-capture",
 ]);
 const BROWSER_SPEECH_FATAL_ERRORS = new Set(["not-allowed", "service-not-allowed"]);
-const VOICE_PROMPT_REQUEST_STALE_MS = 180_000;
 const VOICE_PROMPT_DRAFT_POLL_MS = 2_000;
 const VOICE_DOCUMENT_METADATA_POLL_MS = 30_000;
 const VOICE_LIVE_TRANSCRIPT_VISIBLE_MS = 60_000;
@@ -237,114 +252,6 @@ const TWO_LINE_STATUS_STYLE = {
   overflow: "hidden",
 } as const;
 
-function promptDraftApplyMode(draft: AssistantVoicePromptDraft): "append" | "replace" {
-  const operation = String(draft.operation || "")
-    .trim()
-    .toLowerCase();
-  if (operation === "replace_with_refined_prompt" || operation === "replace") return "replace";
-  return "append";
-}
-
-function isVoicePromptRequestFresh(startedAt: number, nowMs = Date.now()): boolean {
-  return startedAt > 0 && nowMs - startedAt < VOICE_PROMPT_REQUEST_STALE_MS;
-}
-const LOW_VALUE_BROWSER_SPEECH_FRAGMENTS = new Set([
-  "嗯",
-  "嗯嗯",
-  "啊",
-  "好",
-  "好的",
-  "呃",
-  "额",
-  "那个",
-  "えー",
-  "ええ",
-  "あの",
-  "その",
-  "はい",
-  "うん",
-  "uh",
-  "um",
-  "嗯。",
-  "啊。",
-  "好。",
-  "はい。",
-]);
-
-function assistantVoiceTimestampMs(value?: string): number {
-  const text = String(value || "").trim();
-  if (!text) return 0;
-  const parsed = Date.parse(text);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatVoiceActivityTimeMs(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-}
-
-function formatVoiceActivityFullTimeMs(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleString();
-}
-
-const VOICE_LANGUAGE_OPTION_VALUES = [
-  "mixed",
-  "auto",
-  "zh-CN",
-  "en-US",
-  "ja-JP",
-  "ko-KR",
-  "fr-FR",
-  "de-DE",
-  "es-ES",
-] as const;
-
-function slugifyVoiceDocumentDownloadName(value: string): string {
-  return (
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9\u3040-\u30ff\u3400-\u9fff]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 80) || "voice-secretary-document"
-  );
-}
-
-function voiceDocumentDownloadFileName(
-  document: AssistantVoiceDocument | null,
-  fallbackTitle: string,
-): string {
-  const workspacePath = String(document?.document_path || document?.workspace_path || "")
-    .trim()
-    .replace(/\\/g, "/");
-  const workspaceName = workspacePath.split("/").filter(Boolean).pop() || "";
-  if (workspaceName.toLowerCase().endsWith(".md")) return workspaceName;
-  return `${slugifyVoiceDocumentDownloadName(fallbackTitle)}.md`;
-}
-
-function voiceDocumentKey(document: AssistantVoiceDocument | null | undefined): string {
-  return voiceDocumentPath(document) || String(document?.document_id || "").trim();
-}
-
-function voiceDocumentPath(document: AssistantVoiceDocument | null | undefined): string {
-  return String(document?.document_path || document?.workspace_path || "").trim();
-}
-
-function voiceDocumentMatches(document: AssistantVoiceDocument, idOrPath: string): boolean {
-  const target = String(idOrPath || "").trim();
-  if (!target) return false;
-  return (
-    voiceDocumentPath(document) === target ||
-    voiceDocumentKey(document) === target ||
-    String(document.document_id || "").trim() === target
-  );
-}
-
 function voiceDocumentRevisionKey(document: AssistantVoiceDocument | null | undefined): string {
   if (!document) return "";
   return [
@@ -353,37 +260,6 @@ function voiceDocumentRevisionKey(document: AssistantVoiceDocument | null | unde
     String(document.updated_at || "").trim(),
     String(document.content_chars ?? "").trim(),
   ].join("|");
-}
-
-function findVoiceDocument(
-  documents: AssistantVoiceDocument[],
-  idOrPath: string,
-): AssistantVoiceDocument | null {
-  const target = String(idOrPath || "").trim();
-  if (!target) return null;
-  return documents.find((document) => voiceDocumentMatches(document, target)) || null;
-}
-
-function resolveVoiceDocumentPath(documents: AssistantVoiceDocument[], idOrPath: string): string {
-  const target = String(idOrPath || "").trim();
-  if (!target) return "";
-  const directPath = documents.some((document) => voiceDocumentPath(document) === target);
-  if (directPath) return target;
-  return voiceDocumentPath(findVoiceDocument(documents, target));
-}
-
-function downloadMarkdownDocument(fileName: string, content: string): void {
-  if (typeof document === "undefined") return;
-  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.rel = "noopener";
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function createVoiceCaptureOwnerId(): string {
@@ -611,153 +487,6 @@ class Pcm16Resampler {
   }
 }
 
-function normalizeVoiceRecognitionLanguageForBackend(language: string, backend: string): string {
-  const configured = String(language || "").trim() || "auto";
-  return String(backend || "").trim() === "browser_asr" && configured === "mixed"
-    ? "auto"
-    : configured;
-}
-
-function voiceLanguageOptionValues(configuredLanguage: string, backend: string): string[] {
-  const browserAsr = String(backend || "").trim() === "browser_asr";
-  const values: string[] = VOICE_LANGUAGE_OPTION_VALUES.filter(
-    (value) => !(browserAsr && value === "mixed"),
-  );
-  const configured = normalizeVoiceRecognitionLanguageForBackend(configuredLanguage, backend);
-  if (configured && !values.includes(configured)) values.push(configured);
-  return values;
-}
-
-function numberFromUnknown(value: unknown, fallback: number, min: number, max: number): number {
-  const numberValue = Number(value);
-  if (!Number.isFinite(numberValue)) return fallback;
-  return Math.max(min, Math.min(max, Math.round(numberValue)));
-}
-
-function recordFromUnknown(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function normalizeBrowserTranscriptChunk(value: string): string {
-  return String(value || "")
-    .replace(/\s+/g, " ")
-    .replace(/\s+([,.!?;:，。！？；：、])/g, "$1")
-    .trim();
-}
-
-function isLowValueBrowserSpeechFragment(value: string): boolean {
-  const text = normalizeBrowserTranscriptChunk(value).toLowerCase();
-  if (!text) return true;
-  return LOW_VALUE_BROWSER_SPEECH_FRAGMENTS.has(text);
-}
-
-function longestTranscriptOverlap(left: string, right: string): number {
-  const max = Math.min(left.length, right.length, 120);
-  for (let size = max; size >= 2; size -= 1) {
-    if (left.slice(-size) === right.slice(0, size)) return size;
-  }
-  return 0;
-}
-
-function mergeTranscriptChunks(previous: string, nextText: string): string {
-  const prev = normalizeBrowserTranscriptChunk(previous);
-  const next = normalizeBrowserTranscriptChunk(nextText);
-  if (!prev) return next;
-  if (!next) return prev;
-  if (prev === next || prev.endsWith(next)) return prev;
-  if (next.endsWith(prev)) return next;
-  const overlap = longestTranscriptOverlap(prev, next);
-  if (overlap > 0) return `${prev}${next.slice(overlap)}`;
-  const cjkBoundary =
-    /[\u3040-\u30ff\u3400-\u9fff]$/.test(prev) && /^[\u3040-\u30ff\u3400-\u9fff]/.test(next);
-  return cjkBoundary ? `${prev}${next}` : `${prev} ${next}`;
-}
-
-function voiceTranscriptItemsFromMeetingSession(
-  session: AssistantVoiceMeetingSession,
-  opts?: { documentPathFallback?: string },
-): VoiceTranscriptItem[] {
-  if (
-    String(session.capture_mode || "document")
-      .trim()
-      .toLowerCase() !== "document"
-  )
-    return [];
-  const documentPath = String(session.document_path || opts?.documentPathFallback || "").trim();
-  if (!documentPath) return [];
-  const diarization = recordFromUnknown(session.diarization);
-  const speakerTranscriptSegments = Array.isArray(diarization.speaker_transcript_segments)
-    ? diarization.speaker_transcript_segments
-    : [];
-  const speakerTranscriptModelId = String(diarization.speaker_transcript_model_id || "").trim();
-  const segments = speakerTranscriptSegments.length
-    ? speakerTranscriptSegments
-    : Array.isArray(session.segments)
-      ? session.segments
-      : [];
-  const items = segments
-    .map((segment, index): VoiceTranscriptItem | null => {
-      const record = recordFromUnknown(segment);
-      const text = normalizeBrowserTranscriptChunk(String(record.text || ""));
-      if (!text) return null;
-      const speakerLabel = String(record.speaker_label || "").trim();
-      const rawSpeakerIndex = Number(record.speaker_index);
-      const source = speakerTranscriptSegments.length ? "assistant_service_local_asr_final" : "";
-      const updatedAt =
-        assistantVoiceTimestampMs(String(record.updated_at || record.created_at || "")) ||
-        Date.now() - index;
-      const item = createVoiceTranscriptItem({
-        id: String(record.segment_id || "").trim() || `${session.session_id}-segment-${index}`,
-        cleanText: text,
-        metadata: {
-          mode: "document",
-          sessionId: String(session.session_id || "").trim(),
-          documentPath,
-          language: String(record.language || session.language || "").trim(),
-          source,
-          sourceLabel: voiceTranscriptSourceLabel(source),
-          sourceDetail: voiceTranscriptSourceDetail({
-            source,
-            modelId: speakerTranscriptModelId,
-            engine: speakerTranscriptSegments.length ? "sense_voice" : "",
-          }),
-        },
-        timing: {
-          startMs: Number.isFinite(Number(record.start_ms)) ? Number(record.start_ms) : undefined,
-          endMs: Number.isFinite(Number(record.end_ms)) ? Number(record.end_ms) : undefined,
-        },
-        now: updatedAt,
-      });
-      if (!item) return null;
-      return {
-        ...item,
-        ...(speakerLabel ? { speakerLabel } : {}),
-        ...(Number.isFinite(rawSpeakerIndex) ? { speakerIndex: rawSpeakerIndex } : {}),
-      };
-    })
-    .filter((item): item is VoiceTranscriptItem => item !== null);
-
-  const partial = normalizeBrowserTranscriptChunk(String(session.latest_partial || ""));
-  if (partial) {
-    const updatedAt = assistantVoiceTimestampMs(String(session.updated_at || "")) || Date.now();
-    items.unshift({
-      id: `${session.session_id}-partial`,
-      phase: "interim",
-      text: partial,
-      pendingFinalText: "",
-      interimText: partial,
-      mode: "document",
-      documentPath,
-      language: String(session.language || "").trim(),
-      updatedAt,
-      createdAt: updatedAt,
-    });
-  }
-  return items;
-}
-
 function hashComposerSnapshot(value: string): string {
   let hash = 2166136261;
   const text = String(value || "");
@@ -869,7 +598,7 @@ export function VoiceSecretaryComposerControl({
   const documentDraftRef = useRef("");
   const voiceStreamItemIdRef = useRef("");
   const liveTranscriptPreviewRef = useRef<VoiceTranscriptPreview | null>(null);
-  const archivedDocumentIdsRef = useRef<Set<string>>(new Set());
+  const archivedDocumentPathsRef = useRef<Set<string>>(new Set());
   const selectedGroupIdRef = useRef("");
   const unmountCleanupRef = useRef<() => void>(() => undefined);
   selectedGroupIdRef.current = String(selectedGroupId || "").trim();
@@ -1602,7 +1331,12 @@ export function VoiceSecretaryComposerControl({
             setPendingAskRequestId("");
           }
         }
-        let nextDocuments = resp.result.documents || [];
+        let nextDocuments = visibleVoiceDocuments(resp.result.documents || []).filter(
+          (document) => {
+            const docPath = voiceDocumentPath(document);
+            return !docPath || !archivedDocumentPathsRef.current.has(docPath);
+          },
+        );
         setDocuments(nextDocuments);
         const serverCaptureTargetPath =
           resolveVoiceDocumentPath(
@@ -2002,6 +1736,7 @@ export function VoiceSecretaryComposerControl({
     setRecognitionLanguageSaving(false);
     setAssistant(null);
     setDocuments([]);
+    archivedDocumentPathsRef.current.clear();
     setViewedDocumentPath("");
     setCaptureTargetDocumentPath("");
     loadDocumentDraft(null);
@@ -2188,7 +1923,7 @@ export function VoiceSecretaryComposerControl({
         const docPath = voiceDocumentPath(document);
         if (
           docPath &&
-          !archivedDocumentIdsRef.current.has(docPath) &&
+          !archivedDocumentPathsRef.current.has(docPath) &&
           String(document.status || "active").trim() !== "archived"
         ) {
           setDocuments((prev) => {
@@ -2401,6 +2136,7 @@ export function VoiceSecretaryComposerControl({
           kind: "voice_instruction",
           instruction,
           requestId,
+          inputAppendId: requestId,
           trigger: {
             trigger_kind: opts?.triggerKind || "voice_instruction",
             mode: "voice_instruction",
@@ -2494,6 +2230,9 @@ export function VoiceSecretaryComposerControl({
       const requestId = reuseExistingRequest
         ? existingRequestId
         : `voice-prompt-${nowMs.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      const inputAppendId = `voice-prompt-input-${nowMs.toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
       pendingPromptRequestIdRef.current = requestId;
       pendingPromptRequestStartedAtRef.current = reuseExistingRequest
         ? pendingPromptRequestStartedAtRef.current
@@ -2506,6 +2245,7 @@ export function VoiceSecretaryComposerControl({
           voiceTranscript,
           composerText: snapshot,
           requestId,
+          inputAppendId,
           operation,
           composerSnapshotHash: snapshotHash,
           composerContext,
@@ -4345,10 +4085,14 @@ export function VoiceSecretaryComposerControl({
       return;
     }
     setActionBusy("instruct_doc");
+    const nowMs = Date.now();
+    const requestId = `voice-ask-${nowMs.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     try {
       const resp = await sendVoiceAssistantDocumentInstruction(gid, docPath, {
         instruction,
         documentPath: docPath,
+        requestId,
+        inputAppendId: requestId,
         trigger: {
           trigger_kind: "user_instruction",
           mode: "meeting",
@@ -4363,21 +4107,21 @@ export function VoiceSecretaryComposerControl({
         return;
       }
       applyDocumentMutationResult(resp.result.document, resp.result.assistant);
-      const requestId = String(resp.result.request_id || "").trim();
-      if (requestId) {
-        localVoiceReplyRequestIdsRef.current.add(requestId);
-        pendingAskRequestIdRef.current = requestId;
-        setPendingAskRequestId(requestId);
+      const effectiveRequestId = String(resp.result.request_id || requestId).trim();
+      if (effectiveRequestId) {
+        localVoiceReplyRequestIdsRef.current.add(effectiveRequestId);
+        pendingAskRequestIdRef.current = effectiveRequestId;
+        setPendingAskRequestId(effectiveRequestId);
         setAskFeedbackItems((prev) =>
           [
             {
-              request_id: requestId,
+              request_id: effectiveRequestId,
               status: "pending",
               request_text: instruction,
               request_preview: instruction.slice(0, 240),
               document_path: docPath,
             },
-            ...prev.filter((item) => item.request_id !== requestId),
+            ...prev.filter((item) => item.request_id !== effectiveRequestId),
           ].slice(0, 10),
         );
       }
@@ -4507,7 +4251,7 @@ export function VoiceSecretaryComposerControl({
           showError(resp.error.message);
           return;
         }
-        archivedDocumentIdsRef.current.add(docPath);
+        archivedDocumentPathsRef.current.add(docPath);
         setDocuments((prev) => prev.filter((item) => voiceDocumentPath(item) !== docPath));
         if (isActiveTarget) {
           setViewedDocumentPath("");

@@ -11,6 +11,17 @@ const VOICE_ASK_ACTIVE_TIMEOUT_MS = 90_000;
 const VOICE_PROMPT_REQUEST_STALE_MS = 180_000;
 const VOICE_TRANSCRIPT_SUMMARY_MAX_CHARS = 72;
 
+export function visibleVoiceDocuments(
+  documents: AssistantVoiceDocument[],
+): AssistantVoiceDocument[] {
+  return documents.filter((document) => {
+    const status = String(document.status || "active")
+      .trim()
+      .toLowerCase();
+    return status !== "archived" && status !== "deleted";
+  });
+}
+
 const LOW_VALUE_BROWSER_SPEECH_FRAGMENTS = new Set([
   "嗯",
   "嗯嗯",
@@ -222,9 +233,22 @@ export function downloadMarkdownDocument(fileName: string, content: string): voi
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export function voiceLanguageOptionValues(configuredLanguage: string): string[] {
-  const values: string[] = [...VOICE_LANGUAGE_OPTION_VALUES];
-  const configured = String(configuredLanguage || "").trim();
+export function normalizeVoiceRecognitionLanguageForBackend(
+  language: string,
+  backend: string,
+): string {
+  const configured = String(language || "").trim() || "auto";
+  return String(backend || "").trim() === "browser_asr" && configured === "mixed"
+    ? "auto"
+    : configured;
+}
+
+export function voiceLanguageOptionValues(configuredLanguage: string, backend = ""): string[] {
+  const browserAsr = String(backend || "").trim() === "browser_asr";
+  const values: string[] = VOICE_LANGUAGE_OPTION_VALUES.filter(
+    (value) => !(browserAsr && value === "mixed"),
+  );
+  const configured = normalizeVoiceRecognitionLanguageForBackend(configuredLanguage, backend);
   if (configured && !values.includes(configured)) values.push(configured);
   return values;
 }
@@ -304,24 +328,44 @@ export function voiceTranscriptItemsFromMeetingSession(
   session: AssistantVoiceMeetingSession,
   opts?: { documentPathFallback?: string },
 ): VoiceTranscriptItem[] {
+  const captureMode = String(session.capture_mode || "")
+    .trim()
+    .toLowerCase();
+  if (captureMode && captureMode !== "document") return [];
+  const sessionId = String(session.session_id || "").trim();
   if (
-    String(session.capture_mode || "document")
-      .trim()
-      .toLowerCase() !== "document"
+    !captureMode &&
+    (sessionId.startsWith("input-") ||
+      sessionId === "voice-secretary-prompt-refine" ||
+      sessionId === "voice-secretary-user-instruction")
   )
     return [];
-  const documentPath = String(session.document_path || opts?.documentPathFallback || "").trim();
-  if (!documentPath) return [];
   const diarization = recordFromUnknown(session.diarization);
-  const speakerTranscriptSegments = Array.isArray(diarization.speaker_transcript_segments)
-    ? diarization.speaker_transcript_segments
-    : [];
   const speakerTranscriptModelId = String(diarization.speaker_transcript_model_id || "").trim();
-  const segments = speakerTranscriptSegments.length
-    ? speakerTranscriptSegments
-    : Array.isArray(session.segments)
-      ? session.segments
-      : [];
+  const diarizationModelId = String(diarization.model_id || "").trim();
+  const hasWindowedSpeakerTranscript =
+    Boolean(speakerTranscriptModelId) &&
+    speakerTranscriptModelId !== diarizationModelId &&
+    !/(?:diarization|pyannote|3dspeaker)/i.test(speakerTranscriptModelId);
+  const speakerTranscriptSegments = (
+    hasWindowedSpeakerTranscript && Array.isArray(diarization.speaker_transcript_segments)
+      ? diarization.speaker_transcript_segments
+      : []
+  ).filter(isDocumentVoiceTranscriptSegment);
+  const rawSegments = (Array.isArray(session.segments) ? session.segments : []).filter(
+    isDocumentVoiceTranscriptSegment,
+  );
+  if (!captureMode && speakerTranscriptSegments.length === 0 && rawSegments.length === 0) return [];
+  const segments = speakerTranscriptSegments.length ? speakerTranscriptSegments : rawSegments;
+  const documentPath = String(
+    session.document_path ||
+      segments
+        .map((segment) => String(recordFromUnknown(segment).document_path || "").trim())
+        .find(Boolean) ||
+      opts?.documentPathFallback ||
+      "",
+  ).trim();
+  if (!documentPath) return [];
   const items = segments
     .map((segment, index): VoiceTranscriptItem | null => {
       const record = recordFromUnknown(segment);
@@ -393,6 +437,40 @@ export function voiceTranscriptItemsFromMeetingSession(
     });
   }
   return items;
+}
+
+function isDocumentVoiceTranscriptSegment(value: unknown): boolean {
+  const record = recordFromUnknown(value);
+  if (!normalizeBrowserTranscriptChunk(String(record.text || ""))) return false;
+  const trigger = recordFromUnknown(record.trigger);
+  const semanticValues = [
+    record.kind,
+    record.input_kind,
+    record.capture_mode,
+    trigger.kind,
+    trigger.input_kind,
+    trigger.capture_mode,
+    trigger.mode,
+    trigger.trigger_kind,
+    trigger.source,
+    trigger.dispatch_target,
+    trigger.target_kind,
+  ].map((item) =>
+    String(item || "")
+      .trim()
+      .toLowerCase(),
+  );
+  return !semanticValues.some((item) =>
+    [
+      "prompt",
+      "prompt_refine",
+      "composer_prompt_refine",
+      "instruction",
+      "voice_instruction",
+      "user_instruction",
+      "composer",
+    ].includes(item),
+  );
 }
 
 export function hashComposerSnapshot(value: string): string {

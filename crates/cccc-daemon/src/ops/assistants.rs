@@ -8,7 +8,11 @@ use uuid::Uuid;
 
 mod document_reconcile;
 mod prompt_refine;
+mod voice_ask;
+mod voice_document_state;
 mod voice_input;
+mod voice_input_delivery;
+mod voice_semantic_input;
 mod voice_settings;
 
 use crate::dispatch::{
@@ -29,13 +33,13 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "assistant_voice_document_select" => select(home, request),
         "assistant_voice_document_input_read" => voice_input::read(home, request),
         "assistant_voice_document_save" => save(home, request),
-        "assistant_voice_document_instruction" => voice_input::instruction(home, request),
+        "assistant_voice_document_instruction" => voice_ask::input(home, request),
         "assistant_voice_document_archive" => archive(home, request),
         "assistant_voice_input_append" => prompt_refine::input(home, request),
         "assistant_voice_prompt_draft_submit" => prompt_refine::submit(home, request),
         "assistant_voice_prompt_draft_ack" => prompt_refine::ack(home, request),
-        "assistant_voice_instruction_feedback" => feedback(home, request),
-        "assistant_voice_ask_requests_clear" => clear(home, request),
+        "assistant_voice_instruction_feedback" => voice_ask::feedback(home, request),
+        "assistant_voice_ask_requests_clear" => voice_ask::clear(home, request),
         "assistant_voice_request" => voice_request(home, request),
         _ => return None,
     })
@@ -49,7 +53,8 @@ fn documents(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let documents = items(&value, "documents")
         .iter()
         .filter(|document| {
-            (include_archived || document["status"] != "archived")
+            !voice_document_state::is_deleted(document)
+                && (include_archived || voice_document_state::is_active(document))
                 && (requested_path.is_empty() || document["document_path"] == requested_path)
         })
         .cloned()
@@ -68,6 +73,12 @@ fn select(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .find(|item| item["document_path"] == path)
             .cloned()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "document not found"))?;
+        if !voice_document_state::is_active(&document) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "voice document is not active",
+            ));
+        }
         state.insert("active_document_id".into(), document["document_id"].clone());
         state.insert("active_document_path".into(), json!(path));
         Ok(document)
@@ -206,39 +217,27 @@ fn archive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let path = document_path(request)?;
     let document = update(home, &group_id, |state| {
-        let item = array(state, "documents")
-            .iter_mut()
-            .find(|item| item["document_path"] == path)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "document not found"))?;
-        item["status"] = json!("archived");
-        item["updated_at"] = json!(utc_now());
-        Ok(item.clone())
+        let document = {
+            let item = array(state, "documents")
+                .iter_mut()
+                .find(|item| item["document_path"] == path)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "document not found"))?;
+            item["status"] = json!("archived");
+            item["updated_at"] = json!(utc_now());
+            item.clone()
+        };
+        let archived_id = document["document_id"].as_str().unwrap_or_default();
+        let was_active =
+            state["active_document_id"] == archived_id || state["active_document_path"] == path;
+        if was_active {
+            let next =
+                voice_document_state::latest_active(array(state, "documents"), Some(archived_id))
+                    .cloned();
+            voice_document_state::set_active(state, next.as_ref());
+        }
+        Ok(document)
     })?;
     document_result(home, request, &group_id, document, "archived")
-}
-fn feedback(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let request_id = required_arg(request, "request_id")?;
-    let status = string_arg(request, "status").unwrap_or_else(|| "completed".into());
-    let item = update(home, &group_id, |state| {
-        let item = array(state, "ask_requests")
-            .iter_mut()
-            .find(|item| item["request_id"] == request_id)
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "request not found"))?;
-        item["status"] = json!(status);
-        item["reply_text"] = json!(string_arg(request, "reply_text").unwrap_or_default());
-        item["updated_at"] = json!(utc_now());
-        Ok(item.clone())
-    })?;
-    object(json!({"group_id":group_id,"request":item}))
-}
-fn clear(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    update(home, &group_id, |state| {
-        array(state, "ask_requests").clear();
-        Ok(())
-    })?;
-    object(json!({"group_id":group_id,"ask_requests":[]}))
 }
 fn voice_request(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;

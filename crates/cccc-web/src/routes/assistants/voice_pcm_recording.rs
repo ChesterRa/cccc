@@ -31,6 +31,12 @@ impl PcmRecording {
     }
 
     pub(super) async fn append(&mut self, pcm: &[u8]) -> Result<(), voice_asr::VoiceError> {
+        if pcm.len() % 2 != 0 {
+            return Err(voice_asr::VoiceError::new(
+                "invalid_audio",
+                "PCM16 byte length must be even",
+            ));
+        }
         let next = self.bytes.saturating_add(pcm.len());
         if next > self.limit {
             return Err(voice_asr::VoiceError::new(
@@ -79,5 +85,12 @@ mod tests {
         limited.append(&[1, 2]).await.expect("within limit");
         let error = limited.append(&[3, 4]).await.expect_err("over limit");
         assert_eq!(error.code, "audio_too_large");
+
+        let mut aligned = PcmRecording::create_with_limit(&home, 4).expect("aligned recording");
+        let error = aligned.append(&[1]).await.expect_err("odd PCM16 chunk");
+        assert_eq!(error.code, "invalid_audio");
+        aligned.append(&[2, 3]).await.expect("valid PCM16 chunk");
+        let file = aligned.finish().await.expect("finish aligned recording");
+        assert_eq!(std::fs::read(file.path()).expect("read"), [2, 3]);
     }
 }

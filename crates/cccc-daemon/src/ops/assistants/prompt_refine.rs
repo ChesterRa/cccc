@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use std::io;
 use uuid::Uuid;
 
-use super::{KEY, voice_input, voice_settings};
+use super::{KEY, voice_input, voice_semantic_input, voice_settings};
 use crate::dispatch::{
     OpError, OpResult, bool_arg, first_non_blank_arg, object, required_arg, string_arg,
 };
@@ -39,6 +39,8 @@ pub fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
 
     let request_id = clean_request_id(string_arg(request, "request_id"));
+    let input_append_id = voice_semantic_input::requested_input_append_id(request)
+        .unwrap_or_else(|| format!("voice-prompt-input-{}", Uuid::new_v4().simple()));
     let operation = string_arg(request, "operation")
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| DEFAULT_OPERATION.into());
@@ -58,6 +60,20 @@ pub fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             .filter(|value| value.is_object())
             .cloned()
             .unwrap_or_else(|| json!({}));
+        let mut input_append_ids = existing["input_append_ids"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if input_append_ids
+            .iter()
+            .any(|value| value.as_str() == Some(&input_append_id))
+        {
+            return Ok(existing);
+        }
+        input_append_ids.push(json!(input_append_id));
+        if input_append_ids.len() > MAX_RECORDS {
+            input_append_ids.drain(..input_append_ids.len() - MAX_RECORDS);
+        }
         let mut transcripts = existing["voice_transcripts"]
             .as_array()
             .cloned()
@@ -83,6 +99,8 @@ pub fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "composer_context": composer_context,
             "composer_snapshot_hash": snapshot_hash,
             "voice_transcripts": transcripts,
+            "input_append_ids": input_append_ids,
+            "last_input_append_id": input_append_id,
             "created_at": existing["created_at"].as_str().unwrap_or(&now),
             "updated_at": now,
         });
@@ -137,6 +155,9 @@ pub fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     forwarded
         .args
         .insert("request_id".into(), json!(request_id));
+    forwarded
+        .args
+        .insert("input_append_id".into(), json!(input_append_id));
     forwarded.args.insert("operation".into(), json!(operation));
     forwarded
         .args

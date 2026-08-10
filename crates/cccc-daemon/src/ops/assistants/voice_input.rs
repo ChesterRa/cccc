@@ -1,5 +1,5 @@
-use cccc_contracts::{DaemonRequest, Event, utc_now};
-use cccc_core::{GroupStore, HomeLayout, integration_state, ledger};
+use cccc_contracts::{DaemonRequest, utc_now};
+use cccc_core::{GroupStore, HomeLayout, integration_state};
 use fs2::FileExt;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -9,8 +9,8 @@ use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Component, Path, PathBuf};
 use uuid::Uuid;
 
+use super::{voice_document_state, voice_input_delivery, voice_semantic_input};
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
-use crate::ops::{actor_delivery, actor_runtime};
 
 const KEY: &str = "assistants";
 const ACTOR_ID: &str = "voice-secretary";
@@ -62,7 +62,6 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     });
     let segment_path = segment_log_path(home, &group_id, &session_id);
     let input_path = input_log_path(home, &group_id);
-    let needs_notice = group.actors.iter().any(|actor| actor.id == ACTOR_ID);
     ensure_document_file(home, &group, &document_path)?;
 
     let (candidate_input, input_created) = integration_state::group_update(&store,&group_id,KEY,|value| {
@@ -78,28 +77,23 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             root.insert("active_document_id".into(),selected["document_id"].clone());
         }
         let sessions=array(root,"sessions");
-        let index=sessions.iter().position(|item|item["session_id"]==session_id).unwrap_or_else(||{sessions.push(json!({"session_id":session_id,"created_at":now,"segments":[],"transcript":""}));if sessions.len()>50{sessions.remove(0);}sessions.len()-1});
+        let index=sessions.iter().position(|item|item["session_id"]==session_id).unwrap_or_else(||{sessions.push(json!({"session_id":session_id,"capture_mode":"document","created_at":now,"segments":[],"transcript":""}));if sessions.len()>50{sessions.remove(0);}sessions.len()-1});
         let session=&mut sessions[index];
-        let speaker_ranges=session["diarization"]["segments"].as_array().cloned().unwrap_or_default();
-        let (duplicate,speaker_transcript_segments,transcript)={
+        let (duplicate,transcript)={
             let segments=session.get_mut("segments").and_then(Value::as_array_mut).expect("segments initialized");
             let duplicate=segments.iter().any(|item|item["segment_id"]==segment_id);
             if !duplicate && !text.is_empty() {
-                let mut stored_segment=segment.clone();
-                apply_speaker_range(&mut stored_segment,&speaker_ranges);
-                segments.push(stored_segment);
+                segments.push(segment.clone());
                 if segments.len()>200 { segments.drain(..segments.len()-200); }
             }
-            let speaker_segments=(!speaker_ranges.is_empty()).then(||segments.clone());
             let transcript=segments.iter().filter(|item|item["is_final"].as_bool().unwrap_or(true)).filter_map(|item|item["text"].as_str()).collect::<Vec<_>>().join("\n");
-            (duplicate,speaker_segments,transcript)
+            (duplicate,transcript)
         };
         session["transcript"]=json!(transcript);
-        if let Some(segments)=speaker_transcript_segments {
-            session["diarization"]["speaker_transcript_segments"]=json!(segments);
-        }
         session["updated_at"]=json!(now);
         session["document_path"]=json!(document_path);
+        session["capture_mode"]=json!("document");
+        session["language"]=json!(language);
         if !text.is_empty() && !segment_exists_io(&segment_path, &session_id, &segment_id)? {
             append_jsonl_io(&segment_path, &segment)?;
         }
@@ -138,59 +132,15 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         Ok((Some(record), true))
     }).map_err(OpError::io)?;
 
-    let prior_events = if candidate_input.is_some() {
-        voice_events_for_segment(&store, &group_id, &session_id, &segment_id)?
-    } else {
-        (None, None)
-    };
-    let prior_delivery_complete =
-        prior_events.0.is_some() && (!needs_notice || prior_events.1.is_some());
-    let input = (!prior_delivery_complete)
-        .then_some(candidate_input.clone())
-        .flatten();
-
-    let mut event = None;
-    let mut notify = None;
-    let mut delivery = None;
-    let mut actor_woken = false;
-    let mut wake_error = String::new();
-    if let Some(ref input) = input {
-        let ledger_path = store.ledger_path(&group_id).map_err(OpError::io)?;
-        let input_event = if let Some(event) = prior_events.0 {
-            event
-        } else {
-            let mut event = Event::new("assistant.voice.input", &group_id);
-            event.by = segment["by"].as_str().unwrap_or("user").into();
-            event.data = input.as_object().cloned().unwrap_or_default();
-            ledger::append(&ledger_path, &event).map_err(OpError::io)?;
-            event
-        };
-        event = Some(input_event);
-
-        let latest = store.load(&group_id).map_err(OpError::not_found)?;
-        if latest.actors.iter().any(|actor| actor.id == ACTOR_ID) {
-            if cccc_runtime::status(&group_id, ACTOR_ID).is_ok_and(|status| status.running) {
-                actor_woken = true;
-            } else if latest.running {
-                match actor_runtime::apply(home, &latest, ACTOR_ID, "actor.start") {
-                    Ok(status) => actor_woken = status.is_some_and(|item| item.running),
-                    Err(error) => wake_error = format!("{}: {}", error.code, error.message),
-                }
-            }
-            let notice = if let Some(event) = prior_events.1 {
-                event
-            } else {
-                let mut event = Event::new("system.notify", &group_id);
-                event.by = "system".into();
-                event.data=json!({"kind":"voice_secretary_input","title":"Voice Secretary input","text":"New voice input is ready.","to":[ACTOR_ID],"priority":"normal","requires_ack":false,"context":{"kind":"voice_secretary_input","input_envelope":input}}).as_object().cloned().unwrap_or_default();
-                ledger::append(&ledger_path, &event).map_err(OpError::io)?;
-                event
-            };
-            let report = actor_delivery::dispatch(home, &latest, &notice);
-            delivery = serde_json::to_value(report).ok();
-            notify = Some(notice);
-        }
-    }
+    let delivery = voice_input_delivery::deliver(
+        home,
+        &store,
+        &group_id,
+        &session_id,
+        &segment_id,
+        segment["by"].as_str().unwrap_or("user"),
+        candidate_input.as_ref(),
+    )?;
     let current = integration_state::group_get(&store, &group_id, KEY).map_err(OpError::io)?;
     let document = current
         .get("documents")
@@ -205,37 +155,15 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "group_id":group_id,"assistant":current.get("assistant").cloned().unwrap_or_else(default_assistant),
         "session_id":session_id,"segment":segment,"segment_path":segment_path,"document":document,
         "document_updated":false,"input_event":candidate_input,"input_event_created":input_created,
-        "event":event,"input_notify_event":notify,"input_notify_emitted":notify.is_some(),
-        "actor_woken":actor_woken,"actor_wake_error":wake_error,
-        "actor_notify_delivered":delivery.as_ref().and_then(|item|item["queued"].as_u64()).unwrap_or(0)>0,
-        "actor_notify_delivery":delivery
+        "event":delivery.event,"input_notify_event":delivery.notify,"input_notify_emitted":delivery.notify.is_some(),
+        "actor_woken":delivery.actor_woken,"actor_wake_error":delivery.wake_error,
+        "actor_notify_delivered":delivery.delivery.as_ref().and_then(|item|item["queued"].as_u64()).unwrap_or(0)>0,
+        "actor_notify_delivery":delivery.delivery
     }))
 }
 
-pub fn instruction(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let instruction = required_arg(request, "instruction")?;
-    named(home, request, "voice_instruction", instruction)
-}
-
 pub fn named(home: &HomeLayout, request: &DaemonRequest, kind: &str, text: String) -> OpResult {
-    let mut forwarded = request.clone();
-    forwarded.args.insert(
-        "session_id".into(),
-        json!(format!("input-{}", Uuid::new_v4().simple())),
-    );
-    forwarded.args.insert(
-        "segment_id".into(),
-        json!(format!("input-{}", Uuid::new_v4().simple())),
-    );
-    forwarded.args.insert("text".into(), json!(text));
-    forwarded.args.insert("is_final".into(), json!(true));
-    forwarded.args.insert("flush".into(), json!(false));
-    forwarded.args.insert("input_kind".into(), json!(kind));
-    forwarded
-        .args
-        .entry("trigger")
-        .or_insert_with(|| json!({"trigger_kind":"user_instruction","source":"user"}));
-    append(home, &forwarded)
+    voice_semantic_input::append(home, request, kind, text)
 }
 
 pub fn read(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -291,12 +219,7 @@ pub fn read(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 fn effective_document_path(request: &DaemonRequest, state: &Value) -> Result<String, OpError> {
     let path = string_arg(request, "document_path")
         .filter(|value| !value.trim().is_empty())
-        .or_else(|| {
-            state["active_document_path"]
-                .as_str()
-                .filter(|v| !v.is_empty())
-                .map(str::to_owned)
-        })
+        .or_else(|| voice_document_state::active_path(state).map(str::to_owned))
         .unwrap_or_else(|| {
             format!(
                 "docs/voice-secretary/{}.md",
@@ -306,7 +229,7 @@ fn effective_document_path(request: &DaemonRequest, state: &Value) -> Result<Str
     validate_document_path(&path)?;
     Ok(path)
 }
-fn validate_document_path(value: &str) -> Result<(), OpError> {
+pub(super) fn validate_document_path(value: &str) -> Result<(), OpError> {
     let path = Path::new(value);
     if path.is_absolute()
         || path
@@ -345,7 +268,7 @@ fn segment_log_path(home: &HomeLayout, group_id: &str, session_id: &str) -> Path
         .join(session_id)
         .join("transcripts/segments.jsonl")
 }
-fn input_log_path(home: &HomeLayout, group_id: &str) -> PathBuf {
+pub(super) fn input_log_path(home: &HomeLayout, group_id: &str) -> PathBuf {
     voice_root(home, group_id).join("inputs.jsonl")
 }
 fn ensure_document_file(
@@ -377,7 +300,7 @@ fn ensure_document_file(
     }
     std::fs::write(path, b"").map_err(OpError::io)
 }
-fn append_jsonl_io(path: &Path, value: &Value) -> std::io::Result<()> {
+pub(super) fn append_jsonl_io(path: &Path, value: &Value) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -479,7 +402,7 @@ fn read_jsonl_matching(
 fn segment_exists_io(path: &Path, session_id: &str, segment_id: &str) -> std::io::Result<bool> {
     Ok(find_segment_io(path, session_id, segment_id)?.is_some())
 }
-fn find_segment_io(
+pub(super) fn find_segment_io(
     path: &Path,
     session_id: &str,
     segment_id: &str,
@@ -491,43 +414,6 @@ fn find_segment_io(
         item["session_id"] == session_id && item["segment_id"] == segment_id
     })
     .map(|mut values| values.pop())
-}
-fn voice_events_for_segment(
-    store: &GroupStore,
-    group_id: &str,
-    session_id: &str,
-    segment_id: &str,
-) -> Result<(Option<Event>, Option<Event>), OpError> {
-    let events = ledger::read_all(&store.ledger_path(group_id).map_err(OpError::io)?)
-        .map_err(OpError::io)?;
-    let input = events
-        .iter()
-        .find(|event| {
-            event.kind == "assistant.voice.input"
-                && event_data_string(event, &["session_id"]) == Some(session_id)
-                && event_data_string(event, &["segment_id"]) == Some(segment_id)
-        })
-        .cloned();
-    let notice = events
-        .iter()
-        .find(|event| {
-            event.kind == "system.notify"
-                && event_data_string(event, &["kind"]) == Some("voice_secretary_input")
-                && event_data_string(event, &["context", "input_envelope", "session_id"])
-                    == Some(session_id)
-                && event_data_string(event, &["context", "input_envelope", "segment_id"])
-                    == Some(segment_id)
-        })
-        .cloned();
-    Ok((input, notice))
-}
-fn event_data_string<'a>(event: &'a Event, path: &[&str]) -> Option<&'a str> {
-    let (first, rest) = path.split_first()?;
-    let mut value = event.data.get(*first)?;
-    for key in rest {
-        value = value.get(*key)?;
-    }
-    value.as_str()
 }
 fn checked_document_path(root: &Path, relative: &str) -> Result<PathBuf, OpError> {
     let mut current = root.to_path_buf();
@@ -550,19 +436,7 @@ fn checked_document_path(root: &Path, relative: &str) -> Result<PathBuf, OpError
     }
     Ok(current)
 }
-fn apply_speaker_range(segment: &mut Value, ranges: &[Value]) {
-    let start = segment["start_ms"].as_i64().unwrap_or(0);
-    let end = segment["end_ms"].as_i64().unwrap_or(start);
-    let midpoint = start.saturating_add(end).saturating_div(2);
-    if let Some(range) = ranges.iter().find(|range| {
-        range["start_ms"].as_i64().unwrap_or(i64::MAX) <= midpoint
-            && range["end_ms"].as_i64().unwrap_or(i64::MIN) >= midpoint
-    }) {
-        segment["speaker_index"] = range["speaker"].clone();
-        segment["speaker_label"] = range["speaker_label"].clone();
-    }
-}
-fn state_root(value: &mut Value) -> &mut Map<String, Value> {
+pub(super) fn state_root(value: &mut Value) -> &mut Map<String, Value> {
     if !value.is_object() {
         *value = json!({});
     }
@@ -581,7 +455,7 @@ fn array<'a>(root: &'a mut Map<String, Value>, key: &str) -> &'a mut Vec<Value> 
         .as_array_mut()
         .expect("array initialized")
 }
-fn default_assistant() -> Value {
+pub(super) fn default_assistant() -> Value {
     json!({"assistant_id":"voice_secretary","kind":"voice_secretary","enabled":false,"lifecycle":"disabled","config":{"auto_document_enabled":true}})
 }
 

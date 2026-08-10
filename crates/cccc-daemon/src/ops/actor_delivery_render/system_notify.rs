@@ -32,10 +32,84 @@ fn voice_input(context: Option<&serde_json::Map<String, Value>>) -> String {
         }
         return lines.join("\n");
     };
-    format!(
-        "Voice Secretary input is ready. Work directly from this daemon-delivered input_envelope:\n{}",
-        serde_json::to_string_pretty(envelope).unwrap_or_else(|_| envelope.to_string())
-    )
+    let kind = string_at(envelope, &["kind"]).unwrap_or_default();
+    let request_id = string_at(envelope, &["request_id"])
+        .or_else(|| string_at(envelope, &["metadata", "request_id"]))
+        .unwrap_or_default();
+    let document_path = string_at(envelope, &["document_path"]).unwrap_or_default();
+    let target_kind = string_at(envelope, &["metadata", "target_kind"])
+        .or_else(|| string_at(envelope, &["trigger", "target_kind"]))
+        .unwrap_or_else(|| {
+            if kind == "prompt_refine" {
+                "composer"
+            } else if !document_path.is_empty() {
+                "document"
+            } else {
+                "secretary"
+            }
+        });
+    let mode = match target_kind {
+        "composer" => "prompt",
+        "document" => "document",
+        _ => "ask",
+    };
+    let text = string_at(envelope, &["text"]).unwrap_or_default();
+    let work_text = if is_structured_work_text(text) {
+        text.to_owned()
+    } else if target_kind == "document" && kind != "voice_instruction" {
+        format!("Inputs:\n{text}")
+    } else {
+        format!("Task:\n{text}")
+    };
+    let required_output = match (target_kind, request_id.is_empty()) {
+        ("secretary", false) => format!(
+            "Call MCP tool cccc_voice_secretary_request(action=\"report\", request_id=\"{request_id}\", status=\"done\"|\"needs_user\"|\"failed\", reply_text=\"...\").\nConsole text alone is not delivered to the user."
+        ),
+        ("document", false) => format!(
+            "Edit the repository markdown at {document_path}, then call MCP tool cccc_voice_secretary_request(action=\"report\", request_id=\"{request_id}\", status=\"done\", reply_text=\"...\").\nConsole text alone is not delivered to the user."
+        ),
+        ("composer", false) => format!(
+            "Call MCP tool cccc_voice_secretary_composer(action=\"submit_prompt_draft\", request_id=\"{request_id}\", draft_text=\"...\").\nDo not execute the prompt. Console text alone is not delivered to the composer."
+        ),
+        ("document", true) => format!("Edit the repository markdown at {document_path}."),
+        _ => "Complete the work through the target-specific MCP output channel.".into(),
+    };
+    let mut metadata = vec![format!("Mode: {mode}"), format!("Target: {target_kind}")];
+    if !request_id.is_empty() {
+        metadata.push(format!("Request id: {request_id}"));
+    }
+    if !document_path.is_empty() {
+        metadata.push(format!("Document: {document_path}"));
+    }
+    [
+        "Voice Secretary input is ready. Follow Required output before ending this turn."
+            .to_owned(),
+        format!("Work order:\n{}", metadata.join("\n")),
+        work_text,
+        format!(
+            "Canonical daemon-delivered input_envelope:\n{}",
+            serde_json::to_string_pretty(envelope).unwrap_or_else(|_| envelope.to_string())
+        ),
+        format!("Required output:\n{required_output}"),
+    ]
+    .join("\n\n")
+}
+
+fn string_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key)?;
+    }
+    current
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn is_structured_work_text(value: &str) -> bool {
+    ["Task:\n", "Inputs:\n", "Context (not task):\n", "Target:\n"]
+        .iter()
+        .any(|prefix| value.starts_with(prefix))
 }
 
 fn voice_action(event: &Event, context: Option<&serde_json::Map<String, Value>>) -> String {

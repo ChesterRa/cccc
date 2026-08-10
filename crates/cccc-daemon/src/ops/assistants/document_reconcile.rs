@@ -6,7 +6,7 @@ use std::io;
 
 use crate::dispatch::{OpError, required_arg, string_arg};
 
-use super::{array, document_storage_path, load, update};
+use super::{array, document_storage_path, load, update, voice_document_state};
 
 pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> Result<Value, OpError> {
     let group_id = required_arg(request, "group_id")?;
@@ -25,7 +25,7 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> Result<Value, O
             Ok((path.to_owned(), storage_path, storage_kind))
         })
         .collect::<Result<Vec<_>, OpError>>()?;
-    let needs_reconcile = targets
+    let needs_content_reconcile = targets
         .iter()
         .try_fold(
             false,
@@ -45,6 +45,8 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> Result<Value, O
             },
         )
         .map_err(OpError::io)?;
+    let needs_reconcile =
+        needs_content_reconcile || voice_document_state::needs_active_repair(&state);
     if !needs_reconcile {
         return Ok(state);
     }
@@ -76,6 +78,7 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> Result<Value, O
             document["storage_kind"] = json!(storage_kind);
             changed.push(document.clone());
         }
+        voice_document_state::repair_active(state);
         Ok((Value::Object(state.clone()), changed))
     })?;
 

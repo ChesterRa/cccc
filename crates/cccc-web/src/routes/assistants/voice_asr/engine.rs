@@ -64,6 +64,99 @@ pub fn transcribe_pcm16_file(
     finish_transcription(recognizer, stream, model, sample_rate, bytes)
 }
 
+pub fn transcribe_pcm16_ranges(
+    home: &HomeLayout,
+    model_id: &str,
+    path: &Path,
+    sample_rate: i32,
+    language: &str,
+    ranges_ms: &[(i64, i64)],
+) -> Result<Vec<Value>, VoiceError> {
+    if ranges_ms.is_empty() {
+        return Ok(Vec::new());
+    }
+    if let Some(result) = mock_transcript() {
+        return Ok(ranges_ms.iter().map(|_| result.clone()).collect());
+    }
+    let bytes = validate_audio_file(path)?;
+    if bytes % 2 != 0 {
+        return Err(VoiceError::new(
+            "invalid_audio",
+            "PCM16 byte length must be even",
+        ));
+    }
+    if sample_rate <= 0 {
+        return Err(VoiceError::new(
+            "unsupported_sample_rate",
+            "PCM16 sample rate must be positive",
+        ));
+    }
+    let (model, recognizer) = create_offline_recognizer(home, model_id, language)?;
+    let mut reader = BufReader::new(
+        std::fs::File::open(path)
+            .map_err(|error| VoiceError::new("audio_read_failed", error.to_string()))?,
+    );
+    let mut buffer = vec![0_u8; 64 * 1024];
+    let mut results = Vec::with_capacity(ranges_ms.len());
+    for &(start_ms, end_ms) in ranges_ms {
+        let (start_byte, end_byte) = pcm16_byte_range(bytes, sample_rate, start_ms, end_ms);
+        let range_bytes = end_byte.saturating_sub(start_byte);
+        if range_bytes == 0 {
+            results.push(json!({
+                "text":"","bytes":0,"model_id":model.model_id,"sample_rate":sample_rate
+            }));
+            continue;
+        }
+        reader
+            .seek(SeekFrom::Start(start_byte as u64))
+            .map_err(|error| VoiceError::new("audio_read_failed", error.to_string()))?;
+        let stream = recognizer.create_stream();
+        let mut remaining = range_bytes;
+        while remaining > 0 {
+            let chunk_bytes = remaining.min(buffer.len());
+            reader
+                .read_exact(&mut buffer[..chunk_bytes])
+                .map_err(|error| VoiceError::new("audio_read_failed", error.to_string()))?;
+            stream.accept_waveform(sample_rate, &pcm16_samples(&buffer[..chunk_bytes]));
+            remaining -= chunk_bytes;
+        }
+        recognizer.decode(&stream);
+        let result = stream
+            .get_result()
+            .ok_or_else(|| VoiceError::new("asr_failed", "sherpa-onnx returned no result"))?;
+        results.push(json!({
+            "text":clean_transcript(&result.text),
+            "bytes":range_bytes,
+            "model_id":model.model_id,
+            "sample_rate":sample_rate
+        }));
+    }
+    Ok(results)
+}
+
+fn pcm16_byte_range(
+    total_bytes: usize,
+    sample_rate: i32,
+    start_ms: i64,
+    end_ms: i64,
+) -> (usize, usize) {
+    let rate = i64::from(sample_rate.max(1));
+    let start_sample = start_ms.max(0).saturating_mul(rate).saturating_div(1000);
+    let end_sample = end_ms
+        .max(start_ms.max(0))
+        .saturating_mul(rate)
+        .saturating_div(1000);
+    let start_byte = usize::try_from(start_sample)
+        .unwrap_or(usize::MAX)
+        .saturating_mul(2)
+        .min(total_bytes);
+    let end_byte = usize::try_from(end_sample)
+        .unwrap_or(usize::MAX)
+        .saturating_mul(2)
+        .min(total_bytes);
+    (start_byte, end_byte.max(start_byte))
+}
+
 fn create_offline_recognizer(
     home: &HomeLayout,
     model_id: &str,
@@ -314,10 +407,26 @@ fn diarize_samples(
             "sherpa-onnx returned no diarization result",
         )
     })?;
-    let segments=result.sort_by_start_time().into_iter().map(|segment|json!({"start_ms":(segment.start*1000.0).round() as i64,"end_ms":(segment.end*1000.0).round() as i64,"start":segment.start,"end":segment.end,"speaker":segment.speaker,"speaker_label":format!("Speaker {}",segment.speaker+1)})).collect::<Vec<_>>();
-    Ok(Some(
-        json!({"model_id":model.model_id,"num_speakers":result.num_speakers(),"segments":segments,"provisional":false}),
-    ))
+    let segments = result
+        .sort_by_start_time()
+        .into_iter()
+        .map(|segment| {
+            json!({
+                "start_ms":(segment.start*1000.0).round() as i64,
+                "end_ms":(segment.end*1000.0).round() as i64,
+                "start":segment.start,
+                "end":segment.end,
+                "speaker":segment.speaker,
+                "speaker_label":format!("Speaker {}",segment.speaker+1)
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Some(json!({
+        "model_id":model.model_id,
+        "num_speakers":result.num_speakers(),
+        "segments":segments,
+        "provisional":false
+    })))
 }
 
 impl StreamingSession {
@@ -511,17 +620,25 @@ pub(super) fn pcm16_samples(bytes: &[u8]) -> Vec<f32> {
         .collect()
 }
 
-fn clean_transcript(text: &str) -> String {
-    text.replace("<|zh|>", "")
-        .replace("<|en|>", "")
-        .replace("<|ja|>", "")
-        .replace("<|ko|>", "")
-        .replace("<|yue|>", "")
-        .replace("<|NEUTRAL|>", "")
-        .replace("<|Speech|>", "")
-        .replace("<|withitn|>", "")
-        .trim()
-        .to_owned()
+pub fn clean_transcript(text: &str) -> String {
+    let mut cleaned = String::with_capacity(text.len());
+    let mut remaining = text;
+    while let Some(start) = remaining.find("<|") {
+        cleaned.push_str(&remaining[..start]);
+        let tail = &remaining[start + 2..];
+        let Some(end) = tail.find("|>") else {
+            cleaned.push_str(&remaining[start..]);
+            remaining = "";
+            break;
+        };
+        let tag = &tail[..end];
+        if tag.is_empty() || tag.len() > 48 || tag.contains(['<', '>', '|']) {
+            cleaned.push_str(&remaining[start..start + end + 4]);
+        }
+        remaining = &tail[end + 2..];
+    }
+    cleaned.push_str(remaining);
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn normalize_language(value: &str) -> String {
@@ -547,5 +664,5 @@ use sherpa_onnx::{
     OfflineSpeakerSegmentationModelConfig, OfflineSpeakerSegmentationPyannoteModelConfig,
     OnlineRecognizer, OnlineRecognizerConfig, OnlineStream, SpeakerEmbeddingExtractorConfig,
 };
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;

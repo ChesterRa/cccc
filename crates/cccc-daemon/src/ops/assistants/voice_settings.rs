@@ -5,6 +5,8 @@ use serde_json::{Map, Value, json};
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
 use crate::ops::{actor_delivery, actor_runtime, actor_secrets};
 
+use super::voice_document_state;
+
 const KEY: &str = "assistants";
 const ASSISTANT_ID: &str = "voice_secretary";
 const ACTOR_ID: &str = "voice-secretary";
@@ -15,7 +17,17 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = store.load(&group_id).map_err(OpError::not_found)?;
     let state = group.extra.get(KEY).cloned().unwrap_or_else(|| json!({}));
     let assistant = project_actor_runtime(&group, effective_assistant(&state));
-    let docs = state["documents"].as_array().cloned().unwrap_or_default();
+    let docs = state["documents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|document| voice_document_state::is_active(document))
+        .cloned()
+        .collect::<Vec<_>>();
+    let asks = state["ask_requests"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let documents_by_path = docs
         .iter()
         .filter_map(|item| {
@@ -24,8 +36,18 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .map(|path| (path.to_owned(), item.clone()))
         })
         .collect::<Map<_, _>>();
+    let configured_active_id = state["active_document_id"].as_str().unwrap_or_default();
+    let configured_active_path = state["active_document_path"].as_str().unwrap_or_default();
+    let active_document =
+        voice_document_state::resolved_active(&docs, configured_active_id, configured_active_path);
+    let active_document_id = active_document
+        .and_then(|document| document["document_id"].as_str())
+        .unwrap_or_default();
+    let active_document_path = active_document
+        .and_then(|document| document["document_path"].as_str())
+        .unwrap_or_default();
     object(
-        json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{ASSISTANT_ID:assistant},"assistant":assistant,"documents":docs,"documents_by_path":documents_by_path,"active_document_id":state["active_document_id"],"active_document_path":state["active_document_path"],"capture_target_document_id":state["active_document_id"],"capture_target_document_path":state["active_document_path"],"new_input_available":state["input_latest_seq"].as_u64().unwrap_or(0)>state["input_read_cursor"].as_u64().unwrap_or(0)}),
+        json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{ASSISTANT_ID:assistant},"assistant":assistant,"documents":docs,"documents_by_path":documents_by_path,"active_document_id":active_document_id,"active_document_path":active_document_path,"capture_target_document_id":active_document_id,"capture_target_document_path":active_document_path,"new_input_available":state["input_latest_seq"].as_u64().unwrap_or(0)>state["input_read_cursor"].as_u64().unwrap_or(0),"prompt_draft":state["prompt_draft"],"ask_requests":asks,"latest_ask_request":asks.first().cloned()}),
     )
 }
 

@@ -39,6 +39,7 @@ uv.lock
 .env
 .tmp
 /tmp
+/voice/
 graphify-out
 
 # Local dev environments

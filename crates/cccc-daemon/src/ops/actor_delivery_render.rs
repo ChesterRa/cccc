@@ -398,6 +398,35 @@ mod tests {
     }
 
     #[test]
+    fn renders_voice_ask_with_an_explicit_report_contract() {
+        let mut event = Event::new("system.notify", "g_test");
+        event.data = json!({
+            "context": {
+                "kind": "voice_secretary_input",
+                "input_envelope": {
+                    "kind":"voice_instruction",
+                    "request_id":"voice-ask-weather",
+                    "text":"Task:\n厦门天气怎么样？",
+                    "metadata":{"target_kind":"secretary"}
+                }
+            }
+        })
+        .as_object()
+        .cloned()
+        .expect("object");
+
+        let rendered = render_batch(&[event]).expect("rendered");
+        assert!(rendered.contains("Work order:"));
+        assert!(rendered.contains("Target: secretary"));
+        assert!(rendered.contains("Request id: voice-ask-weather"));
+        assert!(rendered.contains("Required output:"));
+        assert!(rendered.contains(
+            "cccc_voice_secretary_request(action=\"report\", request_id=\"voice-ask-weather\""
+        ));
+        assert!(rendered.contains("Console text alone is not delivered to the user."));
+    }
+
+    #[test]
     fn renders_voice_secretary_action_request_envelope() {
         let mut event = Event::new("system.notify", "g_test");
         event.data = json!({
