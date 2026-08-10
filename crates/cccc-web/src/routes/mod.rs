@@ -4,6 +4,7 @@ mod actor_assets;
 mod actor_profiles;
 mod actors;
 mod assistants;
+mod blob_download;
 mod capabilities;
 mod context;
 mod diagnostics;

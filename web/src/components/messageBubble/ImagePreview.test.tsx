@@ -14,6 +14,8 @@ describe("ImagePreview fixed layout", () => {
     const markup = renderToStaticMarkup(
       <ImagePreview
         href="/api/v1/groups/g1/blobs/image"
+        downloadHref="/api/v1/groups/g1/blobs/image?download=true"
+        downloadName="image.png"
         alt="attachment"
         isSvg={false}
         isUserMessage={false}
@@ -31,6 +33,7 @@ describe("ImagePreview fixed layout", () => {
     const markup = renderToStaticMarkup(
       <ImagePreviewFailure
         href="/api/v1/groups/g1/blobs/missing-image"
+        downloadName="missing-image.png"
         alt="a-very-long-image-name-that-must-not-overlap.png"
         isUserMessage={false}
         isDark={false}
@@ -49,5 +52,6 @@ describe("ImagePreview fixed layout", () => {
     expect(markup).toContain('width="20"');
     expect(markup).toContain("mb-1");
     expect(markup).toContain("pt-1");
+    expect(markup).toContain('download="missing-image.png"');
   });
 });

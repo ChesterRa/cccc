@@ -1,6 +1,6 @@
 import type { MessageAttachment } from "../../types";
-import { withAuthToken } from "../../services/api/base";
 import { classNames } from "../../utils/classNames";
+import { buildMessageAttachmentLinks } from "../../utils/messageAttachmentLinks";
 import { isImageAttachment, isSvgAttachment } from "../../utils/messageAttachments";
 import { FileIcon } from "../Icons";
 import { ImagePreview } from "./ImagePreview";
@@ -38,14 +38,13 @@ export function MessageAttachments({
           )}
         >
           {imageAttachments.map((attachment, index) => {
-            const parts = String(attachment.path || "").split("/");
-            const blobName = parts[parts.length - 1] || "";
-            const href =
-              attachment.local_preview_url ||
-              withAuthToken(
-                `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`,
-              );
-            const label = attachment.title || blobName || "image";
+            const links = buildMessageAttachmentLinks({
+              groupId: blobGroupId,
+              path: attachment.path,
+              title: attachment.title,
+              localPreviewUrl: attachment.local_preview_url,
+              fallbackLabel: "image",
+            });
             return (
               <div
                 key={`img:${attachmentKeyPrefix}:${index}`}
@@ -55,8 +54,10 @@ export function MessageAttachments({
                 )}
               >
                 <ImagePreview
-                  href={href}
-                  alt={label}
+                  href={links.previewHref}
+                  downloadHref={links.downloadHref}
+                  downloadName={links.downloadName}
+                  alt={links.label}
                   isSvg={isSvgAttachment(attachment)}
                   isUserMessage={isUserMessage}
                   isDark={isDark}
@@ -75,31 +76,30 @@ export function MessageAttachments({
           )}
         >
           {fileAttachments.map((attachment, index) => {
-            const parts = String(attachment.path || "").split("/");
-            const blobName = parts[parts.length - 1] || "";
-            const href =
-              attachment.local_preview_url ||
-              withAuthToken(
-                `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`,
-              );
-            const label = attachment.title || blobName || "file";
+            const links = buildMessageAttachmentLinks({
+              groupId: blobGroupId,
+              path: attachment.path,
+              title: attachment.title,
+              localPreviewUrl: attachment.local_preview_url,
+              fallbackLabel: "file",
+            });
             return (
               <a
                 key={`file:${attachmentKeyPrefix}:${index}`}
-                href={href}
+                href={links.downloadHref}
                 className={classNames(
                   "inline-flex max-w-full items-center gap-2 rounded-full px-2.5 py-1.5 text-[11px] transition-colors",
                   "border border-[var(--glass-border-subtle)] bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg)]",
                 )}
-                title={downloadTitle(label)}
-                download
+                title={downloadTitle(links.label)}
+                download={links.downloadName}
               >
                 <FileIcon size={13} className="opacity-60 flex-shrink-0" />
                 <span
                   className="truncate font-medium"
                   style={{ color: "var(--color-text-primary)" }}
                 >
-                  {label}
+                  {links.label}
                 </span>
               </a>
             );

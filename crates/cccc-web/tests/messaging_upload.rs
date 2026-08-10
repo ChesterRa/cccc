@@ -76,7 +76,7 @@ async fn plural_files_field_creates_a_structured_image_attachment() {
     assert_eq!(attachment["bytes"], PNG.len());
     let path = attachment["path"].as_str().expect("attachment path");
     assert!(path.starts_with("state/blobs/"));
-    let blob_name = path.rsplit('/').next().expect("blob name");
+    let blob_name = path.rsplit('/').next().expect("blob name").to_owned();
 
     let blob = cccc_web::app(home.clone())
         .oneshot(
@@ -91,6 +91,7 @@ async fn plural_files_field_creates_a_structured_image_attachment() {
         .expect("blob response");
     assert_eq!(blob.status(), StatusCode::OK);
     assert_eq!(blob.headers()[header::CONTENT_TYPE], "image/png");
+    assert!(!blob.headers().contains_key(header::CONTENT_DISPOSITION));
     assert_eq!(
         blob.into_body()
             .collect()
@@ -98,6 +99,24 @@ async fn plural_files_field_creates_a_structured_image_attachment() {
             .expect("blob body")
             .to_bytes(),
         PNG
+    );
+
+    let download = cccc_web::app(home.clone())
+        .oneshot(
+            Request::get(format!(
+                "/api/v1/groups/{}/blobs/{blob_name}?filename=overview.png&download=true",
+                group.group_id
+            ))
+            .body(Body::empty())
+            .expect("download request"),
+        )
+        .await
+        .expect("download response");
+    assert_eq!(download.status(), StatusCode::OK);
+    assert_eq!(download.headers()[header::CONTENT_TYPE], "image/png");
+    assert_eq!(
+        download.headers()[header::CONTENT_DISPOSITION],
+        "attachment; filename=\"overview.png\"; filename*=UTF-8''overview%2Epng"
     );
 
     let _ = cccc_client::DaemonClient::new(home)

@@ -3,6 +3,7 @@ import { ImageIcon } from "../Icons";
 
 export function ImagePreviewFailure({
   href,
+  downloadName,
   alt,
   isUserMessage,
   isDark,
@@ -13,6 +14,7 @@ export function ImagePreviewFailure({
   openOriginalLabel,
 }: {
   href: string;
+  downloadName: string;
   alt: string;
   isUserMessage: boolean;
   isDark: boolean;
@@ -39,7 +41,7 @@ export function ImagePreviewFailure({
       )}
       style={{ height }}
       title={title}
-      download
+      download={downloadName}
     >
       <div
         className={classNames(

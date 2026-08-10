@@ -29,6 +29,8 @@ const DARK_IMAGE_CANVAS_STYLE = {
 
 export function ImagePreview({
   href,
+  downloadHref,
+  downloadName,
   alt,
   isSvg,
   isUserMessage,
@@ -36,6 +38,8 @@ export function ImagePreview({
   layout = "hero",
 }: {
   href: string;
+  downloadHref: string;
+  downloadName: string;
   alt: string;
   isSvg: boolean;
   isUserMessage: boolean;
@@ -156,7 +160,8 @@ export function ImagePreview({
   if (loadError) {
     return (
       <ImagePreviewFailure
-        href={href}
+        href={downloadHref}
+        downloadName={downloadName}
         alt={alt}
         isUserMessage={isUserMessage}
         isDark={isDark}
@@ -275,8 +280,8 @@ export function ImagePreview({
 
                 <div className="flex items-center gap-2">
                   <a
-                    href={href}
-                    download
+                    href={downloadHref}
+                    download={downloadName}
                     className={classNames(
                       "inline-flex items-center rounded-lg px-3 py-2 text-xs font-medium transition-colors",
                       isDark

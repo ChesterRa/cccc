@@ -34,7 +34,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route(
             "/api/v1/groups/{group_id}/blobs/{blob_name}",
-            get(blob_download),
+            get(super::blob_download::download),
         )
         .merge(upload_routes())
 }
@@ -245,47 +245,6 @@ pub(super) fn insert_upload_field(
         }
     }
     Ok(())
-}
-
-async fn blob_download(
-    State(state): State<AppState>,
-    Path((group_id, blob_name)): Path<(String, String)>,
-) -> Result<axum::response::Response, ApiError> {
-    let path = cccc_core::blobs::resolve(&state.home, &group_id, &blob_name)
-        .map_err(|error| ApiError::not_found(error.to_string()))?;
-    let prefix = super::file_response::prefix(&path, 16)
-        .await
-        .map_err(|error| ApiError::not_found(error.to_string()))?;
-    let content_type = blob_content_type(&blob_name, &prefix);
-    super::file_response::stream(&path, &content_type, None, None)
-        .await
-        .map_err(|error| ApiError::not_found(error.to_string()))
-}
-
-fn blob_content_type(blob_name: &str, bytes: &[u8]) -> String {
-    let guessed = mime_guess::from_path(blob_name).first_or_octet_stream();
-    if guessed != mime_guess::mime::APPLICATION_OCTET_STREAM {
-        return guessed.essence_str().to_owned();
-    }
-    let detected = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
-        "image/png"
-    } else if bytes.starts_with(b"\xff\xd8\xff") {
-        "image/jpeg"
-    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
-        "image/gif"
-    } else if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
-        "image/webp"
-    } else if bytes.starts_with(b"BM") {
-        "image/bmp"
-    } else if bytes.len() >= 12
-        && &bytes[4..8] == b"ftyp"
-        && matches!(&bytes[8..12], b"avif" | b"avis")
-    {
-        "image/avif"
-    } else {
-        "application/octet-stream"
-    };
-    detected.to_owned()
 }
 
 async fn daemon_body(state: &AppState, op: &str, group_id: String, body: Value) -> ApiResult {
