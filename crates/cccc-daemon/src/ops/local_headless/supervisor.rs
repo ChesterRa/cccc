@@ -11,6 +11,8 @@ use std::time::Duration;
 
 type Key = (String, String);
 
+const CLAUDE_STARTUP_GRACE: Duration = Duration::from_millis(250);
+
 fn sessions() -> &'static RwLock<HashMap<Key, Arc<Session>>> {
     static SESSIONS: OnceLock<RwLock<HashMap<Key, Arc<Session>>>> = OnceLock::new();
     SESSIONS.get_or_init(|| RwLock::new(HashMap::new()))
@@ -153,7 +155,7 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
             return Err(error);
         }
     } else {
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(CLAUDE_STARTUP_GRACE);
         if !item.running() {
             let resumed = claude_session.as_ref().is_some_and(|(_, resumed)| *resumed);
             let error = if resumed {
@@ -685,9 +687,10 @@ mod tests {
             &executable,
             r#"#!/bin/sh
 printf '%s\n' "$*" >> "$CCCC_TEST_ARGS"
-case " $* " in
-  *" --resume "*) exit 2 ;;
-esac
+if [ ! -e "$CCCC_TEST_FIRST_LAUNCH" ]; then
+  : > "$CCCC_TEST_FIRST_LAUNCH"
+  exit 2
+fi
 while IFS= read -r line; do :; done
 "#,
         )
@@ -699,6 +702,7 @@ while IFS= read -r line; do :; done
         std::fs::set_permissions(&executable, permissions).expect("fake Claude executable");
 
         let args_log = temp.path().join("claude-args.log");
+        let first_launch = temp.path().join("claude-first-launch");
         let mut actor = Actor::new("headless");
         actor.role = Some(ActorRole::Foreman);
         actor.runtime = ActorRuntime::Claude;
@@ -707,6 +711,10 @@ while IFS= read -r line; do :; done
         actor.env.insert(
             "CCCC_TEST_ARGS".into(),
             args_log.to_string_lossy().into_owned(),
+        );
+        actor.env.insert(
+            "CCCC_TEST_FIRST_LAUNCH".into(),
+            first_launch.to_string_lossy().into_owned(),
         );
         group.actors.push(actor.clone());
 
