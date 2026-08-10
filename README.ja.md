@@ -31,7 +31,9 @@ Claude Code、Codex、ChatGPT Web など 17 のランタイムをひとつの永
 
 <div align="center">
 
-<img src="screenshots/overview.webp" alt="CCCC Web UI の概要" width="100%">
+<img src="screenshots/overview.webp" alt="CCCC Web UI デスクトップ概要" width="76%">
+&nbsp;
+<img src="screenshots/iphone.webp" alt="CCCC Web UI モバイル概要" width="20%">
 
 </div>
 
@@ -333,10 +335,6 @@ CCCC は IM グレードのメッセージングセマンティクスを実装 �
 - **設定** — メッセージングポリシー、配信チューニング、ターミナルトランスクリプト制御
 - **テキストスケール** — 90% / 100% / 125% フォントサイズ、ブラウザごとに永続化
 - **ライト / ダーク / システムテーマ**
-
-| チャット | ターミナル |
-|:--------:|:----------:|
-| ![Chat](screenshots/chat.png) | ![Terminal](screenshots/terminal.png) |
 
 ### リモートアクセス
 

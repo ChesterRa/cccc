@@ -31,7 +31,9 @@ Claude Code、Codex、ChatGPT Web 等 17 种运行时，在同一个持久协作
 
 <div align="center">
 
-<img src="screenshots/overview.webp" alt="CCCC Web UI 概览" width="100%">
+<img src="screenshots/overview.webp" alt="CCCC Web UI 桌面端概览" width="76%">
+&nbsp;
+<img src="screenshots/iphone.webp" alt="CCCC Web UI 移动端概览" width="20%">
 
 </div>
 
@@ -331,10 +333,6 @@ CCCC 实现的是 IM 级消息语义，而不是"往终端里粘贴一段文字"
 - **设置** — 消息策略、触达调优、终端日志控制
 - **文本缩放** — 90% / 100% / 125% 三级字体大小，按浏览器持久化
 - **亮色 / 暗色 / 跟随系统 主题**
-
-| 聊天 | 终端 |
-|:----:|:----:|
-| ![Chat](screenshots/chat.png) | ![Terminal](screenshots/terminal.png) |
 
 ### 远程访问
 

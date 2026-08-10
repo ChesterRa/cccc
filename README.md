@@ -31,7 +31,9 @@ One install command. No Rust toolchain or infrastructure required.
 
 <div align="center">
 
-<img src="screenshots/overview.webp" alt="CCCC Web UI overview" width="100%">
+<img src="screenshots/overview.webp" alt="CCCC Web UI desktop overview" width="76%">
+&nbsp;
+<img src="screenshots/iphone.webp" alt="CCCC Web UI mobile overview" width="20%">
 
 </div>
 
@@ -337,10 +339,6 @@ The built-in Web UI at `http://127.0.0.1:8848` provides:
 - **Settings** — messaging policies, delivery tuning, terminal transcript controls
 - **Text scale** — 90% / 100% / 125% font size with per-browser persistence
 - **Light / Dark / System themes**
-
-| Chat | Terminal |
-|:----:|:-------:|
-| ![Chat](screenshots/chat.png) | ![Terminal](screenshots/terminal.png) |
 
 ### Remote access
 
