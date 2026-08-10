@@ -14,7 +14,9 @@ use crate::browser_surface::{
 };
 
 use super::web_model_browser::key;
-use super::web_model_delivery_completion::{args, call as daemon_call, complete_args, reconcile};
+use super::web_model_delivery_completion::{
+    args, call as daemon_call, complete_args, reconcile, record_delivery,
+};
 use super::web_model_delivery_state::{record_connector, target as load_target, update_target};
 
 static IN_FLIGHT: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -137,6 +139,34 @@ fn spawn_worker(state: AppState, group_id: String, actor_id: String) {
         let Some(exhausted_turn_id) = exhausted_turn_id else {
             return;
         };
+        if let Ok(target) = load_target(&state, &group_id, &actor_id) {
+            let message =
+                "browser model remained unavailable after the bounded automatic retry budget";
+            let _ = update_target(
+                &state,
+                &group_id,
+                &actor_id,
+                json!({"last_delivery_status":"failed","last_error":message}),
+            );
+            if let (Some(delivery_id), Some(event_ids)) = (
+                target["last_delivery_id"].as_str(),
+                target["last_delivery_event_ids"].as_array(),
+            ) {
+                record_delivery(
+                    &state,
+                    &group_id,
+                    &actor_id,
+                    &exhausted_turn_id,
+                    Value::Array(event_ids.clone()),
+                    delivery_id,
+                    "failed",
+                    message,
+                    false,
+                    json!({"target_url":target["url"]}),
+                )
+                .await;
+            }
+        }
         match fresh_turn_after_exhaustion(&state, &group_id, &actor_id, &exhausted_turn_id).await {
             Ok(Some(fresh_turn_id)) => {
                 tracing::debug!(
@@ -438,6 +468,19 @@ async fn deliver_once(
         actor_id,
         json!({"last_delivery_id":delivery_id,"last_delivery_turn_id":turn_id,"last_delivery_event_ids":turn["event_ids"],"last_delivery_status":"submitting","last_delivery_started_at":cccc_contracts::utc_now(),"last_error":""}),
     )?;
+    record_delivery(
+        state,
+        group_id,
+        actor_id,
+        turn_id,
+        turn["event_ids"].clone(),
+        &delivery_id,
+        "submitting",
+        "",
+        false,
+        json!({"target_url":target_url,"auto_bind_new_chat":target["kind"] == "new_chat"}),
+    )
+    .await;
     let submitted = state
         .browser_surfaces
         .submit_prompt_with_attachment(
@@ -494,6 +537,19 @@ async fn deliver_once(
                 }),
             )?;
             record_connector(state, group_id, actor_id, "failed", turn_id, &message)?;
+            record_delivery(
+                state,
+                group_id,
+                actor_id,
+                turn_id,
+                turn["event_ids"].clone(),
+                &delivery_id,
+                "failed",
+                &message,
+                false,
+                json!({"target_url":target_url}),
+            )
+            .await;
             return Ok(DeliveryOutcome::Stopped);
         }
         Err(error) => {
@@ -553,10 +609,24 @@ async fn deliver_once(
             %error,
             "Web-model browser submission is ambiguous; automatic redelivery is paused"
         );
+        record_delivery(
+            state,
+            group_id,
+            actor_id,
+            turn_id,
+            turn["event_ids"].clone(),
+            &delivery_id,
+            "submitted",
+            "browser submission verified; local completion is pending reconciliation",
+            false,
+            json!({"target_url":target_url,"auto_bind_new_chat":target["kind"] == "new_chat"}),
+        )
+        .await;
         return Ok(DeliveryOutcome::Ambiguous);
     }
     let mut pending_new_chat_bind = target["kind"] == "new_chat";
     let mut bind_error = String::new();
+    let mut bound_conversation_url = String::new();
     if pending_new_chat_bind {
         match state
             .browser_surfaces
@@ -569,6 +639,7 @@ async fn deliver_once(
                 {
                     bind_error = error.to_string();
                 } else {
+                    bound_conversation_url = conversation_url;
                     pending_new_chat_bind = false;
                 }
             }
@@ -589,6 +660,10 @@ async fn deliver_once(
         ""
     };
     let now = cccc_contracts::utc_now();
+    let submission_evidence = browser["submission_evidence"]
+        .as_str()
+        .unwrap_or("")
+        .to_owned();
     let mut final_patch = json!({
         "last_delivery_status":final_status,
         "last_delivery_at":now.clone(),
@@ -609,7 +684,48 @@ async fn deliver_once(
         );
     }
     update_target(state, group_id, actor_id, final_patch)?;
+    // Keep the existing connector-facing status coherent with the target
+    // before the best-effort ledger receipt performs an async daemon call.
+    // Otherwise observers can see a submitted target while the connector
+    // still exposes the preceding MCP probe status.
     record_connector(state, group_id, actor_id, "submitted", turn_id, "")?;
+    record_delivery(
+        state,
+        group_id,
+        actor_id,
+        turn_id,
+        turn["event_ids"].clone(),
+        &delivery_id,
+        "submitted",
+        &submission_evidence,
+        true,
+        json!({
+            "target_url":target_url,
+            "bound_conversation_url":bound_conversation_url,
+            "pending_conversation_url":pending_new_chat_bind,
+            "auto_bind_new_chat":target["kind"] == "new_chat"
+        }),
+    )
+    .await;
+    if pending_new_chat_bind {
+        record_delivery(
+            state,
+            group_id,
+            actor_id,
+            turn_id,
+            turn["event_ids"].clone(),
+            &delivery_id,
+            "pending",
+            final_error,
+            true,
+            json!({
+                "target_url":target_url,
+                "pending_conversation_url":true,
+                "auto_bind_new_chat":true
+            }),
+        )
+        .await;
+    }
     Ok(DeliveryOutcome::Submitted)
 }
 
@@ -639,10 +755,23 @@ async fn complete_ambiguous_attempt(
         group_id,
         actor_id,
         attempt.turn_id,
-        attempt.event_ids,
+        attempt.event_ids.clone(),
         attempt.delivery_id,
     );
     let completion = daemon_call(state, "web_model_runtime_complete_turn", complete).await;
+    record_delivery(
+        state,
+        group_id,
+        actor_id,
+        attempt.turn_id,
+        attempt.event_ids.clone(),
+        attempt.delivery_id,
+        "ambiguous",
+        message,
+        completion.is_ok(),
+        json!({}),
+    )
+    .await;
     let completion_status = if completion.is_ok() {
         "submission_ambiguous"
     } else {
@@ -1136,6 +1265,29 @@ async fn resolve_pending_new_chat(
         actor_id,
         json!({"last_delivery_status":"submitted","last_error":""}),
     )?;
+    if let (Some(turn_id), Some(delivery_id), Some(event_ids)) = (
+        target["last_delivery_turn_id"].as_str(),
+        target["last_delivery_id"].as_str(),
+        target["last_delivery_event_ids"].as_array(),
+    ) {
+        record_delivery(
+            state,
+            group_id,
+            actor_id,
+            turn_id,
+            Value::Array(event_ids.clone()),
+            delivery_id,
+            "bound",
+            "conversation_url_bound",
+            true,
+            json!({
+                "target_url":target_url,
+                "bound_conversation_url":conversation_url,
+                "resolved_pending_new_chat":true
+            }),
+        )
+        .await;
+    }
     Ok(DeliveryOutcome::Submitted)
 }
 

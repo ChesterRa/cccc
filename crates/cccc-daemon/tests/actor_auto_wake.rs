@@ -110,6 +110,14 @@ async fn setup(
         .as_str()
         .expect("group id")
         .to_owned();
+    let workspace = temp.path().join("workspace");
+    std::fs::create_dir(&workspace).expect("workspace");
+    call(
+        &client,
+        "attach",
+        json!({"group_id":group_id,"path":workspace,"by":"user"}),
+    )
+    .await;
     let command = if reads_delivery {
         "stty -echo; IFS= read -r preamble; IFS= read -r message; printf 'PREAMBLE:%s\\nMESSAGE:%s' \"$preamble\" \"$message\"; sleep 2"
     } else {

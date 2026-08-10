@@ -31,11 +31,13 @@ pub(super) fn handle_message(session: &Session, message: Value) {
             .lock()
             .map(|mut value| std::mem::take(&mut *value))
             .unwrap_or_default();
-        emit(
-            session,
-            "headless.turn.completed",
-            Map::from_iter([("event_id".into(), json!(event_id))]),
-        );
+        if session.runtime == ActorRuntime::Codex {
+            let (kind, data) = codex_terminal_event(&message, &event_id);
+            emit(session, kind, data);
+        } else {
+            let (kind, data) = claude_terminal_event(&message, &event_id);
+            emit(session, kind, data);
+        }
         return;
     }
     if session.runtime == ActorRuntime::Codex {
@@ -64,6 +66,106 @@ pub(super) fn handle_message(session: &Session, message: Value) {
                 .and_then(|state| state.task_id.clone());
             session.set_status("waiting", task);
         }
+    }
+}
+
+fn codex_terminal_event(message: &Value, event_id: &str) -> (&'static str, Map<String, Value>) {
+    let turn = message.pointer("/params/turn").and_then(Value::as_object);
+    let turn_id = turn
+        .and_then(|value| value.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let status = turn
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
+        .unwrap_or("completed");
+    let error = turn
+        .and_then(|value| value.get("error"))
+        .filter(|value| !value.is_null())
+        .map(normalize_provider_error);
+    let failed = matches!(
+        status.trim().to_ascii_lowercase().as_str(),
+        "failed" | "error" | "cancelled"
+    ) || error.is_some();
+    (
+        if failed {
+            "headless.turn.failed"
+        } else {
+            "headless.turn.completed"
+        },
+        Map::from_iter([
+            ("turn_id".into(), json!(turn_id)),
+            ("event_id".into(), json!(event_id)),
+            ("status".into(), json!(status)),
+            ("error".into(), error.unwrap_or(Value::Null)),
+        ]),
+    )
+}
+
+fn claude_terminal_event(message: &Value, event_id: &str) -> (&'static str, Map<String, Value>) {
+    let subtype = message
+        .get("subtype")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let normalized_subtype = subtype.trim().to_ascii_lowercase();
+    let failed = message.get("is_error").and_then(Value::as_bool) == Some(true)
+        || normalized_subtype == "error"
+        || normalized_subtype.starts_with("error_");
+    let status = if subtype.trim().is_empty() {
+        "completed"
+    } else {
+        subtype
+    };
+    let error = failed.then(|| claude_result_error(message, status));
+    (
+        if failed {
+            "headless.turn.failed"
+        } else {
+            "headless.turn.completed"
+        },
+        Map::from_iter([
+            ("event_id".into(), json!(event_id)),
+            ("status".into(), json!(status)),
+            ("error".into(), error.unwrap_or(Value::Null)),
+        ]),
+    )
+}
+
+fn claude_result_error(message: &Value, status: &str) -> Value {
+    if let Some(error) = message.get("error").filter(|value| !value.is_null()) {
+        return normalize_provider_error(error);
+    }
+    if let Some(result) = message.get("result").filter(|value| !value.is_null()) {
+        if result.as_str().is_none_or(|value| !value.trim().is_empty()) {
+            return normalize_provider_error(result);
+        }
+    }
+    if let Some(errors) = message.get("errors").and_then(Value::as_array) {
+        let messages = errors
+            .iter()
+            .filter_map(|value| {
+                value
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .or_else(|| value.as_str())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            })
+            .collect::<Vec<_>>();
+        if !messages.is_empty() {
+            return json!({"message":messages.join("; ")});
+        }
+    }
+    json!({"message":if status.is_empty() { "Claude provider result failed" } else { status }})
+}
+
+fn normalize_provider_error(value: &Value) -> Value {
+    if value.is_object() {
+        value.clone()
+    } else if let Some(message) = value.as_str() {
+        json!({"message":message})
+    } else {
+        json!({"message":value.to_string()})
     }
 }
 
@@ -216,5 +318,91 @@ pub(super) fn emit(session: &Session, kind: &str, data: Map<String, Value>) {
         data,
     ) {
         tracing::warn!(%error, group_id = %session.group_id, actor_id = %session.actor_id, "failed to append headless event");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_failed_completion_preserves_status_and_error() {
+        let message = json!({
+            "method":"turn/completed",
+            "params":{"turn":{
+                "id":"turn-failed",
+                "status":"failed",
+                "error":{"message":"provider failed"}
+            }}
+        });
+
+        let (kind, data) = codex_terminal_event(&message, "event-1");
+
+        assert_eq!(kind, "headless.turn.failed");
+        assert_eq!(data["turn_id"], "turn-failed");
+        assert_eq!(data["event_id"], "event-1");
+        assert_eq!(data["status"], "failed");
+        assert_eq!(data["error"]["message"], "provider failed");
+    }
+
+    #[test]
+    fn codex_cancelled_or_explicit_error_is_not_reported_completed() {
+        for message in [
+            json!({"params":{"turn":{"id":"turn-cancelled","status":"cancelled"}}}),
+            json!({"params":{"turn":{"id":"turn-error","status":"completed","error":"late failure"}}}),
+        ] {
+            let (kind, data) = codex_terminal_event(&message, "event-1");
+            assert_eq!(kind, "headless.turn.failed");
+            assert_eq!(data["event_id"], "event-1");
+        }
+    }
+
+    #[test]
+    fn codex_success_retains_completed_event() {
+        let message = json!({
+            "params":{"turn":{"id":"turn-completed","status":"completed"}}
+        });
+
+        let (kind, data) = codex_terminal_event(&message, "event-1");
+
+        assert_eq!(kind, "headless.turn.completed");
+        assert_eq!(data["turn_id"], "turn-completed");
+        assert_eq!(data["status"], "completed");
+        assert_eq!(data["error"], Value::Null);
+    }
+
+    #[test]
+    fn claude_error_result_preserves_status_and_error() {
+        let message = json!({
+            "type":"result",
+            "subtype":"error_during_execution",
+            "is_error":true,
+            "result":"provider failed"
+        });
+
+        let (kind, data) = claude_terminal_event(&message, "event-1");
+
+        assert_eq!(kind, "headless.turn.failed");
+        assert_eq!(data["event_id"], "event-1");
+        assert_eq!(data["status"], "error_during_execution");
+        assert_eq!(data["error"]["message"], "provider failed");
+    }
+
+    #[test]
+    fn claude_error_prefix_is_a_legacy_failure_signal() {
+        let (kind, data) = claude_terminal_event(
+            &json!({"type":"result","subtype":"error_max_turns","errors":["limit reached"]}),
+            "event-1",
+        );
+        assert_eq!(kind, "headless.turn.failed");
+        assert_eq!(data["error"]["message"], "limit reached");
+
+        let (kind, data) = claude_terminal_event(
+            &json!({"type":"result","subtype":"success","is_error":false}),
+            "event-2",
+        );
+        assert_eq!(kind, "headless.turn.completed");
+        assert_eq!(data["status"], "success");
+        assert_eq!(data["error"], Value::Null);
     }
 }

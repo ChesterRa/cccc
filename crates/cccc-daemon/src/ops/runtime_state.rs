@@ -10,6 +10,7 @@ use crate::dispatch::{OpError, OpResult, first_non_blank_arg, object, required_a
 
 const KEY: &str = "runtime_states";
 const DELIVERY_PREFERENCES_KEY: &str = "web_model_delivery_preferences";
+const MAX_TURN_EVENTS: usize = 20;
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -22,6 +23,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
             wait_next_turn(home, request)
         }
         "web_model_runtime_recover_turn" => recover_turn(home, request),
+        "web_model_browser_delivery_record" => record_browser_delivery(home, request),
         "runtime_complete_turn" | "web_model_runtime_complete_turn" => complete_turn(home, request),
         _ => return None,
     })
@@ -208,12 +210,14 @@ fn wait_next_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .unwrap_or(20)
         .clamp(1, 20) as usize;
     let kind_filter = string_arg(request, "kind_filter").unwrap_or_else(|| "all".into());
-    let mut messages = inbox::list_unread(home, &group, &actor_id, limit).map_err(OpError::io)?;
-    match kind_filter.as_str() {
-        "chat" => messages.retain(|event| event.kind == "chat.message"),
-        "notify" => messages.retain(|event| event.kind == "system.notify"),
-        _ => {}
+    if !matches!(kind_filter.as_str(), "all" | "chat" | "notify") {
+        return Err(OpError::new(
+            "invalid_kind_filter",
+            "kind_filter must be all, chat, or notify",
+        ));
     }
+    let messages =
+        inbox::list_unread(home, &group, &actor_id, limit, &kind_filter).map_err(OpError::io)?;
     if messages.is_empty() {
         set_runtime_status(home, &group, &actor_id, "waiting", "", "")?;
         return object(
@@ -421,6 +425,12 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if event_ids.is_empty() {
         return Err(OpError::new("missing_event_ids", "event_ids is required"));
     }
+    if event_ids.len() > MAX_TURN_EVENTS {
+        return Err(OpError::new(
+            "invalid_event_ids",
+            format!("event_ids cannot contain more than {MAX_TURN_EVENTS} entries"),
+        ));
+    }
     let delivery_id = string_arg(request, "delivery_id")
         .filter(|value| !value.is_empty())
         .or_else(|| (request.op == "runtime_complete_turn").then(|| format!("runtime:{turn_id}")))
@@ -442,7 +452,7 @@ fn complete_turn(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "turn_id does not match the actor's active structured turn",
         ));
     }
-    let unread = inbox::list_unread(home, &group, &actor_id, 1000).map_err(OpError::io)?;
+    let unread = inbox::list_unread(home, &group, &actor_id, 1000, "all").map_err(OpError::io)?;
     validate_completed_prefix(&unread, &event_ids)?;
     let receipt = super::runtime_completion::append(home, &group.group_id, &actor_id, &completion)?;
     finish_completion(home, &group, &actor_id, &completion, receipt, request)
@@ -482,6 +492,135 @@ fn finish_completion(
         "followup_delivery_scheduled":false,
         "summary":string_arg(request,"summary").unwrap_or_default()
     }))
+}
+
+fn record_browser_delivery(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let (group, actor_id) = group_actor(home, request)?;
+    require_web_model_actor(&group, &actor_id)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| actor_id.clone());
+    if by != actor_id {
+        return Err(OpError::new(
+            "permission_denied",
+            "browser delivery records must be written by the runtime actor",
+        ));
+    }
+    let turn_id = required_arg(request, "turn_id")?;
+    let delivery_id = required_arg(request, "delivery_id")?;
+    let event_ids = normalized_required_event_ids(request)?;
+    let ledger_path = GroupStore::new(home.clone())
+        .map_err(OpError::io)?
+        .ledger_path(&group.group_id)
+        .map_err(OpError::io)?;
+    let events = ledger::read_all(&ledger_path).map_err(OpError::io)?;
+    for event_id in &event_ids {
+        let Some(event) = events.iter().find(|event| event.id == *event_id) else {
+            return Err(OpError::new(
+                "event_not_found",
+                format!("event not found: {event_id}"),
+            ));
+        };
+        if !matches!(event.kind.as_str(), "chat.message" | "system.notify")
+            || !inbox::is_for_actor(&group, event, &actor_id)
+        {
+            return Err(OpError::new(
+                "event_not_for_actor",
+                format!("event is not addressed to actor: {actor_id}"),
+            ));
+        }
+    }
+    let browser_delivery = parse_browser_delivery(request)?
+        .ok_or_else(|| OpError::new("missing_browser_delivery", "browser_delivery is required"))?;
+    let cursor_committed = request
+        .args
+        .get("cursor_committed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let event = super::runtime_completion::append_browser_delivery(
+        home,
+        &group.group_id,
+        &actor_id,
+        &turn_id,
+        &event_ids,
+        &delivery_id,
+        &browser_delivery,
+        cursor_committed,
+    )?;
+    object(json!({"event":event}))
+}
+
+fn normalized_required_event_ids(request: &DaemonRequest) -> Result<Vec<String>, OpError> {
+    let raw = request.args.get("event_ids").and_then(Value::as_array);
+    if raw.is_some_and(|items| items.iter().any(|item| !item.is_string())) {
+        return Err(OpError::new(
+            "invalid_event_ids",
+            "event_ids must contain only strings",
+        ));
+    }
+    let event_ids = raw
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if event_ids.is_empty() {
+        return Err(OpError::new("missing_event_ids", "event_ids is required"));
+    }
+    if event_ids.len() > MAX_TURN_EVENTS {
+        return Err(OpError::new(
+            "invalid_event_ids",
+            format!("event_ids cannot contain more than {MAX_TURN_EVENTS} entries"),
+        ));
+    }
+    Ok(event_ids)
+}
+
+fn parse_browser_delivery(request: &DaemonRequest) -> Result<Option<Value>, OpError> {
+    let Some(raw) = request.args.get("browser_delivery") else {
+        return Ok(None);
+    };
+    let Some(raw) = raw.as_object() else {
+        return Err(OpError::new(
+            "invalid_browser_delivery",
+            "browser_delivery must be an object",
+        ));
+    };
+    let state = raw
+        .get("state")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    if !matches!(
+        state,
+        "submitting" | "submitted" | "bound" | "pending" | "ambiguous" | "failed"
+    ) {
+        return Err(OpError::new(
+            "invalid_browser_delivery_state",
+            "browser delivery state must be submitting, submitted, bound, pending, ambiguous, or failed",
+        ));
+    }
+    let detail = raw
+        .get("detail")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .chars()
+        .take(4096)
+        .collect::<String>();
+    let mut normalized = json!({"state":state,"detail":detail});
+    for field in [
+        "provider",
+        "target_url",
+        "bound_conversation_url",
+        "pending_conversation_url",
+        "auto_bind_new_chat",
+        "resolved_pending_new_chat",
+    ] {
+        if let Some(value) = raw.get(field) {
+            normalized[field] = value.clone();
+        }
+    }
+    Ok(Some(normalized))
 }
 
 fn group_actor(home: &HomeLayout, request: &DaemonRequest) -> Result<(GroupDoc, String), OpError> {

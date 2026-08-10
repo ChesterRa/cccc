@@ -1,4 +1,5 @@
 mod actions;
+mod bootstrap;
 mod code_mode;
 mod local_sessions;
 mod local_tools;
@@ -17,6 +18,24 @@ use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+const SUPPORTED_LEGACY_PROTOCOL_VERSIONS: &[&str] = &["2025-11-25", "2025-06-18", "2024-11-05"];
+const DEFAULT_LEGACY_PROTOCOL_VERSION: &str = SUPPORTED_LEGACY_PROTOCOL_VERSIONS[0];
+const CORE_TOOL_NAMES: &[&str] = &[
+    "cccc_help",
+    "cccc_bootstrap",
+    "cccc_capability_search",
+    "cccc_capability_use",
+    "cccc_inbox_list",
+    "cccc_inbox_mark_read",
+    "cccc_message_send",
+    "cccc_message_reply",
+    "cccc_file",
+    "cccc_context_get",
+    "cccc_coordination",
+    "cccc_task",
+    "cccc_agent_state",
+];
 
 pub async fn run_stdio(home: HomeLayout) -> Result<()> {
     let result = run_stdio_loop(&home).await;
@@ -89,8 +108,8 @@ async fn handle(
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
     let result = match method {
         "initialize" => Ok(json!({
-            "protocolVersion": "2024-11-05",
-            "capabilities": {"tools": {"listChanged": true}},
+            "protocolVersion": negotiated_protocol_version(request),
+            "capabilities": {"tools": {"listChanged": false}},
             "serverInfo": {"name": "cccc-mcp", "version": env!("CARGO_PKG_VERSION")},
         })),
         "ping" => Ok(json!({})),
@@ -116,6 +135,20 @@ async fn handle(
         Ok(value) => json!({"jsonrpc":"2.0","id":id,"result":value}),
         Err(message) => json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":message}}),
     }
+}
+
+fn negotiated_protocol_version(request: &Value) -> &'static str {
+    let requested = request
+        .get("params")
+        .and_then(|params| params.get("protocolVersion"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    SUPPORTED_LEGACY_PROTOCOL_VERSIONS
+        .iter()
+        .copied()
+        .find(|version| *version == requested)
+        .unwrap_or(DEFAULT_LEGACY_PROTOCOL_VERSION)
 }
 
 pub(crate) async fn visible_tools_for_actor(
@@ -219,29 +252,18 @@ fn hide_disabled_code_mode_tools(tools: &mut Vec<Value>) {
 }
 
 fn core_tools(catalog: Vec<Value>) -> Vec<Value> {
-    const CORE: &[&str] = &[
-        "cccc_help",
-        "cccc_bootstrap",
-        "cccc_capability_search",
-        "cccc_capability_use",
-        "cccc_inbox_list",
-        "cccc_inbox_mark_read",
-        "cccc_message_send",
-        "cccc_message_reply",
-        "cccc_file",
-        "cccc_context_get",
-        "cccc_coordination",
-        "cccc_task",
-        "cccc_agent_state",
-    ];
     catalog
         .into_iter()
         .filter(|tool| {
             tool["name"]
                 .as_str()
-                .is_some_and(|name| CORE.contains(&name))
+                .is_some_and(|name| CORE_TOOL_NAMES.contains(&name))
         })
         .collect()
+}
+
+fn is_core_tool(name: &str) -> bool {
+    CORE_TOOL_NAMES.contains(&name)
 }
 
 async fn write_response(output: &mut tokio::io::Stdout, response: &Value) -> Result<()> {
@@ -255,6 +277,41 @@ async fn write_response(output: &mut tokio::io::Stdout, response: &Value) -> Res
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;
+
+    use serde_json::json;
+
+    #[test]
+    fn initialize_negotiates_supported_legacy_protocol_versions() {
+        for version in super::SUPPORTED_LEGACY_PROTOCOL_VERSIONS {
+            let request = json!({"params":{"protocolVersion":version}});
+            assert_eq!(super::negotiated_protocol_version(&request), *version);
+        }
+        assert_eq!(
+            super::negotiated_protocol_version(&json!({"params":{"protocolVersion":"2099-01-01"}})),
+            super::DEFAULT_LEGACY_PROTOCOL_VERSION
+        );
+    }
+
+    #[tokio::test]
+    async fn initialize_truthfully_disables_tool_list_change_notifications() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let response = super::handle_request(
+            &home,
+            &json!({
+                "jsonrpc":"2.0",
+                "id":1,
+                "method":"initialize",
+                "params":{"protocolVersion":"2025-11-25","capabilities":{}}
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            response["result"]["capabilities"]["tools"]["listChanged"],
+            false
+        );
+    }
 
     #[test]
     fn unscoped_fallback_remains_the_thirteen_core_tools() {

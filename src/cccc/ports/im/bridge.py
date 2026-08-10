@@ -42,7 +42,7 @@ from .commands import (
     parse_message,
 )
 from .config_schema import canonicalize_im_config
-from .auth import KeyManager
+from .auth import KeyManager, ThreadId, normalize_thread_id
 from .inbound_content import prepare_inbound_content
 from .lifecycle import IMProcessingLifecycle
 from .subscribers import SubscriberManager
@@ -320,7 +320,7 @@ class IMBridge:
         self._mention_targets: Dict[str, List[str]] = {}
 
     def _should_process_inbound(
-        self, *, chat_id: str, thread_id: int, message_id: str
+        self, *, chat_id: str, thread_id: ThreadId, message_id: str
     ) -> bool:
         """
         Return True if this inbound message should be processed.
@@ -332,7 +332,7 @@ class IMBridge:
             return True
 
         now = time.time()
-        key = f"{chat_id}:{int(thread_id or 0)}:{mid}"
+        key = f"{chat_id}:{normalize_thread_id(thread_id)}:{mid}"
 
         if key in self._seen_inbound:
             self._log(f"[inbound] Dedup skip: {key}")
@@ -449,10 +449,7 @@ class IMBridge:
             from_user = str(msg.get("from_user") or "user")
             from_user_id = str(msg.get("from_user_id") or "")
             chat_type = str(msg.get("chat_type") or "").strip().lower()
-            try:
-                thread_id = int(msg.get("thread_id") or 0)
-            except Exception:
-                thread_id = 0
+            thread_id = normalize_thread_id(msg.get("thread_id"))
             message_id = str(msg.get("message_id") or "").strip()
 
             if not text and not attachments:
@@ -476,7 +473,8 @@ class IMBridge:
             self._log(
                 f"[inbound] Checking auth for chat_id={chat_id} thread={thread_id}"
             )
-            if not self.key_manager.is_authorized(chat_id, thread_id):
+            platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
+            if not self.key_manager.is_authorized(chat_id, thread_id, platform):
                 parsed_pre = parse_message(text)
                 if parsed_pre.type == CommandType.SUBSCRIBE:
                     self._handle_subscribe(chat_id, chat_title, thread_id=thread_id)
@@ -651,8 +649,8 @@ class IMBridge:
         return raw
 
     @staticmethod
-    def _stream_target_key(chat_id: str, thread_id: int) -> str:
-        return f"{chat_id}:{int(thread_id or 0)}"
+    def _stream_target_key(chat_id: str, thread_id: ThreadId) -> str:
+        return f"{chat_id}:{normalize_thread_id(thread_id)}"
 
     def _trim_outbound_stream_state(self) -> None:
         """Bound abandoned streams while preserving final-message fallback."""
@@ -664,7 +662,7 @@ class IMBridge:
             )
 
     def _remember_mention_targets(
-        self, chat_id: str, thread_id: int, msg: Dict[str, Any]
+        self, chat_id: str, thread_id: ThreadId, msg: Dict[str, Any]
     ) -> None:
         """Cache the latest explicit mention target for this chat/thread."""
         target_key = self._stream_target_key(chat_id, thread_id)
@@ -765,7 +763,7 @@ class IMBridge:
         subscribed = self.subscribers.get_subscribed_targets(platform=platform)
 
         for sub in subscribed:
-            if not self.key_manager.is_authorized(sub.chat_id, sub.thread_id):
+            if not self.key_manager.is_authorized(sub.chat_id, sub.thread_id, platform):
                 continue
 
             # E3: non-verbose subscribers only get user-facing streams.
@@ -797,7 +795,9 @@ class IMBridge:
                     handle = targets.get(target_key)
                     if handle is not None:
                         try:
-                            self.adapter.update_stream(handle, text=stream_text, seq=seq)
+                            self.adapter.update_stream(
+                                handle, text=stream_text, seq=seq
+                            )
                         except Exception:
                             self._log(
                                 f"[stream] update_stream exception for stream={stream_id} target={target_key} seq={seq}, frame dropped"
@@ -889,7 +889,7 @@ class IMBridge:
         for sub in subscribed:
             # Safety filter: only authorized chats are allowed to receive bridge
             # traffic even if stale subscription state exists on disk.
-            if not self.key_manager.is_authorized(sub.chat_id, sub.thread_id):
+            if not self.key_manager.is_authorized(sub.chat_id, sub.thread_id, platform):
                 continue
 
             target_key = self._stream_target_key(sub.chat_id, sub.thread_id)
@@ -1090,7 +1090,7 @@ class IMBridge:
     # =========================================================================
 
     def _handle_subscribe(
-        self, chat_id: str, chat_title: str, thread_id: int = 0
+        self, chat_id: str, chat_title: str, thread_id: ThreadId = 0
     ) -> None:
         """Handle /subscribe command."""
         # Reload auth state on-demand as subscribe semantics depend on current
@@ -1099,7 +1099,7 @@ class IMBridge:
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
 
         # If the chat is not yet authorized, generate a binding key.
-        if not self.key_manager.is_authorized(chat_id, thread_id):
+        if not self.key_manager.is_authorized(chat_id, thread_id, platform):
             key = self.key_manager.generate_key(chat_id, thread_id, platform)
             self.adapter.send_message(
                 chat_id,
@@ -1149,7 +1149,7 @@ class IMBridge:
         )
         self._log(f"[subscribe] chat={chat_id} thread={thread_id} title={chat_title}")
 
-    def _handle_unsubscribe(self, chat_id: str, thread_id: int = 0) -> None:
+    def _handle_unsubscribe(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /unsubscribe command — also revokes authorization so re-subscribe requires key."""
         # Reload auth state — authorization may have been granted by the daemon
         # process (im_bind_chat), so in-memory _authorized can be stale.
@@ -1170,7 +1170,7 @@ class IMBridge:
             )
         self._log(f"[unsubscribe] chat={chat_id} thread={thread_id} (auth revoked)")
 
-    def _handle_verbose(self, chat_id: str, thread_id: int = 0) -> None:
+    def _handle_verbose(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /verbose command (toggle)."""
         new_value = self.subscribers.toggle_verbose(chat_id, thread_id=thread_id)
         if new_value is None:
@@ -1188,7 +1188,7 @@ class IMBridge:
             )
         self._log(f"[verbose] chat={chat_id} thread={thread_id} new_value={new_value}")
 
-    def _handle_status(self, chat_id: str, thread_id: int = 0) -> None:
+    def _handle_status(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /status command."""
         # Get group info
         resp = self._daemon(
@@ -1220,9 +1220,10 @@ class IMBridge:
             capabilities = self.adapter.get_capabilities()
         except Exception:
             capabilities = {}
+        platform = str(getattr(self.adapter, "platform", "") or "unknown")
         im_status = {
-            "platform": str(getattr(self.adapter, "platform", "") or "unknown"),
-            "authorized": self.key_manager.is_authorized(chat_id, thread_id),
+            "platform": platform,
+            "authorized": self.key_manager.is_authorized(chat_id, thread_id, platform),
             "subscribed": self.subscribers.is_subscribed(chat_id, thread_id=thread_id),
             "verbose": self.subscribers.is_verbose(chat_id, thread_id=thread_id),
             "thread_id": thread_id,
@@ -1234,7 +1235,7 @@ class IMBridge:
         )
         self.adapter.send_message(chat_id, status_text, thread_id=thread_id)
 
-    def _handle_context(self, chat_id: str, thread_id: int = 0) -> None:
+    def _handle_context(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /context command."""
         resp = self._daemon(
             {"op": "context_get", "args": {"group_id": self.group.group_id}}
@@ -1249,7 +1250,7 @@ class IMBridge:
         context_text = format_context(context)
         self.adapter.send_message(chat_id, context_text, thread_id=thread_id)
 
-    def _handle_pause(self, chat_id: str, thread_id: int = 0) -> None:
+    def _handle_pause(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /pause command."""
         resp = self._daemon(
             {
@@ -1274,7 +1275,7 @@ class IMBridge:
             )
         self._log(f"[pause] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
-    def _handle_resume(self, chat_id: str, thread_id: int = 0) -> None:
+    def _handle_resume(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /resume command."""
         resp = self._daemon(
             {
@@ -1299,7 +1300,7 @@ class IMBridge:
             )
         self._log(f"[resume] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
-    def _handle_launch(self, chat_id: str, thread_id: int = 0) -> None:
+    def _handle_launch(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /launch command."""
         resp = self._daemon(
             {
@@ -1318,7 +1319,7 @@ class IMBridge:
             )
         self._log(f"[launch] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
-    def _handle_quit(self, chat_id: str, thread_id: int = 0) -> None:
+    def _handle_quit(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /quit command."""
         resp = self._daemon(
             {
@@ -1337,7 +1338,7 @@ class IMBridge:
             )
         self._log(f"[quit] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
-    def _handle_help(self, chat_id: str, thread_id: int = 0) -> None:
+    def _handle_help(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /help command."""
         platform = (
             str(getattr(self.adapter, "platform", "") or "").strip().lower()
@@ -1352,7 +1353,7 @@ class IMBridge:
         self._processing_lifecycle.refresh()
 
     def _remove_typing_indicator(
-        self, chat_id: str, thread_id: int = 0, *, reply_to: str = ""
+        self, chat_id: str, thread_id: ThreadId = 0, *, reply_to: str = ""
     ) -> None:
         """Complete the processing indicator for a chat, if any."""
         self._processing_lifecycle.complete(
@@ -1370,7 +1371,7 @@ class IMBridge:
         *,
         attachments: List[Dict[str, Any]],
         mention_user_ids: Optional[List[str]] = None,
-        thread_id: int = 0,
+        thread_id: ThreadId = 0,
         message_id: str = "",
         from_user_id: str = "",
     ) -> None:

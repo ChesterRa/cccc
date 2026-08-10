@@ -65,13 +65,11 @@ class WeixinAdapter(IMAdapter):
         self.max_chars = int(max_chars)
         self.max_lines = int(max_lines)
 
-        state_dir = (
-            log_path.parent
-            if isinstance(log_path, Path)
-            else Path.cwd()
-        )
+        state_dir = log_path.parent if isinstance(log_path, Path) else Path.cwd()
         self.cred_path = cred_path or (state_dir / "im_weixin_credentials.json")
-        self.context_cache_path = context_cache_path or (state_dir / "im_weixin_context_tokens.json")
+        self.context_cache_path = context_cache_path or (
+            state_dir / "im_weixin_context_tokens.json"
+        )
 
         self._queue_lock = threading.Lock()
         self._message_queue: List[Dict[str, Any]] = []
@@ -195,14 +193,16 @@ class WeixinAdapter(IMAdapter):
         fd, path = tempfile.mkstemp(suffix=suffix, prefix="wx_media_")
         with open(fd, "wb") as f:
             f.write(media.data)
-        return [{
-            "type": media.type,
-            "kind": "image" if media.type == "image" else "file",
-            "file_path": path,
-            "file_name": filename or (Path(path).name),
-            "mime_type": self._guess_mime_type(filename, media.type),
-            "provider": "weixin",
-        }]
+        return [
+            {
+                "type": media.type,
+                "kind": "image" if media.type == "image" else "file",
+                "file_path": path,
+                "file_name": filename or (Path(path).name),
+                "mime_type": self._guess_mime_type(filename, media.type),
+                "provider": "weixin",
+            }
+        ]
 
     def _guess_mime_type(self, filename: str, media_type: str) -> str:
         suffix = Path(filename or "").suffix.lower()
@@ -235,7 +235,9 @@ class WeixinAdapter(IMAdapter):
         message_id = ""
         raw = getattr(msg, "raw", None)
         if isinstance(raw, dict):
-            message_id = str(raw.get("client_id") or raw.get("msg_id") or raw.get("id") or "").strip()
+            message_id = str(
+                raw.get("client_id") or raw.get("msg_id") or raw.get("id") or ""
+            ).strip()
         if not message_id:
             message_id = f"wx_{int(time.time() * 1000)}"
 
@@ -256,19 +258,21 @@ class WeixinAdapter(IMAdapter):
 
     async def _async_connect(self) -> None:
         from wechatbot import WeChatBot
-        from wechatbot.auth import load_credentials
+        from wechatbot.auth import FIXED_QR_BASE_URL, load_credentials
 
         creds = await load_credentials(self.cred_path)
         if creds is None:
-            raise RuntimeError(f"weixin not logged in (missing credentials: {self.cred_path})")
+            raise RuntimeError(
+                f"weixin not logged in (missing credentials: {self.cred_path})"
+            )
 
         bot = WeChatBot(
-            base_url=self.api_base_url or None,
+            base_url=FIXED_QR_BASE_URL,
             cred_path=str(self.cred_path),
             on_error=lambda err: self._log(f"[bot] {type(err).__name__}: {err}"),
         )
         bot._credentials = creds
-        bot._base_url = str(creds.base_url or self.api_base_url or "").strip()
+        bot._base_url = FIXED_QR_BASE_URL
         with self._context_lock:
             self._bot = bot
             self._merge_bot_context_tokens(dict(self._context_tokens))
@@ -327,6 +331,7 @@ class WeixinAdapter(IMAdapter):
         receiver = self._receiver_task
 
         if loop and loop.is_running():
+
             async def _shutdown() -> None:
                 if bot is not None:
                     try:
@@ -434,7 +439,9 @@ class WeixinAdapter(IMAdapter):
     def download_attachment(self, attachment: Dict[str, Any]) -> bytes:
         file_path = str(attachment.get("file_path") or "").strip()
         if not file_path:
-            raise ValueError("weixin attachment has no file_path (media not pre-downloaded)")
+            raise ValueError(
+                "weixin attachment has no file_path (media not pre-downloaded)"
+            )
         return Path(file_path).read_bytes()
 
     def get_chat_title(self, chat_id: str) -> str:

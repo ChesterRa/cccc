@@ -143,6 +143,11 @@ pub async fn call(state: &AppState, op: &str, args: Map<String, Value>) -> ApiRe
         StatusCode::NOT_FOUND
     } else if error.0.contains("permission") {
         StatusCode::FORBIDDEN
+    } else if error.0.ends_with("_busy")
+        || error.0.ends_with("_conflict")
+        || error.0.ends_with("_lease_lost")
+    {
+        StatusCode::CONFLICT
     } else {
         StatusCode::BAD_REQUEST
     };

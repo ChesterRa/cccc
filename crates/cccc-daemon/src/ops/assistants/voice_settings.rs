@@ -1,5 +1,5 @@
 use cccc_contracts::{ActorRole, DaemonRequest, Event, utc_now};
-use cccc_core::{GroupStore, HomeLayout, ledger, settings};
+use cccc_core::{GroupStore, HomeLayout, assistant_state, ledger, settings, voice_recording_lease};
 use serde_json::{Map, Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
@@ -13,9 +13,13 @@ const ACTOR_ID: &str = "voice-secretary";
 
 pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
+    let assistant_id = string_arg(request, "assistant_id").unwrap_or_default();
+    if !assistant_id.is_empty() && assistant_id != ASSISTANT_ID {
+        return Err(OpError::new("assistant_not_found", "assistant not found"));
+    }
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let group = store.load(&group_id).map_err(OpError::not_found)?;
-    let state = group.extra.get(KEY).cloned().unwrap_or_else(|| json!({}));
+    let state = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     let assistant = project_actor_runtime(&group, effective_assistant(&state));
     let docs = state["documents"]
         .as_array()
@@ -27,7 +31,14 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let asks = state["ask_requests"]
         .as_array()
         .cloned()
-        .unwrap_or_default();
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|item| {
+            item["cleared_at"]
+                .as_str()
+                .is_none_or(|value| value.is_empty())
+        })
+        .collect::<Vec<_>>();
     let documents_by_path = docs
         .iter()
         .filter_map(|item| {
@@ -47,7 +58,7 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .and_then(|document| document["document_path"].as_str())
         .unwrap_or_default();
     object(
-        json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{ASSISTANT_ID:assistant},"assistant":assistant,"documents":docs,"documents_by_path":documents_by_path,"active_document_id":active_document_id,"active_document_path":active_document_path,"capture_target_document_id":active_document_id,"capture_target_document_path":active_document_path,"new_input_available":state["input_latest_seq"].as_u64().unwrap_or(0)>state["input_read_cursor"].as_u64().unwrap_or(0),"prompt_draft":state["prompt_draft"],"ask_requests":asks,"latest_ask_request":asks.first().cloned()}),
+        json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{ASSISTANT_ID:assistant},"assistant":assistant,"documents":docs,"documents_by_path":documents_by_path,"active_document_id":active_document_id,"active_document_path":active_document_path,"capture_target_document_id":active_document_id,"capture_target_document_path":active_document_path,"new_input_available":state["input_latest_seq"].as_u64().unwrap_or(0)>state["input_read_cursor"].as_u64().unwrap_or(0),"prompt_draft":state["prompt_draft"],"ask_requests":asks,"latest_ask_request":asks.first().cloned(),"recording_lease":voice_recording_lease::current(home).map_err(|error|OpError::new(error.code,error.message))?}),
     )
 }
 
@@ -64,6 +75,7 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .cloned()
         .unwrap_or_default();
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    assistant_state::load(home, &group_id).map_err(OpError::io)?;
     let before = store.load(&group_id).map_err(OpError::not_found)?;
     let was_enabled = before
         .extra
@@ -100,7 +112,7 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         actor_delivery::shutdown_actor(&group_id, ACTOR_ID);
         let _ = actor_runtime::apply(home, &before, ACTOR_ID, "actor.stop");
     }
-    let assistant = store
+    store
         .mutate(&group_id, |group| {
             if enabled && !group.actors.iter().any(|actor| actor.id == ACTOR_ID) {
                 let mut actor = group
@@ -131,21 +143,34 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             if !state.is_object() {
                 *state = json!({});
             }
-            let root = state.as_object_mut().expect("assistant state initialized");
-            let assistant = root.entry("assistant").or_insert_with(default_assistant);
+            let root = state.as_object_mut().expect("assistant config initialized");
+            let assistant = root.entry(ASSISTANT_ID).or_insert_with(|| {
+                json!({
+                    "enabled":false,
+                    "config":default_assistant()["config"].clone()
+                })
+            });
+            if !assistant.is_object() {
+                *assistant = json!({});
+            }
             assistant["enabled"] = json!(enabled);
-            assistant["lifecycle"] = json!(if enabled { "idle" } else { "disabled" });
             if let Some(config) = patch.get("config").and_then(Value::as_object) {
                 let target = assistant
-                    .get_mut("config")
-                    .and_then(Value::as_object_mut)
-                    .expect("assistant config initialized");
-                settings::merge(target, config);
+                    .as_object_mut()
+                    .expect("assistant config initialized")
+                    .entry("config")
+                    .or_insert_with(|| default_assistant()["config"].clone());
+                if !target.is_object() {
+                    *target = json!({});
+                }
+                settings::merge(
+                    target
+                        .as_object_mut()
+                        .expect("assistant config map initialized"),
+                    config,
+                );
             }
-            assistant["updated_at"] = json!(utc_now());
-            let assistant = assistant.clone();
-            root.insert(ASSISTANT_ID.into(), assistant.clone());
-            Ok(assistant)
+            Ok(())
         })
         .map_err(OpError::io)?;
     let after = store.load(&group_id).map_err(OpError::not_found)?;
@@ -200,7 +225,19 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     } else {
         false
     };
-    let assistant = project_actor_runtime(&after, assistant);
+    let runtime_state = assistant_state::update(home, &group_id, |state| {
+        let legacy = state.get(ASSISTANT_ID).cloned();
+        let assistant = state
+            .entry("assistant")
+            .or_insert_with(|| legacy.unwrap_or_else(default_assistant));
+        assistant["lifecycle"] = json!(if enabled { "idle" } else { "disabled" });
+        assistant["updated_at"] = json!(utc_now());
+        let assistant = assistant.clone();
+        state.insert(ASSISTANT_ID.into(), assistant);
+        Ok(Value::Object(state.clone()))
+    })
+    .map_err(OpError::io)?;
+    let assistant = project_actor_runtime(&after, effective_assistant(&runtime_state));
     let event = append_event(
         home,
         &group_id,
@@ -252,32 +289,26 @@ fn rollback_enable(
 
 pub fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let lifecycle = string_arg(request, "lifecycle").unwrap_or_else(|| "idle".into());
     let health = request
         .args
         .get("health")
         .cloned()
         .unwrap_or_else(|| json!({}));
-    let assistant = store
-        .mutate(&group_id, |group| {
-            let state = group.extra.entry(KEY).or_insert_with(|| json!({}));
-            if !state.is_object() {
-                *state = json!({});
-            }
-            let root = state.as_object_mut().expect("state");
-            let legacy = root.get(ASSISTANT_ID).cloned();
-            let assistant = root
-                .entry("assistant")
-                .or_insert_with(|| legacy.unwrap_or_else(default_assistant));
-            assistant["lifecycle"] = json!(lifecycle);
-            assistant["health"] = health.clone();
-            assistant["updated_at"] = json!(utc_now());
-            let assistant = assistant.clone();
-            root.insert(ASSISTANT_ID.into(), assistant.clone());
-            Ok(assistant)
-        })
-        .map_err(OpError::io)?;
+    let state = assistant_state::update(home, &group_id, |state| {
+        let legacy = state.get(ASSISTANT_ID).cloned();
+        let assistant = state
+            .entry("assistant")
+            .or_insert_with(|| legacy.unwrap_or_else(default_assistant));
+        assistant["lifecycle"] = json!(lifecycle);
+        assistant["health"] = health.clone();
+        assistant["updated_at"] = json!(utc_now());
+        let assistant = assistant.clone();
+        state.insert(ASSISTANT_ID.into(), assistant);
+        Ok(Value::Object(state.clone()))
+    })
+    .map_err(OpError::io)?;
+    let assistant = effective_assistant(&state);
     let event = append_event(
         home,
         &group_id,
@@ -304,14 +335,19 @@ fn append_event(
     Ok(event)
 }
 pub fn effective_assistant(state: &Value) -> Value {
-    state
+    let candidate = state
         .get("assistant")
         .cloned()
         .or_else(|| state.get(ASSISTANT_ID).cloned())
-        .unwrap_or_else(default_assistant)
+        .unwrap_or_else(|| json!({}));
+    let mut assistant = default_assistant();
+    if let (Some(target), Some(source)) = (assistant.as_object_mut(), candidate.as_object()) {
+        settings::merge(target, source);
+    }
+    assistant
 }
 pub fn default_assistant() -> Value {
-    json!({"assistant_id":ASSISTANT_ID,"kind":ASSISTANT_ID,"enabled":false,"principal":"assistant:voice_secretary","lifecycle":"disabled","health":{},"policy":{"action_allowlist":[],"requires_user_confirmation":[]},"config":{"capture_mode":"document","recognition_backend":"browser_asr","recognition_language":"auto","retention_ttl_seconds":604800,"auto_document_enabled":true,"document_default_dir":"docs/voice-secretary","auto_document_quiet_ms":1200,"auto_document_min_chars":80,"auto_document_max_window_seconds":30,"service_model_id":"sherpa_onnx_sense_voice_zh_en_ja_ko_yue_int8","tts_enabled":false},"ui":{"title":"Voice Secretary"}})
+    json!({"assistant_id":ASSISTANT_ID,"kind":ASSISTANT_ID,"enabled":false,"principal":"assistant:voice_secretary","lifecycle":"disabled","health":{},"policy":{"action_allowlist":["voice_secretary.request"],"requires_user_confirmation":[]},"config":{"capture_mode":"browser","recognition_backend":"browser_asr","recognition_language":"auto","retention_ttl_seconds":900,"auto_document_enabled":true,"document_default_dir":"docs/voice-secretary","auto_document_quiet_ms":5000,"auto_document_min_chars":700,"auto_document_max_window_seconds":300,"service_model_id":"","service_diarization_model_id":"","tts_enabled":false},"ui":{"surface":"composer_quick_strip","composer_control":"voice_secretary_workspace","title":"Voice Secretary"}})
 }
 
 fn project_actor_runtime(group: &cccc_core::GroupDoc, mut assistant: Value) -> Value {

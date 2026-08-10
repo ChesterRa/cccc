@@ -4,21 +4,38 @@ import hashlib
 import hmac
 import secrets
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 import yaml
 
 from ..paths import ensure_home
+from ..util.file_lock import acquire_lockfile, release_lockfile
 from ..util.fs import atomic_write_text
 from ..util.time import utc_now_iso
 
 _CONNECTOR_PREFIX = "wmc_"
 _SECRET_PREFIX = "wmcs_"
+_SETTINGS_STORE_KEY = "web_model_connectors"
+_T = TypeVar("_T")
 
 
 def _connectors_path(home: Optional[Path] = None) -> Path:
     base = Path(home) if home is not None else ensure_home()
     return base / "web_model_connectors.yaml"
+
+
+def _connectors_lock_path(home: Optional[Path] = None) -> Path:
+    return _connectors_path(home).with_suffix(".yaml.lock")
+
+
+def _settings_path(home: Optional[Path] = None) -> Path:
+    base = Path(home) if home is not None else ensure_home()
+    return base / "settings.yaml"
+
+
+def _settings_lock_path(home: Optional[Path] = None) -> Path:
+    base = Path(home) if home is not None else ensure_home()
+    return base / "settings.yaml.lock"
 
 
 def _hash_secret(secret: str) -> str:
@@ -86,8 +103,18 @@ def _collapse_active_connector_duplicates(connectors: Dict[str, Dict[str, Any]])
             current_by_actor[key] = connector_id
             continue
         current = connectors.get(current_id, {})
-        entry_rank = (str(entry.get("created_at") or ""), str(entry.get("updated_at") or ""), connector_id)
-        current_rank = (str(current.get("created_at") or ""), str(current.get("updated_at") or ""), current_id)
+        entry_rank = (
+            str(entry.get("created_at") or ""),
+            str(entry.get("updated_at") or ""),
+            str(entry.get("last_activity_at") or ""),
+            connector_id,
+        )
+        current_rank = (
+            str(current.get("created_at") or ""),
+            str(current.get("updated_at") or ""),
+            str(current.get("last_activity_at") or ""),
+            current_id,
+        )
         if entry_rank > current_rank:
             current_by_actor[key] = connector_id
 
@@ -103,7 +130,27 @@ def _collapse_active_connector_duplicates(connectors: Dict[str, Dict[str, Any]])
     return connectors
 
 
-def load_web_model_connectors(home: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
+def _normalized_connector_map(raw: Any) -> Dict[str, Dict[str, Any]]:
+    if isinstance(raw, dict):
+        connector_map: Any = raw.get("connectors") if isinstance(raw.get("connectors"), dict) else raw
+        items = connector_map.items() if isinstance(connector_map, dict) else ()
+    elif isinstance(raw, list):
+        items = (
+            (str(entry.get("connector_id") or ""), entry)
+            for entry in raw
+            if isinstance(entry, dict)
+        )
+    else:
+        items = ()
+    out: Dict[str, Dict[str, Any]] = {}
+    for connector_id, entry in items:
+        normalized = _normalize_entry(str(connector_id or ""), entry)
+        if normalized is not None:
+            out[normalized["connector_id"]] = normalized
+    return _collapse_active_connector_duplicates(out)
+
+
+def _read_connectors_unlocked(home: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
     path = _connectors_path(home)
     if not path.exists():
         return {}
@@ -111,21 +158,10 @@ def load_web_model_connectors(home: Optional[Path] = None) -> Dict[str, Dict[str
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except Exception:
         return {}
-    if not isinstance(raw, dict):
-        return {}
-    connector_map = raw.get("connectors") if isinstance(raw.get("connectors"), dict) else raw
-    if not isinstance(connector_map, dict):
-        return {}
-    out: Dict[str, Dict[str, Any]] = {}
-    for connector_id, entry in connector_map.items():
-        normalized = _normalize_entry(str(connector_id or ""), entry)
-        if normalized is not None:
-            out[normalized["connector_id"]] = normalized
-    return _collapse_active_connector_duplicates(out)
+    return _normalized_connector_map(raw)
 
 
-def save_web_model_connectors(connectors: Dict[str, Dict[str, Any]], home: Optional[Path] = None) -> None:
-    path = _connectors_path(home)
+def _connector_payload(connectors: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     payload: Dict[str, Any] = {"connectors": {}}
     for connector_id, entry in sorted(connectors.items(), key=lambda item: item[0]):
         normalized = _normalize_entry(connector_id, entry)
@@ -150,10 +186,126 @@ def save_web_model_connectors(connectors: Dict[str, Dict[str, Any]], home: Optio
             "last_turn_id": normalized["last_turn_id"],
             "last_error": normalized["last_error"],
         }
+    return payload
+
+
+def _write_connectors_unlocked(
+    connectors: Dict[str, Dict[str, Any]], home: Optional[Path] = None
+) -> None:
+    path = _connectors_path(home)
     atomic_write_text(
         path,
-        yaml.safe_dump(payload, allow_unicode=True, sort_keys=False, default_flow_style=False),
+        yaml.safe_dump(
+            _connector_payload(connectors),
+            allow_unicode=True,
+            sort_keys=False,
+            default_flow_style=False,
+        ),
     )
+
+
+def _entry_rank(entry: Dict[str, Any], connector_id: str) -> tuple[str, str, str, str]:
+    return (
+        str(entry.get("created_at") or ""),
+        str(entry.get("updated_at") or ""),
+        str(entry.get("last_activity_at") or ""),
+        connector_id,
+    )
+
+
+def _merge_connector_maps(
+    canonical: Dict[str, Dict[str, Any]], imported: Dict[str, Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
+    merged = {connector_id: dict(entry) for connector_id, entry in canonical.items()}
+    for connector_id, incoming in imported.items():
+        existing = merged.get(connector_id)
+        if not isinstance(existing, dict):
+            merged[connector_id] = dict(incoming)
+            continue
+        if _entry_rank(incoming, connector_id) > _entry_rank(existing, connector_id):
+            merged[connector_id] = {**existing, **incoming}
+        else:
+            merged[connector_id] = {**incoming, **existing}
+    return _collapse_active_connector_duplicates(merged)
+
+
+def _migrate_rust_settings_store(home: Optional[Path] = None) -> None:
+    """Move the former Rust-only settings section into the shared connector file."""
+
+    settings_path = _settings_path(home)
+    if not settings_path.exists():
+        return
+    try:
+        initial = yaml.safe_load(settings_path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return
+    if not isinstance(initial, dict) or _SETTINGS_STORE_KEY not in initial:
+        return
+
+    settings_lock = acquire_lockfile(_settings_lock_path(home))
+    try:
+        try:
+            settings = yaml.safe_load(settings_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return
+        if not isinstance(settings, dict) or _SETTINGS_STORE_KEY not in settings:
+            return
+        imported = _normalized_connector_map(settings.get(_SETTINGS_STORE_KEY))
+        connector_lock = acquire_lockfile(_connectors_lock_path(home))
+        try:
+            canonical = _read_connectors_unlocked(home)
+            if imported:
+                _write_connectors_unlocked(
+                    _merge_connector_maps(canonical, imported), home
+                )
+            settings.pop(_SETTINGS_STORE_KEY, None)
+            atomic_write_text(
+                settings_path,
+                yaml.safe_dump(settings, allow_unicode=True, sort_keys=False),
+            )
+            try:
+                from .settings import _invalidate_settings_cache
+
+                _invalidate_settings_cache()
+            except Exception:
+                pass
+        finally:
+            release_lockfile(connector_lock)
+    finally:
+        release_lockfile(settings_lock)
+
+
+def _mutate_web_model_connectors(
+    change: Callable[[Dict[str, Dict[str, Any]]], _T],
+    home: Optional[Path] = None,
+) -> _T:
+    _migrate_rust_settings_store(home)
+    lock = acquire_lockfile(_connectors_lock_path(home))
+    try:
+        connectors = _read_connectors_unlocked(home)
+        result = change(connectors)
+        _write_connectors_unlocked(connectors, home)
+        return result
+    finally:
+        release_lockfile(lock)
+
+
+def load_web_model_connectors(home: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
+    _migrate_rust_settings_store(home)
+    lock = acquire_lockfile(_connectors_lock_path(home))
+    try:
+        return _read_connectors_unlocked(home)
+    finally:
+        release_lockfile(lock)
+
+
+def save_web_model_connectors(connectors: Dict[str, Dict[str, Any]], home: Optional[Path] = None) -> None:
+    _migrate_rust_settings_store(home)
+    lock = acquire_lockfile(_connectors_lock_path(home))
+    try:
+        _write_connectors_unlocked(connectors, home)
+    finally:
+        release_lockfile(lock)
 
 
 def _new_connector_id(existing: Dict[str, Dict[str, Any]]) -> str:
@@ -181,39 +333,45 @@ def create_web_model_connector(
         raise ValueError("group_id is required")
     if not aid:
         raise ValueError("actor_id is required")
-    connectors = load_web_model_connectors(home)
-    connector_id = _new_connector_id(connectors)
-    secret = _new_secret()
-    now = utc_now_iso()
-    replaced_connector_ids: List[str] = []
-    for existing_id, existing in connectors.items():
-        if not isinstance(existing, dict) or bool(existing.get("revoked")):
-            continue
-        if str(existing.get("group_id") or "").strip() != gid:
-            continue
-        if str(existing.get("actor_id") or "").strip() != aid:
-            continue
-        existing["revoked"] = True
-        existing["updated_at"] = now
-        connectors[existing_id] = existing
-        replaced_connector_ids.append(str(existing_id or "").strip())
-    entry = {
-        "connector_id": connector_id,
-        "kind": "web_model_connector",
-        "group_id": gid,
-        "actor_id": aid,
-        "provider": str(provider or "").strip(),
-        "label": str(label or "").strip(),
-        "secret": secret,
-        "secret_hash": _hash_secret(secret),
-        "secret_preview": _preview(secret),
-        "revoked": False,
-        "created_at": now,
-        "updated_at": now,
-    }
-    connectors[connector_id] = entry
-    save_web_model_connectors(connectors, home)
-    return {**entry, "secret": secret, "replaced_connector_ids": replaced_connector_ids}
+
+    def _create(connectors: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        connector_id = _new_connector_id(connectors)
+        secret = _new_secret()
+        now = utc_now_iso()
+        replaced_connector_ids: List[str] = []
+        for existing_id, existing in connectors.items():
+            if not isinstance(existing, dict) or bool(existing.get("revoked")):
+                continue
+            if str(existing.get("group_id") or "").strip() != gid:
+                continue
+            if str(existing.get("actor_id") or "").strip() != aid:
+                continue
+            existing["revoked"] = True
+            existing["updated_at"] = now
+            connectors[existing_id] = existing
+            replaced_connector_ids.append(str(existing_id or "").strip())
+        entry = {
+            "connector_id": connector_id,
+            "kind": "web_model_connector",
+            "group_id": gid,
+            "actor_id": aid,
+            "provider": str(provider or "").strip(),
+            "label": str(label or "").strip(),
+            "secret": secret,
+            "secret_hash": _hash_secret(secret),
+            "secret_preview": _preview(secret),
+            "revoked": False,
+            "created_at": now,
+            "updated_at": now,
+        }
+        connectors[connector_id] = entry
+        return {
+            **entry,
+            "secret": secret,
+            "replaced_connector_ids": replaced_connector_ids,
+        }
+
+    return _mutate_web_model_connectors(_create, home)
 
 
 def list_web_model_connectors(home: Optional[Path] = None) -> List[Dict[str, Any]]:
@@ -256,15 +414,16 @@ def revoke_web_model_connector(connector_id: str, home: Optional[Path] = None) -
     cid = str(connector_id or "").strip()
     if not cid:
         return False
-    connectors = load_web_model_connectors(home)
-    entry = connectors.get(cid)
-    if not isinstance(entry, dict):
-        return False
-    entry["revoked"] = True
-    entry["updated_at"] = utc_now_iso()
-    connectors[cid] = entry
-    save_web_model_connectors(connectors, home)
-    return True
+    def _revoke(connectors: Dict[str, Dict[str, Any]]) -> bool:
+        entry = connectors.get(cid)
+        if not isinstance(entry, dict):
+            return False
+        entry["revoked"] = True
+        entry["updated_at"] = utc_now_iso()
+        connectors[cid] = entry
+        return True
+
+    return _mutate_web_model_connectors(_revoke, home)
 
 
 def record_web_model_connector_activity(
@@ -281,19 +440,22 @@ def record_web_model_connector_activity(
     cid = str(connector_id or "").strip()
     if not cid:
         return None
-    connectors = load_web_model_connectors(home)
-    entry = connectors.get(cid)
-    if not isinstance(entry, dict) or bool(entry.get("revoked")):
-        return None
-    entry["last_activity_at"] = utc_now_iso()
-    entry["last_method"] = str(method or "").strip()
-    entry["last_tool_name"] = str(tool_name or "").strip()
-    entry["last_call_status"] = str(call_status or "").strip()
-    if wait_status:
-        entry["last_wait_status"] = str(wait_status or "").strip()
-    if turn_id:
-        entry["last_turn_id"] = str(turn_id or "").strip()
-    entry["last_error"] = str(error or "").strip()
-    connectors[cid] = entry
-    save_web_model_connectors(connectors, home)
-    return mask_web_model_connector(entry)
+    def _record(
+        connectors: Dict[str, Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        entry = connectors.get(cid)
+        if not isinstance(entry, dict) or bool(entry.get("revoked")):
+            return None
+        entry["last_activity_at"] = utc_now_iso()
+        entry["last_method"] = str(method or "").strip()
+        entry["last_tool_name"] = str(tool_name or "").strip()
+        entry["last_call_status"] = str(call_status or "").strip()
+        if wait_status:
+            entry["last_wait_status"] = str(wait_status or "").strip()
+        if turn_id:
+            entry["last_turn_id"] = str(turn_id or "").strip()
+        entry["last_error"] = str(error or "").strip()
+        connectors[cid] = entry
+        return mask_web_model_connector(entry)
+
+    return _mutate_web_model_connectors(_record, home)

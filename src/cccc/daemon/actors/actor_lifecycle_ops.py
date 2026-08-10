@@ -145,7 +145,38 @@ def handle_actor_start(
         return _error("actor_start_failed", str(e))
     if not start_result["success"]:
         _restore_previous_enabled()
-        return _error("actor_start_failed", start_result.get("error") or "unknown error")
+        message = str(start_result.get("error") or "unknown error")
+        if message == "no active scope for group":
+            return _error(
+                "missing_project_root",
+                "missing project root for group (no active scope)",
+                details={"hint": "Attach a project root first (e.g. cccc attach <path> --group <id>)"},
+            )
+        if message.startswith("scope not attached:"):
+            scope_key = message.partition(":")[2].strip()
+            return _error(
+                "scope_not_attached",
+                message,
+                details={
+                    "group_id": group.group_id,
+                    "actor_id": actor_id,
+                    "scope_key": scope_key,
+                    "hint": "Attach this scope to the group (cccc attach <path> --group <id>)",
+                },
+            )
+        if message.startswith("project root path does not exist:"):
+            return _error(
+                "invalid_project_root",
+                "project root path does not exist",
+                details={
+                    "group_id": group.group_id,
+                    "actor_id": actor_id,
+                    "scope_key": str(actor.get("default_scope_key") or group.doc.get("active_scope_key") or "").strip(),
+                    "path": message.partition(":")[2].strip(),
+                    "hint": "Re-attach a valid project root (cccc attach <path> --group <id>)",
+                },
+            )
+        return _error("actor_start_failed", message)
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
     result: Dict[str, Any] = {"actor": actor, "event": start_result["event"]}
@@ -404,6 +435,28 @@ def handle_actor_restart(
             if runtime == "web_model" and runner_effective == "headless":
                 try:
                     write_headless_state(group.group_id, actor_id)
+                except Exception:
+                    pass
+                try:
+                    from .web_model_browser_delivery import (
+                        schedule_web_model_browser_delivery,
+                        web_model_browser_delivery_enabled,
+                    )
+                    from .web_model_browser_session import (
+                        schedule_web_model_chatgpt_browser_session_warmup,
+                    )
+
+                    if web_model_browser_delivery_enabled(group.group_id, actor):
+                        schedule_web_model_chatgpt_browser_session_warmup(
+                            group_id=group.group_id,
+                            actor_id=actor_id,
+                            reason="actor_restart",
+                            retry_seconds=0.0,
+                        )
+                        schedule_web_model_browser_delivery(
+                            group_id=group.group_id,
+                            actor_id=actor_id,
+                        )
                 except Exception:
                     pass
             elif actor_uses_codex_app_server_state(actor):

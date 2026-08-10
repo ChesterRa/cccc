@@ -30,7 +30,7 @@ def handle_inbox_list(args: Dict[str, Any]) -> DaemonResponse:
     limit = int(limit_raw) if isinstance(limit_raw, int) else 50
     kind_filter = str(args.get("kind_filter") or "all").strip()
     if kind_filter not in ("all", "chat", "notify"):
-        kind_filter = "all"
+        return _error("invalid_kind_filter", "kind_filter must be all, chat, or notify")
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     if not actor_id:

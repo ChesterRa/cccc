@@ -62,17 +62,16 @@ async fn revoked_legacy_chat_stays_revoked_after_refresh() {
     )
     .await;
     assert_eq!(refreshed["result"]["authorized"], serde_json::json!([]));
-    let state = cccc_core::integration_state::group_get(&store, &group.group_id, "im_bridge")
-        .expect("canonical IM state");
+    let state = cccc_core::im_state::load(&store, &group.group_id).expect("canonical IM state");
     assert_eq!(state["authorized"], serde_json::json!([]));
-    assert_eq!(state["subscribers"], serde_json::json!([]));
+    assert_eq!(state["subscribers"][0]["subscribed"], false);
     assert!(
         store
             .state_dir(&group.group_id)
             .expect("state dir")
             .join("im_authorized_chats.json")
             .is_file(),
-        "the legacy source remains present so the canonical empty arrays must prevent revival"
+        "the canonical authorization file remains present so an empty set cannot be revived"
     );
 }
 

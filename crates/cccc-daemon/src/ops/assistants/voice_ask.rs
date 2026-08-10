@@ -1,11 +1,11 @@
 use cccc_contracts::{DaemonRequest, Event, utc_now};
-use cccc_core::{GroupStore, HomeLayout, integration_state, ledger};
+use cccc_core::{GroupStore, HomeLayout, assistant_state, ledger};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::io;
 use uuid::Uuid;
 
-use super::{KEY, voice_input, voice_semantic_input, voice_settings};
+use super::{voice_input, voice_semantic_input, voice_settings};
 use crate::dispatch::{
     OpError, OpResult, bool_arg, first_non_blank_arg, object, required_arg, string_arg,
 };
@@ -46,8 +46,7 @@ pub(super) fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         voice_input::validate_document_path(&document_path)?;
     }
 
-    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    let state = integration_state::group_get(&store, &group_id, KEY).map_err(OpError::io)?;
+    let state = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     let document = if document_path.is_empty() {
         None
     } else {
@@ -169,7 +168,7 @@ pub(super) fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         text,
         move |root| ensure_pending(root, pending_for_state),
     )?;
-    let current = integration_state::group_get(&store, &group_id, KEY).map_err(OpError::io)?;
+    let current = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     let ask_request = find_request(&current, &request_id).unwrap_or(pending);
     result.insert("request_id".into(), json!(request_id));
     result.insert("ask_request".into(), ask_request);
@@ -234,59 +233,62 @@ pub(super) fn feedback(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
 
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    let (ask_request, assistant) =
-        integration_state::group_update(&store, &group_id, KEY, |value| {
-            let root = voice_input::state_root(value);
-            let asks = ask_requests(root);
-            let index = asks
-                .iter()
-                .position(|item| item["request_id"] == request_id)
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "request not found"))?;
-            let mut item = asks.remove(index);
-            item["status"] = json!(status);
-            if request.args.contains_key("reply_text")
-                || request.args.contains_key("result_text")
-                || request.args.contains_key("message")
-            {
-                item["reply_text"] = json!(reply_text);
+    let (ask_request, assistant) = assistant_state::update(home, &group_id, |root| {
+        let asks = ask_requests(root);
+        let index = asks
+            .iter()
+            .position(|item| item["request_id"] == request_id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "request not found"))?;
+        let mut item = asks.remove(index);
+        item["status"] = json!(status);
+        if request.args.contains_key("reply_text")
+            || request.args.contains_key("result_text")
+            || request.args.contains_key("message")
+        {
+            item["reply_text"] = json!(reply_text);
+        }
+        if !document_path.is_empty() {
+            item["document_path"] = json!(document_path);
+        }
+        if request.args.contains_key("artifact_paths") || !document_path.is_empty() {
+            item["artifact_paths"] = json!(artifact_paths);
+        }
+        if request.args.contains_key("source_summary") {
+            item["source_summary"] = json!(source_summary);
+        }
+        if request.args.contains_key("checked_at") {
+            item["checked_at"] = json!(checked_at);
+        }
+        if request.args.contains_key("source_urls") {
+            item["source_urls"] = json!(source_urls);
+        }
+        if !reply_text.is_empty() || matches!(status.as_str(), "needs_user" | "failed") {
+            if let Some(item) = item.as_object_mut() {
+                item.remove("cleared_at");
             }
-            if !document_path.is_empty() {
-                item["document_path"] = json!(document_path);
-            }
-            if request.args.contains_key("artifact_paths") || !document_path.is_empty() {
-                item["artifact_paths"] = json!(artifact_paths);
-            }
-            if request.args.contains_key("source_summary") {
-                item["source_summary"] = json!(source_summary);
-            }
-            if request.args.contains_key("checked_at") {
-                item["checked_at"] = json!(checked_at);
-            }
-            if request.args.contains_key("source_urls") {
-                item["source_urls"] = json!(source_urls);
-            }
-            if item["first_feedback_at"]
-                .as_str()
-                .is_none_or(|value| value.is_empty())
-            {
-                item["first_feedback_at"] = json!(now);
-            }
-            item["last_feedback_at"] = json!(now);
-            item["updated_at"] = json!(now);
-            asks.insert(0, item.clone());
-            let assistant = update_runtime_after_feedback(root, &request_id, &status, &now);
-            Ok((item, assistant))
-        })
-        .map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                OpError::new(
-                    "voice_ask_request_not_found",
-                    format!("voice ask request not found: {request_id}"),
-                )
-            } else {
-                OpError::io(error)
-            }
-        })?;
+        }
+        if item["first_feedback_at"]
+            .as_str()
+            .is_none_or(|value| value.is_empty())
+        {
+            item["first_feedback_at"] = json!(now);
+        }
+        item["last_feedback_at"] = json!(now);
+        item["updated_at"] = json!(now);
+        asks.insert(0, item.clone());
+        let assistant = update_runtime_after_feedback(root, &request_id, &status, &now);
+        Ok((item, assistant))
+    })
+    .map_err(|error| {
+        if error.kind() == io::ErrorKind::NotFound {
+            OpError::new(
+                "voice_ask_request_not_found",
+                format!("voice ask request not found: {request_id}"),
+            )
+        } else {
+            OpError::io(error)
+        }
+    })?;
 
     let event = append_feedback_event(&store, &group_id, &request_id, &status, &ask_request)?;
     object(json!({
@@ -301,22 +303,45 @@ pub(super) fn feedback(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 pub(super) fn clear(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let keep_active = bool_arg(request, "keep_active", false);
-    let (ask_requests, assistant) = update(home, &group_id, |root| {
+    let now = utc_now();
+    let (ask_requests, assistant, cleared_count) = update(home, &group_id, |root| {
         let asks = ask_requests(root);
-        if keep_active {
-            asks.retain(|item| is_active_status(item["status"].as_str().unwrap_or("")));
-        } else {
-            asks.clear();
+        let mut cleared_count = 0;
+        for item in asks.iter_mut() {
+            if keep_active && is_active_status(item["status"].as_str().unwrap_or("")) {
+                continue;
+            }
+            if item["cleared_at"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+            {
+                continue;
+            }
+            item["cleared_at"] = json!(now);
+            item["updated_at"] = json!(now);
+            cleared_count += 1;
         }
-        let asks = asks.clone();
-        let assistant = update_runtime_after_clear(root, &asks);
-        Ok((asks, assistant))
+        let visible = asks
+            .iter()
+            .filter(|item| {
+                item["cleared_at"]
+                    .as_str()
+                    .is_none_or(|value| value.is_empty())
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let assistant = update_runtime_after_clear(root, &visible);
+        Ok((visible, assistant, cleared_count))
     })?;
+    let kept_count = ask_requests.len();
     object(json!({
         "group_id":group_id,
         "assistant":assistant,
         "ask_requests":ask_requests,
-        "latest_ask_request":ask_requests.first().cloned()
+        "latest_ask_request":ask_requests.first().cloned(),
+        "cleared_count":cleared_count,
+        "removed_count":cleared_count,
+        "kept_count":kept_count
     }))
 }
 
@@ -351,11 +376,34 @@ fn update_runtime_after_feedback(
     status: &str,
     now: &str,
 ) -> Value {
+    if status == "working" {
+        let target_kind = ask_requests(root)
+            .iter()
+            .find(|item| item["request_id"] == request_id)
+            .and_then(|item| item["target_kind"].as_str())
+            .unwrap_or("secretary")
+            .to_owned();
+        return set_runtime(
+            root,
+            "working",
+            json!({
+                "status":"ask_working",
+                "last_ask_request_id":request_id,
+                "active_request_id":request_id,
+                "active_request_kind":if target_kind == "document" { "document" } else { "ask" },
+                "active_request_status":"working",
+                "last_ask_feedback_at":now
+            }),
+        );
+    }
     let next_active = ask_requests(root)
         .iter()
         .find(|item| {
             item["request_id"] != request_id
                 && is_active_status(item["status"].as_str().unwrap_or(""))
+                && item["cleared_at"]
+                    .as_str()
+                    .is_none_or(|value| value.is_empty())
         })
         .cloned();
     if let Some(active) = next_active {
@@ -479,11 +527,7 @@ fn update<T>(
     group_id: &str,
     change: impl FnOnce(&mut Map<String, Value>) -> io::Result<T>,
 ) -> Result<T, OpError> {
-    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    integration_state::group_update(&store, group_id, KEY, |value| {
-        change(voice_input::state_root(value))
-    })
-    .map_err(OpError::io)
+    assistant_state::update(home, group_id, change).map_err(OpError::io)
 }
 
 fn ask_requests(root: &mut Map<String, Value>) -> &mut Vec<Value> {

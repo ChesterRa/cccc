@@ -202,6 +202,125 @@ class TestDiagnosticsOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_terminal_since_returns_utf8_safe_forward_page(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="terminal-since")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")
+
+            with patch(
+                "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.history_since_page",
+                return_value={
+                    "data": "ab你".encode("utf-8"),
+                    "start_cursor": 3,
+                    "end_cursor": 8,
+                    "has_more": True,
+                    "cursor_expired": False,
+                },
+            ) as history_since_page:
+                resp = self._call(
+                    "terminal_since",
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "after": 3,
+                        "limit_bytes": 3,
+                    },
+                )[0]
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual((resp.result or {}).get("history", {}).get("data"), "ab你")
+            history_since_page.assert_called_once_with(
+                group_id=group.group_id,
+                actor_id="peer1",
+                after=3,
+                limit_bytes=3,
+            )
+            invalid = self._call(
+                "terminal_since",
+                {"group_id": group.group_id, "actor_id": "peer1"},
+            )[0]
+            self.assertFalse(invalid.ok)
+            self.assertEqual(str(getattr(invalid, "error", None).code), "invalid_args")
+        finally:
+            cleanup()
+
+    def test_terminal_snapshot_renders_at_the_complete_raw_cursor(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="terminal-snapshot")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")
+            incomplete = "你".encode("utf-8")[:2]
+
+            with patch(
+                "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.history_page",
+                return_value={
+                    "data": b"old\rnew" + incomplete,
+                    "start_cursor": 10,
+                    "end_cursor": 20,
+                    "has_more": False,
+                    "cursor_expired": False,
+                },
+            ):
+                resp = self._call(
+                    "terminal_snapshot",
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "limit_bytes": 4096,
+                    },
+                )[0]
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual((resp.result or {}).get("data"), "\x1b[2J\x1b[Hnew")
+            self.assertEqual((resp.result or {}).get("start_cursor"), 10)
+            self.assertEqual((resp.result or {}).get("end_cursor"), 17)
+        finally:
+            cleanup()
+
+    def test_terminal_cursor_operations_reuse_transcript_visibility_policy(self) -> None:
+        from cccc.daemon.ops.diagnostics_ops import (
+            handle_terminal_since,
+            handle_terminal_snapshot,
+        )
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="terminal-cursor-permission")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")
+
+            for handler in (handle_terminal_since, handle_terminal_snapshot):
+                with self.subTest(handler=handler.__name__):
+                    resp = handler(
+                        {
+                            "group_id": group.group_id,
+                            "actor_id": "peer1",
+                            "by": "peer2",
+                            "after": 0,
+                        },
+                        can_read_terminal_transcript=lambda _group, _by, _target: False,
+                        pty_backlog_bytes=lambda: 4096,
+                    )
+                    self.assertFalse(resp.ok)
+                    self.assertEqual(str(getattr(resp, "error", None).code), "permission_denied")
+        finally:
+            cleanup()
+
 
     def test_terminal_tail_strips_codex_working_status_lines(self) -> None:
         from unittest.mock import patch

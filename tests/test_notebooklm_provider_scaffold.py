@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -57,6 +58,40 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
             seen = notebooklm_adapter._run_with_vendor_auth(auth_payload, _probe())
             self.assertIn('"value": "new"', seen)
             self.assertEqual(str(os.environ.get("NOTEBOOKLM_AUTH_JSON") or ""), previous)
+
+    def test_build_client_uses_domain_preserving_vendor_storage_loader(self) -> None:
+        from cccc.providers.notebooklm.adapter import _build_client
+        from cccc.providers.notebooklm._vendor.notebooklm.auth import AuthTokens
+        from cccc.providers.notebooklm._vendor.notebooklm import client as vendor_client
+
+        sentinel_auth = object()
+        sentinel_client = object()
+        calls: list[str] = []
+
+        async def _from_storage():
+            calls.append("from_storage")
+            return sentinel_auth
+
+        with patch.object(AuthTokens, "from_storage", new=_from_storage), patch.object(
+            vendor_client,
+            "NotebookLMClient",
+            return_value=sentinel_client,
+        ) as client_type:
+            result = asyncio.run(
+                _build_client(
+                    auth_payload={
+                        "cookies": [
+                            {"name": "OSID", "value": "current", "domain": "notebook.google.com"},
+                            {"name": "OSID", "value": "legacy", "domain": "notebooklm.google.com"},
+                        ]
+                    },
+                    timeout_seconds=17.0,
+                )
+            )
+
+        self.assertIs(result, sentinel_client)
+        self.assertEqual(calls, ["from_storage"])
+        client_type.assert_called_once_with(sentinel_auth, timeout=17.0)
 
     def test_adapter_download_artifact_injects_vendor_auth_env(self) -> None:
         from cccc.providers.notebooklm.adapter import NotebookLMAdapter

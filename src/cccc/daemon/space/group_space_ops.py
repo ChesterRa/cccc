@@ -1070,7 +1070,9 @@ def _provider_runtime_readiness(provider: str) -> Dict[str, Any]:
     if pid != "notebooklm":
         return {"write_ready": False, "reason": "unsupported_provider"}
     provider_state = get_space_provider_state(pid)
+    enabled = bool(provider_state.get("enabled"))
     real_enabled = bool(provider_state.get("real_enabled"))
+    mode = str(provider_state.get("mode") or "disabled").strip().lower() or "disabled"
     stub_enabled = bool(_truthy_env("CCCC_NOTEBOOKLM_STUB"))
     auth_configured = False
     credential_read_error = ""
@@ -1079,14 +1081,20 @@ def _provider_runtime_readiness(provider: str) -> Dict[str, Any]:
     except Exception as e:
         credential_read_error = str(e)
         _LOG.warning("group-space credential read failed provider=%s: %s", pid, credential_read_error)
-    write_ready = (real_enabled and auth_configured) or ((not real_enabled) and stub_enabled)
+    write_ready = (
+        enabled and real_enabled and auth_configured and mode == "active"
+    ) or ((not real_enabled) and stub_enabled)
     reason = "ok"
     if credential_read_error:
         reason = "credential_read_failed"
         write_ready = False
-    if not write_ready:
+    elif not write_ready:
         if real_enabled and not auth_configured:
             reason = "missing_auth"
+        elif real_enabled and not enabled:
+            reason = "provider_disabled"
+        elif real_enabled and mode != "active":
+            reason = f"provider_{mode}"
         elif (not real_enabled) and (not stub_enabled):
             reason = "real_disabled_and_stub_disabled"
         else:
@@ -2501,6 +2509,13 @@ def handle_group_space_provider_credential_update(args: Dict[str, Any]) -> Daemo
                 clear=False,
             )
         status = _build_provider_credential_status(provider)
+        if not bool(status.get("env_configured")):
+            _ = set_space_provider_state(
+                provider,
+                enabled=False,
+                mode="disabled",
+                last_error="",
+            )
         return DaemonResponse(ok=True, result={"provider": provider, "credential": status})
     except NotebookLMProviderError as e:
         return _error(str(e.code or "space_provider_auth_invalid"), str(e))
@@ -2518,19 +2533,26 @@ def handle_group_space_provider_health_check(args: Dict[str, Any]) -> DaemonResp
     try:
         provider = _provider_or_error(provider_raw)
         current_state = get_space_provider_state(provider)
-        auth_json = _resolve_auth_json(provider)
+        candidate_auth_json = str(args.get("auth_json") or "").strip()
+        auth_json = candidate_auth_json or _resolve_auth_json(provider)
+        candidate_only = bool(candidate_auth_json)
         try:
             health = notebooklm_health_check(
                 auth_json_raw=auth_json,
                 real_enabled=bool(current_state.get("real_enabled")),
+                verify_remote=True,
             )
-            mode = "active" if bool(current_state.get("enabled")) else "disabled"
-            provider_state = set_space_provider_state(
-                provider,
-                mode=mode,
-                last_error="",
-                touch_health=True,
-            )
+            if candidate_only:
+                provider_state = current_state
+            else:
+                provider_state = set_space_provider_state(
+                    provider,
+                    enabled=True,
+                    real_enabled=True,
+                    mode="active",
+                    last_error="",
+                    touch_health=True,
+                )
             return DaemonResponse(
                 ok=True,
                 result={
@@ -2542,13 +2564,16 @@ def handle_group_space_provider_health_check(args: Dict[str, Any]) -> DaemonResp
                 },
             )
         except NotebookLMProviderError as e:
-            mode = "degraded" if bool(current_state.get("enabled")) else "disabled"
-            provider_state = set_space_provider_state(
-                provider,
-                mode=mode,
-                last_error=str(e),
-                touch_health=True,
-            )
+            if candidate_only:
+                provider_state = current_state
+            else:
+                mode = "degraded" if bool(current_state.get("enabled")) else "disabled"
+                provider_state = set_space_provider_state(
+                    provider,
+                    mode=mode,
+                    last_error=str(e),
+                    touch_health=True,
+                )
             return DaemonResponse(
                 ok=True,
                 result={

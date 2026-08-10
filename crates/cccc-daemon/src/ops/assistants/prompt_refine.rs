@@ -1,10 +1,10 @@
 use cccc_contracts::{DaemonRequest, Event, utc_now};
-use cccc_core::{GroupStore, HomeLayout, integration_state, ledger};
+use cccc_core::{GroupStore, HomeLayout, assistant_state, ledger};
 use serde_json::{Map, Value, json};
 use std::io;
 use uuid::Uuid;
 
-use super::{KEY, voice_input, voice_semantic_input, voice_settings};
+use super::{voice_input, voice_semantic_input, voice_settings};
 use crate::dispatch::{
     OpError, OpResult, bool_arg, first_non_blank_arg, object, required_arg, string_arg,
 };
@@ -398,8 +398,7 @@ fn clean_request_id(value: Option<String>) -> String {
 }
 
 fn load(home: &HomeLayout, group_id: &str) -> Result<Value, OpError> {
-    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    integration_state::group_get(&store, group_id, KEY).map_err(OpError::io)
+    assistant_state::load(home, group_id).map_err(OpError::io)
 }
 
 fn update<T>(
@@ -407,14 +406,7 @@ fn update<T>(
     group_id: &str,
     change: impl FnOnce(&mut Map<String, Value>) -> io::Result<T>,
 ) -> Result<T, OpError> {
-    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    integration_state::group_update(&store, group_id, KEY, |value| {
-        if !value.is_object() {
-            *value = json!({});
-        }
-        change(value.as_object_mut().expect("assistant state initialized"))
-    })
-    .map_err(OpError::io)
+    assistant_state::update(home, group_id, change).map_err(OpError::io)
 }
 
 fn object_mut<'a>(state: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<String, Value> {

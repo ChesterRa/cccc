@@ -85,6 +85,17 @@ ASSISTANT_ID_VOICE_SECRETARY = "voice_secretary"
 
 _STATE_SCHEMA = 1
 _STATE_FILENAME = "assistants.json"
+_RUST_STATE_KEY = "rust_state"
+_EPHEMERAL_ASSISTANT_HEALTH_KEYS = {
+    "actor",
+    "service",
+    "pid",
+    "port",
+    "host",
+    "alive",
+    "exit_code",
+    "websocket",
+}
 _MAX_TRANSCRIPT_CHARS = 32_000
 _MAX_TRANSCRIPT_SESSION_CHARS = 16_000
 _MAX_PROMPT_REFINE_CHARS = 16_000
@@ -246,12 +257,14 @@ def _load_runtime_state(group: Group) -> Dict[str, Any]:
             "voice_prompt_drafts": {},
             "voice_prompt_requests": {},
             "voice_ask_requests": {},
+            _RUST_STATE_KEY: {},
         }
     assistants = payload.get("assistants") if isinstance(payload.get("assistants"), dict) else {}
     voice_sessions = payload.get("voice_sessions") if isinstance(payload.get("voice_sessions"), dict) else {}
     voice_prompt_drafts = payload.get("voice_prompt_drafts") if isinstance(payload.get("voice_prompt_drafts"), dict) else {}
     voice_prompt_requests = payload.get("voice_prompt_requests") if isinstance(payload.get("voice_prompt_requests"), dict) else {}
     voice_ask_requests = payload.get("voice_ask_requests") if isinstance(payload.get("voice_ask_requests"), dict) else {}
+    rust_state = payload.get(_RUST_STATE_KEY) if isinstance(payload.get(_RUST_STATE_KEY), dict) else {}
     return {
         "schema": _STATE_SCHEMA,
         "group_id": group.group_id,
@@ -260,6 +273,7 @@ def _load_runtime_state(group: Group) -> Dict[str, Any]:
         "voice_prompt_drafts": {str(k): v for k, v in voice_prompt_drafts.items() if isinstance(v, dict)},
         "voice_prompt_requests": {str(k): v for k, v in voice_prompt_requests.items() if isinstance(v, dict)},
         "voice_ask_requests": {str(k): v for k, v in voice_ask_requests.items() if isinstance(v, dict)},
+        _RUST_STATE_KEY: dict(rust_state),
     }
 
 
@@ -275,14 +289,32 @@ def _voice_retention_ttl_seconds(group: Group) -> int:
 
 
 def _save_runtime_state(group: Group, payload: Dict[str, Any]) -> None:
+    assistants = payload.get("assistants") if isinstance(payload.get("assistants"), dict) else {}
+    durable_assistants: Dict[str, Any] = {}
+    for assistant_id, raw_entry in assistants.items():
+        if not isinstance(raw_entry, dict):
+            continue
+        entry: Dict[str, Any] = {}
+        for key in ("lifecycle", "updated_at"):
+            if key in raw_entry:
+                entry[key] = raw_entry[key]
+        if isinstance(raw_entry.get("health"), dict):
+            entry["health"] = {
+                str(key): value
+                for key, value in raw_entry["health"].items()
+                if str(key) not in _EPHEMERAL_ASSISTANT_HEALTH_KEYS
+            }
+        if entry:
+            durable_assistants[str(assistant_id)] = entry
     normalized = {
         "schema": _STATE_SCHEMA,
         "group_id": group.group_id,
-        "assistants": payload.get("assistants") if isinstance(payload.get("assistants"), dict) else {},
+        "assistants": durable_assistants,
         "voice_sessions": payload.get("voice_sessions") if isinstance(payload.get("voice_sessions"), dict) else {},
         "voice_prompt_drafts": payload.get("voice_prompt_drafts") if isinstance(payload.get("voice_prompt_drafts"), dict) else {},
         "voice_prompt_requests": payload.get("voice_prompt_requests") if isinstance(payload.get("voice_prompt_requests"), dict) else {},
         "voice_ask_requests": payload.get("voice_ask_requests") if isinstance(payload.get("voice_ask_requests"), dict) else {},
+        _RUST_STATE_KEY: payload.get(_RUST_STATE_KEY) if isinstance(payload.get(_RUST_STATE_KEY), dict) else {},
     }
     _state_path(group).parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(_state_path(group), normalized, indent=2)
@@ -621,6 +653,15 @@ def _clean_voice_prompt_request_id(value: Any) -> str:
 
 def _clean_voice_ask_request_id(value: Any) -> str:
     return _clean_voice_request_id(value, prefix="voice-ask")
+
+
+def _clean_voice_input_append_id(value: Any) -> str:
+    return str(value or "").strip()[:256]
+
+
+def _voice_semantic_input_segment_id(kind: str, request_id: str, input_append_id: str) -> str:
+    payload = f"{kind}\0{request_id}\0{input_append_id}".encode("utf-8")
+    return f"semantic-{hashlib.sha256(payload).hexdigest()}"
 
 
 def _voice_prompt_draft_public(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -1620,6 +1661,29 @@ def _voice_input_event_public(event: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _find_voice_input_event(group: Group, *, session_id: str, segment_id: str) -> Dict[str, Any]:
+    if not session_id or not segment_id:
+        return {}
+    path = _voice_input_stream_path(group)
+    if not path.is_file():
+        return {}
+    found: Dict[str, Any] = {}
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            try:
+                item = json.loads(line)
+            except Exception:
+                continue
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("session_id") or "") != session_id:
+                continue
+            if str(item.get("segment_id") or "") != segment_id:
+                continue
+            found = item
+    return _voice_input_event_public(found) if found else {}
+
+
 def _append_voice_input_event(
     group: Group,
     *,
@@ -1631,6 +1695,7 @@ def _append_voice_input_event(
     source: str = "",
     session_id: str = "",
     segment_id: str = "",
+    input_append_id: str = "",
     by: str = "",
     trigger: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
@@ -1661,6 +1726,7 @@ def _append_voice_input_event(
         "source": str(source or ""),
         "session_id": str(session_id or ""),
         "segment_id": str(segment_id or ""),
+        "input_append_id": str(input_append_id or ""),
         "by": str(by or ""),
         "trigger": dict(trigger or {}),
         "metadata": dict(metadata or {}),
@@ -4867,7 +4933,8 @@ def _latest_voice_input_notify_event(group: Group) -> Dict[str, Any]:
 def _try_emit_voice_input_notify_after_input(group: Group, *, reason: str) -> tuple[bool, str, Dict[str, Any]]:
     try:
         event = _emit_voice_input_notify(group, reason=reason)
-        return True, "", event if isinstance(event, dict) else {}
+        event = event if isinstance(event, dict) else {}
+        return bool(event), "", event
     except Exception as exc:
         message = str(exc).strip() or exc.__class__.__name__
         logger.warning("voice secretary input notify failed after durable append: group=%s error=%s", group.group_id, message)
@@ -4948,6 +5015,10 @@ def handle_assistant_voice_input_append(
             return _error("assistant_voice_input_append_failed", str(exc))
 
     request_id = ""
+    input_append_id = _clean_voice_input_append_id(args.get("input_append_id") or args.get("idempotency_key"))
+    existing_input_event: Dict[str, Any] = {}
+    prompt_request: Dict[str, Any] = {}
+    ask_request: Dict[str, Any] = {}
     metadata: Dict[str, Any] = {}
     event_kind = input_kind
     source = "secretary_panel"
@@ -4955,6 +5026,18 @@ def handle_assistant_voice_input_append(
     segment_id = f"instruction-{uuid.uuid4().hex}"
     if input_kind == "prompt_refine":
         request_id = _clean_voice_prompt_request_id(args.get("request_id"))
+        session_id = "voice-secretary-prompt-refine"
+        segment_id = (
+            _voice_semantic_input_segment_id(input_kind, request_id, input_append_id)
+            if input_append_id
+            else request_id
+        )
+        if input_append_id:
+            existing_input_event = _find_voice_input_event(
+                group,
+                session_id=session_id,
+                segment_id=segment_id,
+            )
         voice_transcript = _clean_multiline_text(args.get("voice_transcript") or args.get("text"), max_len=8_000)
         composer_text = _clean_multiline_text(args.get("composer_text"), max_len=8_000)
         if not voice_transcript and not composer_text:
@@ -4964,25 +5047,30 @@ def handle_assistant_voice_input_append(
         composer_snapshot_hash = str(args.get("composer_snapshot_hash") or "").strip()
         now = utc_now_iso()
         runtime_state = _load_runtime_state(group)
-        prompt_request = _merge_voice_prompt_request(
-            runtime_state,
-            group=group,
-            request_id=request_id,
-            composer_text=composer_text,
-            voice_transcript=voice_transcript,
-            operation=operation,
-            composer_context=composer_context,
-            composer_snapshot_hash=composer_snapshot_hash,
-            now=now,
-        )
-        prompt_draft_staled = _stale_pending_voice_prompt_draft_in_state(runtime_state, request_id=request_id, now=now)
-        _save_runtime_state(group, runtime_state)
+        if existing_input_event:
+            requests = runtime_state.get("voice_prompt_requests") if isinstance(runtime_state.get("voice_prompt_requests"), dict) else {}
+            prompt_request = dict(requests.get(request_id)) if isinstance(requests.get(request_id), dict) else {}
+            prompt_draft_staled = False
+        else:
+            prompt_request = _merge_voice_prompt_request(
+                runtime_state,
+                group=group,
+                request_id=request_id,
+                composer_text=composer_text,
+                voice_transcript=voice_transcript,
+                operation=operation,
+                composer_context=composer_context,
+                composer_snapshot_hash=composer_snapshot_hash,
+                now=now,
+            )
+            prompt_draft_staled = _stale_pending_voice_prompt_draft_in_state(runtime_state, request_id=request_id, now=now)
+            _save_runtime_state(group, runtime_state)
         merged_voice_transcript = "\n\n".join(
             str(item).strip()
             for item in (prompt_request.get("voice_transcripts") if isinstance(prompt_request.get("voice_transcripts"), list) else [])
             if str(item).strip()
         )
-        text = _clean_multiline_text(
+        text = str(existing_input_event.get("text") or "") or _clean_multiline_text(
             build_voice_prompt_refine_input_text(
                 composer_text=str(prompt_request.get("composer_text") or composer_text),
                 voice_transcript=merged_voice_transcript or voice_transcript,
@@ -5003,11 +5091,20 @@ def handle_assistant_voice_input_append(
             "prompt_draft_staled": prompt_draft_staled,
         }
         source = "composer_prompt_refine"
-        session_id = "voice-secretary-prompt-refine"
-        segment_id = request_id
         intent_hint = "prompt_refine"
     else:
         request_id = _clean_voice_ask_request_id(args.get("request_id"))
+        segment_id = (
+            _voice_semantic_input_segment_id(input_kind, request_id, input_append_id)
+            if input_append_id
+            else segment_id
+        )
+        if input_append_id:
+            existing_input_event = _find_voice_input_event(
+                group,
+                session_id=session_id,
+                segment_id=segment_id,
+            )
         instruction = _clean_multiline_text(args.get("instruction") or args.get("text"), max_len=8_000)
         source_text = _clean_multiline_text(args.get("source_text"), max_len=_MAX_TRANSCRIPT_CHARS)
         if not instruction and not source_text:
@@ -5034,7 +5131,8 @@ def handle_assistant_voice_input_append(
     raw_trigger.setdefault("language", language)
     raw_trigger.setdefault("instruction_policy", _voice_instruction_policy())
     try:
-        input_event = _append_voice_input_event(
+        input_event_created = not bool(existing_input_event)
+        input_event = existing_input_event or _append_voice_input_event(
             group,
             kind=event_kind,
             text=text,
@@ -5044,6 +5142,7 @@ def handle_assistant_voice_input_append(
             source=source,
             session_id=session_id,
             segment_id=segment_id,
+            input_append_id=input_append_id,
             by=by,
             trigger=raw_trigger,
             metadata=metadata,
@@ -5051,63 +5150,75 @@ def handle_assistant_voice_input_append(
         )
         if input_kind == "voice_instruction":
             runtime_state = _load_runtime_state(group)
-            request_now = utc_now_iso()
-            _upsert_voice_ask_request(
-                runtime_state,
-                group=group,
-                request_id=request_id,
-                status="pending",
-                request_text=text,
-                document_path=str(document.get("document_path") or document.get("workspace_path") or ""),
-                target_kind=str(metadata.get("target_kind") or "secretary"),
-                intent_hint=intent_hint,
-                language=language,
-                input_appended_at=request_now,
-                now=request_now,
+            requests = runtime_state.get("voice_ask_requests") if isinstance(runtime_state.get("voice_ask_requests"), dict) else {}
+            if not isinstance(requests.get(request_id), dict):
+                request_now = utc_now_iso()
+                ask_request = _upsert_voice_ask_request(
+                    runtime_state,
+                    group=group,
+                    request_id=request_id,
+                    status="pending",
+                    request_text=text,
+                    document_path=str(document.get("document_path") or document.get("workspace_path") or ""),
+                    target_kind=str(metadata.get("target_kind") or "secretary"),
+                    intent_hint=intent_hint,
+                    language=language,
+                    input_appended_at=request_now,
+                    now=request_now,
+                )
+                _save_runtime_state(group, runtime_state)
+            else:
+                ask_request = dict(requests[request_id])
+        event: Dict[str, Any] = {}
+        if input_event_created:
+            event = append_event(
+                group.ledger_path,
+                kind="assistant.voice.input",
+                group_id=group.group_id,
+                scope_key="",
+                by=by,
+                data={
+                    "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+                    "input_kind": event_kind,
+                    "target_kind": str(metadata.get("target_kind") or ""),
+                    "request_id": request_id,
+                    "input_append_id": input_append_id,
+                    "document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
+                    "input_preview": _clean_multiline_text(text, max_len=240),
+                },
             )
-            _save_runtime_state(group, runtime_state)
-        event = append_event(
-            group.ledger_path,
-            kind="assistant.voice.input",
-            group_id=group.group_id,
-            scope_key="",
-            by=by,
-            data={
-                "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
-                "input_kind": event_kind,
-                "target_kind": str(metadata.get("target_kind") or ""),
-                "request_id": request_id,
-                "document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
-                "input_preview": _clean_multiline_text(text, max_len=240),
-            },
-        )
-        assistant_after = _set_voice_assistant_runtime(
-            group,
-            lifecycle="working",
-            health={
-                "status": "prompt_refine_requested" if input_kind == "prompt_refine" else "instruction_requested",
-                "last_input_kind": event_kind,
-                "last_prompt_request_id": request_id if input_kind == "prompt_refine" else "",
-                "last_ask_request_id": request_id if input_kind == "voice_instruction" else "",
-                "active_request_id": request_id,
-                "active_request_kind": (
-                    "prompt"
-                    if input_kind == "prompt_refine"
-                    else "document" if str(metadata.get("target_kind") or "").strip().lower() == "document" else "ask"
-                ),
-                "active_request_status": "pending",
-                "last_document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
-                "last_input_at": utc_now_iso(),
-            },
-        )
+            assistant_after = _set_voice_assistant_runtime(
+                group,
+                lifecycle="working",
+                health={
+                    "status": "prompt_refine_requested" if input_kind == "prompt_refine" else "instruction_requested",
+                    "last_input_kind": event_kind,
+                    "last_prompt_request_id": request_id if input_kind == "prompt_refine" else "",
+                    "last_ask_request_id": request_id if input_kind == "voice_instruction" else "",
+                    "active_request_id": request_id,
+                    "active_request_kind": (
+                        "prompt"
+                        if input_kind == "prompt_refine"
+                        else "document" if str(metadata.get("target_kind") or "").strip().lower() == "document" else "ask"
+                    ),
+                    "active_request_status": "pending",
+                    "last_document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
+                    "last_input_at": utc_now_iso(),
+                },
+            )
+        else:
+            assistant_after = _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY)
         input_notify_emitted, input_notify_error, input_notify_event = _try_emit_voice_input_notify_after_input(group, reason="new_input")
-        actor_woken, actor_wake_error = _try_wake_voice_secretary_actor_after_input(
-            group,
-            by=by,
-            args=args,
-            effective_runner_kind=effective_runner_kind,
-            start_actor_process=start_actor_process,
-        )
+        actor_woken = False
+        actor_wake_error = ""
+        if input_event_created or input_notify_event:
+            actor_woken, actor_wake_error = _try_wake_voice_secretary_actor_after_input(
+                group,
+                by=by,
+                args=args,
+                effective_runner_kind=effective_runner_kind,
+                start_actor_process=start_actor_process,
+            )
         actor_notify_delivered, actor_notify_delivery_error = _try_deliver_voice_input_notify_after_wake(
             group,
             actor_woken=actor_woken,
@@ -5121,7 +5232,7 @@ def handle_assistant_voice_input_append(
                 "assistant": assistant_after,
                 "document": document,
                 "input_event": input_event,
-                "input_event_created": True,
+                "input_event_created": input_event_created,
                 "input_notify_emitted": input_notify_emitted,
                 "input_notify_error": input_notify_error,
                 "actor_woken": actor_woken,
@@ -5130,6 +5241,9 @@ def handle_assistant_voice_input_append(
                 "actor_notify_delivery_error": actor_notify_delivery_error,
                 "event": event,
                 "request_id": request_id,
+                "input_append_id": input_append_id,
+                "prompt_request": prompt_request,
+                "ask_request": _voice_ask_request_public(ask_request) if ask_request else {},
             },
         )
     except Exception as exc:
@@ -5177,6 +5291,18 @@ def handle_assistant_voice_document_instruction(
         document = _voice_document_public_record(group, record)
         intent_hint = _infer_voice_transcript_intent(instruction or source_text, raw_trigger)
         request_id = _clean_voice_ask_request_id(args.get("request_id"))
+        input_append_id = _clean_voice_input_append_id(args.get("input_append_id") or args.get("idempotency_key"))
+        session_id = "voice-secretary-user-instruction"
+        segment_id = (
+            _voice_semantic_input_segment_id("voice_instruction", request_id, input_append_id)
+            if input_append_id
+            else f"instruction-{uuid.uuid4().hex}"
+        )
+        existing_input_event = (
+            _find_voice_input_event(group, session_id=session_id, segment_id=segment_id)
+            if input_append_id
+            else {}
+        )
         raw_trigger.setdefault("trigger_kind", "user_instruction")
         raw_trigger.setdefault("mode", "meeting")
         raw_trigger.setdefault("recognition_backend", str((assistant.get("config") or {}).get("recognition_backend") or "browser_asr"))
@@ -5191,8 +5317,8 @@ def handle_assistant_voice_document_instruction(
         job_source_text = "\n\n".join(job_source_parts).strip()
         source_segment = {
             "schema": 1,
-            "segment_id": f"instruction-{uuid.uuid4().hex}",
-            "session_id": "voice-secretary-user-instruction",
+            "segment_id": segment_id,
+            "session_id": session_id,
             "group_id": group.group_id,
             "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
             "created_at": utc_now_iso(),
@@ -5204,7 +5330,8 @@ def handle_assistant_voice_document_instruction(
             "source": "user_instruction",
             "by": by,
         }
-        input_event = _append_voice_input_event(
+        input_event_created = not bool(existing_input_event)
+        input_event = existing_input_event or _append_voice_input_event(
             group,
             kind="user_instruction",
             text=job_source_text,
@@ -5212,67 +5339,80 @@ def handle_assistant_voice_document_instruction(
             language=str(raw_trigger.get("language") or ""),
             intent_hint=intent_hint,
             source="secretary_panel",
-            session_id="voice-secretary-user-instruction",
-            segment_id=str(source_segment.get("segment_id") or ""),
+            session_id=session_id,
+            segment_id=segment_id,
+            input_append_id=input_append_id,
             by=by,
             trigger=raw_trigger,
             metadata={"target_kind": "document", "request_id": request_id},
             emit_notify=False,
         )
         runtime_state = _load_runtime_state(group)
-        request_now = utc_now_iso()
-        _upsert_voice_ask_request(
-            runtime_state,
-            group=group,
-            request_id=request_id,
-            status="pending",
-            request_text=job_source_text,
-            document_path=str(document.get("document_path") or document.get("workspace_path") or ""),
-            target_kind="document",
-            intent_hint=intent_hint,
-            language=str(raw_trigger.get("language") or ""),
-            input_appended_at=request_now,
-            now=request_now,
-        )
-        _save_runtime_state(group, runtime_state)
-        event = append_event(
-            group.ledger_path,
-            kind="assistant.voice.document",
-            group_id=group.group_id,
-            scope_key="",
-            by=by,
-            data={
-                "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
-                "document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
-                "action": "input_appended",
-                "input_kind": "user_instruction",
-                "request_id": request_id,
-                "status": str(document.get("status") or "active"),
-                "workspace_path": str(document.get("workspace_path") or ""),
-                "title": str(document.get("title") or ""),
-            },
-        )
-        assistant_after = _set_voice_assistant_runtime(
-            group,
-            lifecycle="working",
-            health={
-                "status": "document_refine_requested",
-                "last_document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
-                "last_ask_request_id": request_id,
-                "active_request_id": request_id,
-                "active_request_kind": "document",
-                "active_request_status": "pending",
-                "last_document_instruction_at": utc_now_iso(),
-            },
-        )
+        requests = runtime_state.get("voice_ask_requests") if isinstance(runtime_state.get("voice_ask_requests"), dict) else {}
+        if not isinstance(requests.get(request_id), dict):
+            request_now = utc_now_iso()
+            ask_request = _upsert_voice_ask_request(
+                runtime_state,
+                group=group,
+                request_id=request_id,
+                status="pending",
+                request_text=job_source_text,
+                document_path=str(document.get("document_path") or document.get("workspace_path") or ""),
+                target_kind="document",
+                intent_hint=intent_hint,
+                language=str(raw_trigger.get("language") or ""),
+                input_appended_at=request_now,
+                now=request_now,
+            )
+            _save_runtime_state(group, runtime_state)
+        else:
+            ask_request = dict(requests[request_id])
+        event: Dict[str, Any] = {}
+        if input_event_created:
+            event = append_event(
+                group.ledger_path,
+                kind="assistant.voice.document",
+                group_id=group.group_id,
+                scope_key="",
+                by=by,
+                data={
+                    "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+                    "document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
+                    "action": "input_appended",
+                    "input_kind": "user_instruction",
+                    "request_id": request_id,
+                    "input_append_id": input_append_id,
+                    "status": str(document.get("status") or "active"),
+                    "workspace_path": str(document.get("workspace_path") or ""),
+                    "title": str(document.get("title") or ""),
+                },
+            )
+            assistant_after = _set_voice_assistant_runtime(
+                group,
+                lifecycle="working",
+                health={
+                    "status": "document_refine_requested",
+                    "last_document_path": str(document.get("document_path") or document.get("workspace_path") or ""),
+                    "last_ask_request_id": request_id,
+                    "active_request_id": request_id,
+                    "active_request_kind": "document",
+                    "active_request_status": "pending",
+                    "last_document_instruction_at": utc_now_iso(),
+                },
+            )
+        else:
+            assistant_after = _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY)
         input_notify_emitted, input_notify_error, input_notify_event = _try_emit_voice_input_notify_after_input(group, reason="new_input")
-        actor_woken, actor_wake_error = _try_wake_voice_secretary_actor_after_input(
-            group,
-            by=by,
-            args=args,
-            effective_runner_kind=effective_runner_kind,
-            start_actor_process=start_actor_process,
-        )
+        actor_woken = False
+        actor_wake_error = ""
+        if input_event_created or input_notify_event:
+            actor_woken, actor_wake_error = _try_wake_voice_secretary_actor_after_input(
+                group,
+                by=by,
+                args=args,
+                effective_runner_kind=effective_runner_kind,
+                start_actor_process=start_actor_process,
+            )
         actor_notify_delivered, actor_notify_delivery_error = _try_deliver_voice_input_notify_after_wake(
             group,
             actor_woken=actor_woken,
@@ -5286,7 +5426,7 @@ def handle_assistant_voice_document_instruction(
                 "document": document,
                 "assistant": assistant_after,
                 "input_event": input_event,
-                "input_event_created": True,
+                "input_event_created": input_event_created,
                 "input_notify_emitted": input_notify_emitted,
                 "input_notify_error": input_notify_error,
                 "actor_woken": actor_woken,
@@ -5295,6 +5435,8 @@ def handle_assistant_voice_document_instruction(
                 "actor_notify_delivery_error": actor_notify_delivery_error,
                 "event": event,
                 "request_id": request_id,
+                "input_append_id": input_append_id,
+                "ask_request": _voice_ask_request_public(ask_request),
             },
         )
     except Exception as exc:

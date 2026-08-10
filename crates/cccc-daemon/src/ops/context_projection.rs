@@ -16,10 +16,6 @@ pub(super) fn project(document: ContextDoc, version: String, detail: &str) -> Va
     ]);
     if detail == "full" {
         result.insert("board".into(), board(&tasks));
-        result.insert(
-            "actor_notes".into(),
-            serde_json::to_value(document.actor_notes).unwrap_or_else(|_| json!({})),
-        );
     }
     Value::Object(result)
 }

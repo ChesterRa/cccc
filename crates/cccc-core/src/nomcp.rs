@@ -1,7 +1,8 @@
 use cccc_contracts::utc_now;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -21,12 +22,44 @@ pub struct Session {
     pub scope_key: String,
     pub allowed_paths: Vec<String>,
     pub created_at: String,
+    #[serde(default)]
+    pub updated_at: String,
     pub expires_at: String,
+    #[serde(default)]
+    pub token_hash: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub secret_sha256: String,
+    #[serde(default)]
+    pub token_preview: String,
+    #[serde(default)]
+    pub repo_root: String,
     #[serde(default)]
     pub revoked_at: String,
     #[serde(default)]
     pub sent_message_ids: BTreeSet<String>,
+    #[serde(default, flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+impl Session {
+    fn credential_digest(&self) -> &str {
+        if self.token_hash.is_empty() {
+            &self.secret_sha256
+        } else {
+            &self.token_hash
+        }
+    }
+
+    fn canonicalize(&mut self) {
+        if self.token_hash.is_empty() {
+            self.token_hash = std::mem::take(&mut self.secret_sha256);
+        } else {
+            self.secret_sha256.clear();
+        }
+        if let Some(Value::Object(messages)) = self.extra.get("sent_messages") {
+            self.sent_message_ids.extend(messages.keys().cloned());
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,22 +95,29 @@ impl Store {
     pub fn create(&self, spec: CreateSpec) -> io::Result<Created> {
         let group = GroupStore::new(self.home.clone())?.load(&spec.group_id)?;
         let effective_scope = if spec.scope_key.trim().is_empty() {
-            group.active_scope_key
+            group.active_scope_key.clone()
         } else if group
             .scopes
             .iter()
             .any(|scope| scope.scope_key == spec.scope_key)
         {
-            spec.scope_key
+            spec.scope_key.clone()
         } else {
             return Err(io::Error::other("scope is not attached to group"));
         };
         if effective_scope.is_empty() {
             return Err(io::Error::other("group has no active scope"));
         }
+        let repo_root = group
+            .scopes
+            .iter()
+            .find(|scope| scope.scope_key == effective_scope)
+            .map(|scope| scope.url.clone())
+            .ok_or_else(|| io::Error::other("session scope is unavailable"))?;
         let sid = format!("nomcp_{}", &Uuid::new_v4().simple().to_string()[..16]);
         let secret = format!("nomcps_{}", Uuid::new_v4().simple());
         let now = chrono::Utc::now();
+        let now_text = utc_now();
         let session = Session {
             schema: "cccc.nomcp.session.v1".into(),
             sid: sid.clone(),
@@ -88,13 +128,18 @@ impl Store {
             recipient: spec.recipient.trim().into(),
             scope_key: effective_scope,
             allowed_paths: normalize_paths(spec.allowed_paths)?,
-            created_at: utc_now(),
+            created_at: now_text.clone(),
+            updated_at: now_text,
             expires_at: (now
                 + chrono::Duration::seconds(spec.expires_in_seconds.clamp(60, 604_800)))
             .to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
-            secret_sha256: digest(&secret),
+            token_hash: digest(&secret),
+            secret_sha256: String::new(),
+            token_preview: preview(&secret),
+            repo_root,
             revoked_at: String::new(),
             sent_message_ids: BTreeSet::new(),
+            extra: BTreeMap::new(),
         };
         self.save(&session)?;
         Ok(Created { session, secret })
@@ -135,7 +180,7 @@ impl Store {
         if expires < chrono::Utc::now() {
             return Err(io::Error::other("session expired"));
         }
-        if digest(secret) != session.secret_sha256 {
+        if digest(secret) != session.credential_digest() {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "invalid session secret",
@@ -148,7 +193,9 @@ impl Store {
         let Some(mut session) = self.get(sid)? else {
             return Ok(false);
         };
+        session.canonicalize();
         session.revoked_at = utc_now();
+        session.updated_at = session.revoked_at.clone();
         self.save(&session)?;
         Ok(true)
     }
@@ -160,6 +207,8 @@ impl Store {
         if !session.sent_message_ids.insert(message_id.into()) {
             return Ok(false);
         }
+        session.canonicalize();
+        session.updated_at = utc_now();
         self.save(&session)?;
         Ok(true)
     }
@@ -208,4 +257,11 @@ fn validate_sid(sid: &str) -> io::Result<()> {
 
 fn digest(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
+}
+
+fn preview(secret: &str) -> String {
+    if secret.len() <= 12 {
+        return "****".into();
+    }
+    format!("{}...{}", &secret[..7], &secret[secret.len() - 4..])
 }

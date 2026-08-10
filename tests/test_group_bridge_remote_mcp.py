@@ -69,6 +69,30 @@ class TestGroupBridgeRemoteMcp(unittest.TestCase):
             access_level=access_level,
         )
 
+    def test_initialize_negotiates_supported_legacy_protocol_versions(self) -> None:
+        from cccc.ports.mcp.group_bridge import handle_group_bridge_request
+
+        context = self._bridge_context(target_group_id="g_target", access_level="messages")
+        cases = {
+            "2025-11-25": "2025-11-25",
+            "2025-06-18": "2025-06-18",
+            "2024-11-05": "2024-11-05",
+            "2099-01-01": "2025-11-25",
+        }
+        for requested, expected in cases.items():
+            with self.subTest(requested=requested):
+                response = handle_group_bridge_request(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "init",
+                        "method": "initialize",
+                        "params": {"protocolVersion": requested},
+                    },
+                    context,
+                )
+                self.assertEqual(response["result"]["protocolVersion"], expected)
+                self.assertIs(response["result"]["capabilities"]["tools"]["listChanged"], False)
+
     def test_group_bridge_tool_specs_are_stable_and_do_not_enter_web_model(self) -> None:
         from cccc.ports.mcp.group_bridge import group_bridge_tool_specs
         from cccc.ports.mcp.server import _WEB_MODEL_FOREMAN_ADVERTISED_TOOL_NAMES, _WEB_MODEL_PEER_ADVERTISED_TOOL_NAMES

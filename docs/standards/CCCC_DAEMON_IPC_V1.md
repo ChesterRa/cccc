@@ -348,8 +348,11 @@ Notes:
 - SDK-compatible daemons MUST return `ipc_v: 1`; omitting it is interpreted as IPC version `0`.
 - SDK-compatible daemons MUST identify their active implementation as `python` or `rust`.
 - `compatibility`, when present, is an implementation-specific compatibility identity; clients MUST NOT infer compatibility from the implementation name alone.
-- SDK-compatible daemons MUST return a `capabilities` feature map. Python and Rust daemons advertise supported `events_stream` and `remote_access` features here.
+- SDK-compatible daemons MUST return a `capabilities` feature map. Python and Rust daemons advertise supported `events_stream`, `remote_access`, and optional browser-attach operations here.
+- Each optional browser stream is advertised under its exact operation name (`presentation_browser_attach`, `presentation_browser_vnc_attach`, `space_provider_auth_browser_attach`, `space_provider_auth_browser_vnc_attach`, `web_model_browser_attach`, or `web_model_browser_vnc_attach`). `true` means the daemon recognizes that streaming upgrade; `false` means callers MUST use another product surface or treat the operation as unavailable.
+- A product implementation MAY serve an equivalent ephemeral browser surface directly through its local Web port. That does not make the daemon IPC upgrade supported: the exact daemon capability MUST remain `false` unless that daemon recognizes and serves the operation itself.
 - Clients SHOULD probe operation support independently; a recognized operation may reject empty probe arguments, but MUST NOT return `unknown_op`.
+- Clients MUST NOT probe an unadvertised browser attach operation merely to discover support: a successful probe upgrades the connection and may acquire the only controller. They SHOULD consult the exact capability first.
 - Clients MUST use protocol, compatibility, and capability fields instead of exact product-version equality.
 - Ordinary business commands MUST NOT stop, signal, or replace a reachable daemon. Implementation replacement is restricted to explicit daemon lifecycle commands.
 
@@ -1210,7 +1213,7 @@ Result:
 }
 ```
 
-#### `capability_install` / `capability_install_target`
+#### `capability_install_target`
 
 Install and enable either an existing capability id or one or more `SKILL.md` records from a local
 path, a direct HTTP(S) URL, or a GitHub repository. GitHub repositories import a root `SKILL.md`
@@ -1392,6 +1395,92 @@ Args:
 
 Result: the `group_preamble_get` result plus `changed: boolean`.
 
+#### `group_help_get`
+
+Read the effective group collaboration reference from the canonical
+`CCCC_HELP.md` override or the built-in fallback. When `actor_id` is supplied,
+the daemon MUST apply the document's `## @role:`, `## @actor:`, and
+`## @voice_secretary` visibility rules before returning `markdown`. Runtime-only
+MCP addenda are outside this operation and MAY be appended by the MCP adapter.
+`user` and the foreman may request any actor's effective help; a peer may request
+only its own actor view and MUST NOT use this operation to read another actor's
+scoped note.
+
+Args:
+```ts
+{ group_id: string; actor_id?: string; by?: string }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  actor_id: string | null
+  source: "builtin" | "home"
+  source_path: string
+  filename: "CCCC_HELP.md"
+  overridden: boolean
+  markdown: string
+}
+```
+
+#### `actor_notes_get`
+
+Read actor-scoped notes from `## @actor: <actor_id>` blocks in the canonical
+group `CCCC_HELP.md`. `user` and the foreman may read any actor or omit
+`target_actor_id` to list all notes. A peer MUST provide its own actor id and
+MUST NOT read another actor's note.
+
+Args:
+```ts
+{ group_id: string; target_actor_id?: string; by?: string }
+```
+
+Result when a target is supplied:
+```ts
+{
+  target_actor_id: string
+  content: string
+  source: "builtin" | "home"
+  path: string
+}
+```
+
+Result when listing:
+```ts
+{
+  actor_notes: Array<{ actor_id: string; content: string }>
+  source: "builtin" | "home"
+  path: string
+}
+```
+
+#### `actor_notes_set`
+
+Create or replace one existing actor's scoped note in the canonical group help
+document. Only `user` or the foreman may mutate actor notes. The daemon MUST
+preserve common, role, other-actor, Voice Secretary, and unknown tagged blocks,
+write atomically, and MUST NOT create a Context or actor-record copy.
+
+Args:
+```ts
+{ group_id: string; target_actor_id: string; content: string; by?: string }
+```
+
+Result: the targeted `actor_notes_get` result plus `changed: boolean`.
+
+#### `actor_notes_clear`
+
+Remove one existing actor's scoped note without changing other help content.
+Permission and preservation rules are identical to `actor_notes_set`.
+
+Args:
+```ts
+{ group_id: string; target_actor_id: string; by?: string }
+```
+
+Result: the targeted `actor_notes_get` result plus `changed: boolean`.
+
 #### `group_create`
 
 Args:
@@ -1451,7 +1540,7 @@ Args:
 
 Result:
 ```ts
-{ group_id: string; ruleset: { rules: Array<unknown>; snippets: Record<string, string> }; event: CCCSEventV1 }
+{ group_id: string; event: CCCSEventV1 }
 ```
 
 #### `group_set_state`
@@ -1496,6 +1585,17 @@ Read the group-scoped state for first-party built-in assistants. Voice
 Secretary service-local ASR runs in-process through the Rust `sherpa-onnx`
 binding. The native runtime is linked into the CCCC binary; model weights remain
 explicit, checksummed downloads under `CCCC_HOME/cache/voice-models`.
+
+Voice Secretary configuration (`enabled` and `config`) remains in
+`group.yaml:assistants.voice_secretary`. Durable workflow records shared by the
+Python and Rust implementations live in
+`groups/<group_id>/state/assistants.json`: lifecycle, durable health, sessions,
+prompt drafts/requests, and ask requests. Process observations such as PID,
+port, live service/socket state, and actor handles MUST NOT be persisted there.
+Implementations MUST preserve the reserved `rust_state` object when updating
+the common records. A legacy Rust workflow embedded in `group.yaml:assistants`
+is imported canonical-first; after the canonical file commits, only assistant
+configuration remains in `group.yaml`.
 
 Args:
 ```ts
@@ -1935,12 +2035,13 @@ Result:
 
 #### `assistant_voice_document_instruction`
 
-Append a user instruction into the same Voice Secretary input stream used for
-ASR transcript. The daemon emits a targeted `voice_secretary_input` notify; the
-runtime actor works from the inline `input_envelope` and saves the full revised markdown.
-The daemon does not directly append the instruction to the document. Cross-peer
-handoff is intentionally handled only by `assistant_voice_request`, and only when
-the Voice Secretary decides the work belongs to foreman or one concrete peer.
+Append a user instruction for one active working document into the same Voice
+Secretary input stream used for ASR transcript. The daemon emits a targeted
+`voice_secretary_input` notify and the runtime actor works from the inline
+`input_envelope`. The daemon does not directly append the instruction to a
+document. Cross-peer handoff is intentionally handled only by
+`assistant_voice_request`, and only when the Voice Secretary decides the work
+belongs to foreman or one concrete peer.
 
 Args:
 ```ts
@@ -1948,6 +2049,8 @@ Args:
   group_id: string
   by?: string
   document_path: string
+  request_id?: string
+  input_append_id?: string
   instruction?: string
   source_text?: string
   trigger?: Record<string, unknown>
@@ -1960,6 +2063,9 @@ Result:
   group_id: string
   assistant?: Record<string, unknown>
   document: Record<string, unknown>
+  request_id: string
+  input_append_id?: string
+  ask_request?: Record<string, unknown>
   input_event?: Record<string, unknown>
   input_event_created?: boolean
   input_notify_emitted?: boolean
@@ -1972,21 +2078,31 @@ Result:
 }
 ```
 
-#### `assistant_voice_input_append` (`kind="prompt_refine"`)
+`request_id` identifies the logical Ask request. `input_append_id` identifies
+one durable append attempt. A caller retrying an accepted append MUST reuse both
+values. The daemon MUST then return the existing input with
+`input_event_created=false` and MUST NOT append a second semantic input, request
+event, or notification. When either value is omitted, the daemon may generate
+it and no retry guarantee exists until the caller retains the returned values.
 
-Create or update a composer refinement request. The daemon persists the request
-before emitting one targeted `voice_secretary_input` notification. Its canonical
-`input_envelope` carries `request_id`, `operation`, `composer_snapshot_hash`, and
-matching composer metadata. This operation creates work for Voice Secretary; it
-does not create a prompt draft.
+#### `assistant_voice_input_append`
+
+Append a general Voice Secretary Ask or create/update a composer refinement
+request. The daemon persists the request before emitting one targeted
+`voice_secretary_input` notification. This operation creates work for Voice
+Secretary; it does not create a prompt draft.
 
 Args:
 ```ts
 {
   group_id: string
   by?: string
-  kind: "prompt_refine"
+  kind: "voice_instruction" | "prompt_refine"
   request_id?: string
+  input_append_id?: string
+  instruction?: string
+  text?: string
+  source_text?: string
   voice_transcript?: string
   composer_text?: string
   operation?: "append_to_composer_end" | "replace_with_refined_prompt" | string
@@ -1995,7 +2111,92 @@ Args:
 }
 ```
 
-At least one of `voice_transcript` or `composer_text` must be non-empty.
+For `voice_instruction`, at least one of `instruction`/`text` or `source_text`
+must be non-empty. For `prompt_refine`, at least one of `voice_transcript` or
+`composer_text` must be non-empty. `request_id` groups a composer refinement and
+may be reused for intentional follow-up input. Each distinct follow-up MUST use
+a new `input_append_id`; an exact retry MUST reuse the prior one and follows the
+same no-duplicate rule as `assistant_voice_document_instruction`.
+
+Result:
+```ts
+{
+  group_id: string
+  assistant?: Record<string, unknown>
+  request_id: string
+  input_append_id?: string
+  prompt_request?: Record<string, unknown>
+  ask_request?: Record<string, unknown>
+  input_event?: Record<string, unknown>
+  input_event_created: boolean
+  input_notify_emitted: boolean
+  input_notify_error?: string
+  actor_woken?: boolean
+  actor_wake_error?: string
+  actor_notify_delivered?: boolean
+  actor_notify_delivery_error?: string
+  event?: CCCSEventV1
+}
+```
+
+#### `assistant_voice_instruction_feedback`
+
+Report progress or the terminal result for an existing Voice Secretary Ask.
+Only the `voice-secretary` actor/principal may submit feedback.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: "voice-secretary" | "assistant:voice_secretary"
+  request_id: string
+  status: "working" | "done" | "needs_user" | "failed"
+  reply_text?: string
+  result_text?: string
+  message?: string
+  document_path?: string
+  artifact_paths?: string[]
+  source_summary?: string
+  checked_at?: string
+  source_urls?: string[]
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  assistant: Record<string, unknown>
+  ask_request: Record<string, unknown>
+  event: CCCSEventV1
+}
+```
+
+#### `assistant_voice_ask_requests_clear`
+
+Hide Ask history from the current projection. `keep_active=true` preserves
+`pending` and `working` requests in the visible result. Clearing is a display
+operation, not cancellation: the daemon MUST retain enough bounded state to
+accept later feedback for a cleared in-flight request. User-visible feedback
+may make that request visible again.
+
+Args:
+```ts
+{ group_id: string; keep_active?: boolean; by?: string }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  assistant: Record<string, unknown>
+  ask_requests: Array<Record<string, unknown>>
+  latest_ask_request?: Record<string, unknown>
+  cleared_count: number
+  removed_count: number
+  kept_count: number
+}
+```
 
 #### `assistant_voice_prompt_draft_submit`
 
@@ -2308,10 +2509,19 @@ Notes:
 - If `env_private` is provided (even empty), it is treated as authoritative for this create: it clears any existing private keys for that actor_id, then sets the provided keys.
 - `profile_id` links the actor to a global Actor Profile and applies profile-controlled runtime fields + profile secrets.
 - When `profile_id` is used, `env_private` is rejected (linked actor private env is profile-controlled).
+- The appended `actor.add` event starts that actor id's current generation. The daemon MUST initialize the new generation's read boundary at that append position, so events from before the add are not delivered as unread. Removing and later re-adding the same actor id starts a new generation at the later `actor.add` position.
+- Adding an enabled actor to an `active` or `idle` group MAY start it immediately and transition the group's runtime to running. Adding one to a `paused` or `stopped` group MUST only persist the actor and MUST NOT change the group lifecycle state.
+- When immediate startup is attempted, startup capability baselines follow the same rules as `actor_start` below.
 
 Result:
 ```ts
-{ actor: Record<string, unknown>; event: CCCSEventV1 }
+{
+  actor: Record<string, unknown>
+  event: CCCSEventV1
+  running?: boolean
+  start_event?: CCCSEventV1
+  start_error?: string
+}
 ```
 
 #### `actor_update`
@@ -2368,6 +2578,8 @@ Result:
 Notes:
 - For linked actors (`profile_id` set), `actor_start` and `actor_restart` first resolve profile runtime config and profile secrets.
 - If the linked profile includes `capability_defaults`, daemon applies baseline capability enables through capability control plane before launch.
+- Daemon also applies role defaults and the actor's `capability_autoload` before launch. These are durable desired capability bindings, so they remain applied when the subsequent runtime launch fails.
+- A daemon-launched runtime process MUST resolve an explicit existing attached scope from the actor default or group active scope. It MUST return `missing_project_root`, `scope_not_attached`, or `invalid_project_root` as applicable and MUST NOT fall back to the daemon working directory. An explicitly external structured executor may omit a local process only when its product capability and documentation say so.
 
 #### `actor_new_session`
 
@@ -2728,6 +2940,12 @@ Args:
 Every resolved path MUST be a regular file beneath the group's active scope.
 All paths are validated and read before any message is appended. The resulting
 event uses the normal `send` recipient, permission, wake, and delivery rules.
+If `client_id` already identifies an accepted message, the daemon MUST return
+that message before reading or storing new source content. After source paths
+have been validated and read, deterministic normal-send validation (including
+priority, recipients, and required peer insight) MUST succeed before any new
+blob is stored. A request rejected by that preflight MUST NOT add a blob or
+ledger event.
 
 Result:
 ```ts
@@ -2855,15 +3073,30 @@ Result:
 { acked: boolean; already: boolean; event: CCCSEventV1 | null }
 ```
 
+The target MUST be an `attention` `chat.message` addressed to `actor_id` during
+that actor id's current generation, and the sender cannot acknowledge its own
+message. Generation membership is determined by ledger append order from the
+latest `actor.add`, never by event timestamps. Invalid targets append no event.
+If that actor has already acknowledged the message, the operation is
+idempotent and returns `acked=true`, `already=true`, and `event=null`.
+
 ### 8.7 Inbox (Read Cursor)
 
 #### `inbox_list`
 
 Return unread `chat.message` and/or `system.notify` events for an actor based on its read cursor.
+The current actor generation begins at the latest `actor.add` for that actor id in
+ledger append order. Inbox membership, read/ACK/obligation status, and automatic
+delivery MUST exclude events before that boundary, including after an actor is
+removed and re-added with the same id. Histories with no recoverable `actor.add`
+boundary MAY fall back to the actor and event timestamps for compatibility.
 When a cursor contains a resolvable `event_id`, cursor advancement, unread membership,
 read status, and obligation status MUST use ledger append order. The cursor `ts` is
 informational and a compatibility fallback only; equal or regressed timestamps MUST
 NOT change event coverage.
+`kind_filter` MUST be validated before reading or mutating state. Filtering is applied
+before `limit`; an unsupported value fails with `invalid_kind_filter` rather than
+broadening to `all`.
 
 Args:
 ```ts
@@ -2892,6 +3125,7 @@ Result:
 #### `inbox_mark_all_read`
 
 Advance the actor read cursor to the latest currently-unread event (for the chosen kind filter) and append a `chat.read` event.
+An invalid `kind_filter` fails with `invalid_kind_filter` and MUST NOT advance the cursor.
 
 Args:
 ```ts
@@ -3258,24 +3492,6 @@ Notes:
 
 `presence_get` has been removed. Agent state is returned in `context_get.result.agent_states`.
 
-#### `blueprint_generate`
-
-Generate a blueprint for a task (currently returns a predefined blueprint ID; LLM integration planned).
-
-Args:
-```ts
-{ task_id: string; task_name?: string; task_goal?: string; theme_hint?: string }
-```
-
-Result:
-```ts
-{ source: "predefined" | "llm"; blueprint_id: string; variant?: number }
-```
-
-Notes:
-- Current implementation uses deterministic FNV-1a hashing on `task_id` to select from predefined blueprints (`shield`, `house`, `rocket`).
-- Returns error code `missing_task_id` if `task_id` is empty.
-
 ### 8.9 Headless Runner
 
 #### `headless_status`
@@ -3355,6 +3571,11 @@ Result:
 ```ts
 { event: CCCSEventV1 } // kind="system.notify_ack"
 ```
+
+`notify_ack` is self-only: `by`, when supplied, MUST equal `actor_id`; when it
+is omitted, the daemon attributes the event to `actor_id`. The target MUST be a
+`system.notify` addressed to that current actor, or a broadcast visible to that
+actor. Invalid principals, actors, event kinds, or recipients append no event.
 
 ### 8.11 Terminal Diagnostics and PTY Attach
 
@@ -3589,6 +3810,20 @@ Args:
 
 Result: implementation-defined compaction report.
 
+For implementations that share a CCCC home, sealed ledger segment bytes remain
+part of the append-only source of truth even when a crash occurs before their
+manifest entry is published. Before rotating another active ledger, compaction
+MUST reconcile every unambiguous canonical segment present on disk and allocate
+a sequence greater than every physical or manifested segment sequence. It MUST
+NOT reuse an unpublished physical sequence. If distinct canonical segment files
+already claim the same sequence, compaction MUST fail before another rotation
+rather than silently selecting, overwriting, or hiding either file.
+Compaction MUST hold the same canonical ledger writer lock used by appenders
+from its source snapshot through active-ledger replacement and manifest
+publication. It MUST NOT rotate or report success while an earlier writer still
+owns that lock; snapshot and segment metadata MUST include every write committed
+before the lock is released to compaction.
+
 ### 8.14 Presentation Browser Surface (Optional)
 
 #### `presentation_browser_attach`
@@ -3674,6 +3909,13 @@ Streaming mode:
 
 ### 8.16 IM Authentication
 
+Across IM authentication and subscriber state, `thread_id` is a platform-owned
+opaque identifier. Implementations MUST preserve it as either a legacy JSON
+number or a non-empty JSON string and MUST NOT coerce string identifiers (for
+example, Slack timestamps such as `1710000000.100`) through an integer or
+floating-point representation. Omitted, null, empty, integer `0`, and string
+`"0"` mean no thread; unsupported JSON value types MAY normalize to numeric `0`.
+
 #### `im_bind_chat`
 
 Bind a pending one-time key to authorize an IM chat. On success the chat is also auto-subscribed for outbound message delivery.
@@ -3685,7 +3927,7 @@ Args:
 
 Result:
 ```ts
-{ chat_id: string; thread_id: number; platform: string }
+{ chat_id: string; thread_id: number | string; platform: string }
 ```
 
 Errors:
@@ -3727,7 +3969,7 @@ Result:
   pending: Array<{
     key: string
     chat_id: string
-    thread_id: number
+    thread_id: number | string
     platform: string
     created_at: number
     expires_at: number
@@ -3765,7 +4007,7 @@ Revoke authorization for an IM chat.
 
 Args:
 ```ts
-{ group_id: string; chat_id: string; thread_id?: number }
+{ group_id: string; chat_id: string; thread_id?: number | string }
 ```
 
 Result:
@@ -3774,7 +4016,7 @@ Result:
 ```
 
 Notes:
-- `thread_id` defaults to `0` if omitted or invalid.
+- `thread_id` defaults to `0` when omitted or represented by an unsupported JSON value type.
 
 Errors:
 - `missing_chat_id` – `chat_id` is empty.
@@ -3914,6 +4156,25 @@ The daemon accepts the Python-compatible Group Bridge operations:
 
 Implementations MUST persist delivery receipts and MUST NOT create duplicate
 events when the same registration and idempotency key are retried.
+
+The cross-engine persistence authority is the Python-compatible set of
+purpose-specific files in `CCCC_HOME`:
+
+- `group_bridge_identity.yaml`
+- `group_bridge_pairing.yaml` for invites, requests, trusts, and outbounds
+- `group_bridge_registrations.yaml`
+- `group_bridge_credentials.yaml` for raw bearer and remote-send secrets
+- `group_bridge_receipts.yaml`, keyed by
+  `registration_id::idempotency_key`
+
+Registrations MUST contain only an opaque `credential_ref`; raw credentials
+MUST NOT be written into pairing or registration records. The former Rust
+`settings.yaml:group_bridge` section is a migration source only. Canonical
+records win conflicts, including terminal trust states (`revoked`, `rejected`,
+`expired`, or `disabled`) matched by registration or route identity. An
+implementation MUST commit the canonical files before clearing that legacy
+section, and MUST NOT recreate an active registration, credential, or trust from
+legacy state after a canonical terminal decision.
 
 The Rust WebSocket owner and MCP bridge share live reverse-session state through
 these daemon-internal operations:
@@ -4432,6 +4693,8 @@ Notes:
 - `clear=true` removes stored credentials for this provider.
 - `auth_json` is write-only and never returned in response payloads.
 - Environment credential (`CCCC_NOTEBOOKLM_AUTH_JSON`) has higher precedence than stored credentials.
+- Updating or clearing the effective stored credential invalidates its prior verified-ready state;
+  callers must run a successful health check before the provider is reported `write_ready=true`.
 
 Result:
 ```ts
@@ -4459,8 +4722,13 @@ Args:
 {
   provider?: "notebooklm"
   by?: string // user-only
+  auth_json?: string // optional candidate storage-state JSON
 }
 ```
+
+When `auth_json` is present it is treated as write-only credential material: it is never
+returned, persisted, or used to update the current provider state. This candidate-validation
+form lets browser-auth controllers verify a captured session before committing it.
 
 Result:
 ```ts
@@ -4673,6 +4941,48 @@ Result:
 ```
 
 Every event MUST exist, be addressed to the actor, have a supported turn kind, and already be covered by that actor's cursor. The operation MUST NOT roll the cursor back, change active runtime state, or create a completion receipt.
+
+#### `web_model_browser_delivery_record` (internal)
+
+Append one best-effort browser-delivery observation for an accepted Web Model
+turn. The browser owner uses this operation to expose the same message status in
+Python and Rust Web surfaces; it does not complete the turn or advance the actor
+cursor.
+
+Args:
+```ts
+{
+  group_id: string
+  actor_id: string
+  by: string                 // MUST equal actor_id
+  turn_id: string
+  event_ids: string[]        // 1..20 addressed chat.message/system.notify IDs
+  delivery_id: string
+  cursor_committed?: boolean
+  browser_delivery: {
+    state: "submitting" | "submitted" | "bound" | "pending" | "ambiguous" | "failed"
+    detail?: string
+    provider?: string
+    target_url?: string
+    bound_conversation_url?: string
+    pending_conversation_url?: string
+    auto_bind_new_chat?: boolean
+    resolved_pending_new_chat?: boolean
+  }
+}
+```
+
+Result:
+```ts
+{ event: CCCSEventV1 }
+```
+
+Each call appends an ordinary
+`web_model.browser_delivery.<state>` event. Status projection uses the latest
+such event in ledger order for every referenced message. Observation failures
+MUST remain independent from browser submission and
+`web_model_runtime_complete_turn`: they may reduce status visibility, but MUST
+NOT turn a verified ChatGPT submission into a failed or duplicate delivery.
 
 #### `web_model_browser_attach`
 

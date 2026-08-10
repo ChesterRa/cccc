@@ -26,7 +26,13 @@ pub(crate) async fn call_with_context(
     if let Some(context) = context {
         apply_request_context(&mut arguments, context);
     }
+    if name == "cccc_task" {
+        prepare_task_arguments(home, &mut arguments)?;
+    }
     authorize_tool(home, name, &arguments)?;
+    if name == "cccc_capability_use" {
+        return capability_use(home, client, arguments, context).await;
+    }
     let message_operation = is_message_operation(name, &arguments);
     if message_operation {
         arguments.insert("require_peer_insight".into(), Value::Bool(true));
@@ -42,9 +48,13 @@ pub(crate) async fn call_with_context(
     }
     let payload = match name {
         "cccc_help" => {
-            json!({"markdown": help_markdown()})
+            return group_help(client, arguments).await;
         }
-        "cccc_bootstrap" => return bootstrap(client, arguments).await,
+        "cccc_bootstrap" => {
+            return Ok(tool_result(
+                crate::bootstrap::build(home, client, arguments).await?,
+            ));
+        }
         "cccc_project_info" => return project_info(client, arguments).await,
         "cccc_runtime_list" => json!({"runtimes": cccc_runtime::detect_runtimes()
             .into_iter()
@@ -83,7 +93,14 @@ pub(crate) async fn call_with_context(
                 }
                 Err(error) => return Err(error),
             };
-            Value::Object(daemon(client, &op, args).await?)
+            let mut result = daemon(client, &op, args).await?;
+            if name == "cccc_task" {
+                postprocess_task_result(&mut result, &arguments)?;
+            }
+            if name == "cccc_actor_notes" {
+                postprocess_actor_notes(client, &mut result, &arguments).await;
+            }
+            Value::Object(result)
         }
     };
     let result = tool_result(payload);
@@ -134,133 +151,440 @@ fn authorize_tool(
     }
 }
 
+async fn capability_use(
+    home: &HomeLayout,
+    client: &DaemonClient,
+    arguments: Map<String, Value>,
+    context: Option<RequestContext<'_>>,
+) -> Result<Value, String> {
+    let group_id = arguments
+        .get("group_id")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_owned();
+    let actor_id = arguments
+        .get("actor_id")
+        .and_then(Value::as_str)
+        .or_else(|| arguments.get("by").and_then(Value::as_str))
+        .unwrap_or("user")
+        .trim()
+        .to_owned();
+    let by = arguments
+        .get("by")
+        .and_then(Value::as_str)
+        .unwrap_or(&actor_id)
+        .trim()
+        .to_owned();
+    let requested_scope = arguments
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("session")
+        .trim()
+        .to_ascii_lowercase();
+    let ttl_seconds = arguments
+        .get("ttl_seconds")
+        .and_then(Value::as_i64)
+        .unwrap_or(3600)
+        .clamp(60, 86_400);
+    let reason = arguments
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let tool_name = arguments
+        .get("tool_name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_owned();
+    if tool_name == "cccc_capability_use" {
+        return Err(
+            "capability_use_invalid_tool: cccc_capability_use cannot recursively call itself"
+                .into(),
+        );
+    }
+    let mut capability_id = arguments
+        .get("capability_id")
+        .or_else(|| arguments.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_owned();
+
+    let state_probe = if tool_name.is_empty() {
+        Map::new()
+    } else {
+        capability_state(client, &group_id, &actor_id, &by)
+            .await
+            .unwrap_or_default()
+    };
+    if capability_id.is_empty() && !tool_name.is_empty() {
+        let mut candidates = cccc_core::capabilities::CapabilityStore::new(home.clone())
+            .catalog()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|capability| capability.tool_names.iter().any(|name| name == &tool_name))
+            .map(|capability| capability.id)
+            .collect::<Vec<_>>();
+        candidates.sort();
+        candidates.dedup();
+        if candidates.len() > 1 {
+            return Err(format!(
+                "capability_use_ambiguous_tool: tool maps to multiple capabilities: {tool_name} ({})",
+                candidates.join(", ")
+            ));
+        }
+        capability_id = candidates.pop().unwrap_or_default();
+        if capability_id.is_empty() {
+            let mut dynamic_candidates = state_probe
+                .get("dynamic_tools")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|tool| {
+                    tool.get("name").and_then(Value::as_str) == Some(tool_name.as_str())
+                        || tool.get("real_tool_name").and_then(Value::as_str)
+                            == Some(tool_name.as_str())
+                })
+                .filter_map(|tool| tool.get("capability_id").and_then(Value::as_str))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            dynamic_candidates.sort();
+            dynamic_candidates.dedup();
+            if dynamic_candidates.len() > 1 {
+                return Err(format!(
+                    "capability_use_ambiguous_tool: tool maps to multiple capabilities: {tool_name} ({})",
+                    dynamic_candidates.join(", ")
+                ));
+            }
+            capability_id = dynamic_candidates.pop().unwrap_or_default();
+        }
+        if capability_id.is_empty() && crate::is_core_tool(&tool_name) {
+            capability_id = "core".into();
+        }
+    }
+    if capability_id.is_empty() {
+        return Err(
+            "missing_capability_id: pass capability_id when it cannot be inferred from tool_name"
+                .into(),
+        );
+    }
+
+    let already_enabled = state_probe
+        .get("enabled_capabilities")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items
+                .iter()
+                .any(|item| item.as_str() == Some(&capability_id))
+        });
+    let reused_existing_binding = !tool_name.is_empty() && already_enabled;
+    let enable_result = if capability_id == "core" {
+        json!({
+            "state":"runnable","enabled":true,"refresh_required":false,"scope":"core"
+        })
+        .as_object()
+        .cloned()
+        .expect("core enable result")
+    } else if reused_existing_binding {
+        json!({
+            "state":"runnable","enabled":true,"refresh_required":false,
+            "reused_existing_binding":true,"scope":requested_scope
+        })
+        .as_object()
+        .cloned()
+        .expect("reused enable result")
+    } else {
+        daemon(
+            client,
+            "capability_enable",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "by":by,
+                "capability_id":capability_id,
+                "scope":requested_scope,
+                "enabled":true,
+                "ttl_seconds":ttl_seconds,
+                "reason":reason,
+            })
+            .as_object()
+            .cloned()
+            .expect("capability enable args"),
+        )
+        .await?
+    };
+    let state = enable_result
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("runnable")
+        .trim()
+        .to_ascii_lowercase();
+    let enabled = matches!(
+        state.as_str(),
+        "ready" | "activation_pending" | "runnable" | "verified"
+    );
+    let scope = enable_result
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or(&requested_scope)
+        .to_owned();
+    if !enabled || tool_name.is_empty() {
+        return Ok(tool_result(json!({
+            "group_id":group_id,
+            "actor_id":actor_id,
+            "capability_id":capability_id,
+            "scope":scope,
+            "requested_scope":requested_scope,
+            "enabled":enabled,
+            "state":state,
+            "refresh_required":enable_result
+                .get("refresh_required")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            "enable_result":enable_result,
+            "tool_called":false,
+        })));
+    }
+
+    let mut tool_arguments = arguments
+        .get("tool_arguments")
+        .or_else(|| arguments.get("arguments"))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    tool_arguments
+        .entry("group_id")
+        .or_insert_with(|| Value::String(group_id.clone()));
+    tool_arguments
+        .entry("by")
+        .or_insert_with(|| Value::String(by.clone()));
+    tool_arguments
+        .entry("actor_id")
+        .or_insert_with(|| Value::String(actor_id.clone()));
+    let nested = Box::pin(call_with_context(
+        home,
+        client,
+        &tool_name,
+        tool_arguments,
+        context,
+    ))
+    .await?;
+    let nested_payload = nested.get("structuredContent").cloned().unwrap_or(nested);
+    Ok(tool_result(json!({
+        "group_id":group_id,
+        "actor_id":actor_id,
+        "capability_id":capability_id,
+        "scope":scope,
+        "requested_scope":requested_scope,
+        "enabled":true,
+        "state":"verified",
+        "refresh_required":false,
+        "verification_source":"tool_call",
+        "reused_existing_binding":reused_existing_binding,
+        "enable_result":enable_result,
+        "tool_called":true,
+        "tool_name":tool_name,
+        "tool_result":nested_payload,
+    })))
+}
+
+async fn capability_state(
+    client: &DaemonClient,
+    group_id: &str,
+    actor_id: &str,
+    by: &str,
+) -> Result<Map<String, Value>, String> {
+    daemon(
+        client,
+        "capability_state",
+        json!({"group_id":group_id,"actor_id":actor_id,"by":by})
+            .as_object()
+            .cloned()
+            .expect("capability state args"),
+    )
+    .await
+}
+
+fn prepare_task_arguments(
+    home: &HomeLayout,
+    arguments: &mut Map<String, Value>,
+) -> Result<(), String> {
+    if arguments.get("action").and_then(Value::as_str) != Some("create")
+        || arguments.contains_key("assignee")
+    {
+        return Ok(());
+    }
+    let by = arguments
+        .get("by")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    if by.is_empty() || matches!(by.as_str(), "user" | "system") {
+        return Ok(());
+    }
+    let group_id = arguments
+        .get("group_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "group_id is required".to_owned())?;
+    let group = cccc_core::GroupStore::new(home.clone())
+        .and_then(|store| store.load(group_id))
+        .map_err(|error| error.to_string())?;
+    if cccc_core::actors::effective_role(&group, &by) == Some(cccc_contracts::ActorRole::Peer) {
+        arguments.insert("assignee".into(), Value::String(by));
+    }
+    Ok(())
+}
+
+fn postprocess_task_result(
+    result: &mut Map<String, Value>,
+    arguments: &Map<String, Value>,
+) -> Result<(), String> {
+    let action = arguments
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("list");
+    if !matches!(action, "get" | "list")
+        || arguments
+            .get("include_archived")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Ok(());
+    }
+    if result
+        .get("task")
+        .and_then(Value::as_object)
+        .and_then(|task| task.get("status"))
+        .and_then(Value::as_str)
+        == Some("archived")
+    {
+        return Err("archived_hidden: archived task is hidden by default".into());
+    }
+    if let Some(tasks) = result.get_mut("tasks").and_then(Value::as_array_mut) {
+        tasks.retain(|task| task.get("status").and_then(Value::as_str) != Some("archived"));
+    }
+    Ok(())
+}
+
 fn help_markdown() -> String {
     format!(
         "{}\n\n{}\n",
-        include_str!("../resources/cccc-help.md").trim_end(),
+        cccc_core::group_prompts::BUILTIN_HELP_MARKDOWN.trim_end(),
         cccc_core::peer_insight::PEER_INSIGHT_RUNTIME_HELP.as_str()
     )
 }
 
-async fn bootstrap(client: &DaemonClient, args: Map<String, Value>) -> Result<Value, String> {
-    let group_id = args
-        .get("group_id")
-        .cloned()
-        .ok_or_else(|| "group_id is required".to_owned())?;
-    let actor_id = args
-        .get("actor_id")
-        .cloned()
-        .unwrap_or_else(|| Value::String("user".into()));
-    let mut group_args = Map::new();
-    group_args.insert("group_id".into(), group_id.clone());
-    let group = daemon(client, "group_show", group_args).await?;
-    let mut inbox_args = Map::new();
-    inbox_args.insert("group_id".into(), group_id.clone());
-    inbox_args.insert("actor_id".into(), actor_id.clone());
-    inbox_args.insert(
-        "limit".into(),
-        args.get("inbox_limit")
-            .cloned()
-            .unwrap_or_else(|| json!(50)),
-    );
-    let inbox = daemon(client, "inbox_list", inbox_args).await?;
-    let mut context_args = Map::new();
-    context_args.insert("group_id".into(), group_id);
-    let context = daemon(client, "context_get", context_args).await?;
-    let recovery = bootstrap_recovery(&context, actor_id.as_str().unwrap_or("user"));
+async fn group_help(client: &DaemonClient, arguments: Map<String, Value>) -> Result<Value, String> {
+    if !arguments.contains_key("group_id") {
+        return Ok(tool_result(json!({
+            "markdown": help_markdown(),
+            "source": "cccc.resources/cccc-help.md",
+        })));
+    }
+    let result = daemon(client, "group_help_get", arguments).await?;
+    let base = result
+        .get("markdown")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let source = result
+        .get("source_path")
+        .and_then(Value::as_str)
+        .unwrap_or("cccc.resources/cccc-help.md");
     Ok(tool_result(json!({
-        "session": {"actor_id": actor_id, "implementation": "rust"},
-        "group": group.get("group"), "inbox_preview": inbox, "recovery":recovery, "context": context,
-        "next_calls": ["cccc_help", "cccc_inbox_list", "cccc_context_get"]
+        "markdown": append_peer_insight_runtime_help(base),
+        "source": source,
     })))
 }
 
-fn bootstrap_recovery(context: &Map<String, Value>, actor_id: &str) -> Value {
-    let root = context.get("context").unwrap_or(&Value::Null);
-    if has_native_recoverable_task(root, actor_id) || has_recoverable_work(root) {
-        json!({"takeover_nudge":cccc_core::peer_insight::BOOTSTRAP_TAKEOVER_NUDGE})
-    } else {
-        json!({})
-    }
-}
-
-fn has_native_recoverable_task(context: &Value, actor_id: &str) -> bool {
-    context
-        .get("tasks")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_object)
-        .any(|task| {
-            let status = task
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("planned")
-                .trim()
-                .to_ascii_lowercase();
-            if matches!(
-                status.as_str(),
-                "done" | "completed" | "cancelled" | "canceled" | "archived"
-            ) {
-                return false;
-            }
-            let assigned = ["assignee", "handoff_to"].into_iter().any(|key| {
-                task.get(key)
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| value.trim() == actor_id)
-            });
-            let waiting_on = task
-                .get("waiting_on")
-                .and_then(Value::as_str)
-                .unwrap_or("none")
-                .trim();
-            let waiting_for_actor = waiting_on == "actor" && actor_id != "user";
-            let waiting_for_user = waiting_on == "user" && actor_id == "user";
-            let attention = task.get("priority").and_then(Value::as_str) == Some("attention");
-            assigned || waiting_for_actor || waiting_for_user || attention
-        })
-}
-
-fn has_recoverable_work(value: &Value) -> bool {
-    match value {
-        Value::Object(object) => {
-            let scalar_work = ["active_task_id", "focus", "next_action", "current_focus"]
-                .into_iter()
-                .any(|key| {
-                    object
-                        .get(key)
-                        .and_then(Value::as_str)
-                        .is_some_and(|value| !value.trim().is_empty())
-                });
-            let list_work = ["blockers", "open_loops", "commitments"]
-                .into_iter()
-                .any(|key| {
-                    object
-                        .get(key)
-                        .and_then(Value::as_array)
-                        .is_some_and(|items| {
-                            items.iter().any(|item| match item {
-                                Value::String(value) => !value.trim().is_empty(),
-                                Value::Object(value) => !value.is_empty(),
-                                _ => false,
-                            })
-                        })
-                });
-            let task_work = ["assigned_active", "attention"].into_iter().any(|key| {
-                object
-                    .get(key)
-                    .and_then(Value::as_array)
-                    .is_some_and(|items| {
-                        items
-                            .iter()
-                            .any(|item| item.as_object().is_some_and(|item| !item.is_empty()))
-                    })
-            });
-            scalar_work || list_work || task_work || object.values().any(has_recoverable_work)
+fn append_peer_insight_runtime_help(markdown: &str) -> String {
+    let reserved = "## Peer Insight Contract (Runtime)";
+    let mut kept = Vec::new();
+    let mut current = Vec::new();
+    let mut skip = false;
+    let flush = |kept: &mut Vec<String>, current: &mut Vec<String>, skip: bool| {
+        if !skip {
+            kept.append(current);
+        } else {
+            current.clear();
         }
-        Value::Array(items) => items.iter().any(has_recoverable_work),
-        _ => false,
+    };
+    for line in markdown.lines() {
+        if line.starts_with("## ") && !line.starts_with("### ") {
+            flush(&mut kept, &mut current, skip);
+            skip = line.trim() == reserved;
+        }
+        current.push(line.to_owned());
     }
+    flush(&mut kept, &mut current, skip);
+    format!(
+        "{}\n\n{}\n",
+        kept.join("\n").trim_end(),
+        cccc_core::peer_insight::PEER_INSIGHT_RUNTIME_HELP.as_str()
+    )
+}
+
+async fn postprocess_actor_notes(
+    client: &DaemonClient,
+    result: &mut Map<String, Value>,
+    arguments: &Map<String, Value>,
+) {
+    let action = arguments
+        .get("action")
+        .and_then(Value::as_str)
+        .unwrap_or("get");
+    let changed = result
+        .remove("changed")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    if !matches!(action, "set" | "clear") || !changed {
+        if matches!(action, "set" | "clear") {
+            result.insert("notified_actor_ids".into(), json!([]));
+        }
+        return;
+    }
+    let Some(group_id) = arguments.get("group_id").and_then(Value::as_str) else {
+        result.insert("notified_actor_ids".into(), json!([]));
+        return;
+    };
+    let target = result
+        .get("target_actor_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mut list_args = Map::new();
+    list_args.insert("group_id".into(), Value::String(group_id.into()));
+    let actors = daemon(client, "actor_list", list_args)
+        .await
+        .ok()
+        .and_then(|value| value.get("actors").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+    let running = actors.iter().find(|actor| {
+        actor.get("id").and_then(Value::as_str) == Some(target)
+            && actor.get("running").and_then(Value::as_bool) == Some(true)
+    });
+    if running.is_none() {
+        result.insert("notified_actor_ids".into(), json!([]));
+        return;
+    }
+    let notify_args = json!({
+        "group_id": group_id,
+        "by": "system",
+        "kind": "info",
+        "priority": "normal",
+        "title": "Help updated: your actor note",
+        "message": "Updated: your actor note. Run `cccc_help` now to refresh your effective protocol reference; then update `cccc_agent_state` if your plan changes.",
+        "target_actor_id": target,
+        "requires_ack": false,
+    })
+    .as_object()
+    .cloned()
+    .unwrap_or_default();
+    let notified = daemon(client, "system_notify", notify_args).await.is_ok();
+    result.insert(
+        "notified_actor_ids".into(),
+        if notified { json!([target]) } else { json!([]) },
+    );
 }
 
 async fn project_info(client: &DaemonClient, args: Map<String, Value>) -> Result<Value, String> {
@@ -405,11 +729,98 @@ fn is_repo_tool(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_actor_context, apply_request_context, bootstrap_recovery, help_markdown,
-        is_message_operation, with_post_message_nudge,
+        apply_actor_context, apply_request_context, help_markdown, is_message_operation,
+        postprocess_task_result, prepare_task_arguments, with_post_message_nudge,
     };
     use crate::RequestContext;
     use serde_json::json;
+
+    #[tokio::test]
+    async fn capability_use_enables_hidden_pack_and_calls_inferred_builtin() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let group = cccc_core::GroupStore::new(home.clone())
+            .and_then(|store| store.create("capability use", ""))
+            .expect("group");
+        let daemon_home = home.clone();
+        let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+        let client = cccc_client::DaemonClient::new(home.clone());
+        for _ in 0..100 {
+            if client
+                .call(&cccc_contracts::DaemonRequest {
+                    v: 1,
+                    op: "group_list".into(),
+                    args: serde_json::Map::new(),
+                })
+                .await
+                .is_ok()
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+
+        let context = Some(RequestContext {
+            group_id: &group.group_id,
+            actor_id: "user",
+        });
+        let enabled = super::call_with_context(
+            &home,
+            &client,
+            "cccc_capability_use",
+            json!({"capability_id":"pack:space","scope":"session"})
+                .as_object()
+                .cloned()
+                .expect("enable args"),
+            context,
+        )
+        .await
+        .expect("enable pack");
+        assert_eq!(enabled["structuredContent"]["enabled"], true);
+        assert_eq!(enabled["structuredContent"]["capability_id"], "pack:space");
+        assert_eq!(enabled["structuredContent"]["tool_called"], false);
+
+        let state = super::daemon(
+            &client,
+            "capability_state",
+            json!({"group_id":group.group_id,"actor_id":"user","by":"user"})
+                .as_object()
+                .cloned()
+                .expect("state args"),
+        )
+        .await
+        .expect("capability state");
+        assert!(
+            state["enabled_capabilities"]
+                .as_array()
+                .expect("enabled capabilities")
+                .contains(&json!("pack:space"))
+        );
+
+        let called = super::call_with_context(
+            &home,
+            &client,
+            "cccc_capability_use",
+            json!({"tool_name":"cccc_project_info","tool_arguments":{}})
+                .as_object()
+                .cloned()
+                .expect("call args"),
+            context,
+        )
+        .await
+        .expect("call inferred built-in");
+        assert_eq!(
+            called["structuredContent"]["capability_id"],
+            "pack:context-advanced"
+        );
+        assert_eq!(called["structuredContent"]["tool_called"], true);
+        assert_eq!(
+            called["structuredContent"]["tool_name"],
+            "cccc_project_info"
+        );
+
+        daemon_task.abort();
+    }
 
     #[test]
     fn runtime_actor_is_authoritative_but_does_not_replace_target_actor() {
@@ -455,6 +866,50 @@ mod tests {
     }
 
     #[test]
+    fn task_create_defaults_peer_assignment_and_list_hides_archived_tasks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+        let group = store.create("tasks", "").expect("group");
+        store
+            .mutate(&group.group_id, |group| {
+                cccc_core::actors::add(group, cccc_contracts::Actor::new("lead"))?;
+                cccc_core::actors::add(group, cccc_contracts::Actor::new("peer"))?;
+                Ok(())
+            })
+            .expect("actors");
+        let mut args = json!({
+            "action":"create","group_id":group.group_id,"actor_id":"peer","by":"peer",
+            "title":"self-owned"
+        })
+        .as_object()
+        .cloned()
+        .expect("args");
+        prepare_task_arguments(&home, &mut args).expect("prepare task");
+        assert_eq!(args["assignee"], "peer");
+
+        let mut result = json!({
+            "tasks":[
+                {"id":"T001","status":"planned"},
+                {"id":"T002","status":"archived"}
+            ]
+        })
+        .as_object()
+        .cloned()
+        .expect("result");
+        postprocess_task_result(
+            &mut result,
+            &json!({"action":"list"})
+                .as_object()
+                .cloned()
+                .expect("list args"),
+        )
+        .expect("filter");
+        assert_eq!(result["tasks"].as_array().expect("tasks").len(), 1);
+        assert_eq!(result["tasks"][0]["id"], "T001");
+    }
+
+    #[test]
     fn identifies_message_operations_and_adds_reconstruction_nudge() {
         assert!(is_message_operation(
             "cccc_message_send",
@@ -479,43 +934,6 @@ mod tests {
             result["structuredContent"]["post_message_nudge"]["kind"],
             "whole_situation_reconstruction"
         );
-    }
-
-    #[test]
-    fn bootstrap_takeover_requires_unfinished_recovery_material() {
-        let active = json!({"context":{"agent_state":{"hot":{"focus":"finish migration"}}}})
-            .as_object()
-            .cloned()
-            .expect("active context");
-        assert_eq!(
-            bootstrap_recovery(&active, "peer1")["takeover_nudge"],
-            cccc_core::peer_insight::BOOTSTRAP_TAKEOVER_NUDGE
-        );
-        let objective_only = json!({"context":{"coordination":{"objective":"ship"}}})
-            .as_object()
-            .cloned()
-            .expect("objective context");
-        assert_eq!(bootstrap_recovery(&objective_only, "peer1"), json!({}));
-
-        let native_task = json!({"context":{"tasks":[{
-            "id":"t_1","status":"planned","assignee":"peer1","waiting_on":"none"
-        }]}})
-        .as_object()
-        .cloned()
-        .expect("native task context");
-        assert_eq!(
-            bootstrap_recovery(&native_task, "peer1")["takeover_nudge"],
-            cccc_core::peer_insight::BOOTSTRAP_TAKEOVER_NUDGE
-        );
-        assert_eq!(bootstrap_recovery(&native_task, "peer2"), json!({}));
-
-        let completed = json!({"context":{"tasks":[{
-            "id":"t_2","status":"done","assignee":"peer1","priority":"attention"
-        }]}})
-        .as_object()
-        .cloned()
-        .expect("completed task context");
-        assert_eq!(bootstrap_recovery(&completed, "peer1"), json!({}));
     }
 
     #[test]

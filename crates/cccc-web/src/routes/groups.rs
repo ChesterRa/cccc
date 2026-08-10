@@ -77,9 +77,75 @@ async fn update(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let mut args = body_object(body)?;
-    args.insert("group_id".into(), Value::String(group_id));
+    let body = body_object(body)?;
+    let Some(args) = group_update_args(group_id, body) else {
+        return Ok(Json(json!({"ok":true,"result":{"message":"no changes"}})));
+    };
     call(&state, "group_update", args).await
+}
+
+fn group_update_args(group_id: String, mut body: Map<String, Value>) -> Option<Map<String, Value>> {
+    let by = body
+        .remove("by")
+        .unwrap_or_else(|| Value::String("user".into()));
+    let mut patch = Map::new();
+    for key in ["title", "topic"] {
+        if let Some(value) = body.remove(key)
+            && !value.is_null()
+        {
+            patch.insert(key.into(), value);
+        }
+    }
+    if patch.is_empty() {
+        return None;
+    }
+    Some(object(json!({"group_id":group_id,"by":by,"patch":patch})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::group_update_args;
+    use serde_json::json;
+
+    #[test]
+    fn group_update_emits_only_the_canonical_patch_shape() {
+        let args = group_update_args(
+            "g_test".into(),
+            json!({
+                "title":"title",
+                "topic":"topic",
+                "by":"operator",
+                "ignored":"value"
+            })
+            .as_object()
+            .cloned()
+            .expect("body"),
+        )
+        .expect("update args");
+        assert_eq!(
+            args,
+            json!({
+                "group_id":"g_test",
+                "by":"operator",
+                "patch":{"title":"title","topic":"topic"}
+            })
+            .as_object()
+            .cloned()
+            .expect("expected args")
+        );
+        assert!(args.get("title").is_none());
+        assert!(args.get("topic").is_none());
+    }
+
+    #[test]
+    fn group_update_treats_absent_or_null_fields_as_no_change() {
+        for body in [json!({}), json!({"title":null,"topic":null})] {
+            assert!(
+                group_update_args("g_test".into(), body.as_object().cloned().expect("body"))
+                    .is_none()
+            );
+        }
+    }
 }
 
 async fn remove(

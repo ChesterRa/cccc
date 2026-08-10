@@ -9,6 +9,22 @@ use crate::fs::{read_yaml, with_exclusive_lock, write_yaml, write_yaml_committed
 use crate::home::HomeLayout;
 use crate::registry::{GroupMeta, Registry};
 
+pub const AUTOMATION_TIMING_KEYS: &[&str] = &[
+    "nudge_after_seconds",
+    "reply_required_nudge_after_seconds",
+    "attention_ack_nudge_after_seconds",
+    "unread_nudge_after_seconds",
+    "nudge_digest_min_interval_seconds",
+    "nudge_max_repeats_per_obligation",
+    "nudge_escalate_after_repeats",
+    "actor_idle_timeout_seconds",
+    "keepalive_delay_seconds",
+    "keepalive_max_per_actor",
+    "silence_timeout_seconds",
+    "help_nudge_interval_seconds",
+    "help_nudge_min_messages",
+];
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Scope {
     pub scope_key: String,
@@ -42,6 +58,18 @@ pub struct GroupDoc {
     pub automation: Map<String, Value>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+/// Read automation timing from the canonical automation document, with a
+/// bounded fallback for groups written by the former native settings layout.
+pub fn automation_timing_value<'a>(group: &'a GroupDoc, key: &str) -> Option<&'a Value> {
+    group.automation.get(key).or_else(|| {
+        group
+            .extra
+            .get("settings")
+            .and_then(Value::as_object)
+            .and_then(|settings| settings.get(key))
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +171,10 @@ impl GroupStore {
         Ok(stored)
     }
 
+    fn restore_unlocked(&self, group: &GroupDoc) -> io::Result<()> {
+        write_yaml_committed(&self.group_dir(&group.group_id)?.join("group.yaml"), group)
+    }
+
     pub fn list(&self) -> io::Result<Vec<GroupMeta>> {
         Ok(Registry::load(&self.home)?.groups.into_values().collect())
     }
@@ -210,7 +242,7 @@ impl GroupStore {
             let written = self.save_unlocked_doc(&group)?;
             if let Err(error) = side_effect(&result) {
                 return match self.load(group_id) {
-                    Ok(current) if current == written => match self.save_unlocked(&before) {
+                    Ok(current) if current == written => match self.restore_unlocked(&before) {
                         Ok(()) => Err(error),
                         Err(rollback) => Err(io::Error::other(format!(
                             "{error}; rollback_failed: could not restore group: {rollback}"

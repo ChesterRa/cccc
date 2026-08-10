@@ -12,7 +12,6 @@ from ..contracts.v1 import Event
 from ..contracts.v1.event import normalize_event_data
 from ..util.fs import atomic_write_text
 from ..util.file_lock import acquire_lockfile, release_lockfile
-from .ledger_index import append_event_to_index
 from .ledger_segments import read_last_lines_across_sources
 
 
@@ -81,8 +80,9 @@ def append_event(
     notify: bool = True,
 ) -> Dict[str, Any]:
     payload = normalize_event_data(kind, data or {})
-    event = Event(kind=kind, group_id=group_id, scope_key=scope_key, by=by, data=payload)
-
+    event = Event(
+        kind=kind, group_id=group_id, scope_key=scope_key, by=by, data=payload
+    )
     # Hard rules: keep the ledger small and stable. Large payloads belong in files referenced from the ledger.
     if kind == "chat.message":
         text = event.data.get("text")
@@ -100,21 +100,23 @@ def append_event(
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     out = event.model_dump()
     line = json.dumps(out, ensure_ascii=False)
-    if len(line.encode("utf-8", errors="replace")) > MAX_EVENT_BYTES:
+    encoded = (line + "\n").encode("utf-8", errors="replace")
+    if len(encoded) - 1 > MAX_EVENT_BYTES:
         raise ValueError(f"ledger event too large (>{MAX_EVENT_BYTES} bytes): {kind}")
     lock = _lock_path(ledger_path)
     lk = acquire_lockfile(lock, blocking=True)
     try:
-        with ledger_path.open("a", encoding="utf-8") as f:
-            start_offset = int(f.tell() or 0)
-            f.write(line + "\n")
-            next_offset = start_offset + len((line + "\n").encode("utf-8", errors="replace"))
+        with ledger_path.open("a+b") as f:
+            f.seek(0, os.SEEK_END)
+            if f.tell() > 0:
+                f.seek(-1, os.SEEK_END)
+                needs_separator = f.read(1) != b"\n"
+                f.seek(0, os.SEEK_END)
+                if needs_separator:
+                    f.write(b"\n")
+            f.write(encoded)
     finally:
         release_lockfile(lk)
-    try:
-        append_event_to_index(ledger_path, out, next_offset_bytes=next_offset)
-    except Exception:
-        pass
     try:
         from .ledger_status_cache import update_message_status_cache_on_append
 
@@ -133,7 +135,9 @@ def read_last_lines(path: Path, n: int) -> list[str]:
         try:
             return read_last_lines_across_sources(path.parent, n)
         except Exception as e:
-            LOGGER.warning("failed to read ledger tail across sources: path=%s err=%s", path, e)
+            LOGGER.warning(
+                "failed to read ledger tail across sources: path=%s err=%s", path, e
+            )
     try:
         if not path.exists():
             return []
@@ -143,7 +147,9 @@ def read_last_lines(path: Path, n: int) -> list[str]:
         return []
 
 
-def _read_last_lines_from_regular_file(path: Path, n: int, *, block_size: int = _TAIL_READ_BLOCK_SIZE) -> list[str]:
+def _read_last_lines_from_regular_file(
+    path: Path, n: int, *, block_size: int = _TAIL_READ_BLOCK_SIZE
+) -> list[str]:
     if n <= 0:
         return []
 
@@ -161,7 +167,9 @@ def _read_last_lines_from_regular_file(path: Path, n: int, *, block_size: int = 
             candidate = data
             if position > 0:
                 first_newline = candidate.find(b"\n")
-                candidate = candidate[first_newline + 1 :] if first_newline >= 0 else b""
+                candidate = (
+                    candidate[first_newline + 1 :] if first_newline >= 0 else b""
+                )
             parts = candidate.split(b"\n")
             if parts and parts[-1] == b"":
                 parts = parts[:-1]

@@ -20,6 +20,12 @@ pub(super) fn health(home: &HomeLayout) -> Result<(), OpError> {
     run(home, Client::health_check)
 }
 
+pub(super) fn health_candidate(credential: &str) -> Result<(), OpError> {
+    Client::from_storage_state(credential)
+        .and_then(|client| client.health_check())
+        .map_err(map_error)
+}
+
 pub(super) fn notebooks(home: &HomeLayout) -> Result<Vec<Notebook>, OpError> {
     run(home, Client::list_notebooks)
 }

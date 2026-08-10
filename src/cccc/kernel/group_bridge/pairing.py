@@ -31,7 +31,7 @@ from .credentials import (
     delete_group_bridge_credential,
     resolve_pairing_remote_send_token,
 )
-from .registration import upsert_registration
+from .registration import get_registration, get_registration_by_target, upsert_registration
 from .registration import delete_registration
 from .peer_addresses import record_peer_addresses
 
@@ -642,7 +642,11 @@ def revoke_trust(
     trust["updated_at"] = utc_now_iso()
     registration_id = str(trust.get("registration_id") or "").strip()
     if registration_id:
+        registration = get_registration(registration_id, home=home) or {}
+        credential_ref = str(registration.get("credential_ref") or "").strip()
         delete_registration(registration_id, home=home)
+        if credential_ref:
+            delete_group_bridge_credential(credential_ref, home=_aux_home(home))
     _cleanup_trust_remote_send_credential(store, trust, home=home)
     _save_store(store, home)
     _publish_pairing_event("group_bridge.pairing.trust_revoked", {
@@ -755,10 +759,15 @@ def _upsert_approved_session_registration(
     *,
     remote_group_id: str,
     remote_peer_id: str,
+    credential_ref: str = "",
     home: Optional[Path] = None,
 ) -> Dict[str, Any]:
     if str(url or "").strip().startswith("session://"):
         raise ValueError("group_bridge_session registration requires a concrete remote endpoint")
+    existing_ref = str(credential_ref or "").strip()
+    if not existing_ref:
+        existing = get_registration_by_target(url, group_id, home=home)
+        existing_ref = str((existing or {}).get("credential_ref") or "").strip()
     return upsert_registration(
         group_id,
         url,
@@ -766,6 +775,7 @@ def _upsert_approved_session_registration(
         remote_group_id=remote_group_id,
         remote_peer_id=remote_peer_id,
         multiaddrs=[],
+        credential_ref=existing_ref,
         status="active",
         home=home,
         _approved_by_pairing=True,

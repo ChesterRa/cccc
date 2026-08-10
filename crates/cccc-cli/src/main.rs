@@ -8,7 +8,7 @@ mod web_launch;
 use anyhow::{Result, bail};
 use args::{Cli, CommandKind, DaemonAction, HermesAction, RuntimeAction, WebModeArg};
 use cccc_client::DaemonClient;
-use cccc_core::{HomeLayout, active};
+use cccc_core::{GroupStore, HomeLayout, active};
 use cccc_daemon::{DetachedDaemon, StartOutcome};
 use clap::Parser;
 use commands::common::{call, print};
@@ -65,7 +65,8 @@ async fn main() -> Result<()> {
         Some(CommandKind::Group(args)) => commands::group::run(&client, &home, args).await,
         Some(CommandKind::Groups) => print(call(&client, "group_list", json!({})).await?),
         Some(CommandKind::Use { group_id }) => {
-            print(call(&client, "group_use", json!({"group_id":group_id})).await?)
+            select_active_group(&home, &group_id)?;
+            show_active(&client, &home).await
         }
         Some(CommandKind::Active) => show_active(&client, &home).await,
         Some(CommandKind::Actor(args)) => commands::actor::run(&client, &home, args).await,
@@ -301,6 +302,14 @@ async fn show_active(client: &DaemonClient, home: &HomeLayout) -> Result<()> {
     print(call(client, "group_show", json!({"group_id":group_id})).await?)
 }
 
+fn select_active_group(home: &HomeLayout, group_id: &str) -> Result<()> {
+    GroupStore::new(home.clone())?
+        .load(group_id)
+        .map_err(|_| anyhow::anyhow!("group not found: {group_id}"))?;
+    active::set(home, group_id)?;
+    Ok(())
+}
+
 async fn runtime(client: &DaemonClient, action: RuntimeAction) -> Result<()> {
     match action {
         RuntimeAction::List { all } => {
@@ -409,8 +418,9 @@ fn is_compatible_daemon(response: &cccc_contracts::DaemonResponse) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{PRODUCT_VERSION, is_compatible_daemon, web_endpoint};
+    use super::{PRODUCT_VERSION, is_compatible_daemon, select_active_group, web_endpoint};
     use cccc_contracts::DaemonResponse;
+    use cccc_core::{GroupStore, HomeLayout, active};
     use serde_json::json;
 
     #[test]
@@ -461,5 +471,23 @@ mod tests {
             "http://[2001:db8::1]:9000"
         );
         assert_eq!(web_endpoint("127.0.0.1", 8848), "http://127.0.0.1:8848");
+    }
+
+    #[test]
+    fn top_level_use_selects_a_group_without_overloading_scope_selection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let group = GroupStore::new(home.clone())
+            .expect("store")
+            .create("active", "")
+            .expect("group");
+
+        select_active_group(&home, &group.group_id).expect("select group");
+
+        assert_eq!(
+            active::get(&home).expect("active").as_deref(),
+            Some(group.group_id.as_str())
+        );
+        assert!(select_active_group(&home, "g_missing").is_err());
     }
 }

@@ -35,7 +35,7 @@ pub(super) fn persist_failures(
         return;
     };
     let error = format!("DingTalk attachment delivery failed: {}", json!(report));
-    let _ = cccc_core::integration_state::group_update(&store, group_id, "im_bridge", |value| {
+    let _ = cccc_core::im_state::update(&store, group_id, |value| {
         if !value.is_object() {
             *value = Value::Object(Default::default());
         }

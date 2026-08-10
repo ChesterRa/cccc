@@ -2028,14 +2028,24 @@ class TestGroupSpaceOps(unittest.TestCase):
             cleanup()
 
     def test_provider_health_check_returns_structured_result(self) -> None:
+        from cccc.daemon.space.group_space_store import get_space_provider_state
         from cccc.providers.notebooklm.errors import NotebookLMProviderError
 
         _, cleanup = self._with_home()
         try:
+            credential, _ = self._call(
+                "group_space_provider_credential_update",
+                {
+                    "provider": "notebooklm",
+                    "by": "user",
+                    "auth_json": '{"cookies":[{"name":"SID","value":"current","domain":".google.com"}]}',
+                },
+            )
+            self.assertTrue(credential.ok, getattr(credential, "error", None))
             with patch(
                 "cccc.daemon.space.group_space_ops.notebooklm_health_check",
                 return_value={"provider": "notebooklm", "enabled": True, "compatible": True, "reason": "ok"},
-            ):
+            ) as health_mock:
                 ok_resp, _ = self._call(
                     "group_space_provider_health_check",
                     {"provider": "notebooklm", "by": "user"},
@@ -2043,6 +2053,12 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertTrue(ok_resp.ok, getattr(ok_resp, "error", None))
             ok_result = ok_resp.result if isinstance(ok_resp.result, dict) else {}
             self.assertEqual(bool(ok_result.get("healthy")), True)
+            health_mock.assert_called_once()
+            self.assertTrue(bool(health_mock.call_args.kwargs.get("verify_remote")))
+            active_state = get_space_provider_state("notebooklm")
+            self.assertTrue(bool(active_state.get("enabled")))
+            self.assertTrue(bool(active_state.get("real_enabled")))
+            self.assertEqual(str(active_state.get("mode") or ""), "active")
 
             with patch(
                 "cccc.daemon.space.group_space_ops.notebooklm_health_check",
@@ -2062,6 +2078,47 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertEqual(bool(fail_result.get("healthy")), False)
             err = fail_result.get("error") if isinstance(fail_result.get("error"), dict) else {}
             self.assertEqual(str(err.get("code") or ""), "space_provider_auth_invalid")
+        finally:
+            cleanup()
+
+    def test_provider_candidate_health_does_not_mutate_current_state(self) -> None:
+        from cccc.daemon.space.group_space_store import get_space_provider_state, set_space_provider_state
+
+        _, cleanup = self._with_home()
+        try:
+            expected_state = set_space_provider_state(
+                "notebooklm",
+                enabled=False,
+                real_enabled=False,
+                mode="disabled",
+                last_error="keep-current-state",
+                touch_health=True,
+            )
+            candidate = (
+                '{"cookies":['
+                '{"name":"OSID","value":"current","domain":"notebook.google.com"},'
+                '{"name":"OSID","value":"legacy","domain":"notebooklm.google.com"}'
+                "]}"
+            )
+            with patch(
+                "cccc.daemon.space.group_space_ops.notebooklm_health_check",
+                return_value={"provider": "notebooklm", "enabled": True, "compatible": True, "reason": "ok"},
+            ) as health_mock:
+                response, _ = self._call(
+                    "group_space_provider_health_check",
+                    {"provider": "notebooklm", "by": "user", "auth_json": candidate},
+                )
+
+            self.assertTrue(response.ok, getattr(response, "error", None))
+            result = response.result if isinstance(response.result, dict) else {}
+            self.assertTrue(bool(result.get("healthy")))
+            self.assertEqual(result.get("provider_state"), expected_state)
+            self.assertEqual(get_space_provider_state("notebooklm"), expected_state)
+            health_mock.assert_called_once_with(
+                auth_json_raw=candidate,
+                real_enabled=False,
+                verify_remote=True,
+            )
         finally:
             cleanup()
 
@@ -2092,6 +2149,42 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertEqual(str(provider_state.get("mode") or ""), "degraded")
             err = result.get("error") if isinstance(result.get("error"), dict) else {}
             self.assertEqual(str(err.get("code") or ""), "space_provider_compat_mismatch")
+        finally:
+            cleanup()
+
+    def test_degraded_provider_with_saved_credential_is_not_write_ready(self) -> None:
+        from cccc.daemon.space.group_space_store import set_space_provider_state
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("space-degraded-credential")
+            credential, _ = self._call(
+                "group_space_provider_credential_update",
+                {
+                    "provider": "notebooklm",
+                    "by": "user",
+                    "auth_json": '{"cookies":[{"name":"SID","value":"saved","domain":".google.com"}]}',
+                },
+            )
+            self.assertTrue(credential.ok, getattr(credential, "error", None))
+            set_space_provider_state(
+                "notebooklm",
+                enabled=True,
+                real_enabled=True,
+                mode="degraded",
+                last_error="Authentication expired or invalid",
+            )
+
+            status, _ = self._call(
+                "group_space_status",
+                {"group_id": gid, "provider": "notebooklm"},
+            )
+
+            self.assertTrue(status.ok, getattr(status, "error", None))
+            provider = (status.result or {}).get("provider") if isinstance(status.result, dict) else {}
+            self.assertTrue(bool((provider or {}).get("auth_configured")))
+            self.assertFalse(bool((provider or {}).get("write_ready")))
+            self.assertEqual(str((provider or {}).get("readiness_reason") or ""), "provider_degraded")
         finally:
             cleanup()
 
@@ -2575,18 +2668,47 @@ class TestGroupSpaceOps(unittest.TestCase):
         from cccc.daemon.space import notebooklm_auth_flow as auth_flow
 
         fake_vendor_module = types.ModuleType("notebooklm_auth_fake")
+        fake_refresh_module = types.ModuleType("notebooklm_refresh_fake")
 
-        def _extract_cookies_from_storage(storage_state):
+        captured: dict[str, Any] = {}
+
+        def _extract_cookies_with_domains(storage_state):
             raw = storage_state.get("cookies")
-            return list(raw) if isinstance(raw, list) else []
+            cookies = raw if isinstance(raw, list) else []
+            return {
+                (
+                    str(cookie.get("name") or ""),
+                    str(cookie.get("domain") or ""),
+                    str(cookie.get("path") or "/"),
+                ): str(cookie.get("value") or "")
+                for cookie in cookies
+                if isinstance(cookie, dict)
+            }
 
-        async def _fetch_tokens(cookies):
+        def _build_cookie_jar(*, cookies):
             if not cookies:
                 raise RuntimeError("missing cookies")
+            captured["cookies"] = cookies
+            return cookies
+
+        async def _fetch_tokens_with_jar(
+            cookie_jar,
+            storage_path,
+            *,
+            authuser=0,
+            force_authuser_query=False,
+            poke=True,
+        ):
+            captured["cookie_jar"] = cookie_jar
+            captured["storage_path"] = storage_path
+            captured["authuser"] = authuser
+            captured["force_authuser_query"] = force_authuser_query
+            captured["poke"] = poke
             return ("csrf_token", "session_id")
 
-        fake_vendor_module.extract_cookies_from_storage = _extract_cookies_from_storage
-        fake_vendor_module.fetch_tokens = _fetch_tokens
+        fake_vendor_module.extract_cookies_with_domains = _extract_cookies_with_domains
+        fake_vendor_module.build_cookie_jar = _build_cookie_jar
+        fake_refresh_module._fetch_tokens_with_jar = _fetch_tokens_with_jar
 
         class _Compat:
             compatible = True
@@ -2603,13 +2725,26 @@ class TestGroupSpaceOps(unittest.TestCase):
             return_value=_Compat(),
         ), patch.dict(
             sys.modules,
-            {"cccc.providers.notebooklm._vendor.notebooklm.auth": fake_vendor_module},
+            {
+                "cccc.providers.notebooklm._vendor.notebooklm.auth": fake_vendor_module,
+                "cccc.providers.notebooklm._vendor.notebooklm._auth.refresh": fake_refresh_module,
+            },
         ):
 
             async def _run_verify() -> None:
                 auth_flow._verify_storage_state(storage_state)
 
             asyncio.run(_run_verify())
+
+        self.assertEqual(
+            captured.get("cookies"),
+            {("__Secure-1PSID", ".google.com", "/"): "x"},
+        )
+        self.assertEqual(captured.get("cookie_jar"), captured.get("cookies"))
+        self.assertIsNone(captured.get("storage_path"))
+        self.assertEqual(captured.get("authuser"), 0)
+        self.assertFalse(bool(captured.get("force_authuser_query")))
+        self.assertFalse(bool(captured.get("poke")))
 
     def test_notebooklm_auth_browser_profile_is_persistent_under_home(self) -> None:
         _, cleanup = self._with_home()
@@ -2830,13 +2965,21 @@ class TestGroupSpaceOps(unittest.TestCase):
     def test_notebooklm_auth_flow_projected_browser_path_persists_and_verifies(self) -> None:
         from cccc.daemon.space import notebooklm_auth_flow as auth_flow
 
+        order: list[str] = []
+
+        def _verify(_storage_state: dict[str, Any]) -> None:
+            order.append("verify")
+
+        def _persist(_storage_state: dict[str, Any]) -> None:
+            order.append("persist")
+
         browser_state = {
             "active": True,
             "state": "ready",
             "message": "ready",
             "error": {},
             "strategy": "playwright_channel:chrome_headless",
-            "url": "https://notebooklm.google.com/",
+            "url": "https://notebook.google.com/",
             "width": 1366,
             "height": 900,
             "started_at": "2026-03-24T00:00:00Z",
@@ -2857,7 +3000,7 @@ class TestGroupSpaceOps(unittest.TestCase):
         ) as open_browser_mock, patch.object(
             auth_flow,
             "notebooklm_auth_browser_page_urls",
-            return_value=["https://notebooklm.google.com/"],
+            return_value=["https://notebook.google.com/"],
         ), patch.object(
             auth_flow,
             "notebooklm_auth_browser_storage_state",
@@ -2869,11 +3012,11 @@ class TestGroupSpaceOps(unittest.TestCase):
         ), patch.object(
             auth_flow,
             "_verify_storage_state",
-            return_value=None,
+            side_effect=_verify,
         ), patch.object(
             auth_flow,
             "_persist_storage_state",
-            return_value=None,
+            side_effect=_persist,
         ) as persist_mock, patch.object(
             auth_flow,
             "close_notebooklm_auth_browser_session",
@@ -2896,11 +3039,68 @@ class TestGroupSpaceOps(unittest.TestCase):
 
         open_browser_mock.assert_called_once()
         persist_mock.assert_called_once()
+        self.assertEqual(order, ["verify", "persist"])
         close_browser_mock.assert_called()
         state = auth_flow.get_notebooklm_auth_flow_status()
         self.assertEqual(str(state.get("state") or ""), "succeeded")
         self.assertEqual(str(state.get("delivery") or ""), "projected_browser")
         self.assertIn("connected", str(state.get("message") or "").lower())
+
+    def test_notebooklm_auth_flow_never_persists_failed_candidate(self) -> None:
+        from cccc.daemon.space import notebooklm_auth_flow as auth_flow
+
+        cancel_event = threading.Event()
+        storage_state = {
+            "cookies": [{"name": "SID", "value": "candidate", "domain": ".google.com", "path": "/"}],
+            "origins": [],
+        }
+
+        def _reject_candidate(_storage_state: dict[str, Any]) -> None:
+            cancel_event.set()
+            raise ValueError("Authentication expired or invalid")
+
+        with patch.object(auth_flow, "_load_saved_storage_state", return_value=None), patch.object(
+            auth_flow,
+            "open_notebooklm_auth_browser_session",
+            return_value={"active": True, "state": "ready", "error": {}},
+        ), patch.object(
+            auth_flow,
+            "notebooklm_auth_browser_page_urls",
+            return_value=["https://notebook.google.com/"],
+        ), patch.object(
+            auth_flow,
+            "notebooklm_auth_browser_storage_state",
+            return_value=storage_state,
+        ), patch.object(
+            auth_flow,
+            "_verify_storage_state",
+            side_effect=_reject_candidate,
+        ), patch.object(
+            auth_flow,
+            "_persist_storage_state",
+        ) as persist_mock, patch.object(
+            auth_flow,
+            "close_notebooklm_auth_browser_session",
+            return_value={"closed": True},
+        ), patch.object(
+            auth_flow,
+            "get_space_provider_state",
+            return_value={"enabled": False, "real_enabled": False},
+        ), patch.object(
+            auth_flow.time,
+            "sleep",
+            return_value=None,
+        ):
+            auth_flow._connect_worker(
+                session_id="nbl_auth_projected_rejected",
+                timeout_seconds=120,
+                cancel_event=cancel_event,
+                projected=True,
+            )
+
+        persist_mock.assert_not_called()
+        state = auth_flow.get_notebooklm_auth_flow_status()
+        self.assertEqual(str(state.get("state") or ""), "canceled")
 
     def test_notebooklm_auth_flow_projected_browser_cleans_session_profile_dir(self) -> None:
         _, cleanup = self._with_home()

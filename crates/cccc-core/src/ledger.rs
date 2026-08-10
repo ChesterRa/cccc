@@ -119,22 +119,7 @@ fn append_with(
     event: &Event,
     write: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
 ) -> io::Result<()> {
-    let lock_path = ledger_lock_path(path);
-    if let Some(parent) = lock_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let mut lock = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(lock_path)?;
-    if lock.metadata()?.len() == 0 {
-        lock.write_all(&[0])?;
-        lock.flush()?;
-    }
-    lock.seek(SeekFrom::Start(0))?;
-    lock.lock_exclusive()?;
+    let lock = acquire_writer_lock(path)?;
 
     let mut file = OpenOptions::new()
         .create(true)
@@ -144,6 +129,15 @@ fn append_with(
     let original_len = file.metadata()?.len();
     let mut encoded = serde_json::to_vec(event).map_err(io::Error::other)?;
     encoded.push(b'\n');
+    if original_len > 0 {
+        file.seek(SeekFrom::End(-1))?;
+        let mut last = [0_u8; 1];
+        file.read_exact(&mut last)?;
+        if last[0] != b'\n' {
+            encoded.insert(0, b'\n');
+        }
+        file.seek(SeekFrom::End(0))?;
+    }
     let result = write(&mut file, &encoded);
     if let Err(error) = result {
         if matches!(
@@ -170,6 +164,26 @@ fn append_with(
     let _ = FileExt::unlock(&lock);
     crate::ledger_index::note_append(path, event, encoded.len());
     Ok(())
+}
+
+pub(crate) fn acquire_writer_lock(path: &Path) -> io::Result<File> {
+    let lock_path = ledger_lock_path(path);
+    if let Some(parent) = lock_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(lock_path)?;
+    if lock.metadata()?.len() == 0 {
+        lock.write_all(&[0])?;
+        lock.flush()?;
+    }
+    lock.seek(SeekFrom::Start(0))?;
+    lock.lock_exclusive()?;
+    Ok(lock)
 }
 
 fn ledger_lock_path(path: &Path) -> PathBuf {
@@ -633,6 +647,41 @@ mod tests {
         let events = tail(&path, 1).expect("tail");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].kind, "chat.message");
+    }
+
+    #[test]
+    fn append_separates_an_invalid_unterminated_tail() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let partial = br#"{"v":1,"id":"crash-tail""#;
+        std::fs::write(&path, partial).expect("partial tail");
+        let event = Event::new("chat.message", "g_test");
+
+        append(&path, &event).expect("append after partial tail");
+
+        let raw = std::fs::read(&path).expect("ledger");
+        assert!(raw.starts_with(&[partial.as_slice(), b"\n"].concat()));
+        assert_eq!(
+            read_all_uncached(&path).expect("read separated append"),
+            vec![event]
+        );
+    }
+
+    #[test]
+    fn append_preserves_a_complete_unterminated_event() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("ledger.jsonl");
+        let first = Event::new("group.create", "g_test");
+        std::fs::write(&path, serde_json::to_vec(&first).expect("encode first"))
+            .expect("unterminated first event");
+        let second = Event::new("chat.message", "g_test");
+
+        append(&path, &second).expect("append after complete unterminated event");
+
+        assert_eq!(
+            read_all_uncached(&path).expect("read both events"),
+            vec![first, second]
+        );
     }
 
     #[test]

@@ -51,6 +51,7 @@ impl CreationSteps for RealCreationSteps {
             request,
             json!({"title": group.title, "topic": group.topic, "scope": group.active_scope_key}),
         )
+        .map(|_| ())
     }
 
     fn activate(&self, home: &HomeLayout, group_id: &str) -> io::Result<()> {

@@ -69,6 +69,31 @@ fn context_sync_is_atomic_and_dry_run_does_not_persist() {
         .expect("dry run");
     let stored = contexts.load(&group_id).expect("stored context");
     assert!(stored.coordination.get("notes").is_none());
+
+    let valid_then_invalid = [
+        json!({"op":"task.update","task_id":"T001","notes":"must roll back"})
+            .as_object()
+            .cloned()
+            .expect("valid update"),
+        json!({"op":"task.move","task_id":"T001","status":"bogus"})
+            .as_object()
+            .cloned()
+            .expect("invalid move"),
+    ];
+    assert!(
+        contexts
+            .sync(
+                &group_id,
+                &valid_then_invalid,
+                Some(&first.version),
+                "user",
+                false,
+            )
+            .is_err()
+    );
+    let stored = contexts.load(&group_id).expect("stored after rejection");
+    assert!(stored.tasks[0].get("notes").is_none());
+    assert_eq!(stored.tasks[0]["status"], "planned");
 }
 
 #[test]
@@ -89,7 +114,7 @@ fn inbox_filters_targeted_messages_and_persists_cursor() {
         .unwrap_or_else(Map::<String, Value>::new);
     ledger::append(&store.ledger_path(&group_id).expect("path"), &message).expect("append");
     let group = store.load(&group_id).expect("load");
-    let unread = inbox::list_unread(&home, &group, "peer", 50).expect("unread");
+    let unread = inbox::list_unread(&home, &group, "peer", 50, "all").expect("unread");
     assert_eq!(unread.len(), 1);
     let unread_many =
         inbox::list_unread_many(&home, &group, &["lead".to_owned(), "peer".to_owned()], 50)
@@ -98,7 +123,7 @@ fn inbox_filters_targeted_messages_and_persists_cursor() {
     assert_eq!(unread_many["peer"], unread);
     inbox::mark_read(&home, &group_id, "peer", &message.id).expect("mark read");
     assert!(
-        inbox::list_unread(&home, &group, "peer", 50)
+        inbox::list_unread(&home, &group, "peer", 50, "all")
             .expect("read inbox")
             .is_empty()
     );

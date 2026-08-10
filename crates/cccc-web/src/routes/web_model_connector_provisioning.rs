@@ -39,7 +39,11 @@ pub(super) async fn create(State(state): State<AppState>, Json(body): Json<Value
     }
 
     let connector_id = format!("wmc_{}", &Uuid::new_v4().simple().to_string()[..16]);
-    let secret = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let secret = format!(
+        "wmcs_{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
     let now = utc_now();
     let provider = body
         .get("provider")
@@ -48,7 +52,7 @@ pub(super) async fn create(State(state): State<AppState>, Json(body): Json<Value
         .trim();
     let connector = json!({
         "connector_id":connector_id,
-        "kind":"web_model",
+        "kind":"web_model_connector",
         "group_id":group_id,
         "actor_id":actor_id,
         "provider":if provider.is_empty(){"chatgpt"}else{provider},
@@ -88,6 +92,7 @@ fn public(item: &Value, base_url: &str) -> Value {
     let secret = result
         .remove("secret")
         .and_then(|value| value.as_str().map(str::to_owned));
+    result.remove("secret_hash");
     let id = item["connector_id"].as_str().unwrap_or("");
     let secret_value = secret.as_deref().unwrap_or_default();
     let connector_path = format!("/mcp/web-model/{id}");
@@ -97,11 +102,24 @@ fn public(item: &Value, base_url: &str) -> Value {
         format!("{base_url}{connector_path}")
     };
     result.insert("secret_available".into(), Value::Bool(secret.is_some()));
+    let preview = result
+        .get("secret_preview")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
     result.insert(
         "secret_preview".into(),
-        Value::String(secret.as_deref().map_or(String::new(), |value| {
-            format!("...{}", &value[value.len().saturating_sub(6)..])
-        })),
+        Value::String(if preview.is_empty() {
+            secret.as_deref().map_or(String::new(), |value| {
+                if value.len() <= 10 {
+                    "****".into()
+                } else {
+                    format!("{}...{}", &value[..6], &value[value.len() - 4..])
+                }
+            })
+        } else {
+            preview
+        }),
     );
     result.insert("connector_url".into(), json!(connector_url));
     result.insert(

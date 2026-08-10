@@ -160,8 +160,7 @@ async fn partial_target_failure_is_aggregated_and_queryable() {
     assert_eq!(report.failures[0].stage, "send");
 
     let store = cccc_core::GroupStore::new(sender.home.clone()).expect("store");
-    let state = cccc_core::integration_state::group_get(&store, &sender.group_id, "im_bridge")
-        .expect("state");
+    let state = cccc_core::im_state::load(&store, &sender.group_id).expect("state");
     assert_eq!(state["attachment_delivery"]["delivered_targets"], 1);
     assert_eq!(
         state["attachment_delivery"]["failures"]

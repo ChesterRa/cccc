@@ -46,11 +46,6 @@ pub fn daemon_call(
             "capability_enable"
         }
         "cccc_capability_install" => "capability_install_target",
-        "cccc_capability_use" => {
-            alias(&mut args, "id", "capability_id");
-            alias(&mut args, "tool_arguments", "arguments");
-            "capability_tool_call"
-        }
         "cccc_capability_import" => "capability_import",
         "cccc_capability_block" => {
             alias(&mut args, "id", "capability_id");
@@ -62,6 +57,7 @@ pub fn daemon_call(
         }
         "cccc_group" => return action(args, actions::group),
         "cccc_actor" => return action(args, actions::actor),
+        "cccc_actor_notes" => return action(args, actions::actor_notes),
         "cccc_coordination" => return context_action(args, "coordination"),
         "cccc_task" => return context_action(args, "task"),
         "cccc_agent_state" => return context_action(args, "agent_state"),
@@ -164,29 +160,15 @@ fn context_action(
         .remove("action")
         .and_then(|value| value.as_str().map(str::to_owned))
         .unwrap_or_else(|| "get".into());
+    if namespace == "task" {
+        return task_action(args, &action_name);
+    }
     if action_name == "get" || action_name == "list" {
-        return Ok((
-            if namespace == "task" {
-                "task_list"
-            } else {
-                "context_get"
-            }
-            .into(),
-            args,
-        ));
+        return Ok(("context_get".into(), args));
     }
     let op_name = match (namespace, action_name.as_str()) {
         ("coordination", "update_brief" | "brief") => "coordination.brief.update",
         ("coordination", "add_note" | "note") => "coordination.note.add",
-        ("task", "create" | "update" | "move" | "restore" | "delete" | "archive") => {
-            match action_name.as_str() {
-                "create" => "task.create",
-                "update" => "task.update",
-                "move" => "task.move",
-                "restore" => "task.restore",
-                _ => "task.delete",
-            }
-        }
         ("agent_state", "update" | "clear") => {
             if action_name == "update" {
                 "agent_state.update"
@@ -208,6 +190,127 @@ fn context_action(
     }
     request.insert("ops".into(), Value::Array(vec![Value::Object(args)]));
     Ok(("context_sync".into(), request))
+}
+
+fn task_action(
+    mut args: Map<String, Value>,
+    action_name: &str,
+) -> Result<(String, Map<String, Value>), String> {
+    let group_id = args.remove("group_id");
+    let by = args.remove("by");
+    args.remove("actor_id");
+    args.remove("include_archived");
+    if matches!(action_name, "get" | "list") {
+        let mut request = Map::new();
+        if let Some(value) = group_id {
+            request.insert("group_id".into(), value);
+        }
+        if let Some(value) = args.remove("task_id") {
+            request.insert("task_id".into(), value);
+        }
+        return Ok(("task_list".into(), request));
+    }
+    let mut operations = Vec::new();
+    match action_name {
+        "create" => {
+            if let Some(value) = args.remove("type") {
+                args.insert("task_type".into(), value);
+            }
+            retain_fields(
+                &mut args,
+                &[
+                    "title",
+                    "outcome",
+                    "status",
+                    "parent_id",
+                    "assignee",
+                    "priority",
+                    "blocked_by",
+                    "waiting_on",
+                    "handoff_to",
+                    "task_type",
+                    "notes",
+                    "checklist",
+                ],
+            );
+            args.insert("op".into(), Value::String("task.create".into()));
+            operations.push(Value::Object(args));
+        }
+        "update" => {
+            if let Some(value) = args.remove("type") {
+                args.insert("task_type".into(), value);
+            }
+            let status = args.remove("status");
+            let task_id = args.get("task_id").cloned();
+            retain_fields(
+                &mut args,
+                &[
+                    "task_id",
+                    "title",
+                    "outcome",
+                    "parent_id",
+                    "assignee",
+                    "priority",
+                    "blocked_by",
+                    "waiting_on",
+                    "handoff_to",
+                    "task_type",
+                    "notes",
+                    "checklist",
+                ],
+            );
+            let has_patch = args.keys().any(|key| key != "task_id");
+            if has_patch || status.is_none() {
+                args.insert("op".into(), Value::String("task.update".into()));
+                operations.push(Value::Object(args));
+            }
+            if let Some(status) = status {
+                let mut movement = Map::new();
+                movement.insert("op".into(), Value::String("task.move".into()));
+                if let Some(task_id) = task_id {
+                    movement.insert("task_id".into(), task_id);
+                }
+                movement.insert("status".into(), status);
+                operations.push(Value::Object(movement));
+            }
+        }
+        "move" | "restore" | "delete" => {
+            retain_fields(
+                &mut args,
+                if action_name == "move" {
+                    &["task_id", "status"]
+                } else {
+                    &["task_id"]
+                },
+            );
+            args.insert(
+                "op".into(),
+                Value::String(
+                    match action_name {
+                        "move" => "task.move",
+                        "restore" => "task.restore",
+                        _ => "task.delete",
+                    }
+                    .into(),
+                ),
+            );
+            operations.push(Value::Object(args));
+        }
+        _ => return Err(format!("unsupported task action: {action_name}")),
+    }
+    let mut request = Map::new();
+    if let Some(value) = group_id {
+        request.insert("group_id".into(), value);
+    }
+    if let Some(value) = by {
+        request.insert("by".into(), value);
+    }
+    request.insert("ops".into(), Value::Array(operations));
+    Ok(("context_sync".into(), request))
+}
+
+fn retain_fields(args: &mut Map<String, Value>, allowed: &[&str]) {
+    args.retain(|key, _| allowed.contains(&key.as_str()));
 }
 
 fn alias(args: &mut Map<String, Value>, from: &str, to: &str) {
@@ -246,13 +349,13 @@ mod tests {
     use serde_json::{Map, json};
 
     #[test]
-    fn terminal_resize_maps_to_daemon_operation() {
+    fn terminal_resize_maps_to_standard_daemon_operation() {
         let args = json!({"action":"resize","group_id":"g_test","actor_id":"peer1"})
             .as_object()
             .cloned()
             .unwrap_or_else(Map::new);
         let (op, args) = daemon_call("cccc_terminal", args).expect("mapping");
-        assert_eq!(op, "terminal_resize");
+        assert_eq!(op, "term_resize");
         assert!(!args.contains_key("action"));
     }
 
@@ -326,14 +429,75 @@ mod tests {
     }
 
     #[test]
-    fn python_task_archive_maps_to_context_delete() {
+    fn task_mapping_rejects_the_out_of_schema_archive_alias() {
         let args = json!({"action":"archive","group_id":"g_test","task_id":"t1"})
             .as_object()
             .cloned()
             .expect("args");
-        let (op, args) = daemon_call("cccc_task", args).expect("mapping");
+        assert_eq!(
+            daemon_call("cccc_task", args).expect_err("archive must be rejected"),
+            "unsupported task action: archive"
+        );
+    }
+
+    #[test]
+    fn task_mapping_normalizes_public_fields_and_combines_update_with_move() {
+        let create = json!({
+            "action":"create","group_id":"g_test","actor_id":"peer","by":"peer",
+            "title":"typed","type":"optimization"
+        })
+        .as_object()
+        .cloned()
+        .expect("create args");
+        let (op, args) = daemon_call("cccc_task", create).expect("create mapping");
         assert_eq!(op, "context_sync");
-        assert_eq!(args["ops"][0]["op"], "task.delete");
+        assert_eq!(args["group_id"], "g_test");
+        assert_eq!(args["by"], "peer");
+        assert_eq!(args["ops"][0]["op"], "task.create");
+        assert_eq!(args["ops"][0]["task_type"], "optimization");
+        for leaked in ["group_id", "actor_id", "by", "type"] {
+            assert!(args["ops"][0].get(leaked).is_none(), "leaked {leaked}");
+        }
+
+        let update = json!({
+            "action":"update","group_id":"g_test","actor_id":"peer","by":"peer",
+            "task_id":"T001","notes":"done","status":"active"
+        })
+        .as_object()
+        .cloned()
+        .expect("update args");
+        let (_, args) = daemon_call("cccc_task", update).expect("update mapping");
+        assert_eq!(args["ops"].as_array().expect("ops").len(), 2);
+        assert_eq!(args["ops"][0]["op"], "task.update");
+        assert_eq!(args["ops"][0]["notes"], "done");
+        assert!(args["ops"][0].get("status").is_none());
+        assert_eq!(
+            args["ops"][1],
+            json!({"op":"task.move","task_id":"T001","status":"active"})
+        );
+    }
+
+    #[test]
+    fn actor_notes_actions_map_to_the_daemon_owned_help_contract() {
+        for (action, expected) in [
+            ("get", "actor_notes_get"),
+            ("set", "actor_notes_set"),
+            ("clear", "actor_notes_clear"),
+        ] {
+            let args = json!({
+                "action":action,
+                "group_id":"g_test",
+                "target_actor_id":"peer",
+                "by":"lead"
+            })
+            .as_object()
+            .cloned()
+            .expect("args");
+            let (op, args) = daemon_call("cccc_actor_notes", args).expect("mapping");
+            assert_eq!(op, expected);
+            assert!(!args.contains_key("action"));
+            assert_eq!(args["target_actor_id"], "peer");
+        }
     }
 
     #[test]

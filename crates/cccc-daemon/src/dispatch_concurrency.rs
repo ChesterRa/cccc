@@ -190,6 +190,20 @@ mod tests {
                 "{op} mutates the global capability catalog"
             );
         }
+        assert!(matches!(
+            access(&request(
+                "assistant_voice_recording_lease",
+                json!({"group_id":"g_one","action":"acquire"})
+            )),
+            Access::GlobalWrite
+        ));
+        assert!(matches!(
+            access(&request(
+                "assistant_state",
+                json!({"group_id":"g_one"})
+            )),
+            Access::GroupWrite(group_id) if group_id == "g_one"
+        ));
     }
 
     #[test]
@@ -204,6 +218,7 @@ mod tests {
             "web_model_runtime_wait_next_turn",
             "runtime_complete_turn",
             "web_model_runtime_complete_turn",
+            "web_model_browser_delivery_record",
             "future_unknown_operation",
         ] {
             assert!(

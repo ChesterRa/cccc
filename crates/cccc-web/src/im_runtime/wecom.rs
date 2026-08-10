@@ -3,7 +3,7 @@ use super::wecom_message::{MessageDeduper, materialize_attachments, parse_inboun
 use super::wecom_outbound::WecomOutbound;
 use super::{
     InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision,
-    is_outbound_or_stream, resolve_credential, spawn_outbound_matching, string,
+    is_outbound_or_stream, resolve_config_credential, spawn_outbound_matching,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -22,8 +22,8 @@ pub(super) async fn start(
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
     on_terminal_error: impl Fn(&HomeLayout, &str, &str) + Send + Sync + 'static,
 ) -> Result<(Vec<JoinHandle<()>>, Arc<WecomClient>), String> {
-    let bot_id = resolve_credential(&string(config, "wecom_bot_id"))?;
-    let secret = resolve_credential(&string(config, "wecom_secret"))?;
+    let bot_id = resolve_config_credential(config, "wecom_bot_id", "wecom_bot_id_env")?;
+    let secret = resolve_config_credential(config, "wecom_secret", "wecom_secret_env")?;
     let deduper = Arc::new(MessageDeduper::default());
     let (inbound_tx, mut inbound_rx) = mpsc::channel(128);
     let callback = move |frame: Value| {
@@ -140,17 +140,15 @@ pub(super) fn persist_terminal_error(home: &HomeLayout, group_id: &str, error: &
     let Ok(store) = cccc_core::GroupStore::new(home.clone()) else {
         return;
     };
-    if let Err(persist_error) =
-        cccc_core::integration_state::group_update(&store, group_id, "im_bridge", |value| {
-            if !value.is_object() {
-                *value = json!({});
-            }
-            let state = value.as_object_mut().expect("IM state initialized");
-            state.insert("last_error".into(), json!(error));
-            state.insert("updated_at".into(), json!(cccc_contracts::utc_now()));
-            Ok(())
-        })
-    {
+    if let Err(persist_error) = cccc_core::im_state::update(&store, group_id, |value| {
+        if !value.is_object() {
+            *value = json!({});
+        }
+        let state = value.as_object_mut().expect("IM state initialized");
+        state.insert("last_error".into(), json!(error));
+        state.insert("updated_at".into(), json!(cccc_contracts::utc_now()));
+        Ok(())
+    }) {
         tracing::warn!(%persist_error, %group_id, "failed to persist WeCom terminal error");
     }
 }

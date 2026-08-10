@@ -738,7 +738,7 @@ async fn revoked_trust_invalidates_credential_and_removes_registration() {
         .await
         .expect("denied response");
     assert_eq!(denied.status(), StatusCode::FORBIDDEN);
-    let state = integration_state::global_get(&home, "group_bridge").expect("bridge state");
+    let state = cccc_core::group_bridge_legacy::load(&home).expect("bridge state");
     assert_eq!(state["trusts"][0]["status"], "revoked");
     assert_eq!(
         state["registrations"]

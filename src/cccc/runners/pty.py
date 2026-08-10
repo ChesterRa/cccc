@@ -71,6 +71,7 @@ class PtySession:
         max_client_buffer_bytes: int = 8_000_000,
         cols: int = 120,
         rows: int = 40,
+        cursor_start: int = 0,
     ) -> None:
         self.group_id = group_id
         self.actor_id = actor_id
@@ -98,8 +99,8 @@ class PtySession:
 
         self._backlog: deque[bytes] = deque()
         self._backlog_bytes = 0
-        self._backlog_start_offset = 0
-        self._backlog_end_offset = 0
+        self._backlog_start_offset = max(0, int(cursor_start or 0))
+        self._backlog_end_offset = self._backlog_start_offset
         self._terminal_signal_buffer = ""
         self._terminal_override: Optional[Dict[str, str]] = None
         self._mode_tail = b""
@@ -292,6 +293,14 @@ class PtySession:
             return b""
         return data[max(0, cursor - start):]
 
+    def history_since_page(self, *, after: int, limit_bytes: int = 64_000) -> Dict[str, object]:
+        data, start, end = self._backlog_snapshot()
+        return PtyBacklogSnapshot(
+            data=data,
+            start_cursor=start,
+            end_cursor=end,
+        ).history_since_page(after=after, limit_bytes=limit_bytes)
+
     def clear_backlog(self) -> None:
         """Clear the in-memory PTY backlog/ring buffer (developer-mode only)."""
         with self._lock:
@@ -405,7 +414,7 @@ class PtySession:
         since: Optional[int] = None,
         mode: str = "control",
         takeover: bool = False,
-        on_replay_snapshot: Optional[Callable[[int, int], None]] = None,
+        on_replay_snapshot: Optional[Callable[..., None]] = None,
     ) -> Dict[str, object]:
         requested_mode = str(mode or "control").strip().lower()
         control = requested_mode != "viewer"
@@ -426,8 +435,19 @@ class PtySession:
                     self._writer_fd = fileno
                     writable = True
                     writer_replaced = True
+        replay_callback = on_replay_snapshot
+        if on_replay_snapshot is not None:
+            attach_state = {
+                "mode": "control" if control else "viewer",
+                "writable": writable,
+                "writer_replaced": writer_replaced,
+            }
+
+            def replay_callback(start: int, end: int) -> None:
+                on_replay_snapshot(start, end, attach_state)
+
         try:
-            self._attach_q.put_nowait((sock, since, control, on_replay_snapshot))
+            self._attach_q.put_nowait((sock, since, control, replay_callback))
         except Exception:
             with self._lock:
                 if self._writer_fd == fileno:
@@ -682,7 +702,7 @@ class PtySession:
         *,
         since: Optional[int] = None,
         control: bool = True,
-        on_replay_snapshot: Optional[Callable[[int, int], None]] = None,
+        on_replay_snapshot: Optional[Callable[..., None]] = None,
     ) -> None:
         fileno = int(sock.fileno())
         if fileno < 0:
@@ -876,9 +896,10 @@ class PtySupervisor:
             except Exception:
                 returncode = None
             if returncode not in (None, 0):
+                cursor_floor = int(end or start or 0)
                 data = f"Process exited with code {returncode} before producing terminal output.\n".encode("utf-8")
-                start = 0
-                end = len(data)
+                start = cursor_floor
+                end = cursor_floor + len(data)
         return PtyBacklogSnapshot(
             data=data,
             start_cursor=int(start or 0),
@@ -975,6 +996,32 @@ class PtySupervisor:
         except Exception:
             return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
 
+    def history_since_page(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        after: int,
+        limit_bytes: int = 64_000,
+    ) -> Dict[str, object]:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        if not key[0] or not key[1]:
+            return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
+        with self._lock:
+            session = self._sessions.get(key)
+            snapshot = self._last_backlogs.get(key) if session is None else None
+        if session is None:
+            if snapshot is not None:
+                try:
+                    return snapshot.history_since_page(after=after, limit_bytes=int(limit_bytes or 0))
+                except Exception:
+                    pass
+            return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
+        try:
+            return session.history_since_page(after=after, limit_bytes=int(limit_bytes or 0))
+        except Exception:
+            return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
+
     def backlog_start_offset(self, *, group_id: str, actor_id: str) -> int:
         """Oldest retained backlog offset for an actor (0 if unknown)."""
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
@@ -1054,8 +1101,12 @@ class PtySupervisor:
     ) -> PtySession:
         with self._lock:
             existing = self._sessions.get(key)
+            previous_snapshot = self._last_backlogs.get(key)
         if existing is not None and existing.is_running():
             return existing
+        cursor_start = previous_snapshot.end_cursor if previous_snapshot is not None else 0
+        if existing is not None:
+            cursor_start = max(cursor_start, self._snapshot_session(existing).end_cursor)
         registered = threading.Event()
 
         def on_exit_after_registration(exited: PtySession) -> None:
@@ -1073,6 +1124,7 @@ class PtySupervisor:
                 on_exit=on_exit_after_registration,
                 input_observer=None,
                 max_backlog_bytes=int(max_backlog_bytes or 0),
+                cursor_start=cursor_start,
             )
         except BaseException:
             registered.set()
@@ -1132,7 +1184,7 @@ class PtySupervisor:
         since: Optional[int] = None,
         mode: str = "control",
         takeover: bool = False,
-        on_replay_snapshot: Optional[Callable[[int, int], None]] = None,
+        on_replay_snapshot: Optional[Callable[..., None]] = None,
     ) -> Dict[str, object]:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:

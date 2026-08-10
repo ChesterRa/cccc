@@ -1,6 +1,6 @@
 use cccc_contracts::{ActorRole, DaemonRequest, Event, utc_now};
-use cccc_core::integration_state;
 use cccc_core::{GroupStore, HomeLayout};
+use cccc_core::{assistant_state, voice_recording_lease};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::io;
@@ -24,10 +24,11 @@ const KEY: &str = "assistants";
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
-        "assistant_index" => document_reconcile::run(home, request)
+        "assistant_state" | "assistant_index" => document_reconcile::run(home, request)
             .and_then(|_| voice_settings::index(home, request)),
         "assistant_settings_update" => voice_settings::update(home, request),
         "assistant_status_update" => voice_settings::status(home, request),
+        "assistant_voice_recording_lease" => recording_lease(home, request),
         "assistant_voice_transcript_append" => voice_input::append(home, request),
         "assistant_voice_document_list" => documents(home, request),
         "assistant_voice_document_select" => select(home, request),
@@ -35,6 +36,14 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "assistant_voice_document_save" => save(home, request),
         "assistant_voice_document_instruction" => voice_ask::input(home, request),
         "assistant_voice_document_archive" => archive(home, request),
+        "assistant_voice_input_append"
+            if string_arg(request, "kind")
+                .or_else(|| string_arg(request, "input_kind"))
+                .as_deref()
+                == Some("voice_instruction") =>
+        {
+            voice_ask::input(home, request)
+        }
         "assistant_voice_input_append" => prompt_refine::input(home, request),
         "assistant_voice_prompt_draft_submit" => prompt_refine::submit(home, request),
         "assistant_voice_prompt_draft_ack" => prompt_refine::ack(home, request),
@@ -43,6 +52,55 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "assistant_voice_request" => voice_request(home, request),
         _ => return None,
     })
+}
+
+fn recording_lease(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group_id = required_arg(request, "group_id")?;
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let group = store.load(&group_id).map_err(OpError::not_found)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    if !by.is_empty() && by != "user" && by != "assistant:voice_secretary" {
+        match cccc_core::actors::effective_role(&group, &by) {
+            Some(ActorRole::Foreman) => {}
+            Some(ActorRole::Peer) => {
+                return Err(OpError::new(
+                    "permission_denied",
+                    format!("permission denied: {by}"),
+                ));
+            }
+            None => {
+                return Err(OpError::new(
+                    "permission_denied",
+                    format!("unknown actor: {by}"),
+                ));
+            }
+        }
+    }
+    let action = string_arg(request, "action").unwrap_or_else(|| "status".into());
+    let dispatch_target = string_arg(request, "dispatch_target").unwrap_or_default();
+    let state = group.extra.get(KEY).cloned().unwrap_or_else(|| json!({}));
+    let assistant = voice_settings::effective_assistant(&state);
+    if !assistant["enabled"].as_bool().unwrap_or(false)
+        && matches!(action.as_str(), "acquire" | "heartbeat")
+        && dispatch_target != "composer"
+    {
+        return Err(OpError::new(
+            "assistant_disabled",
+            "voice_secretary is disabled",
+        ));
+    }
+    voice_recording_lease::update(
+        home,
+        &group_id,
+        &group.title,
+        &Value::Object(request.args.clone()),
+    )
+    .map_err(|error| {
+        let mut mapped = OpError::new(error.code, error.message);
+        mapped.details = error.details;
+        mapped
+    })
+    .and_then(object)
 }
 
 fn documents(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -97,7 +155,6 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(OpError::io)?
         .load(&group_id)
         .map_err(OpError::not_found)?;
-    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let (storage_path, storage_kind) = document_storage_path(home, &group, &path)?;
     let mut previous_file = None::<Option<Vec<u8>>>;
     let result = update(home, &group_id, |state| {
@@ -143,27 +200,29 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         Err(error) => {
             if let Some(previous) = previous_file {
                 let attempted_content = content.clone();
-                if let Err(rollback_error) = store.mutate(&group_id, |group| {
-                    let current_matches_attempt =
-                        attempted_content.as_deref().is_some_and(|text| {
-                            group.extra[KEY]["documents"]
-                                .as_array()
-                                .into_iter()
-                                .flatten()
-                                .any(|document| {
-                                    document["document_path"] == path
-                                        && document["content"].as_str() == Some(text)
-                                })
+                let current_matches_attempt =
+                    assistant_state::load(home, &group_id)
+                        .ok()
+                        .is_some_and(|state| {
+                            attempted_content.as_deref().is_some_and(|text| {
+                                state["documents"].as_array().into_iter().flatten().any(
+                                    |document| {
+                                        document["document_path"] == path
+                                            && document["content"].as_str() == Some(text)
+                                    },
+                                )
+                            })
                         });
-                    if !current_matches_attempt {
-                        if let Some(bytes) = previous.as_deref() {
-                            write_document_bytes(&storage_path, bytes)?;
-                        } else if storage_path.exists() {
-                            std::fs::remove_file(&storage_path)?;
-                        }
-                    }
+                let rollback = if current_matches_attempt {
                     Ok(())
-                }) {
+                } else if let Some(bytes) = previous.as_deref() {
+                    write_document_bytes(&storage_path, bytes)
+                } else if storage_path.exists() {
+                    std::fs::remove_file(&storage_path)
+                } else {
+                    Ok(())
+                };
+                if let Err(rollback_error) = rollback {
                     return Err(OpError::new(
                         "rollback_failed",
                         format!(
@@ -319,22 +378,14 @@ fn document_result(
     object(json!({"group_id":group_id,"document":document,"event":event}))
 }
 fn load(home: &HomeLayout, group_id: &str) -> Result<Value, OpError> {
-    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    integration_state::group_get(&store, group_id, KEY).map_err(OpError::io)
+    assistant_state::load(home, group_id).map_err(OpError::io)
 }
 fn update<T>(
     home: &HomeLayout,
     group_id: &str,
     change: impl FnOnce(&mut Map<String, Value>) -> io::Result<T>,
 ) -> Result<T, OpError> {
-    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    integration_state::group_update(&store, group_id, KEY, |value| {
-        if !value.is_object() {
-            *value = json!({});
-        }
-        change(value.as_object_mut().expect("assistant state initialized"))
-    })
-    .map_err(OpError::io)
+    assistant_state::update(home, group_id, change).map_err(OpError::io)
 }
 fn array<'a>(state: &'a mut Map<String, Value>, key: &str) -> &'a mut Vec<Value> {
     let value = state.entry(key).or_insert_with(|| json!([]));

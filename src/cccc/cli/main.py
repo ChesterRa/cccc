@@ -369,7 +369,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_im_revoke = im_sub.add_parser("revoke", help="Revoke authorization for a chat")
     p_im_revoke.add_argument("--chat-id", required=True, dest="chat_id", help="Chat ID to revoke")
-    p_im_revoke.add_argument("--thread-id", type=int, default=0, dest="thread_id", help="Thread ID (default: 0)")
+    p_im_revoke.add_argument(
+        "--thread-id",
+        default="0",
+        dest="thread_id",
+        help="Thread ID or opaque platform thread value (default: 0)",
+    )
     p_im_revoke.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_im_revoke.set_defaults(func=cmd_im_revoke)
 

@@ -30,6 +30,14 @@ pub fn actor(value: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
+pub fn actor_notes(value: &str) -> Option<&'static str> {
+    Some(match value {
+        "get" => "actor_notes_get",
+        "set" => "actor_notes_set",
+        "clear" => "actor_notes_clear",
+        _ => return None,
+    })
+}
 pub fn memory(value: &str) -> Option<&'static str> {
     Some(match value {
         "layout_get" => "memory_reme_layout_get",
@@ -104,7 +112,7 @@ pub fn terminal(value: &str) -> Option<&'static str> {
         "tail" => "terminal_tail",
         "history" => "terminal_history",
         "clear" => "terminal_clear",
-        "resize" => "terminal_resize",
+        "resize" => "term_resize",
         _ => return None,
     })
 }

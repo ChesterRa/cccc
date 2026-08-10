@@ -3,10 +3,8 @@ use axum::extract::{Path, Query, State};
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use cccc_core::space_credentials;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::io;
 
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, call, object, success};
@@ -115,7 +113,12 @@ async fn auth_control(
                 .notebooklm_auth
                 .cancel(&state.browser_surfaces, "Google account disconnected.")
                 .await;
-            space_credentials::clear(&state.home, &provider).map_err(io_error)?;
+            let _ = call(
+                &state,
+                "group_space_provider_credential_update",
+                object(json!({"provider":provider,"by":"user","clear":true})),
+            )
+            .await?;
             crate::notebooklm_auth::remove_legacy_profile(&state.home).await;
         }
         _ => return Err(ApiError::bad("unsupported provider auth action")),
@@ -171,26 +174,57 @@ async fn auth_payload(state: &AppState, provider: &str) -> ApiResult {
         .notebooklm_auth
         .snapshot(&state.browser_surfaces)
         .await;
-    let credential = credential_payload(state, provider)?;
+    let daemon_payload = call(
+        state,
+        "group_space_provider_auth",
+        object(json!({"provider":provider,"by":"user","action":"status"})),
+    )
+    .await?
+    .0;
+    let durable = daemon_payload["result"].clone();
+    let credential = durable["credential"].clone();
+    let provider_state = durable["provider_state"].clone();
     let configured = credential["configured"].as_bool().unwrap_or(false);
-    if auth["state"] == "idle" && configured {
-        auth["state"] = json!("succeeded");
-        auth["phase"] = json!("done");
-        auth["message"] = json!("A saved Google session is configured.");
-    }
-    let active = auth["state"] == "running";
+    let verified = provider_state["write_ready"].as_bool() == Some(true);
+    reconcile_auth_state(&mut auth, configured, verified, &provider_state);
     Ok(success(json!({
-        "provider":provider,"provider_state":provider_state(provider,configured||active),
+        "provider":provider,"provider_state":provider_state,
         "credential":credential,
         "auth":auth
     })))
 }
 
-fn credential_payload(state: &AppState, provider: &str) -> Result<Value, ApiError> {
-    space_credentials::status(&state.home, provider).map_err(io_error)
-}
-fn provider_state(provider: &str, ready: bool) -> Value {
-    json!({"provider":provider,"enabled":ready,"real_enabled":true,"mode":if ready{"active"}else{"disabled"},"real_adapter_enabled":true,"stub_adapter_enabled":false,"auth_configured":ready,"write_ready":ready,"readiness_reason":if ready{"authenticated Rust adapter"}else{"credential missing"}})
+fn reconcile_auth_state(
+    auth: &mut Value,
+    configured: bool,
+    verified: bool,
+    provider_state: &Value,
+) {
+    let state = auth["state"].as_str().unwrap_or("idle");
+    if state == "running" {
+        return;
+    }
+    if verified && state == "idle" {
+        auth["state"] = json!("succeeded");
+        auth["phase"] = json!("done");
+        auth["message"] = json!("Saved Google session is verified.");
+        auth["error"] = Value::Null;
+    } else if configured && !verified && matches!(state, "idle" | "succeeded") {
+        auth["state"] = json!("failed");
+        auth["phase"] = json!("waiting_user_login");
+        auth["message"] = json!("Saved Google session requires verification.");
+        if let Some(message) = provider_state["last_error"]
+            .as_str()
+            .filter(|message| !message.trim().is_empty())
+        {
+            auth["error"] = json!({"code":"space_provider_auth_invalid","message":message});
+        }
+    } else if !configured && state == "succeeded" {
+        auth["state"] = json!("idle");
+        auth["phase"] = json!("idle");
+        auth["message"] = json!("Google account is not connected.");
+        auth["error"] = Value::Null;
+    }
 }
 fn browser_key(provider: &str) -> String {
     format!("space-provider::{provider}")
@@ -203,6 +237,22 @@ fn validate_provider(provider: &str) -> Result<(), ApiError> {
     .then_some(())
     .ok_or_else(|| ApiError::bad("invalid provider"))
 }
-fn io_error(error: io::Error) -> ApiError {
-    ApiError::bad(error.to_string())
+#[cfg(test)]
+mod tests {
+    use super::reconcile_auth_state;
+    use serde_json::json;
+
+    #[test]
+    fn saved_credentials_are_connected_only_after_verification() {
+        let provider = json!({"write_ready":false,"last_error":"expired"});
+        let mut auth = json!({"state":"idle","phase":"idle","error":null});
+        reconcile_auth_state(&mut auth, true, false, &provider);
+        assert_eq!(auth["state"], "failed");
+        assert_eq!(auth["error"]["message"], "expired");
+
+        let provider = json!({"write_ready":true,"last_error":null});
+        let mut auth = json!({"state":"idle","phase":"idle","error":null});
+        reconcile_auth_state(&mut auth, true, true, &provider);
+        assert_eq!(auth["state"], "succeeded");
+    }
 }

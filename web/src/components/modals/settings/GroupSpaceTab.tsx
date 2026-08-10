@@ -28,7 +28,11 @@ import {
   settingsWorkspaceShellClass,
   settingsWorkspaceSoftPanelClass,
 } from "./types";
-import { resolveNotebookSpacesAfterLoad, shouldRefreshNotebookSpaces } from "./groupSpaceState";
+import {
+  isProviderConnectionVerified,
+  resolveNotebookSpacesAfterLoad,
+  shouldRefreshNotebookSpaces,
+} from "./groupSpaceState";
 
 interface GroupSpaceTabProps {
   isDark: boolean;
@@ -146,8 +150,9 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
   const writeReady = Boolean(providerState?.write_ready);
   const connectionState = String(authFlow?.state || "idle").trim() || "idle";
   const connectionRunning = connectionState === "running";
-  const connectionConnected = authConfigured;
-  const providerUsable = connectionConnected && writeReady;
+  const connectionConnected = isProviderConnectionVerified(authConfigured, writeReady);
+  const connectionNeedsReconnect = authConfigured && !connectionConnected;
+  const providerUsable = connectionConnected;
   const connectionWarning =
     String(authFlow?.error?.message || "").trim() || String(providerState?.last_error || "").trim();
 
@@ -170,16 +175,20 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
   const connectionStatusText = useMemo(() => {
     if (connectionRunning) return t("groupSpace.accountConnecting");
     if (connectionConnected) return t("groupSpace.accountConnected");
-    if (connectionState === "failed") return t("groupSpace.accountReconnectRequired");
+    if (connectionNeedsReconnect || connectionState === "failed") {
+      return t("groupSpace.accountReconnectRequired");
+    }
     return t("groupSpace.accountNotConnected");
-  }, [connectionConnected, connectionRunning, connectionState, t]);
+  }, [connectionConnected, connectionNeedsReconnect, connectionRunning, connectionState, t]);
 
   const connectionStatusTone = useMemo(() => {
     if (connectionRunning) return "text-[rgb(35,36,37)] dark:text-white";
     if (connectionConnected) return "text-emerald-600 dark:text-emerald-400";
-    if (connectionState === "failed") return "text-amber-600 dark:text-amber-400";
+    if (connectionNeedsReconnect || connectionState === "failed") {
+      return "text-amber-600 dark:text-amber-400";
+    }
     return "text-[var(--color-text-secondary)]";
-  }, [connectionConnected, connectionRunning, connectionState]);
+  }, [connectionConnected, connectionNeedsReconnect, connectionRunning, connectionState]);
 
   const utilityButtonClass = secondaryButtonClass();
   const primaryUtilityButtonClass = primaryButtonClass(false);
@@ -187,7 +196,7 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
     "inline-flex items-center justify-center gap-2 rounded-xl border border-rose-500/25 bg-rose-500/10 px-3.5 py-2.5 text-sm font-medium min-h-[44px] text-rose-700 dark:text-rose-300 hover:bg-rose-500/16 disabled:opacity-50 disabled:cursor-not-allowed";
   const compactDangerButtonClass =
     "inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-xs font-medium text-rose-700 dark:text-rose-300 hover:bg-rose-500/16 disabled:opacity-50 disabled:cursor-not-allowed";
-  const showNotebookSection = connectionConnected;
+  const showNotebookSection = authConfigured;
 
   const setHintWithTimeout = (text: string) => {
     setHint(text);
@@ -661,7 +670,7 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
                   <CloseIcon size={16} />
                   {t("groupSpace.cancelConnect")}
                 </button>
-              ) : !connectionConnected ? (
+              ) : !authConfigured ? (
                 <button
                   type="button"
                   onClick={() => void handleStartConnect(false)}
@@ -695,7 +704,7 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
               )}
             </div>
 
-            {connectionConnected && !connectionRunning ? (
+            {authConfigured && !connectionRunning ? (
               <div className="mt-3 text-xs text-[var(--color-text-tertiary)]">
                 {t("groupSpace.disconnectBehaviorHint")}
               </div>
@@ -721,7 +730,7 @@ export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: Gro
                   refreshNonce={0}
                   defaultViewerMode="browser"
                   viewportClassName="h-[68vh] min-h-[460px] max-h-[780px] w-full sm:h-[72vh] sm:min-h-[560px]"
-                  fallbackUrl="https://notebooklm.google.com/"
+                  fallbackUrl="https://notebook.google.com/"
                   labels={{
                     starting: t("groupSpace.projectedAuthStarting"),
                     waiting: t("groupSpace.projectedAuthWaiting"),

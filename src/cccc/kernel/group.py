@@ -61,6 +61,63 @@ _DEFAULT_AUTOMATION_BUILTIN_SNIPPETS = {
     "standup": _DEFAULT_AUTOMATION_STANDUP_SNIPPET,
 }
 
+_LEGACY_FLAT_AUTOMATION_KEYS = {
+    "nudge_after_seconds",
+    "reply_required_nudge_after_seconds",
+    "attention_ack_nudge_after_seconds",
+    "unread_nudge_after_seconds",
+    "nudge_digest_min_interval_seconds",
+    "nudge_max_repeats_per_obligation",
+    "nudge_escalate_after_repeats",
+    "actor_idle_timeout_seconds",
+    "keepalive_delay_seconds",
+    "keepalive_max_per_actor",
+    "silence_timeout_seconds",
+    "help_nudge_interval_seconds",
+    "help_nudge_min_messages",
+}
+_LEGACY_FLAT_SECTION_KEYS = {
+    "default_send_to": ("messaging", "default_send_to"),
+    "min_interval_seconds": ("delivery", "min_interval_seconds"),
+    "auto_mark_on_delivery": ("delivery", "auto_mark_on_delivery"),
+    "terminal_transcript_visibility": ("terminal_transcript", "visibility"),
+    "terminal_transcript_notify_tail": ("terminal_transcript", "notify_tail"),
+    "terminal_transcript_notify_lines": ("terminal_transcript", "notify_lines"),
+    "panorama_enabled": ("features", "panorama_enabled"),
+}
+
+
+def normalize_legacy_group_settings(doc: Dict[str, Any]) -> None:
+    """Promote the former native flat settings layout into shared sections."""
+    flat = doc.get("settings")
+    if not isinstance(flat, dict):
+        return
+
+    for key in _LEGACY_FLAT_AUTOMATION_KEYS:
+        if key not in flat:
+            continue
+        automation = doc.get("automation")
+        if not isinstance(automation, dict):
+            automation = {}
+            doc["automation"] = automation
+        if key not in automation:
+            automation[key] = flat[key]
+        flat.pop(key, None)
+
+    for legacy_key, (section_key, canonical_key) in _LEGACY_FLAT_SECTION_KEYS.items():
+        if legacy_key not in flat:
+            continue
+        section = doc.get(section_key)
+        if not isinstance(section, dict):
+            section = {}
+            doc[section_key] = section
+        if canonical_key not in section:
+            section[canonical_key] = flat[legacy_key]
+        flat.pop(legacy_key, None)
+
+    if not flat:
+        doc.pop("settings", None)
+
 
 def _normalize_automation_snippet_map(raw: Any) -> Dict[str, str]:
     out: Dict[str, str] = {}
@@ -238,6 +295,7 @@ def load_group(group_id: str) -> Optional[Group]:
         doc = yaml.load(p.read_text(encoding="utf-8"), Loader=_GroupLoader) or {}
         if not isinstance(doc, dict):
             return None
+        normalize_legacy_group_settings(doc)
         ensure_ledger_layout(gp)
         return Group(group_id=group_id, path=gp, doc=doc)
     except Exception:
@@ -319,65 +377,106 @@ def create_group(
 
 def attach_scope_to_group(reg: Registry, group: Group, scope: ScopeIdentity, *, set_active: bool = True) -> Group:
     now = utc_now_iso()
+    scope_dir = group.path / "scopes" / scope.scope_key
+    scope_yaml = scope_dir / "scope.yaml"
+    group_yaml = group.path / "group.yaml"
+    before_group_doc = copy.deepcopy(group.doc)
+    before_registry_doc = copy.deepcopy(reg.doc)
+    before_group_text = group_yaml.read_text(encoding="utf-8")
+    scope_dir_existed = scope_dir.exists()
+    scope_yaml_existed = scope_yaml.is_file()
+    before_scope_text = scope_yaml.read_text(encoding="utf-8") if scope_yaml_existed else ""
 
-    scopes = group.doc.get("scopes")
-    if not isinstance(scopes, list):
-        scopes = []
-        group.doc["scopes"] = scopes
+    try:
+        scopes = group.doc.get("scopes")
+        if not isinstance(scopes, list):
+            scopes = []
+            group.doc["scopes"] = scopes
 
-    existing: Optional[Dict[str, Any]] = None
-    for item in scopes:
-        if isinstance(item, dict) and item.get("scope_key") == scope.scope_key:
-            existing = item
-            break
+        existing: Optional[Dict[str, Any]] = None
+        for item in scopes:
+            if isinstance(item, dict) and item.get("scope_key") == scope.scope_key:
+                existing = item
+                break
 
-    scope_entry = existing if existing is not None else {}
-    scope_entry.update(
-        {
+        scope_entry = existing if existing is not None else {}
+        scope_entry.update(
+            {
+                "scope_key": scope.scope_key,
+                "url": scope.url,
+                "label": scope.label,
+                "git_remote": scope.git_remote,
+            }
+        )
+        if existing is None:
+            scopes.append(scope_entry)
+
+        scope_dir.mkdir(parents=True, exist_ok=True)
+        created_at = now
+        if scope_yaml.exists():
+            try:
+                prior = yaml.safe_load(scope_yaml.read_text(encoding="utf-8")) or {}
+                if (
+                    isinstance(prior, dict)
+                    and isinstance(prior.get("created_at"), str)
+                    and prior.get("created_at")
+                ):
+                    created_at = prior["created_at"]
+            except Exception as error:
+                LOGGER.warning(
+                    "failed to parse scope metadata; resetting created_at: scope=%s path=%s err=%s",
+                    scope.scope_key,
+                    scope_yaml,
+                    error,
+                )
+        scope_doc: Dict[str, Any] = {
+            "v": 1,
             "scope_key": scope.scope_key,
             "url": scope.url,
             "label": scope.label,
             "git_remote": scope.git_remote,
+            "created_at": created_at,
+            "updated_at": now,
         }
-    )
-    if existing is None:
-        scopes.append(scope_entry)
+        atomic_write_text(scope_yaml, yaml.safe_dump(scope_doc, allow_unicode=True, sort_keys=False))
 
-    scope_dir = group.path / "scopes" / scope.scope_key
-    scope_dir.mkdir(parents=True, exist_ok=True)
-    scope_yaml = scope_dir / "scope.yaml"
-    created_at = now
-    if scope_yaml.exists():
+        if set_active or not str(group.doc.get("active_scope_key") or "").strip():
+            group.doc["active_scope_key"] = scope.scope_key
+
+        group.save()
+
+        reg.defaults[scope.scope_key] = group.group_id
+        meta = reg.groups.get(group.group_id)
+        if isinstance(meta, dict):
+            meta["title"] = group.doc.get("title") or meta.get("title") or ""
+            meta["default_scope_key"] = group.doc.get("active_scope_key") or meta.get("default_scope_key") or ""
+            meta["updated_at"] = now
+        reg.save()
+        return group
+    except Exception as original:
+        rollback_failures: list[str] = []
+        group.doc = before_group_doc
+        reg.doc = before_registry_doc
         try:
-            prior = yaml.safe_load(scope_yaml.read_text(encoding="utf-8")) or {}
-            if isinstance(prior, dict) and isinstance(prior.get("created_at"), str) and prior.get("created_at"):
-                created_at = prior["created_at"]
-        except Exception as e:
-            LOGGER.warning("failed to parse scope metadata; resetting created_at: scope=%s path=%s err=%s", scope.scope_key, scope_yaml, e)
-    scope_doc: Dict[str, Any] = {
-        "v": 1,
-        "scope_key": scope.scope_key,
-        "url": scope.url,
-        "label": scope.label,
-        "git_remote": scope.git_remote,
-        "created_at": created_at,
-        "updated_at": now,
-    }
-    atomic_write_text(scope_yaml, yaml.safe_dump(scope_doc, allow_unicode=True, sort_keys=False))
-
-    if set_active or not str(group.doc.get("active_scope_key") or "").strip():
-        group.doc["active_scope_key"] = scope.scope_key
-
-    group.save()
-
-    reg.defaults[scope.scope_key] = group.group_id
-    meta = reg.groups.get(group.group_id)
-    if isinstance(meta, dict):
-        meta["title"] = group.doc.get("title") or meta.get("title") or ""
-        meta["default_scope_key"] = group.doc.get("active_scope_key") or meta.get("default_scope_key") or ""
-        meta["updated_at"] = now
-    reg.save()
-    return group
+            atomic_write_text(group_yaml, before_group_text)
+        except Exception as error:
+            rollback_failures.append(f"group: {error}")
+        try:
+            if scope_yaml_existed:
+                atomic_write_text(scope_yaml, before_scope_text)
+            elif scope_dir_existed:
+                scope_yaml.unlink(missing_ok=True)
+            else:
+                shutil.rmtree(scope_dir)
+        except FileNotFoundError:
+            pass
+        except Exception as error:
+            rollback_failures.append(f"scope: {error}")
+        if rollback_failures:
+            raise RuntimeError(
+                f"{original}; rollback_failed: {'; '.join(rollback_failures)}"
+            ) from original
+        raise
 
 
 def set_active_scope(reg: Registry, group: Group, *, scope_key: str) -> Group:
@@ -518,6 +617,15 @@ def detach_scope_from_group(reg: Registry, group: Group, *, scope_key: str) -> G
                 break
         group.doc["active_scope_key"] = new_active
 
+    replacement_scope_key = str(group.doc.get("active_scope_key") or "")
+    actors = group.doc.get("actors")
+    if isinstance(actors, list):
+        for actor in actors:
+            if not isinstance(actor, dict):
+                continue
+            if str(actor.get("default_scope_key") or "") == wanted:
+                actor["default_scope_key"] = replacement_scope_key
+
     try:
         shutil.rmtree(group.path / "scopes" / wanted)
     except FileNotFoundError:
@@ -545,14 +653,33 @@ def delete_group(reg: Registry, *, group_id: str, publish: bool = True) -> None:
 
     home = ensure_home()
     gp = home / "groups" / gid
+    tombstone: Optional[Path] = None
+    if gp.exists():
+        tombstone = gp.with_name(f".{gid}.deleting-{uuid.uuid4().hex[:8]}")
+        gp.rename(tombstone)
+
+    before_registry_doc = copy.deepcopy(reg.doc)
+    try:
+        reg.groups.pop(gid, None)
+        for k, v in list(reg.defaults.items()):
+            if v == gid:
+                reg.defaults.pop(k, None)
+        reg.save()
+    except Exception as original:
+        reg.doc = before_registry_doc
+        if tombstone is not None and tombstone.exists():
+            try:
+                tombstone.rename(gp)
+            except Exception as rollback:
+                raise RuntimeError(
+                    f"{original}; rollback_failed: could not restore {gp}: {rollback}"
+                ) from original
+        raise
+
+    if tombstone is not None:
+        _delete_group_dir(tombstone)
     if gp.exists():
         _delete_group_dir(gp)
-
-    reg.groups.pop(gid, None)
-    for k, v in list(reg.defaults.items()):
-        if v == gid:
-            reg.defaults.pop(k, None)
-    reg.save()
 
     if publish:
         from .events import publish_event

@@ -59,6 +59,12 @@ fn send_files(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "send_files owns attachments; do not provide attachment records",
         ));
     }
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    if let Some(event) =
+        super::message_idempotency::find(home, &group.group_id, "chat.message", &by, &request.args)
+    {
+        return duplicate_send(event);
+    }
 
     let scope = group
         .scopes
@@ -107,6 +113,14 @@ fn send_files(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             fs::read(&source).map_err(|error| OpError::new("read_failed", error.to_string()))?;
         sources.push((source, data));
     }
+
+    let mut preflight: Map<String, Value> = request
+        .args
+        .iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "group_id" | "by" | "paths"))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    super::messaging_recipients::normalize_chat_preflight(&group, &by, &mut preflight, false)?;
 
     let mut attachments = Vec::with_capacity(sources.len());
     let mut titles = Vec::with_capacity(sources.len());
@@ -330,11 +344,7 @@ fn send_with_audience_policy(
     if let Some(event) =
         super::message_idempotency::find(home, &group.group_id, kind, &by, &request.args)
     {
-        return object(json!({
-            "event":event,
-            "delivery":{"accepted":true,"state":"duplicate","targeted":0,"online":0,"queued":0},
-            "duplicate":true
-        }));
+        return duplicate_send(event);
     }
     let mut data: Map<String, Value> = request
         .args
@@ -368,6 +378,14 @@ fn send_with_audience_policy(
     let event = append(home, &group.group_id, kind, &by, data)?;
     let delivery = actor_delivery::dispatch(home, &group, &event);
     object(json!({"event": event, "delivery": delivery}))
+}
+
+fn duplicate_send(event: Event) -> OpResult {
+    object(json!({
+        "event":event,
+        "delivery":{"accepted":true,"state":"duplicate","targeted":0,"online":0,"queued":0},
+        "duplicate":true
+    }))
 }
 
 fn slash_skill_dispatch(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

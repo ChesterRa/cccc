@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Deque, Dict, Optional
 
 from .adapters.base import IMAdapter, IMProcessingContext, IMProcessingOutcome
+from .auth import ThreadId, normalize_thread_id
 
 
 @dataclass
@@ -34,14 +35,14 @@ class IMProcessingLifecycle:
         self._active: Dict[str, Deque[_ActiveProcessing]] = {}
 
     @staticmethod
-    def _key(chat_id: str, thread_id: int = 0) -> str:
-        return f"{str(chat_id)}:{int(thread_id or 0)}"
+    def _key(chat_id: str, thread_id: ThreadId = 0) -> str:
+        return f"{str(chat_id)}:{normalize_thread_id(thread_id)}"
 
     def start(
         self,
         *,
         chat_id: str,
-        thread_id: int = 0,
+        thread_id: ThreadId = 0,
         message_id: str = "",
         source_event_id: str = "",
     ) -> None:
@@ -49,7 +50,7 @@ class IMProcessingLifecycle:
         self._expire_stale(now)
         context = IMProcessingContext(
             chat_id=str(chat_id),
-            thread_id=int(thread_id or 0),
+            thread_id=normalize_thread_id(thread_id),
             message_id=str(message_id or ""),
             platform=str(getattr(self._adapter, "platform", "") or "unknown"),
             source_event_id=str(source_event_id or ""),
@@ -77,7 +78,7 @@ class IMProcessingLifecycle:
         chat_id: str,
         outcome: IMProcessingOutcome = IMProcessingOutcome.SUCCESS,
         *,
-        thread_id: int = 0,
+        thread_id: ThreadId = 0,
         reply_to: str = "",
     ) -> None:
         self._expire_stale(time.monotonic())
@@ -126,7 +127,7 @@ class IMProcessingLifecycle:
             if not queue:
                 self._active.pop(key, None)
 
-    def clear(self, chat_id: str, *, thread_id: int = 0) -> None:
+    def clear(self, chat_id: str, *, thread_id: ThreadId = 0) -> None:
         self.complete(chat_id, IMProcessingOutcome.CANCELLED, thread_id=thread_id)
 
     def _send_action_if_due(self, key: str, *, force: bool = False) -> None:

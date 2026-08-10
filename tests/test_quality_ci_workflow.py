@@ -121,6 +121,7 @@ def test_rust_job_is_python_free_and_serializes_daemon_tests() -> None:
         "python_and_rust_share_identity_and_signed_session_hello",
         "python_and_rust_processes_share_paths_files_and_locks",
         "python_and_rust_share_launch_identity_format",
+        "group_bridge_and_voice_workflow_share_one_cross_engine_authority",
         "rust_append_waits_for_the_python_ledger_lock",
         "python_and_rust_share_persisted_control_plane_state",
         "python_and_rust_accept_each_others_group_copy_packages",
@@ -212,6 +213,7 @@ def test_interop_job_runs_the_cross_language_tests_skipped_by_the_python_free_ru
         "runtime_hook_interop",
         "runtime_hook_identity_interop",
         "ledger_python_interop",
+        "shared_integration_state_interop",
         "python_storage_interop",
     ):
         assert test_binary in runs

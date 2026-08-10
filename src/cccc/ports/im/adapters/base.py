@@ -59,7 +59,7 @@ class IMProcessingContext:
     """Platform context for best-effort processing feedback."""
 
     chat_id: str
-    thread_id: int = 0
+    thread_id: int | str = 0
     message_id: str = ""
     platform: str = "unknown"
     source_event_id: str = ""

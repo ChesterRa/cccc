@@ -97,7 +97,7 @@ async fn resize(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    command(&state, "terminal_resize", group_id, body).await
+    command(&state, "term_resize", group_id, body).await
 }
 
 async fn clear(

@@ -538,6 +538,7 @@ dependencies = [
  "cccc-pair-core",
  "cccc-pair-daemon",
  "cccc-pair-runtime",
+ "chrono",
  "mime_guess",
  "regex",
  "reqwest 0.12.28",

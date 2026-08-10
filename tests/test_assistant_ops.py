@@ -139,6 +139,41 @@ class TestAssistantOps(unittest.TestCase):
         )
         self.assertTrue(enable.ok, getattr(enable, "error", None))
 
+    def test_python_runtime_state_preserves_rust_extension_and_drops_process_health(self) -> None:
+        from cccc.daemon.assistants import assistant_ops
+        from cccc.kernel.group import load_group
+        from cccc.util.fs import read_json
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            state = assistant_ops._load_runtime_state(group)
+            state["rust_state"] = {"input_read_cursor": 7, "documents": []}
+            state["assistants"] = {
+                "voice_secretary": {
+                    "lifecycle": "working",
+                    "health": {
+                        "status": "prompt_refine_requested",
+                        "pid": 123,
+                        "service": {"port": 7777},
+                    },
+                }
+            }
+            assistant_ops._save_runtime_state(group, state)
+
+            saved = read_json(group.path / "state" / "assistants.json")
+            self.assertEqual(saved.get("rust_state", {}).get("input_read_cursor"), 7)
+            health = saved.get("assistants", {}).get("voice_secretary", {}).get("health", {})
+            self.assertEqual(health.get("status"), "prompt_refine_requested")
+            self.assertNotIn("pid", health)
+            self.assertNotIn("service", health)
+            reloaded = assistant_ops._load_runtime_state(group)
+            self.assertEqual(reloaded.get("rust_state", {}).get("input_read_cursor"), 7)
+        finally:
+            cleanup()
+
     def _write_voice_model_manifest(self, home: str, *, model_id: str = "mock_asr") -> Path:
         source_dir = Path(home) / "voice-model-source"
         source_dir.mkdir(parents=True, exist_ok=True)
@@ -3003,6 +3038,68 @@ class TestAssistantOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_voice_secretary_prompt_refine_retry_reuses_one_semantic_input(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            repo = Path(home) / "repo"
+            repo.mkdir()
+            self._attach_scope(group_id, str(repo))
+            self._enable_voice_secretary(group_id)
+
+            args = {
+                "group_id": group_id,
+                "by": "user",
+                "kind": "prompt_refine",
+                "request_id": "voice-prompt-idempotent",
+                "input_append_id": "voice-prompt-idempotent-input-1",
+                "composer_text": "Please review this plan.",
+                "voice_transcript": "Focus on rollback risk.",
+            }
+            first, _ = self._call("assistant_voice_input_append", args)
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            first_result = first.result or {}
+            self.assertTrue(bool(first_result.get("input_event_created")), first_result)
+            self.assertEqual(
+                first_result.get("input_append_id"),
+                "voice-prompt-idempotent-input-1",
+            )
+
+            submit, _ = self._call(
+                "assistant_voice_prompt_draft_submit",
+                {
+                    "group_id": group_id,
+                    "by": "assistant:voice_secretary",
+                    "request_id": "voice-prompt-idempotent",
+                    "draft_text": "Please review this plan, focusing on rollback risk.",
+                },
+            )
+            self.assertTrue(submit.ok, getattr(submit, "error", None))
+
+            retry, _ = self._call("assistant_voice_input_append", args)
+            self.assertTrue(retry.ok, getattr(retry, "error", None))
+            retry_result = retry.result or {}
+            self.assertFalse(bool(retry_result.get("input_event_created")), retry_result)
+            self.assertEqual(retry_result.get("input_event"), first_result.get("input_event"))
+
+            state, _ = self._call(
+                "assistant_state",
+                {"group_id": group_id, "assistant_id": "voice_secretary"},
+            )
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            pending = (state.result or {}).get("prompt_draft") or {}
+            self.assertEqual(pending.get("request_id"), "voice-prompt-idempotent")
+            self.assertEqual(pending.get("status"), "pending")
+
+            read, _ = self._call(
+                "assistant_voice_document_input_read",
+                {"group_id": group_id, "by": "assistant:voice_secretary"},
+            )
+            self.assertTrue(read.ok, getattr(read, "error", None))
+            self.assertEqual((read.result or {}).get("item_count"), 1)
+        finally:
+            cleanup()
+
     def test_voice_secretary_prompt_refine_no_op_completes_without_pending_draft(self) -> None:
         from cccc.daemon.assistants.voice_secretary_output_completion import complete_missing_composer_drafts
         from cccc.daemon.voice_secretary_control_turns import control_consumption_diagnostics
@@ -4708,6 +4805,9 @@ class TestAssistantOps(unittest.TestCase):
             )
             self.assertTrue(cleared.ok, getattr(cleared, "error", None))
             remaining_requests = (cleared.result or {}).get("ask_requests") if isinstance(cleared.result, dict) else []
+            self.assertEqual((cleared.result or {}).get("cleared_count"), 2)
+            self.assertEqual((cleared.result or {}).get("removed_count"), 2)
+            self.assertEqual((cleared.result or {}).get("kept_count"), 0)
             remaining_ids = {str(item.get("request_id") or "") for item in remaining_requests if isinstance(item, dict)}
             self.assertNotIn(request_id, remaining_ids)
             self.assertNotIn(active_request_id, remaining_ids)

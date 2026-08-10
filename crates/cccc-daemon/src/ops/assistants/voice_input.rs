@@ -1,5 +1,5 @@
 use cccc_contracts::{DaemonRequest, utc_now};
-use cccc_core::{GroupStore, HomeLayout, integration_state};
+use cccc_core::{GroupStore, HomeLayout, assistant_state};
 use fs2::FileExt;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -12,7 +12,6 @@ use uuid::Uuid;
 use super::{voice_document_state, voice_input_delivery, voice_semantic_input};
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 
-const KEY: &str = "assistants";
 const ACTOR_ID: &str = "voice-secretary";
 
 pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -35,7 +34,7 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     }
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let group = store.load(&group_id).map_err(OpError::not_found)?;
-    let state = integration_state::group_get(&store, &group_id, KEY).map_err(OpError::io)?;
+    let state = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     let assistant = state
         .get("assistant")
         .cloned()
@@ -64,8 +63,7 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let input_path = input_log_path(home, &group_id);
     ensure_document_file(home, &group, &document_path)?;
 
-    let (candidate_input, input_created) = integration_state::group_update(&store,&group_id,KEY,|value| {
-        let root=state_root(value);
+    let (candidate_input, input_created) = assistant_state::update(home,&group_id,|root| {
         if !document_path.is_empty() {
             let docs=array(root,"documents");
             if !docs.iter().any(|item|item["document_path"]==document_path) {
@@ -141,7 +139,7 @@ pub fn append(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         segment["by"].as_str().unwrap_or("user"),
         candidate_input.as_ref(),
     )?;
-    let current = integration_state::group_get(&store, &group_id, KEY).map_err(OpError::io)?;
+    let current = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     let document = current
         .get("documents")
         .and_then(Value::as_array)
@@ -175,8 +173,7 @@ pub fn read(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "read_new_input is only available to voice-secretary",
         ));
     }
-    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    let state = integration_state::group_get(&store, &group_id, KEY).map_err(OpError::io)?;
+    let state = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     let cursor = state["input_read_cursor"].as_u64().unwrap_or(0);
     let inputs = read_jsonl_matching(&input_log_path(home, &group_id), |item| {
         item["seq"].as_u64().unwrap_or(0) > cursor
@@ -188,8 +185,8 @@ pub fn read(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .max()
         .unwrap_or(cursor);
     if latest > cursor {
-        integration_state::group_update(&store, &group_id, KEY, |value| {
-            state_root(value).insert("input_read_cursor".into(), json!(latest));
+        assistant_state::update(home, &group_id, |state| {
+            state.insert("input_read_cursor".into(), json!(latest));
             Ok(())
         })
         .map_err(OpError::io)?;
@@ -435,19 +432,6 @@ fn checked_document_path(root: &Path, relative: &str) -> Result<PathBuf, OpError
         }
     }
     Ok(current)
-}
-pub(super) fn state_root(value: &mut Value) -> &mut Map<String, Value> {
-    if !value.is_object() {
-        *value = json!({});
-    }
-    let root = value.as_object_mut().expect("assistant state initialized");
-    let legacy = root.get("voice_secretary").cloned();
-    root.entry("assistant")
-        .or_insert_with(|| legacy.unwrap_or_else(default_assistant));
-    for key in ["documents", "sessions", "ask_requests"] {
-        root.entry(key).or_insert_with(|| json!([]));
-    }
-    root
 }
 fn array<'a>(root: &'a mut Map<String, Value>, key: &str) -> &'a mut Vec<Value> {
     root.entry(key)

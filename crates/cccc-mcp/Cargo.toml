@@ -15,6 +15,7 @@ cccc-client = { package = "cccc-pair-client", version = "=0.4.34-rc2", path = ".
 cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.34-rc2", path = "../cccc-contracts" }
 cccc-core = { package = "cccc-pair-core", version = "=0.4.34-rc2", path = "../cccc-core" }
 cccc-runtime = { package = "cccc-pair-runtime", version = "=0.4.34-rc2", path = "../cccc-runtime" }
+chrono.workspace = true
 regex.workspace = true
 reqwest.workspace = true
 serde.workspace = true

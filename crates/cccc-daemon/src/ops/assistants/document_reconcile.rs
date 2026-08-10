@@ -126,21 +126,17 @@ mod tests {
         std::fs::write(&path, "disk content").expect("document");
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000))
             .expect("make unreadable");
-        cccc_core::integration_state::group_update(
-            &store,
-            &group.group_id,
-            "assistants",
-            |value| {
-                *value = json!({
-                    "documents":[{
-                        "document_path":relative,
-                        "content":"stored content",
-                        "revision_count":1
-                    }]
-                });
-                Ok(())
-            },
-        )
+        cccc_core::assistant_state::update(&home, &group.group_id, |state| {
+            state.insert(
+                "documents".into(),
+                json!([{
+                    "document_path":relative,
+                    "content":"stored content",
+                    "revision_count":1
+                }]),
+            );
+            Ok(())
+        })
         .expect("assistant state");
         let request = DaemonRequest {
             v: 1,

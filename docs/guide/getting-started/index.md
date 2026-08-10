@@ -106,9 +106,10 @@ python -m pip install -U cccc-pair
 PyPI is the stable CCCC product distribution, with Python as its stable and
 recommended implementation. Supported platform wheels also contain a private,
 version-matched **experimental Rust implementation** for opt-in performance
-evaluation with `cccc rust`. Feature and integration parity is still in progress;
-use `cccc python` for reliability-critical workflows. Other platforms receive the
-universal Python wheel.
+evaluation with `cccc rust`. Complete feature and integration parity is not
+promised; Rust is a bounded evaluation surface for measured native benefits.
+Use `cccc python` for reliability-critical workflows. Other platforms receive
+the universal Python wheel.
 
 ### Experimental standalone Rust preview
 

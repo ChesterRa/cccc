@@ -3,8 +3,8 @@ use super::feishu_outbound::FeishuOutbound;
 use super::processing_reactions::FeishuReactions;
 use super::{
     InboundDecision, InboundMetadata, completes_processing, dispatch_inbound_with,
-    inbound_decision_for_thread, is_outbound_or_stream, processing_reply_to, resolve_credential,
-    spawn_outbound_matching, string, target_key,
+    inbound_decision_for_thread, is_outbound_or_stream, processing_reply_to,
+    resolve_config_credential, spawn_outbound_matching, string, target_key,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -28,10 +28,11 @@ pub(super) async fn start(
     config: &Map<String, Value>,
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
 ) -> Result<Vec<JoinHandle<()>>, String> {
-    let app_id = resolve_credential(&string(config, "feishu_app_id"))?;
-    let app_secret = resolve_credential(&string(config, "feishu_app_secret"))?;
+    let app_id = resolve_config_credential(config, "feishu_app_id", "feishu_app_id_env")?;
+    let app_secret =
+        resolve_config_credential(config, "feishu_app_secret", "feishu_app_secret_env")?;
     let mut channel_config = ChannelConfig::new(app_id, app_secret);
-    if string(config, "feishu_domain").contains("larksuite") {
+    if uses_lark_domain(config) {
         channel_config.domain = Domain::Lark;
     }
     let base_url = channel_config.base_url().to_string();
@@ -298,7 +299,7 @@ fn leading_mention_len(text: &str, mention: &MessageMention) -> Option<usize> {
 }
 
 #[cfg(test)]
-mod tests {
+mod domain_tests {
     use super::*;
 
     #[test]
@@ -422,6 +423,27 @@ mod tests {
             &message(MessageChatType::P2p, Vec::new()),
             &current.open_id,
             "hello",
+        ));
+    }
+}
+
+fn uses_lark_domain(config: &Map<String, Value>) -> bool {
+    let domain = string(config, "feishu_domain");
+    domain.contains("larkoffice") || domain.contains("larksuite")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn stable_lark_domain_selects_the_global_endpoint() {
+        let config = json!({"feishu_domain":"https://open.larkoffice.com"});
+        assert!(uses_lark_domain(config.as_object().expect("configuration")));
+        let config = json!({"feishu_domain":"https://open.feishu.cn"});
+        assert!(!uses_lark_domain(
+            config.as_object().expect("configuration")
         ));
     }
 }

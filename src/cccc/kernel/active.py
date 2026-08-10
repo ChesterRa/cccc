@@ -24,9 +24,15 @@ def load_active() -> Dict[str, Any]:
     p = active_path()
     raw = read_json(p)
     doc = raw if isinstance(raw, dict) else {}
+    if "active_group_id" in doc:
+        active_group_id = str(doc.get("active_group_id") or "").strip()
+    else:
+        # Rust previews before 0.4.34-rc2 wrote the same shared file with the
+        # shorter key. Preserve that selection while normalizing the document.
+        active_group_id = str(doc.get("group_id") or "").strip()
     normalized = {
         "v": 1,
-        "active_group_id": str(doc.get("active_group_id") or "").strip(),
+        "active_group_id": active_group_id,
         "updated_at": str(doc.get("updated_at") or utc_now_iso()),
     }
     if doc != normalized:

@@ -138,6 +138,20 @@ def _save_session_file(session: Dict[str, Any], home: Optional[Path] = None) -> 
     sid = str(session.get("sid") or "").strip()
     if not sid:
         raise ValueError("missing sid")
+    if not str(session.get("token_hash") or "").strip():
+        legacy_digest = str(session.get("secret_sha256") or "").strip()
+        if legacy_digest:
+            session["token_hash"] = legacy_digest
+    session.pop("secret_sha256", None)
+    sent_ids = session.get("sent_message_ids") if isinstance(session.get("sent_message_ids"), list) else []
+    sent_messages = session.get("sent_messages") if isinstance(session.get("sent_messages"), dict) else {}
+    session["sent_message_ids"] = list(
+        dict.fromkeys(
+            str(item).strip()
+            for item in [*sent_ids, *sent_messages.keys()]
+            if str(item).strip()
+        )
+    )
     path = _session_path(sid, home)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(session, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
@@ -256,11 +270,31 @@ def _session_allowed(rel_path: str, allowed_paths: Any) -> bool:
     return False
 
 
+def _session_root(session: Dict[str, Any]) -> Path:
+    persisted = str(session.get("repo_root") or "").strip()
+    if persisted:
+        return Path(persisted).expanduser().resolve()
+
+    group = load_group(str(session.get("group_id") or "").strip())
+    if group is not None:
+        wanted = str(session.get("scope_key") or "").strip() or str(
+            group.doc.get("active_scope_key") or ""
+        ).strip()
+        scopes = group.doc.get("scopes") if isinstance(group.doc.get("scopes"), list) else []
+        for item in scopes:
+            if not isinstance(item, dict) or str(item.get("scope_key") or "").strip() != wanted:
+                continue
+            url = str(item.get("url") or "").strip()
+            if url:
+                return Path(url).expanduser().resolve()
+    raise NomcpSessionError("scope_unavailable", "No-MCP session scope is unavailable", 404)
+
+
 def _resolve_allowed_file(session: Dict[str, Any], rel_path: str) -> Path:
     normalized = _normalize_rel_path(rel_path)
     if _denylisted(normalized) or not _glob_allowed(normalized) or not _session_allowed(normalized, session.get("allowed_paths")):
         raise NomcpSessionError("path_not_allowed", f"path is not allowlisted for this No-MCP session: {normalized}", 403)
-    root = Path(str(session.get("repo_root") or "")).expanduser().resolve()
+    root = _session_root(session)
     target = (root / normalized).resolve()
     try:
         target.relative_to(root)
@@ -272,7 +306,7 @@ def _resolve_allowed_file(session: Dict[str, Any], rel_path: str) -> Path:
 
 
 def _iter_allowed_files(session: Dict[str, Any], *, limit: int = 240) -> list[str]:
-    root = Path(str(session.get("repo_root") or "")).expanduser().resolve()
+    root = _session_root(session)
     if not root.exists():
         return []
     out: list[str] = []
@@ -374,12 +408,19 @@ def create_nomcp_session(
 def mask_nomcp_session(session: Dict[str, Any]) -> Dict[str, Any]:
     out = dict(session)
     sent_messages = session.get("sent_messages") if isinstance(session.get("sent_messages"), dict) else {}
+    sent_ids = session.get("sent_message_ids") if isinstance(session.get("sent_message_ids"), list) else []
+    advisory_ids = {
+        str(item).strip()
+        for item in [*sent_ids, *sent_messages.keys()]
+        if str(item).strip()
+    }
     out.pop("token_hash", None)
+    out.pop("secret_sha256", None)
     out.pop("secret", None)
     out.pop("sent_messages", None)
     out["revoked"] = bool(str(session.get("revoked_at") or "").strip())
     out["expired"] = is_nomcp_session_expired(session)
-    out["advisory_count"] = len(sent_messages)
+    out["advisory_count"] = len(advisory_ids)
     latest = sorted(
         (item for item in sent_messages.values() if isinstance(item, dict)),
         key=lambda item: str(item.get("at") or ""),
@@ -449,7 +490,7 @@ def authorize_nomcp_session(sid: str, token: str) -> Dict[str, Any]:
         raise NomcpSessionError("revoked", "No-MCP session has been revoked", 410)
     if is_nomcp_session_expired(session):
         raise NomcpSessionError("expired", "No-MCP session has expired", 410)
-    expected = str(session.get("token_hash") or "").strip()
+    expected = str(session.get("token_hash") or session.get("secret_sha256") or "").strip()
     actual = _hash_secret(str(token or "").strip())
     if not expected or not token or not hmac.compare_digest(expected, actual):
         raise NomcpSessionError("invalid_token", "invalid No-MCP session token", 403)
@@ -489,7 +530,7 @@ def _link_markdown(path: str, token: str) -> str:
 
 
 def session_status(session: Dict[str, Any]) -> Dict[str, Any]:
-    root = Path(str(session.get("repo_root") or "")).expanduser().resolve()
+    root = _session_root(session)
     status = _run_git(root, ["status", "--short"], max_bytes=96 * 1024)
     branch = _run_git(root, ["branch", "--show-current"], max_bytes=1024)
     head = _git_head(root)
@@ -517,7 +558,7 @@ def session_status(session: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def session_resources(session: Dict[str, Any], token: str = "") -> Dict[str, Any]:
-    root = Path(str(session.get("repo_root") or "")).expanduser().resolve()
+    root = _session_root(session)
     allowed = _iter_allowed_files(session)
     changed = _changed_files(root)
     changed_allowed = [item for item in changed if item in allowed]
@@ -595,7 +636,7 @@ def search_session(session: Dict[str, Any], query: str) -> Dict[str, Any]:
 
 
 def session_diff(session: Dict[str, Any], rel_path: str = "") -> Dict[str, Any]:
-    root = Path(str(session.get("repo_root") or "")).expanduser().resolve()
+    root = _session_root(session)
     path = str(rel_path or "").strip()
     args = ["diff"]
     if path:
@@ -785,9 +826,14 @@ def send_nomcp_advisory(sid: str, token: str, *, msg_id: str, text: str, title: 
     def _send() -> Dict[str, Any]:
         session = authorize_nomcp_session(sid, token)
         sent = session.get("sent_messages") if isinstance(session.get("sent_messages"), dict) else {}
+        ids = session.get("sent_message_ids") if isinstance(session.get("sent_message_ids"), list) else []
         existing = sent.get(clean_msg_id) if isinstance(sent, dict) else None
-        if isinstance(existing, dict):
-            return {"status": "duplicate_ignored", "event_id": str(existing.get("event_id") or ""), "msg_id": clean_msg_id}
+        if clean_msg_id in ids or isinstance(existing, dict):
+            return {
+                "status": "duplicate_ignored",
+                "event_id": str(existing.get("event_id") or "") if isinstance(existing, dict) else "",
+                "msg_id": clean_msg_id,
+            }
         group = load_group(str(session.get("group_id") or ""))
         if group is None:
             raise NomcpSessionError("group_not_found", "bound CCCC group no longer exists", 404)
@@ -828,10 +874,10 @@ def send_nomcp_advisory(sid: str, token: str, *, msg_id: str, text: str, title: 
         event_id = str(event.get("id") or "")
         sent[clean_msg_id] = {"event_id": event_id, "at": utc_now_iso(), "via": via}
         session["sent_messages"] = sent
-        ids = session.get("sent_message_ids") if isinstance(session.get("sent_message_ids"), list) else []
         if clean_msg_id not in ids:
             ids.append(clean_msg_id)
         session["sent_message_ids"] = ids
+        session["repo_root"] = str(_session_root(session))
         session["updated_at"] = utc_now_iso()
         _save_session_file(session)
         return {"status": "accepted", "event_id": event_id, "msg_id": clean_msg_id}

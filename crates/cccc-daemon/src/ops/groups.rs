@@ -1,11 +1,14 @@
-use cccc_contracts::{DaemonRequest, Event, GroupState};
+use cccc_contracts::{ActorRole, DaemonRequest, Event, GroupState};
 use cccc_core::active;
+use cccc_core::actors;
 use cccc_core::group_prompts::{
-    DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, delete_preamble, read_preamble, write_preamble,
+    BUILTIN_HELP_MARKDOWN, DEFAULT_PREAMBLE_BODY, HELP_FILENAME, PREAMBLE_FILENAME, delete_help,
+    delete_preamble, parse_help_markdown, read_help, read_preamble, select_help_markdown,
+    update_actor_help_note, write_help, write_preamble,
 };
 use cccc_core::ledger;
 use cccc_core::permissions;
-use cccc_core::{GroupDoc, HomeLayout, group_bridge_legacy, integration_state};
+use cccc_core::{GroupDoc, HomeLayout, group_bridge_legacy};
 use serde_json::{Value, json};
 
 use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg};
@@ -19,6 +22,10 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "group_preamble_get" => preamble_get(home, request),
         "group_preamble_set" => preamble_set(home, request),
         "group_preamble_reset" => preamble_reset(home, request),
+        "group_help_get" => help_get(home, request),
+        "actor_notes_get" => actor_notes_get(home, request),
+        "actor_notes_set" => actor_notes_write(home, request, false),
+        "actor_notes_clear" => actor_notes_write(home, request, true),
         "group_resolve" => resolve(home, request),
         "group_update" => update(home, request),
         "group_delete" => delete(home, request),
@@ -69,8 +76,7 @@ fn resolve(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 fn resolve_remote(home: &HomeLayout, request: &DaemonRequest, token: &str, raw: &str) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    group_bridge_legacy::import_if_changed(home).map_err(OpError::io)?;
-    let state = integration_state::global_get(home, "group_bridge").map_err(OpError::io)?;
+    let state = group_bridge_legacy::load(home).map_err(OpError::io)?;
     let route = state
         .get("trusts")
         .and_then(Value::as_array)
@@ -248,25 +254,329 @@ fn preamble_result(home: &HomeLayout, group_id: &str, changed: Option<bool>) -> 
     object(result)
 }
 
+struct HelpSource {
+    content: String,
+    source: &'static str,
+    path: String,
+    source_path: String,
+    overridden: bool,
+}
+
+fn help_source(home: &HomeLayout, group_id: &str) -> Result<HelpSource, OpError> {
+    let prompt = read_help(&store(home)?, group_id).map_err(OpError::io)?;
+    let path = prompt.path.to_string_lossy().into_owned();
+    let override_content = prompt.content.unwrap_or_default();
+    let overridden = prompt.found && !override_content.trim().is_empty();
+    Ok(HelpSource {
+        content: if overridden {
+            override_content
+        } else {
+            BUILTIN_HELP_MARKDOWN.to_owned()
+        },
+        source: if overridden { "home" } else { "builtin" },
+        source_path: if overridden {
+            path.clone()
+        } else {
+            "cccc.resources/cccc-help.md".into()
+        },
+        path,
+        overridden,
+    })
+}
+
+fn help_group_id(request: &DaemonRequest) -> Result<String, OpError> {
+    string_arg(request, "group_id")
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| value.trim().to_owned())
+        .ok_or_else(|| OpError::new("missing_group_id", "missing group_id"))
+}
+
+fn load_help_group(home: &HomeLayout, group_id: &str) -> Result<GroupDoc, OpError> {
+    store(home)?
+        .load(group_id)
+        .map_err(|_| OpError::new("group_not_found", format!("group not found: {group_id}")))
+}
+
+fn canonical_actor_id(group: &GroupDoc, value: &str, extras: &[String]) -> String {
+    let value = value.trim();
+    group
+        .actors
+        .iter()
+        .map(|actor| actor.id.as_str())
+        .chain(extras.iter().map(String::as_str))
+        .find(|candidate| candidate.eq_ignore_ascii_case(value))
+        .unwrap_or(value)
+        .to_owned()
+}
+
+fn caller_role(group: &GroupDoc, by: &str) -> Result<Option<ActorRole>, OpError> {
+    if matches!(by, "user" | "system") {
+        return Ok(None);
+    }
+    actors::effective_role(group, by).map(Some).ok_or_else(|| {
+        OpError::new(
+            "permission_denied",
+            format!("group help requires a known actor: {by}"),
+        )
+    })
+}
+
+fn help_get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group_id = help_group_id(request)?;
+    let group = load_help_group(home, &group_id)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    let role = caller_role(&group, &by)?;
+    let requested_actor_id = string_arg(request, "actor_id").unwrap_or_default();
+    let actor_id = if requested_actor_id.trim().is_empty() && role.is_some() {
+        by.clone()
+    } else {
+        requested_actor_id
+    };
+    let actor = if actor_id.trim().is_empty() {
+        None
+    } else {
+        Some(
+            group
+                .actors
+                .iter()
+                .find(|actor| actor.id.eq_ignore_ascii_case(actor_id.trim()))
+                .ok_or_else(|| {
+                    OpError::new("actor_not_found", format!("actor not found: {actor_id}"))
+                })?,
+        )
+    };
+    if role == Some(ActorRole::Peer)
+        && actor.is_some_and(|actor| !actor.id.eq_ignore_ascii_case(&by))
+    {
+        return Err(OpError::new(
+            "permission_denied",
+            "actors can only read their own effective help",
+        ));
+    }
+    let canonical_actor_id = actor.map(|actor| actor.id.as_str()).unwrap_or_default();
+    let voice_secretary = actor.is_some_and(|actor| {
+        actor.internal_kind.as_deref().map(str::trim) == Some("voice_secretary")
+    });
+    let selected_role = if voice_secretary {
+        Some("voice_secretary")
+    } else {
+        actor
+            .and_then(|actor| actors::effective_role(&group, &actor.id))
+            .map(|role| match role {
+                ActorRole::Foreman => "foreman",
+                ActorRole::Peer => "peer",
+            })
+    };
+    let help = help_source(home, &group_id)?;
+    object(json!({
+        "group_id": group_id,
+        "actor_id": if canonical_actor_id.is_empty() { Value::Null } else { json!(canonical_actor_id) },
+        "source": help.source,
+        "source_path": help.source_path,
+        "filename": HELP_FILENAME,
+        "overridden": help.overridden,
+        "markdown": select_help_markdown(
+            &help.content,
+            selected_role,
+            (!canonical_actor_id.is_empty()).then_some(canonical_actor_id),
+            voice_secretary,
+        ),
+    }))
+}
+
+fn authorize_actor_notes(
+    group: &GroupDoc,
+    by: &str,
+    target_actor_id: &str,
+    mutate: bool,
+) -> Result<(), OpError> {
+    let role = caller_role(group, by)?;
+    if mutate && role == Some(ActorRole::Peer) {
+        return Err(OpError::new(
+            "permission_denied",
+            "modifying actor notes requires foreman or user access",
+        ));
+    }
+    if !mutate && role == Some(ActorRole::Peer) {
+        if target_actor_id.trim().is_empty() {
+            return Err(OpError::new(
+                "permission_denied",
+                "listing all actor notes requires foreman or user access",
+            ));
+        }
+        if !target_actor_id.eq_ignore_ascii_case(by) {
+            return Err(OpError::new(
+                "permission_denied",
+                "actors can only read their own actor notes",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn actor_notes_get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    let group_id = help_group_id(request)?;
+    let group = load_help_group(home, &group_id)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    let requested = string_arg(request, "target_actor_id").unwrap_or_default();
+    let help = help_source(home, &group_id)?;
+    let parsed = parse_help_markdown(&help.content);
+    let actor_ids = group
+        .actors
+        .iter()
+        .map(|actor| actor.id.clone())
+        .collect::<Vec<_>>();
+    let extras = parsed
+        .actor_notes
+        .keys()
+        .filter(|actor_id| !actor_ids.contains(actor_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    let target = canonical_actor_id(&group, &requested, &extras);
+    authorize_actor_notes(&group, &by, &target, false)?;
+    if !requested.trim().is_empty() {
+        return object(json!({
+            "target_actor_id": target,
+            "content": parsed.actor_notes.get(&target).cloned().unwrap_or_default(),
+            "source": help.source,
+            "path": help.path,
+        }));
+    }
+    let mut ordered = actor_ids;
+    for actor_id in extras {
+        if !ordered.contains(&actor_id) {
+            ordered.push(actor_id);
+        }
+    }
+    object(json!({
+        "actor_notes": ordered.into_iter().map(|actor_id| json!({
+            "content": parsed.actor_notes.get(&actor_id).cloned().unwrap_or_default(),
+            "actor_id": actor_id,
+        })).collect::<Vec<_>>(),
+        "source": help.source,
+        "path": help.path,
+    }))
+}
+
+fn actor_notes_write(home: &HomeLayout, request: &DaemonRequest, clear: bool) -> OpResult {
+    let group_id = help_group_id(request)?;
+    let requested = required_arg(request, "target_actor_id")?;
+    let content = if clear {
+        String::new()
+    } else {
+        request
+            .args
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .ok_or_else(|| OpError::new("invalid_args", "content must be a string"))?
+    };
+    let group = load_help_group(home, &group_id)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    authorize_actor_notes(&group, &by, &requested, true)?;
+    let target = canonical_actor_id(&group, &requested, &[]);
+    if !group.actors.iter().any(|actor| actor.id == target) {
+        return Err(OpError::new(
+            "actor_not_found",
+            format!("actor not found: {requested}"),
+        ));
+    }
+    let help = help_source(home, &group_id)?;
+    let actor_order = group
+        .actors
+        .iter()
+        .map(|actor| actor.id.clone())
+        .collect::<Vec<_>>();
+    let next = update_actor_help_note(&help.content, &target, &content, &actor_order);
+    let changed = next != help.content;
+    if changed {
+        let group_store = store(home)?;
+        if next.trim().is_empty()
+            || next == BUILTIN_HELP_MARKDOWN
+            || parse_help_markdown(&next) == parse_help_markdown(BUILTIN_HELP_MARKDOWN)
+        {
+            delete_help(&group_store, &group_id).map_err(OpError::io)?;
+        } else {
+            write_help(&group_store, &group_id, &next).map_err(OpError::io)?;
+        }
+    }
+    let refreshed = help_source(home, &group_id)?;
+    let parsed = parse_help_markdown(&refreshed.content);
+    object(json!({
+        "target_actor_id": target,
+        "content": parsed.actor_notes.get(&target).cloned().unwrap_or_default(),
+        "source": refreshed.source,
+        "path": refreshed.path,
+        "changed": changed,
+    }))
+}
+
 fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let current = load(home, request)?;
     authorize(&current, request)?;
-    let title = string_arg(request, "title");
-    let topic = string_arg(request, "topic");
-    if title.is_none() && topic.is_none() {
-        return Err(OpError::new("invalid_args", "title or topic is required"));
-    }
+    let patch = group_update_patch(request)?;
+    let title = patch
+        .get("title")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|value| !value.trim().is_empty());
+    let topic = patch
+        .get("topic")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let group = store(home)?
         .update(&current.group_id, title.as_deref(), topic.as_deref())
         .map_err(OpError::not_found)?;
-    append_group_event(
+    let event = append_group_event(
         home,
         &group,
         "group.update",
         request,
-        json!({"patch": {"title": title, "topic": topic}}),
+        json!({"patch": patch}),
     )?;
-    object(json!({"group": group_runtime::group(group)}))
+    let group_id = group.group_id.clone();
+    object(json!({"group_id": group_id, "group": group_runtime::group(group), "event": event}))
+}
+
+fn group_update_patch(request: &DaemonRequest) -> Result<serde_json::Map<String, Value>, OpError> {
+    let patch = match request.args.get("patch") {
+        Some(Value::Object(patch)) => patch.clone(),
+        Some(_) => {
+            return Err(OpError::new("invalid_patch", "patch must be an object"));
+        }
+        None => {
+            let mut patch = serde_json::Map::new();
+            for key in ["title", "topic"] {
+                if let Some(value) = request.args.get(key)
+                    && !value.is_null()
+                {
+                    patch.insert(key.into(), value.clone());
+                }
+            }
+            patch
+        }
+    };
+    let mut unknown = patch
+        .keys()
+        .filter(|key| !matches!(key.as_str(), "title" | "topic"))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unknown.is_empty() {
+        unknown.sort();
+        let mut error = OpError::new("invalid_patch", "invalid patch keys");
+        error.details.insert("unknown_keys".into(), json!(unknown));
+        return Err(error);
+    }
+    if patch.is_empty() {
+        return Err(OpError::new("invalid_patch", "empty patch"));
+    }
+    if let Some((key, _)) = patch.iter().find(|(_, value)| !value.is_string()) {
+        return Err(OpError::new(
+            "invalid_patch",
+            format!("{key} must be a string"),
+        ));
+    }
+    Ok(patch)
 }
 
 fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -354,7 +664,7 @@ pub(super) fn append_group_event(
     kind: &str,
     request: &DaemonRequest,
     data: Value,
-) -> Result<(), OpError> {
+) -> Result<Event, OpError> {
     let mut event = Event::new(kind, &group.group_id);
     event.by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     event.data = data.as_object().cloned().unwrap_or_default();
@@ -364,5 +674,6 @@ pub(super) fn append_group_event(
             .map_err(OpError::io)?,
         &event,
     )
-    .map_err(OpError::io)
+    .map_err(OpError::io)?;
+    Ok(event)
 }

@@ -1,3 +1,4 @@
+use super::super::runtime_session;
 use super::{Session, Turn};
 use serde_json::{Value, json};
 use std::io;
@@ -8,6 +9,7 @@ pub(super) fn initialize_codex(
     session: &Arc<Session>,
     cwd: &std::path::Path,
     model: &str,
+    command: &[String],
 ) -> io::Result<()> {
     session.request(
         "initialize",
@@ -17,16 +19,54 @@ pub(super) fn initialize_codex(
         }),
         Duration::from_secs(10),
     )?;
-    let mut params = json!({
+    let mut start_params = json!({
         "cwd":cwd,
         "approvalPolicy":"never",
         "sandbox":"danger-full-access",
         "personality":"pragmatic"
     });
     if !model.is_empty() {
-        params["model"] = json!(model);
+        start_params["model"] = json!(model);
     }
-    let result = session.request("thread/start", params, Duration::from_secs(20))?;
+    let resume_thread_id = runtime_session::prepare_codex_app_thread(
+        &session.home,
+        &session.group_id,
+        &session.actor_id,
+        cwd,
+        command,
+        model,
+    )?;
+    let (result, resumed) = if let Some(thread_id) = resume_thread_id {
+        let mut resume_params = json!({
+            "threadId":thread_id,
+            "approvalPolicy":"never",
+            "sandbox":"danger-full-access",
+            "personality":"pragmatic"
+        });
+        if !model.is_empty() {
+            resume_params["model"] = json!(model);
+        }
+        match session.request("thread/resume", resume_params, Duration::from_secs(20)) {
+            Ok(result) => (result, true),
+            Err(error) => {
+                runtime_session::mark_resume_failed(
+                    &session.home,
+                    &session.group_id,
+                    &session.actor_id,
+                    &error.to_string(),
+                )?;
+                (
+                    session.request("thread/start", start_params, Duration::from_secs(20))?,
+                    false,
+                )
+            }
+        }
+    } else {
+        (
+            session.request("thread/start", start_params, Duration::from_secs(20))?,
+            false,
+        )
+    };
     let thread_id = result
         .get("thread")
         .and_then(|thread| thread.get("id"))
@@ -37,6 +77,22 @@ pub(super) fn initialize_codex(
         return Err(io::Error::other(
             "codex app-server returned an empty thread id",
         ));
+    }
+    if let Err(error) = runtime_session::record_codex_app_thread(
+        &session.home,
+        &session.group_id,
+        &session.actor_id,
+        cwd,
+        command,
+        thread_id,
+        resumed,
+    ) {
+        tracing::warn!(
+            %error,
+            group_id = %session.group_id,
+            actor_id = %session.actor_id,
+            "failed to persist Codex app-server thread"
+        );
     }
     *session.thread_id.lock().map_err(|_| poisoned())? = thread_id.to_owned();
     Ok(())

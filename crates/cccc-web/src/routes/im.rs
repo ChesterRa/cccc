@@ -3,7 +3,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use cccc_contracts::utc_now;
 use cccc_core::GroupStore;
-use cccc_core::integration_state;
+use cccc_core::im_state;
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::io;
@@ -12,7 +12,6 @@ use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
 use crate::auth::Principal;
 
-const STORE_KEY: &str = "im_bridge";
 const PLATFORMS: &[&str] = &[
     "telegram", "slack", "discord", "feishu", "dingtalk", "wecom", "weixin",
 ];
@@ -85,6 +84,12 @@ async fn set(
     let mut config = body.as_object().cloned().unwrap_or_default();
     config.remove("group_id");
     normalize_config(&platform, &mut config)?;
+    let current = load(&state, &group_id)?;
+    preserve_config_policy(
+        &platform,
+        &mut config,
+        current.get("config").and_then(Value::as_object),
+    );
     update(&state, &group_id, |value| {
         let state = object(value);
         state.insert("config".into(), Value::Object(config.clone()));
@@ -330,7 +335,7 @@ async fn bind(
             })
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "pending request not found"))?;
         let item = pending.remove(index);
-        Ok(super::im_authorization::upsert_authorized(state, item))
+        Ok(super::im_authorization::bind_authorized(state, item))
     })?;
     Ok(success(bound))
 }
@@ -389,164 +394,39 @@ async fn verbose(
 }
 
 fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(), ApiError> {
-    config.insert("platform".into(), Value::String(platform.into()));
-    let aliases: &[(&str, &str)] = match platform {
-        "telegram" | "discord" | "slack" => &[("token_env", "bot_token_env")],
-        "feishu" => &[
-            ("app_key_env", "feishu_app_id"),
-            ("app_secret_env", "feishu_app_secret"),
-            ("domain", "feishu_domain"),
-        ],
-        "dingtalk" => &[
-            ("app_key_env", "dingtalk_app_key"),
-            ("app_secret_env", "dingtalk_app_secret"),
-            ("robot_code_env", "dingtalk_robot_code"),
-        ],
-        _ => &[],
-    };
-    for (from, to) in aliases {
-        if let Some(value) = config
-            .get(*from)
-            .cloned()
-            .filter(|value| value.as_str().is_some_and(|value| !value.trim().is_empty()))
-        {
-            config.entry((*to).to_owned()).or_insert(value);
-        }
-    }
-    let required_fields: &[&str] = match platform {
-        "telegram" | "discord" => &["bot_token_env"],
-        "slack" => &["bot_token_env", "app_token_env"],
-        "feishu" => &["feishu_app_id", "feishu_app_secret"],
-        "dingtalk" => &["dingtalk_app_key", "dingtalk_app_secret"],
-        "wecom" => &["wecom_bot_id", "wecom_secret"],
-        "weixin" => &[],
-        _ => return Err(ApiError::bad("unsupported IM platform")),
-    };
-    if required_fields.iter().any(|key| {
-        config
-            .get(*key)
-            .and_then(Value::as_str)
-            .is_none_or(|value| value.trim().is_empty())
-    }) {
+    let normalized = im_state::canonicalize_config(platform, config)
+        .ok_or_else(|| ApiError::bad("unsupported IM platform"))?;
+    if !im_state::has_required_credentials(platform, &normalized) {
         return Err(ApiError::bad(format!("missing credentials for {platform}")));
     }
+    *config = normalized;
     Ok(())
+}
+
+fn preserve_config_policy(
+    platform: &str,
+    config: &mut Map<String, Value>,
+    previous: Option<&Map<String, Value>>,
+) {
+    for key in ["files", "skip_pending_on_start"] {
+        if !config.contains_key(key)
+            && let Some(value) = previous.and_then(|previous| previous.get(key)).cloned()
+        {
+            config.insert(key.into(), value);
+        }
+    }
+    config.entry("files").or_insert_with(|| {
+        json!({
+            "enabled":true,
+            "max_mb":if matches!(platform, "telegram" | "slack") { 20 } else { 10 }
+        })
+    });
 }
 
 fn load(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
-    migrate_legacy_im_state(&store, group_id).map_err(io_error)?;
-    integration_state::group_get(&store, group_id, STORE_KEY)
+    im_state::load(&store, group_id)
         .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))
-}
-
-fn migrate_legacy_im_state(store: &GroupStore, group_id: &str) -> io::Result<()> {
-    let group = store.load(group_id)?;
-    let current = group.extra.get(STORE_KEY).cloned().unwrap_or(Value::Null);
-    let legacy = group.extra.get("im").and_then(Value::as_object).cloned();
-    let needs_config = !current.get("config").is_some_and(Value::is_object);
-    let needs_authorized = !current.get("authorized").is_some_and(Value::is_array);
-    let needs_subscribers = !current.get("subscribers").is_some_and(Value::is_array);
-    let needs_pending = !current.get("pending").is_some_and(Value::is_array);
-    if !needs_config && !needs_authorized && !needs_subscribers && !needs_pending {
-        return Ok(());
-    }
-    let state_dir = store.state_dir(group_id)?;
-    let authorized = if needs_authorized {
-        let current_items = normalize_im_items(current.get("authorized"), false);
-        if current_items.is_empty() {
-            read_legacy_im_items(&state_dir.join("im_authorized_chats.json"), false)
-        } else {
-            current_items
-        }
-    } else {
-        Vec::new()
-    };
-    let pending = if needs_pending {
-        let current_items = normalize_im_items(current.get("pending"), true);
-        if current_items.is_empty() {
-            read_legacy_im_items(&state_dir.join("im_pending_keys.json"), true)
-        } else {
-            current_items
-        }
-    } else {
-        Vec::new()
-    };
-    let subscribers = if needs_subscribers {
-        let current_items = normalize_im_items(current.get("subscribers"), false);
-        if current_items.is_empty() {
-            read_legacy_im_items(&state_dir.join("im_subscribers.json"), false)
-        } else {
-            current_items
-        }
-    } else {
-        Vec::new()
-    };
-    integration_state::group_update(store, group_id, STORE_KEY, |value| {
-        let state = object(value);
-        if needs_config && let Some(mut config) = legacy.clone() {
-            config.remove("enabled");
-            config.remove("files");
-            if let Some(token) = config.remove("token") {
-                config.entry("bot_token_env").or_insert(token);
-            }
-            state.insert("config".into(), Value::Object(config));
-            state.entry("enabled").or_insert(Value::Bool(false));
-            state.entry("running").or_insert(Value::Bool(false));
-            state
-                .entry("adapter_available")
-                .or_insert(Value::Bool(false));
-        }
-        if needs_authorized {
-            state.insert("authorized".into(), Value::Array(authorized.clone()));
-        }
-        if needs_subscribers {
-            state.insert("subscribers".into(), Value::Array(subscribers.clone()));
-        }
-        if needs_pending {
-            state.insert("pending".into(), Value::Array(pending.clone()));
-        }
-        Ok(())
-    })
-}
-
-fn read_legacy_im_items(path: &std::path::Path, include_key: bool) -> Vec<Value> {
-    let Ok(raw) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    let Ok(value) = serde_json::from_str::<Value>(&raw) else {
-        return Vec::new();
-    };
-    normalize_im_items(Some(&value), include_key)
-}
-
-fn normalize_im_items(value: Option<&Value>, include_key: bool) -> Vec<Value> {
-    if let Some(items) = value.and_then(Value::as_array) {
-        return items.clone();
-    }
-    value
-        .and_then(Value::as_object)
-        .into_iter()
-        .flatten()
-        .map(|(key, item)| {
-            let mut item = item.clone();
-            if let Some(object) = item.as_object_mut() {
-                if include_key {
-                    object.entry("key").or_insert_with(|| json!(key));
-                } else {
-                    let (chat_id, thread_id) = key
-                        .rsplit_once(':')
-                        .filter(|(chat_id, thread)| !chat_id.is_empty() && !thread.is_empty())
-                        .map_or((key.as_str(), Value::from(0)), |(chat_id, thread)| {
-                            (chat_id, Value::from(thread))
-                        });
-                    object.entry("chat_id").or_insert_with(|| json!(chat_id));
-                    object.entry("thread_id").or_insert(thread_id);
-                }
-            }
-            item
-        })
-        .collect()
 }
 
 fn update<T>(
@@ -555,7 +435,7 @@ fn update<T>(
     change: impl FnOnce(&mut Value) -> io::Result<T>,
 ) -> Result<T, ApiError> {
     let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
-    integration_state::group_update(&store, group_id, STORE_KEY, change).map_err(io_error)
+    im_state::update(&store, group_id, change).map_err(io_error)
 }
 
 fn status_payload(group_id: &str, value: &Value) -> Value {
@@ -568,14 +448,9 @@ fn status_payload(group_id: &str, value: &Value) -> Value {
         "adapter_available":value["adapter_available"].as_bool().unwrap_or(false),
         "last_error":value.get("last_error").cloned().unwrap_or(Value::Null),
         "pid":value.get("pid").cloned().unwrap_or(Value::Null),
-        "subscribers":active_authorization_count(value)
+        "subscribers":array_field(value,"subscribers").into_iter()
+            .filter(|item|item["subscribed"].as_bool().unwrap_or(true)).count()
     })
-}
-
-fn active_authorization_count(value: &Value) -> usize {
-    let mut authorized = normalize_im_items(value.get("authorized"), false);
-    super::im_authorization::retain_active(&mut authorized);
-    authorized.len()
 }
 
 fn ensure_access(principal: &Principal, group_id: &str) -> Result<(), ApiError> {
@@ -594,9 +469,7 @@ fn object(value: &mut Value) -> &mut Map<String, Value> {
 
 fn array_mut<'a>(state: &'a mut Map<String, Value>, key: &str) -> &'a mut Vec<Value> {
     let value = state.entry(key).or_insert_with(|| json!([]));
-    if value.is_object() {
-        *value = Value::Array(normalize_im_items(Some(value), key == "pending"));
-    } else if !value.is_array() {
+    if !value.is_array() {
         *value = json!([]);
     }
     value.as_array_mut().expect("array initialized")
@@ -634,101 +507,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn migrates_legacy_config_and_authorized_chats() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
-        home.initialize().expect("initialize");
-        let store = GroupStore::new(home).expect("store");
-        let group = store.create("legacy", "").expect("group");
-        store
-            .mutate(&group.group_id, |group| {
-                group.extra.insert(
-                    "im".into(),
-                    json!({"platform":"telegram","token":"TOKEN_ENV","enabled":true}),
-                );
-                Ok(())
-            })
-            .expect("legacy config");
-        std::fs::write(
-            store
-                .state_dir(&group.group_id)
-                .expect("state dir")
-                .join("im_authorized_chats.json"),
-            r#"{"chat-1":{"chat_id":"chat-1","thread_id":0,"platform":"telegram"}}"#,
-        )
-        .expect("legacy auth");
-
-        migrate_legacy_im_state(&store, &group.group_id).expect("migrate");
-        let state =
-            integration_state::group_get(&store, &group.group_id, STORE_KEY).expect("state");
-        assert_eq!(state["config"]["platform"], "telegram");
-        assert_eq!(state["config"]["bot_token_env"], "TOKEN_ENV");
-        assert_eq!(state["authorized"][0]["chat_id"], "chat-1");
-    }
-
-    #[test]
-    fn explicit_empty_authorized_and_pending_state_is_not_reimported() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
-        home.initialize().expect("initialize");
-        let store = GroupStore::new(home).expect("store");
-        let group = store.create("legacy", "").expect("group");
-        std::fs::write(
-            store
-                .state_dir(&group.group_id)
-                .expect("state dir")
-                .join("im_authorized_chats.json"),
-            r#"{"chat-1":{"chat_id":"chat-1","thread_id":0,"platform":"telegram"}}"#,
-        )
-        .expect("legacy auth");
-        std::fs::write(
-            store
-                .state_dir(&group.group_id)
-                .expect("state dir")
-                .join("im_pending_keys.json"),
-            r#"{"key-1":{"chat_id":"chat-1","thread_id":0,"platform":"telegram"}}"#,
-        )
-        .expect("legacy pending");
-        integration_state::group_update(&store, &group.group_id, STORE_KEY, |value| {
-            value["authorized"] = json!([]);
-            value["pending"] = json!([]);
-            Ok(())
-        })
-        .expect("revoked state");
-
-        migrate_legacy_im_state(&store, &group.group_id).expect("migrate");
-
-        let state =
-            integration_state::group_get(&store, &group.group_id, STORE_KEY).expect("state");
-        assert_eq!(state["authorized"], json!([]));
-        assert_eq!(state["pending"], json!([]));
-    }
-
-    #[test]
-    fn canonical_object_items_are_normalized_without_legacy_files() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
-        home.initialize().expect("initialize");
-        let store = GroupStore::new(home).expect("store");
-        let group = store.create("object state", "").expect("group");
-        integration_state::group_update(&store, &group.group_id, STORE_KEY, |value| {
-            *value = json!({
-                "authorized":{"chat-1":{"chat_id":"chat-1","platform":"telegram"}},
-                "pending":{"key-1":{"chat_id":"chat-2","platform":"telegram",
-                    "expires_at":chrono_now() as f64 + 600.0}}
-            });
-            Ok(())
-        })
-        .expect("object state");
-
-        migrate_legacy_im_state(&store, &group.group_id).expect("normalize");
-        let state =
-            integration_state::group_get(&store, &group.group_id, STORE_KEY).expect("state");
-        assert_eq!(state["authorized"][0]["chat_id"], "chat-1");
-        assert_eq!(state["pending"][0]["key"], "key-1");
-    }
-
-    #[test]
     fn normalizes_cli_credential_aliases() {
         for (platform, input, expected) in [
             (
@@ -740,16 +518,16 @@ mod tests {
                 "feishu",
                 json!({"app_key_env":"APP_ID","app_secret_env":"APP_SECRET"}),
                 vec![
-                    ("feishu_app_id", "APP_ID"),
-                    ("feishu_app_secret", "APP_SECRET"),
+                    ("feishu_app_id_env", "APP_ID"),
+                    ("feishu_app_secret_env", "APP_SECRET"),
                 ],
             ),
             (
                 "dingtalk",
                 json!({"app_key_env":"APP_KEY","app_secret_env":"APP_SECRET"}),
                 vec![
-                    ("dingtalk_app_key", "APP_KEY"),
-                    ("dingtalk_app_secret", "APP_SECRET"),
+                    ("dingtalk_app_key_env", "APP_KEY"),
+                    ("dingtalk_app_secret_env", "APP_SECRET"),
                 ],
             ),
         ] {
@@ -759,6 +537,28 @@ mod tests {
                 assert_eq!(config[key], value);
             }
         }
+    }
+
+    #[test]
+    fn config_updates_preserve_policy_and_apply_platform_default() {
+        let previous = json!({
+            "files":{"enabled":false,"max_mb":7},
+            "skip_pending_on_start":false
+        });
+        let mut config = json!({"platform":"discord"})
+            .as_object()
+            .cloned()
+            .expect("config");
+        preserve_config_policy("discord", &mut config, previous.as_object());
+        assert_eq!(config["files"]["max_mb"], 7);
+        assert_eq!(config["skip_pending_on_start"], false);
+
+        let mut fresh = json!({"platform":"discord"})
+            .as_object()
+            .cloned()
+            .expect("config");
+        preserve_config_policy("discord", &mut fresh, None);
+        assert_eq!(fresh["files"], json!({"enabled":true,"max_mb":10}));
     }
 
     #[test]
@@ -779,9 +579,9 @@ mod tests {
     #[test]
     fn status_excludes_unsubscribed_weixin_tombstones() {
         let state = json!({
-            "authorized":[
+            "subscribers":[
                 {"chat_id":"wx-old","platform":"weixin","subscribed":false},
-                {"chat_id":"tg-live","platform":"telegram"}
+                {"chat_id":"tg-live","platform":"telegram","subscribed":true}
             ]
         });
 

@@ -106,6 +106,92 @@ class TestBootstrapActorOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_autostart_reschedules_web_model_browser_delivery(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+
+            create, _ = self._call(
+                "group_create",
+                {"title": "web-model-autostart", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call(
+                "attach", {"group_id": group_id, "path": ".", "by": "user"}
+            )
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "web1",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = True
+            group.save()
+
+            with (
+                patch(
+                    "cccc.daemon.actors.web_model_browser_delivery.web_model_browser_delivery_enabled",
+                    return_value=True,
+                ) as delivery_enabled,
+                patch(
+                    "cccc.daemon.actors.web_model_browser_session.schedule_web_model_chatgpt_browser_session_warmup",
+                    return_value=True,
+                ) as warmup,
+                patch(
+                    "cccc.daemon.actors.web_model_browser_delivery.schedule_web_model_browser_delivery",
+                    return_value=True,
+                ) as schedule_delivery,
+            ):
+                autostart_running_groups(
+                    home,
+                    effective_runner_kind=lambda runner: runner,
+                    find_scope_url=lambda _group, _scope_key: ".",
+                    supported_runtimes=("web_model",),
+                    ensure_mcp_installed=lambda _runtime, _cwd, **_kwargs: True,
+                    auto_mcp_runtimes=(),
+                    pty_supported=lambda: True,
+                    merge_actor_env_with_private=lambda _gid, _aid, env: dict(env),
+                    inject_actor_context_env=lambda env, _gid, _aid: dict(env),
+                    prepare_pty_env=lambda env: dict(env),
+                    normalize_runtime_command=lambda _runtime, command: list(command),
+                    pty_backlog_bytes=lambda: 1024,
+                    write_headless_state=lambda _gid, _aid: None,
+                    write_pty_state=lambda _gid, _aid, _pid: None,
+                    clear_preamble_sent=lambda _group, _aid: None,
+                    throttle_reset_actor=lambda _gid, _aid: None,
+                    automation_on_resume=lambda _group: None,
+                    get_group_state=lambda _group: "idle",
+                    load_actor_private_env=lambda _gid, _aid: {},
+                    update_actor_private_env=lambda *_args, **_kwargs: {},
+                    delete_actor_private_env=lambda _gid, _aid: None,
+                )
+
+            delivery_enabled.assert_called_once()
+            warmup.assert_called_once_with(
+                group_id=group_id,
+                actor_id="web1",
+                reason="daemon_autostart",
+                retry_seconds=0.0,
+            )
+            schedule_delivery.assert_called_once()
+            self.assertEqual(schedule_delivery.call_args.kwargs["group_id"], group_id)
+            self.assertEqual(schedule_delivery.call_args.kwargs["actor_id"], "web1")
+        finally:
+            cleanup()
+
     def test_autostart_restores_explicit_user_scope_profile_secrets(self) -> None:
         home, cleanup = self._with_home()
         try:

@@ -61,6 +61,22 @@ class PtySupervisor:
     ):
         return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
 
+    def history_since_page(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        after: int,
+        limit_bytes: int = 64_000,
+    ):
+        return {
+            "data": b"",
+            "start_cursor": max(0, int(after or 0)),
+            "end_cursor": max(0, int(after or 0)),
+            "has_more": False,
+            "cursor_expired": False,
+        }
+
     def terminal_override(self, *, group_id: str, actor_id: str):
         return None
 

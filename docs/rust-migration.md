@@ -8,12 +8,15 @@ experimental engine as a standalone Rust preview for supported platforms. Both
 channels share the product version, data contracts, and public command, while the
 standalone artifact contains no Python fallback or implementation selector.
 
-Experimental means the Rust implementation is maintained and release-tested but
-does not yet promise complete feature and integration parity with Python. Use
-`cccc python` for reliability-critical workflows. Promotion out of experimental
-is gate-based rather than time-based: it requires no known high-priority parity
-gaps across the core CLI, daemon, Web, MCP, runtime, and integration paths, plus
-passing cross-implementation state and supported-platform installation gates.
+Experimental means the Rust implementation is release-tested for its declared
+scope but does not promise complete feature and integration parity with Python.
+Use `cccc python` for reliability-critical workflows. CCCC does not pursue
+breadth-first parity as an end in itself: native work must close a high-severity
+shared-state/security gap or earn a predeclared, correctness-bearing performance
+threshold. Promotion out of experimental is gate-based rather than time-based:
+it requires repeatable material gains on recurring product paths after equivalent
+Python-side simplification, plus the selected state, integration, and
+supported-platform gates for the promoted scope.
 
 Prereleases use one canonical product identity and tag such as `v0.4.34-rc2`.
 The Python manifest represents that identity as PEP 440 `0.4.34rc2`, while the
@@ -131,6 +134,11 @@ The registry, group documents, ledgers, and actor contracts are shared. On first
 Rust startup, CCCC validates the existing layout and adds a `.cccc-rust-v1`
 compatibility marker without moving or deleting existing files. A non-empty
 directory that is not already a CCCC home is still rejected.
+The active Working Group is stored once in `CCCC_HOME/active.json` using
+`{"v":1,"active_group_id":"...","updated_at":"..."}`. Both implementations
+read that canonical document. Python and Rust also accept the experimental
+Rust preview's former `group_id` key and atomically normalize it without losing
+the selected group; new writes never recreate the legacy shape.
 Python-format access-token entries keep the raw token as the map key; Rust reads
 and writes that layout without adding duplicate token fields.
 Wrapped `tokens:` documents and the older top-level token map are both accepted.
@@ -145,6 +153,13 @@ Ledger reads also normalize the pre-v1 `chat.ack` envelope (`type`, `event_id`,
 and `agent`) into the current versioned event contract. Other unrecognized or
 malformed historical lines are reported with their source location and skipped,
 so one legacy record cannot make an entire group unavailable.
+
+ChatGPT Web Model connector bindings use
+`CCCC_HOME/web_model_connectors.yaml` in both implementations. Current builds
+accept the historical Python map and Rust array shapes. If the former Rust
+`settings.yaml:web_model_connectors` section exists, it is merged into the
+canonical file under the shared locks and removed only after the canonical
+write succeeds.
 
 Python and Rust daemons must not write the shared home concurrently. Legacy
 bundled installations retain their selector metadata, while a standalone
@@ -162,6 +177,25 @@ Ports communicate with the daemon through the versioned IPC contract. Ledger
 writes remain daemon-owned. Group documents and global settings use shared
 cross-process transaction locks so daemon operations and Web-owned integration
 lifecycle updates cannot overwrite each other.
+
+The optional daemon IPC `events_stream` upgrade is not implemented by the
+experimental Rust daemon, which therefore reports `events_stream=false` in
+`ping.capabilities`. Clients must use that capability or probe the operation and
+reconcile through inbox/ledger reads; Python continues to provide the optional
+NDJSON stream.
+
+Projected-browser process ownership is also intentionally internal rather than
+mechanically identical. Python hosts the Presentation, NotebookLM-auth, and Web
+Model browser processes behind optional daemon IPC attach streams. Rust hosts
+the equivalent product surfaces in its local Web component and therefore
+reports all six `*_browser_attach` and `*_browser_vnc_attach` daemon
+capabilities as `false`; Python reports them as `true`. External daemon clients
+must consult the exact operation-named capability instead of opening a duplex
+stream as a feature probe. Browser processes and frame streams are ephemeral in
+both implementations. Durable Presentation content, NotebookLM credentials,
+Web Model targets/delivery state, and browser profiles remain under the shared
+`CCCC_HOME` contracts so the applicable surface can be reopened after a
+component or engine restart.
 
 The Rust MCP server uses the same progressive tool surface as Python.
 `tools/list` is derived from caller role and `capability_state`, includes
@@ -185,6 +219,12 @@ the single daily shadow write for durable memory entries.
 `cccc space auth status|start|cancel|disconnect` uses the local Rust Web API for
 NotebookLM authentication. IM start requests sent directly to the daemon are
 delegated to the Web-owned integration worker, preserving one lifecycle owner.
+Both implementations now use the stable top-level `im` configuration and the
+existing pending, authorized-chat, and subscriber JSON files as the durable IM
+state. Rust normalizes literal credentials and `*_env` references to the same
+stored fields, while `im_bridge` is limited to runtime diagnostics and bounded
+legacy import. Switching engines therefore does not copy, fork, or resurrect IM
+configuration and authorization state.
 `cccc doctor` reports daemon identity/version, the invoked executable, PATH
 resolution and duplicate `cccc` commands, PTY support, browser discovery, and
 Linux display helpers so installation failures are visible from the CLI.
@@ -207,6 +247,18 @@ The Rust daemon also owns Python-compatible signed outbound WebSocket sessions:
 it scans active trusts, maintains heartbeats, reconnects with bounded
 exponential backoff, projects connection health onto each trust, and prefers
 the live route for message delivery before HTTP/MCP fallback.
+
+Group Bridge now uses the Python-compatible identity, pairing, registration,
+credential, and receipt files as its one cross-engine persistence authority.
+Experimental Rust imports its former combined `settings.yaml:group_bridge`
+section once, commits the canonical files first, then clears the legacy
+section. Canonical terminal trust decisions win by registration and route, so a
+Python revocation cannot be resurrected by stale Rust state. Raw bearer and
+remote-send tokens remain in the secret credential file behind opaque
+references, and delivery receipts share the same
+`registration_id::idempotency_key` namespace. Provider-session reconnect and
+live remote delivery remain part of the wider experimental Rust journey; the
+authorization and receipt store no longer require staying on one engine.
 
 The Rust NotebookLM adapter owns notebook sources, Studio artifact
 create/list/download operations, and incremental work/memory synchronization.
@@ -242,8 +294,11 @@ session, preserves message order, uses bracketed paste when the terminal enables
 it, and applies the actor's configured submit mode. Successful delivery returns
 to the daemon's serialized state path before advancing the inbox cursor.
 The Rust preamble follows the Python contract: cold-start and resumed sessions
-are told to call `cccc_bootstrap`, which returns group, inbox, recovery, and
-context state. Ordinary chat deliveries do not duplicate the full context JSON.
+are told to call `cccc_bootstrap`, which returns one bounded semantic packet:
+session orientation, recovery state, an actionable inbox preview, context
+hygiene, the memory-recall gate, and named routes for colder detail. It does not
+dump the raw group or context trees, and ordinary chat deliveries do not
+duplicate the full context JSON.
 `CCCC_HOME/groups/<group_id>/prompts/CCCC_PREAMBLE.md` replaces the default
 Startup body when present, matching the Python override behavior.
 Each delivered chat batch also ends with Python's MCP reply reminder; batched
@@ -264,8 +319,9 @@ provider session without CCCC tools.
 `runner=headless` never creates a PTY. Codex and Claude use daemon-managed local
 provider sessions: Codex app-server JSON-RPC and Claude bidirectional
 stream-json. Their messages are pushed through bounded actor delivery workers,
-and actor health comes from the real provider process. Web Model and custom
-external headless actors retain the pull contract: the executor obtains an
+and actor health comes from the real provider process. Web Model and the
+experimental Rust-only custom external-headless path retain the pull contract:
+the executor obtains an
 ordered batch with `cccc_runtime_wait_next_turn` and commits its exact contiguous
 event prefix with `cccc_runtime_complete_turn`. The legacy
 `web_model_runtime_*` daemon operation names remain accepted for compatibility.
@@ -307,6 +363,20 @@ receive the same identity, group, bootstrap, and reply protocol preamble as
 built-in runtimes. Voice Secretary system notifications include the complete
 `input_envelope` or action-request envelope in the delivered payload instead of
 only the generic notification title.
+
+Voice Secretary operation discovery and its cross-client recording lease use
+the canonical daemon boundary in both implementations. Rust stores the
+short-lived lease in the same locked CCCC_HOME document as Python, and Rust Web
+delegates acquire, heartbeat, and release to the daemon while validating the
+token again for the audio stream. Lifecycle, durable health, sessions, pending
+prompt drafts/requests, and ask requests now share the Python-compatible
+`state/assistants.json` authority. Rust imports its former group-embedded
+workflow state once and leaves only `enabled`/`config` in `group.yaml`; Python
+preserves Rust-only extension state when it updates the common records. Live
+process health is deliberately recomputed rather than persisted. Native Rust
+document/input projections and model installation remain implementation-owned
+experimental details; model installation is Web-owned and advertised as
+unavailable through the Rust daemon.
 
 Delivery completion advances the inbox only across a fully delivered contiguous
 prefix. Resolution scans the ledger index from the actor cursor, so batches over

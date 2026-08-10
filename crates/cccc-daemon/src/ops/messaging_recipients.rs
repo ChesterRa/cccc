@@ -26,6 +26,29 @@ pub(super) fn normalize_chat_data(
         ));
     }
 
+    normalize_chat_preflight(group, by, data, allow_sender_only_audience)
+}
+
+pub(super) fn normalize_chat_preflight(
+    group: &GroupDoc,
+    by: &str,
+    data: &mut Map<String, Value>,
+    allow_sender_only_audience: bool,
+) -> Result<(), OpError> {
+    let priority = match data.get("priority") {
+        None | Some(Value::Null) => "normal".into(),
+        Some(Value::String(value)) if value.trim().is_empty() => "normal".into(),
+        Some(Value::String(value)) => value.trim().to_owned(),
+        Some(_) => String::new(),
+    };
+    if !matches!(priority.as_str(), "normal" | "attention") {
+        return Err(OpError::new(
+            "invalid_priority",
+            "priority must be 'normal' or 'attention'",
+        ));
+    }
+    data.insert("priority".into(), Value::String(priority));
+
     let raw = data
         .get("to")
         .and_then(Value::as_array)
@@ -37,7 +60,8 @@ pub(super) fn normalize_chat_data(
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let mut recipients = actors::resolve_recipients(group, &raw).map_err(OpError::invalid)?;
+    let mut recipients = actors::resolve_recipients(group, &raw)
+        .map_err(|error| OpError::new("invalid_recipient", error.to_string()))?;
     if recipients.is_empty() && raw.is_empty() {
         recipients.push(default_local_recipient(group, by).into());
     }
@@ -48,8 +72,6 @@ pub(super) fn normalize_chat_data(
     normalize_peer_insight(group, by, data)?;
     data.entry("format")
         .or_insert_with(|| Value::String("plain".into()));
-    data.entry("priority")
-        .or_insert_with(|| Value::String("normal".into()));
     data.entry("reply_required").or_insert(Value::Bool(false));
     super::message_metadata::add_sender_snapshot(group, by, data);
     Ok(())
@@ -235,13 +257,13 @@ fn peer_facing(group: &GroupDoc, by: &str, data: &Map<String, Value>) -> bool {
 pub(super) fn default_recipient(group: &GroupDoc) -> &'static str {
     let configured = group
         .extra
-        .get("settings")
+        .get("messaging")
         .and_then(Value::as_object)
         .and_then(|settings| settings.get("default_send_to"))
         .or_else(|| {
             group
                 .extra
-                .get("messaging")
+                .get("settings")
                 .and_then(Value::as_object)
                 .and_then(|settings| settings.get("default_send_to"))
         })

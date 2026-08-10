@@ -27,7 +27,9 @@ impl Client {
     ) -> Result<Value> {
         let f_req = rpc::encode(rpc_id, params)?;
         let authuser = self.auth.authuser.to_string();
-        let cookie_header = self.cookie_header()?;
+        let cookie_header = self
+            .cookie_header_for(crate::BASE_HOST, "/_/LabsTailwindUi/data/batchexecute")?
+            .ok_or_else(|| Error::InvalidCredential("NotebookLM API cookies are missing".into()))?;
         let response = auth::attach_cookie(self.http.post(BATCHEXECUTE_URL), &cookie_header)
             .header(ORIGIN, BASE_URL)
             .header(REFERER, format!("{BASE_URL}{source_path}"))
@@ -59,11 +61,15 @@ impl Client {
         rpc::decode(&raw, rpc_id, allow_null)
     }
 
-    pub(crate) fn cookie_header(&self) -> Result<String> {
+    pub(crate) fn cookie_header_for(
+        &self,
+        request_host: &str,
+        request_path: &str,
+    ) -> Result<Option<String>> {
         let storage = self.storage_state()?;
         let raw = serde_json::to_string(&storage)
             .map_err(|error| Error::InvalidCredential(error.to_string()))?;
-        auth::parse_storage(&raw).map(|(_, header, _)| header)
+        auth::optional_cookie_header(&raw, request_host, request_path)
     }
 
     pub(crate) fn capture_cookies(&self, response: &reqwest::blocking::Response) -> Result<()> {

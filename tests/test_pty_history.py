@@ -76,6 +76,86 @@ class TestPtyHistoryPage(unittest.TestCase):
         self.assertEqual(session.history_since(5), b"fghij")
         self.assertEqual(session.history_since(10), b"")
 
+    def test_history_since_page_extends_to_a_complete_utf8_boundary(self) -> None:
+        session = self._session()
+        session._append_backlog("ab你cd".encode("utf-8"))
+
+        first = session.history_since_page(after=0, limit_bytes=3)
+        second = session.history_since_page(after=5, limit_bytes=64)
+
+        self.assertEqual(first["data"], "ab你".encode("utf-8"))
+        self.assertEqual(first["start_cursor"], 0)
+        self.assertEqual(first["end_cursor"], 5)
+        self.assertTrue(first["has_more"])
+        self.assertFalse(first["cursor_expired"])
+        self.assertEqual(second["data"], b"cd")
+        self.assertEqual(second["start_cursor"], 5)
+        self.assertEqual(second["end_cursor"], 7)
+        self.assertFalse(second["has_more"])
+
+    def test_history_since_page_waits_for_an_incomplete_utf8_suffix(self) -> None:
+        session = self._session()
+        encoded = "你".encode("utf-8")
+        session._append_backlog(encoded[:2])
+
+        partial = session.history_since_page(after=0, limit_bytes=64)
+
+        self.assertEqual(partial["data"], b"")
+        self.assertEqual(partial["end_cursor"], 0)
+        self.assertTrue(partial["has_more"])
+
+        session._append_backlog(encoded[2:])
+        complete = session.history_since_page(after=0, limit_bytes=64)
+        self.assertEqual(complete["data"], encoded)
+        self.assertEqual(complete["end_cursor"], 3)
+        self.assertFalse(complete["has_more"])
+
+    def test_replacement_session_continues_the_actor_byte_cursor(self) -> None:
+        from cccc.runners import pty as pty_runner
+
+        supervisor = pty_runner.PtySupervisor()
+        first = supervisor.start_actor(
+            group_id="g-replace",
+            actor_id="a-replace",
+            cwd=Path.cwd(),
+            command=[sys.executable, "-u", "-c", "import os,time;os.write(1,b'first');time.sleep(5)"],
+            env={},
+            max_backlog_bytes=10_000,
+        )
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and b"first" not in first.tail_output(max_bytes=100):
+            time.sleep(0.01)
+        self.assertEqual(first.tail_output(max_bytes=100), b"first")
+        first_end = first.history_page(limit_bytes=100)["end_cursor"]
+        supervisor.stop_actor(group_id="g-replace", actor_id="a-replace")
+
+        try:
+            second = supervisor.start_actor(
+                group_id="g-replace",
+                actor_id="a-replace",
+                cwd=Path.cwd(),
+                command=[sys.executable, "-u", "-c", "import os,time;os.write(1,b'second');time.sleep(5)"],
+                env={},
+                max_backlog_bytes=10_000,
+            )
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline and b"second" not in second.tail_output(max_bytes=100):
+                time.sleep(0.01)
+
+            page = supervisor.history_since_page(
+                group_id="g-replace",
+                actor_id="a-replace",
+                after=int(first_end),
+                limit_bytes=100,
+            )
+
+            self.assertEqual(page["data"], b"second")
+            self.assertEqual(page["start_cursor"], first_end)
+            self.assertEqual(page["end_cursor"], int(first_end) + len(b"second"))
+            self.assertFalse(page["cursor_expired"])
+        finally:
+            supervisor.stop_actor(group_id="g-replace", actor_id="a-replace")
+
     def test_supervisor_keeps_tail_output_after_session_exit(self) -> None:
         from cccc.runners import pty as pty_runner
 

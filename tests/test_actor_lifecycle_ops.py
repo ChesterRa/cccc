@@ -119,6 +119,58 @@ class TestActorLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_add_does_not_restart_an_explicitly_stopped_group(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "stopped-actor-add", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+            attach, _ = self._call(
+                "attach", {"group_id": group_id, "path": ".", "by": "user"}
+            )
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+            stopped, _ = self._call(
+                "group_stop", {"group_id": group_id, "by": "user"}
+            )
+            self.assertTrue(stopped.ok, getattr(stopped, "error", None))
+
+            added, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "custom",
+                    "runner": "pty",
+                    "command": ["sh", "-c", "exit 0"],
+                    "capability_autoload": ["pack:space"],
+                    "by": "user",
+                },
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
+            self.assertFalse(bool((added.result or {}).get("running")))
+            self.assertNotIn("start_event", added.result or {})
+
+            shown, _ = self._call("group_show", {"group_id": group_id})
+            self.assertTrue(shown.ok, getattr(shown, "error", None))
+            group = (shown.result or {}).get("group") or {}
+            self.assertEqual(group.get("state"), "stopped")
+            self.assertFalse(bool(group.get("running")))
+
+            state, _ = self._call(
+                "capability_state",
+                {"group_id": group_id, "actor_id": "peer1", "by": "peer1"},
+            )
+            self.assertTrue(state.ok, getattr(state, "error", None))
+            self.assertNotIn(
+                "pack:space", (state.result or {}).get("enabled_capabilities") or []
+            )
+        finally:
+            cleanup()
+
     def test_actor_start_failure_restores_previous_enabled_state(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -165,6 +217,52 @@ class TestActorLifecycleOps(unittest.TestCase):
             actors = group_doc.get("actors") if isinstance(group_doc.get("actors"), list) else []
             actor = next((item for item in actors if isinstance(item, dict) and item.get("id") == "peer1"), {})
             self.assertFalse(bool(actor.get("enabled", True)))
+        finally:
+            cleanup()
+
+    def test_actor_start_reports_specific_project_root_errors(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create", {"title": "actor-start-scope-errors", "topic": "", "by": "user"}
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+            stopped, _ = self._call("group_stop", {"group_id": group_id, "by": "user"})
+            self.assertTrue(stopped.ok, getattr(stopped, "error", None))
+            added, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "custom",
+                    "runner": "pty",
+                    "command": ["sh", "-c", "sleep 5"],
+                    "by": "user",
+                },
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
+
+            missing, _ = self._call(
+                "actor_start", {"group_id": group_id, "actor_id": "peer1", "by": "user"}
+            )
+            self.assertFalse(missing.ok)
+            self.assertEqual(getattr(missing.error, "code", ""), "missing_project_root")
+
+            with tempfile.TemporaryDirectory() as td:
+                scope = Path(td) / "removed-scope"
+                scope.mkdir()
+                attached, _ = self._call(
+                    "attach", {"group_id": group_id, "path": str(scope), "by": "user"}
+                )
+                self.assertTrue(attached.ok, getattr(attached, "error", None))
+                scope.rmdir()
+                invalid, _ = self._call(
+                    "actor_start", {"group_id": group_id, "actor_id": "peer1", "by": "user"}
+                )
+                self.assertFalse(invalid.ok)
+                self.assertEqual(getattr(invalid.error, "code", ""), "invalid_project_root")
         finally:
             cleanup()
 
@@ -304,6 +402,75 @@ class TestActorLifecycleOps(unittest.TestCase):
             self.assertIsInstance(event, dict)
             assert isinstance(event, dict)
             self.assertEqual(str(event.get("kind") or ""), "actor.restart")
+        finally:
+            cleanup()
+
+    def test_web_model_actor_restart_reschedules_browser_delivery(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "web-model-restart", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call(
+                "attach", {"group_id": group_id, "path": ".", "by": "user"}
+            )
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "web1",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = True
+            group.save()
+
+            with (
+                patch(
+                    "cccc.daemon.actors.web_model_browser_delivery.web_model_browser_delivery_enabled",
+                    return_value=True,
+                ) as delivery_enabled,
+                patch(
+                    "cccc.daemon.actors.web_model_browser_session.schedule_web_model_chatgpt_browser_session_warmup",
+                    return_value=True,
+                ) as warmup,
+                patch(
+                    "cccc.daemon.actors.web_model_browser_delivery.schedule_web_model_browser_delivery",
+                    return_value=True,
+                ) as schedule_delivery,
+            ):
+                restart, _ = self._call(
+                    "actor_restart",
+                    {"group_id": group_id, "actor_id": "web1", "by": "user"},
+                )
+
+            self.assertTrue(restart.ok, getattr(restart, "error", None))
+            delivery_enabled.assert_called_once()
+            warmup.assert_called_once_with(
+                group_id=group_id,
+                actor_id="web1",
+                reason="actor_restart",
+                retry_seconds=0.0,
+            )
+            schedule_delivery.assert_called_once_with(
+                group_id=group_id,
+                actor_id="web1",
+            )
         finally:
             cleanup()
 

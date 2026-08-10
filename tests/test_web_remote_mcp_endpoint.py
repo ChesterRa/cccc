@@ -198,16 +198,17 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertIn("regex", repo_props)
             self.assertIn("include_globs", repo_props)
 
-            help_resp = client.post(
-                f"/mcp/web-model/{connector_id}",
-                headers={"Authorization": f"Bearer {secret}"},
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 20,
-                    "method": "tools/call",
-                    "params": {"name": "cccc_help", "arguments": {}},
-                },
-            )
+            with patch("cccc.ports.mcp.common.call_daemon", side_effect=self._local_call_daemon):
+                help_resp = client.post(
+                    f"/mcp/web-model/{connector_id}",
+                    headers={"Authorization": f"Bearer {secret}"},
+                    json={
+                        "jsonrpc": "2.0",
+                        "id": 20,
+                        "method": "tools/call",
+                        "params": {"name": "cccc_help", "arguments": {}},
+                    },
+                )
             self.assertEqual(help_resp.status_code, 200)
             help_text = (((help_resp.json().get("result") or {}).get("content") or [{}])[0] or {}).get("text") or "{}"
             help_payload = json.loads(help_text)

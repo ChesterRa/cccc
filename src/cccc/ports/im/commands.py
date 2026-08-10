@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
+from .auth import normalize_thread_id
+
 
 _CAPABILITY_NAMES = {
     "yes": "yes",
@@ -269,7 +271,7 @@ def format_status(
         authorized = bool(im_status.get("authorized"))
         subscribed = bool(im_status.get("subscribed"))
         verbose = bool(im_status.get("verbose"))
-        thread_id = int(im_status.get("thread_id") or 0)
+        thread_id = normalize_thread_id(im_status.get("thread_id"))
         lines.append("IM:")
         chat_bits = [
             f"authorized {_format_bool(authorized)}",

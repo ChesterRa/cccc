@@ -14,53 +14,20 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from ... import __version__
 from .server import MCPError, handle_tool_call, list_tools_for_caller
 
-_SESSION_SUPPORTS_TOOLS_LIST_CHANGED = False
-_PENDING_NOTIFICATIONS: List[Dict[str, Any]] = []
-_SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2024-11-05")
-_DEFAULT_PROTOCOL_VERSION = "2024-11-05"
+_SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2024-11-05")
+_DEFAULT_PROTOCOL_VERSION = _SUPPORTED_PROTOCOL_VERSIONS[0]
 # Match the response framing to the inbound stdio framing. Some clients send
 # newline JSON; MCP Content-Length framing is enabled only after seeing it.
 _STDIO_WRITE_CONTENT_LENGTH = False
 
 
-def _set_session_client_capabilities(params: Dict[str, Any]) -> None:
-    global _SESSION_SUPPORTS_TOOLS_LIST_CHANGED, _PENDING_NOTIFICATIONS
-    supports = False
-    caps = params.get("capabilities")
-    if isinstance(caps, dict):
-        tools_caps = caps.get("tools")
-        if isinstance(tools_caps, dict):
-            supports = bool(tools_caps.get("listChanged"))
-    _SESSION_SUPPORTS_TOOLS_LIST_CHANGED = supports
-    _PENDING_NOTIFICATIONS = []
-
-
-def _enqueue_tools_list_changed_notification() -> None:
-    _PENDING_NOTIFICATIONS.append(
-        {
-            "jsonrpc": "2.0",
-            "method": "notifications/tools/list_changed",
-            "params": {},
-        }
-    )
-
-
-def _drain_pending_notifications() -> List[Dict[str, Any]]:
-    global _PENDING_NOTIFICATIONS
-    out = list(_PENDING_NOTIFICATIONS)
-    _PENDING_NOTIFICATIONS = []
-    return out
-
-
 def _reset_session_state_for_tests() -> None:
-    global _SESSION_SUPPORTS_TOOLS_LIST_CHANGED, _PENDING_NOTIFICATIONS, _STDIO_WRITE_CONTENT_LENGTH
-    _SESSION_SUPPORTS_TOOLS_LIST_CHANGED = False
-    _PENDING_NOTIFICATIONS = []
+    global _STDIO_WRITE_CONTENT_LENGTH
     _STDIO_WRITE_CONTENT_LENGTH = False
 
 
@@ -218,12 +185,11 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
     # MCP protocol methods
     if method == "initialize":
         init_params = params if isinstance(params, dict) else {}
-        _set_session_client_capabilities(init_params)
         return _make_response(req_id, {
             "protocolVersion": _negotiated_protocol_version(init_params),
             "capabilities": {
                 "tools": {
-                    "listChanged": True,
+                    "listChanged": False,
                 },
                 # Some MCP clients probe these even if unused; return empty lists below.
                 "resources": {},
@@ -281,20 +247,6 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
 
         try:
             result = handle_tool_call(tool_name, arguments)
-            refresh_required = False
-            if isinstance(result, dict):
-                if bool(result.get("refresh_required")):
-                    refresh_required = True
-                enable_result = result.get("enable_result")
-                if isinstance(enable_result, dict) and bool(enable_result.get("refresh_required")):
-                    refresh_required = True
-            if (
-                tool_name
-                in {"cccc_capability_enable", "cccc_capability_import", "cccc_capability_install", "cccc_capability_uninstall", "cccc_capability_use"}
-                and refresh_required
-                and _SESSION_SUPPORTS_TOOLS_LIST_CHANGED
-            ):
-                _enqueue_tools_list_changed_notification()
             return _make_response(req_id, {
                 "content": [
                     {
@@ -354,9 +306,6 @@ def main() -> int:
         resp = handle_request(msg)
         if resp:  # Notifications return {}
             _write_message(resp)
-        for note in _drain_pending_notifications():
-            _write_message(note)
-
     return 0
 
 

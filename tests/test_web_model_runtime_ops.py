@@ -160,6 +160,52 @@ class TestWebModelRuntimeOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_browser_delivery_record_appends_shared_status_without_committing_cursor(self) -> None:
+        from cccc.kernel.inbox import unread_messages
+        from cccc.kernel.ledger import append_event, read_last_lines
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            message = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={"text": "deliver me", "to": ["peer1"]},
+            )
+            args = {
+                "group_id": group.group_id,
+                "actor_id": "peer1",
+                "by": "peer1",
+                "turn_id": "webturn:peer1:shared-status",
+                "event_ids": [message["id"]],
+                "delivery_id": "webdelivery:peer1:shared-status",
+                "browser_delivery": {
+                    "state": "submitted",
+                    "detail": "message_echo",
+                    "provider": "chatgpt",
+                    "target_url": "https://chatgpt.com/c/shared-status",
+                },
+            }
+            first, _ = self._call("web_model_browser_delivery_record", args)
+
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            first_event = (first.result or {}).get("event") or {}
+            self.assertEqual(first_event.get("kind"), "web_model.browser_delivery.submitted")
+            self.assertEqual((first_event.get("data") or {}).get("event_ids"), [message["id"]])
+            unread = unread_messages(group, actor_id="peer1", limit=10, kind_filter="all")
+            self.assertEqual([event.get("id") for event in unread], [message["id"]])
+            delivery_events = [
+                json.loads(line)
+                for line in read_last_lines(group.ledger_path, 20)
+                if "web_model.browser_delivery.submitted" in line
+            ]
+            self.assertEqual(len(delivery_events), 1)
+        finally:
+            cleanup()
+
     def test_delivery_preferences_persist_and_are_snapshotted_by_the_next_turn(self) -> None:
         from cccc.kernel.ledger import append_event
 

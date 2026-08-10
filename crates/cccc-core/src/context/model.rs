@@ -15,8 +15,6 @@ pub struct ContextDoc {
     #[serde(default)]
     pub agent_states: BTreeMap<String, Map<String, Value>>,
     #[serde(default)]
-    pub actor_notes: BTreeMap<String, Value>,
-    #[serde(default)]
     pub meta: Map<String, Value>,
 }
 
@@ -29,7 +27,6 @@ impl Default for ContextDoc {
             coordination: Map::new(),
             tasks: Vec::new(),
             agent_states: BTreeMap::new(),
-            actor_notes: BTreeMap::new(),
             meta: Map::new(),
         }
     }

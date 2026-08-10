@@ -296,6 +296,29 @@ fn local_skill_uninstall_is_group_scoped_and_reenable_clears_marker() {
 }
 
 #[test]
+fn target_install_is_the_only_daemon_operation_name() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("canonical capability install", "")
+        .expect("group");
+    let args = json!({"group_id":group.group_id,"by":"user"});
+
+    let canonical = response(&home, "capability_install_target", args.clone());
+    assert_eq!(
+        canonical.error.expect("missing target").code,
+        "missing_install_target"
+    );
+
+    let removed_alias = response(&home, "capability_install", args);
+    assert_eq!(
+        removed_alias.error.expect("removed alias").code,
+        "unknown_op"
+    );
+}
+
+#[test]
 fn capability_import_dry_run_and_invalid_install_do_not_persist() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -631,6 +654,248 @@ fn capability_import_rejects_missing_skill_capsule_and_wrong_self_proposed_names
         "capability_import_invalid"
     );
     assert!(!home.root().join("state/capabilities/catalog.json").exists());
+}
+
+#[test]
+fn actor_start_applies_and_projects_role_profile_and_actor_autoload() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("startup capability baseline", "")
+        .expect("group");
+    let group_id = group.group_id;
+    call(
+        &home,
+        "group_stop",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    call(
+        &home,
+        "actor_profile_upsert",
+        json!({
+            "by":"user",
+            "profile":{
+                "id":"autoload-profile",
+                "name":"Autoload Profile",
+                "runtime":"web_model",
+                "runner":"headless",
+                "command":[],
+                "submit":"enter",
+                "capability_defaults":{
+                    "autoload_capabilities":["pack:space"],
+                    "default_scope":"actor"
+                }
+            }
+        }),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"lead1",
+            "runtime":"web_model",
+            "runner":"headless",
+            "profile_id":"autoload-profile",
+            "capability_autoload":["pack:context-advanced"],
+            "by":"user"
+        }),
+    );
+
+    let before = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group_id,"actor_id":"lead1","by":"lead1"}),
+    );
+    assert_eq!(
+        before["actor_autoload_capabilities"],
+        json!(["pack:context-advanced"])
+    );
+    assert_eq!(
+        before["profile_autoload_capabilities"],
+        json!(["pack:space"])
+    );
+    assert_eq!(
+        before["autoload_capabilities"],
+        json!(["pack:space", "pack:context-advanced"])
+    );
+    assert_eq!(before["enabled_capabilities"], json!([]));
+
+    call(
+        &home,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"lead1","by":"user"}),
+    );
+    let after = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group_id,"actor_id":"lead1","by":"lead1"}),
+    );
+    let enabled = after["enabled_capabilities"]
+        .as_array()
+        .expect("enabled capabilities");
+    for capability_id in [
+        "pack:group-runtime",
+        "pack:diagnostics",
+        "pack:space",
+        "pack:context-advanced",
+    ] {
+        assert!(
+            enabled.contains(&json!(capability_id)),
+            "missing {capability_id}"
+        );
+    }
+}
+
+#[test]
+fn failed_actor_start_keeps_the_durable_autoload_baseline() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("failed startup capability baseline", "")
+        .expect("group");
+    let group_id = group.group_id;
+    call(
+        &home,
+        "group_stop",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"lead1",
+            "runtime":"custom",
+            "runner":"pty",
+            "command":["cccc-audit-command-that-does-not-exist"],
+            "capability_autoload":["pack:space"],
+            "by":"user"
+        }),
+    );
+    let scope = temp.path().join("missing-after-attach");
+    std::fs::create_dir(&scope).expect("scope");
+    call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":scope,"by":"user"}),
+    );
+    std::fs::remove_dir(&scope).expect("remove scope");
+
+    let started = response(
+        &home,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"lead1","by":"user"}),
+    );
+    assert!(!started.ok);
+    assert_eq!(
+        started.error.expect("start failure").code,
+        "invalid_project_root"
+    );
+    let state = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group_id,"actor_id":"lead1","by":"lead1"}),
+    );
+    let enabled = state["enabled_capabilities"]
+        .as_array()
+        .expect("enabled capabilities");
+    assert!(enabled.contains(&json!("pack:space")));
+    assert_eq!(state["actor_autoload_capabilities"], json!(["pack:space"]));
+}
+
+#[test]
+fn actor_configured_hidden_skill_is_projected_without_being_disabled() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("actor capability visibility", "")
+        .expect("group");
+    let group_id = group.group_id;
+    let capability_id = "skill:manual:visibility-audit";
+    call(
+        &home,
+        "group_stop",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    call(
+        &home,
+        "capability_import",
+        json!({
+            "group_id":group_id,
+            "by":"user",
+            "probe":false,
+            "record":{
+                "capability_id":capability_id,
+                "kind":"skill",
+                "source_id":"manual_import",
+                "name":"Visibility audit",
+                "capsule_text":"When to use: audit menus.\nAvoid when: no actor exists.\nProcedure: inspect visibility.\nPitfalls: hiding is not disabling.\nVerification: compare projections."
+            }
+        }),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "runtime":"custom",
+            "runner":"pty",
+            "command":["sh","-c","exit 0"],
+            "capability_hidden":[capability_id],
+            "by":"user"
+        }),
+    );
+    call(
+        &home,
+        "capability_enable",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "by":"peer1",
+            "capability_id":capability_id,
+            "scope":"actor",
+            "enabled":true
+        }),
+    );
+
+    let state = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
+    );
+    assert!(
+        state["enabled_capabilities"]
+            .as_array()
+            .expect("enabled")
+            .contains(&json!(capability_id))
+    );
+    assert!(
+        state["actor_hidden_capabilities"]
+            .as_array()
+            .expect("hidden")
+            .contains(&json!(capability_id))
+    );
+    assert!(
+        !state["active_capsule_skills"]
+            .as_array()
+            .expect("active capsules")
+            .iter()
+            .any(|row| row["capability_id"] == capability_id)
+    );
+    assert!(
+        state["hidden_capabilities"]
+            .as_array()
+            .expect("hidden reasons")
+            .iter()
+            .any(|row| {
+                row["capability_id"] == capability_id && row["reason"] == "actor_hidden"
+            })
+    );
 }
 
 fn capability(id: &str) -> Value {

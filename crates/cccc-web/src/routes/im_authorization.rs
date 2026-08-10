@@ -1,3 +1,4 @@
+use cccc_contracts::utc_now;
 use serde_json::{Map, Value, json};
 
 pub(super) fn upsert_authorized(state: &mut Map<String, Value>, mut item: Value) -> Value {
@@ -10,17 +11,72 @@ pub(super) fn upsert_authorized(state: &mut Map<String, Value>, mut item: Value)
     item
 }
 
+pub(super) fn bind_authorized(state: &mut Map<String, Value>, item: Value) -> Value {
+    let authorized = upsert_authorized(state, item);
+    let chat_id = authorized["chat_id"].as_str().unwrap_or("").to_owned();
+    let thread_id = thread_id(&authorized);
+    let thread_value = authorized
+        .get("thread_id")
+        .cloned()
+        .unwrap_or_else(|| json!(0));
+    let platform = authorized["platform"].as_str().unwrap_or("").to_owned();
+    let subscribers = array_mut(state, "subscribers");
+    if let Some(existing) = subscribers
+        .iter_mut()
+        .find(|item| same_target(item, &chat_id, &thread_id))
+    {
+        existing["subscribed"] = Value::Bool(true);
+        if existing["platform"].as_str().unwrap_or("").is_empty() {
+            existing["platform"] = json!(platform);
+        }
+    } else {
+        subscribers.push(json!({
+            "chat_id":chat_id,
+            "thread_id":thread_value,
+            "platform":platform,
+            "subscribed":true,
+            "verbose":false,
+            "subscribed_at":utc_now(),
+            "chat_title":""
+        }));
+    }
+    authorized
+}
+
 pub(super) fn revoke(
     state: &mut Map<String, Value>,
     chat_id: &str,
     thread_id: &str,
 ) -> (bool, bool) {
-    let mut changed = [false, false];
-    for (index, key) in ["authorized", "subscribers"].into_iter().enumerate() {
-        let items = array_mut(state, key);
-        changed[index] = revoke_items(items, chat_id, thread_id);
+    let mut revoked = false;
+    array_mut(state, "authorized").retain_mut(|item| {
+        if !same_target(item, chat_id, thread_id) {
+            return true;
+        }
+        if item["platform"]
+            .as_str()
+            .is_some_and(|platform| platform.eq_ignore_ascii_case("weixin"))
+        {
+            if item["subscribed"].as_bool() != Some(false) {
+                item["subscribed"] = Value::Bool(false);
+                revoked = true;
+            }
+            true
+        } else {
+            revoked = true;
+            false
+        }
+    });
+    let mut unsubscribed = false;
+    for subscriber in array_mut(state, "subscribers") {
+        if same_target(subscriber, chat_id, thread_id)
+            && subscriber["subscribed"].as_bool().unwrap_or(true)
+        {
+            subscriber["subscribed"] = Value::Bool(false);
+            unsubscribed = true;
+        }
     }
-    (changed[0], changed[1])
+    (revoked, unsubscribed)
 }
 
 pub(super) fn retain_active(items: &mut Vec<Value>) {
@@ -62,27 +118,6 @@ pub(super) fn enrich_verbose(authorized: &mut [Value], subscribers: &[Value]) {
 fn same_target(item: &Value, chat_id: &str, thread_id: &str) -> bool {
     item["chat_id"].as_str() == Some(chat_id)
         && self::thread_id(item) == normalize_thread_id(thread_id)
-}
-
-fn revoke_items(items: &mut Vec<Value>, chat_id: &str, thread_id: &str) -> bool {
-    let mut changed = false;
-    items.retain_mut(|item| {
-        if !same_target(item, chat_id, thread_id) {
-            return true;
-        }
-        if item["platform"]
-            .as_str()
-            .is_some_and(|platform| platform.eq_ignore_ascii_case("weixin"))
-        {
-            changed |= item["subscribed"].as_bool() != Some(false);
-            item["subscribed"] = Value::Bool(false);
-            true
-        } else {
-            changed = true;
-            false
-        }
-    });
-    changed
 }
 
 fn thread_id(item: &Value) -> String {
@@ -157,7 +192,7 @@ mod tests {
         let changed = revoke(state.as_object_mut().expect("state"), "same", "");
         assert_eq!(changed, (true, true));
         assert!(state["authorized"].as_array().expect("items").is_empty());
-        assert!(state["subscribers"].as_array().expect("items").is_empty());
+        assert_eq!(state["subscribers"][0]["subscribed"], false);
     }
 
     #[test]
@@ -216,5 +251,18 @@ mod tests {
         let mut visible = authorized.clone();
         retain_active(&mut visible);
         assert!(visible.is_empty());
+    }
+
+    #[test]
+    fn bind_auto_subscribes_the_authorized_target() {
+        let mut state = json!({});
+        let authorized = bind_authorized(
+            state.as_object_mut().expect("state"),
+            json!({"chat_id":"chat","thread_id":4,"platform":"telegram"}),
+        );
+        assert_eq!(authorized["chat_id"], "chat");
+        assert_eq!(state["subscribers"][0]["chat_id"], "chat");
+        assert_eq!(state["subscribers"][0]["thread_id"], 4);
+        assert_eq!(state["subscribers"][0]["subscribed"], true);
     }
 }

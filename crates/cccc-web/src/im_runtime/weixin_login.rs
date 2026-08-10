@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use weixin_agent::{LoginStatus, QrLoginSession, StandaloneQrLogin, WeixinConfig};
 
+pub(super) const CANONICAL_WEIXIN_QR_BASE_URL: &str = "https://ilinkai.weixin.qq.com/";
+
 #[derive(Default)]
 pub(super) struct LoginRegistry {
     attempts: Mutex<HashMap<String, Arc<tokio::sync::Mutex<LoginAttempt>>>>,
@@ -69,6 +71,7 @@ impl LoginRegistry {
                 base_url,
                 ilink_user_id,
             } => {
+                let base_url = canonical_weixin_api_base_url(&base_url);
                 save_credentials(
                     home,
                     group_id,
@@ -120,7 +123,7 @@ impl LoginRegistry {
                 }))
             }
             LoginStatus::ScannedButRedirect { redirect_host } => {
-                let base_url = normalize_redirect_host(&redirect_host)?;
+                let base_url = canonical_weixin_api_base_url(&redirect_host);
                 let config = WeixinConfig::builder()
                     .token("")
                     .base_url(base_url)
@@ -189,20 +192,8 @@ fn active_status(
     }))
 }
 
-fn normalize_redirect_host(value: &str) -> Result<String, String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err("Weixin QR redirect response has no host".into());
-    }
-    let mut url = if value.starts_with("http://") || value.starts_with("https://") {
-        value.to_owned()
-    } else {
-        format!("https://{value}")
-    };
-    if !url.ends_with('/') {
-        url.push('/');
-    }
-    Ok(url)
+fn canonical_weixin_api_base_url(_provider_value: &str) -> String {
+    CANONICAL_WEIXIN_QR_BASE_URL.to_owned()
 }
 
 fn stored_login(home: &HomeLayout, group_id: &str) -> Result<Value, String> {
@@ -299,11 +290,8 @@ fn synchronize_login_authorization(
 }
 
 fn write_credentials(home: &HomeLayout, group_id: &str, payload: &Value) -> Result<(), String> {
-    std::fs::write(
-        credentials_path(home, group_id),
-        serde_json::to_vec_pretty(payload).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())
+    cccc_core::fs::write_secret_json(&credentials_path(home, group_id), payload)
+        .map_err(|error| error.to_string())
 }
 
 pub(super) fn stored_user_id(home: &HomeLayout, group_id: &str) -> Option<String> {
@@ -346,18 +334,47 @@ fn credentials_path(home: &HomeLayout, group_id: &str) -> std::path::PathBuf {
 mod tests {
     use super::*;
     use cccc_core::GroupStore;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
-    fn redirect_hosts_are_normalized_for_follow_up_polling() {
+    fn provider_hosts_are_pinned_to_the_canonical_qr_endpoint() {
         assert_eq!(
-            normalize_redirect_host("redirect.weixin.example").expect("host"),
-            "https://redirect.weixin.example/"
+            canonical_weixin_api_base_url("redirect.weixin.example"),
+            "https://ilinkai.weixin.qq.com/"
         );
         assert_eq!(
-            normalize_redirect_host("https://redirect.weixin.example/api/").expect("url"),
-            "https://redirect.weixin.example/api/"
+            canonical_weixin_api_base_url("http://127.0.0.1:8080/private"),
+            "https://ilinkai.weixin.qq.com/"
         );
-        assert!(normalize_redirect_host("  ").is_err());
+        assert_eq!(
+            canonical_weixin_api_base_url("  "),
+            "https://ilinkai.weixin.qq.com/"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stored_credentials_are_owner_only() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let group_id = "weixin-secret-mode";
+        std::fs::create_dir_all(home.groups_dir().join(group_id).join("state")).expect("state dir");
+
+        write_credentials(
+            &home,
+            group_id,
+            &json!({"token":"secret","baseUrl":CANONICAL_WEIXIN_QR_BASE_URL}),
+        )
+        .expect("credentials");
+
+        let mode = std::fs::metadata(credentials_path(&home, group_id))
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]
@@ -379,8 +396,7 @@ mod tests {
         let status = stored_login(&home, &group.group_id).expect("status");
 
         assert_eq!(status["auto_subscribed"], true);
-        let state = cccc_core::integration_state::group_get(&store, &group.group_id, "im_bridge")
-            .expect("state");
+        let state = cccc_core::im_state::load(&store, &group.group_id).expect("state");
         assert_eq!(state["authorized"][0]["chat_id"], "wx-user");
         let credentials: Value = serde_json::from_slice(
             &std::fs::read(credentials_path(&home, &group.group_id)).expect("credentials"),
@@ -404,7 +420,7 @@ mod tests {
             }),
         )
         .expect("credentials");
-        cccc_core::integration_state::group_update(&store, &group.group_id, "im_bridge", |state| {
+        cccc_core::im_state::update(&store, &group.group_id, |state| {
             *state = json!({"authorized":[]});
             Ok(())
         })
@@ -413,8 +429,7 @@ mod tests {
         let status = stored_login(&home, &group.group_id).expect("status");
 
         assert_eq!(status["auto_subscribed"], true);
-        let state = cccc_core::integration_state::group_get(&store, &group.group_id, "im_bridge")
-            .expect("state");
+        let state = cccc_core::im_state::load(&store, &group.group_id).expect("state");
         assert_eq!(state["authorized"][0]["chat_id"], "wx-user");
     }
 
@@ -433,7 +448,7 @@ mod tests {
             }),
         )
         .expect("credentials");
-        cccc_core::integration_state::group_update(&store, &group.group_id, "im_bridge", |state| {
+        cccc_core::im_state::update(&store, &group.group_id, |state| {
             *state = json!({"authorized":[{
                 "chat_id":"wx-user","platform":"weixin","paused":true,"subscribed":true,
                 "authorization_source":"weixin_login"
@@ -443,19 +458,17 @@ mod tests {
         .expect("paused state");
 
         stored_login(&home, &group.group_id).expect("paused status");
-        let state = cccc_core::integration_state::group_get(&store, &group.group_id, "im_bridge")
-            .expect("state");
+        let state = cccc_core::im_state::load(&store, &group.group_id).expect("state");
         assert_eq!(state["authorized"][0]["paused"], true);
         assert_eq!(state["authorized"][0]["subscribed"], true);
 
-        cccc_core::integration_state::group_update(&store, &group.group_id, "im_bridge", |state| {
+        cccc_core::im_state::update(&store, &group.group_id, |state| {
             state["authorized"][0]["subscribed"] = Value::Bool(false);
             Ok(())
         })
         .expect("unsubscribed state");
         let status = stored_login(&home, &group.group_id).expect("unsubscribed status");
-        let state = cccc_core::integration_state::group_get(&store, &group.group_id, "im_bridge")
-            .expect("state");
+        let state = cccc_core::im_state::load(&store, &group.group_id).expect("state");
         assert_eq!(state["authorized"][0]["subscribed"], false);
         assert_eq!(status["auto_subscribed"], false);
         let credentials: Value = serde_json::from_slice(
@@ -486,7 +499,7 @@ mod tests {
             "wx-user",
         )
         .expect("authorization");
-        cccc_core::integration_state::group_update(&store, &group.group_id, "im_bridge", |state| {
+        cccc_core::im_state::update(&store, &group.group_id, |state| {
             state["enabled"] = json!(true);
             state["running"] = json!(true);
             state["adapter_available"] = json!(true);
@@ -504,9 +517,8 @@ mod tests {
             .expect("logout");
 
         assert!(!credentials_path(&home, &group.group_id).exists());
-        let state = cccc_core::integration_state::group_get(&store, &group.group_id, "im_bridge")
-            .expect("state");
-        assert_eq!(state["enabled"], false);
+        let state = cccc_core::im_state::load(&store, &group.group_id).expect("state");
+        assert!(!state["enabled"].as_bool().unwrap_or(false));
         assert_eq!(state["running"], false);
         assert_eq!(state["adapter_available"], false);
         assert!(state["pid"].is_null());

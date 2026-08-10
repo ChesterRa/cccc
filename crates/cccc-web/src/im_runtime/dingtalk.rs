@@ -6,7 +6,7 @@ use super::processing_reactions::DingTalkReactions;
 use super::{
     AuthorizedChat, InboundDecision, InboundMetadata, completes_processing, dispatch_inbound_with,
     inbound_decision, is_outbound_or_stream, outbound_text, processing_reply_to,
-    resolve_credential, spawn_outbound_matching, string,
+    resolve_config_credential, spawn_outbound_matching, string,
 };
 use async_trait::async_trait;
 use cccc_client::DaemonClient;
@@ -29,11 +29,15 @@ pub(super) async fn start(
     config: &Map<String, Value>,
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
 ) -> Result<Vec<JoinHandle<()>>, String> {
-    let app_key = resolve_credential(&string(config, "dingtalk_app_key"))?;
-    let app_secret = resolve_credential(&string(config, "dingtalk_app_secret"))?;
-    let robot_code = match string(config, "dingtalk_robot_code") {
-        value if value.trim().is_empty() => app_key.clone(),
-        value => resolve_credential(&value)?,
+    let app_key = resolve_config_credential(config, "dingtalk_app_key", "dingtalk_app_key_env")?;
+    let app_secret =
+        resolve_config_credential(config, "dingtalk_app_secret", "dingtalk_app_secret_env")?;
+    let robot_code = if string(config, "dingtalk_robot_code").is_empty()
+        && string(config, "dingtalk_robot_code_env").is_empty()
+    {
+        app_key.clone()
+    } else {
+        resolve_config_credential(config, "dingtalk_robot_code", "dingtalk_robot_code_env")?
     };
     let sessions = Arc::new(Mutex::new(load_sessions(&home, group_id)));
     let credential = Credential::new(app_key, app_secret);

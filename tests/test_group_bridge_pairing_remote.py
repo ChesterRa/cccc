@@ -386,7 +386,8 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
     def test_sync_remote_pairing_outbound_creates_joiner_trust_after_issuer_approval(self) -> None:
         from cccc.daemon.group_bridge.remote_dispatch import deliver_enqueued, enqueue_remote_send
         from cccc.daemon.group_bridge.transports.base import RemoteSendResult
-        from cccc.kernel.group_bridge.pairing import create_pairing_invite, list_pairing_outbounds, list_trusts
+        from cccc.kernel.group_bridge.pairing import create_pairing_invite, list_pairing_outbounds, list_trusts, revoke_trust
+        from cccc.kernel.group_bridge.credentials import resolve_group_bridge_credential
         from cccc.kernel.group_bridge.registration import list_registrations
         from cccc.kernel.group_bridge.pairing_remote import build_connection_payload, submit_remote_pairing_request, sync_remote_pairing_outbound
 
@@ -456,7 +457,10 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
             self.assertEqual(registrations[0]["url"], "http://127.0.0.1:5555")
             self.assertEqual(registrations[0]["remote_group_id"], "g_issuer")
             self.assertEqual(registrations[0]["remote_peer_id"], payload["issuer_peer_id"])
-            self.assertEqual(registrations[0]["credential_ref"], "")
+            credential_ref = registrations[0]["credential_ref"]
+            self.assertTrue(credential_ref.startswith("fsec_pairing_"))
+            self.assertTrue(resolve_group_bridge_credential(credential_ref, home=joiner_home).startswith("frs_"))
+            self.assertNotIn("remote_send_token", synced.get("remote_request") or {})
 
             enqueue_remote_send(
                 src_group_id="g_joiner",
@@ -490,6 +494,10 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
             self.assertEqual(captured["target"].remote_group_id, "g_issuer")
             self.assertEqual(captured["payload"].text, "hello cross instance")
             self.assertEqual(captured["credential"], "")
+
+            revoke_trust(trusts[0]["trust_id"], revoked_by="joiner-admin", home=joiner_home)
+            self.assertEqual(resolve_group_bridge_credential(credential_ref, home=joiner_home), "")
+            self.assertEqual(list_registrations(home=joiner_home), [])
         finally:
             issuer_cleanup()
             joiner_cleanup()

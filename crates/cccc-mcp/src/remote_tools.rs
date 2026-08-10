@@ -1,9 +1,7 @@
-use cccc_core::{HomeLayout, integration_state};
+use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
 use crate::router::tool_result;
-
-const STORE_KEY: &str = "group_bridge";
 
 pub(crate) fn is_remote_tool(name: &str) -> bool {
     matches!(
@@ -25,10 +23,8 @@ pub(crate) async fn call(
     name: &str,
     args: Map<String, Value>,
 ) -> Result<Value, String> {
-    cccc_core::group_bridge_legacy::import_if_changed(home).map_err(|error| error.to_string())?;
     let group_id = text(&args, "group_id").ok_or("group_id is required")?;
-    let state =
-        integration_state::global_get(home, STORE_KEY).map_err(|error| error.to_string())?;
+    let state = cccc_core::group_bridge_legacy::load(home).map_err(|error| error.to_string())?;
     if name == "cccc_remote_access" {
         return Ok(tool_result(remote_access(&state, group_id, &args)?));
     }
@@ -223,21 +219,29 @@ mod tests {
     use axum::routing::post;
     use axum::{Json, Router};
 
+    fn seed_bridge(home: &HomeLayout, value: Value) {
+        cccc_core::group_bridge_legacy::update(home, |state| {
+            state.clear();
+            state.extend(value.as_object().cloned().unwrap_or_default());
+            Ok(())
+        })
+        .expect("bridge state");
+    }
+
     #[tokio::test]
     async fn access_list_projects_permissions_without_credentials() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        integration_state::global_update(&home, STORE_KEY, |value| {
-            *value = json!({"trusts":[{
+        seed_bridge(
+            &home,
+            json!({"trusts":[{
                 "trust_id":"trust_1","group_id":"g_local","remote_group_id":"g_remote",
                 "remote_endpoint":"https://remote.example","credential":"secret",
                 "remote_access_level":"read","status":"active",
                 "session_connected":true,"session_connected_at":"2026-07-29T00:00:00Z",
                 "session_last_error":"","session_last_error_at":null
-            }]});
-            Ok(())
-        })
-        .expect("state");
+            }]}),
+        );
         let result = call(
             &home,
             "cccc_remote_access",
@@ -286,15 +290,14 @@ mod tests {
         let remote_task = tokio::spawn(async move { axum::serve(listener, remote).await });
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
-        integration_state::global_update(&home, STORE_KEY, |value| {
-            *value = json!({"trusts":[{
+        seed_bridge(
+            &home,
+            json!({"trusts":[{
                 "trust_id":"trust_1","group_id":"g_local","remote_group_id":"g_remote",
                 "remote_endpoint":endpoint,"credential":"bridge-token",
                 "remote_access_level":"read","status":"active"
-            }]});
-            Ok(())
-        })
-        .expect("state");
+            }]}),
+        );
 
         let result = call(
             &home,

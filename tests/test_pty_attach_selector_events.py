@@ -1,3 +1,4 @@
+import queue
 import selectors
 import socket
 import threading
@@ -119,6 +120,44 @@ class TestPtyAttachSelectorEvents(unittest.TestCase):
             self.assertEqual(snapshots, [(0, len(b"replay"))])
             client = session._clients[client_sock.fileno()]
             self.assertEqual(bytes(client.outbuf), b"replaylive")
+        finally:
+            try:
+                client_sock.close()
+            except Exception:
+                pass
+            try:
+                peer_sock.close()
+            except Exception:
+                pass
+
+    def test_attach_snapshot_reports_the_reserved_writer_state(self) -> None:
+        session = self._session()
+        session._writer_fd = 999
+        session._attach_q = queue.Queue()
+        snapshots = []
+        client_sock, peer_sock = socket.socketpair()
+
+        try:
+            result = session.attach_client(
+                client_sock,
+                mode="control",
+                takeover=False,
+                on_replay_snapshot=lambda start, end, state: snapshots.append(
+                    (start, end, state)
+                ),
+            )
+            item = session._attach_q.get_nowait()
+            session._attach_client_now(
+                item[0],
+                since=item[1],
+                control=item[2],
+                on_replay_snapshot=item[3],
+            )
+
+            self.assertFalse(result["writable"])
+            self.assertEqual(len(snapshots), 1)
+            self.assertFalse(snapshots[0][2]["writable"])
+            self.assertFalse(snapshots[0][2]["writer_replaced"])
         finally:
             try:
                 client_sock.close()

@@ -258,6 +258,140 @@ class TestNomcpSessions(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_exhibit_blocks_legacy_get_send_without_side_effects(self) -> None:
+        from cccc.kernel.nomcp_sessions import get_nomcp_session
+        from cccc.ports.web.middleware import _is_read_only_safe
+
+        self.assertFalse(_is_read_only_safe("GET", "/nomcp/s/session-1/send"))
+        self.assertFalse(_is_read_only_safe("HEAD", "/nomcp/s/session-1/send"))
+        self.assertTrue(_is_read_only_safe("OPTIONS", "/nomcp/s/session-1/send"))
+        self.assertTrue(_is_read_only_safe("GET", "/nomcp/s/session-1/status"))
+        self.assertTrue(_is_read_only_safe("GET", "/nomcp/s/session-1/send/extra"))
+        self.assertTrue(_is_read_only_safe("GET", "/nomcp/s/session/one/send"))
+
+        home, cleanup = self._with_home()
+        old_mode = os.environ.get("CCCC_WEB_MODE")
+        try:
+            os.environ["CCCC_WEB_MODE"] = "normal"
+            root = self._repo(home)
+            group = self._group(root)
+            admin = self._admin_token()
+            creator = self._client()
+            session, secret = self._create_session(creator, admin, group.group_id)
+            sid = str(session["sid"])
+            before_events = self._ledger_events(group)
+            self.assertEqual(
+                int((get_nomcp_session(sid) or {}).get("advisory_count") or 0), 0
+            )
+
+            os.environ["CCCC_WEB_MODE"] = "exhibit"
+            exhibit = self._client()
+            status = exhibit.get(
+                f"/nomcp/s/{sid}/status",
+                params={"token": secret, "format": "json"},
+            )
+            self.assertEqual(status.status_code, 200, status.text)
+
+            text = (
+                base64.urlsafe_b64encode(b"must not be appended")
+                .decode("ascii")
+                .rstrip("=")
+            )
+            denied = exhibit.get(
+                f"/nomcp/s/{sid}/send",
+                params={
+                    "token": secret,
+                    "msg_id": "exhibit-denied",
+                    "text_b64url": text,
+                },
+            )
+            self.assertEqual(denied.status_code, 403, denied.text)
+            self.assertEqual(
+                (denied.json().get("error") or {}).get("code"), "read_only"
+            )
+            self.assertEqual(self._ledger_events(group), before_events)
+            self.assertEqual(
+                int((get_nomcp_session(sid) or {}).get("advisory_count") or 0), 0
+            )
+
+            os.environ["CCCC_WEB_MODE"] = "normal"
+            normal = self._client()
+            accepted = normal.get(
+                f"/nomcp/s/{sid}/send",
+                params={
+                    "token": secret,
+                    "msg_id": "normal-accepted",
+                    "text_b64url": text,
+                },
+            )
+            self.assertEqual(accepted.status_code, 200, accepted.text)
+            self.assertEqual(
+                int((get_nomcp_session(sid) or {}).get("advisory_count") or 0), 1
+            )
+        finally:
+            if old_mode is None:
+                os.environ.pop("CCCC_WEB_MODE", None)
+            else:
+                os.environ["CCCC_WEB_MODE"] = old_mode
+            cleanup()
+
+    def test_legacy_rust_session_migrates_to_canonical_fields(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            root = self._repo(home)
+            group = self._group(root)
+            admin = self._admin_token()
+            client = self._client()
+            session, secret = self._create_session(client, admin, group.group_id)
+            sid = str(session["sid"])
+            path = home / "state" / "nomcp_sessions" / f"{sid}.json"
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw["secret_sha256"] = raw.pop("token_hash")
+            raw.pop("repo_root", None)
+            raw.pop("sent_messages", None)
+            raw["sent_message_ids"] = ["legacy-duplicate"]
+            path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+            status = client.get(
+                f"/nomcp/s/{sid}/status",
+                params={"token": secret, "format": "json"},
+            )
+            self.assertEqual(status.status_code, 200, status.text)
+
+            before_events = self._ledger_events(group)
+            encoded = base64.urlsafe_b64encode(b"legacy compatibility").decode("ascii").rstrip("=")
+            duplicate = client.get(
+                f"/nomcp/s/{sid}/send",
+                params={
+                    "token": secret,
+                    "msg_id": "legacy-duplicate",
+                    "text_b64url": encoded,
+                },
+            )
+            self.assertEqual(duplicate.status_code, 200, duplicate.text)
+            self.assertIn("duplicate_ignored", duplicate.text)
+            self.assertEqual(self._ledger_events(group), before_events)
+
+            accepted = client.get(
+                f"/nomcp/s/{sid}/send",
+                params={
+                    "token": secret,
+                    "msg_id": "canonical-new",
+                    "text_b64url": encoded,
+                },
+            )
+            self.assertEqual(accepted.status_code, 200, accepted.text)
+            migrated = json.loads(path.read_text(encoding="utf-8"))
+            self.assertTrue(str(migrated.get("token_hash") or ""))
+            self.assertNotIn("secret_sha256", migrated)
+            self.assertEqual(Path(str(migrated.get("repo_root") or "")), root.resolve())
+            self.assertEqual(
+                migrated.get("sent_message_ids"),
+                ["legacy-duplicate", "canonical-new"],
+            )
+        finally:
+            cleanup()
+
     def test_nomcp_revoked_expired_and_invalid_tokens_are_rejected(self) -> None:
         home, cleanup = self._with_home()
         try:

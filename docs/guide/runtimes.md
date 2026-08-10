@@ -118,7 +118,36 @@ Verified PTY hook events also feed the Web runtime activity ticker. This is a se
 
 In the Rust backend, `runtime=codex|claude` with `runner=headless` starts a daemon-managed provider process. Codex uses its app-server JSON-RPC transport and Claude uses bidirectional stream-json. Messages are delivered automatically, provider health determines the actor's `running` value, and stopping the actor or group terminates the provider process. Headless state comes from these structured provider protocols rather than the PTY hooks.
 
-`web_model` and custom external headless actors keep the pull-consumer contract: an external executor calls `cccc_runtime_wait_next_turn` and `cccc_runtime_complete_turn`. These actors do not claim to have a local provider process.
+For daemon-managed Codex headless turns, a provider status of `failed`, `error`,
+or `cancelled`, or an explicit provider error, is persisted as
+`headless.turn.failed`; only a successful terminal notification is persisted as
+`headless.turn.completed`. Acceptance has already advanced the actor's read
+cursor, so a provider failure is not silently retried, but it does release the
+session lane for later queued turns.
+
+Daemon-managed Codex headless actors persist the app-server thread in the
+shared runtime-session state. An ordinary actor stop/start, including a switch
+between the Python and experimental Rust backends, resumes that exact thread
+after validating the runtime, workspace, command, model, and saved-state
+status. If the provider rejects the resume, CCCC records the failure and starts
+a fresh thread. `actor_new_session` deliberately clears the saved thread first,
+and `CCCC_RUNTIME_RESUME=0` disables this reuse globally.
+
+Daemon-managed Claude headless actors use the same shared state boundary for
+their explicit provider session. A fresh direct `claude` command receives a
+CCCC-owned `--session-id`; a compatible ordinary stop/start or Python/Rust
+backend switch uses `--resume` with that same id after validating the runtime,
+workspace, stable command, model, and saved-state status. Wrapper commands and
+commands that already contain Claude session-control flags remain user-owned
+and are not rewritten. `actor_new_session` clears the saved session, and
+`CCCC_RUNTIME_RESUME=0` disables reuse. If the provider rejects a saved session
+during startup, CCCC reports that start as failed and marks the id ineligible;
+the next explicit start creates a fresh session rather than retrying the dead
+id. CCCC does not hide that failure behind an automatic retry. A delayed
+rejection after successful initialization remains a separate integration
+boundary.
+
+`web_model` keeps the pull-consumer contract: an external executor calls `cccc_runtime_wait_next_turn` and `cccc_runtime_complete_turn`. The experimental Rust backend also exposes this generic pull contract to programmatically configured `custom+headless` actors; the stable Python backend and standard Web actor editor do not currently expose that combination. These actors do not claim to have a local provider process.
 
 CCCC also preserves current Grok Build PTY sessions with its native `--session-id` and `--resume` flags. A fresh actor launch receives a CCCC-owned UUID; later starts resume that exact actor session rather than using Grok's directory-wide `--continue` selection. Commands that already contain Grok session-control flags remain user-owned and are not rewritten. Set `CCCC_RUNTIME_RESUME=0` to disable provider-session reuse globally.
 

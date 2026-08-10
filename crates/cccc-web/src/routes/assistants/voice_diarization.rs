@@ -1,9 +1,9 @@
 use cccc_contracts::{Event, utc_now};
-use cccc_core::{GroupStore, integration_state, ledger};
+use cccc_core::{GroupStore, assistant_state, ledger};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use super::{STORE_KEY, root, voice_asr, voice_inference, voice_speaker_transcript};
+use super::{root, voice_asr, voice_inference, voice_speaker_transcript};
 use crate::AppState;
 
 pub(super) enum SpawnStatus {
@@ -124,8 +124,7 @@ fn persist_result(
     error_code: &str,
     error_message: &str,
 ) -> std::io::Result<()> {
-    let store = GroupStore::new(state.home.clone())?;
-    integration_state::group_update(&store, group_id, STORE_KEY, |value| {
+    assistant_state::update(&state.home, group_id, |value| {
         let sessions = root(value)
             .entry("sessions")
             .or_insert_with(|| json!([]))

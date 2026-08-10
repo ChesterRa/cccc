@@ -97,36 +97,31 @@ impl ImWorkerRegistry {
                     .start(home.clone(), client, &group_id, &config)
                     .await;
                 if let Ok(store) = GroupStore::new(home)
-                    && let Err(error) = cccc_core::integration_state::group_update(
-                        &store,
-                        &group_id,
-                        "im_bridge",
-                        |value| {
-                            if !value.is_object() {
-                                *value = json!({});
-                            }
-                            let state = value.as_object_mut().expect("IM state initialized");
-                            state.insert("running".into(), Value::Bool(result.is_ok()));
-                            state.insert("adapter_available".into(), Value::Bool(result.is_ok()));
-                            state.insert(
-                                "pid".into(),
-                                if result.is_ok() {
-                                    json!(std::process::id())
-                                } else {
-                                    Value::Null
-                                },
-                            );
-                            state.insert(
-                                "last_error".into(),
-                                result
-                                    .as_ref()
-                                    .err()
-                                    .map_or(Value::Null, |error| json!(error)),
-                            );
-                            state.insert("updated_at".into(), json!(cccc_contracts::utc_now()));
-                            Ok(())
-                        },
-                    )
+                    && let Err(error) = cccc_core::im_state::update(&store, &group_id, |value| {
+                        if !value.is_object() {
+                            *value = json!({});
+                        }
+                        let state = value.as_object_mut().expect("IM state initialized");
+                        state.insert("running".into(), Value::Bool(result.is_ok()));
+                        state.insert("adapter_available".into(), Value::Bool(result.is_ok()));
+                        state.insert(
+                            "pid".into(),
+                            if result.is_ok() {
+                                json!(std::process::id())
+                            } else {
+                                Value::Null
+                            },
+                        );
+                        state.insert(
+                            "last_error".into(),
+                            result
+                                .as_ref()
+                                .err()
+                                .map_or(Value::Null, |error| json!(error)),
+                        );
+                        state.insert("updated_at".into(), json!(cccc_contracts::utc_now()));
+                        Ok(())
+                    })
                 {
                     tracing::warn!(%error, %group_id, "failed to persist restored IM worker state");
                 }
@@ -179,7 +174,7 @@ impl ImWorkerRegistry {
         self.stop(group_id).await;
         self.weixin_logins.clear(group_id);
         let store = GroupStore::new(home.clone()).map_err(|error| error.to_string())?;
-        cccc_core::integration_state::group_update(&store, group_id, "im_bridge", |value| {
+        cccc_core::im_state::update(&store, group_id, |value| {
             if !value.is_object() {
                 *value = json!({});
             }
@@ -474,9 +469,7 @@ fn restore_candidates(home: &HomeLayout) -> Vec<(String, Map<String, Value>)> {
         .unwrap_or_default()
         .into_iter()
         .filter_map(|meta| {
-            let state =
-                cccc_core::integration_state::group_get(&store, &meta.group_id, "im_bridge")
-                    .ok()?;
+            let state = cccc_core::im_state::load(&store, &meta.group_id).ok()?;
             if !state["enabled"].as_bool().unwrap_or(false) {
                 return None;
             }
@@ -810,7 +803,7 @@ mod tests {
         let enabled = store.create("enabled", "").expect("enabled");
         let disabled = store.create("disabled", "").expect("disabled");
         for (group_id, active) in [(&enabled.group_id, true), (&disabled.group_id, false)] {
-            cccc_core::integration_state::group_update(&store, group_id, "im_bridge", |state| {
+            cccc_core::im_state::update(&store, group_id, |state| {
                 *state = json!({
                     "enabled":active,
                     "config":{"platform":"telegram","bot_token_env":"TOKEN"}
@@ -993,8 +986,7 @@ mod tests {
         assert!(body.contains("CCCC group \"test\""));
         assert!(!body.contains(&group.group_id));
         assert!(body.contains("direct messages work as plain text"));
-        let state = cccc_core::integration_state::group_get(&store, &group.group_id, "im_bridge")
-            .expect("state");
+        let state = cccc_core::im_state::load(&store, &group.group_id).expect("state");
         let pending = state["pending"].as_array().expect("pending");
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0]["chat_id"], "chat-1");

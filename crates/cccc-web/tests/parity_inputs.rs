@@ -84,8 +84,10 @@ async fn web_ack_is_fixed_to_user_identity() {
     let store = GroupStore::new(home.clone()).expect("store");
     let mut message = Event::new("chat.message", &group_id);
     message.id = "message-1".into();
-    message.by = "user".into();
+    message.by = "peer-author".into();
     message.data.insert("text".into(), json!("hello"));
+    message.data.insert("priority".into(), json!("attention"));
+    message.data.insert("to".into(), json!(["user"]));
     ledger::append(&store.ledger_path(&group_id).expect("ledger"), &message).expect("append");
 
     let response = cccc_web::app(home.clone())
@@ -100,9 +102,72 @@ async fn web_ack_is_fixed_to_user_identity() {
     let status = response.status();
     let payload = response_json(response).await;
     shutdown(home, daemon).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::OK, "unexpected response: {payload}");
     assert_eq!(payload["result"]["event"]["by"], "user");
     assert_eq!(payload["result"]["event"]["data"]["actor_id"], "user");
+}
+
+#[tokio::test]
+async fn group_update_http_surface_returns_the_standard_receipt() {
+    let (_temp, home, group_id, daemon) = running_home("group update").await;
+    let app = cccc_web::app(home.clone());
+    let response = app
+        .clone()
+        .oneshot(
+            Request::put(format!("/api/v1/groups/{group_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({"title":"updated title","topic":"updated topic","by":"user"})
+                        .to_string(),
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let payload = response_json(response).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["result"]["group_id"], group_id);
+    assert_eq!(payload["result"]["group"]["title"], "updated title");
+    assert_eq!(
+        payload["result"]["event"]["data"]["patch"],
+        json!({"title":"updated title","topic":"updated topic"})
+    );
+
+    let no_change = app
+        .oneshot(
+            Request::put(format!("/api/v1/groups/{group_id}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"title":null,"by":"user"}"#))
+                .expect("request"),
+        )
+        .await
+        .expect("no-change response");
+    let no_change_status = no_change.status();
+    let no_change = response_json(no_change).await;
+    shutdown(home, daemon).await;
+    assert_eq!(no_change_status, StatusCode::OK);
+    assert_eq!(no_change["result"]["message"], "no changes");
+}
+
+#[tokio::test]
+async fn capability_install_http_surface_uses_the_canonical_daemon_operation() {
+    let (_temp, home, group_id, daemon) = running_home("capability install").await;
+    let response = cccc_web::app(home.clone())
+        .oneshot(
+            Request::post(format!("/api/v1/groups/{group_id}/capabilities/install"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = response.status();
+    let payload = response_json(response).await;
+    shutdown(home, daemon).await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(payload["error"]["code"], "missing_install_target");
 }
 
 #[tokio::test]

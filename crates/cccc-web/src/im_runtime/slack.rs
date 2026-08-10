@@ -1,7 +1,7 @@
 use super::slack_outbound::SlackOutbound;
 use super::{
     InboundDecision, InboundMetadata, dispatch_inbound_with, inbound_decision_for_thread,
-    is_outbound_or_stream, resolve_credential, spawn_outbound_matching, string,
+    is_outbound_or_stream, resolve_config_credential, spawn_outbound_matching,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -71,8 +71,8 @@ pub(super) async fn start(
     config: &Map<String, Value>,
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
 ) -> Result<Vec<JoinHandle<()>>, String> {
-    let bot_token = resolve_credential(&string(config, "bot_token_env"))?;
-    let app_token = resolve_credential(&string(config, "app_token_env"))?;
+    let bot_token = resolve_config_credential(config, "bot_token", "bot_token_env")?;
+    let app_token = resolve_config_credential(config, "app_token", "app_token_env")?;
     let (http, auth) = authenticate_http_client(&bot_token)
         .await
         .map_err(|error| format!("Slack credential verification failed: {error}"))?;
@@ -118,31 +118,12 @@ pub(super) async fn start(
 async fn authenticate_http_client(
     bot_token: &str,
 ) -> Result<(reqwest::Client, Value), SlackCallError> {
-    let system = reqwest::Client::new();
-    match slack_call(&system, bot_token, "auth.test", json!({})).await {
-        Ok(auth) => Ok((system, auth)),
-        Err(error) if !error.is_transient() => Err(error),
-        Err(system_error) => {
-            tracing::warn!(
-                %system_error,
-                "Slack request through configured proxy failed; falling back to direct connection"
-            );
-            let direct = reqwest::Client::builder()
-                .no_proxy()
-                .build()
-                .map_err(|error| SlackCallError::Transport(error_chain(&error)))?;
-            match retry_transient(&STARTUP_RETRY_DELAYS, || {
-                slack_call(&direct, bot_token, "auth.test", json!({}))
-            })
-            .await
-            {
-                Ok(auth) => Ok((direct, auth)),
-                Err(direct_error) => Err(SlackCallError::Transport(format!(
-                    "configured proxy path failed: {system_error}; direct fallback failed: {direct_error}"
-                ))),
-            }
-        }
-    }
+    let http = reqwest::Client::new();
+    let auth = retry_transient(&STARTUP_RETRY_DELAYS, || {
+        slack_call(&http, bot_token, "auth.test", json!({}))
+    })
+    .await?;
+    Ok((http, auth))
 }
 
 async fn socket_loop(context: SlackSocketContext, initial_endpoint: String) {

@@ -99,6 +99,185 @@ pub fn prepare_codex_command(
     }
 }
 
+pub fn prepare_codex_app_thread(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    cwd: &Path,
+    command: &[String],
+    model: &str,
+) -> std::io::Result<Option<String>> {
+    if !resume_enabled() {
+        return Ok(None);
+    }
+    let Ok(mut document) = read(home, group_id, actor_id) else {
+        return Ok(None);
+    };
+    if string(&document, "runtime") != "codex"
+        || string(&document, "status") != "usable"
+        || !document
+            .get("resume_eligible")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        || string(&document, "workspace_path") != workspace_path(cwd)
+        || string(&document, "command_fingerprint") != app_thread_command_fingerprint(command)
+        || string(&document, "model") != model.trim()
+        || !string(&document, "provider_session_id").is_empty()
+    {
+        return Ok(None);
+    }
+    let thread_id = string(&document, "provider_thread_id");
+    if thread_id.is_empty() {
+        return Ok(None);
+    }
+    let now = utc_now();
+    document.insert("last_resume_attempt_at".into(), json!(now));
+    document.insert("updated_at".into(), json!(utc_now()));
+    write(home, group_id, actor_id, &document)?;
+    Ok(Some(thread_id))
+}
+
+pub fn record_codex_app_thread(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    cwd: &Path,
+    command: &[String],
+    thread_id: &str,
+    resumed: bool,
+) -> std::io::Result<()> {
+    if !resume_enabled() {
+        return Ok(());
+    }
+    if thread_id.trim().is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty Codex app-server thread id",
+        ));
+    }
+    let now = utc_now();
+    let document = Map::from_iter([
+        ("v".into(), json!(1)),
+        ("kind".into(), json!("runtime_session")),
+        ("group_id".into(), json!(group_id)),
+        ("actor_id".into(), json!(actor_id)),
+        ("runtime".into(), json!("codex")),
+        ("runner".into(), json!("headless")),
+        ("workspace_path".into(), json!(workspace_path(cwd))),
+        (
+            "command_fingerprint".into(),
+            json!(app_thread_command_fingerprint(command)),
+        ),
+        ("model".into(), json!(model_from_command(command))),
+        ("provider_session_id".into(), json!("")),
+        ("provider_thread_id".into(), json!(thread_id.trim())),
+        ("resume_command_hint".into(), json!("")),
+        (
+            "captured_from".into(),
+            json!(if resumed {
+                "app_server_thread_resume"
+            } else {
+                "app_server_thread_start"
+            }),
+        ),
+        ("status".into(), json!("usable")),
+        ("resume_eligible".into(), json!(true)),
+        ("last_seen_at".into(), json!(now)),
+        ("last_resume_attempt_at".into(), json!("")),
+        ("last_resume_error".into(), json!("")),
+        ("failure_count".into(), json!(0)),
+        ("updated_at".into(), json!(utc_now())),
+    ]);
+    write(home, group_id, actor_id, &document)
+}
+
+pub fn prepare_claude_headless_session(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    cwd: &Path,
+    command: &[String],
+) -> std::io::Result<Option<(String, bool)>> {
+    if !resume_enabled() || !supports_claude_managed_session(command) {
+        return Ok(None);
+    }
+    if let Ok(mut document) = read(home, group_id, actor_id)
+        && string(&document, "runtime") == "claude"
+        && string(&document, "status") == "usable"
+        && document
+            .get("resume_eligible")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        && string(&document, "workspace_path") == workspace_path(cwd)
+        && string(&document, "command_fingerprint") == command_fingerprint(command)
+        && string(&document, "model") == model_from_command(command)
+        && string(&document, "provider_thread_id").is_empty()
+    {
+        let session_id = string(&document, "provider_session_id");
+        if !session_id.is_empty() {
+            document.insert("last_resume_attempt_at".into(), json!(utc_now()));
+            document.insert("updated_at".into(), json!(utc_now()));
+            write(home, group_id, actor_id, &document)?;
+            return Ok(Some((session_id, true)));
+        }
+    }
+    Ok(Some((uuid::Uuid::new_v4().to_string(), false)))
+}
+
+pub fn record_claude_headless_session(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    cwd: &Path,
+    command: &[String],
+    session_id: &str,
+    resumed: bool,
+) -> std::io::Result<()> {
+    if !resume_enabled() {
+        return Ok(());
+    }
+    if session_id.trim().is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "empty Claude headless session id",
+        ));
+    }
+    let now = utc_now();
+    let document = Map::from_iter([
+        ("v".into(), json!(1)),
+        ("kind".into(), json!("runtime_session")),
+        ("group_id".into(), json!(group_id)),
+        ("actor_id".into(), json!(actor_id)),
+        ("runtime".into(), json!("claude")),
+        ("runner".into(), json!("headless")),
+        ("workspace_path".into(), json!(workspace_path(cwd))),
+        (
+            "command_fingerprint".into(),
+            json!(command_fingerprint(command)),
+        ),
+        ("model".into(), json!(model_from_command(command))),
+        ("provider_session_id".into(), json!(session_id.trim())),
+        ("provider_thread_id".into(), json!("")),
+        ("resume_command_hint".into(), json!("")),
+        (
+            "captured_from".into(),
+            json!(if resumed {
+                "claude_resume_command"
+            } else {
+                "claude_generated_session_id"
+            }),
+        ),
+        ("status".into(), json!("usable")),
+        ("resume_eligible".into(), json!(true)),
+        ("last_seen_at".into(), json!(now)),
+        ("last_resume_attempt_at".into(), json!("")),
+        ("last_resume_error".into(), json!("")),
+        ("failure_count".into(), json!(0)),
+        ("updated_at".into(), json!(utc_now())),
+    ]);
+    write(home, group_id, actor_id, &document)
+}
+
 pub fn schedule_codex_session_capture(
     home: HomeLayout,
     group_id: String,
@@ -366,6 +545,39 @@ fn command_fingerprint(command: &[String]) -> String {
     format!("{:x}", Sha256::digest(raw))
 }
 
+fn app_thread_command_fingerprint(command: &[String]) -> String {
+    let stable = stable_app_thread_command(command);
+    let raw = serde_json::to_vec(&json!({"argv":stable})).unwrap_or_default();
+    format!("{:x}", Sha256::digest(raw))
+}
+
+fn stable_app_thread_command(command: &[String]) -> Vec<String> {
+    if command.len() < 2
+        || Path::new(&command[0])
+            .file_name()
+            .and_then(|value| value.to_str())
+            != Some("codex")
+        || command[1] != "app-server"
+    {
+        return command.to_vec();
+    }
+    let mut stable = Vec::with_capacity(command.len());
+    let mut skip_next = false;
+    for item in command {
+        if skip_next {
+            skip_next = false;
+        } else if item == "--listen" {
+            stable.push(item.clone());
+            skip_next = true;
+        } else if item.starts_with("--listen=") {
+            stable.push("--listen".into());
+        } else {
+            stable.push(item.clone());
+        }
+    }
+    stable
+}
+
 fn model_from_command(command: &[String]) -> String {
     for (index, item) in command.iter().enumerate() {
         if matches!(item.as_str(), "-m" | "--model") {
@@ -388,6 +600,21 @@ fn supports_codex_resume(command: &[String]) -> bool {
             .iter()
             .skip(1)
             .any(|item| CODEX_SUBCOMMANDS.contains(&item.as_str()))
+}
+
+fn supports_claude_managed_session(command: &[String]) -> bool {
+    command
+        .first()
+        .and_then(|program| Path::new(program).file_stem())
+        .and_then(|program| program.to_str())
+        == Some("claude")
+        && !command.iter().skip(1).any(|item| {
+            matches!(
+                item.as_str(),
+                "--resume" | "-r" | "--continue" | "-c" | "--session-id"
+            ) || item.starts_with("--resume=")
+                || item.starts_with("--session-id=")
+        })
 }
 
 fn parse_codex_session_id(text: &str) -> Option<String> {
@@ -475,6 +702,175 @@ mod tests {
             "shell_environment_policy.inherit=all".into(),
             "--search".into(),
         ]
+    }
+
+    fn app_thread_command() -> Vec<String> {
+        vec![
+            "codex".into(),
+            "app-server".into(),
+            "--listen".into(),
+            "stdio://".into(),
+        ]
+    }
+
+    fn claude_headless_command() -> Vec<String> {
+        vec![
+            "claude".into(),
+            "-p".into(),
+            "--input-format".into(),
+            "stream-json".into(),
+            "--output-format".into(),
+            "stream-json".into(),
+            "--include-partial-messages".into(),
+            "--include-hook-events".into(),
+            "--verbose".into(),
+            "--dangerously-skip-permissions".into(),
+        ]
+    }
+
+    #[test]
+    fn records_python_compatible_codex_app_thread_metadata() {
+        let (_temp, home, group_id, cwd) = fixture();
+        let command = app_thread_command();
+
+        record_codex_app_thread(&home, &group_id, "peer1", &cwd, &command, "thread-1", false)
+            .expect("record app thread");
+
+        let stored = read(&home, &group_id, "peer1").expect("stored metadata");
+        assert_eq!(stored["runner"], "headless");
+        assert_eq!(stored["provider_session_id"], "");
+        assert_eq!(stored["provider_thread_id"], "thread-1");
+        assert_eq!(stored["captured_from"], "app_server_thread_start");
+        assert_eq!(stored["status"], "usable");
+        assert_eq!(stored["resume_eligible"], true);
+        assert_eq!(
+            stored["command_fingerprint"],
+            "e21da22b1aea2a44604536594c24efbfc4eabe61a03b833c6cb64b09f13ecad4"
+        );
+    }
+
+    #[test]
+    fn prepares_python_codex_app_thread_metadata_when_contract_matches() {
+        let (_temp, home, group_id, cwd) = fixture();
+        let command = app_thread_command();
+        let document = Map::from_iter([
+            ("runtime".into(), json!("codex")),
+            ("status".into(), json!("usable")),
+            ("resume_eligible".into(), json!(true)),
+            ("workspace_path".into(), json!(workspace_path(&cwd))),
+            ("model".into(), json!("gpt-test")),
+            (
+                "command_fingerprint".into(),
+                json!(app_thread_command_fingerprint(&command)),
+            ),
+            ("provider_session_id".into(), json!("")),
+            ("provider_thread_id".into(), json!("thread-1")),
+        ]);
+        write(&home, &group_id, "peer1", &document).expect("write");
+
+        let prepared =
+            prepare_codex_app_thread(&home, &group_id, "peer1", &cwd, &command, "gpt-test")
+                .expect("prepare app thread");
+
+        assert_eq!(prepared.as_deref(), Some("thread-1"));
+        let stored = read(&home, &group_id, "peer1").expect("stored metadata");
+        assert!(
+            stored["last_resume_attempt_at"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+    }
+
+    #[test]
+    fn app_thread_fingerprint_normalizes_only_the_listen_target() {
+        let stdio = app_thread_command();
+        let websocket = vec![
+            "codex".into(),
+            "app-server".into(),
+            "--listen=ws://127.0.0.1:12345".into(),
+        ];
+        assert_eq!(
+            app_thread_command_fingerprint(&stdio),
+            app_thread_command_fingerprint(&websocket)
+        );
+    }
+
+    #[test]
+    fn prepares_and_records_python_compatible_claude_headless_session() {
+        let (_temp, home, group_id, cwd) = fixture();
+        let command = claude_headless_command();
+        let session_id = "42e9ef0c-3b75-43a0-9056-eef13dd1061d";
+        let document = Map::from_iter([
+            ("runtime".into(), json!("claude")),
+            ("status".into(), json!("usable")),
+            ("resume_eligible".into(), json!(true)),
+            ("workspace_path".into(), json!(workspace_path(&cwd))),
+            ("model".into(), json!("")),
+            (
+                "command_fingerprint".into(),
+                json!(command_fingerprint(&command)),
+            ),
+            ("provider_session_id".into(), json!(session_id)),
+            ("provider_thread_id".into(), json!("")),
+        ]);
+        write(&home, &group_id, "peer1", &document).expect("write Python metadata");
+
+        let prepared = prepare_claude_headless_session(&home, &group_id, "peer1", &cwd, &command)
+            .expect("prepare Claude session")
+            .expect("managed Claude session");
+
+        assert_eq!(prepared, (session_id.to_owned(), true));
+        assert!(
+            read(&home, &group_id, "peer1").expect("resume metadata")["last_resume_attempt_at"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty())
+        );
+
+        record_claude_headless_session(&home, &group_id, "peer1", &cwd, &command, session_id, true)
+            .expect("record resumed session");
+        let stored = read(&home, &group_id, "peer1").expect("stored metadata");
+        assert_eq!(stored["runtime"], "claude");
+        assert_eq!(stored["runner"], "headless");
+        assert_eq!(stored["provider_session_id"], session_id);
+        assert_eq!(stored["provider_thread_id"], "");
+        assert_eq!(stored["captured_from"], "claude_resume_command");
+        assert_eq!(stored["status"], "usable");
+        assert_eq!(stored["resume_eligible"], true);
+        assert_eq!(
+            stored["command_fingerprint"],
+            "d02815ad3f7e0e0b16b4e3fa3463a38131f137b415dbbd7af1a412b1efea2829"
+        );
+    }
+
+    #[test]
+    fn creates_fresh_claude_session_without_persisting_before_launch() {
+        let (_temp, home, group_id, cwd) = fixture();
+        let command = claude_headless_command();
+
+        let prepared = prepare_claude_headless_session(&home, &group_id, "peer1", &cwd, &command)
+            .expect("prepare Claude session")
+            .expect("managed Claude session");
+
+        assert!(valid_session_id(&prepared.0));
+        assert!(!prepared.1);
+        assert!(read(&home, &group_id, "peer1").is_err());
+    }
+
+    #[test]
+    fn leaves_user_owned_and_indirect_claude_commands_unmanaged() {
+        let (_temp, home, group_id, cwd) = fixture();
+        for command in [
+            vec!["claude".into(), "--resume".into(), "user-session".into()],
+            vec!["claude".into(), "--session-id=user-session".into()],
+            vec!["sh".into(), "-c".into(), "exec claude".into()],
+        ] {
+            assert!(
+                prepare_claude_headless_session(&home, &group_id, "peer1", &cwd, &command,)
+                    .expect("prepare Claude session")
+                    .is_none()
+            );
+        }
+        assert!(read(&home, &group_id, "peer1").is_err());
     }
 
     #[test]

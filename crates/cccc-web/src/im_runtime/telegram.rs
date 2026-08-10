@@ -4,8 +4,8 @@ use super::telegram_outbound::TelegramOutbound;
 use super::worker::Stopper;
 use super::{
     InboundDecision, InboundMetadata, completes_processing, dispatch_inbound_with,
-    inbound_decision_for_thread, is_outbound_or_stream, processing_reply_to, resolve_credential,
-    spawn_outbound_matching, string, target_key,
+    inbound_decision_for_thread, is_outbound_or_stream, processing_reply_to,
+    resolve_config_credential, spawn_outbound_matching, target_key,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -24,7 +24,7 @@ pub(super) async fn start(
     config: &Map<String, Value>,
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
 ) -> Result<(Vec<JoinHandle<()>>, Stopper), String> {
-    let token = resolve_credential(&string(config, "bot_token_env"))?;
+    let token = resolve_config_credential(config, "bot_token", "bot_token_env")?;
     let bot = Bot::new(token);
     let bot_username = bot
         .get_me()

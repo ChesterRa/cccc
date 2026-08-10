@@ -25,6 +25,7 @@ pub(super) fn is_global_write(request: &DaemonRequest) -> bool {
                 | "capability_source_delete"
                 | "capability_allowlist_update"
                 | "capability_allowlist_reset"
+                | "assistant_voice_recording_lease"
         )
         || request.op.starts_with("access_token_")
         || request.op.starts_with("group_bridge_")
@@ -41,7 +42,6 @@ pub(super) fn is_read_only(op: &str) -> bool {
                 | "actor_profile_get"
                 | "actor_profile_list"
                 | "actor_prompt"
-                | "assistant_index"
                 | "assistant_voice_document_input_read"
                 | "assistant_voice_document_list"
                 | "branding_get"
@@ -51,12 +51,14 @@ pub(super) fn is_read_only(op: &str) -> bool {
                 | "capability_search"
                 | "capability_state"
                 | "context_get"
+                | "actor_notes_get"
                 | "debug_snapshot"
                 | "debug_tail_logs"
                 | "group_automation_state"
                 | "group_copy_export"
                 | "group_copy_preview_import"
                 | "group_list"
+                | "group_help_get"
                 | "group_preamble_get"
                 | "group_show"
                 | "group_space_capabilities"

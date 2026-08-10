@@ -314,6 +314,7 @@ jobs:
             --skip python_and_rust_share_identity_and_signed_session_hello \
             --skip python_and_rust_processes_share_paths_files_and_locks \
             --skip python_and_rust_share_launch_identity_format \
+            --skip group_bridge_and_voice_workflow_share_one_cross_engine_authority \
             --skip rust_append_waits_for_the_python_ledger_lock
           cargo test --package cccc-pair-daemon --locked -- \
             --test-threads=1 \
@@ -367,6 +368,7 @@ jobs:
           cargo test -p cccc-pair-core --test runtime_hook_interop --locked
           cargo test -p cccc-pair-core --test runtime_hook_identity_interop --locked
           cargo test -p cccc-pair-core --test ledger_python_interop --locked
+          cargo test -p cccc-pair-core --test shared_integration_state_interop --locked
           cargo test -p cccc-pair-daemon --test python_storage_interop --locked -- --test-threads=1
 
   nightly-serial:

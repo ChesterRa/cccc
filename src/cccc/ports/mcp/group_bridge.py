@@ -32,8 +32,8 @@ from .handlers.cccc_repo import (
 from .handlers.context import context_get
 from .toolspecs import MCP_TOOLS
 
-_SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2024-11-05")
-_DEFAULT_PROTOCOL_VERSION = "2024-11-05"
+_SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2024-11-05")
+_DEFAULT_PROTOCOL_VERSION = _SUPPORTED_PROTOCOL_VERSIONS[0]
 
 REMOTE_ACCESS_TOOL = "cccc_remote_access"
 REMOTE_READ_TOOLS = frozenset({"cccc_remote_context", "cccc_remote_repo", "cccc_remote_git"})
@@ -615,7 +615,7 @@ def handle_group_bridge_request(req: Dict[str, Any], context: GroupBridgeContext
             {
                 "protocolVersion": _negotiated_protocol_version(params),
                 "capabilities": {
-                    "tools": {"listChanged": True},
+                    "tools": {"listChanged": False},
                     "resources": {},
                     "prompts": {},
                 },

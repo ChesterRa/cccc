@@ -22,11 +22,20 @@ pub fn apply(
     actor_id: &str,
     kind: &str,
 ) -> Result<Option<SessionStatus>, OpError> {
-    let actor = group
+    let stored_actor = group
         .actors
         .iter()
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("not_found", format!("actor not found: {actor_id}")))?;
+    let resolved_actor = if kind == "actor.stop" {
+        None
+    } else {
+        Some(actor_profile_runtime::resolve(home, stored_actor)?)
+    };
+    let actor = resolved_actor.as_ref().unwrap_or(stored_actor);
+    if kind != "actor.stop" {
+        super::capabilities::apply_actor_startup_baseline(home, group, actor);
+    }
     if is_structured(actor) {
         if super::local_headless::supports(actor) {
             match kind {
@@ -246,7 +255,10 @@ fn working_directory(group: &GroupDoc, actor: &Actor) -> Result<PathBuf, OpError
         &actor.default_scope_key
     };
     if wanted.is_empty() {
-        return std::env::current_dir().map_err(OpError::io);
+        return Err(OpError::new(
+            "missing_project_root",
+            "missing project root for group (no active scope)",
+        ));
     }
     let scope = cccc_core::group_scope::resolve_attached_scope(group, wanted).ok_or_else(|| {
         OpError::new(

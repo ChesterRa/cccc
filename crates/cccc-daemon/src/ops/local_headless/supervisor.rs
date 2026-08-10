@@ -75,7 +75,28 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
     env.insert("CCCC_RUNNER".into(), "headless".into());
     super::super::codex_mcp::configure_actor_cli(&mut env);
     let model = model_from_command(&actor.command);
-    let command = provider_command(home, group, actor, &mut env)?;
+    let (mut command, session_command) = provider_command(home, group, actor, &mut env)?;
+    let claude_session = if actor.runtime == ActorRuntime::Claude {
+        let prepared = super::super::runtime_session::prepare_claude_headless_session(
+            home,
+            &group.group_id,
+            &actor.id,
+            &cwd,
+            &session_command,
+        )?;
+        if let Some((session_id, resumed)) = &prepared {
+            command.splice(
+                1..1,
+                [
+                    if *resumed { "--resume" } else { "--session-id" }.into(),
+                    session_id.clone(),
+                ],
+            );
+        }
+        prepared
+    } else {
+        None
+    };
     let (program, args) = command
         .split_first()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty headless command"))?;
@@ -126,16 +147,55 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
     session::spawn_reader(Arc::clone(&item), stdout)?;
     session::spawn_stderr(stderr, &group.group_id, &actor.id)?;
     if actor.runtime == ActorRuntime::Codex {
-        if let Err(error) = super::protocol::initialize_codex(&item, &cwd, &model) {
+        if let Err(error) = super::protocol::initialize_codex(&item, &cwd, &model, &session_command)
+        {
             item.stop();
             return Err(error);
         }
     } else {
         std::thread::sleep(Duration::from_millis(100));
         if !item.running() {
-            return Err(io::Error::other(
-                "claude headless process exited during startup",
-            ));
+            let resumed = claude_session.as_ref().is_some_and(|(_, resumed)| *resumed);
+            let error = if resumed {
+                "claude headless resume process exited during startup"
+            } else {
+                "claude headless process exited during startup"
+            };
+            if resumed {
+                item.stop();
+                if let Err(persist_error) = super::super::runtime_session::mark_resume_failed(
+                    home,
+                    &group.group_id,
+                    &actor.id,
+                    error,
+                ) {
+                    tracing::warn!(
+                        error = %persist_error,
+                        group_id = %group.group_id,
+                        actor_id = %actor.id,
+                        "failed to invalidate rejected Claude resume metadata"
+                    );
+                }
+            }
+            return Err(io::Error::other(error));
+        }
+        if let Some((session_id, resumed)) = claude_session
+            && let Err(error) = super::super::runtime_session::record_claude_headless_session(
+                home,
+                &group.group_id,
+                &actor.id,
+                &cwd,
+                &session_command,
+                &session_id,
+                resumed,
+            )
+        {
+            tracing::warn!(
+                %error,
+                group_id = %group.group_id,
+                actor_id = %actor.id,
+                "failed to persist Claude headless session"
+            );
         }
     }
     sessions()
@@ -252,7 +312,7 @@ fn provider_command(
     group: &GroupDoc,
     actor: &Actor,
     env: &mut BTreeMap<String, String>,
-) -> io::Result<Vec<String>> {
+) -> io::Result<(Vec<String>, Vec<String>)> {
     let base = if actor.command.is_empty() {
         cccc_runtime::default_command(actor.runtime)
     } else {
@@ -268,12 +328,13 @@ fn provider_command(
             })
     });
     if !provider_binary {
-        return Ok(base);
+        return Ok((base.clone(), base));
     }
     if actor.runtime == ActorRuntime::Codex {
         let mut command = vec![base[0].clone()];
         command.extend(preserved_codex_args(&base[1..]));
         command.extend(["app-server".into(), "--listen".into(), "stdio://".into()]);
+        let session_command = command.clone();
         super::super::codex_mcp::configure_mcp_only(
             home,
             &group.group_id,
@@ -281,7 +342,7 @@ fn provider_command(
             &mut command,
             env,
         );
-        Ok(command)
+        Ok((command, session_command))
     } else {
         let mut command = vec![base[0].clone()];
         command.extend(preserved_claude_args(&base[1..]));
@@ -296,11 +357,12 @@ fn provider_command(
             "--verbose".into(),
             "--dangerously-skip-permissions".into(),
         ]);
+        let session_command = command.clone();
         if let Some(executable) = super::super::codex_mcp::resolve_cccc_executable() {
             let config = json!({"mcpServers":{"cccc":{"command":executable,"args":["mcp"],"env":{"CCCC_HOME":home.root(),"CCCC_GROUP_ID":group.group_id,"CCCC_ACTOR_ID":actor.id}}}});
             command.extend(["--mcp-config".into(), config.to_string()]);
         }
-        Ok(command)
+        Ok((command, session_command))
     }
 }
 
@@ -419,7 +481,7 @@ mod tests {
             "--model".into(),
             "gpt-test".into(),
         ];
-        let codex_command =
+        let (codex_command, codex_session_command) =
             provider_command(&home, &group, &codex, &mut env).expect("codex command");
         assert!(
             codex_command
@@ -439,6 +501,25 @@ mod tests {
                 .count(),
             1
         );
+        assert_eq!(
+            codex_session_command,
+            vec![
+                "codex",
+                "-c",
+                "feature=true",
+                "--search",
+                "--model",
+                "gpt-test",
+                "app-server",
+                "--listen",
+                "stdio://",
+            ]
+        );
+        assert!(
+            !codex_session_command
+                .iter()
+                .any(|arg| arg.contains("mcp_servers.cccc"))
+        );
 
         let mut claude = Actor::new("claude");
         claude.runtime = ActorRuntime::Claude;
@@ -452,7 +533,7 @@ mod tests {
             "--mcp-config".into(),
             "custom.json".into(),
         ];
-        let claude_command =
+        let (claude_command, claude_session_command) =
             provider_command(&home, &group, &claude, &mut env).expect("claude command");
         assert!(
             claude_command
@@ -468,6 +549,32 @@ mod tests {
             claude_command
                 .windows(2)
                 .any(|args| args == ["--mcp-config", "custom.json"])
+        );
+        assert_eq!(
+            claude_session_command,
+            vec![
+                "claude",
+                "--model",
+                "claude-test",
+                "--allowedTools",
+                "Read,Write",
+                "--mcp-config",
+                "custom.json",
+                "-p",
+                "--input-format",
+                "stream-json",
+                "--output-format",
+                "stream-json",
+                "--include-partial-messages",
+                "--include-hook-events",
+                "--verbose",
+                "--dangerously-skip-permissions",
+            ]
+        );
+        assert!(
+            !claude_session_command
+                .iter()
+                .any(|arg| arg.contains("mcpServers"))
         );
     }
 
@@ -548,6 +655,107 @@ mod tests {
             std::fs::read_to_string(&starts_path).expect("start count"),
             "x"
         );
+        stop(&group.group_id, &actor.id);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejected_claude_resume_is_invalidated_before_explicit_retry() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let mut group = GroupStore::new(home.clone())
+            .expect("store")
+            .create("stale Claude resume", "")
+            .expect("group");
+        group.scopes.push(Scope {
+            scope_key: "s_project".into(),
+            url: temp.path().to_string_lossy().into_owned(),
+            label: "project".into(),
+            git_remote: String::new(),
+        });
+        group.active_scope_key = "s_project".into();
+
+        let bin_dir = temp.path().join("bin");
+        std::fs::create_dir(&bin_dir).expect("bin dir");
+        let executable = bin_dir.join("claude");
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "$CCCC_TEST_ARGS"
+case " $* " in
+  *" --resume "*) exit 2 ;;
+esac
+while IFS= read -r line; do :; done
+"#,
+        )
+        .expect("fake Claude");
+        let mut permissions = std::fs::metadata(&executable)
+            .expect("fake Claude metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions).expect("fake Claude executable");
+
+        let args_log = temp.path().join("claude-args.log");
+        let mut actor = Actor::new("headless");
+        actor.role = Some(ActorRole::Foreman);
+        actor.runtime = ActorRuntime::Claude;
+        actor.runner = RunnerKind::Headless;
+        actor.command = vec![executable.to_string_lossy().into_owned()];
+        actor.env.insert(
+            "CCCC_TEST_ARGS".into(),
+            args_log.to_string_lossy().into_owned(),
+        );
+        group.actors.push(actor.clone());
+
+        let mut command_env = actor.env.clone();
+        let (_, session_command) =
+            provider_command(&home, &group, &actor, &mut command_env).expect("provider command");
+        let stale_session = "42e9ef0c-3b75-43a0-9056-eef13dd1061d";
+        crate::ops::runtime_session::record_claude_headless_session(
+            &home,
+            &group.group_id,
+            &actor.id,
+            temp.path(),
+            &session_command,
+            stale_session,
+            false,
+        )
+        .expect("seed stale session");
+
+        let error = start(&home, &group, &actor).expect_err("stale resume must fail");
+        assert!(error.to_string().contains("resume process exited"));
+        let session_path = GroupStore::new(home.clone())
+            .expect("store")
+            .state_dir(&group.group_id)
+            .expect("state dir")
+            .join("runtime_sessions")
+            .join(format!("{}.json", actor.id));
+        let rejected: serde_json::Value =
+            cccc_core::fs::read_json(&session_path).expect("rejected session metadata");
+        assert_eq!(rejected["status"], "resume_failed");
+        assert_eq!(rejected["resume_eligible"], false);
+        assert_eq!(rejected["failure_count"], 1);
+        assert_eq!(rejected["provider_session_id"], stale_session);
+
+        start(&home, &group, &actor).expect("explicit retry");
+        let recovered: serde_json::Value =
+            cccc_core::fs::read_json(&session_path).expect("recovered session metadata");
+        let recovered_session = recovered["provider_session_id"]
+            .as_str()
+            .expect("recovered session id");
+        assert_ne!(recovered_session, stale_session);
+        assert!(uuid::Uuid::parse_str(recovered_session).is_ok());
+        assert_eq!(recovered["status"], "usable");
+        assert_eq!(recovered["resume_eligible"], true);
+
+        let launches = std::fs::read_to_string(&args_log).expect("Claude argv log");
+        let lines = launches.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains(&format!("--resume {stale_session}")));
+        assert!(lines[1].contains(&format!("--session-id {recovered_session}")));
         stop(&group.group_id, &actor.id);
     }
 }

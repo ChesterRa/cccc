@@ -125,6 +125,49 @@ class TestWindowsPtyBackendInternals(unittest.TestCase):
             client_sock.close()
             peer_sock.close()
 
+    def test_attach_snapshot_reports_the_reserved_windows_writer_state(self) -> None:
+        from cccc.runners.pty_win import PtySession
+
+        class _AttachSelector:
+            def register(self, _sock, _events, data=None) -> None:
+                return None
+
+        session = self._snapshot_session()
+        session._clients = {}
+        session._writer_fd = 999
+        session._selector = _AttachSelector()
+        session._attach_q = queue.Queue()
+        session._notify_wake = lambda: None
+        snapshots = []
+        client_sock, peer_sock = socket.socketpair()
+
+        try:
+            result = PtySession.attach_client(
+                session,
+                client_sock,
+                mode="control",
+                takeover=False,
+                on_replay_snapshot=lambda start, end, state: snapshots.append(
+                    (start, end, state)
+                ),
+            )
+            item = session._attach_q.get_nowait()
+            PtySession._attach_client_now(
+                session,
+                item[0],
+                since=item[1],
+                control=item[2],
+                on_replay_snapshot=item[3],
+            )
+
+            self.assertFalse(result["writable"])
+            self.assertEqual(len(snapshots), 1)
+            self.assertFalse(snapshots[0][2]["writable"])
+            self.assertFalse(snapshots[0][2]["writer_replaced"])
+        finally:
+            client_sock.close()
+            peer_sock.close()
+
     def test_reader_loop_drains_output_after_fast_process_exit(self) -> None:
         from cccc.runners.pty_win import PtySession
 
@@ -218,6 +261,48 @@ class TestWindowsPtyBackendInternals(unittest.TestCase):
         self.assertEqual(page["data"], b"failed\r\n")
         self.assertEqual(page["start_cursor"], 0)
         self.assertEqual(page["end_cursor"], len(b"failed\r\n"))
+
+    def test_history_since_page_extends_to_a_complete_utf8_boundary(self) -> None:
+        session = self._snapshot_session()
+        session._append_backlog("ab你cd".encode("utf-8"))
+
+        page = session.history_since_page(after=0, limit_bytes=3)
+
+        self.assertEqual(page["data"], "ab你".encode("utf-8"))
+        self.assertEqual(page["start_cursor"], 0)
+        self.assertEqual(page["end_cursor"], 5)
+        self.assertTrue(page["has_more"])
+
+    def test_replacement_session_receives_the_cached_actor_cursor_floor(self) -> None:
+        from cccc.runners.pty_snapshot import PtyBacklogSnapshot
+        from cccc.runners.pty_win import PtySupervisor
+
+        observed: dict[str, object] = {}
+
+        class _ReplacementSession:
+            def __init__(self, **kwargs) -> None:
+                observed.update(kwargs)
+                self.group_id = str(kwargs["group_id"])
+                self.actor_id = str(kwargs["actor_id"])
+
+            def is_running(self) -> bool:
+                return True
+
+        supervisor = PtySupervisor()
+        supervisor._last_backlogs.remember(
+            ("g1", "a1"),
+            PtyBacklogSnapshot(data=b"old", start_cursor=39, end_cursor=42),
+        )
+        with patch("cccc.runners.pty_win.PtySession", _ReplacementSession):
+            supervisor.start_actor(
+                group_id="g1",
+                actor_id="a1",
+                cwd=Path.cwd(),
+                command=["unused"],
+                env={},
+            )
+
+        self.assertEqual(observed.get("cursor_start"), 42)
 
     def test_supervisor_keeps_nonzero_exit_evidence_when_session_has_no_output(self) -> None:
         from cccc.runners.pty_win import PtySupervisor

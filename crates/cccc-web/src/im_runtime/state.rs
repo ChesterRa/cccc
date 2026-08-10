@@ -62,7 +62,7 @@ pub(super) fn authorized_chats_from_store(
     platform: &str,
 ) -> Vec<AuthorizedChat> {
     let mut chats = HashMap::new();
-    if let Ok(value) = cccc_core::integration_state::group_get(store, group_id, "im_bridge") {
+    if let Ok(value) = cccc_core::im_state::load(store, group_id) {
         let has_canonical_authorization = ["authorized", "subscribers"]
             .into_iter()
             .any(|key| value.get(key).is_some());
@@ -152,12 +152,26 @@ pub(super) fn collect_chat_ids(value: Option<&Value>, chat_ids: &mut HashSet<Str
     }
 }
 
-pub(super) fn resolve_credential(value: &str) -> Result<String, String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err("IM credential is empty".into());
+pub(super) fn resolve_config_credential(
+    config: &Map<String, Value>,
+    value_key: &str,
+    env_key: &str,
+) -> Result<String, String> {
+    let value = string(config, value_key);
+    if !value.is_empty() {
+        return Ok(value);
     }
-    Ok(std::env::var(value).unwrap_or_else(|_| value.to_owned()))
+    let env_name = string(config, env_key);
+    if env_name.is_empty() {
+        return Err(format!(
+            "IM credential is missing: {value_key} or {env_key}"
+        ));
+    }
+    std::env::var(&env_name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("IM credential environment variable is not set: {env_name}"))
 }
 
 pub(super) fn string(config: &Map<String, Value>, key: &str) -> String {
@@ -283,6 +297,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn canonical_credentials_distinguish_values_from_environment_references() {
+        let raw = json!({"bot_token":"literal-token"});
+        assert_eq!(
+            resolve_config_credential(
+                raw.as_object().expect("configuration"),
+                "bot_token",
+                "bot_token_env",
+            )
+            .expect("literal credential"),
+            "literal-token"
+        );
+
+        let reference = json!({"bot_token_env":"CCCC_IM_TEST_ENV_MUST_NOT_EXIST_6D6617"});
+        let error = resolve_config_credential(
+            reference.as_object().expect("configuration"),
+            "bot_token",
+            "bot_token_env",
+        )
+        .expect_err("missing environment variable");
+        assert!(error.contains("CCCC_IM_TEST_ENV_MUST_NOT_EXIST_6D6617"));
+    }
+
+    #[test]
     fn canonical_empty_state_prevents_legacy_subscriber_resurrection() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -295,7 +332,7 @@ mod tests {
             r#"{"legacy":{"chat_id":"legacy","subscribed":true}}"#,
         )
         .expect("legacy");
-        cccc_core::integration_state::group_update(&store, &group.group_id, "im_bridge", |state| {
+        cccc_core::im_state::update(&store, &group.group_id, |state| {
             *state = json!({"authorized":[],"subscribers":[]});
             Ok(())
         })
@@ -310,7 +347,7 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home).expect("store");
         let group = store.create("IM", "").expect("group");
-        cccc_core::integration_state::group_update(&store, &group.group_id, "im_bridge", |state| {
+        cccc_core::im_state::update(&store, &group.group_id, |state| {
             *state = json!({
                 "authorized":[
                     {"chat_id":"telegram-chat","platform":"telegram","verbose":false},

@@ -38,21 +38,22 @@ pub(super) async fn finalize_disconnect(
         diarization_model_id,
         persist_artifacts,
     } = context;
+    if !persist_artifacts {
+        return;
+    }
     let session_id = effective_session_id(&client_session_id);
     let streaming_text = finish_streaming(streaming).await;
     let Some(recording) = finish_recording(recording).await else {
-        if persist_artifacts {
-            persist_disconnect_text(
-                &state,
-                &group_id,
-                &session_id,
-                &document_path,
-                &language,
-                &streaming_text,
-                "assistant_service_local_asr_streaming",
-            )
-            .await;
-        }
+        persist_disconnect_text(
+            &state,
+            &group_id,
+            &session_id,
+            &document_path,
+            &language,
+            &streaming_text,
+            "assistant_service_local_asr_streaming",
+        )
+        .await;
         return;
     };
 
@@ -65,9 +66,6 @@ pub(super) async fn finalize_disconnect(
     .await;
     let final_text = best_transcript(&final_result, streaming_text);
 
-    if !persist_artifacts {
-        return;
-    }
     persist_disconnect_text(
         &state,
         &group_id,

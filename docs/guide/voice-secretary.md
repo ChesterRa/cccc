@@ -71,10 +71,10 @@ Stable document-capture ASR segments are appended to:
 
 Prompt refinement and document instructions are semantic inputs, not meeting
 transcripts: they never create a session entry or a per-session transcript
-sidecar. Semantic input is appended only to `inputs.jsonl` before the daemon
-writes an `assistant.voice.input` event and a targeted `system.notify`. Segment
-identity is independent from the prompt request ID: one prompt request may
-accumulate several speech appends, while each append carries its own
+sidecar. Semantic input is appended to the daemon-owned durable input log before
+the daemon writes the corresponding ledger event and targeted `system.notify`.
+Segment identity is independent from the prompt request ID: one prompt request
+may accumulate several speech appends, while each append carries its own
 `input_append_id`. Retrying the same append reuses that ID and does not duplicate
 input or invalidate a pending draft; later speech keeps the request ID but uses a
 new append ID. The internal actor reads unread batches through
@@ -102,8 +102,9 @@ text through
 existing request; it never appends another Voice Secretary input. Empty or
 non-substantive refinements use `no_op=true`.
 
-Instruction/Ask mode creates a durable pending `ask_requests` item atomically
-with its semantic input. The delivered notification renders an explicit work
+Instruction/Ask mode creates a durable pending `ask_requests` item in the same
+accepted daemon operation as its semantic input, before actor delivery. The
+delivered notification renders an explicit work
 order with the target, request ID, and required MCP output instead of relying on
 the actor to infer routing from raw JSON. User-visible answers must be submitted
 through `cccc_voice_secretary_request(action="report")`; ordinary console text
@@ -129,5 +130,22 @@ an active workspace store the Markdown fallback under CCCC_HOME. Removing a
 model, disabling the assistant, or restarting CCCC does not delete documents or
 raw transcript sidecars.
 
-The Rust daemon is the source of truth for Voice Secretary sessions, input
-cursors, document indexes, recording leases, and model installation state.
+Python and Rust share one durable authority for Voice Secretary lifecycle,
+durable health, sessions, prompt drafts/requests, and ask requests:
+`groups/<group_id>/state/assistants.json`. Assistant enablement and configuration
+remain in `group.yaml`; process-local PID, port, service, and socket observations
+are rebuilt after startup. Rust-only input/document projection fields are
+preserved under `rust_state` rather than being mistaken for common workflow
+records. The global recording lease also uses the same file and token semantics
+in both implementations, so an engine switch cannot silently create a second
+recorder. Repository Markdown, transcript/input sidecars, Python's document
+index, and native model caches retain their existing specialized stores; this
+shared-state repair does not claim full Python/Rust feature parity.
+
+Native Rust model installation is still an experimental Web-owned boundary:
+the Rust Web UI manages the bundled sherpa-onnx model cache, while Rust reports
+`assistant_voice_model_install=false` in daemon capabilities. Python continues
+to implement the standardized daemon operation. Callers must inspect that
+capability instead of assuming the Rust SDK path is available; moving model
+management into a shared daemon/runtime layer remains a separate product and
+binary-size decision.

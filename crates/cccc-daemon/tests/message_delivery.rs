@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
 use cccc_client::DaemonClient;
-use cccc_contracts::{DaemonRequest, DaemonResponse};
+use cccc_contracts::{DaemonRequest, DaemonResponse, Event};
 use cccc_core::{GroupStore, HomeLayout, ledger};
 use serde_json::{Map, Value, json};
 use std::time::Duration;
@@ -24,6 +24,14 @@ async fn serializes_delivery_notifies_and_advances_cursor() {
         .as_str()
         .expect("group id")
         .to_owned();
+    let project = temp.path().join("project");
+    std::fs::create_dir(&project).expect("project scope");
+    daemon_call(
+        &client,
+        "attach",
+        json!({"group_id":group_id,"path":project,"by":"user"}),
+    )
+    .await;
     daemon_call(
         &client,
         "actor_add",
@@ -175,6 +183,457 @@ fn empty_recipients_follow_the_group_default_policy() {
 }
 
 #[test]
+fn inbox_kind_filter_precedes_limit_and_bounds_mark_all() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+
+    let first_group = stopped_peer_group(&home, "filter before limit");
+    call(
+        &home,
+        "system_notify",
+        json!({
+            "group_id":first_group,"by":"system","title":"notify first",
+            "message":"notify first","target_actor_id":"peer1"
+        }),
+    );
+    let chatted = call(
+        &home,
+        "send",
+        json!({"group_id":first_group,"by":"user","to":["peer1"],"text":"chat second"}),
+    );
+    let chat_id = chatted.result["event"]["id"].as_str().expect("chat id");
+    let chat_page = call(
+        &home,
+        "inbox_list",
+        json!({
+            "group_id":first_group,"actor_id":"peer1","by":"peer1",
+            "kind_filter":"chat","limit":1
+        }),
+    );
+    assert_eq!(chat_page.result["messages"][0]["id"], chat_id);
+    assert_eq!(chat_page.result["messages"][0]["kind"], "chat.message");
+    let invalid_list = call_raw(
+        &home,
+        "inbox_list",
+        json!({
+            "group_id":first_group,"actor_id":"peer1","by":"peer1",
+            "kind_filter":"bogus"
+        }),
+    );
+    assert_eq!(
+        invalid_list.error.expect("invalid list filter").code,
+        "invalid_kind_filter"
+    );
+
+    let second_group = stopped_peer_group(&home, "filtered mark all");
+    let first_chat = call(
+        &home,
+        "send",
+        json!({"group_id":second_group,"by":"user","to":["peer1"],"text":"chat first"}),
+    );
+    let later_notify = call(
+        &home,
+        "system_notify",
+        json!({
+            "group_id":second_group,"by":"system","title":"notify second",
+            "message":"notify second","target_actor_id":"peer1"
+        }),
+    );
+    let invalid_mark = call_raw(
+        &home,
+        "inbox_mark_all_read",
+        json!({
+            "group_id":second_group,"actor_id":"peer1","by":"peer1",
+            "kind_filter":"bogus"
+        }),
+    );
+    assert_eq!(
+        invalid_mark.error.expect("invalid mark-all filter").code,
+        "invalid_kind_filter"
+    );
+    let marked = call(
+        &home,
+        "inbox_mark_all_read",
+        json!({
+            "group_id":second_group,"actor_id":"peer1","by":"peer1",
+            "kind_filter":"chat"
+        }),
+    );
+    assert_eq!(
+        marked.result["cursor"]["event_id"],
+        first_chat.result["event"]["id"]
+    );
+    let remaining = call(
+        &home,
+        "inbox_list",
+        json!({
+            "group_id":second_group,"actor_id":"peer1","by":"peer1",
+            "kind_filter":"all","limit":10
+        }),
+    );
+    assert_eq!(
+        remaining.result["messages"].as_array().map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(
+        remaining.result["messages"][0]["id"],
+        later_notify.result["event"]["id"]
+    );
+}
+
+#[test]
+fn chat_ack_validates_attention_recipient_and_replays_idempotently() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group_id = stopped_peer_group(&home, "chat ack contract");
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,"actor_id":"peer2","runtime":"custom",
+            "runner":"pty","command":["sh","-c","exit 0"],"by":"user"
+        }),
+    );
+    let normal = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"normal"}),
+    );
+    let attention = call(
+        &home,
+        "send",
+        json!({
+            "group_id":group_id,"by":"user","to":["peer1"],
+            "text":"attention","priority":"attention"
+        }),
+    );
+    let notify = call(
+        &home,
+        "system_notify",
+        json!({
+            "group_id":group_id,"by":"system","title":"notify","message":"notify",
+            "target_actor_id":"peer1"
+        }),
+    );
+    let normal_id = normal.result["event"]["id"].as_str().expect("normal id");
+    let attention_id = attention.result["event"]["id"]
+        .as_str()
+        .expect("attention id");
+    let notify_id = notify.result["event"]["id"].as_str().expect("notify id");
+    let ack = |actor_id: &str, event_id: &str| {
+        call_raw(
+            &home,
+            "chat_ack",
+            json!({
+                "group_id":group_id,"actor_id":actor_id,"event_id":event_id,"by":actor_id
+            }),
+        )
+    };
+
+    assert_eq!(
+        ack("peer1", normal_id)
+            .error
+            .expect("normal rejection")
+            .code,
+        "not_an_attention_message"
+    );
+    assert_eq!(
+        ack("peer2", attention_id)
+            .error
+            .expect("recipient rejection")
+            .code,
+        "event_not_for_actor"
+    );
+    assert_eq!(
+        ack("peer1", notify_id).error.expect("kind rejection").code,
+        "invalid_event_kind"
+    );
+    assert_eq!(
+        call_raw(
+            &home,
+            "chat_ack",
+            json!({
+                "group_id":group_id,"actor_id":"peer1","event_id":attention_id,"by":"user"
+            }),
+        )
+        .error
+        .expect("self-only rejection")
+        .code,
+        "permission_denied"
+    );
+    let first = ack("peer1", attention_id);
+    assert!(first.ok, "first ack: {:?}", first.error);
+    assert_eq!(first.result["acked"], true);
+    assert_eq!(first.result["already"], false);
+    assert_eq!(first.result["event"]["kind"], "chat.ack");
+    let replay = ack("peer1", attention_id);
+    assert!(replay.ok, "replayed ack: {:?}", replay.error);
+    assert_eq!(replay.result["acked"], true);
+    assert_eq!(replay.result["already"], true);
+    assert!(replay.result["event"].is_null());
+
+    let store = GroupStore::new(home.clone()).expect("store");
+    let ack_events = ledger::read_all(&store.ledger_path(&group_id).expect("ledger"))
+        .expect("events")
+        .into_iter()
+        .filter(|event| event.kind == "chat.ack")
+        .collect::<Vec<_>>();
+    let count = ack_events
+        .iter()
+        .filter(|event| event.data["event_id"] == attention_id && event.data["actor_id"] == "peer1")
+        .count();
+    assert_eq!(count, 1);
+    assert_eq!(ack_events.len(), 1);
+}
+
+#[test]
+fn notify_ack_enforces_self_only_and_recipient_boundary() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let group_id = stopped_peer_group(&home, "notify ack contract");
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,"actor_id":"peer2","runtime":"custom",
+            "runner":"pty","command":["sh","-c","exit 0"],"by":"user"
+        }),
+    );
+    let notify = |target: Value| {
+        call(
+            &home,
+            "system_notify",
+            json!({
+                "group_id":group_id,"by":"system","title":"notify","message":"notify",
+                "target_actor_id":target,"requires_ack":true
+            }),
+        )
+        .result["event"]["id"]
+            .as_str()
+            .expect("notify id")
+            .to_owned()
+    };
+    let targeted = notify(json!("peer1"));
+    let defaulted = notify(json!("peer1"));
+    let broadcast = notify(Value::Null);
+    let chat = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"chat"}),
+    );
+    let chat_id = chat.result["event"]["id"].as_str().expect("chat id");
+    let observe = |actor_id: &str, event_id: &str, by: Option<&str>| {
+        let mut args = json!({
+            "group_id":group_id,"actor_id":actor_id,"notify_event_id":event_id
+        });
+        if let Some(by) = by {
+            args["by"] = json!(by);
+        }
+        call_raw(&home, "notify_ack", args)
+    };
+
+    for (response, code) in [
+        (
+            observe("peer1", &targeted, Some("user")),
+            "permission_denied",
+        ),
+        (
+            observe("peer2", &targeted, Some("peer2")),
+            "event_not_for_actor",
+        ),
+        (observe("ghost", &targeted, Some("ghost")), "unknown_actor"),
+        (
+            observe("peer1", chat_id, Some("peer1")),
+            "invalid_event_kind",
+        ),
+        (
+            observe("peer1", "missing-event", Some("peer1")),
+            "event_not_found",
+        ),
+    ] {
+        assert_eq!(response.error.expect("rejection").code, code);
+    }
+
+    for response in [
+        observe("peer1", &targeted, Some("peer1")),
+        observe("peer1", &defaulted, None),
+        observe("peer2", &broadcast, Some("peer2")),
+    ] {
+        assert!(response.ok, "valid ack: {:?}", response.error);
+        assert_eq!(response.result["event"]["kind"], "system.notify_ack");
+        assert_eq!(
+            response.result["event"]["by"],
+            response.result["event"]["data"]["actor_id"]
+        );
+    }
+
+    let store = GroupStore::new(home.clone()).expect("store");
+    let ack_events = ledger::read_all(&store.ledger_path(&group_id).expect("ledger"))
+        .expect("events")
+        .into_iter()
+        .filter(|event| event.kind == "system.notify_ack")
+        .collect::<Vec<_>>();
+    assert_eq!(ack_events.len(), 3);
+    assert!(
+        ack_events
+            .iter()
+            .all(|event| event.by == event.data["actor_id"])
+    );
+}
+
+#[test]
+fn actor_generation_uses_append_order_for_inbox_status_and_ack() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"actor generation order","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    call(
+        &home,
+        "group_stop",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    let store = GroupStore::new(home.clone()).expect("store");
+    let ledger_path = store.ledger_path(&group_id).expect("ledger");
+    let message = |timestamp: &str, text: &str| {
+        let mut event = Event::new("chat.message", &group_id);
+        event.ts = timestamp.into();
+        event.by = "user".into();
+        event.data = json!({
+            "text":text,"to":["peer1"],"priority":"attention","reply_required":true
+        })
+        .as_object()
+        .cloned()
+        .expect("message data");
+        event
+    };
+    let before_actor = message("2999-01-01T00:00:00Z", "before actor");
+    ledger::append(&ledger_path, &before_actor).expect("pre-actor append");
+    let added = call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    assert_eq!(added.result["event"]["kind"], "actor.add");
+    let after_actor = message("2000-01-01T00:00:00Z", "after actor");
+    ledger::append(&ledger_path, &after_actor).expect("post-actor append");
+
+    let inbox = call(
+        &home,
+        "inbox_list",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","limit":10}),
+    );
+    assert_eq!(
+        inbox.result["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .map(|event| event["id"].as_str().expect("event id"))
+            .collect::<Vec<_>>(),
+        vec![after_actor.id.as_str()]
+    );
+
+    let statuses = call(
+        &home,
+        "ledger_statuses",
+        json!({"group_id":group_id,"event_ids":[before_actor.id,after_actor.id]}),
+    );
+    let old = &statuses.result["statuses"][&before_actor.id];
+    assert!(old["read_status"].get("peer1").is_none());
+    assert!(old["ack_status"].get("peer1").is_none());
+    assert!(old["obligation_status"].get("peer1").is_none());
+    let current = &statuses.result["statuses"][&after_actor.id];
+    assert_eq!(current["read_status"]["peer1"], false);
+    assert_eq!(current["ack_status"]["peer1"], false);
+    assert_eq!(current["obligation_status"]["peer1"]["acked"], false);
+
+    let old_ack = call_raw(
+        &home,
+        "chat_ack",
+        json!({
+            "group_id":group_id,"actor_id":"peer1","event_id":before_actor.id,"by":"peer1"
+        }),
+    );
+    assert_eq!(
+        old_ack.error.expect("pre-actor rejection").code,
+        "event_not_for_actor"
+    );
+    let current_ack = call(
+        &home,
+        "chat_ack",
+        json!({
+            "group_id":group_id,"actor_id":"peer1","event_id":after_actor.id,"by":"peer1"
+        }),
+    );
+    assert_eq!(current_ack.result["acked"], true);
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    let after_readd = call(
+        &home,
+        "ledger_statuses",
+        json!({"group_id":group_id,"event_ids":[after_actor.id]}),
+    );
+    assert!(
+        after_readd.result["statuses"][&after_actor.id]["read_status"]
+            .get("peer1")
+            .is_none()
+    );
+    assert_eq!(
+        call_raw(
+            &home,
+            "chat_ack",
+            json!({
+                "group_id":group_id,"actor_id":"peer1","event_id":after_actor.id,"by":"peer1"
+            }),
+        )
+        .error
+        .expect("previous-generation rejection")
+        .code,
+        "event_not_for_actor"
+    );
+    // Cursor persistence is an optimization, not the actor-generation source
+    // of truth. Losing it must not reveal pre-recreation messages.
+    std::fs::remove_file(
+        store
+            .state_dir(&group_id)
+            .expect("state dir")
+            .join("read_cursors.json"),
+    )
+    .expect("remove cursor state");
+    let inbox_after_readd = call(
+        &home,
+        "inbox_list",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"peer1","limit":10}),
+    );
+    assert!(
+        inbox_after_readd.result["messages"]
+            .as_array()
+            .expect("messages")
+            .is_empty()
+    );
+    let ack_count = ledger::read_all(&ledger_path)
+        .expect("events")
+        .into_iter()
+        .filter(|event| event.kind == "chat.ack")
+        .count();
+    assert_eq!(ack_count, 1);
+}
+
+#[test]
 fn send_files_uses_the_active_scope_and_normal_send_contract() {
     use cccc_contracts::GroupState;
 
@@ -275,6 +734,111 @@ fn send_files_uses_the_active_scope_and_normal_send_contract() {
             .expect("events")
             .len(),
         before
+    );
+}
+
+#[test]
+fn send_files_preflights_rejection_and_replay_before_blob_storage() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = temp.path().join("scope");
+    std::fs::create_dir_all(&scope).expect("scope");
+    std::fs::write(scope.join("payload.bin"), b"accepted payload").expect("payload");
+    std::fs::write(scope.join("duplicate.bin"), b"must not be stored").expect("duplicate");
+
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"send-files-preflight","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":scope,"by":"user"}),
+    );
+    let store = GroupStore::new(home.clone()).expect("store");
+    let blob_dir = store
+        .state_dir(group_id)
+        .expect("state directory")
+        .join("blobs");
+    let blob_files = || {
+        let mut files = std::fs::read_dir(&blob_dir)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.is_file())
+            .collect::<Vec<_>>();
+        files.sort();
+        files
+    };
+
+    let invalid_priority = call_raw(
+        &home,
+        "send_files",
+        json!({
+            "group_id":group_id,"paths":["payload.bin"],"by":"user",
+            "to":["user"],"priority":"urgent"
+        }),
+    );
+    assert_eq!(
+        invalid_priority
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("invalid_priority")
+    );
+    assert!(blob_files().is_empty());
+
+    let rejected = call_raw(
+        &home,
+        "send_files",
+        json!({
+            "group_id":group_id,"paths":["payload.bin"],"by":"user",
+            "to":["missing-actor"]
+        }),
+    );
+    assert_eq!(
+        rejected.error.as_ref().map(|error| error.code.as_str()),
+        Some("invalid_recipient")
+    );
+    assert!(blob_files().is_empty());
+
+    let sent = call(
+        &home,
+        "send_files",
+        json!({
+            "group_id":group_id,"paths":["payload.bin"],"by":"user",
+            "to":["user"],"client_id":"send-files-preflight-key"
+        }),
+    );
+    let event_id = sent.result["event"]["id"]
+        .as_str()
+        .expect("event id")
+        .to_owned();
+    let blobs_after_send = blob_files();
+    assert_eq!(blobs_after_send.len(), 1);
+
+    let replayed = call(
+        &home,
+        "send_files",
+        json!({
+            "group_id":group_id,"paths":["duplicate.bin"],"by":"user",
+            "to":["user"],"client_id":"send-files-preflight-key"
+        }),
+    );
+    assert_eq!(replayed.result["event"]["id"], event_id);
+    assert_eq!(blob_files(), blobs_after_send);
+    assert_eq!(
+        ledger::read_all(&store.ledger_path(group_id).expect("ledger"))
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.kind == "chat.message")
+            .count(),
+        1
     );
 }
 
@@ -1135,6 +1699,24 @@ async fn wait_for(client: &DaemonClient, group_id: &str, expected: &str) {
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
+}
+
+fn stopped_peer_group(home: &HomeLayout, title: &str) -> String {
+    let created = call(home, "group_create", json!({"title":title,"by":"user"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    call(home, "group_stop", json!({"group_id":group_id,"by":"user"}));
+    call(
+        home,
+        "actor_add",
+        json!({
+            "group_id":group_id,"actor_id":"peer1","runtime":"custom",
+            "runner":"pty","command":["sh","-c","exit 0"],"by":"user"
+        }),
+    );
+    group_id
 }
 
 async fn daemon_call(client: &DaemonClient, op: &str, args: Value) -> DaemonResponse {

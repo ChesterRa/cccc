@@ -4,7 +4,7 @@ use axum::extract::{Path, Query, State};
 use axum::routing::get;
 use axum::{Json, Router};
 use cccc_core::GroupStore;
-use cccc_core::group_prompts::{DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME};
+use cccc_core::group_prompts::{BUILTIN_HELP_MARKDOWN, DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -12,7 +12,6 @@ use crate::AppState;
 use crate::api::{ApiError, call, object, success};
 
 const HELP_FILENAME: &str = "CCCC_HELP.md";
-const BUILTIN_HELP_MARKDOWN: &str = include_str!("../../resources/cccc-help.md");
 
 #[derive(Deserialize)]
 struct PromptDeleteQuery {

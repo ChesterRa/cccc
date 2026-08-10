@@ -24,6 +24,7 @@ from ...ports.web.runtime_control import (
 )
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
+from ...runners.pty_snapshot import complete_utf8_prefix_len, cursor_preserving_text
 from ...util.terminal_render import render_transcript
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
@@ -403,6 +404,144 @@ def handle_terminal_history(
         return _error("terminal_history_failed", str(e))
 
 
+def handle_terminal_since(
+    args: Dict[str, Any],
+    *,
+    can_read_terminal_transcript: Callable[[Any, str, str], bool],
+    pty_backlog_bytes: Callable[[], int],
+) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    actor_id = str(args.get("actor_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    after_raw = args.get("after")
+    if isinstance(after_raw, bool) or not isinstance(after_raw, int) or after_raw < 0:
+        return _error("invalid_args", "after is required and must be a non-negative integer")
+    after = after_raw
+    limit_bytes = _safe_int(args.get("limit_bytes")) or 64_000
+    limit_bytes = min(max(1, limit_bytes), 2_000_000, pty_backlog_bytes())
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not actor_id:
+        return _error("missing_actor_id", "missing actor_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    if not can_read_terminal_transcript(group, by, actor_id):
+        tt = get_terminal_transcript_settings(group.doc)
+        role = get_effective_role(group, by) if by and by != "user" else ""
+        return _error(
+            "permission_denied",
+            "terminal transcript is restricted by group settings",
+            details={
+                "visibility": str(tt.get("visibility") or "foreman"),
+                "by": by,
+                "by_role": role,
+                "target_actor_id": actor_id,
+                "how_to_enable": "Ask user/foreman to change Settings → Transcript → Visibility.",
+            },
+        )
+    actor = find_actor(group, actor_id)
+    if not isinstance(actor, dict):
+        return _error("actor_not_found", f"actor not found: {actor_id}")
+    runner_kind = str(actor.get("runner") or "pty").strip()
+    if runner_kind != "pty":
+        return _error(
+            "not_pty_actor",
+            "terminal transcript is only available for PTY actors",
+            details={"runner": runner_kind},
+        )
+    try:
+        page = pty_runner.SUPERVISOR.history_since_page(
+            group_id=group_id,
+            actor_id=actor_id,
+            after=after,
+            limit_bytes=limit_bytes,
+        )
+        raw = page.get("data") if isinstance(page, dict) else b""
+        if not isinstance(raw, bytes):
+            raw = bytes(str(raw or ""), encoding="utf-8", errors="replace")
+        history = {
+            "data": cursor_preserving_text(raw),
+            "start_cursor": _safe_int(page.get("start_cursor") if isinstance(page, dict) else 0),
+            "end_cursor": _safe_int(page.get("end_cursor") if isinstance(page, dict) else 0),
+            "has_more": bool(page.get("has_more") if isinstance(page, dict) else False),
+            "cursor_expired": bool(page.get("cursor_expired") if isinstance(page, dict) else False),
+        }
+        return DaemonResponse(ok=True, result={"history": history})
+    except Exception as e:
+        return _error("terminal_since_failed", str(e))
+
+
+def handle_terminal_snapshot(
+    args: Dict[str, Any],
+    *,
+    can_read_terminal_transcript: Callable[[Any, str, str], bool],
+    pty_backlog_bytes: Callable[[], int],
+) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    actor_id = str(args.get("actor_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    limit_bytes = _safe_int(args.get("limit_bytes")) or 512 * 1024
+    limit_bytes = min(max(1, limit_bytes), 2_000_000, pty_backlog_bytes())
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not actor_id:
+        return _error("missing_actor_id", "missing actor_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    if not can_read_terminal_transcript(group, by, actor_id):
+        tt = get_terminal_transcript_settings(group.doc)
+        role = get_effective_role(group, by) if by and by != "user" else ""
+        return _error(
+            "permission_denied",
+            "terminal transcript is restricted by group settings",
+            details={
+                "visibility": str(tt.get("visibility") or "foreman"),
+                "by": by,
+                "by_role": role,
+                "target_actor_id": actor_id,
+                "how_to_enable": "Ask user/foreman to change Settings → Transcript → Visibility.",
+            },
+        )
+    actor = find_actor(group, actor_id)
+    if not isinstance(actor, dict):
+        return _error("actor_not_found", f"actor not found: {actor_id}")
+    runner_kind = str(actor.get("runner") or "pty").strip()
+    if runner_kind != "pty":
+        return _error(
+            "not_pty_actor",
+            "terminal transcript is only available for PTY actors",
+            details={"runner": runner_kind},
+        )
+    try:
+        page = pty_runner.SUPERVISOR.history_page(
+            group_id=group_id,
+            actor_id=actor_id,
+            before=None,
+            limit_bytes=limit_bytes,
+        )
+        raw = page.get("data") if isinstance(page, dict) else b""
+        if not isinstance(raw, bytes):
+            raw = bytes(str(raw or ""), encoding="utf-8", errors="replace")
+        complete_len = complete_utf8_prefix_len(raw)
+        raw = raw[:complete_len]
+        start_cursor = _safe_int(page.get("start_cursor") if isinstance(page, dict) else 0)
+        end_cursor = start_cursor + complete_len
+        rendered = render_transcript(cursor_preserving_text(raw), compact=False)
+        data = f"\x1b[2J\x1b[H{rendered}" if rendered else ""
+        return DaemonResponse(
+            ok=True,
+            result={
+                "data": data,
+                "start_cursor": start_cursor,
+                "end_cursor": end_cursor,
+            },
+        )
+    except Exception as e:
+        return _error("terminal_snapshot_failed", str(e))
+
+
 def handle_terminal_clear(
     args: Dict[str, Any],
     *,
@@ -548,6 +687,18 @@ def try_handle_diagnostics_op(
         )
     if op == "terminal_history":
         return handle_terminal_history(
+            args,
+            can_read_terminal_transcript=can_read_terminal_transcript,
+            pty_backlog_bytes=pty_backlog_bytes,
+        )
+    if op == "terminal_since":
+        return handle_terminal_since(
+            args,
+            can_read_terminal_transcript=can_read_terminal_transcript,
+            pty_backlog_bytes=pty_backlog_bytes,
+        )
+    if op == "terminal_snapshot":
+        return handle_terminal_snapshot(
             args,
             can_read_terminal_transcript=can_read_terminal_transcript,
             pty_backlog_bytes=pty_backlog_bytes,

@@ -144,13 +144,7 @@ fn load_credentials(home: &HomeLayout, group_id: &str) -> Result<(String, String
     if token.is_empty() {
         return Err("Weixin credential token is empty".into());
     }
-    let base_url = ["baseUrl", "base_url"]
-        .into_iter()
-        .filter_map(|name| value.get(name).and_then(Value::as_str))
-        .find(|value| !value.trim().is_empty())
-        .unwrap_or("")
-        .trim()
-        .to_owned();
+    let base_url = super::weixin_login::CANONICAL_WEIXIN_QR_BASE_URL.to_owned();
     Ok((token, base_url))
 }
 
@@ -159,4 +153,29 @@ fn load_optional_string(path: &std::path::Path) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stored_provider_base_url_never_controls_authenticated_requests() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let group_id = "weixin-base-url";
+        let state_dir = home.groups_dir().join(group_id).join("state");
+        std::fs::create_dir_all(&state_dir).expect("state dir");
+        std::fs::write(
+            state_dir.join("im_weixin_credentials.json"),
+            br#"{"token":"secret","baseUrl":"http://127.0.0.1:8080/private"}"#,
+        )
+        .expect("credentials");
+
+        let (token, base_url) = load_credentials(&home, group_id).expect("load credentials");
+
+        assert_eq!(token, "secret");
+        assert_eq!(base_url, "https://ilinkai.weixin.qq.com/");
+    }
 }

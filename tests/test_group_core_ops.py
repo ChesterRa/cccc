@@ -65,6 +65,18 @@ class TestGroupCoreOps(unittest.TestCase):
                 scope_key = str((attach_resp.result or {}).get("scope_key") or "").strip()
                 self.assertTrue(scope_key)
 
+                actor_resp, _ = self._call(
+                    "actor_add",
+                    {
+                        "group_id": group_id,
+                        "actor_id": "scope-peer",
+                        "default_scope_key": scope_key,
+                        "enabled": False,
+                        "by": "user",
+                    },
+                )
+                self.assertTrue(actor_resp.ok, getattr(actor_resp, "error", None))
+
                 use_resp, _ = self._call(
                     "group_use",
                     {"group_id": group_id, "path": str(scope_dir), "by": "user"},
@@ -86,8 +98,64 @@ class TestGroupCoreOps(unittest.TestCase):
                 assert isinstance(show_group, dict)
                 scopes = show_group.get("scopes") if isinstance(show_group.get("scopes"), list) else []
                 self.assertEqual(len(scopes), 0)
+                actors = show_group.get("actors") if isinstance(show_group.get("actors"), list) else []
+                scope_peer = next(
+                    item
+                    for item in actors
+                    if isinstance(item, dict) and item.get("id") == "scope-peer"
+                )
+                self.assertEqual(scope_peer.get("default_scope_key"), "")
         finally:
             cleanup()
+
+    def test_attach_rolls_back_group_scope_and_registry_when_registry_save_fails(self) -> None:
+        from cccc.kernel.group import attach_scope_to_group, create_group, load_group
+        from cccc.kernel.registry import load_registry
+        from cccc.kernel.scope import detect_scope
+
+        home_raw, cleanup = self._with_home()
+        with tempfile.TemporaryDirectory(prefix="cccc_attach_rollback_") as scope_raw:
+            try:
+                home = Path(home_raw)
+                registry = load_registry()
+                group = create_group(
+                    registry,
+                    title="attach rollback",
+                    publish=False,
+                )
+                scope = detect_scope(Path(scope_raw))
+                group_text_before = (group.path / "group.yaml").read_text(encoding="utf-8")
+                registry_text_before = (home / "registry.json").read_text(encoding="utf-8")
+
+                with patch.object(
+                    registry,
+                    "save",
+                    side_effect=PermissionError("injected registry failure"),
+                ):
+                    with self.assertRaisesRegex(PermissionError, "injected registry failure"):
+                        attach_scope_to_group(registry, group, scope)
+
+                stored = load_group(group.group_id)
+                self.assertIsNotNone(stored)
+                assert stored is not None
+                self.assertEqual(stored.doc, group.doc)
+                self.assertEqual(stored.doc.get("scopes"), [])
+                self.assertEqual(stored.doc.get("active_scope_key"), "")
+                self.assertEqual(
+                    (group.path / "group.yaml").read_text(encoding="utf-8"),
+                    group_text_before,
+                )
+                self.assertEqual(
+                    (home / "registry.json").read_text(encoding="utf-8"),
+                    registry_text_before,
+                )
+                self.assertFalse((group.path / "scopes" / scope.scope_key).exists())
+
+                retried = attach_scope_to_group(registry, group, scope)
+                self.assertEqual(retried.doc.get("active_scope_key"), scope.scope_key)
+                self.assertEqual(load_registry().defaults.get(scope.scope_key), group.group_id)
+            finally:
+                cleanup()
 
     def test_group_preamble_get_set_and_reset(self) -> None:
         from cccc.kernel.prompt_files import DEFAULT_PREAMBLE_BODY
@@ -173,6 +241,105 @@ class TestGroupCoreOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_help_and_actor_notes_use_one_permissioned_file(self) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.kernel.prompt_files import HELP_FILENAME, read_group_prompt_file
+
+        _, cleanup = self._with_home()
+        try:
+            missing_group_id, _ = self._call("group_help_get", {"by": "user"})
+            self.assertFalse(missing_group_id.ok)
+            self.assertEqual(
+                getattr(missing_group_id.error, "code", ""), "missing_group_id"
+            )
+            unknown_group, _ = self._call(
+                "actor_notes_get", {"group_id": "missing", "by": "user"}
+            )
+            self.assertFalse(unknown_group.ok)
+            self.assertEqual(
+                getattr(unknown_group.error, "code", ""), "group_not_found"
+            )
+
+            created, _ = self._call(
+                "group_create", {"title": "help", "topic": "", "by": "user"}
+            )
+            group_id = str((created.result or {}).get("group_id") or "")
+            for actor_id in ("lead", "peer"):
+                added, _ = self._call(
+                    "actor_add",
+                    {
+                        "group_id": group_id,
+                        "actor_id": actor_id,
+                        "runtime": "custom",
+                        "runner": "pty",
+                        "command": ["sh", "-c", "exit 0"],
+                        "by": "user",
+                    },
+                )
+                self.assertTrue(added.ok, getattr(added, "error", None))
+
+            updated, _ = self._call(
+                "actor_notes_set",
+                {
+                    "group_id": group_id,
+                    "target_actor_id": "peer",
+                    "content": "Keep receipts.",
+                    "by": "lead",
+                },
+            )
+            self.assertTrue(updated.ok, getattr(updated, "error", None))
+            self.assertTrue(bool((updated.result or {}).get("changed")))
+
+            own, _ = self._call(
+                "actor_notes_get",
+                {"group_id": group_id, "target_actor_id": "peer", "by": "peer"},
+            )
+            self.assertTrue(own.ok, getattr(own, "error", None))
+            self.assertEqual((own.result or {}).get("content"), "Keep receipts.")
+
+            denied_read, _ = self._call(
+                "actor_notes_get",
+                {"group_id": group_id, "target_actor_id": "lead", "by": "peer"},
+            )
+            self.assertFalse(denied_read.ok)
+            self.assertEqual(getattr(denied_read.error, "code", ""), "permission_denied")
+
+            denied_write, _ = self._call(
+                "actor_notes_set",
+                {
+                    "group_id": group_id,
+                    "target_actor_id": "peer",
+                    "content": "self-authored",
+                    "by": "peer",
+                },
+            )
+            self.assertFalse(denied_write.ok)
+            self.assertEqual(getattr(denied_write.error, "code", ""), "permission_denied")
+
+            effective, _ = self._call(
+                "group_help_get",
+                {"group_id": group_id, "actor_id": "peer", "by": "peer"},
+            )
+            self.assertTrue(effective.ok, getattr(effective, "error", None))
+            markdown = str((effective.result or {}).get("markdown") or "")
+            self.assertIn("## Notes for you", markdown)
+            self.assertIn("Keep receipts.", markdown)
+            self.assertNotIn("## Foreman", markdown)
+
+            cleared, _ = self._call(
+                "actor_notes_clear",
+                {"group_id": group_id, "target_actor_id": "peer", "by": "user"},
+            )
+            self.assertTrue(cleared.ok, getattr(cleared, "error", None))
+            self.assertTrue(bool((cleared.result or {}).get("changed")))
+            self.assertEqual((cleared.result or {}).get("content"), "")
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            self.assertFalse(read_group_prompt_file(group, HELP_FILENAME).found)
+        finally:
+            cleanup()
+
     def test_group_use_rejects_exact_cccc_home_as_workspace_scope(self) -> None:
         home, cleanup = self._with_home()
         try:
@@ -229,7 +396,7 @@ class TestGroupCoreOps(unittest.TestCase):
 
             def _flaky_rmtree(path, *args, **kwargs):
                 name = Path(path).name
-                if name == group_id and not injected["raised"]:
+                if group_id in name and not injected["raised"]:
                     injected["raised"] = True
                     raise OSError(errno.ENOTEMPTY, "Directory not empty")
                 return real_rmtree(path, *args, **kwargs)
@@ -240,6 +407,115 @@ class TestGroupCoreOps(unittest.TestCase):
             self.assertTrue(injected["raised"])
             self.assertTrue(delete_resp.ok, getattr(delete_resp, "error", None))
             self.assertIsNone(load_group(group_id))
+        finally:
+            cleanup()
+
+    def test_group_delete_removes_canonical_path_recreated_after_rename(self) -> None:
+        from cccc.kernel.group import load_group
+
+        home_raw, cleanup = self._with_home()
+        try:
+            created, _ = self._call(
+                "group_create",
+                {"title": "delete-recreated", "topic": "", "by": "user"},
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            group_id = str((created.result or {}).get("group_id") or "")
+            group_path = Path(home_raw) / "groups" / group_id
+            real_rmtree = shutil.rmtree
+            recreated = {"done": False}
+
+            def _recreating_rmtree(path, *args, **kwargs):
+                candidate = Path(path)
+                if (
+                    candidate.name.startswith(f".{group_id}.deleting-")
+                    and not recreated["done"]
+                ):
+                    recreated["done"] = True
+                    (group_path / "state").mkdir(parents=True)
+                    (group_path / "state" / "late-write").write_text(
+                        "stale background write",
+                        encoding="utf-8",
+                    )
+                return real_rmtree(candidate, *args, **kwargs)
+
+            with patch(
+                "cccc.kernel.group.shutil.rmtree",
+                side_effect=_recreating_rmtree,
+            ):
+                deleted, _ = self._call(
+                    "group_delete", {"group_id": group_id, "by": "user"}
+                )
+
+            self.assertTrue(recreated["done"])
+            self.assertTrue(deleted.ok, getattr(deleted, "error", None))
+            self.assertFalse(group_path.exists())
+            self.assertIsNone(load_group(group_id))
+        finally:
+            cleanup()
+
+    def test_group_delete_restores_group_routing_and_secrets_when_registry_save_fails(self) -> None:
+        from cccc.daemon.actors.private_env_ops import load_actor_private_env
+        from cccc.kernel.active import load_active, set_active_group_id
+        from cccc.kernel.group import load_group
+        from cccc.kernel.registry import load_registry
+
+        home_raw, cleanup = self._with_home()
+        try:
+            home = Path(home_raw)
+            created, _ = self._call(
+                "group_create",
+                {"title": "delete rollback", "topic": "", "by": "user"},
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            group_id = str((created.result or {}).get("group_id") or "")
+            added, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "rollback-peer",
+                    "runtime": "custom",
+                    "runner": "pty",
+                    "command": ["sh"],
+                    "enabled": False,
+                    "env_private": {"ROLLBACK_SECRET": "preserve-me"},
+                    "by": "user",
+                },
+            )
+            self.assertTrue(added.ok, getattr(added, "error", None))
+            set_active_group_id(group_id)
+            registry_text_before = (home / "registry.json").read_text(encoding="utf-8")
+
+            with patch(
+                "cccc.kernel.registry.Registry.save",
+                side_effect=PermissionError("injected registry failure"),
+            ):
+                failed, _ = self._call(
+                    "group_delete", {"group_id": group_id, "by": "user"}
+                )
+
+            self.assertFalse(failed.ok)
+            self.assertEqual(getattr(failed.error, "code", ""), "group_delete_failed")
+            self.assertIsNotNone(load_group(group_id))
+            self.assertIn(group_id, load_registry().groups)
+            self.assertEqual(
+                (home / "registry.json").read_text(encoding="utf-8"),
+                registry_text_before,
+            )
+            self.assertEqual(str(load_active().get("active_group_id") or ""), group_id)
+            self.assertEqual(
+                load_actor_private_env(group_id, "rollback-peer").get("ROLLBACK_SECRET"),
+                "preserve-me",
+            )
+
+            retried, _ = self._call(
+                "group_delete", {"group_id": group_id, "by": "user"}
+            )
+            self.assertTrue(retried.ok, getattr(retried, "error", None))
+            self.assertIsNone(load_group(group_id))
+            self.assertNotIn(group_id, load_registry().groups)
+            self.assertEqual(str(load_active().get("active_group_id") or ""), "")
+            self.assertEqual(load_actor_private_env(group_id, "rollback-peer"), {})
         finally:
             cleanup()
 
@@ -312,6 +588,19 @@ class TestGroupCoreOps(unittest.TestCase):
                     "keepalive_delay_seconds": 456,
                     "runtime_last_tick": "should not be copied",
                 }
+                group.doc["settings"] = {
+                    "nudge_after_seconds": 999,
+                    "help_nudge_interval_seconds": 777,
+                    "default_send_to": "broadcast",
+                }
+                group.doc["runtime_states"] = {"peer1": {"status": "working"}}
+                group.doc["assistants"] = {"active_document_id": "old-document"}
+                group.doc["im"] = {"enabled": True}
+                group.doc["im_bridge"] = {"running": True}
+                group.doc["group_bridge"] = {"status": "connected"}
+                group.doc["web_model_delivery_preferences"] = {
+                    "peer1": {"mode": "image_compat"}
+                }
                 group.save()
                 state_path = group.path / "state" / "automation.json"
                 state_path.write_text('{"runtime_marker": true}\n', encoding="utf-8")
@@ -370,11 +659,22 @@ class TestGroupCoreOps(unittest.TestCase):
                 self.assertEqual(automation.get("snippet_overrides"), {"standup": "custom standup"})
                 self.assertEqual(int(automation.get("nudge_after_seconds") or 0), 123)
                 self.assertEqual(int(automation.get("keepalive_delay_seconds") or 0), 456)
+                self.assertEqual(int(automation.get("help_nudge_interval_seconds") or 0), 777)
                 self.assertNotIn("runtime_last_tick", automation)
+                self.assertNotIn("settings", replacement.doc)
                 self.assertNotIn("messaging", replacement.doc)
                 self.assertNotIn("delivery", replacement.doc)
                 self.assertNotIn("terminal_transcript", replacement.doc)
                 self.assertNotIn("features", replacement.doc)
+                for key in (
+                    "runtime_states",
+                    "assistants",
+                    "im",
+                    "im_bridge",
+                    "group_bridge",
+                    "web_model_delivery_preferences",
+                ):
+                    self.assertNotIn(key, replacement.doc)
                 self.assertFalse((replacement.path / "state" / "automation.json").exists())
 
                 ledger_text = replacement.ledger_path.read_text(encoding="utf-8")
@@ -417,6 +717,58 @@ class TestGroupCoreOps(unittest.TestCase):
             self.assertEqual(str(load_active().get("active_group_id") or ""), active_group_id)
         finally:
             cleanup()
+
+    def test_group_reset_preparation_failure_rolls_back_replacement_state(self) -> None:
+        from cccc.kernel.active import load_active, set_active_group_id
+        from cccc.kernel.group import load_group
+        from cccc.kernel.registry import load_registry
+
+        home_raw, cleanup = self._with_home()
+        with tempfile.TemporaryDirectory(prefix="cccc_scope_") as scope_dir_raw:
+            try:
+                create_resp, _ = self._call(
+                    "group_create",
+                    {"title": "reset-rollback", "topic": "", "by": "user"},
+                )
+                self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+                group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+                attach_resp, _ = self._call(
+                    "attach",
+                    {"group_id": group_id, "path": scope_dir_raw, "by": "user"},
+                )
+                self.assertTrue(attach_resp.ok, getattr(attach_resp, "error", None))
+                scope_key = str((attach_resp.result or {}).get("scope_key") or "").strip()
+                set_active_group_id(group_id)
+                replacement_ids: list[str] = []
+
+                def _fail_copy(_: str, replacement_group_id: str) -> int:
+                    replacement_ids.append(replacement_group_id)
+                    target = Path(home_raw) / "state" / "secrets" / "actors" / replacement_group_id
+                    target.mkdir(parents=True)
+                    (target / "partial.json").write_text("{}\n", encoding="utf-8")
+                    raise OSError("injected secret-copy failure")
+
+                with patch("cccc.daemon.group.group_ops.copy_group_private_env", side_effect=_fail_copy):
+                    reset_resp, _ = self._call(
+                        "group_reset",
+                        {"group_id": group_id, "confirm": group_id, "by": "user"},
+                    )
+
+                self.assertFalse(reset_resp.ok)
+                self.assertEqual((reset_resp.error.code if reset_resp.error else ""), "group_reset_failed")
+                self.assertEqual(len(replacement_ids), 1)
+                replacement_group_id = replacement_ids[0]
+                self.assertIsNotNone(load_group(group_id))
+                self.assertIsNone(load_group(replacement_group_id))
+                registry = load_registry()
+                self.assertEqual(set(registry.groups), {group_id})
+                self.assertEqual(registry.defaults.get(scope_key), group_id)
+                self.assertEqual(str(load_active().get("active_group_id") or ""), group_id)
+                self.assertFalse(
+                    (Path(home_raw) / "state" / "secrets" / "actors" / replacement_group_id).exists()
+                )
+            finally:
+                cleanup()
 
     def test_group_reset_requires_matching_confirm(self) -> None:
         from cccc.kernel.group import load_group

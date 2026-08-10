@@ -11,7 +11,6 @@ v3 truths:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import threading
@@ -52,13 +51,6 @@ from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..runner_state_ops import headless_state_running, read_headless_state
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
-from ...kernel.prompt_files import (
-    HELP_FILENAME,
-    delete_group_prompt_file,
-    load_builtin_help_markdown,
-    read_group_prompt_file,
-    write_group_prompt_file,
-)
 from ...kernel.working_state import derive_effective_working_state
 from ...paths import ensure_home
 from ...util.conv import coerce_bool
@@ -454,6 +446,7 @@ def _check_permission(
     task: Optional[Task] = None,
     target_actor_id: Optional[str] = None,
     create_assignee: Optional[str] = None,
+    requested_assignee: Optional[str] = None,
 ) -> Optional[str]:
     if by == "system":
         return None
@@ -463,14 +456,12 @@ def _check_permission(
         return None
 
     role = "user" if by == "user" else get_effective_role(group, by)
-    if role in {"user", "foreman"}:
-        if op_name in {"agent_state.update", "agent_state.clear"} and target_actor_id and by not in {"system", target_actor_id}:
-            return f"Permission denied: {op_name} for {target_actor_id} (caller is {by})"
+    if role == "user":
         return None
 
-    if op_name == "actor_notes.set":
-        if role not in {"user", "foreman"}:
-            return "Permission denied: actor_notes.set requires foreman or user"
+    if role == "foreman":
+        if op_name in {"agent_state.update", "agent_state.clear"} and target_actor_id and by not in {"system", target_actor_id}:
+            return f"Permission denied: {op_name} for {target_actor_id} (caller is {by})"
         return None
 
     if op_name == "coordination.brief.update":
@@ -496,6 +487,9 @@ def _check_permission(
         assignee = str(task.assignee or "").strip()
         handoff_to = str(task.handoff_to or "").strip()
         if assignee == by or handoff_to == by:
+            next_assignee = str(requested_assignee or "").strip()
+            if op_name == "task.update" and next_assignee and next_assignee != by:
+                return f"Permission denied: peer cannot reassign task to {next_assignee}"
             return None
         if assignee:
             return f"Permission denied: {op_name} on {task.id} (assigned to {assignee}, caller is {by})"
@@ -595,32 +589,6 @@ def _record_note(notes: List[CoordinationNote], *, by: str, summary: str, task_i
     note = CoordinationNote(by=by, summary=_normalize_text(summary, max_len=400), task_id=(str(task_id or "").strip() or None))
     notes.insert(0, note)
     del notes[5:]
-
-
-def _coordination_memory_note_text(*, kind: str, summary: str, by: str, task_id: Optional[str]) -> str:
-    label = "Decision" if str(kind or "").strip().lower() == "decision" else "Handoff"
-    text = f"{label}: {str(summary or '').strip()}"
-    meta: List[str] = []
-    if task_id:
-        meta.append(f"task={str(task_id).strip()}")
-    if by:
-        meta.append(f"by={str(by).strip()}")
-    if meta:
-        text += f" ({', '.join(meta)})"
-    return text.strip()
-
-
-def _coordination_memory_note_key(*, kind: str, summary: str, by: str, task_id: Optional[str]) -> str:
-    basis = "|".join(
-        [
-            str(kind or "").strip().lower(),
-            str(summary or "").strip(),
-            str(by or "").strip(),
-            str(task_id or "").strip(),
-        ]
-    )
-    digest = hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
-    return f"coordination_note:{digest}"
 
 
 def _filter_agents_to_group(storage: ContextStorage, agents_state: AgentsData) -> AgentsData:
@@ -1034,38 +1002,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 task_id = str(raw.get("task_id") or "").strip() or None
                 target = context.coordination.recent_decisions if note_kind == "decision" else context.coordination.recent_handoffs
                 _record_note(target, by=by, summary=summary, task_id=task_id)
-                if not dry_run:
-                    try:
-                        from ..memory.memory_ops import handle_memory_reme_write
-
-                        source_refs = [f"coordination:{note_kind}"]
-                        if task_id:
-                            source_refs.append(f"task:{task_id}")
-                        handle_memory_reme_write(
-                            {
-                                "group_id": group_id,
-                                "target": "daily",
-                                "date": _utc_now_iso()[:10],
-                                "mode": "append",
-                                "content": _coordination_memory_note_text(
-                                    kind=note_kind,
-                                    summary=summary,
-                                    by=by,
-                                    task_id=task_id,
-                                ),
-                                "idempotency_key": _coordination_memory_note_key(
-                                    kind=note_kind,
-                                    summary=summary,
-                                    by=by,
-                                    task_id=task_id,
-                                ),
-                                "actor_id": by,
-                                "tags": ["coordination_note", note_kind],
-                                "source_refs": source_refs,
-                            }
-                        )
-                    except Exception:
-                        logger.exception("memory_coordination_note_hook_failed group_id=%s kind=%s", group_id, note_kind)
                 context_dirty = True
                 _mark_change(idx, op_name, f"Added {note_kind} note")
                 continue
@@ -1113,7 +1049,18 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 task = tasks_by_id.get(task_id)
                 if task is None:
                     raise ValueError(f"Task not found: {task_id}")
-                perm_err = _check_permission(by, op_name, group_id, task=task)
+                requested_assignee = (
+                    str(raw.get("assignee") or "").strip()
+                    if "assignee" in raw
+                    else None
+                )
+                perm_err = _check_permission(
+                    by,
+                    op_name,
+                    group_id,
+                    task=task,
+                    requested_assignee=requested_assignee,
+                )
                 if perm_err:
                     raise ValueError(perm_err)
                 updated = False
@@ -1131,8 +1078,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                         updated = True
                 if "assignee" in raw:
                     value = str(raw.get("assignee") or "").strip() or None
-                    if by not in {"system", "user"} and value and value != by:
-                        raise ValueError(f"Permission denied: peer cannot reassign task to {value}")
                     if task.assignee != value:
                         task.assignee = value
                         updated = True
@@ -1223,84 +1168,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     dirty_task_ids.append(task.id)
                 tasks_changed = True
                 _mark_change(idx, op_name, f"Moved task {task.id} to {new_status.value}", task_id=task.id)
-
-                assignee_id = str(task.assignee or "").strip()
-                if assignee_id:
-                    agent = _get_or_create_agent(agents_state, assignee_id)
-                    auto_changed = False
-                    changed_hint = f"{task.id} -> {new_status.value}"
-                    if new_status == TaskStatus.ACTIVE:
-                        if agent.hot.active_task_id != task.id:
-                            agent.hot.active_task_id = task.id
-                            auto_changed = True
-                        if task.title and agent.hot.focus != task.title:
-                            agent.hot.focus = task.title
-                            auto_changed = True
-                        if agent.warm.what_changed != changed_hint:
-                            agent.warm.what_changed = changed_hint
-                            auto_changed = True
-                    elif new_status in {TaskStatus.DONE, TaskStatus.ARCHIVED, TaskStatus.PLANNED}:
-                        if agent.hot.active_task_id == task.id:
-                            agent.hot.active_task_id = None
-                            auto_changed = True
-                        if agent.warm.what_changed != changed_hint:
-                            agent.warm.what_changed = changed_hint
-                            auto_changed = True
-                        if agent.hot.focus == task.title and new_status != TaskStatus.ACTIVE:
-                            agent.hot.focus = ""
-                            auto_changed = True
-                    if auto_changed:
-                        agent.updated_at = _utc_now_iso()
-                        agents_dirty = True
-                        agents_changed = True
-                        _mark_change(idx, "agent_state.autosync", f"Auto-synced agent {assignee_id} from {task.id}")
-
-                if not dry_run:
-                    try:
-                        from ..memory.memory_ops import handle_memory_reme_write
-
-                        lifecycle_note = (
-                            f"Task status update: id={task.id}, title={task.title}, from={prev_status.value}, "
-                            f"to={new_status.value}, by={by}, at={task.updated_at}"
-                        )
-                        handle_memory_reme_write(
-                            {
-                                "group_id": group_id,
-                                "target": "daily",
-                                "date": _utc_now_iso()[:10],
-                                "mode": "append",
-                                "content": lifecycle_note,
-                                "idempotency_key": f"task_status:{task.id}:{prev_status.value}->{new_status.value}:{task.updated_at}",
-                                "actor_id": by,
-                                "tags": ["task_status", new_status.value],
-                                "source_refs": [f"task:{task.id}"],
-                            }
-                        )
-                    except Exception:
-                        logger.exception("memory_task_status_hook_failed group_id=%s task_id=%s", group_id, task.id)
-
-                    if new_status == TaskStatus.DONE and task.is_root:
-                        try:
-                            from ..memory.memory_ops import handle_memory_reme_write
-
-                            promotion_note = (
-                                f"Root task completed: id={task.id}, title={task.title}, outcome={task.outcome}, "
-                                f"by={by}, at={task.updated_at}"
-                            )
-                            handle_memory_reme_write(
-                                {
-                                    "group_id": group_id,
-                                    "target": "memory",
-                                    "mode": "append",
-                                    "content": promotion_note,
-                                    "idempotency_key": f"root_task_done:{task.id}",
-                                    "actor_id": by,
-                                    "tags": ["root_task_done", "stable"],
-                                    "source_refs": [f"task:{task.id}"],
-                                }
-                            )
-                        except Exception:
-                            logger.exception("memory_root_task_hook_failed group_id=%s task_id=%s", group_id, task.id)
                 continue
 
             if op_name == "task.restore":
@@ -1337,28 +1204,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 delete_targets, delete_reason = _task_delete_plan(task, tasks_by_id, group_id=group_id, by=by)
                 if delete_reason:
                     raise ValueError(f"op[{idx}] task.delete rejected: {delete_reason}")
-
-                delete_ids = {item.id for item in delete_targets}
-                delete_titles = {str(item.title or "").strip() for item in delete_targets if str(item.title or "").strip()}
-                for agent in agents_state.agents:
-                    hot = agent.hot if isinstance(agent.hot, AgentStateHot) else AgentStateHot()
-                    warm = agent.warm if isinstance(agent.warm, AgentStateWarm) else AgentStateWarm()
-                    auto_changed = False
-                    if str(hot.active_task_id or "").strip() in delete_ids:
-                        hot.active_task_id = None
-                        auto_changed = True
-                    if str(hot.focus or "").strip() in delete_titles:
-                        hot.focus = ""
-                        auto_changed = True
-                    if any(warm.what_changed == f"{deleted_id} -> planned" or warm.what_changed == f"{deleted_id} -> archived" for deleted_id in delete_ids):
-                        warm.what_changed = ""
-                        auto_changed = True
-                    if auto_changed:
-                        agent.hot = hot
-                        agent.warm = warm
-                        agent.updated_at = _utc_now_iso()
-                        agents_dirty = True
-                        agents_changed = True
 
                 for delete_task in delete_targets:
                     tasks_by_id.pop(delete_task.id, None)
@@ -1464,44 +1309,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 agents_dirty = True
                 agents_changed = True
                 _mark_change(idx, op_name, f"Cleared agent state {actor_id}")
-                continue
-
-            if op_name == "actor_notes.set":
-                actor_id = str(raw.get("actor_id") or "").strip()
-                if not actor_id:
-                    raise ValueError(f"op[{idx}] actor_notes.set actor_id is required")
-                perm_err = _check_permission(by, op_name, group_id)
-                if perm_err:
-                    raise ValueError(perm_err)
-                group = load_group(group_id)
-                if group is None:
-                    raise ValueError(f"group not found: {group_id}")
-                actor_ids = _group_actor_ids(group)
-                target_actor_id = _canonical_actor_id(actor_ids, actor_id)
-                if target_actor_id not in actor_ids:
-                    raise ValueError(f"op[{idx}] actor_notes.set actor not found: {actor_id}")
-
-                from ...ports.mcp.utils.help_markdown import update_actor_help_note
-
-                prompt_file = read_group_prompt_file(group, HELP_FILENAME)
-                builtin_help = str(load_builtin_help_markdown() or "")
-                current_content = builtin_help if not prompt_file.found else str(prompt_file.content or "")
-                source = raw.get("content")
-                if source is None:
-                    source = raw.get("persona_notes") if "persona_notes" in raw else raw.get("notes")
-                value = _normalize_text(source, max_len=600)
-                next_content = update_actor_help_note(
-                    current_content,
-                    target_actor_id,
-                    value,
-                    actor_order=actor_ids,
-                )
-                if next_content != current_content:
-                    if not next_content.strip() or next_content == builtin_help:
-                        delete_group_prompt_file(group, HELP_FILENAME)
-                    else:
-                        write_group_prompt_file(group, HELP_FILENAME, next_content)
-                    _mark_change(idx, op_name, f"Set actor notes for {target_actor_id}")
                 continue
 
             if op_name == "meta.merge":

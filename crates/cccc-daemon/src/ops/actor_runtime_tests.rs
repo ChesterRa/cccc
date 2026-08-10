@@ -34,6 +34,35 @@ fn restore_migrates_legacy_actor_scope_paths_even_for_stopped_groups() {
 }
 
 #[test]
+fn pty_actor_start_without_a_scope_is_rejected() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("missing scope", "").expect("group");
+    let group_id = group.group_id.clone();
+    store
+        .mutate(&group_id, |group| {
+            let mut actor = Actor::new("peer1");
+            actor.runtime = ActorRuntime::Custom;
+            actor.runner = RunnerKind::Pty;
+            actor.command = vec!["sh".into(), "-c".into(), "sleep 5".into()];
+            actors::add(group, actor)
+        })
+        .expect("actor");
+
+    let response = request(&home, "actor_start", &group_id);
+    assert!(!response.ok);
+    assert_eq!(
+        response.error.expect("missing scope error").code,
+        "missing_project_root"
+    );
+    assert!(actor_runtime::status(&group_id, "peer1").is_none());
+    let stored = store.load(&group_id).expect("stored group");
+    assert!(!stored.running);
+    assert_eq!(stored.state, GroupState::Active);
+}
+
+#[test]
 fn restores_enabled_actors_for_persisted_running_groups() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

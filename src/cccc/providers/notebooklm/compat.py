@@ -15,7 +15,8 @@ class NotebookLMCompatStatus:
 def probe_notebooklm_vendor() -> NotebookLMCompatStatus:
     try:
         from ._vendor.notebooklm import __version__
-        from ._vendor.notebooklm.auth import AuthTokens, extract_cookies_from_storage, fetch_tokens
+        from ._vendor.notebooklm._auth.refresh import _fetch_tokens_with_jar
+        from ._vendor.notebooklm.auth import AuthTokens, build_cookie_jar, extract_cookies_with_domains
         from ._vendor.notebooklm.client import NotebookLMClient
 
         if __version__ != _EXPECTED_VENDOR_VERSION:
@@ -28,7 +29,7 @@ def probe_notebooklm_vendor() -> NotebookLMCompatStatus:
             )
 
         # Symbol-level checks keep the narrow CCCC adapter boundary explicit.
-        _ = AuthTokens, extract_cookies_from_storage, fetch_tokens, NotebookLMClient
+        _ = AuthTokens, build_cookie_jar, extract_cookies_with_domains, _fetch_tokens_with_jar, NotebookLMClient
         return NotebookLMCompatStatus(compatible=True, reason="ok")
     except Exception as e:
         return NotebookLMCompatStatus(

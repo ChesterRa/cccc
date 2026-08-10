@@ -44,18 +44,10 @@ fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let provider = provider(request);
     require_notebooklm(&provider)?;
     let value = load(home, &group_id)?;
-    let auth_configured =
-        space_credentials::status(home, &provider).map_err(OpError::io)?["configured"]
-            .as_bool()
-            .unwrap_or(false);
-    let provider_record = provider_record(home, &provider)?;
-    let enabled = provider_record["enabled"].as_bool().unwrap_or(false);
-    let real_enabled = provider_record["real_enabled"].as_bool().unwrap_or(false);
-    let mode = provider_record["mode"].as_str().unwrap_or("disabled");
-    let write_ready = auth_configured && enabled && real_enabled && mode == "active";
+    let provider_state = provider_runtime_state(home, &provider)?;
     object(json!({
         "group_id":group_id,
-        "provider":{"provider":provider,"enabled":enabled,"real_enabled":real_enabled,"real_adapter_enabled":real_enabled,"auth_configured":auth_configured,"mode":mode,"write_ready":write_ready,"readiness_reason":if !auth_configured{"credential missing"}else if write_ready{"ready"}else{"provider disabled"},"last_health_at":provider_record["last_health_at"],"last_error":provider_record["last_error"]},
+        "provider":provider_state,
         "bindings":value["bindings"],
         "queue_summary":{"work":summary_for(&value,"work"),"memory":summary_for(&value,"memory")},
         "sync":value.get("sync").cloned().unwrap_or(json!({"available":false,"converged":false,"reason":"provider_unavailable"})),

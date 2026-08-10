@@ -304,6 +304,12 @@ def handle_actor_add(
         pass
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
+    group_state = str(group.doc.get("state") or "active").strip().lower()
+    if group_state not in {"active", "idle"}:
+        return DaemonResponse(
+            ok=True,
+            result={"actor": actor, "event": event, "running": False},
+        )
     start_actor_id = str(actor.get("id") or actor_id).strip() or actor_id
     start_runtime = str(actor.get("runtime") or runtime).strip() or runtime
     start_runner = str(actor.get("runner") or runner).strip() or runner

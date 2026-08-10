@@ -1,12 +1,9 @@
 use cccc_contracts::utc_now;
 use cccc_core::HomeLayout;
-use cccc_core::integration_state;
 use serde_json::{Map, Value, json};
 use sha2::Digest;
 use std::io;
 use uuid::Uuid;
-
-const STORE_KEY: &str = "group_bridge";
 
 pub struct BridgeStore<'a> {
     home: &'a HomeLayout,
@@ -18,8 +15,7 @@ impl<'a> BridgeStore<'a> {
     }
 
     pub fn load(&self) -> io::Result<Value> {
-        self.import_legacy_if_changed()?;
-        let mut value = integration_state::global_get(self.home, STORE_KEY)?;
+        let mut value = cccc_core::group_bridge_legacy::load(self.home)?;
         normalize(&mut value);
         Ok(value)
     }
@@ -28,10 +24,9 @@ impl<'a> BridgeStore<'a> {
         &self,
         change: impl FnOnce(&mut Map<String, Value>) -> io::Result<T>,
     ) -> io::Result<T> {
-        self.import_legacy_if_changed()?;
-        integration_state::global_update(self.home, STORE_KEY, |value| {
-            normalize(value);
-            change(value.as_object_mut().expect("bridge store initialized"))
+        cccc_core::group_bridge_legacy::update(self.home, |value| {
+            ensure_sections(value);
+            change(value)
         })
     }
 
@@ -40,8 +35,7 @@ impl<'a> BridgeStore<'a> {
     /// whether a repair is pending, and only writes when one is — so a steady-state
     /// store incurs no extra writes. The matching logic is shared with `normalize`.
     pub fn repair_legacy_active_outbounds(&self) -> io::Result<()> {
-        self.import_legacy_if_changed()?;
-        let mut raw = integration_state::global_get(self.home, STORE_KEY)?;
+        let mut raw = cccc_core::group_bridge_legacy::load(self.home)?;
         let needs_repair = {
             if !raw.is_object() {
                 raw = json!({});
@@ -58,10 +52,6 @@ impl<'a> BridgeStore<'a> {
             Ok(())
         })?;
         Ok(())
-    }
-
-    fn import_legacy_if_changed(&self) -> io::Result<()> {
-        cccc_core::group_bridge_legacy::import_if_changed(self.home)
     }
 
     pub fn identity(&self) -> io::Result<Value> {

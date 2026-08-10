@@ -132,7 +132,7 @@ export async function fetchIMPending(groupId: string) {
 
 export async function revokeIMChat(groupId: string, chatId: string, threadId: number | string = 0) {
   return apiJson<{ revoked: boolean; unsubscribed?: boolean }>(
-    `/api/im/revoke?group_id=${encodeURIComponent(groupId)}&chat_id=${encodeURIComponent(chatId)}&thread_id=${threadId}`,
+    `/api/im/revoke?group_id=${encodeURIComponent(groupId)}&chat_id=${encodeURIComponent(chatId)}&thread_id=${encodeURIComponent(String(threadId))}`,
     { method: "POST" },
   );
 }
@@ -158,7 +158,7 @@ export async function setIMVerbose(
   threadId: number | string = 0,
 ) {
   return apiJson<{ chat_id: string; thread_id: number | string; verbose: boolean }>(
-    `/api/im/verbose?group_id=${encodeURIComponent(groupId)}&chat_id=${encodeURIComponent(chatId)}&verbose=${verbose}&thread_id=${threadId}`,
+    `/api/im/verbose?group_id=${encodeURIComponent(groupId)}&chat_id=${encodeURIComponent(chatId)}&verbose=${verbose}&thread_id=${encodeURIComponent(String(threadId))}`,
     { method: "POST" },
   );
 }

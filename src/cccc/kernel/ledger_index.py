@@ -782,6 +782,51 @@ def lookup_event_positions(ledger_path: Path, event_ids: list[str]) -> list[Opti
     return [found.get(event_id) if event_id else None for event_id in wanted_ids]
 
 
+def lookup_latest_actor_add_positions(
+    ledger_path: Path,
+    actor_ids: list[str],
+) -> dict[str, tuple[int, int]]:
+    """Return the latest actor.add append position for each requested actor."""
+    wanted = {
+        str(actor_id or "").strip()
+        for actor_id in actor_ids
+        if str(actor_id or "").strip()
+    }
+    if not wanted:
+        return {}
+    rows = _query_ledger_index(
+        ledger_path,
+        lambda conn: conn.execute(
+            """
+            SELECT source_path, line_no, offset_bytes, source_seq
+            FROM events
+            WHERE kind = 'actor.add'
+            ORDER BY source_seq DESC, line_no DESC
+            """
+        ).fetchall(),
+    )
+    found: dict[str, tuple[int, int]] = {}
+    for row in rows:
+        source_path = str(row[0] or "").strip()
+        line_no = int(row[1] or 0)
+        offset_bytes = int(row[2] or 0)
+        source_seq = int(row[3] or 0)
+        event = _read_event_from_source(
+            ledger_path.parent,
+            source_path=source_path,
+            line_no=line_no,
+            offset_bytes=offset_bytes,
+        )
+        data = event.get("data") if isinstance(event, dict) and isinstance(event.get("data"), dict) else {}
+        actor = data.get("actor") if isinstance(data.get("actor"), dict) else {}
+        actor_id = str(actor.get("id") or "").strip()
+        if actor_id in wanted and actor_id not in found:
+            found[actor_id] = (source_seq, line_no)
+            if len(found) == len(wanted):
+                break
+    return found
+
+
 def _chunks(items: list[str], size: int = 500) -> list[list[str]]:
     chunk_size = max(1, int(size or 500))
     return [items[idx : idx + chunk_size] for idx in range(0, len(items), chunk_size)]

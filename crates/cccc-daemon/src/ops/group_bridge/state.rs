@@ -1,15 +1,12 @@
 use cccc_contracts::DaemonRequest;
-use cccc_core::{HomeLayout, group_bridge_legacy, integration_state};
+use cccc_core::{HomeLayout, group_bridge_legacy};
 use serde_json::{Map, Value, json};
 use std::io;
 
 use crate::dispatch::OpError;
 
-use super::STORE_KEY;
-
 pub(super) fn bridge_state(home: &HomeLayout) -> Result<Value, OpError> {
-    group_bridge_legacy::import_if_changed(home).map_err(OpError::io)?;
-    integration_state::global_get(home, STORE_KEY).map_err(OpError::io)
+    group_bridge_legacy::load(home).map_err(OpError::io)
 }
 
 pub(super) fn route(
@@ -42,13 +39,7 @@ pub(super) fn find_delivery(state: &Value, registration_id: &str, key: &str) -> 
 }
 
 pub(super) fn store_delivery(home: &HomeLayout, receipt: Value) -> Result<(), OpError> {
-    integration_state::global_update(home, STORE_KEY, |state| {
-        if !state.is_object() {
-            *state = json!({});
-        }
-        let root = state
-            .as_object_mut()
-            .ok_or_else(|| io::Error::other("group bridge state must be an object"))?;
+    group_bridge_legacy::update(home, |root| {
         let deliveries = root.entry("deliveries").or_insert_with(|| json!([]));
         if !deliveries.is_array() {
             *deliveries = json!([]);

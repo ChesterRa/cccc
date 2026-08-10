@@ -14,7 +14,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "terminal_history" => history(home, request),
         "terminal_since" => since(home, request),
         "terminal_write" => write(home, request),
-        "terminal_resize" => resize(request),
+        "term_resize" | "terminal_resize" => resize(request),
         "terminal_clear" => clear(home, request),
         _ => return None,
     })
@@ -143,7 +143,12 @@ fn since(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .args
         .get("after")
         .and_then(Value::as_u64)
-        .unwrap_or(u64::MAX);
+        .ok_or_else(|| {
+            OpError::new(
+                "invalid_args",
+                "after is required and must be a non-negative integer",
+            )
+        })?;
     let limit = integer(request, "limit_bytes", 64_000).clamp(1, 2_000_000);
     let page = super::terminal_history_source::since(home, &group_id, &actor_id, after, limit)
         .map_err(runtime_error)?;
@@ -170,7 +175,12 @@ fn resize(request: &DaemonRequest) -> OpResult {
     let cols = integer(request, "cols", 120).clamp(1, u16::MAX as usize) as u16;
     let rows = integer(request, "rows", 40).clamp(1, u16::MAX as usize) as u16;
     cccc_runtime::resize(&group_id, &actor_id, cols, rows).map_err(runtime_error)?;
-    object(json!({"resized": true, "cols": cols, "rows": rows}))
+    object(json!({
+        "group_id": group_id,
+        "actor_id": actor_id,
+        "cols": cols,
+        "rows": rows,
+    }))
 }
 
 fn clear(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -226,22 +236,22 @@ fn authorize_transcript(
 fn transcript_visibility(group: &GroupDoc) -> &str {
     let configured = group
         .extra
-        .get("settings")
+        .get("terminal_transcript")
         .and_then(Value::as_object)
-        .and_then(|settings| {
-            settings.get("terminal_transcript_visibility").or_else(|| {
-                settings
-                    .get("terminal_transcript")
-                    .and_then(Value::as_object)
-                    .and_then(|value| value.get("visibility"))
-            })
-        })
+        .and_then(|value| value.get("visibility"))
         .or_else(|| {
             group
                 .extra
-                .get("terminal_transcript")
+                .get("settings")
                 .and_then(Value::as_object)
-                .and_then(|value| value.get("visibility"))
+                .and_then(|settings| {
+                    settings.get("terminal_transcript_visibility").or_else(|| {
+                        settings
+                            .get("terminal_transcript")
+                            .and_then(Value::as_object)
+                            .and_then(|value| value.get("visibility"))
+                    })
+                })
         })
         .and_then(Value::as_str);
     match configured {

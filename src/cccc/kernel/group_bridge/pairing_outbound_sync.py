@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 from ...util.time import utc_now_iso
 from . import pairing
+from .credentials import save_pairing_bearer_token
 
 
 def approve_outbound_from_remote_request(
@@ -35,11 +36,25 @@ def approve_outbound_from_remote_request(
     if not local_gid or not issuer_gid or not issuer_pid:
         raise ValueError("pairing outbound is missing issuer identity")
 
+    # The issuer returns this secret once.  Keep it in the dedicated credential
+    # store and persist only the opaque reference on the local registration.
+    remote_send_token = str(request.pop("remote_send_token", "") or "").strip()
+    credential_ref = ""
+    if remote_send_token:
+        credential_ref = save_pairing_bearer_token(
+            local_group_id=local_gid,
+            remote_group_id=issuer_gid,
+            remote_endpoint=issuer_endpoint,
+            token=remote_send_token,
+            home=home,
+        )
+
     registration = pairing._upsert_approved_session_registration(  # type: ignore[attr-defined]
         local_gid,
         issuer_endpoint or pairing._session_only_registration_url(issuer_pid),  # type: ignore[attr-defined]
         remote_group_id=issuer_gid,
         remote_peer_id=issuer_pid,
+        credential_ref=credential_ref,
         home=home,
     )
     now = utc_now_iso()

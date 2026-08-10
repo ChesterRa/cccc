@@ -1,6 +1,7 @@
 pub mod access_tokens;
 pub mod active;
 pub mod actors;
+pub mod assistant_state;
 pub mod automation;
 mod automation_render;
 mod automation_schedule;
@@ -22,6 +23,7 @@ mod group_delete;
 pub mod group_prompts;
 pub mod group_scope;
 pub mod home;
+pub mod im_state;
 pub mod inbox;
 pub mod integration_state;
 pub mod ledger;
@@ -42,6 +44,7 @@ pub mod scope;
 pub mod settings;
 pub mod space_credentials;
 pub mod system_prompt;
+pub mod voice_recording_lease;
 
 pub use group::{GroupDoc, GroupStore, Scope};
 pub use home::{HomeError, HomeLayout};

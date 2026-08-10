@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+from ...kernel.actors import get_effective_role, is_voice_secretary_actor, list_actors
+from ...kernel.help_markdown import _select_help_markdown, parse_help_markdown, update_actor_help_note
 from ..actors.private_env_ops import copy_group_private_env
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
@@ -26,8 +28,10 @@ from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
 from ...kernel.prompt_files import (
     DEFAULT_PREAMBLE_BODY,
+    HELP_FILENAME,
     PREAMBLE_FILENAME,
     delete_group_prompt_file,
+    load_builtin_help_markdown,
     read_group_prompt_file,
     write_group_prompt_file,
 )
@@ -147,6 +151,222 @@ def handle_group_preamble_reset(args: Dict[str, Any]) -> DaemonResponse:
     return DaemonResponse(ok=True, result=_group_preamble_result(group, changed=changed))
 
 
+def _actor_ids(group: Group) -> list[str]:
+    return [
+        str(actor.get("id") or "").strip()
+        for actor in list_actors(group)
+        if str(actor.get("id") or "").strip()
+    ]
+
+
+def _canonical_actor_id(actor_ids: list[str], value: Any, *, extras: Optional[list[str]] = None) -> str:
+    target = str(value or "").strip()
+    if not target:
+        return ""
+    folded = target.casefold()
+    for actor_id in [*actor_ids, *(extras or [])]:
+        if actor_id.casefold() == folded:
+            return actor_id
+    return target
+
+
+def _help_document(group: Group) -> Dict[str, Any]:
+    prompt_file = read_group_prompt_file(group, HELP_FILENAME)
+    override = str(prompt_file.content or "") if prompt_file.found else ""
+    overridden = bool(override.strip())
+    return {
+        "content": override if overridden else str(load_builtin_help_markdown() or ""),
+        "source": "home" if overridden else "builtin",
+        "path": str(prompt_file.path or ""),
+        "source_path": str(prompt_file.path or "") if overridden else "cccc.resources/cccc-help.md",
+        "overridden": overridden,
+    }
+
+
+def _known_actor(group: Group, actor_id: str) -> Optional[Dict[str, Any]]:
+    target = actor_id.casefold()
+    return next(
+        (
+            actor
+            for actor in list_actors(group)
+            if str(actor.get("id") or "").strip().casefold() == target
+        ),
+        None,
+    )
+
+
+def _help_caller_role(group: Group, by: str) -> str:
+    if by in {"user", "system"}:
+        return by
+    if _known_actor(group, by) is None:
+        return "unknown"
+    return str(get_effective_role(group, by) or "peer").strip().lower()
+
+
+def handle_group_help_get(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip() or "user"
+    requested_actor_id = str(args.get("actor_id") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    caller_role = _help_caller_role(group, by)
+    if caller_role == "unknown":
+        return _error("permission_denied", f"group help requires a known actor: {by}")
+    actor_id = requested_actor_id or (by if caller_role in {"foreman", "peer"} else "")
+    actor = _known_actor(group, actor_id) if actor_id else None
+    if actor_id and actor is None:
+        return _error("actor_not_found", f"actor not found: {actor_id}")
+    canonical_actor_id = str((actor or {}).get("id") or "")
+    if caller_role == "peer" and canonical_actor_id.casefold() != by.casefold():
+        return _error("permission_denied", "actors can only read their own effective help")
+    role = str(get_effective_role(group, canonical_actor_id) or "").strip().lower() if actor else ""
+    voice_secretary = bool(actor and is_voice_secretary_actor(actor))
+    if voice_secretary:
+        role = "voice_secretary"
+    prompt = _help_document(group)
+    return DaemonResponse(
+        ok=True,
+        result={
+            "group_id": group_id,
+            "actor_id": canonical_actor_id or None,
+            "source": prompt["source"],
+            "source_path": prompt["source_path"],
+            "filename": HELP_FILENAME,
+            "overridden": prompt["overridden"],
+            "markdown": _select_help_markdown(
+                str(prompt["content"]),
+                role=role or None,
+                actor_id=canonical_actor_id or None,
+                include_voice_secretary=voice_secretary,
+            ),
+        },
+    )
+
+
+def _actor_notes_access(
+    group: Group,
+    *,
+    by: str,
+    target_actor_id: str,
+    mutate: bool,
+) -> Optional[DaemonResponse]:
+    role = _help_caller_role(group, by)
+    if role == "unknown":
+        return _error("permission_denied", f"actor notes require a known actor: {by}")
+    if mutate and role not in {"user", "system", "foreman"}:
+        return _error("permission_denied", "modifying actor notes requires foreman or user access")
+    if not mutate and role == "peer":
+        if not target_actor_id:
+            return _error("permission_denied", "listing all actor notes requires foreman or user access")
+        if target_actor_id.casefold() != by.casefold():
+            return _error("permission_denied", "actors can only read their own actor notes")
+    return None
+
+
+def handle_actor_notes_get(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip() or "user"
+    requested = str(args.get("target_actor_id") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    actor_ids = _actor_ids(group)
+    prompt = _help_document(group)
+    parsed = parse_help_markdown(str(prompt["content"]))
+    notes = parsed.get("actor_notes") if isinstance(parsed.get("actor_notes"), dict) else {}
+    extras = [str(actor_id) for actor_id in notes if str(actor_id) not in actor_ids]
+    target = _canonical_actor_id(actor_ids, requested, extras=extras)
+    denied = _actor_notes_access(group, by=by, target_actor_id=target, mutate=False)
+    if denied is not None:
+        return denied
+    if requested:
+        return DaemonResponse(
+            ok=True,
+            result={
+                "target_actor_id": target,
+                "content": str(notes.get(target) or ""),
+                "source": prompt["source"],
+                "path": prompt["path"],
+            },
+        )
+    ordered = list(actor_ids)
+    ordered.extend(actor_id for actor_id in extras if actor_id not in ordered)
+    return DaemonResponse(
+        ok=True,
+        result={
+            "actor_notes": [
+                {"actor_id": actor_id, "content": str(notes.get(actor_id) or "")}
+                for actor_id in ordered
+            ],
+            "source": prompt["source"],
+            "path": prompt["path"],
+        },
+    )
+
+
+def _handle_actor_notes_write(args: Dict[str, Any], *, clear: bool) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip() or "user"
+    requested = str(args.get("target_actor_id") or "").strip()
+    content = "" if clear else args.get("content")
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not requested:
+        return _error("invalid_args", "target_actor_id is required")
+    if not isinstance(content, str):
+        return _error("invalid_args", "content must be a string")
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    denied = _actor_notes_access(group, by=by, target_actor_id=requested, mutate=True)
+    if denied is not None:
+        return denied
+    actor_ids = _actor_ids(group)
+    target = _canonical_actor_id(actor_ids, requested)
+    if target not in actor_ids:
+        return _error("actor_not_found", f"actor not found: {requested}")
+    prompt = _help_document(group)
+    next_content = update_actor_help_note(
+        str(prompt["content"]),
+        target,
+        content,
+        actor_order=actor_ids,
+    )
+    changed = next_content != str(prompt["content"])
+    try:
+        if changed:
+            builtin = str(load_builtin_help_markdown() or "")
+            if (
+                not next_content.strip()
+                or next_content == builtin
+                or parse_help_markdown(next_content) == parse_help_markdown(builtin)
+            ):
+                delete_group_prompt_file(group, HELP_FILENAME)
+            else:
+                write_group_prompt_file(group, HELP_FILENAME, next_content)
+    except Exception as error:
+        return _error("actor_notes_write_failed", str(error))
+    result = handle_actor_notes_get(
+        {"group_id": group_id, "target_actor_id": target, "by": by}
+    )
+    if result.ok and isinstance(result.result, dict):
+        result.result["changed"] = changed
+    return result
+
+
+def handle_actor_notes_set(args: Dict[str, Any]) -> DaemonResponse:
+    return _handle_actor_notes_write(args, clear=False)
+
+
+def handle_actor_notes_clear(args: Dict[str, Any]) -> DaemonResponse:
+    return _handle_actor_notes_write(args, clear=True)
+
+
 def handle_group_update(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "user").strip()
@@ -227,9 +447,9 @@ def handle_group_delete(
         claude_app_supervisor.stop_group(group_id=group_id)
         pty_runner.SUPERVISOR.stop_group(group_id=group_id)
         headless_runner.SUPERVISOR.stop_group(group_id=group_id)
-        delete_group_private_env(group_id)
         reg = load_registry()
         delete_group(reg, group_id=group_id)
+        delete_group_private_env(group_id)
         active = load_active()
         if str(active.get("active_group_id") or "") == group_id:
             set_active_group_id("")
@@ -263,11 +483,7 @@ _RESET_ACTOR_CONFIG_KEYS = {
 }
 
 
-_RESET_AUTOMATION_CONFIG_KEYS = {
-    "version",
-    "rules",
-    "snippets",
-    "snippet_overrides",
+_RESET_AUTOMATION_TIMING_KEYS = {
     "nudge_after_seconds",
     "reply_required_nudge_after_seconds",
     "attention_ack_nudge_after_seconds",
@@ -282,16 +498,27 @@ _RESET_AUTOMATION_CONFIG_KEYS = {
     "help_nudge_interval_seconds",
     "help_nudge_min_messages",
 }
+_RESET_AUTOMATION_CONFIG_KEYS = {
+    "version",
+    "rules",
+    "snippets",
+    "snippet_overrides",
+} | _RESET_AUTOMATION_TIMING_KEYS
 
 
-def _reset_automation_config(raw: Any) -> Optional[Dict[str, Any]]:
-    if not isinstance(raw, dict):
+def _reset_automation_config(raw: Any, *, legacy_settings: Any = None) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, dict) and not isinstance(legacy_settings, dict):
         return None
+    canonical = raw if isinstance(raw, dict) else {}
     seed = default_automation_ruleset_doc()
     out = copy.deepcopy(seed)
     for key in _RESET_AUTOMATION_CONFIG_KEYS:
-        if key in raw:
-            out[key] = copy.deepcopy(raw.get(key))
+        if key in canonical:
+            out[key] = copy.deepcopy(canonical.get(key))
+    if isinstance(legacy_settings, dict):
+        for key in _RESET_AUTOMATION_TIMING_KEYS:
+            if key not in canonical and key in legacy_settings:
+                out[key] = copy.deepcopy(legacy_settings.get(key))
     if not isinstance(out.get("rules"), list):
         out["rules"] = copy.deepcopy(seed.get("rules") if isinstance(seed.get("rules"), list) else [])
     if not isinstance(out.get("snippets"), dict):
@@ -362,12 +589,41 @@ def _delete_group_for_reset(
         claude_app_supervisor.stop_group(group_id=group_id)
         pty_runner.SUPERVISOR.stop_group(group_id=group_id)
         headless_runner.SUPERVISOR.stop_group(group_id=group_id)
-        delete_group_private_env(group_id)
         reg = load_registry()
         delete_group(reg, group_id=group_id)
+        delete_group_private_env(group_id)
         return None
     except Exception as e:
         return str(e)
+
+
+def _rollback_reset_replacement(
+    *,
+    source_group_id: str,
+    scopes: list[Dict[str, str]],
+    replacement_group_id: str,
+    delete_group_private_env: Callable[[str], None],
+) -> list[str]:
+    failures: list[str] = []
+    private_env_path = ensure_home() / "state" / "secrets" / "actors" / replacement_group_id
+    try:
+        delete_group_private_env(replacement_group_id)
+    except Exception as exc:
+        failures.append(f"private_env: {exc}")
+    if private_env_path.exists():
+        failures.append("private_env: replacement directory remains")
+    try:
+        delete_group(load_registry(), group_id=replacement_group_id)
+    except Exception as exc:
+        failures.append(f"group: {exc}")
+    try:
+        registry = load_registry()
+        for scope in scopes:
+            registry.defaults[scope["scope_key"]] = source_group_id
+        registry.save()
+    except Exception as exc:
+        failures.append(f"scope_registry: {exc}")
+    return failures
 
 
 def handle_group_reset(
@@ -403,9 +659,13 @@ def handle_group_reset(
         for actor in (_reset_actor_config(item, now=now) for item in source.doc.get("actors", []))
         if actor is not None
     ]
-    automation = _reset_automation_config(source.doc.get("automation"))
+    automation = _reset_automation_config(
+        source.doc.get("automation"),
+        legacy_settings=source.doc.get("settings"),
+    )
     was_active = str(load_active().get("active_group_id") or "").strip() == group_id
 
+    replacement: Optional[Group] = None
     try:
         reg = load_registry()
         replacement = create_group(reg, title=title, topic=topic)
@@ -441,6 +701,19 @@ def handle_group_reset(
             data={"title": title, "topic": topic},
         )
     except Exception as e:
+        if replacement is None:
+            return _error("group_reset_failed", str(e))
+        rollback_failures = _rollback_reset_replacement(
+            source_group_id=group_id,
+            scopes=scopes,
+            replacement_group_id=replacement.group_id,
+            delete_group_private_env=delete_group_private_env,
+        )
+        if rollback_failures:
+            return _error(
+                "rollback_failed",
+                f"{e}; failed to roll back replacement {replacement.group_id}: {'; '.join(rollback_failures)}",
+            )
         return _error("group_reset_failed", str(e))
 
     old_delete_error = _delete_group_for_reset(
@@ -515,6 +788,14 @@ def try_handle_group_core_op(
         return handle_group_preamble_set(args)
     if op == "group_preamble_reset":
         return handle_group_preamble_reset(args)
+    if op == "group_help_get":
+        return handle_group_help_get(args)
+    if op == "actor_notes_get":
+        return handle_actor_notes_get(args)
+    if op == "actor_notes_set":
+        return handle_actor_notes_set(args)
+    if op == "actor_notes_clear":
+        return handle_actor_notes_clear(args)
     if op == "group_update":
         return handle_group_update(args)
     if op == "group_detach_scope":

@@ -1,6 +1,7 @@
 use regex::Regex;
 use reqwest::header::COOKIE;
 use serde::Deserialize;
+use std::cmp::Reverse;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{Error, Result};
@@ -20,6 +21,8 @@ struct Cookie {
     #[serde(default)]
     domain: String,
     #[serde(default)]
+    path: String,
+    #[serde(default)]
     expires: Option<f64>,
 }
 
@@ -30,26 +33,52 @@ pub(crate) struct AuthState {
     pub(crate) authuser: usize,
 }
 
-pub(crate) fn parse_storage(raw: &str) -> Result<(serde_json::Value, String, usize)> {
+pub(crate) fn parse_storage(
+    raw: &str,
+    request_host: &str,
+    request_path: &str,
+) -> Result<(serde_json::Value, String, usize)> {
+    let (value, state) = decode_storage(raw)?;
+    let authuser = state.authuser;
+    let cookies = cookie_header(&state, request_host, request_path).ok_or_else(|| {
+        Error::InvalidCredential("Playwright storage state must contain Google cookies".into())
+    })?;
+    Ok((value, cookies, authuser))
+}
+
+pub(crate) fn optional_cookie_header(
+    raw: &str,
+    request_host: &str,
+    request_path: &str,
+) -> Result<Option<String>> {
+    let (_, state) = decode_storage(raw)?;
+    Ok(cookie_header(&state, request_host, request_path))
+}
+
+fn decode_storage(raw: &str) -> Result<(serde_json::Value, StorageState)> {
     let value: serde_json::Value =
         serde_json::from_str(raw).map_err(|error| Error::InvalidCredential(error.to_string()))?;
     let state: StorageState = serde_json::from_value(value.clone())
         .map_err(|error| Error::InvalidCredential(error.to_string()))?;
-    let cookies = state
+    Ok((value, state))
+}
+
+fn cookie_header(state: &StorageState, request_host: &str, request_path: &str) -> Option<String> {
+    let mut cookies = state
         .cookies
-        .into_iter()
-        .filter(|cookie| domain_matches("notebooklm.google.com", &cookie.domain))
+        .iter()
+        .filter(|cookie| domain_matches(request_host, &cookie.domain))
+        .filter(|cookie| path_matches(request_path, &cookie.path))
         .filter(|cookie| !is_expired(cookie.expires))
         .filter(|cookie| !cookie.name.is_empty())
+        .collect::<Vec<_>>();
+    cookies.sort_by_key(|cookie| Reverse(normalized_cookie_path(&cookie.path).len()));
+    let header = cookies
+        .into_iter()
         .map(|cookie| format!("{}={}", cookie.name, cookie.value))
         .collect::<Vec<_>>()
         .join("; ");
-    if cookies.is_empty() {
-        return Err(Error::InvalidCredential(
-            "Playwright storage state must contain Google cookies".into(),
-        ));
-    }
-    Ok((value, cookies, state.authuser))
+    (!header.is_empty()).then_some(header)
 }
 
 fn is_expired(expires: Option<f64>) -> bool {
@@ -63,12 +92,36 @@ fn is_expired(expires: Option<f64>) -> bool {
 }
 
 fn domain_matches(host: &str, cookie_domain: &str) -> bool {
-    let domain = cookie_domain.trim_start_matches('.');
-    domain.is_empty()
-        || host == domain
-        || host
-            .strip_suffix(domain)
-            .is_some_and(|prefix| prefix.ends_with('.'))
+    let host = host.trim_end_matches('.').to_ascii_lowercase();
+    let raw_domain = cookie_domain
+        .trim()
+        .trim_end_matches('.')
+        .to_ascii_lowercase();
+    let Some(domain) = raw_domain.strip_prefix('.') else {
+        return !raw_domain.is_empty() && host == raw_domain;
+    };
+    !domain.is_empty()
+        && (host == domain
+            || host
+                .strip_suffix(domain)
+                .is_some_and(|prefix| prefix.ends_with('.')))
+}
+
+fn normalized_cookie_path(path: &str) -> &str {
+    if path.starts_with('/') { path } else { "/" }
+}
+
+fn path_matches(request_path: &str, cookie_path: &str) -> bool {
+    let request_path = if request_path.starts_with('/') {
+        request_path
+    } else {
+        "/"
+    };
+    let cookie_path = normalized_cookie_path(cookie_path);
+    request_path == cookie_path
+        || request_path
+            .strip_prefix(cookie_path)
+            .is_some_and(|suffix| cookie_path.ends_with('/') || suffix.starts_with('/'))
 }
 
 pub(crate) fn attach_cookie(
@@ -112,6 +165,8 @@ mod tests {
     fn parses_storage_state_and_filters_unrelated_cookies() {
         let (_, header, authuser) = parse_storage(
             r#"{"authuser":2,"cookies":[{"name":"SID","value":"a","domain":".google.com"},{"name":"x","value":"b","domain":"example.com"}]}"#,
+            "notebook.google.com",
+            "/",
         )
         .expect("credential");
         assert_eq!(header, "SID=a");
@@ -122,6 +177,8 @@ mod tests {
     fn excludes_google_sibling_domain_cookies() {
         let (_, header, _) = parse_storage(
             r#"{"cookies":[{"name":"SID","value":"ok","domain":".google.com"},{"name":"ACCOUNT","value":"private","domain":"accounts.google.com"}]}"#,
+            "notebook.google.com",
+            "/",
         )
         .expect("credential");
         assert_eq!(header, "SID=ok");
@@ -131,9 +188,34 @@ mod tests {
     fn excludes_expired_cookies() {
         let (_, header, _) = parse_storage(
             r#"{"cookies":[{"name":"OLD","value":"expired","domain":".google.com","expires":1},{"name":"SID","value":"session","domain":".google.com","expires":-1}]}"#,
+            "notebook.google.com",
+            "/",
         )
         .expect("credential");
         assert_eq!(header, "SID=session");
+    }
+
+    #[test]
+    fn preserves_current_gemini_notebook_cookie_scope() {
+        let raw = r#"{"cookies":[{"name":"SID","value":"global","domain":".google.com"},{"name":"OSID","value":"current","domain":"notebook.google.com"},{"name":"OSID","value":"legacy","domain":"notebooklm.google.com"}]}"#;
+        let (_, current, _) =
+            parse_storage(raw, "notebook.google.com", "/").expect("current credential");
+        let (_, legacy, _) =
+            parse_storage(raw, "notebooklm.google.com", "/").expect("legacy credential");
+        assert_eq!(current, "SID=global; OSID=current");
+        assert_eq!(legacy, "SID=global; OSID=legacy");
+    }
+
+    #[test]
+    fn honors_host_only_domains_and_cookie_paths() {
+        let raw = r#"{"cookies":[{"name":"GLOBAL","value":"g","domain":".google.com","path":"/"},{"name":"HOST_ONLY","value":"h","domain":"google.com","path":"/"},{"name":"ROOT","value":"r","domain":"notebooklm.google.com","path":"/"},{"name":"API","value":"a","domain":"notebooklm.google.com","path":"/_/LabsTailwindUi"},{"name":"OTHER","value":"x","domain":"notebooklm.google.com","path":"/other"}]}"#;
+        let (_, header, _) = parse_storage(
+            raw,
+            "notebooklm.google.com",
+            "/_/LabsTailwindUi/data/batchexecute",
+        )
+        .expect("credential");
+        assert_eq!(header, "API=a; GLOBAL=g; ROOT=r");
     }
 
     #[test]

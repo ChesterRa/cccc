@@ -184,9 +184,9 @@ pub(super) fn delivery_setting<'a>(
 ) -> Option<&'a serde_json::Value> {
     group
         .extra
-        .get("settings")
+        .get("delivery")
         .and_then(|value| value.get(key))
-        .or_else(|| group.extra.get("delivery").and_then(|value| value.get(key)))
+        .or_else(|| group.extra.get("settings").and_then(|value| value.get(key)))
 }
 
 fn enqueue(job: DeliveryJob) -> bool {
@@ -322,24 +322,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn delivery_settings_prefer_canonical_settings_and_read_legacy_delivery() {
+    fn delivery_settings_prefer_canonical_section_and_read_legacy_flat_value() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path()).expect("home");
         let store = GroupStore::new(home).expect("store");
         let mut group = store.create("delivery settings", "").expect("group");
         group
             .extra
-            .insert("delivery".into(), json!({"min_interval_seconds":7}));
-        assert_eq!(
-            delivery_setting(&group, "min_interval_seconds").and_then(|value| value.as_u64()),
-            Some(7)
-        );
-        group
-            .extra
             .insert("settings".into(), json!({"min_interval_seconds":2}));
         assert_eq!(
             delivery_setting(&group, "min_interval_seconds").and_then(|value| value.as_u64()),
             Some(2)
+        );
+        group
+            .extra
+            .insert("delivery".into(), json!({"min_interval_seconds":7}));
+        assert_eq!(
+            delivery_setting(&group, "min_interval_seconds").and_then(|value| value.as_u64()),
+            Some(7)
         );
     }
 }

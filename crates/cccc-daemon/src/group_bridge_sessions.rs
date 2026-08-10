@@ -1,6 +1,6 @@
 use cccc_contracts::{DaemonRequest, utc_now};
 use cccc_core::group_bridge_identity::GroupBridgeIdentity;
-use cccc_core::{HomeLayout, group_bridge_legacy, integration_state};
+use cccc_core::{HomeLayout, group_bridge_legacy};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
@@ -10,7 +10,6 @@ use tokio::sync::{mpsc as tokio_mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::Message;
 
-const STORE_KEY: &str = "group_bridge";
 const SCAN_INTERVAL: Duration = Duration::from_secs(10);
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
@@ -283,8 +282,7 @@ fn receive_request(home: &HomeLayout, config: &RouteConfig, frame: &Value) -> Va
 }
 
 fn load_routes(home: &HomeLayout) -> HashMap<String, RouteConfig> {
-    let _ = group_bridge_legacy::import_if_changed(home);
-    let state = integration_state::global_get(home, STORE_KEY).unwrap_or_else(|_| json!({}));
+    let state = group_bridge_legacy::load(home).unwrap_or_else(|_| json!({}));
     state["trusts"]
         .as_array()
         .into_iter()
@@ -371,8 +369,8 @@ fn unregister(config: &RouteConfig) {
 
 fn update_status(home: &HomeLayout, config: &RouteConfig, connected: bool, error: &str) {
     let now = utc_now();
-    let _ = integration_state::global_update(home, STORE_KEY, |state| {
-        let Some(trusts) = state["trusts"].as_array_mut() else {
+    let _ = group_bridge_legacy::update(home, |state| {
+        let Some(trusts) = state.get_mut("trusts").and_then(Value::as_array_mut) else {
             return Ok(());
         };
         let Some(trust) = trusts
@@ -544,17 +542,20 @@ mod tests {
             remote_peer_id: "peer_remote".into(),
             endpoint,
         };
-        integration_state::global_update(&home, STORE_KEY, |state| {
-            *state = json!({"trusts":[{
-                "trust_id":config.trust_id.clone(),
-                "registration_id":config.registration_id.clone(),
-                "group_id":config.local_group_id.clone(),
-                "remote_group_id":config.remote_group_id.clone(),
-                "remote_peer_id":config.remote_peer_id.clone(),
-                "remote_endpoint":config.endpoint.clone(),
-                "transport":"group_bridge_session",
-                "status":"active"
-            }]});
+        group_bridge_legacy::update(&home, |state| {
+            state.insert(
+                "trusts".into(),
+                json!([{
+                    "trust_id":config.trust_id.clone(),
+                    "registration_id":config.registration_id.clone(),
+                    "group_id":config.local_group_id.clone(),
+                    "remote_group_id":config.remote_group_id.clone(),
+                    "remote_peer_id":config.remote_peer_id.clone(),
+                    "remote_endpoint":config.endpoint.clone(),
+                    "transport":"group_bridge_session",
+                    "status":"active"
+                }]),
+            );
             Ok(())
         })
         .expect("state");
@@ -583,7 +584,7 @@ mod tests {
         });
         let mut connected = false;
         for _ in 0..250 {
-            let state = integration_state::global_get(&home, STORE_KEY).expect("bridge state");
+            let state = group_bridge_legacy::load(&home).expect("bridge state");
             if state["trusts"][0]["session_connected"] == true {
                 connected = true;
                 break;
@@ -594,7 +595,7 @@ mod tests {
         let _ = stop_tx.send(true);
         worker.await.expect("worker");
         server.await.expect("server");
-        let state = integration_state::global_get(&home, STORE_KEY).expect("bridge state");
+        let state = group_bridge_legacy::load(&home).expect("bridge state");
         assert_eq!(state["trusts"][0]["session_connected"], false);
     }
 }

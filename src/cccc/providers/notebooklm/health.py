@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import threading
 from typing import Any, Dict
 
 from .compat import probe_notebooklm_vendor
@@ -68,10 +70,50 @@ def validate_notebooklm_auth_json(auth_json_raw: str | None = None) -> Dict[str,
     return parse_notebooklm_auth_json(raw, label="CCCC_NOTEBOOKLM_AUTH_JSON")
 
 
+def _run_coroutine_sync(coro: Any) -> Any:
+    result_holder: Dict[str, Any] = {}
+    error_holder: Dict[str, BaseException] = {}
+
+    def _runner() -> None:
+        try:
+            result_holder["value"] = asyncio.run(coro)
+        except BaseException as e:  # pragma: no cover - exercised by live provider failures
+            error_holder["error"] = e
+
+    thread = threading.Thread(target=_runner, daemon=True)
+    thread.start()
+    thread.join()
+    if "error" in error_holder:
+        raise error_holder["error"]
+    return result_holder.get("value")
+
+
+def verify_notebooklm_storage_state(storage_state: Dict[str, Any]) -> None:
+    """Passively verify one in-memory Playwright state without discarding cookie scope."""
+    from ._vendor.notebooklm._auth.refresh import _fetch_tokens_with_jar
+    from ._vendor.notebooklm.auth import build_cookie_jar, extract_cookies_with_domains
+
+    cookies = extract_cookies_with_domains(storage_state)
+    cookie_jar = build_cookie_jar(cookies=cookies)
+    authuser_raw = storage_state.get("authuser")
+    explicit_authuser = isinstance(authuser_raw, int) and authuser_raw >= 0
+    authuser = authuser_raw if explicit_authuser else 0
+    _ = _run_coroutine_sync(
+        _fetch_tokens_with_jar(
+            cookie_jar,
+            None,
+            authuser=authuser,
+            force_authuser_query=explicit_authuser,
+            poke=False,
+        )
+    )
+
+
 def notebooklm_health_check(
     auth_json_raw: str | None = None,
     *,
     real_enabled: bool | None = None,
+    verify_remote: bool = False,
 ) -> Dict[str, Any]:
     explicit_auth = bool(str(auth_json_raw or "").strip())
     enabled = notebooklm_real_enabled() if real_enabled is None else bool(real_enabled)
@@ -84,7 +126,7 @@ def notebooklm_health_check(
             transient=False,
             degrade_provider=True,
         )
-    _ = validate_notebooklm_auth_json(auth_json_raw)
+    auth_payload = validate_notebooklm_auth_json(auth_json_raw)
     compat = probe_notebooklm_vendor()
     if not compat.compatible:
         raise NotebookLMProviderError(
@@ -93,6 +135,18 @@ def notebooklm_health_check(
             transient=False,
             degrade_provider=True,
         )
+    if verify_remote:
+        try:
+            verify_notebooklm_storage_state(auth_payload)
+        except NotebookLMProviderError:
+            raise
+        except Exception as e:
+            raise NotebookLMProviderError(
+                code="space_provider_auth_invalid",
+                message=str(e) or "NotebookLM session validation failed",
+                transient=False,
+                degrade_provider=True,
+            ) from e
     return {
         "provider": "notebooklm",
         "enabled": True,

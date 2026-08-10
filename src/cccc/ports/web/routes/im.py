@@ -18,7 +18,7 @@ from ....daemon.im.im_bridge_ops import (
 )
 from ....kernel.group import load_group
 from ....paths import ensure_home
-from ....ports.im.auth import KeyManager
+from ....ports.im.auth import KeyManager, normalize_thread_id
 from ....ports.im.config_schema import canonicalize_im_config
 from ....ports.im.subscribers import SubscriberManager
 from ....util.conv import coerce_bool
@@ -152,9 +152,7 @@ async def _refresh_weixin_login_status(
             token = str(result.get("bot_token") or "").strip()
             account_id = str(result.get("ilink_bot_id") or "").strip()
             user_id = str(result.get("ilink_user_id") or "").strip()
-            base_url = str(
-                result.get("baseurl") or poll_base_url or FIXED_QR_BASE_URL
-            ).strip()
+            base_url = FIXED_QR_BASE_URL
             if not (token and account_id and user_id):
                 _write_weixin_status(
                     status_path,
@@ -238,12 +236,10 @@ async def _refresh_weixin_login_status(
         elif qr_status == "scaned_but_redirect":
             redirect_host = str(result.get("redirect_host") or "").strip()
             next_base_url = (
-                redirect_host
-                if redirect_host.startswith(("http://", "https://"))
-                else f"https://{redirect_host}"
+                FIXED_QR_BASE_URL
+                if redirect_host
+                else poll_base_url or FIXED_QR_BASE_URL
             )
-            if not redirect_host:
-                next_base_url = poll_base_url or FIXED_QR_BASE_URL
             _write_weixin_status(
                 status_path,
                 {
@@ -1229,13 +1225,17 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 if isinstance(chat, dict):
                     chat["verbose"] = sm.is_verbose(
                         str(chat.get("chat_id", "")),
-                        int(chat.get("thread_id", 0)),
+                        normalize_thread_id(chat.get("thread_id")),
                     )
         return resp
 
     @im_router.post("/api/im/verbose")
     async def im_set_verbose(
-        request: Request, group_id: str, chat_id: str, verbose: bool, thread_id: int = 0
+        request: Request,
+        group_id: str,
+        chat_id: str,
+        verbose: bool,
+        thread_id: str = "",
     ) -> Dict[str, Any]:
         """Set verbose mode for an IM subscriber."""
         check_group(request, group_id)
@@ -1251,7 +1251,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         from ....ports.im.subscribers import SubscriberManager
 
         sm = SubscriberManager(group.path / "state")
-        ok = sm.set_verbose(chat_id, verbose, thread_id)
+        normalized_thread_id = normalize_thread_id(thread_id)
+        ok = sm.set_verbose(chat_id, verbose, normalized_thread_id)
         if not ok:
             raise HTTPException(
                 status_code=404,
@@ -1262,7 +1263,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             )
         return {
             "ok": True,
-            "result": {"chat_id": chat_id, "thread_id": thread_id, "verbose": verbose},
+            "result": {
+                "chat_id": chat_id,
+                "thread_id": normalized_thread_id,
+                "verbose": verbose,
+            },
         }
 
     @im_router.get("/api/im/pending")
@@ -1315,7 +1320,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @im_router.post("/api/im/revoke")
     async def im_revoke(
-        request: Request, group_id: str, chat_id: str, thread_id: int = 0
+        request: Request, group_id: str, chat_id: str, thread_id: str = ""
     ) -> Dict[str, Any]:
         """Revoke authorization for a chat."""
         check_group(request, group_id)
@@ -1325,7 +1330,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "args": {
                     "group_id": group_id,
                     "chat_id": chat_id,
-                    "thread_id": thread_id,
+                    "thread_id": normalize_thread_id(thread_id),
                 },
             }
         )

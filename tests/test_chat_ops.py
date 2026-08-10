@@ -125,6 +125,101 @@ class TestChatOps(unittest.TestCase):
             scope_ctx.__exit__(None, None, None)
             cleanup()
 
+    def test_send_files_preflights_rejection_and_replay_before_blob_storage(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        scope_ctx = tempfile.TemporaryDirectory()
+        scope = Path(scope_ctx.__enter__())
+        try:
+            create, _ = self._call(
+                "group_create", {"title": "file-send-preflight", "topic": "", "by": "user"}
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "")
+            attach, _ = self._call(
+                "attach", {"group_id": group_id, "path": str(scope), "by": "user"}
+            )
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+            (scope / "payload.bin").write_bytes(b"accepted payload")
+            (scope / "duplicate.bin").write_bytes(b"must not be stored")
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            blob_dir = group.path / "state" / "blobs"
+
+            invalid_priority, _ = self._call(
+                "send_files",
+                {
+                    "group_id": group_id,
+                    "paths": ["payload.bin"],
+                    "by": "user",
+                    "to": ["user"],
+                    "priority": "urgent",
+                },
+            )
+            self.assertFalse(invalid_priority.ok)
+            self.assertEqual(getattr(invalid_priority.error, "code", ""), "invalid_priority")
+            self.assertFalse(blob_dir.exists())
+
+            rejected, _ = self._call(
+                "send_files",
+                {
+                    "group_id": group_id,
+                    "paths": ["payload.bin"],
+                    "by": "user",
+                    "to": ["missing-actor"],
+                },
+            )
+            self.assertFalse(rejected.ok)
+            self.assertEqual(getattr(rejected.error, "code", ""), "invalid_recipient")
+            self.assertFalse(blob_dir.exists())
+
+            sent, _ = self._call(
+                "send_files",
+                {
+                    "group_id": group_id,
+                    "paths": ["payload.bin"],
+                    "by": "user",
+                    "to": ["user"],
+                    "client_id": "send-files-preflight-key",
+                },
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            sent_event = (sent.result or {}).get("event") or {}
+            blobs_after_send = sorted(path for path in blob_dir.iterdir() if path.is_file())
+            self.assertEqual(len(blobs_after_send), 1)
+
+            replayed, _ = self._call(
+                "send_files",
+                {
+                    "group_id": group_id,
+                    "paths": ["duplicate.bin"],
+                    "by": "user",
+                    "to": ["user"],
+                    "client_id": "send-files-preflight-key",
+                },
+            )
+            self.assertTrue(replayed.ok, getattr(replayed, "error", None))
+            replayed_event = (replayed.result or {}).get("event") or {}
+            self.assertEqual(replayed_event.get("id"), sent_event.get("id"))
+            self.assertEqual(
+                sorted(path for path in blob_dir.iterdir() if path.is_file()),
+                blobs_after_send,
+            )
+            chat_events = []
+            for line in group.ledger_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                event = json.loads(line)
+                if event.get("kind") == "chat.message":
+                    chat_events.append(event)
+            self.assertEqual(len(chat_events), 1)
+        finally:
+            scope_ctx.__exit__(None, None, None)
+            cleanup()
+
     def test_wake_group_on_human_message_skips_execution_time_idle_when_accept_was_active(self) -> None:
         from cccc.daemon.messaging.chat_ops import _wake_group_on_human_message
 

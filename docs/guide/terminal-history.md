@@ -8,6 +8,13 @@ Native PTY actors always keep terminal output in two bounded memory layers, with
 
 Fresh WebSocket attaches atomically capture the current PTY session's UTF-8-complete replay boundary, then stream retained raw ANSI history up to that fixed boundary in bounded 512 KiB pages. New output cannot make the initial loop chase a moving tail and starve keyboard input; once the boundary is reached, live polling and input handling run together. Reconnects continue from an absolute byte cursor and request only new output. Rendered screen snapshots remain available for diagnostics, but are not used to initialize the interactive terminal because TUI repaint sequences intentionally erase older frames. When persistence is enabled, the durable transcript extends `/terminal/history` beyond the in-memory window and across daemon restarts; durable output from earlier sessions is never injected into an interactive attach.
 
+Daemon clients use `terminal_snapshot` for an attach-time rendered screen and
+`terminal_since` for subsequent raw output. Both return the exact raw-byte
+cursor boundary, including across replacement sessions in the same daemon
+process. `term_resize` is the canonical resize operation. Native Rust also
+accepts its former `terminal_resize` spelling as a compatibility input, but new
+clients should not emit that alias.
+
 ## Retention
 
 Durable capture is opt-in through `observability.terminal_transcript.enabled=true` and `observability.terminal_transcript.persist=true`. Both default to `false`, matching the Python implementation's memory-only default. `per_actor_bytes` controls both the memory ring and, when enabled, durable retention. It defaults to 10 MiB; zero selects that default, and larger values are capped at 50,000,000 bytes like Python.

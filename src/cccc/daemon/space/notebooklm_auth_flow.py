@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import secrets
@@ -25,7 +24,7 @@ from ..browser.projected_browser_runtime import (
     install_playwright_package as _shared_install_playwright_package,
     seed_context_with_storage_state as _shared_seed_context_with_storage_state,
 )
-from ...providers.notebooklm.health import parse_notebooklm_auth_json
+from ...providers.notebooklm.health import parse_notebooklm_auth_json, verify_notebooklm_storage_state
 from ...providers.notebooklm.compat import probe_notebooklm_vendor
 from ...providers.notebooklm.errors import NotebookLMProviderError
 from ...paths import ensure_home
@@ -64,6 +63,7 @@ _LIGHT_LOGIN_PROBE_INTERVAL_SECONDS = 6.0
 _CREDENTIAL_RETRY_INTERVAL_SECONDS = 8.0
 _PROJECTED_BROWSER_DEFAULT_WIDTH = 1366
 _PROJECTED_BROWSER_DEFAULT_HEIGHT = 900
+_NOTEBOOKLM_LOGIN_URL = "https://notebook.google.com/"
 
 
 def _now_iso() -> str:
@@ -387,7 +387,7 @@ def _start_system_browser_over_cdp(playwright_obj: Any, *, profile_root: Path) -
             "--no-first-run",
             "--no-default-browser-check",
             "--new-window",
-            "https://notebooklm.google.com/",
+            _NOTEBOOKLM_LOGIN_URL,
         ]
         proc: Optional[subprocess.Popen[str]] = None
         try:
@@ -519,6 +519,7 @@ def _collect_storage_state(context: Any) -> Dict[str, Any]:
                 context,
                 [
                     "https://notebooklm.google.com",
+                    "https://notebook.google.com",
                     "https://accounts.google.com",
                     "https://www.google.com",
                 ],
@@ -540,6 +541,7 @@ def _peek_google_cookies(context: Any) -> list[Dict[str, Any]]:
         context,
         [
             "https://notebooklm.google.com",
+            "https://notebook.google.com",
             "https://accounts.google.com",
             "https://www.google.com",
         ],
@@ -570,54 +572,13 @@ def _load_saved_storage_state() -> Dict[str, Any] | None:
         return None
 
 
-def _is_hard_auth_failure(message: str) -> bool:
-    text = str(message or "").strip().lower()
-    if not text:
-        return False
-    markers = (
-        "missing required cookies",
-        "missing cookies",
-        "authentication expired",
-        "re-authenticate",
-        "run 'notebooklm login'",
-        "redirected to:",
-        "space_provider_auth_invalid",
-        "missing sid",
-    )
-    return any(token in text for token in markers)
-
-
-def _run_coroutine_sync(coro: Any) -> Any:
-    result_holder: Dict[str, Any] = {}
-    error_holder: Dict[str, BaseException] = {}
-
-    def _runner() -> None:
-        try:
-            result_holder["value"] = asyncio.run(coro)
-        except BaseException as e:  # pragma: no cover - exercised via auth flow runtime path
-            error_holder["error"] = e
-
-    thread = threading.Thread(target=_runner, daemon=True)
-    thread.start()
-    thread.join()
-    if "error" in error_holder:
-        raise error_holder["error"]
-    return result_holder.get("value")
-
-
 def _verify_storage_state(storage_state: Dict[str, Any]) -> None:
-    try:
-        from ...providers.notebooklm._vendor.notebooklm.auth import (
-            extract_cookies_from_storage,
-            fetch_tokens,
-        )
-    except Exception as e:
-        raise RuntimeError(f"NotebookLM vendor package unavailable: {e}") from e
-
     auth_json = json.dumps(storage_state, ensure_ascii=False)
     _ = parse_notebooklm_auth_json(auth_json, label=_SPACE_PROVIDER_SECRET_KEY)
-    cookies = extract_cookies_from_storage(storage_state)
-    _ = _run_coroutine_sync(fetch_tokens(cookies))
+    try:
+        verify_notebooklm_storage_state(storage_state)
+    except ImportError as e:
+        raise RuntimeError(f"NotebookLM vendor package unavailable: {e}") from e
     compat = probe_notebooklm_vendor()
     if not bool(compat.compatible):
         raise RuntimeError(str(compat.reason or "NotebookLM vendor compatibility mismatch"))
@@ -692,14 +653,8 @@ def _connect_worker(
             _mark_provider_connected(mode="active", last_error="")
             _set_succeeded("Google account already connected.")
             return True
-        except Exception as e:
-            message = str(e)
-            if _is_hard_auth_failure(message):
-                return False
-            _persist_storage_state(saved)
-            _mark_provider_connected(mode="active", last_error="")
-            _set_succeeded("Google credential reused (verification deferred).")
-            return True
+        except Exception:
+            return False
 
     try:
         if not force_reauth and _try_reuse_saved_credential():
@@ -725,7 +680,7 @@ def _connect_worker(
                 restored_count = len(saved_state.get("cookies") or []) if isinstance(saved_state, dict) else 0
                 browser_surface = open_notebooklm_auth_browser_session(
                     profile_dir=profile_root,
-                    url="https://notebooklm.google.com/",
+                    url=_NOTEBOOKLM_LOGIN_URL,
                     width=_PROJECTED_BROWSER_DEFAULT_WIDTH,
                     height=_PROJECTED_BROWSER_DEFAULT_HEIGHT,
                     seed_storage_state=saved_state if isinstance(saved_state, dict) else None,
@@ -830,14 +785,11 @@ def _connect_worker(
                         next_probe_at = now_ts + _CREDENTIAL_RETRY_INTERVAL_SECONDS
                         time.sleep(0.5)
                         continue
-                    persisted = False
                     try:
                         _ = parse_notebooklm_auth_json(
                             json.dumps(storage_state, ensure_ascii=False),
                             label=_SPACE_PROVIDER_SECRET_KEY,
                         )
-                        _persist_storage_state(storage_state)
-                        persisted = True
                     except NotebookLMProviderError:
                         _update_state(
                             state="running",
@@ -852,7 +804,7 @@ def _connect_worker(
                     _update_state(
                         state="running",
                         phase="verifying_session",
-                        message=f"Verifying session and saving credential... (cookies={len(cookies)})",
+                        message=f"Verifying session before saving credential... (cookies={len(cookies)})",
                         error={},
                         delivery="projected_browser",
                     )
@@ -873,10 +825,6 @@ def _connect_worker(
                         msg = str(e)
                         if "vendor package unavailable" in msg or "compatibility mismatch" in msg:
                             raise
-                        if persisted and (not _is_hard_auth_failure(msg)):
-                            _mark_provider_connected(mode="active", last_error="")
-                            _set_succeeded("Google account connected.")
-                            return
                         brief = (msg or "verification pending").replace("\n", " ").strip()
                         if len(brief) > 160:
                             brief = brief[:160] + "..."
@@ -890,6 +838,7 @@ def _connect_worker(
                         next_probe_at = now_ts + _CREDENTIAL_RETRY_INTERVAL_SECONDS
                         time.sleep(0.5)
                         continue
+                    _persist_storage_state(storage_state)
                     _mark_provider_connected(mode="active", last_error="")
                     _set_succeeded("Google account connected.")
                     return
@@ -931,7 +880,7 @@ def _connect_worker(
                         delivery="local_browser",
                     )
                     if not _is_notebooklm_url(str(getattr(page, "url", "") or "")):
-                        page.goto("https://notebooklm.google.com/", wait_until="domcontentloaded", timeout=120000)
+                        page.goto(_NOTEBOOKLM_LOGIN_URL, wait_until="domcontentloaded", timeout=120000)
                     while True:
                         if _cancel_requested(cancel_event, session_id=session_id):
                             return
@@ -989,14 +938,11 @@ def _connect_worker(
                             next_probe_at = now_ts + _CREDENTIAL_RETRY_INTERVAL_SECONDS
                             time.sleep(0.5)
                             continue
-                        persisted = False
                         try:
                             _ = parse_notebooklm_auth_json(
                                 json.dumps(storage_state, ensure_ascii=False),
                                 label=_SPACE_PROVIDER_SECRET_KEY,
                             )
-                            _persist_storage_state(storage_state)
-                            persisted = True
                         except NotebookLMProviderError:
                             _update_state(
                                 state="running",
@@ -1011,7 +957,7 @@ def _connect_worker(
                         _update_state(
                             state="running",
                             phase="verifying_session",
-                            message=f"Verifying session and saving credential... (cookies={len(cookies)})",
+                            message=f"Verifying session before saving credential... (cookies={len(cookies)})",
                             error={},
                             delivery="local_browser",
                         )
@@ -1032,10 +978,6 @@ def _connect_worker(
                             msg = str(e)
                             if "vendor package unavailable" in msg or "compatibility mismatch" in msg:
                                 raise
-                            if persisted and (not _is_hard_auth_failure(msg)):
-                                _mark_provider_connected(mode="active", last_error="")
-                                _set_succeeded("Google account connected.")
-                                return
                             brief = (msg or "verification pending").replace("\n", " ").strip()
                             if len(brief) > 160:
                                 brief = brief[:160] + "..."
@@ -1049,6 +991,7 @@ def _connect_worker(
                             next_probe_at = now_ts + _CREDENTIAL_RETRY_INTERVAL_SECONDS
                             time.sleep(0.5)
                             continue
+                        _persist_storage_state(storage_state)
                         _mark_provider_connected(mode="active", last_error="")
                         _set_succeeded("Google account connected.")
                         return

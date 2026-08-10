@@ -15,6 +15,8 @@ import { CSS } from "@dnd-kit/utilities";
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
+import { MoreIcon } from "../Icons";
+import { IconButton } from "../ui/icon-button";
 import { GroupMenuAction } from "./GroupMenuAction";
 import { GroupStatusIndicator } from "./GroupStatusIndicator";
 
@@ -212,6 +214,29 @@ export function SortableGroupItem({
             </span>
           </div>
         </div>
+        {onMenuAction && menuActionLabel && (
+          <IconButton
+            type="button"
+            variant="ghost"
+            size="sm"
+            label={menuAriaLabel || menuActionLabel}
+            className={classNames(
+              "shrink-0 text-[var(--color-text-tertiary)] opacity-70 hover:opacity-100 focus-visible:opacity-100 md:pointer-fine:hidden",
+              menuOpen &&
+                "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)] opacity-100 shadow-sm",
+            )}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              refs.setPositionReference(event.currentTarget);
+              setMenuOpen((current) => !current);
+            }}
+          >
+            <MoreIcon size={16} />
+          </IconButton>
+        )}
       </div>
       {actionMenu}
     </div>

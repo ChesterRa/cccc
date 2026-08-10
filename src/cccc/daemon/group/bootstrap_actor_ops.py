@@ -193,7 +193,10 @@ def autostart_running_groups(
                 if runtime == "web_model" and effective_runner == "headless":
                     write_headless_state(group.group_id, actor_id)
                     try:
-                        from ..actors.web_model_browser_delivery import web_model_browser_delivery_enabled
+                        from ..actors.web_model_browser_delivery import (
+                            schedule_web_model_browser_delivery,
+                            web_model_browser_delivery_enabled,
+                        )
                         from ..actors.web_model_browser_session import schedule_web_model_chatgpt_browser_session_warmup
 
                         if web_model_browser_delivery_enabled(group.group_id, actor):
@@ -202,6 +205,11 @@ def autostart_running_groups(
                                 actor_id=actor_id,
                                 reason="daemon_autostart",
                                 retry_seconds=0.0,
+                            )
+                            schedule_web_model_browser_delivery(
+                                group_id=group.group_id,
+                                actor_id=actor_id,
+                                logger=logger,
                             )
                     except Exception:
                         pass

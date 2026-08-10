@@ -21,7 +21,7 @@ impl AuthFlowManager {
                 .ok()
                 .flatten()
         };
-        if saved_raw.is_some() && validate(&context.client).await.is_ok() {
+        if saved_raw.is_some() && validate(&context.client, None).await.is_ok() {
             self.finish(
                 &context.session_id,
                 "succeeded",
@@ -192,19 +192,31 @@ impl AuthFlowManager {
                     break;
                 }
             };
-            if let Err(error) = space_credentials::update(&context.home, PROVIDER, &raw) {
-                self.finish(
-                    &context.session_id,
-                    "failed",
-                    "failed",
-                    "Failed to save browser credentials.",
-                    Some(error.to_string()),
-                )
-                .await;
-                break;
-            }
-            match validate(&context.client).await {
+            match validate(&context.client, Some(&raw)).await {
                 Ok(()) => {
+                    if let Err(error) = space_credentials::update(&context.home, PROVIDER, &raw) {
+                        self.finish(
+                            &context.session_id,
+                            "failed",
+                            "failed",
+                            "Failed to save browser credentials.",
+                            Some(error.to_string()),
+                        )
+                        .await;
+                        break;
+                    }
+                    if let Err(error) = validate(&context.client, None).await {
+                        self.update(
+                            &context.session_id,
+                            "running",
+                            "waiting_user_login",
+                            "Session was saved, but provider activation is still pending.",
+                            Some(error),
+                        )
+                        .await;
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        continue;
+                    }
                     self.finish(
                         &context.session_id,
                         "succeeded",
@@ -253,15 +265,19 @@ async fn remove_profile_after_close(profile: &Path, close_result: anyhow::Result
     }
 }
 
-async fn validate(client: &DaemonClient) -> Result<(), String> {
+async fn validate(client: &DaemonClient, candidate: Option<&str>) -> Result<(), String> {
+    let mut args = Map::from_iter([
+        ("provider".into(), Value::String(PROVIDER.into())),
+        ("by".into(), Value::String("user".into())),
+    ]);
+    if let Some(candidate) = candidate {
+        args.insert("auth_json".into(), Value::String(candidate.into()));
+    }
     let response = client
         .call(&DaemonRequest {
             v: 1,
             op: "group_space_provider_health_check".into(),
-            args: Map::from_iter([
-                ("provider".into(), Value::String(PROVIDER.into())),
-                ("by".into(), Value::String("user".into())),
-            ]),
+            args,
         })
         .await
         .map_err(|error| error.to_string())?;

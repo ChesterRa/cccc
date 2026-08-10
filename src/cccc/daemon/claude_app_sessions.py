@@ -91,6 +91,40 @@ def _looks_like_stale_resume_error(text: str) -> bool:
     return any(marker in lowered for marker in markers)
 
 
+def _claude_result_is_error(event: Dict[str, Any]) -> bool:
+    subtype = str(event.get("subtype") or "").strip().lower()
+    return event.get("is_error") is True or subtype == "error" or subtype.startswith("error_")
+
+
+def _claude_result_error(event: Dict[str, Any], *, subtype: str) -> Dict[str, Any]:
+    raw_error = event.get("error")
+    if isinstance(raw_error, dict):
+        normalized = dict(raw_error)
+        if str(normalized.get("message") or "").strip():
+            return normalized
+        return {"message": json.dumps(normalized, ensure_ascii=False, sort_keys=True)}
+    if raw_error not in (None, ""):
+        return {"message": str(raw_error)}
+
+    result = event.get("result")
+    if result not in (None, ""):
+        return {"message": str(result)}
+
+    errors = event.get("errors")
+    if isinstance(errors, list):
+        messages = []
+        for item in errors:
+            if isinstance(item, dict):
+                message = str(item.get("message") or "").strip()
+                messages.append(message or json.dumps(item, ensure_ascii=False, sort_keys=True))
+            elif item not in (None, ""):
+                messages.append(str(item))
+        if messages:
+            return {"message": "; ".join(messages)}
+
+    return {"message": subtype or "Claude provider result failed"}
+
+
 def _voice_secretary_prepare_control_turn(
     *,
     group_id: str,
@@ -1577,6 +1611,8 @@ class ClaudeAppSession:
 
     def _handle_result_event(self, event: Dict[str, Any]) -> None:
         subtype = str(event.get("subtype") or "").strip()
+        result_is_error = _claude_result_is_error(event)
+        result_error = _claude_result_error(event, subtype=subtype)
         now = utc_now_iso()
 
         with self._lock:
@@ -1602,7 +1638,7 @@ class ClaudeAppSession:
                 self._resumed_provider_session_id = ""
         self._persist_state()
 
-        resume_error_text = str(event.get("error") or event.get("result") or "unknown error")
+        resume_error_text = str(result_error.get("message") or "unknown error")
         resume_rejected = False
         if subtype not in ("success", "") and _looks_like_stale_resume_error(resume_error_text):
             resume_rejected = self._mark_stale_resume_failed(error=resume_error_text)
@@ -1690,7 +1726,6 @@ class ClaudeAppSession:
                 },
             )
         elif control_kind:
-            error_text = resume_error_text
             self._emit(
                 "headless.control.failed",
                 {
@@ -1698,7 +1733,7 @@ class ClaudeAppSession:
                     "event_id": active_event_id,
                     "control_kind": control_kind,
                     "status": subtype or "completed",
-                    "error": {"message": error_text},
+                    "error": result_error,
                 },
             )
         elif subtype in ("success", ""):
@@ -1711,14 +1746,13 @@ class ClaudeAppSession:
                 },
             )
         else:
-            error_text = resume_error_text
             self._emit(
-                "headless.turn.failed" if subtype == "error" else "headless.turn.completed",
+                "headless.turn.failed" if result_is_error else "headless.turn.completed",
                 {
                     "turn_id": turn_id,
                     "event_id": active_event_id,
                     "status": subtype or "completed",
-                    "error": {"message": error_text} if subtype == "error" else None,
+                    "error": result_error if result_is_error else None,
                 },
             )
 

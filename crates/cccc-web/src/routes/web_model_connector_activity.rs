@@ -1,10 +1,9 @@
-use cccc_core::integration_state;
 use serde_json::{Value, json};
 
 use crate::AppState;
 use crate::api::ApiError;
 
-use super::web_model_connector_store::{STORE_KEY, ensure_array, io_error};
+use super::web_model_connector_store;
 
 pub(super) struct Activity<'a> {
     pub method: &'a str,
@@ -20,13 +19,7 @@ pub(super) fn record(
     connector_id: &str,
     activity: Activity<'_>,
 ) -> Result<(), ApiError> {
-    integration_state::global_update(&state.home, STORE_KEY, |value| {
-        let Some(item) = ensure_array(value)
-            .iter_mut()
-            .find(|item| item["connector_id"] == connector_id)
-        else {
-            return Ok(());
-        };
+    web_model_connector_store::update_connector(state, connector_id, |item| {
         item["last_activity_at"] = json!(cccc_contracts::utc_now());
         item["last_method"] = json!(activity.method);
         item["last_tool_name"] = json!(activity.tool_name);
@@ -35,9 +28,8 @@ pub(super) fn record(
         item["last_turn_id"] = json!(activity.turn_id);
         item["last_error"] = json!(activity.error);
         item["updated_at"] = json!(cccc_contracts::utc_now());
-        Ok(())
     })
-    .map_err(io_error)
+    .map(|_| ())
 }
 
 pub(super) fn details(tool_name: &str, response: &Value) -> (String, String, String) {

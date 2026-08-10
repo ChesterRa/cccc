@@ -1096,6 +1096,13 @@ def handle_send_files(
             "send_files owns attachments; do not provide attachment records",
         )
 
+    by = str(args.get("by") or "user").strip()
+    client_id = str(args.get("client_id") or "").strip()
+    if client_id:
+        existing = _tracked_send_existing_result(group, client_id=client_id, by=by)
+        if existing is not None:
+            return DaemonResponse(ok=True, result=existing)
+
     scope_key = str(group.doc.get("active_scope_key") or "").strip()
     scopes = group.doc.get("scopes")
     scope_url = ""
@@ -1131,6 +1138,29 @@ def handle_send_files(
             sources.append((source, source.read_bytes()))
         except OSError as exc:
             return _error("read_failed", str(exc), details={"path": str(source)})
+
+    priority = str(args.get("priority") or "normal").strip() or "normal"
+    if priority not in ("normal", "attention"):
+        return _error("invalid_priority", "priority must be 'normal' or 'attention'")
+    try:
+        insight = normalized_insight_or_error(args.get("insight"))
+    except ValueError as exc:
+        return _error("invalid_insight", str(exc))
+    try:
+        audience = preflight_local_peer_audience(
+            group,
+            to_tokens=_normalize_to_tokens(args.get("to")),
+            by=by,
+            apply_default_send=True,
+        )
+    except PeerRecipientError as exc:
+        return _error(exc.code, exc.message, details=exc.details)
+    if coerce_bool(args.get("require_peer_insight")) and audience.peer_actor_ids and insight is None:
+        return _error(
+            "peer_insight_required",
+            "Not sent: this peer-facing message is missing `insight`.",
+            details=peer_insight_required_details(),
+        )
 
     attachments = [
         store_blob_bytes(

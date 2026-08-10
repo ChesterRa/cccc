@@ -7,18 +7,30 @@ Manages which chats are subscribed to receive messages from a group.
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...util.conv import coerce_bool
+from .auth import ThreadId, normalize_thread_id, thread_key
 
 
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return int(default)
+_OPAQUE_THREAD_ID_PLATFORMS = frozenset({"feishu"})
+_SLACK_THREAD_TS_RE = re.compile(r"^[0-9]+\.[0-9]+$")
+
+
+def _stored_thread_id(data: Dict[str, Any], fallback: ThreadId) -> ThreadId:
+    """Keep provider-owned opaque IDs but tolerate malformed legacy fields."""
+    if "thread_id" not in data:
+        return fallback
+    value = normalize_thread_id(data.get("thread_id"))
+    if not isinstance(value, str):
+        return value
+    platform = str(data.get("platform") or "").strip().lower()
+    if platform in _OPAQUE_THREAD_ID_PLATFORMS or _SLACK_THREAD_TS_RE.fullmatch(value):
+        return value
+    return fallback
 
 
 class Subscriber:
@@ -31,7 +43,7 @@ class Subscriber:
         verbose: bool = False,
         subscribed_at: Optional[str] = None,
         chat_title: str = "",
-        thread_id: int = 0,
+        thread_id: ThreadId = 0,
         platform: str = "",
     ):
         self.chat_id = str(chat_id)
@@ -39,7 +51,7 @@ class Subscriber:
         self.verbose = verbose  # Default False: show only user-facing messages
         self.subscribed_at = subscribed_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self.chat_title = chat_title
-        self.thread_id = int(thread_id or 0)
+        self.thread_id = normalize_thread_id(thread_id)
         self.platform = str(platform or "").strip().lower()  # Platform that created this subscription
 
     def to_dict(self) -> Dict[str, Any]:
@@ -60,7 +72,7 @@ class Subscriber:
             verbose=coerce_bool(data.get("verbose"), default=False),
             subscribed_at=data.get("subscribed_at"),
             chat_title=str(data.get("chat_title", "")),
-            thread_id=_safe_int(data.get("thread_id"), 0),
+            thread_id=normalize_thread_id(data.get("thread_id")),
             platform=str(data.get("platform") or ""),
         )
 
@@ -74,10 +86,8 @@ class SubscriberManager:
         self._subscribers: Dict[str, Subscriber] = {}
         self._load()
 
-    def _key(self, chat_id: str, thread_id: int = 0) -> str:
-        cid = str(chat_id)
-        tid = int(thread_id or 0)
-        return f"{cid}:{tid}" if tid > 0 else cid
+    def _key(self, chat_id: str, thread_id: ThreadId = 0) -> str:
+        return thread_key(chat_id, thread_id)
 
     def _load(self) -> None:
         """Load subscribers from disk."""
@@ -97,22 +107,19 @@ class SubscriberManager:
 
                 # Support both legacy keys ("<chat_id>") and topic keys ("<chat_id>:<thread_id>").
                 chat_id = key
-                thread_id = 0
+                thread_id: ThreadId = 0
                 if ":" in key:
                     head, tail = key.rsplit(":", 1)
-                    try:
-                        thread_id = int(tail)
+                    if head and tail:
+                        thread_id = normalize_thread_id(tail)
                         chat_id = head
-                    except Exception:
-                        chat_id = key
-                        thread_id = 0
 
                 if not isinstance(sub_data, dict):
                     continue
 
-                # If thread_id was encoded in the key, prefer it (but still allow stored thread_id field).
-                stored_thread_id = _safe_int(sub_data.get("thread_id"), 0)
-                effective_thread_id = thread_id or stored_thread_id
+                # Match Rust normalization: an explicit stored field wins;
+                # otherwise recover the identifier from the composite key.
+                effective_thread_id = _stored_thread_id(sub_data, thread_id)
 
                 sub = Subscriber.from_dict(chat_id, sub_data)
                 sub.thread_id = effective_thread_id
@@ -128,7 +135,13 @@ class SubscriberManager:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(self.subscribers_path)
 
-    def subscribe(self, chat_id: str, chat_title: str = "", thread_id: int = 0, platform: str = "") -> Subscriber:
+    def subscribe(
+        self,
+        chat_id: str,
+        chat_title: str = "",
+        thread_id: ThreadId = 0,
+        platform: str = "",
+    ) -> Subscriber:
         """Subscribe a chat. Returns the subscriber."""
         key = self._key(chat_id, thread_id)
         if key in self._subscribers:
@@ -144,7 +157,7 @@ class SubscriberManager:
         self._save()
         return sub
 
-    def unsubscribe(self, chat_id: str, thread_id: int = 0) -> bool:
+    def unsubscribe(self, chat_id: str, thread_id: ThreadId = 0) -> bool:
         """Unsubscribe a chat. Returns True if was subscribed."""
         key = self._key(chat_id, thread_id)
         if key in self._subscribers:
@@ -153,7 +166,9 @@ class SubscriberManager:
             return True
         return False
 
-    def set_verbose(self, chat_id: str, verbose: bool, thread_id: int = 0) -> bool:
+    def set_verbose(
+        self, chat_id: str, verbose: bool, thread_id: ThreadId = 0
+    ) -> bool:
         """Set verbose mode for a chat. Returns True if chat exists."""
         key = self._key(chat_id, thread_id)
         if key in self._subscribers:
@@ -162,7 +177,9 @@ class SubscriberManager:
             return True
         return False
 
-    def toggle_verbose(self, chat_id: str, thread_id: int = 0) -> Optional[bool]:
+    def toggle_verbose(
+        self, chat_id: str, thread_id: ThreadId = 0
+    ) -> Optional[bool]:
         """Toggle verbose mode. Returns new value or None if not subscribed."""
         key = self._key(chat_id, thread_id)
         if key in self._subscribers:
@@ -172,17 +189,19 @@ class SubscriberManager:
             return sub.verbose
         return None
 
-    def is_subscribed(self, chat_id: str, thread_id: int = 0) -> bool:
+    def is_subscribed(self, chat_id: str, thread_id: ThreadId = 0) -> bool:
         """Check if a chat is subscribed."""
         sub = self._subscribers.get(self._key(chat_id, thread_id))
         return sub is not None and sub.subscribed
 
-    def is_verbose(self, chat_id: str, thread_id: int = 0) -> bool:
+    def is_verbose(self, chat_id: str, thread_id: ThreadId = 0) -> bool:
         """Check if a chat has verbose mode enabled."""
         sub = self._subscribers.get(self._key(chat_id, thread_id))
         return sub is not None and sub.verbose
 
-    def get_subscriber(self, chat_id: str, thread_id: int = 0) -> Optional[Subscriber]:
+    def get_subscriber(
+        self, chat_id: str, thread_id: ThreadId = 0
+    ) -> Optional[Subscriber]:
         """Get subscriber info."""
         return self._subscribers.get(self._key(chat_id, thread_id))
 

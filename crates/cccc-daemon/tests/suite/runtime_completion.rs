@@ -32,6 +32,53 @@ fn exact_completion_is_replayable_but_mismatched_receipts_are_rejected() {
     }
 }
 
+#[test]
+fn browser_delivery_receipts_project_latest_retry_state_without_completing_turn() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group_id = setup(&home);
+    let turn = next_turn(&home, &group_id);
+    let event_ids = turn["event_ids"].clone();
+    let event_id = event_ids[0].as_str().expect("event id").to_owned();
+    let base = json!({
+        "group_id":group_id,
+        "actor_id":"web1",
+        "by":"web1",
+        "turn_id":turn["turn_id"],
+        "event_ids":event_ids,
+        "delivery_id":"delivery-retry"
+    });
+
+    for (state, detail) in [("failed", "send unavailable"), ("submitting", "")] {
+        let mut args = base.as_object().cloned().expect("args");
+        args.insert(
+            "browser_delivery".into(),
+            json!({"state":state,"detail":detail,"provider":"chatgpt"}),
+        );
+        let recorded = call(&home, "web_model_browser_delivery_record", args);
+        assert_eq!(
+            recorded.result["event"]["kind"],
+            format!("web_model.browser_delivery.{state}")
+        );
+    }
+
+    let statuses = call(
+        &home,
+        "ledger_statuses",
+        json!({"group_id":group_id,"event_ids":[event_id]}),
+    );
+    assert_eq!(
+        statuses.result["statuses"][&event_id]["web_model_delivery_status"]["state"],
+        "submitting"
+    );
+    let unread = call(
+        &home,
+        "inbox_list",
+        json!({"group_id":group_id,"actor_id":"web1","unread_only":true}),
+    );
+    assert_eq!(unread.result["messages"][0]["id"], event_id);
+}
+
 #[cfg(unix)]
 #[test]
 fn precommit_ledger_failure_does_not_create_a_completion_receipt() {

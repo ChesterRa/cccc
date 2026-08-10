@@ -1,13 +1,11 @@
 use cccc_contracts::{DaemonRequest, utc_now};
 use cccc_core::access_tokens::AccessTokenStore;
-use cccc_core::integration_state;
+use cccc_core::im_state;
 use cccc_core::{GroupStore, HomeLayout, settings};
 use serde_json::{Map, Value, json};
 use std::io;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg};
-
-const KEY: &str = "im_bridge";
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -27,18 +25,18 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
 }
 
 fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
+    let group_id = required_im_arg(request, "group_id", "missing_group_id")?;
     object(status_payload(&group_id, &load(home, &group_id)?))
 }
 
 fn config(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
+    let group_id = required_im_arg(request, "group_id", "missing_group_id")?;
     let value = load(home, &group_id)?;
     object(json!({"group_id":group_id,"im":value.get("config").cloned().unwrap_or(Value::Null)}))
 }
 
 fn set(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
+    let group_id = required_im_arg(request, "group_id", "missing_group_id")?;
     let platform = required_arg(request, "platform")?.to_ascii_lowercase();
     if !matches!(
         platform.as_str(),
@@ -53,6 +51,12 @@ fn set(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
     normalize_config(&platform, &mut config)?;
+    let current = load(home, &group_id)?;
+    preserve_config_policy(
+        &platform,
+        &mut config,
+        current.get("config").and_then(Value::as_object),
+    );
     update(home, &group_id, |state| {
         state.insert("config".into(), Value::Object(config));
         state.insert("enabled".into(), Value::Bool(false));
@@ -64,7 +68,7 @@ fn set(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 fn unset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
+    let group_id = required_im_arg(request, "group_id", "missing_group_id")?;
     update(home, &group_id, |state| {
         state.clear();
         Ok(())
@@ -73,7 +77,7 @@ fn unset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 fn running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
+    let group_id = required_im_arg(request, "group_id", "missing_group_id")?;
     let current = load(home, &group_id)?;
     if running && !current.get("config").is_some_and(Value::is_object) {
         return Err(OpError::new("invalid_state", "IM bridge is not configured"));
@@ -174,47 +178,36 @@ fn url_host(host: &str) -> String {
 }
 
 fn normalize_config(platform: &str, config: &mut Map<String, Value>) -> Result<(), OpError> {
-    config.insert("platform".into(), json!(platform));
-    let aliases: &[(&str, &str)] = match platform {
-        "telegram" | "discord" => &[("token_env", "bot_token_env")],
-        "feishu" => &[
-            ("app_key_env", "feishu_app_id"),
-            ("app_secret_env", "feishu_app_secret"),
-        ],
-        "dingtalk" => &[
-            ("app_key_env", "dingtalk_app_key"),
-            ("app_secret_env", "dingtalk_app_secret"),
-        ],
-        _ => &[],
-    };
-    for (from, to) in aliases {
-        if let Some(value) = config.get(*from).cloned().filter(non_empty) {
-            config.entry(*to).or_insert(value);
-        }
-    }
-    let required: &[&str] = match platform {
-        "telegram" | "discord" => &["bot_token_env"],
-        "slack" => &["bot_token_env", "app_token_env"],
-        "feishu" => &["feishu_app_id", "feishu_app_secret"],
-        "dingtalk" => &["dingtalk_app_key", "dingtalk_app_secret"],
-        "wecom" => &["wecom_bot_id", "wecom_secret"],
-        "weixin" => &[],
-        _ => unreachable!(),
-    };
-    if required
-        .iter()
-        .any(|key| config.get(*key).is_none_or(|value| !non_empty(value)))
-    {
+    let normalized = im_state::canonicalize_config(platform, config)
+        .ok_or_else(|| OpError::new("invalid_args", "unsupported IM platform"))?;
+    if !im_state::has_required_credentials(platform, &normalized) {
         return Err(OpError::new(
             "invalid_args",
             format!("missing credentials for {platform}"),
         ));
     }
+    *config = normalized;
     Ok(())
 }
 
-fn non_empty(value: &Value) -> bool {
-    value.as_str().is_some_and(|value| !value.trim().is_empty())
+fn preserve_config_policy(
+    platform: &str,
+    config: &mut Map<String, Value>,
+    previous: Option<&Map<String, Value>>,
+) {
+    for key in ["files", "skip_pending_on_start"] {
+        if !config.contains_key(key)
+            && let Some(value) = previous.and_then(|previous| previous.get(key)).cloned()
+        {
+            config.insert(key.into(), value);
+        }
+    }
+    config.entry("files").or_insert_with(|| {
+        json!({
+            "enabled":true,
+            "max_mb":if matches!(platform, "telegram" | "slack") { 20 } else { 10 }
+        })
+    });
 }
 
 fn status_payload(group_id: &str, value: &Value) -> Value {
@@ -228,43 +221,87 @@ fn status_payload(group_id: &str, value: &Value) -> Value {
         "adapter_available":value["adapter_available"].as_bool().unwrap_or(false),
         "last_error":value.get("last_error").cloned().unwrap_or(Value::Null),
         "pid":value.get("pid").cloned().unwrap_or(Value::Null),
-        "subscribers":active_authorization_count(value)
+        "subscribers":value.get("subscribers").and_then(Value::as_array).map_or(0,|items| {
+            items.iter().filter(|item| item["subscribed"].as_bool().unwrap_or(true)).count()
+        })
     })
 }
-
-fn active_authorization_count(value: &Value) -> usize {
-    let is_active = |item: &Value| item["subscribed"].as_bool() != Some(false);
-    match value.get("authorized") {
-        Some(Value::Array(items)) => items.iter().filter(|item| is_active(item)).count(),
-        Some(Value::Object(items)) => items.values().filter(|item| is_active(item)).count(),
-        _ => 0,
-    }
-}
 fn bind(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let key = required_arg(request, "key")?;
-    let now = chrono::Utc::now().timestamp() as f64;
-    let item = update(home, &group_id, |state| {
+    let group_id = required_im_arg(request, "group_id", "missing_group_id")?;
+    let key = required_im_arg(request, "key", "missing_key")?;
+    let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
+    let bound = im_state::update(&store, &group_id, |value| {
+        let state = value
+            .as_object_mut()
+            .ok_or_else(|| io::Error::other("IM state is not an object"))?;
         let pending = array(state, "pending");
-        pending.retain(|item| item["expires_at"].as_f64().unwrap_or(0.0) > now);
-        let Some(index) = pending.iter().position(|item| item["key"] == key) else {
-            return Ok(None);
-        };
+        let index = pending
+            .iter()
+            .position(|item| item["key"] == key)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid key"))?;
         let item = pending.remove(index);
-        array(state, "authorized").push(item.clone());
-        Ok(Some(item))
-    })?
-    .ok_or_else(|| OpError::new("invalid_key", "pending request not found or expired"))?;
-    object(json!({"group_id":group_id,"authorized":item}))
+        let chat_id = item["chat_id"].as_str().unwrap_or("").to_owned();
+        let thread_value = item.get("thread_id").cloned().unwrap_or_else(|| json!(0));
+        let thread_id = thread_id_value(&thread_value);
+        let platform = item["platform"].as_str().unwrap_or("").to_owned();
+        if chat_id.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "pending request has no chat_id",
+            ));
+        }
+
+        let authorized = array(state, "authorized");
+        authorized.retain(|item| !same_chat_target(item, &chat_id, &thread_id));
+        authorized.push(json!({
+            "chat_id":chat_id.clone(),
+            "thread_id":thread_value.clone(),
+            "platform":platform.clone(),
+            "authorized_at":epoch_seconds(),
+            "key_used":key
+        }));
+
+        let subscribers = array(state, "subscribers");
+        if let Some(existing) = subscribers
+            .iter_mut()
+            .find(|item| same_chat_target(item, &chat_id, &thread_id))
+        {
+            existing["subscribed"] = Value::Bool(true);
+            if existing["platform"].as_str().unwrap_or("").is_empty() {
+                existing["platform"] = json!(platform.clone());
+            }
+        } else {
+            subscribers.push(json!({
+                "chat_id":chat_id.clone(),
+                "thread_id":thread_value.clone(),
+                "platform":platform.clone(),
+                "subscribed":true,
+                "verbose":false,
+                "subscribed_at":utc_now(),
+                "chat_title":""
+            }));
+        }
+        Ok((chat_id, thread_value, platform))
+    })
+    .map_err(|error| {
+        if error.kind() == io::ErrorKind::InvalidInput {
+            OpError::new("invalid_key", "key not found or expired")
+        } else if error.kind() == io::ErrorKind::NotFound {
+            OpError::new("group_not_found", format!("group not found: {group_id}"))
+        } else {
+            OpError::io(error)
+        }
+    })?;
+    object(json!({"chat_id":bound.0,"thread_id":bound.1,"platform":bound.2}))
 }
 fn list(home: &HomeLayout, request: &DaemonRequest, key: &str) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
+    let group_id = required_im_arg(request, "group_id", "missing_group_id")?;
     let value = load(home, &group_id)?;
     object(json!({"group_id":group_id,key:value.get(key).cloned().unwrap_or_else(||json!([]))}))
 }
 fn reject(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let key = required_arg(request, "key")?;
+    let group_id = required_im_arg(request, "group_id", "missing_group_id")?;
+    let key = required_im_arg(request, "key", "missing_key")?;
     let rejected = update(home, &group_id, |state| {
         let items = array(state, "pending");
         let before = items.len();
@@ -274,71 +311,42 @@ fn reject(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"group_id":group_id,"rejected":rejected}))
 }
 fn revoke(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let chat_id = required_arg(request, "chat_id")?;
+    let group_id = required_im_arg(request, "group_id", "missing_group_id")?;
+    let chat_id = required_im_arg(request, "chat_id", "missing_chat_id")?;
     let thread_id = request
         .args
         .get("thread_id")
         .map(thread_id_value)
         .unwrap_or_default();
-    let revoked = update(home, &group_id, |state| {
+    let (revoked, unsubscribed) = update(home, &group_id, |state| {
         let mut revoked = false;
-        for key in ["authorized", "subscribers"] {
-            if let Some(items) = state.get_mut(key) {
-                revoked |= remove_chat_target(items, &chat_id, &thread_id);
+        array(state, "authorized").retain_mut(|item| {
+            if !same_chat_target(item, &chat_id, &thread_id) {
+                return true;
+            }
+            if is_weixin_target(item) {
+                if item["subscribed"].as_bool() != Some(false) {
+                    item["subscribed"] = Value::Bool(false);
+                    revoked = true;
+                }
+                true
+            } else {
+                revoked = true;
+                false
+            }
+        });
+        let mut unsubscribed = false;
+        for subscriber in array(state, "subscribers") {
+            if same_chat_target(subscriber, &chat_id, &thread_id)
+                && subscriber["subscribed"].as_bool().unwrap_or(true)
+            {
+                subscriber["subscribed"] = Value::Bool(false);
+                unsubscribed = true;
             }
         }
-        Ok(revoked)
+        Ok((revoked, unsubscribed))
     })?;
-    object(json!({"group_id":group_id,"revoked":revoked}))
-}
-
-fn remove_chat_target(items: &mut Value, chat_id: &str, thread_id: &str) -> bool {
-    match items {
-        Value::Array(items) => {
-            let mut changed = false;
-            items.retain_mut(|item| {
-                if !same_chat_target(item, chat_id, thread_id) {
-                    return true;
-                }
-                if is_weixin_target(item) {
-                    changed |= item["subscribed"].as_bool() != Some(false);
-                    item["subscribed"] = Value::Bool(false);
-                    true
-                } else {
-                    changed = true;
-                    false
-                }
-            });
-            changed
-        }
-        Value::Object(items) => {
-            let mut changed = false;
-            items.retain(|key, item| {
-                if !legacy_chat_key_matches(key, chat_id, thread_id)
-                    && !same_chat_target(item, chat_id, thread_id)
-                {
-                    return true;
-                }
-                if is_weixin_target(item) {
-                    changed |= item["subscribed"].as_bool() != Some(false);
-                    item["chat_id"] = json!(chat_id);
-                    item["thread_id"] = if thread_id.is_empty() {
-                        json!(0)
-                    } else {
-                        json!(thread_id)
-                    };
-                    item["subscribed"] = Value::Bool(false);
-                    true
-                } else {
-                    changed = true;
-                    false
-                }
-            });
-            changed
-        }
-        _ => false,
-    }
+    object(json!({"revoked":revoked,"unsubscribed":unsubscribed}))
 }
 
 fn is_weixin_target(item: &Value) -> bool {
@@ -350,14 +358,6 @@ fn is_weixin_target(item: &Value) -> bool {
 fn same_chat_target(item: &Value, chat_id: &str, thread_id: &str) -> bool {
     item["chat_id"].as_str() == Some(chat_id)
         && thread_id_value(&item["thread_id"]) == normalize_thread_id(thread_id)
-}
-
-fn legacy_chat_key_matches(key: &str, chat_id: &str, thread_id: &str) -> bool {
-    if !thread_id.is_empty() {
-        key == format!("{chat_id}:{thread_id}")
-    } else {
-        key == chat_id
-    }
 }
 
 fn thread_id_value(value: &Value) -> String {
@@ -379,7 +379,7 @@ fn normalize_thread_id(value: &str) -> String {
 
 fn load(home: &HomeLayout, group_id: &str) -> Result<Value, OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    integration_state::group_get(&store, group_id, KEY).map_err(OpError::io)
+    im_state::load(&store, group_id).map_err(|error| map_state_error(error, group_id))
 }
 fn update<T>(
     home: &HomeLayout,
@@ -387,13 +387,38 @@ fn update<T>(
     change: impl FnOnce(&mut Map<String, Value>) -> io::Result<T>,
 ) -> Result<T, OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    integration_state::group_update(&store, group_id, KEY, |value| {
+    im_state::update(&store, group_id, |value| {
         if !value.is_object() {
             *value = json!({});
         }
         change(value.as_object_mut().expect("IM state initialized"))
     })
-    .map_err(OpError::io)
+    .map_err(|error| map_state_error(error, group_id))
+}
+
+fn required_im_arg(request: &DaemonRequest, name: &str, code: &str) -> Result<String, OpError> {
+    request
+        .args
+        .get(name)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| OpError::new(code, format!("{name} is required")))
+}
+
+fn map_state_error(error: io::Error, group_id: &str) -> OpError {
+    if error.kind() == io::ErrorKind::NotFound {
+        OpError::new("group_not_found", format!("group not found: {group_id}"))
+    } else {
+        OpError::io(error)
+    }
+}
+
+fn epoch_seconds() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |duration| duration.as_secs_f64())
 }
 fn array<'a>(state: &'a mut Map<String, Value>, key: &str) -> &'a mut Vec<Value> {
     let value = state.entry(key).or_insert_with(|| json!([]));
@@ -437,9 +462,12 @@ fn legacy_target_from_key(key: &str) -> (String, Value) {
 
 #[cfg(test)]
 mod tests {
-    use super::{KEY, bind, delegate_start, revoke, status_payload, url_host};
+    use super::{
+        bind, delegate_start, normalize_config, preserve_config_policy, revoke, status_payload,
+        url_host,
+    };
     use cccc_contracts::DaemonRequest;
-    use cccc_core::{GroupStore, HomeLayout, integration_state, settings};
+    use cccc_core::{GroupStore, HomeLayout, im_state, settings};
     use serde_json::json;
     use std::io::{Read, Write};
 
@@ -456,11 +484,11 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("IM bind", "").expect("group");
-        let future = chrono::Utc::now().timestamp() as f64 + 3_600.0;
-        integration_state::group_update(&store, &group.group_id, KEY, |value| {
+        let now = chrono::Utc::now().timestamp() as f64;
+        im_state::update(&store, &group.group_id, |value| {
             *value = json!({"pending":[
-                {"key":"expired","chat_id":"old","expires_at":0.0},
-                {"key":"active","chat_id":"new","expires_at":future}
+                {"key":"expired","chat_id":"old","created_at":0.0},
+                {"key":"active","chat_id":"new","created_at":now}
             ]});
             Ok(())
         })
@@ -477,11 +505,10 @@ mod tests {
 
         let error = bind(&home, &request("expired")).expect_err("expired key must fail");
         assert_eq!(error.code, "invalid_key");
-        assert!(error.message.contains("expired"));
-        let state = integration_state::group_get(&store, &group.group_id, KEY).expect("state");
+        let state = im_state::load(&store, &group.group_id).expect("state");
         assert_eq!(state["pending"].as_array().expect("pending").len(), 1);
         let result = bind(&home, &request("active")).expect("active key binds");
-        assert_eq!(result["authorized"]["chat_id"], "new");
+        assert_eq!(result["chat_id"], "new");
     }
 
     #[test]
@@ -490,15 +517,15 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("Legacy IM bind", "").expect("group");
-        let future = chrono::Utc::now().timestamp() as f64 + 3_600.0;
-        integration_state::group_update(&store, &group.group_id, KEY, |value| {
+        let now = chrono::Utc::now().timestamp() as f64;
+        im_state::update(&store, &group.group_id, |value| {
             *value = json!({
                 "authorized":{
                     "old-chat":{"platform":"telegram"}
                 },
                 "pending":{"active":{
                     "chat_id":"new-chat","thread_id":"1710000000.100",
-                    "platform":"slack","expires_at":future
+                    "platform":"slack","created_at":now
                 }}
             });
             Ok(())
@@ -515,7 +542,7 @@ mod tests {
 
         bind(&home, &request).expect("bind");
 
-        let state = integration_state::group_get(&store, &group.group_id, KEY).expect("state");
+        let state = im_state::load(&store, &group.group_id).expect("state");
         let authorized = state["authorized"].as_array().expect("authorized");
         assert_eq!(authorized.len(), 2);
         assert!(authorized.iter().any(|item| item["chat_id"] == "old-chat"));
@@ -530,7 +557,7 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("IM revoke", "").expect("group");
-        integration_state::group_update(&store, &group.group_id, KEY, |value| {
+        im_state::update(&store, &group.group_id, |value| {
             *value = json!({
                 "authorized":[{"chat_id":"chat-1","thread_id":0}],
                 "subscribers":[{"chat_id":"chat-1","thread_id":0,"subscribed":true}]
@@ -550,19 +577,14 @@ mod tests {
         let result = revoke(&home, &request).expect("revoke");
 
         assert_eq!(result["revoked"], true);
-        let state = integration_state::group_get(&store, &group.group_id, KEY).expect("state");
+        let state = im_state::load(&store, &group.group_id).expect("state");
         assert!(
             state["authorized"]
                 .as_array()
                 .expect("authorized")
                 .is_empty()
         );
-        assert!(
-            state["subscribers"]
-                .as_array()
-                .expect("subscribers")
-                .is_empty()
-        );
+        assert_eq!(state["subscribers"][0]["subscribed"], false);
     }
 
     #[test]
@@ -571,7 +593,7 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("Legacy IM revoke", "").expect("group");
-        integration_state::group_update(&store, &group.group_id, KEY, |value| {
+        im_state::update(&store, &group.group_id, |value| {
             *value = json!({
                 "authorized":{
                     "chat-1":{"chat_id":"chat-1","thread_id":0},
@@ -597,14 +619,20 @@ mod tests {
         let result = revoke(&home, &request).expect("revoke");
 
         assert_eq!(result["revoked"], true);
-        let state = integration_state::group_get(&store, &group.group_id, KEY).expect("state");
-        assert_eq!(
-            state["authorized"],
-            json!({"chat-2":{"chat_id":"chat-2","thread_id":0}})
+        let state = im_state::load(&store, &group.group_id).expect("state");
+        assert_eq!(state["authorized"].as_array().expect("authorized").len(), 1);
+        assert_eq!(state["authorized"][0]["chat_id"], "chat-2");
+        let subscribers = state["subscribers"].as_array().expect("subscribers");
+        assert_eq!(subscribers.len(), 2);
+        assert!(
+            subscribers
+                .iter()
+                .any(|item| { item["chat_id"] == "chat-1" && item["subscribed"] == false })
         );
-        assert_eq!(
-            state["subscribers"],
-            json!({"chat-2":{"thread_id":0,"subscribed":true,"verbose":true}})
+        assert!(
+            subscribers
+                .iter()
+                .any(|item| { item["chat_id"] == "chat-2" && item["verbose"] == true })
         );
     }
 
@@ -614,7 +642,7 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("Weixin revoke", "").expect("group");
-        integration_state::group_update(&store, &group.group_id, KEY, |value| {
+        im_state::update(&store, &group.group_id, |value| {
             *value = json!({"authorized":[{
                 "chat_id":"wx-user","thread_id":0,"platform":"weixin",
                 "subscribed":true,"authorization_source":"weixin_login"
@@ -634,9 +662,31 @@ mod tests {
         let result = revoke(&home, &request).expect("revoke");
 
         assert_eq!(result["revoked"], true);
-        let state = integration_state::group_get(&store, &group.group_id, KEY).expect("state");
+        let state = im_state::load(&store, &group.group_id).expect("state");
         assert_eq!(state["authorized"][0]["subscribed"], false);
         assert_eq!(status_payload(&group.group_id, &state)["subscribers"], 0);
+    }
+
+    #[test]
+    fn daemon_config_uses_canonical_credentials_and_preserves_policy() {
+        let mut config = json!({
+            "app_key_env":"FEISHU_APP_ID",
+            "app_secret_env":"raw-secret"
+        })
+        .as_object()
+        .cloned()
+        .expect("config");
+        normalize_config("feishu", &mut config).expect("normalize");
+        preserve_config_policy(
+            "feishu",
+            &mut config,
+            json!({"files":{"enabled":false,"max_mb":7},"skip_pending_on_start":false}).as_object(),
+        );
+        assert_eq!(config["feishu_app_id_env"], "FEISHU_APP_ID");
+        assert_eq!(config["feishu_app_secret"], "raw-secret");
+        assert_eq!(config["files"]["max_mb"], 7);
+        assert_eq!(config["skip_pending_on_start"], false);
+        assert!(!config.contains_key("app_key_env"));
     }
 
     #[test]

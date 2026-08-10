@@ -62,7 +62,7 @@ pub(super) async fn handle_input(
             let size: Value = serde_json::from_slice(payload).unwrap_or_else(|_| json!({}));
             daemon_call(
                 state,
-                "terminal_resize",
+                "term_resize",
                 json!({"group_id":group_id,"actor_id":actor_id,"cols":size.get("cols"),"rows":size.get("rows")}),
             )
             .await

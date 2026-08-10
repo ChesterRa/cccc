@@ -163,8 +163,10 @@ impl Client {
         let url = parse_trusted_download_url(url)?;
         let client = download_http_client()?;
         let mut request = client.get(url.clone());
-        if google_cookie_host(url.host_str()) {
-            request = crate::auth::attach_cookie(request, &self.cookie_header()?);
+        if let Some(host) = url.host_str().filter(|host| google_cookie_host(Some(host)))
+            && let Some(cookie_header) = self.cookie_header_for(host, url.path())?
+        {
+            request = crate::auth::attach_cookie(request, &cookie_header);
         }
         let response = request.send()?;
         if crate::transport::is_auth_redirect(&response) {

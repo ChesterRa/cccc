@@ -9,10 +9,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use tokio::task::{JoinHandle, JoinSet};
+#[cfg(test)]
+use tokio_tungstenite::connect_async_with_config;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream, accept_async_with_config, client_async_tls_with_config,
-    connect_async_with_config,
 };
 
 const DISCORD_GATEWAY_HOST: &str = "gateway.discord.gg";
@@ -153,33 +154,10 @@ async fn relay_connection(
 }
 
 async fn connect_remote(proxy: &ProxyConfig, remote_url: &str) -> Result<RemoteSocket, String> {
-    let proxy_result =
-        tokio::time::timeout(CONNECT_TIMEOUT, connect_remote_via_proxy(proxy, remote_url))
-            .await
-            .map_err(|_| format!("proxy {} timed out", proxy.label()))
-            .and_then(|result| result);
-    match proxy_result {
-        Ok(socket) => Ok(socket),
-        Err(proxy_error) => {
-            tracing::warn!(%proxy_error, "Discord gateway proxy failed; trying direct connection");
-            let direct = tokio::time::timeout(
-                CONNECT_TIMEOUT,
-                connect_async_with_config(remote_url, Some(websocket_config()), false),
-            )
-            .await
-            .map_err(|_| "direct connection timed out".to_owned())
-            .and_then(|result| {
-                result
-                    .map(|(socket, _)| socket)
-                    .map_err(|error| error.to_string())
-            });
-            direct.map_err(|direct_error| {
-                format!(
-                    "configured proxy failed: {proxy_error}; direct fallback failed: {direct_error}"
-                )
-            })
-        }
-    }
+    tokio::time::timeout(CONNECT_TIMEOUT, connect_remote_via_proxy(proxy, remote_url))
+        .await
+        .map_err(|_| format!("configured proxy {} timed out", proxy.label()))?
+        .map_err(|error| format!("configured proxy failed: {error}"))
 }
 
 async fn connect_remote_via_proxy(
@@ -570,6 +548,54 @@ mod tests {
         .expect("proxy");
 
         assert_eq!(proxy.label(), "http://127.0.0.1:7890");
+    }
+
+    #[tokio::test]
+    async fn configured_proxy_failure_never_falls_back_to_direct_connection() {
+        let remote_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("remote listener");
+        let remote_address = remote_listener.local_addr().expect("remote address");
+        let (direct_contact_tx, direct_contact_rx) = tokio::sync::oneshot::channel();
+        let remote = tokio::spawn(async move {
+            let (stream, _) = remote_listener.accept().await.expect("remote accept");
+            let _ = direct_contact_tx.send(());
+            let _ = accept_async(stream).await;
+        });
+
+        let proxy_listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("proxy listener");
+        let proxy_address = proxy_listener.local_addr().expect("proxy address");
+        let proxy_task = tokio::spawn(async move {
+            let (mut inbound, _) = proxy_listener.accept().await.expect("proxy accept");
+            let _ = read_http_header(&mut inbound)
+                .await
+                .expect("CONNECT request");
+            inbound
+                .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .expect("CONNECT rejection");
+        });
+        let proxy = ProxyConfig {
+            kind: ProxyKind::Http,
+            host: proxy_address.ip().to_string(),
+            port: proxy_address.port(),
+            username: String::new(),
+            password: String::new(),
+        };
+
+        let result = connect_remote(&proxy, &format!("ws://{remote_address}")).await;
+
+        assert!(result.is_err(), "configured proxy must be fail-closed");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), direct_contact_rx)
+                .await
+                .is_err(),
+            "the direct endpoint must not be contacted"
+        );
+        remote.abort();
+        proxy_task.await.expect("proxy task");
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@ use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, Event};
 use cccc_core::actors;
 use cccc_core::ledger;
 use cccc_core::permissions::{self, ActorAction};
-use cccc_core::{GroupDoc, HomeLayout, group_scope};
+use cccc_core::{GroupDoc, HomeLayout, group_scope, inbox};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -78,18 +78,29 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             home, &group_id, &added.id, error,
         ));
     }
-    if let Err(error) = append_event(
+    let event = match append_event(
         home,
         &group_id,
         "actor.add",
         request,
         json!({"actor": added}),
     ) {
-        return Err(super::actor_saga::rollback_added(
-            home, &group_id, &added.id, error,
-        ));
+        Ok(event) => event,
+        Err(error) => {
+            return Err(super::actor_saga::rollback_added(
+                home, &group_id, &added.id, error,
+            ));
+        }
+    };
+    if let Err(error) = inbox::advance(home, &group_id, &added.id, &event.id) {
+        tracing::warn!(
+            %error,
+            group_id = %group_id,
+            actor_id = %added.id,
+            "failed to initialize actor inbox cursor"
+        );
     }
-    object(json!({"actor": added}))
+    object(json!({"actor": added, "event": event}))
 }
 
 fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -140,6 +151,7 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .iter()
         .find(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
+    let original_actor = current.clone();
     if actor_profile_runtime::rejects_linked_patch(current, &patch) {
         return Err(OpError::new(
             "actor_profile_linked_readonly",
@@ -163,13 +175,20 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     if final_preview.runtime == ActorRuntime::WebModel {
         require_single_web_model_actor(home, &group_id, &actor_id)?;
     }
+    let original_secrets = if profile_action == "convert_to_custom" {
+        Some(actor_secrets::values(home, &group_id, &actor_id)?)
+    } else {
+        None
+    };
     let converted_secrets = if profile_action == "convert_to_custom" {
         let mut secrets = actor_profile_runtime::profile_secrets(home, current)?;
-        secrets.extend(actor_secrets::values(home, &group_id, &actor_id)?);
+        secrets.extend(original_secrets.clone().unwrap_or_default());
         Some(secrets)
     } else {
         None
     };
+    let enabled_patched = patch.contains_key("enabled");
+    let was_running = actor_process_running(&group, &original_actor);
     let actor = store(home)?
         .mutate(&group_id, |doc| {
             let patched = actors::update(doc, &actor_id, &patch)?;
@@ -192,20 +211,197 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .position(|actor| actor.id == actor_id)
                 .ok_or_else(|| std::io::Error::other("actor not found"))?;
             doc.actors[index] = final_actor.clone();
+            if enabled_patched && !final_actor.enabled {
+                doc.running = doc.running && doc.actors.iter().any(|actor| actor.enabled);
+            }
             Ok(final_actor)
         })
         .map_err(OpError::invalid)?;
     if let Some(secrets) = converted_secrets {
-        actor_secrets::replace(home, &group_id, &actor_id, secrets)?;
+        if let Err(error) = actor_secrets::replace(home, &group_id, &actor_id, secrets) {
+            return Err(rollback_actor_update(
+                home,
+                &group,
+                &original_actor,
+                original_secrets.as_ref(),
+                None,
+                ActorUpdateEffect::None,
+                error,
+            ));
+        }
     }
-    append_event(
+    let updated_group =
+        match store(home).and_then(|store| store.load(&group_id).map_err(OpError::io)) {
+            Ok(group) => group,
+            Err(error) => {
+                return Err(rollback_actor_update(
+                    home,
+                    &group,
+                    &original_actor,
+                    original_secrets.as_ref(),
+                    None,
+                    ActorUpdateEffect::None,
+                    error,
+                ));
+            }
+        };
+    let mut effect = ActorUpdateEffect::None;
+    if enabled_patched && !actor.enabled {
+        actor_delivery::shutdown_actor(&group_id, &actor_id);
+        if let Err(error) = actor_runtime::apply(home, &group, &actor_id, "actor.stop") {
+            let effect = if was_running && !actor_process_running(&group, &original_actor) {
+                ActorUpdateEffect::Stopped
+            } else {
+                ActorUpdateEffect::None
+            };
+            return Err(rollback_actor_update(
+                home,
+                &group,
+                &original_actor,
+                original_secrets.as_ref(),
+                Some(&updated_group),
+                effect,
+                error,
+            ));
+        }
+        if was_running {
+            effect = ActorUpdateEffect::Stopped;
+        }
+    } else if enabled_patched
+        && actor.enabled
+        && group.running
+        && matches!(
+            group.state,
+            cccc_contracts::GroupState::Active | cccc_contracts::GroupState::Idle
+        )
+    {
+        if let Err(error) = actor_runtime::apply(home, &updated_group, &actor_id, "actor.start") {
+            let effect = if !was_running && actor_process_running(&updated_group, &actor) {
+                ActorUpdateEffect::Started
+            } else {
+                ActorUpdateEffect::None
+            };
+            return Err(rollback_actor_update(
+                home,
+                &group,
+                &original_actor,
+                original_secrets.as_ref(),
+                Some(&updated_group),
+                effect,
+                error,
+            ));
+        }
+        if !was_running {
+            effect = ActorUpdateEffect::Started;
+        }
+    }
+    let event = match append_event(
         home,
         &group_id,
         "actor.update",
         request,
         json!({"actor_id": actor_id, "patch": patch}),
-    )?;
-    object(json!({"actor": actor}))
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            return Err(rollback_actor_update(
+                home,
+                &group,
+                &original_actor,
+                original_secrets.as_ref(),
+                Some(&updated_group),
+                effect,
+                error,
+            ));
+        }
+    };
+    object(json!({"actor": actor, "event": event}))
+}
+
+#[derive(Clone, Copy)]
+enum ActorUpdateEffect {
+    None,
+    Started,
+    Stopped,
+}
+
+fn actor_process_running(group: &GroupDoc, actor: &Actor) -> bool {
+    if super::local_headless::supports(actor) {
+        super::local_headless::running(&group.group_id, &actor.id)
+    } else if actor_runtime::is_structured(actor) {
+        false
+    } else {
+        actor_runtime::status(&group.group_id, &actor.id).is_some_and(|status| status.running)
+    }
+}
+
+fn rollback_actor_update(
+    home: &HomeLayout,
+    original_group: &GroupDoc,
+    original_actor: &Actor,
+    original_secrets: Option<&BTreeMap<String, String>>,
+    updated_group: Option<&GroupDoc>,
+    effect: ActorUpdateEffect,
+    original: OpError,
+) -> OpError {
+    let mut failures = Vec::new();
+    if matches!(effect, ActorUpdateEffect::Started)
+        && let Some(group) = updated_group
+    {
+        actor_delivery::shutdown_actor(&group.group_id, &original_actor.id);
+        if let Err(error) = actor_runtime::apply(home, group, &original_actor.id, "actor.stop") {
+            failures.push(format!("stop newly started runtime: {}", error.message));
+        }
+    }
+    match store(home).and_then(|store| {
+        store
+            .mutate(&original_group.group_id, |doc| {
+                let index = doc
+                    .actors
+                    .iter()
+                    .position(|actor| actor.id == original_actor.id)
+                    .ok_or_else(|| std::io::Error::other("actor not found during rollback"))?;
+                doc.actors[index] = original_actor.clone();
+                doc.running = original_group.running;
+                doc.state = original_group.state;
+                Ok(())
+            })
+            .map_err(OpError::io)
+    }) {
+        Ok(()) => {}
+        Err(error) => failures.push(format!("restore actor state: {}", error.message)),
+    }
+    if let Some(secrets) = original_secrets
+        && let Err(error) = actor_secrets::replace(
+            home,
+            &original_group.group_id,
+            &original_actor.id,
+            secrets.clone(),
+        )
+    {
+        failures.push(format!("restore actor secrets: {}", error.message));
+    }
+    if matches!(effect, ActorUpdateEffect::Stopped)
+        && let Err(error) =
+            actor_runtime::apply(home, original_group, &original_actor.id, "actor.start")
+    {
+        failures.push(format!(
+            "restart previously running actor: {}",
+            error.message
+        ));
+    }
+    if failures.is_empty() {
+        original
+    } else {
+        OpError::new(
+            "rollback_failed",
+            format!(
+                "{}; rollback failed: {}",
+                original.message,
+                failures.join("; ")
+            ),
+        )
+    }
 }
 
 fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -403,7 +599,7 @@ fn append_event(
     kind: &str,
     request: &DaemonRequest,
     data: Value,
-) -> Result<(), OpError> {
+) -> Result<Event, OpError> {
     let mut event = Event::new(kind, group_id);
     event.by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     event.data = data.as_object().cloned().unwrap_or_default();
@@ -411,5 +607,6 @@ fn append_event(
         &store(home)?.ledger_path(group_id).map_err(OpError::io)?,
         &event,
     )
-    .map_err(OpError::io)
+    .map_err(OpError::io)?;
+    Ok(event)
 }

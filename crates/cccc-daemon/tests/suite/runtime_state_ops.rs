@@ -111,6 +111,7 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
 fn codex_headless_starts_a_provider_and_delivers_messages() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let resume_log = temp.path().join("resume-attempted");
     let created = call(&home, "group_create", json!({"title":"codex headless"}));
     let group_id = created.result["group"]["group_id"]
         .as_str()
@@ -124,6 +125,10 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/start"'*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$id"
+      ;;
+    *'"method":"thread/resume"'*)
+      printf 'attempted' > "$CCCC_RESUME_LOG"
+      printf '{"jsonrpc":"2.0","id":%s,"error":{"message":"saved thread unavailable"}}\n' "$id"
       ;;
     *'"method":"turn/start"'*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"turn-%s"}}}\n' "$id" "$id"
@@ -141,6 +146,7 @@ done
             "runtime":"codex",
             "runner":"headless",
             "command":["sh","-c",fake_app_server],
+            "env":{"CCCC_RESUME_LOG":resume_log},
             "by":"user"
         }),
     );
@@ -193,6 +199,34 @@ done
         "provider_headless_session"
     );
 
+    call(
+        &home,
+        "actor_stop",
+        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
+    );
+    call(
+        &home,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !resume_log.is_file() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "headless restart did not attempt provider-thread resume"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let restarted = call(
+        &home,
+        "actor_list",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    assert_eq!(restarted.result["actors"][0]["running"], true);
+    assert_eq!(
+        restarted.result["actors"][0]["runtime_session_status"],
+        "usable"
+    );
     call(
         &home,
         "actor_stop",

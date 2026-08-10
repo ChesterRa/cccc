@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  isProviderConnectionVerified,
   resolveNotebookSpacesAfterLoad,
   shouldRefreshNotebookSpaces,
 } from "../../../../src/components/modals/settings/groupSpaceState";
@@ -10,6 +11,12 @@ describe("groupSpaceState", () => {
     { remote_space_id: "nb-1", title: "Notebook 1", created_at: "", is_owner: true },
     { remote_space_id: "nb-2", title: "Notebook 2", created_at: "", is_owner: false },
   ];
+
+  it("does not treat an unverified saved credential as connected", () => {
+    expect(isProviderConnectionVerified(true, false)).toBe(false);
+    expect(isProviderConnectionVerified(true, true)).toBe(true);
+    expect(isProviderConnectionVerified(false, true)).toBe(false);
+  });
 
   it("refreshes notebook spaces only when write-ready and refresh is requested or the list is empty", () => {
     expect(shouldRefreshNotebookSpaces(true, false, 2)).toBe(false);

@@ -20,8 +20,6 @@ use state::{
     bridge_state, dispatch_message, find_delivery, items, nonempty, route, store_delivery,
 };
 
-const STORE_KEY: &str = "group_bridge";
-
 pub(super) fn route_ready(home: &HomeLayout, trust: &Value) -> bool {
     session_runtime::route_ready(home, trust)
 }

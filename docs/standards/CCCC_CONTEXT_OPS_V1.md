@@ -23,6 +23,12 @@ Read-only projections such as `board` and `attention` are daemon-computed and ar
 
 All operations are applied in order. If any op is invalid, the daemon rejects the entire batch.
 
+`context_sync` only mutates the Context v3 stores named by its operations. It
+MUST NOT implicitly write the separate durable memory store. Callers that want
+to retain a decision or outcome beyond the bounded Context projections MUST use
+the explicit `memory_reme_write` daemon operation after a successful
+`context_sync` receipt.
+
 ## 2. Operation Item Shape
 
 Each item in `args.ops` MUST be a JSON object with:
@@ -75,6 +81,7 @@ Permission: any actor.
 Notes:
 - Used for compact recent decisions / handoffs.
 - Daemon keeps only the newest bounded slice in context.
+- This operation does not implicitly copy the note into daily or stable memory.
 
 ### 3.2 Tasks
 
@@ -180,7 +187,8 @@ Notes:
 - This is the canonical lifecycle transition op.
 - `task.move` only accepts `task_id` and `status`. Fields such as `outcome`, `notes`, `checklist`, or `task_type` MUST go through `task.update`.
 - Moving to `archived` records `archived_from`.
-- Task lifecycle changes append memory lane events; root-task completion may promote one stable memory entry into `state/memory/MEMORY.md`.
+- This operation changes only task lifecycle state. It does not implicitly
+  rewrite an assignee's `agent_state` or append daily/stable memory.
 
 #### `task.restore`
 
@@ -193,9 +201,31 @@ Permission: assignee / handoff target / foreman / user.
 Rules:
 - The task MUST currently be archived.
 
+#### `task.delete`
+
+```ts
+{ op: "task.delete"; task_id: string }
+```
+
+Permission: assignee / handoff target / foreman / user.
+
+Rules:
+- This operation is for removing work that never entered execution, not for erasing task history.
+- The target task and every descendant MUST be `planned`, or `archived` directly from `planned`.
+- If the target or any descendant has execution history, the entire operation MUST be rejected.
+- A successful delete removes the complete target subtree atomically.
+- Task deletion does not implicitly rewrite actor-owned `agent_state`; an actor
+  or the local `user` recovery authority may reconcile stale working-state hints
+  explicitly.
+
 ### 3.3 Agent State
 
 Agent states are keyed by `actor_id`.
+
+Agent state is actor-owned short-term working context. Task and coordination
+operations MUST NOT implicitly update or clear it. Normal writes are explicit
+self-writes through the operations below; the local `user` principal remains
+the recovery authority described in §4.
 
 #### `agent_state.update`
 
@@ -303,7 +333,7 @@ Curated trigger allowlist:
 | Role | Allowed ops |
 |------|------------|
 | `user` | All ops |
-| `foreman` | All ops |
-| `peer` | `coordination.note.add`, `task.create`, `task.update` (own assigned / handed-off), `task.move` (own assigned / handed-off), `task.restore` (own assigned / handed-off), `agent_state.update` (self), `agent_state.clear` (self) |
+| `foreman` | All ops except changing another actor's `agent_state` |
+| `peer` | `coordination.note.add`, `task.create`, `task.update` (own assigned / handed-off), `task.move` (own assigned / handed-off), `task.restore` (own assigned / handed-off), `task.delete` (own assigned / handed-off), `agent_state.update` (self), `agent_state.clear` (self) |
 
 Permission checks use `context_sync.args.by`.

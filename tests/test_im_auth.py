@@ -59,6 +59,11 @@ class TestKeyManagerBasic(unittest.TestCase):
         self.km.authorize("123", 0, "telegram", key)
         self.assertTrue(self.km.is_authorized("123", 0))
 
+    def test_authorization_does_not_cross_platform_after_adapter_switch(self) -> None:
+        self.km.authorize_direct("same", 0, "telegram", "test")
+        self.assertTrue(self.km.is_authorized("same", 0, "telegram"))
+        self.assertFalse(self.km.is_authorized("same", 0, "discord"))
+
     def test_authorize_consumes_key(self) -> None:
         key = self.km.generate_key("123", 0, "telegram")
         self.km.authorize("123", 0, "telegram", key)
@@ -113,6 +118,22 @@ class TestKeyManagerThreadId(unittest.TestCase):
         self.assertFalse(self.km.is_authorized("100", 42))
         self.km.authorize("100", 42, "telegram", k2)
         self.assertTrue(self.km.is_authorized("100", 42))
+
+    def test_opaque_slack_thread_ids_remain_distinct_after_reload(self) -> None:
+        first = "1710000000.100"
+        second = "1710000000.200"
+        k1 = self.km.generate_key("C100", first, "slack")
+        k2 = self.km.generate_key("C100", second, "slack")
+        self.km.authorize("C100", first, "slack", k1)
+        self.km.authorize("C100", second, "slack", k2)
+
+        reloaded = KeyManager(self.state_dir)
+        self.assertTrue(reloaded.is_authorized("C100", first, "slack"))
+        self.assertTrue(reloaded.is_authorized("C100", second, "slack"))
+        self.assertEqual(
+            {item["thread_id"] for item in reloaded.list_authorized()},
+            {first, second},
+        )
 
 
 class TestKeyManagerPersistence(unittest.TestCase):
@@ -302,6 +323,62 @@ class TestImRevokeSemantics(unittest.TestCase):
         self.assertIsInstance(pending, list)
         self.assertEqual(len(pending), 1)
         self.assertEqual(pending[0].get("key"), key)
+
+    def test_rust_slack_thread_id_survives_list_bind_and_revoke(self) -> None:
+        from cccc.daemon.im import im_ops
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        thread_id = "1710000000.100"
+        (self.state_dir / "im_pending_keys.json").write_text(
+            json.dumps(
+                {
+                    "rust-key": {
+                        "chat_id": "C100",
+                        "thread_id": thread_id,
+                        "platform": "slack",
+                        "created_at": time.time(),
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        km = KeyManager(self.state_dir)
+        fake_group = SimpleNamespace(path=self.group_path)
+        with patch(
+            "cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)
+        ):
+            pending = im_ops.handle_im_list_pending({"group_id": "g_demo"})
+            bound = im_ops.handle_im_bind_chat(
+                {"group_id": "g_demo", "key": "rust-key"}
+            )
+
+        self.assertTrue(pending.ok, getattr(pending, "error", None))
+        self.assertEqual(pending.result["pending"][0]["thread_id"], thread_id)
+        self.assertTrue(bound.ok, getattr(bound, "error", None))
+        self.assertEqual(bound.result["thread_id"], thread_id)
+
+        reloaded_keys = KeyManager(self.state_dir)
+        reloaded_subscribers = SubscriberManager(self.state_dir)
+        self.assertTrue(reloaded_keys.is_authorized("C100", thread_id, "slack"))
+        subscriber = reloaded_subscribers.get_subscriber("C100", thread_id)
+        self.assertIsNotNone(subscriber)
+        assert subscriber is not None
+        self.assertEqual(subscriber.thread_id, thread_id)
+
+        with patch(
+            "cccc.daemon.im.im_ops._load_km",
+            return_value=(None, reloaded_keys, fake_group),
+        ):
+            revoked = im_ops.handle_im_revoke_chat(
+                {
+                    "group_id": "g_demo",
+                    "chat_id": "C100",
+                    "thread_id": thread_id,
+                }
+            )
+        self.assertTrue(revoked.ok, getattr(revoked, "error", None))
+        self.assertTrue(revoked.result["revoked"])
+        self.assertTrue(revoked.result["unsubscribed"])
 
     def test_reject_pending_is_idempotent(self) -> None:
         from cccc.daemon.im import im_ops

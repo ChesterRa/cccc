@@ -173,6 +173,54 @@ class TestSocketSpecialOps(unittest.TestCase):
         self.assertEqual((sent[0].get("result") or {}).get("replay_cursor"), 120)
         self.assertEqual((sent[0].get("result") or {}).get("replay_end_cursor"), 275)
 
+    def test_term_attach_reports_the_actual_writer_reservation(self) -> None:
+        req = DaemonRequest.model_validate(
+            {"op": "term_attach", "args": {"group_id": "g1", "actor_id": "a1", "mode": "control"}}
+        )
+        conn = _FakeConn()
+        sent: list[dict] = []
+
+        def attach(
+            _gid,
+            _aid,
+            _sock,
+            _since=None,
+            _mode="control",
+            _takeover=False,
+            *,
+            on_replay_snapshot=None,
+        ):
+            self.assertIsNotNone(on_replay_snapshot)
+            on_replay_snapshot(
+                120,
+                275,
+                {"mode": "control", "writable": False, "writer_replaced": False},
+            )
+            return {"mode": "control", "writable": False, "writer_replaced": False}
+
+        handled = try_handle_socket_special_op(
+            req,
+            conn,
+            send_json=lambda _conn, payload: sent.append(payload),
+            dump_response=lambda resp: resp.model_dump(),
+            error=lambda code, msg, details=None: self._error_payload(code, msg, details),
+            actor_running=lambda _gid, _aid: True,
+            backlog_start_offset=lambda _gid, _aid: 0,
+            backlog_end_offset=lambda _gid, _aid: 0,
+            attach_actor_socket=attach,
+            load_group=lambda _gid: {"group_id": "g1"},
+            find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
+            effective_runner_kind=lambda rk: rk,
+            supported_stream_kinds=lambda: {"chat.message"},
+            start_events_stream=lambda *_args: False,
+        )
+
+        self.assertTrue(handled)
+        result = sent[0].get("result") or {}
+        self.assertEqual(result.get("terminal_mode"), "control")
+        self.assertFalse(result.get("terminal_writable"))
+        self.assertFalse(result.get("writer_replaced"))
+
     def test_term_attach_replay_cursor_honors_in_ring_since(self) -> None:
         # Reconnect with a cursor still inside the ring: replay_cursor == since, so
         # the client keeps counting from where it left off (exact gap resume).

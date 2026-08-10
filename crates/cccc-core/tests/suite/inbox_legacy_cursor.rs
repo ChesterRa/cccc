@@ -111,6 +111,6 @@ impl Fixture {
 
     fn unread(&self) -> Vec<Event> {
         let group = self.store.load(&self.group_id).expect("group");
-        inbox::list_unread(&self.home, &group, "peer", 50).expect("unread")
+        inbox::list_unread(&self.home, &group, "peer", 50, "all").expect("unread")
     }
 }

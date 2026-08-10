@@ -38,6 +38,18 @@ class TestDaemonCoreOps(unittest.TestCase):
             capabilities = result.get("capabilities") if isinstance(result.get("capabilities"), dict) else {}
             self.assertEqual(bool(capabilities.get("events_stream")), True)
             self.assertEqual(bool(capabilities.get("remote_access")), True)
+            self.assertIs(capabilities.get("assistant_state"), True)
+            self.assertIs(capabilities.get("assistant_voice_recording_lease"), True)
+            self.assertIs(capabilities.get("assistant_voice_model_install"), True)
+            for operation in (
+                "presentation_browser_attach",
+                "presentation_browser_vnc_attach",
+                "space_provider_auth_browser_attach",
+                "space_provider_auth_browser_vnc_attach",
+                "web_model_browser_attach",
+                "web_model_browser_vnc_attach",
+            ):
+                self.assertIs(capabilities.get(operation), True, operation)
 
             shutdown, should_stop = self._call("shutdown", {})
             self.assertTrue(shutdown.ok, getattr(shutdown, "error", None))

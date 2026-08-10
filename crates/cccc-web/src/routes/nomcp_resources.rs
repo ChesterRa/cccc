@@ -4,6 +4,13 @@ use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 
 pub fn root(home: &HomeLayout, session: &Session) -> Result<PathBuf, String> {
+    if !session.repo_root.trim().is_empty() {
+        let root = PathBuf::from(session.repo_root.trim());
+        return root
+            .is_dir()
+            .then_some(root)
+            .ok_or_else(|| "session scope is unavailable".into());
+    }
     let group = GroupStore::new(home.clone())
         .and_then(|store| store.load(&session.group_id))
         .map_err(|error| error.to_string())?;

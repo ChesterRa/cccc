@@ -15,12 +15,16 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use reqwest::blocking::Client as HttpClient;
-use reqwest::header::{ORIGIN, REFERER};
+use reqwest::header::{COOKIE, LOCATION, ORIGIN, REFERER};
 use serde_json::{Value, json};
 
 use auth::AuthState;
 
 pub(crate) const BASE_URL: &str = "https://notebooklm.google.com";
+const BASE_HOST: &str = "notebooklm.google.com";
+const AUTH_BASE_HOST: &str = "notebook.google.com";
+const ACCOUNTS_HOST: &str = "accounts.google.com";
+const MAX_AUTH_REDIRECTS: usize = 8;
 pub(crate) const BATCHEXECUTE_URL: &str =
     "https://notebooklm.google.com/_/LabsTailwindUi/data/batchexecute";
 const QUERY_URL: &str = "https://notebooklm.google.com/_/LabsTailwindUi/data/google.internal.labs.tailwind.orchestration.v1.LabsTailwindOrchestrationService/GenerateFreeFormStreamed";
@@ -34,18 +38,20 @@ pub struct Client {
 
 impl Client {
     pub fn from_storage_state(raw: &str) -> Result<Self> {
-        let (mut storage_state, cookie_header, authuser) = auth::parse_storage(raw)?;
+        let (mut storage_state, _, authuser) = auth::parse_storage(raw, BASE_HOST, "/")?;
+        let auth_http = HttpClient::builder()
+            .timeout(Duration::from_secs(180))
+            .connect_timeout(Duration::from_secs(15))
+            .user_agent("Mozilla/5.0 CCCC NotebookLM Rust adapter")
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let response = fetch_auth_page(&auth_http, &mut storage_state, authuser)?;
         let http = HttpClient::builder()
             .timeout(Duration::from_secs(180))
             .connect_timeout(Duration::from_secs(15))
             .user_agent("Mozilla/5.0 CCCC NotebookLM Rust adapter")
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()?;
-        let response = http
-            .get(format!("{BASE_URL}/"))
-            .header(reqwest::header::COOKIE, &cookie_header)
-            .send()?;
-        cookies::merge_response(&mut storage_state, &response)?;
         if response.status() == reqwest::StatusCode::UNAUTHORIZED
             || response.status() == reqwest::StatusCode::FORBIDDEN
             || response
@@ -211,7 +217,12 @@ impl Client {
                 .map_err(|error| Error::drift("chat request", error.to_string()))?
         ]))
         .map_err(|error| Error::drift("chat request", error.to_string()))?;
-        let cookie_header = self.cookie_header()?;
+        let cookie_header = self
+            .cookie_header_for(
+                BASE_HOST,
+                "/_/LabsTailwindUi/data/google.internal.labs.tailwind.orchestration.v1.LabsTailwindOrchestrationService/GenerateFreeFormStreamed",
+            )?
+            .ok_or_else(|| Error::InvalidCredential("NotebookLM API cookies are missing".into()))?;
         let response = auth::attach_cookie(self.http.post(QUERY_URL), &cookie_header)
             .header(ORIGIN, BASE_URL)
             .header(REFERER, format!("{BASE_URL}/notebook/{notebook_id}"))
@@ -250,6 +261,54 @@ impl Client {
     }
 }
 
+fn fetch_auth_page(
+    http: &HttpClient,
+    storage_state: &mut Value,
+    authuser: usize,
+) -> Result<reqwest::blocking::Response> {
+    let mut url = reqwest::Url::parse(&format!("{BASE_URL}/"))
+        .map_err(|error| Error::InvalidCredential(error.to_string()))?;
+    if authuser != 0 {
+        url.query_pairs_mut()
+            .append_pair("authuser", &authuser.to_string());
+    }
+    for _ in 0..=MAX_AUTH_REDIRECTS {
+        let host = url.host_str().ok_or(Error::Authentication)?;
+        if !allowed_auth_url(&url) {
+            return Err(Error::Authentication);
+        }
+        let raw = serde_json::to_string(storage_state)
+            .map_err(|error| Error::InvalidCredential(error.to_string()))?;
+        let (_, cookie_header, _) = auth::parse_storage(&raw, host, url.path())?;
+        let response = http.get(url.clone()).header(COOKIE, cookie_header).send()?;
+        cookies::merge_response(storage_state, &response)?;
+        if !response.status().is_redirection() {
+            return Ok(response);
+        }
+        let location = response
+            .headers()
+            .get(LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .ok_or(Error::Authentication)?;
+        url = response
+            .url()
+            .join(location)
+            .map_err(|_| Error::Authentication)?;
+    }
+    Err(Error::Authentication)
+}
+
+fn allowed_auth_url(url: &reqwest::Url) -> bool {
+    url.scheme() == "https"
+        && url.port().is_none()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && matches!(
+            url.host_str(),
+            Some(BASE_HOST | AUTH_BASE_HOST | ACCOUNTS_HOST)
+        )
+}
+
 fn template_block() -> Value {
     json!([
         2,
@@ -274,5 +333,24 @@ mod tests {
             json!([null, ["source-1"], [2]])
         );
         assert_eq!(rpc::REFRESH_SOURCE, "FLmJqe");
+    }
+
+    #[test]
+    fn auth_redirects_are_limited_to_exact_google_hosts() {
+        for raw in [
+            "https://notebooklm.google.com/",
+            "https://notebook.google.com/",
+            "https://accounts.google.com/",
+        ] {
+            assert!(allowed_auth_url(&reqwest::Url::parse(raw).expect("url")));
+        }
+        for raw in [
+            "http://notebook.google.com/",
+            "https://notebook.google.com:444/",
+            "https://accounts.google.com.evil.example/",
+            "https://user@accounts.google.com/",
+        ] {
+            assert!(!allowed_auth_url(&reqwest::Url::parse(raw).expect("url")));
+        }
     }
 }

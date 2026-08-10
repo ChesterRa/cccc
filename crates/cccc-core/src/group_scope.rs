@@ -299,6 +299,38 @@ mod tests {
     }
 
     #[test]
+    fn failed_attach_restores_the_original_updated_at() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("timestamp rollback", "").expect("group");
+        let group_path = store
+            .group_dir(&group.group_id)
+            .expect("group dir")
+            .join("group.yaml");
+        let mut before = store.load(&group.group_id).expect("before");
+        before.updated_at = "2000-01-01T00:00:00Z".into();
+        crate::fs::write_yaml(&group_path, &before).expect("fixed timestamp");
+        let scope = Scope {
+            scope_key: "s_test".into(),
+            url: temp.path().to_string_lossy().into_owned(),
+            label: "test".into(),
+            git_remote: String::new(),
+        };
+
+        let error = attach_with(&store, &group.group_id, scope, |_| {
+            Err(io::Error::other("injected registry failure"))
+        })
+        .expect_err("attach failure");
+
+        assert!(error.to_string().contains("injected registry failure"));
+        let stored = store.load(&group.group_id).expect("stored");
+        assert_eq!(stored.updated_at, before.updated_at);
+        assert!(stored.scopes.is_empty());
+        assert!(stored.active_scope_key.is_empty());
+    }
+
+    #[test]
     fn failed_attach_rollback_does_not_overwrite_a_concurrent_group_update() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

@@ -15,6 +15,22 @@ PrincipalResolver = Callable[[Request], object]
 TokensActiveGetter = Callable[[], bool]
 
 
+def _is_read_only_safe(method: str, path: str) -> bool:
+    normalized_method = str(method or "").upper()
+    if normalized_method == "OPTIONS":
+        return True
+    if normalized_method not in ("GET", "HEAD"):
+        return False
+
+    prefix = "/nomcp/s/"
+    if path.startswith(prefix):
+        remainder = path[len(prefix) :]
+        parts = remainder.split("/")
+        if len(parts) == 2 and parts[0] and parts[1] == "send":
+            return False
+    return True
+
+
 def _scope_state_get(scope: Scope, key: str, default: object = None) -> object:
     state = scope.setdefault("state", {})
     if not isinstance(state, dict):
@@ -146,22 +162,23 @@ class ReadOnlyGuardMiddleware:
         if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
-        if self.read_only:
-            method = str(scope.get("method") or "").upper()
-            if method not in ("GET", "HEAD", "OPTIONS"):
-                resp = JSONResponse(
-                    status_code=403,
-                    content={
-                        "ok": False,
-                        "error": {
-                            "code": "read_only",
-                            "message": "CCCC Web is running in read-only (exhibit) mode.",
-                            "details": {},
-                        },
+        if self.read_only and not _is_read_only_safe(
+            str(scope.get("method") or ""),
+            str(scope.get("path") or ""),
+        ):
+            resp = JSONResponse(
+                status_code=403,
+                content={
+                    "ok": False,
+                    "error": {
+                        "code": "read_only",
+                        "message": "CCCC Web is running in read-only (exhibit) mode.",
+                        "details": {},
                     },
-                )
-                await resp(scope, receive, send)
-                return
+                },
+            )
+            await resp(scope, receive, send)
+            return
         await self.app(scope, receive, send)
 
 

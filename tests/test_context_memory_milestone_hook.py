@@ -35,7 +35,7 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
         self.assertTrue(group_id)
         return group_id
 
-    def test_root_task_complete_triggers_file_memory_writes(self) -> None:
+    def test_root_task_complete_does_not_write_memory_implicitly(self) -> None:
         _, cleanup = self._with_home()
         try:
             group_id = self._create_group()
@@ -76,24 +76,14 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
             self.assertIsNotNone(group)
             assert group is not None
             memory_root = Path(group.path) / "state" / "memory"
-            self.assertTrue(memory_root.exists())
-
-            memory_file = memory_root / "MEMORY.md"
-            self.assertTrue(memory_file.exists())
-            memory_text = memory_file.read_text(encoding="utf-8")
-            self.assertIn("Root task completed", memory_text)
-            self.assertIn(task_id, memory_text)
-
-            daily_files = sorted((memory_root / "daily").glob("*.md"))
-            self.assertGreaterEqual(len(daily_files), 1)
-            daily_text = "\n".join(p.read_text(encoding="utf-8") for p in daily_files)
-            self.assertIn("Task status update", daily_text)
-            self.assertIn("Root task completed", daily_text)
-            self.assertIn(task_id, daily_text)
+            self.assertFalse(
+                memory_root.exists(),
+                f"unexpected implicit memory write: {memory_root}",
+            )
         finally:
             cleanup()
 
-    def test_coordination_notes_write_daily_memory(self) -> None:
+    def test_coordination_notes_do_not_write_memory_implicitly(self) -> None:
         _, cleanup = self._with_home()
         try:
             group_id = self._create_group()
@@ -116,11 +106,10 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
             self.assertIsNotNone(group)
             assert group is not None
             memory_root = Path(group.path) / "state" / "memory"
-            daily_files = sorted((memory_root / "daily").glob("*.md"))
-            self.assertGreaterEqual(len(daily_files), 1)
-            daily_text = "\n".join(p.read_text(encoding="utf-8") for p in daily_files)
-            self.assertIn("Decision: Freeze the memory-lane split.", daily_text)
-            self.assertIn("Handoff: Ask peer2 to verify the sync diagnostics.", daily_text)
+            self.assertFalse(
+                memory_root.exists(),
+                f"unexpected implicit memory write: {memory_root}",
+            )
         finally:
             cleanup()
 

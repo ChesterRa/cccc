@@ -1,12 +1,11 @@
 use cccc_contracts::{DaemonRequest, Event};
-use cccc_core::{GroupStore, HomeLayout, integration_state, ledger};
+use cccc_core::{GroupStore, HomeLayout, group_bridge_legacy, ledger};
 use serde_json::json;
 use std::thread;
 use tempfile::tempdir;
 
 use super::{
-    STORE_KEY, delivery_status, normalize_outbound_payload, session_runtime,
-    validate_remote_payload,
+    delivery_status, normalize_outbound_payload, session_runtime, validate_remote_payload,
 };
 
 fn request(op: &str, value: serde_json::Value) -> DaemonRequest {
@@ -25,11 +24,19 @@ fn delivery_status_reads_python_compatible_receipt() {
     let temp = tempdir().expect("temp");
     let home = HomeLayout::from_path(temp.path()).expect("home path");
     home.initialize().expect("home");
-    integration_state::global_update(&home, STORE_KEY, |state| {
-        *state = json!({
-            "registrations":[{"registration_id":"greg_1","group_id":"g_local","status":"active"}],
-            "deliveries":[{"registration_id":"greg_1","idempotency_key":"once","status":"delivered"}]
-        });
+    group_bridge_legacy::update(&home, |state| {
+        state.insert(
+            "registrations".into(),
+            json!([
+                {"registration_id":"greg_1","group_id":"g_local","status":"active"}
+            ]),
+        );
+        state.insert(
+            "deliveries".into(),
+            json!([
+                {"registration_id":"greg_1","idempotency_key":"once","status":"delivered"}
+            ]),
+        );
         Ok(())
     })
     .expect("state");
@@ -119,13 +126,17 @@ fn remote_reply_uses_reverse_session_and_keeps_one_local_record() {
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home path");
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("receiver", "").expect("group");
-    integration_state::global_update(&home, STORE_KEY, |state| {
-        *state = json!({"trusts":[{
-            "trust_id":"trust_reply","registration_id":"registration_reply",
-            "group_id":group.group_id,"remote_group_id":"g_remote",
-            "remote_peer_id":"peer_remote","transport":"group_bridge_session",
-            "status":"active","remote_access_level":"messages"
-        }]});
+    group_bridge_legacy::update(&home, |state| {
+        state.clear();
+        state.insert(
+            "trusts".into(),
+            json!([{
+                "trust_id":"trust_reply","registration_id":"registration_reply",
+                "group_id":group.group_id,"remote_group_id":"g_remote",
+                "remote_peer_id":"peer_remote","transport":"group_bridge_session",
+                "status":"active","remote_access_level":"messages"
+            }]),
+        );
         Ok(())
     })
     .expect("bridge state");
@@ -237,13 +248,17 @@ fn remote_reply_without_return_recipient_fails_before_local_append() {
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home path");
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("receiver", "").expect("group");
-    integration_state::global_update(&home, STORE_KEY, |state| {
-        *state = json!({"trusts":[{
-            "trust_id":"trust_reply","registration_id":"registration_reply",
-            "group_id":group.group_id,"remote_group_id":"g_remote",
-            "remote_peer_id":"peer_remote","transport":"group_bridge_session",
-            "status":"active","remote_access_level":"messages"
-        }]});
+    group_bridge_legacy::update(&home, |state| {
+        state.clear();
+        state.insert(
+            "trusts".into(),
+            json!([{
+                "trust_id":"trust_reply","registration_id":"registration_reply",
+                "group_id":group.group_id,"remote_group_id":"g_remote",
+                "remote_peer_id":"peer_remote","transport":"group_bridge_session",
+                "status":"active","remote_access_level":"messages"
+            }]),
+        );
         Ok(())
     })
     .expect("bridge state");
@@ -284,13 +299,17 @@ fn remote_reply_allows_an_explicit_remote_audience_without_local_actors() {
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home path");
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("receiver", "").expect("group");
-    integration_state::global_update(&home, STORE_KEY, |state| {
-        *state = json!({"trusts":[{
-            "trust_id":"trust_reply","registration_id":"registration_reply",
-            "group_id":group.group_id,"remote_group_id":"g_remote",
-            "remote_peer_id":"peer_remote","transport":"group_bridge_session",
-            "status":"active","remote_access_level":"messages"
-        }]});
+    group_bridge_legacy::update(&home, |state| {
+        state.clear();
+        state.insert(
+            "trusts".into(),
+            json!([{
+                "trust_id":"trust_reply","registration_id":"registration_reply",
+                "group_id":group.group_id,"remote_group_id":"g_remote",
+                "remote_peer_id":"peer_remote","transport":"group_bridge_session",
+                "status":"active","remote_access_level":"messages"
+            }]),
+        );
         Ok(())
     })
     .expect("bridge state");

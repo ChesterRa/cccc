@@ -17,7 +17,7 @@ use crate::browser_surface::BrowserSurfaces;
 
 pub(super) const PROVIDER: &str = "notebooklm";
 pub(super) const BROWSER_KEY: &str = "space-provider::notebooklm";
-pub(super) const LOGIN_URL: &str = "https://notebooklm.google.com/";
+pub(super) const LOGIN_URL: &str = "https://notebook.google.com/";
 pub(super) const BROWSER_WIDTH: u32 = 1366;
 pub(super) const BROWSER_HEIGHT: u32 = 900;
 

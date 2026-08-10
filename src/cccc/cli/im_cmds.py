@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .common import *  # noqa: F401,F403
 from ..daemon.im.im_bridge_ops import read_live_im_bridge_pid, sanitize_im_bridge_env
+from ..ports.im.auth import normalize_thread_id
 from ..util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, resolve_background_python_argv, supervised_process_popen_kwargs
 
 __all__ = [
@@ -578,10 +579,7 @@ def cmd_im_revoke(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "missing_chat_id", "message": "missing --chat-id argument"}})
         return 2
 
-    try:
-        thread_id = int(getattr(args, "thread_id", 0) or 0)
-    except Exception:
-        thread_id = 0
+    thread_id = normalize_thread_id(getattr(args, "thread_id", 0))
 
     if not _ensure_daemon_running():
         _print_json({"ok": False, "error": {"code": "daemon_error", "message": "cannot reach daemon"}})

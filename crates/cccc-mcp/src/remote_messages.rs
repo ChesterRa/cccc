@@ -1,11 +1,9 @@
 use cccc_client::DaemonClient;
 use cccc_contracts::DaemonRequest;
-use cccc_core::{GroupStore, HomeLayout, integration_state};
+use cccc_core::{GroupStore, HomeLayout};
 use reqwest::StatusCode;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
-
-const STORE_KEY: &str = "group_bridge";
 
 pub(crate) fn apply_cross_group_default(args: &mut Map<String, Value>) -> Result<(), String> {
     let cross_group = match (text(args, "group_id"), text(args, "dst_group_id")) {
@@ -48,10 +46,7 @@ pub(crate) async fn try_send(
 ) -> Option<Result<Value, String>> {
     let source_group_id = text(&args, "group_id")?.to_owned();
     if let Some(destination_group_id) = text(&args, "dst_group_id") {
-        if let Err(error) = cccc_core::group_bridge_legacy::import_if_changed(home) {
-            return Some(Err(error.to_string()));
-        }
-        let state = match integration_state::global_get(home, STORE_KEY) {
+        let state = match cccc_core::group_bridge_legacy::load(home) {
             Ok(state) => state,
             Err(error) => return Some(Err(error.to_string())),
         };
@@ -625,6 +620,15 @@ mod tests {
     use cccc_core::ledger;
     use std::sync::{Arc, Mutex};
 
+    fn seed_bridge(home: &HomeLayout, value: Value) {
+        cccc_core::group_bridge_legacy::update(home, |state| {
+            state.clear();
+            state.extend(value.as_object().cloned().unwrap_or_default());
+            Ok(())
+        })
+        .expect("bridge state");
+    }
+
     #[test]
     fn cross_group_default_intent_only_applies_when_recipient_is_omitted() {
         let mut omitted = json!({"group_id":"g_local","dst_group_id":"g_remote"})
@@ -692,17 +696,16 @@ mod tests {
         let group = GroupStore::new(home.clone())
             .and_then(|store| store.create("source", ""))
             .expect("source group");
-        integration_state::global_update(&home, STORE_KEY, |state| {
-            *state = json!({"trusts":[{
-                "registration_id":"session-registration","group_id":group.group_id,
+        seed_bridge(
+            &home,
+            json!({"trusts":[{
+                "trust_id":"trust-live-session","registration_id":"session-registration","group_id":group.group_id,
                 "remote_group_id":"g_remote","remote_peer_id":"peer-remote",
                 "remote_endpoint":"https://direct.example.invalid",
                 "credential":"direct-credential",
                 "remote_access_level":"messages","status":"active"
-            }]});
-            Ok(())
-        })
-        .expect("bridge state");
+            }]}),
+        );
         let daemon_home = home.clone();
         let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
         wait_for_daemon(&home).await;
@@ -806,16 +809,15 @@ mod tests {
         let group = GroupStore::new(home.clone())
             .and_then(|store| store.create("source", ""))
             .expect("source group");
-        integration_state::global_update(&home, STORE_KEY, |state| {
-            *state = json!({"trusts":[{
-                "registration_id":"session-registration","group_id":group.group_id,
+        seed_bridge(
+            &home,
+            json!({"trusts":[{
+                "trust_id":"trust-http-fallback","registration_id":"session-registration","group_id":group.group_id,
                 "remote_group_id":"g_remote","remote_peer_id":"peer-remote",
                 "remote_endpoint":endpoint,"credential":"direct-credential",
                 "remote_access_level":"messages","status":"active"
-            }]});
-            Ok(())
-        })
-        .expect("bridge state");
+            }]}),
+        );
         let daemon_home = home.clone();
         let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
         wait_for_daemon(&home).await;
@@ -970,10 +972,10 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("receiver", "").expect("group");
-        cccc_core::group_bridge_legacy::import_if_changed(&home).expect("legacy import");
-        integration_state::global_update(&home, STORE_KEY, |state| {
-            *state = json!({"trusts":[{
-                "registration_id":"registration-1",
+        seed_bridge(
+            &home,
+            json!({"trusts":[{
+                "trust_id":"trust-remote-reply","registration_id":"registration-1",
                 "group_id":group.group_id,
                 "remote_group_id":"g_remote",
                 "remote_peer_id":"peer-remote",
@@ -982,10 +984,8 @@ mod tests {
                 "transport":"group_bridge_session",
                 "remote_access_level":"messages",
                 "status":"active"
-            }]});
-            Ok(())
-        })
-        .expect("bridge state");
+            }]}),
+        );
         let mut inbound = Event::new("chat.message", &group.group_id);
         inbound.by = "group_bridge:peer-remote".into();
         inbound.data = json!({
@@ -1054,16 +1054,16 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("receiver", "").expect("group");
-        integration_state::global_update(&home, STORE_KEY, |state| {
-            *state = json!({"trusts":[{
+        seed_bridge(
+            &home,
+            json!({"trusts":[{
+                "trust_id":"trust-reverse-session",
                 "registration_id":"registration-session",
                 "group_id":group.group_id,"remote_group_id":"g_remote",
                 "remote_peer_id":"peer-remote","transport":"group_bridge_session",
                 "remote_access_level":"messages","status":"active"
-            }]});
-            Ok(())
-        })
-        .expect("bridge state");
+            }]}),
+        );
         let mut inbound = Event::new("chat.message", &group.group_id);
         inbound.by = "group_bridge:peer-remote".into();
         inbound.data = json!({
@@ -1167,10 +1167,11 @@ mod tests {
         let group = GroupStore::new(home.clone())
             .and_then(|store| store.create("source", ""))
             .expect("source group");
-        cccc_core::group_bridge_legacy::import_if_changed(&home).expect("legacy import");
-        integration_state::global_update(&home, STORE_KEY, |state| {
-            *state = json!({
+        seed_bridge(
+            &home,
+            json!({
                 "trusts":[{
+                    "trust_id":"trust-read-route",
                     "group_id":group.group_id,
                     "remote_group_id":"g_remote",
                     "remote_endpoint":"http://127.0.0.1:9",
@@ -1178,10 +1179,8 @@ mod tests {
                     "remote_access_level":"read",
                     "status":"active"
                 }]
-            });
-            Ok(())
-        })
-        .expect("bridge state");
+            }),
+        );
         let client = DaemonClient::new(home.clone());
         let args = json!({
             "group_id":group.group_id,
@@ -1377,8 +1376,10 @@ mod tests {
         let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("receiver", "").expect("group");
-        integration_state::global_update(&home, STORE_KEY, |state| {
-            *state = json!({"trusts":[{
+        seed_bridge(
+            &home,
+            json!({"trusts":[{
+                "trust_id":"trust-missing-peer",
                 "group_id":group.group_id,
                 "remote_group_id":"g_remote",
                 "remote_endpoint":"http://127.0.0.1:9",
@@ -1386,10 +1387,8 @@ mod tests {
                 "transport":"group_bridge_session",
                 "remote_access_level":"messages",
                 "status":"active"
-            }]});
-            Ok(())
-        })
-        .expect("bridge state");
+            }]}),
+        );
         let mut inbound = Event::new("chat.message", &group.group_id);
         inbound.by = "group_bridge:peer-remote".into();
         inbound.data = json!({

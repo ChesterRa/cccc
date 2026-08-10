@@ -31,6 +31,57 @@ class TestActiveDocNormalization(unittest.TestCase):
             else:
                 os.environ["CCCC_HOME"] = old_home
 
+    def test_load_active_preserves_and_normalizes_legacy_rust_selection(self) -> None:
+        from cccc.kernel.active import active_path, load_active
+        from cccc.util.fs import atomic_write_json, read_json
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                p = active_path()
+                p.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_json(p, {"group_id": "g_from_rust"})
+
+                doc = load_active()
+                self.assertEqual(doc.get("active_group_id"), "g_from_rust")
+
+                persisted = read_json(p)
+                self.assertEqual((persisted or {}).get("active_group_id"), "g_from_rust")
+                self.assertNotIn("group_id", persisted or {})
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
+    def test_canonical_empty_selection_wins_over_stale_legacy_key(self) -> None:
+        from cccc.kernel.active import active_path, load_active
+        from cccc.util.fs import atomic_write_json
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                p = active_path()
+                p.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_json(
+                    p,
+                    {
+                        "v": 1,
+                        "active_group_id": "",
+                        "group_id": "g_stale",
+                        "updated_at": "2026-08-09T00:00:00Z",
+                    },
+                )
+
+                self.assertEqual(load_active().get("active_group_id"), "")
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
 
 if __name__ == "__main__":
     unittest.main()

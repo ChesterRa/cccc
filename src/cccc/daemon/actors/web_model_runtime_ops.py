@@ -23,6 +23,15 @@ _MAX_COALESCED_TEXT_CHARS = 24000
 _COMPLETE_STATUSES = {"done", "partial", "failed", "cancelled"}
 _DELIVERY_PREFERENCES_KEY = "web_model_delivery_preferences"
 _DELIVERY_MODES = {"standard", "image_compat"}
+_BROWSER_DELIVERY_STATES = {"submitting", "submitted", "bound", "pending", "ambiguous", "failed"}
+_BROWSER_DELIVERY_METADATA_FIELDS = (
+    "provider",
+    "target_url",
+    "bound_conversation_url",
+    "pending_conversation_url",
+    "auto_bind_new_chat",
+    "resolved_pending_new_chat",
+)
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -31,6 +40,66 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
 
 def _clean_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _normalize_browser_delivery(value: Any) -> tuple[Optional[Dict[str, Any]], Optional[DaemonResponse]]:
+    if value is None:
+        return None, None
+    if not isinstance(value, dict):
+        return None, _error("invalid_browser_delivery", "browser_delivery must be an object")
+    state = _clean_text(value.get("state")).lower()
+    if state not in _BROWSER_DELIVERY_STATES:
+        return None, _error(
+            "invalid_browser_delivery_state",
+            "browser delivery state must be submitting, submitted, bound, pending, ambiguous, or failed",
+        )
+    normalized: Dict[str, Any] = {
+        "state": state,
+        "detail": str(value.get("detail") or "")[:4096],
+    }
+    for field in _BROWSER_DELIVERY_METADATA_FIELDS:
+        if field in value:
+            normalized[field] = value[field]
+    return normalized, None
+
+
+def _append_browser_delivery_event(
+    group: Any,
+    *,
+    actor_id: str,
+    turn_id: str,
+    event_ids: List[str],
+    delivery_id: str,
+    browser_delivery: Dict[str, Any],
+    cursor_committed: bool,
+) -> tuple[Optional[Dict[str, Any]], Optional[DaemonResponse]]:
+    state = _clean_text(browser_delivery.get("state")).lower()
+    data: Dict[str, Any] = {
+        "actor_id": actor_id,
+        "turn_id": turn_id,
+        "event_ids": event_ids,
+        "latest_event_id": event_ids[-1],
+        "delivery_id": delivery_id,
+        "cursor_committed": cursor_committed,
+        "delivery_transport": "projected_session",
+    }
+    for field in _BROWSER_DELIVERY_METADATA_FIELDS:
+        if field in browser_delivery:
+            data[field] = browser_delivery[field]
+    detail = _clean_text(browser_delivery.get("detail"))
+    if detail:
+        data["error" if state in {"failed", "ambiguous"} else "submission_evidence"] = detail
+    return (
+        append_event(
+            group.ledger_path,
+            kind=f"web_model.browser_delivery.{state}",
+            group_id=group.group_id,
+            scope_key="",
+            by="system",
+            data=data,
+        ),
+        None,
+    )
 
 
 def _coerce_limit(value: Any) -> int:
@@ -553,11 +622,12 @@ def handle_web_model_runtime_complete_turn(args: Dict[str, Any]) -> DaemonRespon
             event_ids = [latest_event_id]
     if not event_ids:
         return _error("missing_event_ids", "event_ids is required")
+    if len(event_ids) > _MAX_TURN_EVENTS:
+        return _error("invalid_event_ids", f"event_ids cannot contain more than {_MAX_TURN_EVENTS} entries")
 
     events, event_err = _valid_turn_events(group, actor_id=actor_id, event_ids=event_ids)
     if event_err is not None:
         return event_err
-
     cursor = {"event_id": get_cursor(group, actor_id)[0], "ts": get_cursor(group, actor_id)[1]}
     read_event: Optional[Dict[str, Any]] = None
     ack_events: List[Dict[str, Any]] = []
@@ -642,6 +712,53 @@ def handle_web_model_runtime_complete_turn(args: Dict[str, Any]) -> DaemonRespon
     )
 
 
+def handle_web_model_browser_delivery_record(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = _clean_text(args.get("group_id"))
+    actor_id = _clean_text(args.get("actor_id") or args.get("by"))
+    by = _clean_text(args.get("by")) or actor_id
+    if by != actor_id:
+        return _error("permission_denied", "browser delivery records must be written by the runtime actor")
+    group, actor, err = _validate_group_actor(group_id, actor_id)
+    if err is not None:
+        return err
+    if _clean_text(actor.get("runtime")).lower() != "web_model":
+        return _error("invalid_actor_runtime", "browser delivery records require runtime=web_model")
+    turn_id = _clean_text(args.get("turn_id"))
+    delivery_id = _clean_text(args.get("delivery_id"))
+    if not turn_id:
+        return _error("invalid_args", "turn_id is required")
+    if not delivery_id:
+        return _error("invalid_args", "delivery_id is required")
+    raw_event_ids = args.get("event_ids")
+    if not isinstance(raw_event_ids, list) or any(not isinstance(item, str) for item in raw_event_ids):
+        return _error("invalid_event_ids", "event_ids must contain only strings")
+    event_ids = [_clean_text(item) for item in raw_event_ids if _clean_text(item)]
+    if not event_ids:
+        return _error("missing_event_ids", "event_ids is required")
+    if len(event_ids) > _MAX_TURN_EVENTS:
+        return _error("invalid_event_ids", f"event_ids cannot contain more than {_MAX_TURN_EVENTS} entries")
+    _events, event_err = _valid_turn_events(group, actor_id=actor_id, event_ids=event_ids)
+    if event_err is not None:
+        return event_err
+    browser_delivery, browser_delivery_err = _normalize_browser_delivery(args.get("browser_delivery"))
+    if browser_delivery_err is not None:
+        return browser_delivery_err
+    if browser_delivery is None:
+        return _error("missing_browser_delivery", "browser_delivery is required")
+    event, event_err = _append_browser_delivery_event(
+        group,
+        actor_id=actor_id,
+        turn_id=turn_id,
+        event_ids=event_ids,
+        delivery_id=delivery_id,
+        browser_delivery=browser_delivery,
+        cursor_committed=bool(args.get("cursor_committed")),
+    )
+    if event_err is not None:
+        return event_err
+    return DaemonResponse(ok=True, result={"event": event})
+
+
 def try_handle_web_model_runtime_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
     if op == "web_model_delivery_preferences_get":
         return handle_web_model_delivery_preferences_get(args)
@@ -651,6 +768,8 @@ def try_handle_web_model_runtime_op(op: str, args: Dict[str, Any]) -> Optional[D
         return handle_web_model_runtime_wait_next_turn(args)
     if op == "web_model_runtime_recover_turn":
         return handle_web_model_runtime_recover_turn(args)
+    if op == "web_model_browser_delivery_record":
+        return handle_web_model_browser_delivery_record(args)
     if op == "web_model_runtime_complete_turn":
         return handle_web_model_runtime_complete_turn(args)
     return None

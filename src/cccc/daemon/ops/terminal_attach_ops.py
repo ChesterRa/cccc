@@ -11,7 +11,8 @@ def _response(
     *,
     base_result: Dict[str, Any],
     mode: str,
-    takeover: bool,
+    terminal_writable: bool,
+    writer_replaced: bool,
     since: Optional[int],
     replay_start: int,
     replay_end: int,
@@ -22,8 +23,8 @@ def _response(
         result={
             **base_result,
             "terminal_mode": mode,
-            "terminal_writable": mode == "control",
-            "writer_replaced": bool(takeover),
+            "terminal_writable": bool(terminal_writable),
+            "writer_replaced": bool(writer_replaced),
             "replay_cursor": replay_cursor,
             "replay_end_cursor": max(replay_cursor, int(replay_end)),
         },
@@ -97,14 +98,31 @@ def handle_terminal_attach(
             base_result = dict(resp.result) if isinstance(resp.result, dict) else {}
             response_sent = False
 
-            def send_attach_response(replay_start: int, replay_end: int) -> None:
+            def send_attach_response(
+                replay_start: int,
+                replay_end: int,
+                attach_state: Optional[Dict[str, Any]] = None,
+            ) -> None:
                 nonlocal response_sent
                 if response_sent:
                     return
+                actual = attach_state if isinstance(attach_state, dict) else {}
+                actual_mode = str(actual.get("mode") or mode).strip().lower()
+                if actual_mode not in {"control", "viewer"}:
+                    actual_mode = mode
+                terminal_writable = (
+                    bool(actual.get("writable")) if "writable" in actual else actual_mode == "control"
+                )
+                writer_replaced = (
+                    bool(actual.get("writer_replaced"))
+                    if "writer_replaced" in actual
+                    else bool(takeover)
+                )
                 attach_resp = _response(
                     base_result=base_result,
-                    mode=mode,
-                    takeover=takeover,
+                    mode=actual_mode,
+                    terminal_writable=terminal_writable,
+                    writer_replaced=writer_replaced,
                     since=since,
                     replay_start=replay_start,
                     replay_end=replay_end,

@@ -2538,6 +2538,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         streaming_stable_speaker_embeddings: list[dict[str, Any]] = []
         streaming_client_session_id = ""
         streaming_dispatch_target = ""
+        streaming_audio_seq = 0
 
         def cleanup_streaming_pcm16() -> None:
             nonlocal streaming_pcm16_path, streaming_pcm16_bytes
@@ -2874,7 +2875,28 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         try:
             while True:
                 try:
-                    payload = await websocket.receive_json()
+                    message = await websocket.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        raise WebSocketDisconnect(
+                            code=int(message.get("code") or 1000),
+                            reason=str(message.get("reason") or ""),
+                        )
+                    binary_audio = message.get("bytes")
+                    if binary_audio is not None:
+                        streaming_audio_seq += 1
+                        payload = {
+                            "type": "audio",
+                            "seq": streaming_audio_seq,
+                            "sample_rate": streaming_sample_rate,
+                            "audio_base64": base64.b64encode(binary_audio).decode("ascii"),
+                        }
+                    else:
+                        text = message.get("text")
+                        if not isinstance(text, str):
+                            raise ValueError("WebSocket frame must contain JSON text or binary PCM16 audio")
+                        payload = json.loads(text)
+                        if not isinstance(payload, dict):
+                            raise ValueError("WebSocket JSON payload must be an object")
                 except WebSocketDisconnect:
                     await finalize_streaming_state(send_client_events=False)
                     return
@@ -2885,6 +2907,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 message_type = str(payload.get("type") or "transcribe").strip()
                 seq = payload.get("seq")
                 if message_type == "start":
+                    if isinstance(seq, int) and not isinstance(seq, bool):
+                        streaming_audio_seq = max(streaming_audio_seq, seq)
                     streaming_client_session_id = _safe_voice_session_id(payload.get("session_id") or payload.get("sessionId") or "")
                     group = load_group(group_id)
                     if group is None:
@@ -3437,6 +3461,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "document_path": str(req.document_path or "").strip(),
                     "instruction": req.instruction,
                     "source_text": req.source_text,
+                    "request_id": req.request_id,
+                    "input_append_id": req.input_append_id,
                     "trigger": dict(req.trigger),
                     "by": req.by,
                 },
@@ -3461,6 +3487,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "voice_transcript": req.voice_transcript,
                     "composer_text": req.composer_text,
                     "request_id": req.request_id,
+                    "input_append_id": req.input_append_id,
                     "operation": req.operation,
                     "composer_context": dict(req.composer_context),
                     "composer_snapshot_hash": req.composer_snapshot_hash,

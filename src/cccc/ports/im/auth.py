@@ -18,6 +18,39 @@ from typing import Any, Dict, List, Optional
 
 # Key time-to-live: 10 minutes.
 KEY_TTL_SECONDS = 600
+ThreadId = int | str
+
+
+def normalize_thread_id(value: Any) -> ThreadId:
+    """Preserve platform-owned thread identifiers in the shared state shape."""
+    if value is None or isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        text = str(value).strip()
+        return 0 if not text or text == "0" else text
+    if not isinstance(value, str):
+        return 0
+    text = value.strip()
+    if not text or text == "0":
+        return 0
+    try:
+        parsed = int(text)
+    except ValueError:
+        return text
+    if -(2**63) <= parsed <= 2**63 - 1:
+        return parsed
+    return text
+
+
+def thread_key(chat_id: str, thread_id: Any = 0) -> str:
+    """Return the Python/Rust-compatible persisted key for an IM target."""
+    cid = str(chat_id).strip()
+    if not cid:
+        return ""
+    tid = normalize_thread_id(thread_id)
+    return f"{cid}:{tid}" if tid != 0 else cid
 
 
 class KeyManager:
@@ -74,21 +107,19 @@ class KeyManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _chat_key(chat_id: str, thread_id: int) -> str:
-        cid = str(chat_id).strip()
-        tid = int(thread_id or 0)
-        return f"{cid}:{tid}" if tid > 0 else cid
+    def _chat_key(chat_id: str, thread_id: ThreadId) -> str:
+        return thread_key(chat_id, thread_id)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def generate_key(self, chat_id: str, thread_id: int, platform: str) -> str:
+    def generate_key(self, chat_id: str, thread_id: ThreadId, platform: str) -> str:
         """Create a pending authorization key (``secrets.token_urlsafe(8)``)."""
         key = secrets.token_urlsafe(8)
         self._pending[key] = {
             "chat_id": str(chat_id),
-            "thread_id": int(thread_id or 0),
+            "thread_id": normalize_thread_id(thread_id),
             "platform": str(platform or ""),
             "created_at": time.time(),
         }
@@ -108,12 +139,21 @@ class KeyManager:
             return None
         return dict(entry)
 
-    def is_authorized(self, chat_id: str, thread_id: int) -> bool:
+    def is_authorized(
+        self, chat_id: str, thread_id: ThreadId, platform: str = ""
+    ) -> bool:
         ck = self._chat_key(chat_id, thread_id)
-        return ck in self._authorized
+        entry = self._authorized.get(ck)
+        if entry is None:
+            return False
+        requested = str(platform or "").strip().lower()
+        if not requested or not isinstance(entry, dict):
+            return True
+        stored = str(entry.get("platform") or "").strip().lower()
+        return not stored or stored == requested
 
     def authorize(
-        self, chat_id: str, thread_id: int, platform: str, key_used: str
+        self, chat_id: str, thread_id: ThreadId, platform: str, key_used: str
     ) -> None:
         """Mark a chat as authorized and remove the consumed key."""
         self._store_authorization(
@@ -127,7 +167,7 @@ class KeyManager:
         self._save_pending()
 
     def authorize_direct(
-        self, chat_id: str, thread_id: int, platform: str, source: str
+        self, chat_id: str, thread_id: ThreadId, platform: str, source: str
     ) -> None:
         """Authorize a chat through an explicit non-key trust flow."""
         self._store_authorization(
@@ -138,7 +178,7 @@ class KeyManager:
             key_used="",
         )
 
-    def revoke_direct(self, chat_id: str, thread_id: int, source: str) -> bool:
+    def revoke_direct(self, chat_id: str, thread_id: ThreadId, source: str) -> bool:
         """Revoke a direct authorization only when its source matches."""
         ck = self._chat_key(chat_id, thread_id)
         entry = self._authorized.get(ck)
@@ -153,7 +193,7 @@ class KeyManager:
     def _store_authorization(
         self,
         chat_id: str,
-        thread_id: int,
+        thread_id: ThreadId,
         platform: str,
         *,
         authorization_source: str,
@@ -162,7 +202,7 @@ class KeyManager:
         ck = self._chat_key(chat_id, thread_id)
         self._authorized[ck] = {
             "chat_id": str(chat_id),
-            "thread_id": int(thread_id or 0),
+            "thread_id": normalize_thread_id(thread_id),
             "platform": str(platform or ""),
             "authorized_at": time.time(),
             "key_used": str(key_used),
@@ -170,7 +210,7 @@ class KeyManager:
         }
         self._save_authorized()
 
-    def revoke(self, chat_id: str, thread_id: int) -> bool:
+    def revoke(self, chat_id: str, thread_id: ThreadId) -> bool:
         """Revoke authorization. Returns ``True`` if the chat was authorized."""
         ck = self._chat_key(chat_id, thread_id)
         if ck in self._authorized:
@@ -196,7 +236,7 @@ class KeyManager:
                 {
                     "key": str(key),
                     "chat_id": str(entry.get("chat_id") or ""),
-                    "thread_id": int(entry.get("thread_id") or 0),
+                    "thread_id": normalize_thread_id(entry.get("thread_id")),
                     "platform": str(entry.get("platform") or ""),
                     "created_at": created_at,
                     "expires_at": expires_at,

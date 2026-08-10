@@ -52,6 +52,7 @@ class AssistantVoiceDocumentData(BaseModel):
     action: str
     input_kind: str = ""
     request_id: str = ""
+    input_append_id: str = ""
     status: str = "active"
     workspace_path: str = ""
     title: str = ""
@@ -97,6 +98,7 @@ class AssistantVoiceInputData(BaseModel):
     input_kind: str
     target_kind: str = ""
     request_id: str = ""
+    input_append_id: str = ""
     document_path: str = ""
     input_preview: str = ""
 

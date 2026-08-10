@@ -39,7 +39,6 @@ from ...kernel.capabilities import (
     web_model_advertised_tool_names,
 )
 from ...kernel.memory_guide import build_memory_guide
-from ...kernel.prompt_files import HELP_FILENAME, read_group_prompt_file
 from ...kernel.voice_secretary_actor import VOICE_SECRETARY_ACTOR_ID
 from ...util.conv import coerce_bool
 
@@ -199,7 +198,7 @@ from .handlers.notify import (  # noqa: F401
     notify_ack,
     notify_send,
 )
-from .utils.help_markdown import _select_help_markdown
+from ...kernel.help_markdown import _select_help_markdown
 from .utils.space_args import _normalize_space_query_options_mcp
 
 
@@ -354,72 +353,30 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         runtime_ctx = _runtime_context()
         gid = runtime_ctx.group_id
         aid = runtime_ctx.actor_id
-        role: Optional[str] = None
         help_result: Dict[str, Any]
-
-        def _safe_find_actor(group_obj: Any, actor_id: str | None) -> Optional[Dict[str, Any]]:
-            if not actor_id:
-                return None
-            try:
-                actor = find_actor(group_obj, actor_id)
-            except Exception:
-                return None
-            return actor if isinstance(actor, dict) else None
-
         if gid:
-            g = load_group(gid)
-            if g is not None:
-                if aid:
-                    try:
-                        role = get_effective_role(g, aid)
-                    except Exception:
-                        role = None
-                actor = _safe_find_actor(g, aid)
-                actor_is_voice_secretary = aid == "voice-secretary" or bool(isinstance(actor, dict) and is_voice_secretary_actor(actor))
-                if actor_is_voice_secretary:
-                    role = "voice_secretary"
-                pf = read_group_prompt_file(g, HELP_FILENAME)
-                if pf.found and isinstance(pf.content, str) and pf.content.strip():
-                    help_result = {
-                        "markdown": _append_runtime_help_addenda(
-                            _select_help_markdown(
-                                pf.content,
-                                role=role,
-                                actor_id=aid,
-                                include_voice_secretary=actor_is_voice_secretary,
-                            ),
-                            group_id=gid,
-                            actor_id=aid,
-                        ),
-                        "source": str(pf.path or ""),
-                    }
-                else:
-                    help_result = {
-                        "markdown": _append_runtime_help_addenda(
-                            _select_help_markdown(
-                                _CCCC_HELP_BUILTIN,
-                                role=role,
-                                actor_id=aid,
-                                include_voice_secretary=actor_is_voice_secretary,
-                            ),
-                            group_id=gid,
-                            actor_id=aid,
-                        ),
-                        "source": "cccc.resources/cccc-help.md",
-                    }
-            else:
-                help_result = {
-                    "markdown": _append_runtime_help_addenda(
-                        _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
-                        group_id=gid,
-                        actor_id=aid,
-                    ),
-                    "source": "cccc.resources/cccc-help.md",
+            daemon_help = _call_daemon_or_raise(
+                {
+                    "op": "group_help_get",
+                    "args": {
+                        "group_id": gid,
+                        "actor_id": aid,
+                        "by": aid or "user",
+                    },
                 }
+            )
+            help_result = {
+                "markdown": _append_runtime_help_addenda(
+                    str(daemon_help.get("markdown") or ""),
+                    group_id=gid,
+                    actor_id=aid,
+                ),
+                "source": str(daemon_help.get("source_path") or "cccc.resources/cccc-help.md"),
+            }
         else:
             help_result = {
                 "markdown": _append_runtime_help_addenda(
-                    _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
+                    _select_help_markdown(_CCCC_HELP_BUILTIN, role=None, actor_id=aid),
                     group_id=gid,
                     actor_id=aid,
                 ),

@@ -448,15 +448,38 @@ pub(super) fn provider_unavailable() -> OpError {
     )
 }
 
-pub(super) fn provider_state(provider: &str, ready: bool) -> Value {
-    json!({
+pub(super) fn provider_runtime_state(home: &HomeLayout, provider: &str) -> Result<Value, OpError> {
+    let credential = space_credentials::status(home, provider).map_err(OpError::io)?;
+    let record = provider_record(home, provider)?;
+    let auth_configured = credential["configured"].as_bool().unwrap_or(false);
+    let enabled = record["enabled"].as_bool().unwrap_or(false);
+    let real_enabled = record["real_enabled"].as_bool().unwrap_or(false);
+    let mode = record["mode"].as_str().unwrap_or("disabled");
+    let ready = auth_configured && enabled && real_enabled && mode == "active";
+    let readiness_reason = if !auth_configured {
+        "credential missing"
+    } else if ready {
+        "ready"
+    } else if !enabled {
+        "provider disabled"
+    } else if mode == "degraded" {
+        "provider degraded"
+    } else {
+        "provider inactive"
+    };
+    Ok(json!({
         "provider":provider,
-        "enabled":ready,
-        "real_enabled":ready,
-        "mode":if ready{"active"}else{"degraded"},
+        "enabled":enabled,
+        "real_enabled":real_enabled,
+        "real_adapter_enabled":real_enabled,
+        "stub_adapter_enabled":false,
+        "auth_configured":auth_configured,
+        "mode":mode,
         "write_ready":ready,
-        "readiness_reason":if ready{"ready"}else{"health check failed"}
-    })
+        "readiness_reason":readiness_reason,
+        "last_health_at":record["last_health_at"],
+        "last_error":record["last_error"]
+    }))
 }
 
 pub(super) fn record_provider_health(
@@ -467,6 +490,10 @@ pub(super) fn record_provider_health(
     error: Option<&str>,
 ) -> Result<(), OpError> {
     update_provider(home, provider, |item| {
+        if healthy {
+            item["enabled"] = json!(true);
+            item["real_enabled"] = json!(true);
+        }
         let enabled = item["enabled"].as_bool().unwrap_or(false);
         item["mode"] = json!(if !enabled {
             "disabled"

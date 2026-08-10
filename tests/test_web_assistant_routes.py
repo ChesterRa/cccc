@@ -404,14 +404,8 @@ class TestWebAssistantRoutes(unittest.TestCase):
                             }
                         )
                         self.assertEqual(ws.receive_json().get("type"), "ready")
-                        ws.send_json(
-                            {
-                                "type": "audio",
-                                "seq": 2,
-                                "sample_rate": 16000,
-                                "audio_base64": base64.b64encode(b"\x01\x00" * 800).decode("ascii"),
-                            }
-                        )
+                        # The production composer sends PCM16 as a binary frame.
+                        ws.send_bytes(b"\x01\x00" * 800)
                         ws.send_json({"type": "stop", "seq": 3})
                         final_event = ws.receive_json()
                         closed_event = ws.receive_json()
@@ -706,6 +700,8 @@ class TestWebAssistantRoutes(unittest.TestCase):
                         json={
                             "document_path": document_path,
                             "instruction": "add an owner field",
+                            "request_id": "web-document-instruction-1",
+                            "input_append_id": "web-document-instruction-input-1",
                             "by": "user",
                         },
                     )
@@ -715,7 +711,29 @@ class TestWebAssistantRoutes(unittest.TestCase):
                     instruction_result = instruction_body.get("result") or {}
                     updated_document = (instruction_result.get("document")) or {}
                     self.assertTrue(bool(instruction_result.get("input_event_created")), instruction_result)
+                    self.assertEqual(instruction_result.get("request_id"), "web-document-instruction-1")
+                    self.assertEqual(
+                        instruction_result.get("input_append_id"),
+                        "web-document-instruction-input-1",
+                    )
                     self.assertNotIn("Instruction: add an owner field", str(updated_document.get("content") or ""))
+
+                    retry_resp = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/documents/instructions",
+                        json={
+                            "document_path": document_path,
+                            "instruction": "add an owner field",
+                            "request_id": "web-document-instruction-1",
+                            "input_append_id": "web-document-instruction-input-1",
+                            "by": "user",
+                        },
+                    )
+                    self.assertEqual(retry_resp.status_code, 200)
+                    retry_body = retry_resp.json()
+                    self.assertTrue(bool(retry_body.get("ok")), retry_body)
+                    retry_result = retry_body.get("result") or {}
+                    self.assertFalse(bool(retry_result.get("input_event_created")), retry_result)
+                    self.assertEqual(retry_result.get("input_event"), instruction_result.get("input_event"))
 
                     state_resp = client.get(f"/api/v1/groups/{group_id}/assistants/voice_secretary")
                     self.assertEqual(state_resp.status_code, 200)

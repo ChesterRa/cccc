@@ -28,10 +28,11 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: GroupArgs) -> R
             if title.is_none() && topic.is_none() {
                 bail!("--title or --topic is required");
             }
+            let group_id = group(home, group_id)?;
             call(
                 client,
                 "group_update",
-                json!({"group_id":group(home,group_id)?,"title":title,"topic":topic,"by":by}),
+                group_update_request(&group_id, &by, title, topic),
             )
             .await?
         }
@@ -71,16 +72,7 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: GroupArgs) -> R
             .await?
         }
         GroupAction::Use { group_id, path } => {
-            let attach = call(
-                client,
-                "attach",
-                json!({"group_id":group_id,"path":path,"by":"user"}),
-            )
-            .await?;
-            if !attach.ok {
-                return print(attach);
-            }
-            call(client, "group_use", json!({"group_id":group_id})).await?
+            call(client, "group_use", group_use_request(&group_id, &path)).await?
         }
         GroupAction::Start { group_id, by } => {
             call(
@@ -117,9 +109,63 @@ pub async fn run(client: &DaemonClient, home: &HomeLayout, args: GroupArgs) -> R
     print(response)
 }
 
+fn group_update_request(
+    group_id: &str,
+    by: &str,
+    title: Option<String>,
+    topic: Option<String>,
+) -> serde_json::Value {
+    let mut patch = serde_json::Map::new();
+    if let Some(title) = title {
+        patch.insert("title".into(), json!(title));
+    }
+    if let Some(topic) = topic {
+        patch.insert("topic".into(), json!(topic));
+    }
+    json!({"group_id":group_id,"patch":patch,"by":by})
+}
+
+fn group_use_request(group_id: &str, path: &str) -> serde_json::Value {
+    json!({"group_id":group_id,"path":path,"by":"user"})
+}
+
 fn confirm_id(group_id: &str, confirm: &str) -> Result<()> {
     if group_id != confirm {
         bail!("--confirm must exactly match group_id");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{group_update_request, group_use_request};
+    use serde_json::json;
+
+    #[test]
+    fn group_update_emits_only_the_canonical_patch_shape() {
+        let request =
+            group_update_request("g_test", "user", Some("title".into()), Some(String::new()));
+        assert_eq!(
+            request,
+            json!({
+                "group_id":"g_test",
+                "by":"user",
+                "patch":{"title":"title","topic":""}
+            })
+        );
+        assert!(request.get("title").is_none());
+        assert!(request.get("topic").is_none());
+    }
+
+    #[test]
+    fn group_use_emits_the_canonical_attached_path_shape() {
+        assert_eq!(
+            group_use_request("g_test", "/workspace/project"),
+            json!({
+                "group_id":"g_test",
+                "path":"/workspace/project",
+                "by":"user"
+            })
+        );
+    }
 }

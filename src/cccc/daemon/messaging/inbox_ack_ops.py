@@ -8,6 +8,7 @@ from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import find_actor
 from ...kernel.group import load_group
 from ...kernel.inbox import (
+    actor_existed_at_event,
     find_event,
     get_cursor,
     has_chat_ack,
@@ -72,17 +73,9 @@ def handle_chat_ack(args: Dict[str, Any]) -> DaemonResponse:
         if "user" not in to_set and "@user" not in to_set:
             return _error("event_not_for_actor", "message is not addressed to user")
     else:
-        try:
-            from ...util.time import parse_utc_iso
-
-            msg_dt = parse_utc_iso(str(target.get("ts") or ""))
-            actor = find_actor(group, actor_id)
-            created_ts = str(actor.get("created_at") or "").strip() if isinstance(actor, dict) else ""
-            created_dt = parse_utc_iso(created_ts) if created_ts else None
-            if msg_dt is not None and created_dt is not None and created_dt > msg_dt:
-                return _error("event_not_for_actor", f"actor did not exist at message time: {actor_id}")
-        except Exception:
-            pass
+        actor = find_actor(group, actor_id)
+        if not isinstance(actor, dict) or not actor_existed_at_event(group, actor=actor, event=target):
+            return _error("event_not_for_actor", f"actor did not exist at message append position: {actor_id}")
         if not is_message_for_actor(group, actor_id=actor_id, event=target):
             return _error("event_not_for_actor", f"event is not addressed to actor: {actor_id}")
 
@@ -106,7 +99,7 @@ def handle_inbox_mark_all_read(args: Dict[str, Any]) -> DaemonResponse:
     by = str(args.get("by") or "user").strip()
     kind_filter = str(args.get("kind_filter") or "all").strip()
     if kind_filter not in ("all", "chat", "notify"):
-        kind_filter = "all"
+        return _error("invalid_kind_filter", "kind_filter must be all, chat, or notify")
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     if not actor_id:

@@ -29,7 +29,9 @@ class TestLedgerSearchIndex(unittest.TestCase):
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
     def _create_group_with_messages(self, title: str, count: int = 3) -> str:
-        create, _ = self._call("group_create", {"title": title, "topic": "", "by": "user"})
+        create, _ = self._call(
+            "group_create", {"title": title, "topic": "", "by": "user"}
+        )
         self.assertTrue(create.ok, getattr(create, "error", None))
         group_id = str((create.result or {}).get("group_id") or "").strip()
         self.assertTrue(group_id)
@@ -46,6 +48,39 @@ class TestLedgerSearchIndex(unittest.TestCase):
             )
             self.assertTrue(sent.ok, getattr(sent, "error", None))
         return group_id
+
+    def test_append_defers_derived_index_until_first_lookup(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.contracts.v1 import ChatMessageData
+            from cccc.kernel import ledger_index
+            from cccc.kernel.group import create_group
+            from cccc.kernel.ledger import append_event
+            from cccc.kernel.registry import load_registry
+
+            group = create_group(load_registry(), title="lazy-ledger-index")
+            index_path = group.path / "state" / "ledger" / "index.sqlite3"
+            self.assertFalse(index_path.exists())
+
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data=ChatMessageData(text="lazy index", to=["user"]).model_dump(),
+            )
+            self.assertFalse(index_path.exists())
+
+            found = ledger_index.lookup_event_by_id(
+                group.ledger_path,
+                str(event.get("id") or ""),
+            )
+
+            self.assertEqual(str((found or {}).get("id") or ""), event.get("id"))
+            self.assertTrue(index_path.exists())
+        finally:
+            cleanup()
 
     def _corrupt_index_root_page(self, index_path, index_name: str) -> None:
         conn = sqlite3.connect(str(index_path))
@@ -92,12 +127,16 @@ class TestLedgerSearchIndex(unittest.TestCase):
             def run_catch_up() -> None:
                 try:
                     ledger_index.catch_up_ledger_index(group.ledger_path)
-                except BaseException as exc:  # pragma: no cover - surfaced by assertion below
+                except (
+                    BaseException
+                ) as exc:  # pragma: no cover - surfaced by assertion below
                     errors.append(exc)
                 finally:
                     finished.set()
 
-            with patch.object(ledger_index, "acquire_lockfile", side_effect=observed_acquire):
+            with patch.object(
+                ledger_index, "acquire_lockfile", side_effect=observed_acquire
+            ):
                 thread = threading.Thread(target=run_catch_up)
                 thread.start()
                 self.assertTrue(attempted.wait(timeout=1.0))
@@ -136,7 +175,11 @@ class TestLedgerSearchIndex(unittest.TestCase):
             lock_path = group.path / "state" / "ledger" / "index.lock"
             lock_handle = acquire_lockfile(lock_path, blocking=True)
 
-            with patch.object(ledger_index, "_connect", side_effect=AssertionError("busy append index update should skip")):
+            with patch.object(
+                ledger_index,
+                "_connect",
+                side_effect=AssertionError("busy append index update should skip"),
+            ):
                 ledger_index.append_event_to_index(
                     group.ledger_path,
                     indexed_event,
@@ -155,6 +198,7 @@ class TestLedgerSearchIndex(unittest.TestCase):
     def test_search_rebuilds_corrupt_derived_index(self) -> None:
         _, cleanup = self._with_home()
         try:
+            from cccc.kernel import ledger_index
             from cccc.kernel.group import load_group
             from cccc.kernel.inbox import search_messages
 
@@ -164,10 +208,13 @@ class TestLedgerSearchIndex(unittest.TestCase):
             assert group is not None
 
             index_path = group.path / "state" / "ledger" / "index.sqlite3"
+            ledger_index.catch_up_ledger_index(group.ledger_path)
             with index_path.open("r+b") as handle:
                 handle.write(b"x")
 
-            events, has_more = search_messages(group, query="", kind_filter="chat", limit=10)
+            events, has_more = search_messages(
+                group, query="", kind_filter="chat", limit=10
+            )
 
             self.assertFalse(has_more)
             self.assertEqual(
@@ -176,7 +223,9 @@ class TestLedgerSearchIndex(unittest.TestCase):
             )
             conn = sqlite3.connect(str(index_path))
             try:
-                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(
+                    conn.execute("PRAGMA integrity_check").fetchone()[0], "ok"
+                )
             finally:
                 conn.close()
         finally:
@@ -185,6 +234,7 @@ class TestLedgerSearchIndex(unittest.TestCase):
     def test_search_rebuilds_when_corruption_is_only_reached_by_query(self) -> None:
         _, cleanup = self._with_home()
         try:
+            from cccc.kernel import ledger_index
             from cccc.kernel.group import load_group
             from cccc.kernel.inbox import search_messages
 
@@ -195,31 +245,43 @@ class TestLedgerSearchIndex(unittest.TestCase):
             assert group is not None
 
             index_path = group.path / "state" / "ledger" / "index.sqlite3"
+            ledger_index.catch_up_ledger_index(group.ledger_path)
             self._corrupt_index_root_page(index_path, "sqlite_autoindex_event_search_1")
 
-            events, has_more = search_messages(group, query=title, kind_filter="chat", limit=10)
+            events, has_more = search_messages(
+                group, query=title, kind_filter="chat", limit=10
+            )
 
             self.assertTrue(has_more)
             self.assertEqual(len(events), 10)
             self.assertTrue(
-                all(title in str((event.get("data") or {}).get("text") or "") for event in events)
+                all(
+                    title in str((event.get("data") or {}).get("text") or "")
+                    for event in events
+                )
             )
             conn = sqlite3.connect(str(index_path))
             try:
-                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(
+                    conn.execute("PRAGMA integrity_check").fetchone()[0], "ok"
+                )
             finally:
                 conn.close()
         finally:
             cleanup()
 
-    def test_direct_lookups_rebuild_when_corruption_is_only_reached_by_query(self) -> None:
+    def test_direct_lookups_rebuild_when_corruption_is_only_reached_by_query(
+        self,
+    ) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.kernel import ledger_index
             from cccc.kernel.group import load_group
             from cccc.kernel.inbox import search_messages
 
-            group_id = self._create_group_with_messages("lookup-page-corruption", count=3)
+            group_id = self._create_group_with_messages(
+                "lookup-page-corruption", count=3
+            )
             group = load_group(group_id)
             self.assertIsNotNone(group)
             assert group is not None
@@ -242,7 +304,9 @@ class TestLedgerSearchIndex(unittest.TestCase):
             self.assertEqual(str((batch[0] or {}).get("id") or ""), event_id)
             conn = sqlite3.connect(str(index_path))
             try:
-                self.assertEqual(conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
+                self.assertEqual(
+                    conn.execute("PRAGMA integrity_check").fetchone()[0], "ok"
+                )
             finally:
                 conn.close()
         finally:
@@ -254,7 +318,9 @@ class TestLedgerSearchIndex(unittest.TestCase):
             from cccc.kernel import ledger_index
             from cccc.kernel.group import load_group
 
-            group_id = self._create_group_with_messages("non-corrupt-query-error", count=1)
+            group_id = self._create_group_with_messages(
+                "non-corrupt-query-error", count=1
+            )
             group = load_group(group_id)
             self.assertIsNotNone(group)
             assert group is not None
@@ -265,7 +331,9 @@ class TestLedgerSearchIndex(unittest.TestCase):
                 raise error
 
             with patch.object(ledger_index, "_discard_index_files") as discard:
-                with self.assertRaisesRegex(sqlite3.OperationalError, "database is locked"):
+                with self.assertRaisesRegex(
+                    sqlite3.OperationalError, "database is locked"
+                ):
                     ledger_index._query_ledger_index(group.ledger_path, fail_query)
 
             discard.assert_not_called()
@@ -278,15 +346,20 @@ class TestLedgerSearchIndex(unittest.TestCase):
             from cccc.kernel import ledger_index
             from cccc.kernel.group import load_group
 
-            group_id = self._create_group_with_messages("non-corrupt-index-error", count=1)
+            group_id = self._create_group_with_messages(
+                "non-corrupt-index-error", count=1
+            )
             group = load_group(group_id)
             self.assertIsNotNone(group)
             assert group is not None
             index_path = group.path / "state" / "ledger" / "index.sqlite3"
+            ledger_index.catch_up_ledger_index(group.ledger_path)
 
             error = sqlite3.OperationalError("unable to open database file")
             with patch.object(ledger_index, "_connect", side_effect=error):
-                with self.assertRaisesRegex(sqlite3.OperationalError, "unable to open database file"):
+                with self.assertRaisesRegex(
+                    sqlite3.OperationalError, "unable to open database file"
+                ):
                     ledger_index.catch_up_ledger_index(group.ledger_path)
 
             self.assertTrue(index_path.exists())
@@ -296,9 +369,19 @@ class TestLedgerSearchIndex(unittest.TestCase):
     def test_rebuildable_index_error_supports_legacy_sqlite_exceptions(self) -> None:
         from cccc.kernel.ledger_index import _is_rebuildable_index_error
 
-        self.assertTrue(_is_rebuildable_index_error(sqlite3.DatabaseError("file is not a database")))
-        self.assertTrue(_is_rebuildable_index_error(sqlite3.DatabaseError("database disk image is malformed")))
-        self.assertFalse(_is_rebuildable_index_error(sqlite3.OperationalError("unable to open database file")))
+        self.assertTrue(
+            _is_rebuildable_index_error(sqlite3.DatabaseError("file is not a database"))
+        )
+        self.assertTrue(
+            _is_rebuildable_index_error(
+                sqlite3.DatabaseError("database disk image is malformed")
+            )
+        )
+        self.assertFalse(
+            _is_rebuildable_index_error(
+                sqlite3.OperationalError("unable to open database file")
+            )
+        )
 
     def test_search_messages_without_query_uses_index_path(self) -> None:
         _, cleanup = self._with_home()
@@ -306,7 +389,9 @@ class TestLedgerSearchIndex(unittest.TestCase):
             from cccc.kernel.group import load_group
             from cccc.kernel.inbox import search_messages
 
-            create, _ = self._call("group_create", {"title": "search-index", "topic": "", "by": "user"})
+            create, _ = self._call(
+                "group_create", {"title": "search-index", "topic": "", "by": "user"}
+            )
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -327,11 +412,19 @@ class TestLedgerSearchIndex(unittest.TestCase):
             self.assertIsNotNone(group)
             assert group is not None
 
-            with patch("cccc.kernel.inbox.iter_events", side_effect=AssertionError("indexed search should avoid ledger scan")):
-                events, has_more = search_messages(group, query="", kind_filter="all", limit=3)
+            with patch(
+                "cccc.kernel.inbox.iter_events",
+                side_effect=AssertionError("indexed search should avoid ledger scan"),
+            ):
+                events, has_more = search_messages(
+                    group, query="", kind_filter="all", limit=3
+                )
             self.assertEqual(len(events), 3)
             self.assertTrue(has_more)
-            self.assertEqual([str(ev.get("kind") or "") for ev in events], ["chat.message", "chat.message", "chat.message"])
+            self.assertEqual(
+                [str(ev.get("kind") or "") for ev in events],
+                ["chat.message", "chat.message", "chat.message"],
+            )
         finally:
             cleanup()
 
@@ -341,7 +434,10 @@ class TestLedgerSearchIndex(unittest.TestCase):
             from cccc.kernel.group import load_group
             from cccc.kernel.inbox import search_messages
 
-            create, _ = self._call("group_create", {"title": "search-index-query", "topic": "", "by": "user"})
+            create, _ = self._call(
+                "group_create",
+                {"title": "search-index-query", "topic": "", "by": "user"},
+            )
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -362,11 +458,26 @@ class TestLedgerSearchIndex(unittest.TestCase):
             self.assertIsNotNone(group)
             assert group is not None
 
-            with patch("cccc.kernel.inbox.iter_events", side_effect=AssertionError("indexed text search should avoid ledger scan")):
-                events, has_more = search_messages(group, query="hello", kind_filter="all", limit=10)
+            with patch(
+                "cccc.kernel.inbox.iter_events",
+                side_effect=AssertionError(
+                    "indexed text search should avoid ledger scan"
+                ),
+            ):
+                events, has_more = search_messages(
+                    group, query="hello", kind_filter="all", limit=10
+                )
             self.assertFalse(has_more)
             self.assertEqual(len(events), 2)
-            texts = [str((ev.get("data") if isinstance(ev.get("data"), dict) else {}).get("text") or "") for ev in events]
+            texts = [
+                str(
+                    (ev.get("data") if isinstance(ev.get("data"), dict) else {}).get(
+                        "text"
+                    )
+                    or ""
+                )
+                for ev in events
+            ]
             self.assertTrue(all("hello" in text.lower() for text in texts))
         finally:
             cleanup()
@@ -377,7 +488,9 @@ class TestLedgerSearchIndex(unittest.TestCase):
             from cccc.kernel.group import load_group
             from cccc.kernel.inbox import search_messages
 
-            create, _ = self._call("group_create", {"title": "search-insight", "topic": "", "by": "user"})
+            create, _ = self._call(
+                "group_create", {"title": "search-insight", "topic": "", "by": "user"}
+            )
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             sent, _ = self._call(
@@ -395,12 +508,20 @@ class TestLedgerSearchIndex(unittest.TestCase):
             self.assertIsNotNone(group)
             assert group is not None
 
-            with patch("cccc.kernel.inbox.iter_events", side_effect=AssertionError("indexed search should avoid ledger scan")):
-                events, has_more = search_messages(group, query="rollback", kind_filter="all", limit=10)
+            with patch(
+                "cccc.kernel.inbox.iter_events",
+                side_effect=AssertionError("indexed search should avoid ledger scan"),
+            ):
+                events, has_more = search_messages(
+                    group, query="rollback", kind_filter="all", limit=10
+                )
 
             self.assertFalse(has_more)
             self.assertEqual(len(events), 1)
-            self.assertEqual((events[0].get("data") or {}).get("insight"), "The rollback boundary remains unverified.")
+            self.assertEqual(
+                (events[0].get("data") or {}).get("insight"),
+                "The rollback boundary remains unverified.",
+            )
         finally:
             cleanup()
 
@@ -410,7 +531,10 @@ class TestLedgerSearchIndex(unittest.TestCase):
             from cccc.kernel.group import load_group
             from cccc.kernel.inbox import search_messages
 
-            create, _ = self._call("group_create", {"title": "search-batch-lookup", "topic": "", "by": "user"})
+            create, _ = self._call(
+                "group_create",
+                {"title": "search-batch-lookup", "topic": "", "by": "user"},
+            )
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -431,8 +555,13 @@ class TestLedgerSearchIndex(unittest.TestCase):
             self.assertIsNotNone(group)
             assert group is not None
 
-            with patch("cccc.kernel.inbox.lookup_event_by_id", side_effect=AssertionError("search should use batched event lookup")):
-                events, has_more = search_messages(group, query="", kind_filter="all", limit=4)
+            with patch(
+                "cccc.kernel.inbox.lookup_event_by_id",
+                side_effect=AssertionError("search should use batched event lookup"),
+            ):
+                events, has_more = search_messages(
+                    group, query="", kind_filter="all", limit=4
+                )
             self.assertEqual(len(events), 4)
             self.assertTrue(has_more)
         finally:
@@ -447,7 +576,9 @@ class TestLedgerSearchIndex(unittest.TestCase):
             from cccc.kernel.inbox import search_messages
             from cccc.kernel.ledger_index import catch_up_ledger_index
 
-            create, _ = self._call("group_create", {"title": "search-repair", "topic": "", "by": "user"})
+            create, _ = self._call(
+                "group_create", {"title": "search-repair", "topic": "", "by": "user"}
+            )
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -473,15 +604,26 @@ class TestLedgerSearchIndex(unittest.TestCase):
             file_size = group.ledger_path.stat().st_size
             conn = sqlite3.connect(str(index_path))
             try:
-                conn.execute("DELETE FROM events WHERE source_path = 'ledger.jsonl' AND line_no > 3")
-                conn.execute("DELETE FROM event_search WHERE event_id NOT IN (SELECT event_id FROM events)")
-                conn.execute("UPDATE events SET line_no = line_no + 20 WHERE source_path = 'ledger.jsonl'")
-                conn.execute("UPDATE source_state SET file_size = ?, last_offset_bytes = ?, last_line_no = 3 WHERE source_path = 'ledger.jsonl'", (file_size, file_size))
+                conn.execute(
+                    "DELETE FROM events WHERE source_path = 'ledger.jsonl' AND line_no > 3"
+                )
+                conn.execute(
+                    "DELETE FROM event_search WHERE event_id NOT IN (SELECT event_id FROM events)"
+                )
+                conn.execute(
+                    "UPDATE events SET line_no = line_no + 20 WHERE source_path = 'ledger.jsonl'"
+                )
+                conn.execute(
+                    "UPDATE source_state SET file_size = ?, last_offset_bytes = ?, last_line_no = 3 WHERE source_path = 'ledger.jsonl'",
+                    (file_size, file_size),
+                )
                 conn.commit()
             finally:
                 conn.close()
 
-            events, has_more = search_messages(group, query="", kind_filter="chat", limit=20)
+            events, has_more = search_messages(
+                group, query="", kind_filter="chat", limit=20
+            )
 
             self.assertFalse(has_more)
             self.assertEqual(len(events), 12)
@@ -492,13 +634,18 @@ class TestLedgerSearchIndex(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_search_messages_default_tail_preserves_chronological_order_for_history_paging(self) -> None:
+    def test_search_messages_default_tail_preserves_chronological_order_for_history_paging(
+        self,
+    ) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.kernel.group import load_group
             from cccc.kernel.inbox import search_messages
 
-            create, _ = self._call("group_create", {"title": "search-tail-order", "topic": "", "by": "user"})
+            create, _ = self._call(
+                "group_create",
+                {"title": "search-tail-order", "topic": "", "by": "user"},
+            )
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
@@ -519,10 +666,17 @@ class TestLedgerSearchIndex(unittest.TestCase):
             self.assertIsNotNone(group)
             assert group is not None
 
-            events, has_more = search_messages(group, query="", kind_filter="chat", limit=3)
+            events, has_more = search_messages(
+                group, query="", kind_filter="chat", limit=3
+            )
 
             texts = [
-                str((ev.get("data") if isinstance(ev.get("data"), dict) else {}).get("text") or "")
+                str(
+                    (ev.get("data") if isinstance(ev.get("data"), dict) else {}).get(
+                        "text"
+                    )
+                    or ""
+                )
                 for ev in events
             ]
             self.assertEqual(texts, ["ordered 3", "ordered 4", "ordered 5"])
@@ -536,7 +690,12 @@ class TestLedgerSearchIndex(unittest.TestCase):
                 limit=3,
             )
             older_texts = [
-                str((ev.get("data") if isinstance(ev.get("data"), dict) else {}).get("text") or "")
+                str(
+                    (ev.get("data") if isinstance(ev.get("data"), dict) else {}).get(
+                        "text"
+                    )
+                    or ""
+                )
                 for ev in older
             ]
             self.assertEqual(older_texts, ["ordered 0", "ordered 1", "ordered 2"])
@@ -551,7 +710,10 @@ class TestLedgerSearchIndex(unittest.TestCase):
             from cccc.kernel import ledger_index
             from cccc.kernel.group import create_group
             from cccc.kernel.ledger import append_event
-            from cccc.kernel.ledger_segments import compress_sealed_segments, rotate_active_ledger
+            from cccc.kernel.ledger_segments import (
+                compress_sealed_segments,
+                rotate_active_ledger,
+            )
             from cccc.kernel.registry import load_registry
 
             reg = load_registry()
@@ -584,17 +746,28 @@ class TestLedgerSearchIndex(unittest.TestCase):
             ledger_index.catch_up_ledger_index(group.ledger_path)
             positions = ledger_index.lookup_event_positions(
                 group.ledger_path,
-                [event_ids[3], event_ids[17], str(active_event.get("id") or ""), "missing"],
+                [
+                    event_ids[3],
+                    event_ids[17],
+                    str(active_event.get("id") or ""),
+                    "missing",
+                ],
             )
             self.assertIsNotNone(positions[0])
             self.assertIsNotNone(positions[1])
             self.assertIsNotNone(positions[2])
-            assert positions[0] is not None and positions[1] is not None and positions[2] is not None
+            assert (
+                positions[0] is not None
+                and positions[1] is not None
+                and positions[2] is not None
+            )
             self.assertLess(positions[0], positions[1])
             self.assertLess(positions[1], positions[2])
             self.assertIsNone(positions[3])
             wanted = [event_ids[3], event_ids[17], event_ids[7], event_ids[29]]
-            with patch.object(ledger_index, "iter_source_lines", wraps=ledger_index.iter_source_lines) as iter_source_lines:
+            with patch.object(
+                ledger_index, "iter_source_lines", wraps=ledger_index.iter_source_lines
+            ) as iter_source_lines:
                 events = ledger_index.lookup_events_by_ids(group.ledger_path, wanted)
 
             self.assertEqual([str((ev or {}).get("id") or "") for ev in events], wanted)
@@ -609,7 +782,10 @@ class TestLedgerSearchIndex(unittest.TestCase):
             from cccc.kernel import ledger_index
             from cccc.kernel.group import create_group
             from cccc.kernel.ledger import append_event
-            from cccc.kernel.ledger_segments import compress_sealed_segments, rotate_active_ledger
+            from cccc.kernel.ledger_segments import (
+                compress_sealed_segments,
+                rotate_active_ledger,
+            )
             from cccc.kernel.registry import load_registry
 
             reg = load_registry()

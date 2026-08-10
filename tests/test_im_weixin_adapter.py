@@ -79,7 +79,9 @@ class TestWeixinAdapterContextCache(unittest.TestCase):
         async def _run() -> None:
             with tempfile.TemporaryDirectory() as td:
                 context_path = Path(td) / "ctx.json"
-                context_path.write_text(json.dumps({"chat-1": "ctx-token-1"}), encoding="utf-8")
+                context_path.write_text(
+                    json.dumps({"chat-1": "ctx-token-1"}), encoding="utf-8"
+                )
                 adapter = WeixinAdapter(
                     cred_path=Path(td) / "creds.json",
                     context_cache_path=context_path,
@@ -89,16 +91,30 @@ class TestWeixinAdapterContextCache(unittest.TestCase):
                 fake_pkg.__path__ = []  # mark as package
                 fake_pkg.WeChatBot = FakeBot
                 fake_auth = types.ModuleType("wechatbot.auth")
+                fake_auth.FIXED_QR_BASE_URL = "https://ilinkai.weixin.qq.com"
                 fake_auth.load_credentials = _fake_load_credentials
 
-                with unittest.mock.patch.dict(sys.modules, {
-                    "wechatbot": fake_pkg,
-                    "wechatbot.auth": fake_auth,
-                }):
+                with unittest.mock.patch.dict(
+                    sys.modules,
+                    {
+                        "wechatbot": fake_pkg,
+                        "wechatbot.auth": fake_auth,
+                    },
+                ):
                     await adapter._async_connect()
 
                 self.assertIsNotNone(FakeBot.last)
-                self.assertEqual(FakeBot.last._context_tokens, {"chat-1": "ctx-token-1"})
+                self.assertEqual(
+                    FakeBot.last._context_tokens, {"chat-1": "ctx-token-1"}
+                )
+                self.assertEqual(
+                    FakeBot.last.kwargs.get("base_url"),
+                    "https://ilinkai.weixin.qq.com",
+                )
+                self.assertEqual(
+                    FakeBot.last._base_url,
+                    "https://ilinkai.weixin.qq.com",
+                )
                 adapter._receiver_task.cancel()
                 try:
                     await adapter._receiver_task
@@ -184,7 +200,9 @@ class TestWeixinAdapterSendFile(unittest.TestCase):
                 fp = Path(td) / "photo.jpg"
                 fp.write_bytes(b"\xff\xd8\xff\xe0")
 
-                ok = adapter.send_file("chat-1", file_path=fp, filename="photo.jpg", caption="look")
+                ok = adapter.send_file(
+                    "chat-1", file_path=fp, filename="photo.jpg", caption="look"
+                )
 
             self.assertTrue(ok)
             adapter._bot.send_media.assert_awaited_once()

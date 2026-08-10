@@ -274,8 +274,8 @@ Notes:
 
 Select the product implementation persistently, then optionally execute a
 command with that implementation. Python is the stable and recommended default;
-Rust is an experimental opt-in for performance evaluation while feature and
-integration parity remains in progress.
+Rust is an experimental opt-in and bounded evaluation surface for measured
+native benefits; complete feature and integration parity is not promised.
 
 ```bash
 cccc status             # Show selected, running, and available implementations

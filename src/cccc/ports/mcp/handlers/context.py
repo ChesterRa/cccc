@@ -4,19 +4,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from ....kernel.agent_state_hygiene import evaluate_agent_state_hygiene
-from ....kernel.actors import get_effective_role, list_actors
+from ....kernel.actors import get_effective_role
 from ....kernel.group import load_group
-from ....kernel.prompt_files import (
-    HELP_FILENAME,
-    delete_group_prompt_file,
-    load_builtin_help_markdown,
-    read_group_prompt_file,
-    write_group_prompt_file,
-)
 from ....util.fs import read_json
 from ..task_types import default_task_type_id, normalize_task_type_id
 from ..common import MCPError, _call_daemon_or_raise, _runtime_context
-from ..utils.help_markdown import parse_help_markdown, update_actor_help_note
 
 
 def _resolve_task_create_assignee(
@@ -453,61 +445,6 @@ def agent_state_clear(*, group_id: str, actor_id: str, by: Optional[str] = None)
     return context_sync(group_id=group_id, ops=[{"op": "agent_state.clear", "actor_id": actor_id}], by=by)
 
 
-def _load_actor_notes_help(group: Any) -> Dict[str, Any]:
-    prompt_file = read_group_prompt_file(group, HELP_FILENAME)
-    if prompt_file.found and isinstance(prompt_file.content, str) and prompt_file.content.strip():
-        content = str(prompt_file.content)
-        source = "home"
-    else:
-        content = str(load_builtin_help_markdown() or "")
-        source = "builtin"
-    return {
-        "content": content,
-        "source": source,
-        "path": prompt_file.path,
-    }
-
-
-def _group_actor_ids(group: Any) -> List[str]:
-    return [
-        str(item.get("id") or "").strip()
-        for item in list_actors(group)
-        if isinstance(item, dict) and str(item.get("id") or "").strip()
-    ]
-
-
-def _canonical_actor_id(actor_ids: List[str], target_actor_id: str, extra_actor_ids: Optional[List[str]] = None) -> str:
-    target = str(target_actor_id or "").strip()
-    if not target:
-        return ""
-    target_fold = target.casefold()
-    for candidate in list(actor_ids or []):
-        if str(candidate or "").strip().casefold() == target_fold:
-            return str(candidate or "").strip()
-    for candidate in list(extra_actor_ids or []):
-        if str(candidate or "").strip().casefold() == target_fold:
-            return str(candidate or "").strip()
-    return target
-
-
-def _write_actor_notes_help(group: Any, markdown: str) -> Dict[str, Any]:
-    builtin = str(load_builtin_help_markdown() or "")
-    next_content = str(markdown or "")
-    if not next_content.strip() or next_content == builtin:
-        prompt_file = delete_group_prompt_file(group, HELP_FILENAME)
-        return {
-            "content": builtin,
-            "source": "builtin",
-            "path": prompt_file.path,
-        }
-    prompt_file = write_group_prompt_file(group, HELP_FILENAME, next_content)
-    return {
-        "content": str(prompt_file.content or ""),
-        "source": "home",
-        "path": prompt_file.path,
-    }
-
-
 def _notify_actor_notes_target(*, group_id: str, target_actor_id: str) -> List[str]:
     target = str(target_actor_id or "").strip()
     if not target:
@@ -548,82 +485,51 @@ def _notify_actor_notes_target(*, group_id: str, target_actor_id: str) -> List[s
 
 
 def actor_notes_get(*, group_id: str, caller_actor_id: str, target_actor_id: Optional[str] = None) -> Dict[str, Any]:
-    group = load_group(group_id)
-    if group is None:
-        raise MCPError(code="group_not_found", message=f"group not found: {group_id}")
-    caller_id = str(caller_actor_id or "").strip()
-    role = str(get_effective_role(group, caller_id) or "").strip().lower()
-    help_prompt = _load_actor_notes_help(group)
-    parsed = parse_help_markdown(str(help_prompt.get("content") or ""))
-    actor_ids = _group_actor_ids(group)
-    actor_notes = parsed.get("actor_notes") if isinstance(parsed.get("actor_notes"), dict) else {}
-    extra_actor_ids = [str(aid or "").strip() for aid in actor_notes.keys() if str(aid or "").strip() not in actor_ids]
-    target = _canonical_actor_id(actor_ids, str(target_actor_id or "").strip(), extra_actor_ids=extra_actor_ids)
-    if role != "foreman":
-        if not target:
-            raise MCPError(code="permission_denied", message="listing all actor notes requires foreman access")
-        if target.casefold() != caller_id.casefold():
-            raise MCPError(code="permission_denied", message="actors can only read their own actor notes")
+    args: Dict[str, Any] = {"group_id": group_id, "by": caller_actor_id}
     if target_actor_id:
-        return {
-            "target_actor_id": target,
-            "content": str(actor_notes.get(target) or ""),
-            "source": help_prompt.get("source"),
-            "path": help_prompt.get("path"),
-        }
-    ordered_actor_ids = list(actor_ids)
-    for actor_id in extra_actor_ids:
-        if actor_id not in ordered_actor_ids:
-            ordered_actor_ids.append(actor_id)
-    return {
-        "actor_notes": [
-            {"actor_id": actor_id, "content": str(actor_notes.get(actor_id) or "")}
-            for actor_id in ordered_actor_ids
-        ],
-        "source": help_prompt.get("source"),
-        "path": help_prompt.get("path"),
-    }
+        args["target_actor_id"] = target_actor_id
+    return _call_daemon_or_raise({"op": "actor_notes_get", "args": args})
 
 
 def actor_notes_set(*, group_id: str, target_actor_id: str, content: str, by: Optional[str] = None) -> Dict[str, Any]:
-    group = load_group(group_id)
-    if group is None:
-        raise MCPError(code="group_not_found", message=f"group not found: {group_id}")
-    caller_id = str(by or "").strip()
-    role = str(get_effective_role(group, caller_id) or "").strip().lower()
-    if role != "foreman":
-        raise MCPError(code="permission_denied", message="modifying actor notes requires foreman access")
-    actor_ids = _group_actor_ids(group)
-    target = _canonical_actor_id(actor_ids, target_actor_id)
-    if target not in actor_ids:
-        raise MCPError(code="actor_not_found", message=f"actor not found: {target_actor_id}")
-    current = _load_actor_notes_help(group)
-    next_content = update_actor_help_note(
-        str(current.get("content") or ""),
-        target,
-        str(content or ""),
-        actor_order=actor_ids,
-    )
-    if next_content == str(current.get("content") or ""):
-        return {
-            "target_actor_id": target,
-            "content": str(parse_help_markdown(next_content).get("actor_notes", {}).get(target) or ""),
-            "source": current.get("source"),
-            "path": current.get("path"),
-            "notified_actor_ids": [],
+    result = _call_daemon_or_raise(
+        {
+            "op": "actor_notes_set",
+            "args": {
+                "group_id": group_id,
+                "target_actor_id": target_actor_id,
+                "content": content,
+                "by": str(by or "").strip(),
+            },
         }
-    written = _write_actor_notes_help(group, next_content)
-    return {
-        "target_actor_id": target,
-        "content": str(parse_help_markdown(str(written.get("content") or "")).get("actor_notes", {}).get(target) or ""),
-        "source": written.get("source"),
-        "path": written.get("path"),
-        "notified_actor_ids": _notify_actor_notes_target(group_id=group_id, target_actor_id=target),
-    }
+    )
+    target = str(result.get("target_actor_id") or target_actor_id)
+    result["notified_actor_ids"] = (
+        _notify_actor_notes_target(group_id=group_id, target_actor_id=target)
+        if result.pop("changed", False)
+        else []
+    )
+    return result
 
 
 def actor_notes_clear(*, group_id: str, target_actor_id: str, by: Optional[str] = None) -> Dict[str, Any]:
-    return actor_notes_set(group_id=group_id, target_actor_id=target_actor_id, content="", by=by)
+    result = _call_daemon_or_raise(
+        {
+            "op": "actor_notes_clear",
+            "args": {
+                "group_id": group_id,
+                "target_actor_id": target_actor_id,
+                "by": str(by or "").strip(),
+            },
+        }
+    )
+    target = str(result.get("target_actor_id") or target_actor_id)
+    result["notified_actor_ids"] = (
+        _notify_actor_notes_target(group_id=group_id, target_actor_id=target)
+        if result.pop("changed", False)
+        else []
+    )
+    return result
 
 
 def _handle_context_namespace(

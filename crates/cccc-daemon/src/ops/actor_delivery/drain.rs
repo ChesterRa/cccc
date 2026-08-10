@@ -125,10 +125,20 @@ fn resolve_completion_prefix(
     let mut completed_unread = HashSet::new();
     let mut delivered = Vec::new();
     let mut prefix_complete = true;
-    for event in events[start..].iter().filter(|event| {
-        inbox::is_for_actor(group, event, actor_id)
-            && (actor_created_at.is_empty() || event.ts.as_str() >= actor_created_at)
-    }) {
+    let generations = inbox::actor_generation_positions(events);
+    for (_, event) in events[start..]
+        .iter()
+        .enumerate()
+        .filter(|(offset, event)| {
+            let exists = generations
+                .get(actor_id)
+                .map(|generation| start + offset >= *generation)
+                .unwrap_or_else(|| {
+                    actor_created_at.is_empty() || event.ts.as_str() >= actor_created_at
+                });
+            inbox::is_for_actor(group, event, actor_id) && exists
+        })
+    {
         let completed = completed_ids.contains(&event.id);
         if completed {
             completed_unread.insert(event.id.clone());

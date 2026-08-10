@@ -1,7 +1,8 @@
-use cccc_contracts::{ActorRole, DaemonRequest};
+use cccc_contracts::{Actor, ActorRole, DaemonRequest};
 use cccc_core::capabilities::{Capability, CapabilityStore};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Value, json};
+use std::collections::BTreeSet;
 
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 
@@ -13,6 +14,8 @@ mod overview;
 mod package_install;
 mod target_install;
 mod uninstall;
+
+const FOREMAN_STARTUP_CAPABILITIES: &[&str] = &["pack:group-runtime", "pack:diagnostics"];
 
 #[derive(Debug)]
 pub(super) struct ActorContext {
@@ -118,6 +121,76 @@ pub(super) fn authorize_scope_mutation(
     Ok(ScopeMutation { actor, scope })
 }
 
+pub(super) fn apply_actor_startup_baseline(home: &HomeLayout, group: &GroupDoc, actor: &Actor) {
+    if cccc_core::actors::effective_role(group, &actor.id) == Some(ActorRole::Foreman) {
+        enable_startup_capabilities(
+            home,
+            &group.group_id,
+            &actor.id,
+            FOREMAN_STARTUP_CAPABILITIES.iter().copied(),
+            "actor",
+            3600,
+            "foreman role default",
+        );
+    }
+    match super::actor_profile_runtime::capability_defaults(home, actor) {
+        Ok(Some(defaults)) => enable_startup_capabilities(
+            home,
+            &group.group_id,
+            &actor.id,
+            defaults.autoload_capabilities.iter().map(String::as_str),
+            &defaults.default_scope,
+            defaults.session_ttl_seconds,
+            "actor profile default",
+        ),
+        Ok(None) => {}
+        Err(error) => tracing::warn!(
+            group_id = %group.group_id,
+            actor_id = %actor.id,
+            message = %error.message,
+            "failed to resolve actor profile capability defaults"
+        ),
+    }
+    enable_startup_capabilities(
+        home,
+        &group.group_id,
+        &actor.id,
+        actor.capability_autoload.iter().map(String::as_str),
+        "actor",
+        3600,
+        "actor autoload",
+    );
+}
+
+fn enable_startup_capabilities<'a>(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    capability_ids: impl IntoIterator<Item = &'a str>,
+    scope: &str,
+    ttl_seconds: i64,
+    source: &str,
+) {
+    for capability_id in capability_ids
+        .into_iter()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Err(error) =
+            target_install::enable(home, group_id, actor_id, scope, ttl_seconds, capability_id)
+        {
+            tracing::warn!(
+                %group_id,
+                %actor_id,
+                %capability_id,
+                %source,
+                message = %error.message,
+                "failed to apply startup capability"
+            );
+        }
+    }
+}
+
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
         "capability_overview" => overview::run(home, request),
@@ -128,7 +201,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
         "capability_state" => state(home, request),
         "capability_import" => import::run(home, request),
         "capability_uninstall" => uninstall::run(home, request),
-        "capability_install" | "capability_install_target" => target_install::run(home, request),
+        "capability_install_target" => target_install::run(home, request),
         "capability_source_delete" => source_delete(home, request),
         "capability_tool_call" => use_capability(home, request),
         "capability_allowlist_get" => allowlist::get(home),
@@ -250,16 +323,45 @@ fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         effective_state::load(home, &group_id, &actor_id, &native).map_err(OpError::io)?;
     let enabled = effective.enabled;
     let blocked = effective.blocked;
-    let hidden = effective.hidden;
+    let mut hidden = effective.hidden;
+    let actor = (!group_id.is_empty())
+        .then(|| cccc_core::GroupStore::new(home.clone()))
+        .transpose()
+        .map_err(OpError::io)?
+        .and_then(|store| store.load(&group_id).ok())
+        .and_then(|group| group.actors.into_iter().find(|actor| actor.id == actor_id));
+    let actor_autoload_capabilities = actor
+        .as_ref()
+        .map(|actor| normalized_ids(&actor.capability_autoload))
+        .unwrap_or_default();
+    let actor_configured_hidden = actor
+        .as_ref()
+        .map(|actor| normalized_ids(&actor.capability_hidden))
+        .unwrap_or_default();
+    hidden.extend(actor_configured_hidden);
+    let profile_autoload_capabilities = match actor.as_ref() {
+        Some(actor) => super::actor_profile_runtime::capability_defaults(home, actor)
+            .ok()
+            .flatten()
+            .map(|defaults| defaults.autoload_capabilities)
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+    let autoload_capabilities = normalized_ids(
+        &profile_autoload_capabilities
+            .iter()
+            .chain(&actor_autoload_capabilities)
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
     let enabled_capabilities = enabled.difference(&blocked).cloned().collect::<Vec<_>>();
     let enabled_rows = enabled_capabilities
         .iter()
         .map(|id| json!({"capability_id":id,"scope":"group"}))
         .collect::<Vec<_>>();
-    let active_capsule_skills = store
-        .catalog()
-        .map_err(OpError::io)?
-        .into_iter()
+    let catalog = store.catalog().map_err(OpError::io)?;
+    let active_capsule_skills = catalog
+        .iter()
         .filter(|capability| {
             enabled.contains(&capability.id)
                 && !blocked.contains(&capability.id)
@@ -281,7 +383,49 @@ fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             })
         })
         .collect::<Vec<_>>();
-    let catalog = store.catalog().map_err(OpError::io)?;
+    let autoload_skills = catalog
+        .iter()
+        .filter(|capability| {
+            autoload_capabilities.contains(&capability.id)
+                && capability.kind == "skill"
+                && !blocked.contains(&capability.id)
+                && !hidden.contains(&capability.id)
+        })
+        .map(|capability| {
+            let preview = capability
+                .capsule_text
+                .chars()
+                .take(240)
+                .collect::<String>();
+            json!({
+                "capability_id":capability.id,
+                "name":capability.name,
+                "description_short":capability.description,
+                "capsule_preview":preview,
+                "capsule_text":capability.capsule_text,
+                "source_id":capability.source,
+            })
+        })
+        .collect::<Vec<_>>();
+    let hidden_capabilities = catalog
+        .iter()
+        .filter(|capability| {
+            enabled.contains(&capability.id)
+                && !blocked.contains(&capability.id)
+                && hidden.contains(&capability.id)
+                && (capability.id.starts_with("skill:") || !capability.capsule_text.is_empty())
+        })
+        .map(|capability| {
+            json!({
+                "capability_id":capability.id,
+                "reason":"actor_hidden",
+                "name":capability.name,
+                "description_short":capability.description,
+                "kind":capability.kind,
+                "source_id":capability.source,
+            })
+        })
+        .collect::<Vec<_>>();
     let dynamic_tools =
         external_runtime::dynamic_tools(home, &group_id, &actor_id, &enabled_capabilities)?;
     let visible_tools = visible_tools(
@@ -301,9 +445,25 @@ fn state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "visible_tools":visible_tools,
         "dynamic_tools":dynamic_tools,
         "active_capsule_skills":active_capsule_skills,
+        "autoload_skills":autoload_skills,
+        "autoload_capabilities":autoload_capabilities,
+        "actor_autoload_capabilities":actor_autoload_capabilities,
+        "profile_autoload_capabilities":profile_autoload_capabilities,
         "actor_hidden_capabilities":hidden.into_iter().collect::<Vec<_>>(),
+        "hidden_capabilities":hidden_capabilities,
         "state":native,
     }))
+}
+
+fn normalized_ids(values: &[String]) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .filter(|value| seen.insert((*value).to_owned()))
+        .map(str::to_owned)
+        .collect()
 }
 fn source_delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let source = required_arg(request, "source_id")?;

@@ -9,6 +9,31 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 
+def _server_help_daemon(*, context_payload: dict | None = None):
+    """Mock the two daemon reads performed by the public cccc_help wrapper."""
+
+    def call(request, **_kwargs):
+        from cccc.kernel.help_markdown import _select_help_markdown
+        from cccc.kernel.prompt_files import load_builtin_help_markdown
+
+        op = str(request.get("op") or "")
+        args = request.get("args") if isinstance(request.get("args"), dict) else {}
+        if op == "group_help_get":
+            return {
+                "markdown": _select_help_markdown(
+                    load_builtin_help_markdown(),
+                    role="peer",
+                    actor_id=str(args.get("actor_id") or ""),
+                ),
+                "source_path": "cccc.resources/cccc-help.md",
+            }
+        if op == "context_get":
+            return dict(context_payload or {})
+        raise AssertionError(f"unexpected daemon op in cccc_help test: {op}")
+
+    return call
+
+
 class TestMcpHelpSkillsDigest(unittest.TestCase):
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
@@ -51,6 +76,9 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
                     }
                 ],
             },
+        ), patch(
+            "cccc.ports.mcp.server._call_daemon_or_raise",
+            side_effect=_server_help_daemon(),
         ):
             out = handle_tool_call("cccc_help", {})
 
@@ -100,6 +128,9 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
                 "work_bound": True,
                 "memory_bound": True,
             },
+        ), patch(
+            "cccc.ports.mcp.server._call_daemon_or_raise",
+            side_effect=_server_help_daemon(),
         ):
             out = handle_tool_call("cccc_help", {})
 
@@ -121,6 +152,9 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
             with patch.dict(os.environ, {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "peer-1"}, clear=False), patch(
                 "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
                 return_value={"enabled_capabilities": []},
+            ), patch(
+                "cccc.ports.mcp.server._call_daemon_or_raise",
+                side_effect=_server_help_daemon(),
             ):
                 initial = handle_tool_call("cccc_help", {})
                 initial_markdown = str(initial.get("markdown") or "")
@@ -201,6 +235,9 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
             with patch.dict(os.environ, {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "peer-1"}, clear=False), patch(
                 "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
                 return_value={"enabled_capabilities": []},
+            ), patch(
+                "cccc.ports.mcp.server._call_daemon_or_raise",
+                side_effect=_server_help_daemon(),
             ):
                 both = handle_tool_call("cccc_help", {})
                 both_markdown = str(both.get("markdown") or "")
@@ -400,7 +437,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
             return_value={},
         ), patch(
             "cccc.ports.mcp.server._call_daemon_or_raise",
-            return_value={
+            side_effect=_server_help_daemon(context_payload={
                 "agent_states": [
                     {
                         "id": "peer-1",
@@ -412,7 +449,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
                         "warm": {"what_changed": "updated"},
                     }
                 ]
-            },
+            }),
         ):
             out = handle_tool_call("cccc_help", {})
 
@@ -462,7 +499,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
                 return_value={},
             ), patch(
                 "cccc.ports.mcp.server._call_daemon_or_raise",
-                return_value={
+                side_effect=_server_help_daemon(context_payload={
                     "agent_states": [
                         {
                             "id": "peer-1",
@@ -480,7 +517,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
                             "updated_at": updated_at,
                         }
                     ]
-                },
+                }),
             ):
                 out = handle_tool_call("cccc_help", {})
 

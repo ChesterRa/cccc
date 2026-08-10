@@ -56,18 +56,63 @@ pub(super) async fn reconcile(
     if evidence.attempts >= MAX_RECONCILE_ATTEMPTS {
         return Ok(false);
     }
+    let submission_ambiguous =
+        target["last_delivery_status"] == "submission_ambiguous_completion_pending";
+    let final_error = if submission_ambiguous {
+        "browser submission was attempted but could not be verified; this message will not be redelivered automatically"
+    } else {
+        ""
+    };
     let request = complete_args(
         group_id,
         actor_id,
         &evidence.turn_id,
-        evidence.event_ids,
+        evidence.event_ids.clone(),
         &evidence.delivery_id,
     );
     match raw_call(state, "web_model_runtime_complete_turn", request).await {
         Ok(_) => {
-            let submission_ambiguous =
-                target["last_delivery_status"] == "submission_ambiguous_completion_pending";
             let pending_new_chat_bind = target["kind"] == "new_chat";
+            let delivery_state = if submission_ambiguous {
+                "ambiguous"
+            } else {
+                "submitted"
+            };
+            record_delivery(
+                state,
+                group_id,
+                actor_id,
+                &evidence.turn_id,
+                evidence.event_ids.clone(),
+                &evidence.delivery_id,
+                delivery_state,
+                final_error,
+                true,
+                json!({
+                    "target_url":target["url"],
+                    "auto_bind_new_chat":pending_new_chat_bind
+                }),
+            )
+            .await;
+            if pending_new_chat_bind && !submission_ambiguous {
+                record_delivery(
+                    state,
+                    group_id,
+                    actor_id,
+                    &evidence.turn_id,
+                    evidence.event_ids.clone(),
+                    &evidence.delivery_id,
+                    "pending",
+                    "conversation_url_pending",
+                    true,
+                    json!({
+                        "target_url":target["url"],
+                        "pending_conversation_url":true,
+                        "auto_bind_new_chat":true
+                    }),
+                )
+                .await;
+            }
             let final_status = if submission_ambiguous {
                 "submission_ambiguous"
             } else if pending_new_chat_bind {
@@ -76,7 +121,7 @@ pub(super) async fn reconcile(
                 "submitted"
             };
             let final_error = if submission_ambiguous {
-                "browser submission was attempted but could not be verified; this message will not be redelivered automatically"
+                final_error
             } else if pending_new_chat_bind {
                 "conversation_url_pending"
             } else {
@@ -139,6 +184,63 @@ pub(super) async fn reconcile(
             }
             Ok(false)
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn record_delivery(
+    state: &AppState,
+    group_id: &str,
+    actor_id: &str,
+    turn_id: &str,
+    event_ids: Value,
+    delivery_id: &str,
+    delivery_state: &str,
+    detail: &str,
+    cursor_committed: bool,
+    metadata: Value,
+) {
+    let mut browser_delivery = json!({
+        "state":delivery_state,
+        "detail":detail,
+        "provider":"chatgpt"
+    });
+    if let (Some(target), Some(source)) = (browser_delivery.as_object_mut(), metadata.as_object()) {
+        for field in [
+            "target_url",
+            "bound_conversation_url",
+            "pending_conversation_url",
+            "auto_bind_new_chat",
+            "resolved_pending_new_chat",
+        ] {
+            if let Some(value) = source.get(field) {
+                target.insert(field.into(), value.clone());
+            }
+        }
+    }
+    let request = json!({
+        "group_id":group_id,
+        "actor_id":actor_id,
+        "turn_id":turn_id,
+        "event_ids":event_ids,
+        "delivery_id":delivery_id,
+        "browser_delivery":browser_delivery,
+        "cursor_committed":cursor_committed,
+        "by":actor_id
+    })
+    .as_object()
+    .cloned()
+    .expect("browser delivery request");
+    if let Err(error) = call(state, "web_model_browser_delivery_record", request).await {
+        tracing::warn!(
+            group_id,
+            actor_id,
+            turn_id,
+            delivery_id,
+            delivery_state,
+            %error,
+            "Failed to record Web Model browser delivery status"
+        );
     }
 }
 

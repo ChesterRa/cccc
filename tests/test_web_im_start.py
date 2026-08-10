@@ -386,6 +386,81 @@ class TestWebImStart(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_im_weixin_login_redirect_stays_on_canonical_endpoint(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        home, cleanup = self._with_home()
+        try:
+            gid = self._create_group("im-weixin-login-redirect")
+
+            with TestClient(create_app()) as client:
+                set_resp = client.post(
+                    "/api/im/set",
+                    json={"group_id": gid, "platform": "weixin"},
+                )
+                self.assertEqual(set_resp.status_code, 200)
+                self.assertTrue(bool(set_resp.json().get("ok")))
+
+                state_dir = Path(home) / "groups" / gid / "state"
+                state_dir.mkdir(parents=True, exist_ok=True)
+                status_path = state_dir / "im_weixin_login.json"
+                status_path.write_text(
+                    json.dumps(
+                        {
+                            "status": "waiting_scan",
+                            "logged_in": False,
+                            "qrcode": "qr-token-1",
+                            "qrcode_url": "https://example.test/qr",
+                            "poll_base_url": "https://ilinkai.weixin.qq.com",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                class _FakeApi:
+                    async def poll_qr_status(self, base_url: str, qrcode: str):
+                        self.base_url = base_url
+                        self.qrcode = qrcode
+                        return {
+                            "status": "scaned_but_redirect",
+                            "redirect_host": "http://127.0.0.1:8080/private",
+                        }
+
+                fake_auth = types.ModuleType("wechatbot.auth")
+                fake_auth.FIXED_QR_BASE_URL = "https://ilinkai.weixin.qq.com"
+                fake_auth.save_credentials = AsyncMock()
+                fake_protocol = types.ModuleType("wechatbot.protocol")
+                fake_protocol.ILinkApi = _FakeApi
+                fake_types = types.ModuleType("wechatbot.types")
+                fake_types.Credentials = object
+                fake_pkg = types.ModuleType("wechatbot")
+                fake_pkg.__path__ = []
+
+                with patch.dict(
+                    sys.modules,
+                    {
+                        "wechatbot": fake_pkg,
+                        "wechatbot.auth": fake_auth,
+                        "wechatbot.protocol": fake_protocol,
+                        "wechatbot.types": fake_types,
+                    },
+                ):
+                    status_resp = client.get(
+                        f"/api/im/weixin/login/status?group_id={gid}"
+                    )
+
+                self.assertEqual(status_resp.status_code, 200)
+                payload = status_resp.json()
+                self.assertTrue(bool(payload.get("ok")))
+                result = payload.get("result") or {}
+                self.assertEqual(result.get("status"), "waiting_scan")
+                self.assertEqual(
+                    result.get("poll_base_url"),
+                    "https://ilinkai.weixin.qq.com",
+                )
+        finally:
+            cleanup()
+
     def test_im_weixin_verification_confirms_and_authorizes_scanning_user(self) -> None:
         from cccc.ports.im.auth import KeyManager
         from cccc.ports.im.subscribers import SubscriberManager
@@ -417,7 +492,7 @@ class TestWebImStart(unittest.TestCase):
                     "bot_token": "token-1",
                     "ilink_bot_id": "bot-1",
                     "ilink_user_id": "wx-user-1",
-                    "baseurl": "https://example.test",
+                    "baseurl": "http://127.0.0.1:8080/private",
                 },
             ]
 
@@ -499,6 +574,12 @@ class TestWebImStart(unittest.TestCase):
             self.assertTrue(bool(result.get("auto_subscribed")))
             self.assertEqual(
                 poll_calls[-1], ("https://example.test", "qr-token-verify", "246810")
+            )
+            credentials = json.loads(
+                (state_dir / "im_weixin_credentials.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                credentials.get("baseUrl"), "https://ilinkai.weixin.qq.com"
             )
             self.assertTrue(KeyManager(state_dir).is_authorized("wx-user-1", 0))
             self.assertTrue(SubscriberManager(state_dir).is_subscribed("wx-user-1", 0))

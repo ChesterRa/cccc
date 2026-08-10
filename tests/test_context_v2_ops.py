@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 class TestContextV2Ops(unittest.TestCase):
@@ -373,8 +374,13 @@ class TestContextV2Ops(unittest.TestCase):
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
 
-            from cccc.daemon.context.context_ops import _rebuild_summary_snapshot
+            from cccc.daemon.context.context_ops import (
+                _rebuild_summary_snapshot,
+                _wait_for_summary_snapshot_rebuild,
+            )
             from cccc.kernel.context import ContextStorage
+
+            self.assertTrue(_wait_for_summary_snapshot_rebuild(gid))
 
             stable_basis = {"context_rev": 1, "tasks_rev": 0, "agents_rev": 0, "actors_rev": 0}
             newer_basis = {"context_rev": 2, "tasks_rev": 0, "agents_rev": 0, "actors_rev": 0}
@@ -722,7 +728,7 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_task_delete_clears_pointing_agent_state_for_deleted_subtree(self) -> None:
+    def test_task_delete_preserves_actor_owned_state_for_deleted_subtree(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -751,33 +757,103 @@ class TestContextV2Ops(unittest.TestCase):
 
             ctx, _ = self._context(gid)
             state = [item for item in ctx.result["agent_states"] if item["id"] == "peer1"][0]
-            self.assertIsNone(state["hot"]["active_task_id"])
-            self.assertEqual(state["hot"]["focus"], "")
-            self.assertEqual(state["warm"]["what_changed"], "")
+            self.assertEqual(state["hot"]["active_task_id"], child_id)
+            self.assertEqual(state["hot"]["focus"], "Child")
+            self.assertEqual(state["warm"]["what_changed"], f"{child_id} -> planned")
         finally:
             cleanup()
 
-    def test_task_move_autosyncs_assignee_agent_state(self) -> None:
+    def test_task_move_preserves_assignee_owned_agent_state(self) -> None:
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
             self._sync(
                 gid,
-                [{"op": "task.create", "title": "Auth", "outcome": "Ship auth", "assignee": "foreman"}],
+                [{"op": "task.create", "title": "Manual focus", "assignee": "peer1"}],
             )
-            task_id = self._tasks(gid)[0].result["tasks"][0]["id"]
-            self._sync(gid, [{"op": "task.move", "task_id": task_id, "status": "active"}])
+            manual_task_id = self._tasks(gid)[0].result["tasks"][0]["id"]
+            self._sync(
+                gid,
+                [{"op": "task.create", "title": "Auth", "outcome": "Ship auth", "assignee": "peer1"}],
+            )
+            task_id = next(task["id"] for task in self._tasks(gid)[0].result["tasks"] if task["title"] == "Auth")
+            seed_resp, _ = self._sync(
+                gid,
+                [
+                    {
+                        "op": "agent_state.update",
+                        "actor_id": "peer1",
+                        "active_task_id": manual_task_id,
+                        "focus": "actor-authored focus",
+                        "next_action": "actor-authored next action",
+                        "what_changed": "actor-authored delta",
+                    }
+                ],
+                by="peer1",
+            )
+            self.assertTrue(seed_resp.ok, getattr(seed_resp, "error", None))
+            before, _ = self._context(gid)
+            state_before = [item for item in before.result["agent_states"] if item["id"] == "peer1"][0]
+
+            active_resp, _ = self._sync(gid, [{"op": "task.move", "task_id": task_id, "status": "active"}])
+            self.assertTrue(active_resp.ok, getattr(active_resp, "error", None))
             ctx, _ = self._context(gid)
-            state = [item for item in ctx.result["agent_states"] if item["id"] == "foreman"][0]
-            self.assertEqual(state["hot"]["active_task_id"], task_id)
-            self.assertEqual(state["hot"]["focus"], "Auth")
-            self.assertEqual(state["warm"]["what_changed"], f"{task_id} -> active")
+            state = [item for item in ctx.result["agent_states"] if item["id"] == "peer1"][0]
+            self.assertEqual(state, state_before)
+            self.assertNotIn("agent_state.autosync", [change.get("op") for change in active_resp.result["changes"]])
 
             self._sync(gid, [{"op": "task.move", "task_id": task_id, "status": "done"}])
             ctx2, _ = self._context(gid)
-            state2 = [item for item in ctx2.result["agent_states"] if item["id"] == "foreman"][0]
-            self.assertIsNone(state2["hot"]["active_task_id"])
-            self.assertEqual(state2["warm"]["what_changed"], f"{task_id} -> done")
+            state2 = [item for item in ctx2.result["agent_states"] if item["id"] == "peer1"][0]
+            self.assertEqual(state2, state_before)
+        finally:
+            cleanup()
+
+    def test_context_ops_do_not_write_memory_and_failed_batches_leave_no_side_effects(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._sync(gid, [{"op": "task.create", "title": "Successful lifecycle", "assignee": "peer1"}])
+            self._sync(gid, [{"op": "task.create", "title": "Rejected lifecycle", "assignee": "peer1"}])
+            tasks = self._tasks(gid)[0].result["tasks"]
+            successful_id = next(task["id"] for task in tasks if task["title"] == "Successful lifecycle")
+            rejected_id = next(task["id"] for task in tasks if task["title"] == "Rejected lifecycle")
+            memory_root = Path(home) / "groups" / gid / "state" / "memory"
+
+            def memory_snapshot() -> dict[str, str]:
+                if not memory_root.is_dir():
+                    return {}
+                return {
+                    path.relative_to(memory_root).as_posix(): path.read_text(encoding="utf-8")
+                    for path in sorted(memory_root.rglob("*.md"))
+                }
+
+            initial_memory = memory_snapshot()
+            note_resp, _ = self._sync(
+                gid,
+                [{"op": "coordination.note.add", "kind": "decision", "summary": "Keep this bounded"}],
+            )
+            self.assertTrue(note_resp.ok, getattr(note_resp, "error", None))
+            self._sync(gid, [{"op": "task.move", "task_id": successful_id, "status": "active"}])
+            self._sync(gid, [{"op": "task.move", "task_id": successful_id, "status": "done"}])
+            self.assertEqual(memory_snapshot(), initial_memory)
+
+            context_before, _ = self._context(gid)
+            memory_before_rejected = memory_snapshot()
+            rejected_resp, _ = self._sync(
+                gid,
+                [
+                    {"op": "coordination.note.add", "kind": "decision", "summary": "Must roll back"},
+                    {"op": "task.move", "task_id": rejected_id, "status": "active"},
+                    {"op": "not.a.real.operation"},
+                ],
+            )
+            self.assertFalse(rejected_resp.ok)
+            rejected_task = next(task for task in self._tasks(gid)[0].result["tasks"] if task["id"] == rejected_id)
+            self.assertEqual(rejected_task["status"], "planned")
+            context_after, _ = self._context(gid)
+            self.assertEqual(context_after.result["coordination"], context_before.result["coordination"])
+            self.assertEqual(memory_snapshot(), memory_before_rejected)
         finally:
             cleanup()
 
@@ -976,6 +1052,37 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_user_can_recover_peer_agent_state(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.actors import add_actor
+            from cccc.kernel.group import load_group
+
+            gid = self._create_group()
+            group = load_group(gid)
+            assert group is not None
+            add_actor(group, actor_id="lead1", runtime="codex")
+            add_actor(group, actor_id="peer1", runtime="codex")
+
+            update_resp, _ = self._sync(
+                gid,
+                [{"op": "agent_state.update", "actor_id": "peer1", "focus": "operator recovery"}],
+                by="user",
+            )
+            self.assertTrue(update_resp.ok, getattr(update_resp, "error", None))
+            ctx, _ = self._context(gid)
+            peer_state = [item for item in ctx.result["agent_states"] if item["id"] == "peer1"][0]
+            self.assertEqual(peer_state["hot"]["focus"], "operator recovery")
+
+            clear_resp, _ = self._sync(
+                gid,
+                [{"op": "agent_state.clear", "actor_id": "peer1"}],
+                by="user",
+            )
+            self.assertTrue(clear_resp.ok, getattr(clear_resp, "error", None))
+        finally:
+            cleanup()
+
     def test_peer_cannot_update_coordination_brief(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -1003,6 +1110,37 @@ class TestContextV2Ops(unittest.TestCase):
             )
             self.assertFalse(bad_resp.ok)
             self.assertIn("assigned to foreman", str(bad_resp.error.message).lower())
+        finally:
+            cleanup()
+
+    def test_foreman_can_reassign_task(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.actors import add_actor
+            from cccc.kernel.group import load_group
+
+            gid = self._create_group()
+            group = load_group(gid)
+            assert group is not None
+            add_actor(group, actor_id="lead1", runtime="codex")
+            add_actor(group, actor_id="peer1", runtime="codex")
+            add_actor(group, actor_id="peer2", runtime="codex")
+
+            create_resp, _ = self._sync(
+                gid,
+                [{"op": "task.create", "title": "Reassign me", "assignee": "peer1"}],
+                by="user",
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            task_id = self._tasks(gid)[0].result["tasks"][0]["id"]
+            update_resp, _ = self._sync(
+                gid,
+                [{"op": "task.update", "task_id": task_id, "assignee": "peer2"}],
+                by="lead1",
+            )
+            self.assertTrue(update_resp.ok, getattr(update_resp, "error", None))
+            task = self._tasks(gid)[0].result["tasks"][0]
+            self.assertEqual(task["assignee"], "peer2")
         finally:
             cleanup()
 
@@ -1079,7 +1217,7 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_actor_notes_set_updates_help_actor_block_without_touching_persona_notes(self) -> None:
+    def test_undocumented_actor_notes_context_op_is_rejected_without_mutation(self) -> None:
         _, cleanup = self._with_home()
         try:
             from cccc.kernel.actors import add_actor
@@ -1107,13 +1245,11 @@ class TestContextV2Ops(unittest.TestCase):
                 }],
                 by="user",
             )
-            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertFalse(resp.ok)
+            self.assertIn("Unknown operation", str(getattr(resp.error, "message", "")))
 
             prompt_file = read_group_prompt_file(group, HELP_FILENAME)
-            self.assertTrue(prompt_file.found)
-            help_content = str(prompt_file.content or "")
-            self.assertIn("## @actor: peer1", help_content)
-            self.assertIn("Stay skeptical.\nUse receipts.", help_content)
+            self.assertFalse(prompt_file.found)
 
             ctx, _ = self._context(gid)
             peer_state = [item for item in ctx.result["agent_states"] if item["id"] == "peer1"][0]

@@ -4,6 +4,14 @@ from pathlib import Path
 
 
 class TestDaemonIpcDocsParity(unittest.TestCase):
+    def test_removed_panorama_blueprint_operation_is_not_promised(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        spec_text = (
+            repo_root / "docs" / "standards" / "CCCC_DAEMON_IPC_V1.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("#### `blueprint_generate`", spec_text)
+
     def test_all_daemon_ops_are_documented(self) -> None:
         repo_root = Path(__file__).resolve().parents[1]
         daemon_dir = repo_root / "src" / "cccc" / "daemon"

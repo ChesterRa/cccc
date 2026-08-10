@@ -51,11 +51,18 @@ class TestServerRequestQueueRouting(unittest.TestCase):
         read_queue = object()
         message_lanes = object()
         slow_queue = object()
-        req = SimpleNamespace(op="context_get", args={"group_id": "g1"})
+        for op in ("actor_notes_get", "context_get", "group_help_get"):
+            with self.subTest(op=op):
+                req = SimpleNamespace(op=op, args={"group_id": "g1"})
 
-        selected = _request_queue_for(req, read_queue=read_queue, message_lanes=message_lanes, slow_queue=slow_queue)
+                selected = _request_queue_for(
+                    req,
+                    read_queue=read_queue,
+                    message_lanes=message_lanes,
+                    slow_queue=slow_queue,
+                )
 
-        self.assertIs(selected, read_queue)
+                self.assertIs(selected, read_queue)
 
     def test_terminal_transcript_ops_stay_on_slow_queue(self) -> None:
         from cccc.daemon.server import _request_queue_for
@@ -64,7 +71,7 @@ class TestServerRequestQueueRouting(unittest.TestCase):
         message_lanes = object()
         slow_queue = object()
 
-        for op in ("terminal_history", "terminal_tail"):
+        for op in ("terminal_history", "terminal_since", "terminal_snapshot", "terminal_tail"):
             with self.subTest(op=op):
                 req = SimpleNamespace(op=op, args={"group_id": "g1", "actor_id": "peer1"})
 

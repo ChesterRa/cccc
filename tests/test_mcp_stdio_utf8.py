@@ -130,6 +130,34 @@ class TestMcpStdioUtf8(unittest.TestCase):
         result = resp.get("result") if isinstance(resp.get("result"), dict) else {}
         self.assertEqual(str(result.get("protocolVersion") or ""), "2024-11-05")
 
+    def test_initialize_accepts_latest_legacy_protocol_version(self) -> None:
+        from cccc.ports.mcp import main as mcp_main
+
+        resp = mcp_main.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-11-25"},
+            }
+        )
+        result = resp.get("result") if isinstance(resp.get("result"), dict) else {}
+        self.assertEqual(str(result.get("protocolVersion") or ""), "2025-11-25")
+
+    def test_initialize_unknown_version_offers_latest_supported_legacy_version(self) -> None:
+        from cccc.ports.mcp import main as mcp_main
+
+        resp = mcp_main.handle_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2099-01-01"},
+            }
+        )
+        result = resp.get("result") if isinstance(resp.get("result"), dict) else {}
+        self.assertEqual(str(result.get("protocolVersion") or ""), "2025-11-25")
+
     def test_text_stream_fallback_still_works_without_binary_buffer(self) -> None:
         from cccc.ports.mcp import main as mcp_main
 

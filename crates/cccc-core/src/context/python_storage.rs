@@ -99,7 +99,6 @@ pub(super) fn load(paths: &PythonContextPaths) -> io::Result<ContextDoc> {
         coordination,
         tasks: python_files::load_tasks(&paths.tasks_dir)?,
         agent_states: python_files::load_agents(&paths.agents_file),
-        actor_notes: Default::default(),
         meta,
     })
 }

@@ -19,6 +19,7 @@ from .ledger_index import (
     lookup_event_positions,
     lookup_event_with_chat_ack_indexed,
     lookup_events_by_ids,
+    lookup_latest_actor_add_positions,
     search_event_ids_indexed,
 )
 from .ledger_segments import iter_source_lines, list_ledger_sources
@@ -498,6 +499,53 @@ def _ledger_positions(group: Group, event_ids: Iterable[str]) -> Dict[str, Tuple
     }
 
 
+def actor_generation_positions(
+    group: Group,
+    actor_ids: Iterable[str],
+) -> Dict[str, Tuple[int, int]]:
+    normalized = list(
+        dict.fromkeys(
+            str(actor_id or "").strip()
+            for actor_id in actor_ids
+            if str(actor_id or "").strip()
+        )
+    )
+    if not normalized:
+        return {}
+    try:
+        return lookup_latest_actor_add_positions(group.ledger_path, normalized)
+    except Exception:
+        return {}
+
+
+def actor_existed_at_event(
+    group: Group,
+    *,
+    actor: Dict[str, Any],
+    event: Dict[str, Any],
+    positions: Optional[Dict[str, Tuple[int, int]]] = None,
+    generations: Optional[Dict[str, Tuple[int, int]]] = None,
+) -> bool:
+    actor_id = str(actor.get("id") or "").strip()
+    event_id = str(event.get("id") or "").strip()
+    effective_positions = positions if positions is not None else _ledger_positions(group, [event_id])
+    effective_generations = (
+        generations
+        if generations is not None
+        else actor_generation_positions(group, [actor_id])
+    )
+    event_position = effective_positions.get(event_id)
+    generation_position = effective_generations.get(actor_id)
+    if event_position is not None and generation_position is not None:
+        return event_position >= generation_position
+
+    created_ts = str(actor.get("created_at") or "").strip()
+    event_ts = str(event.get("ts") or "").strip()
+    created_dt = parse_utc_iso(created_ts) if created_ts else None
+    event_dt = parse_utc_iso(event_ts) if event_ts else None
+    return not (created_dt is not None and event_dt is not None and created_dt > event_dt)
+
+
 def _cursor_record_covers_event(
     cursor: Any,
     event: Dict[str, Any],
@@ -677,7 +725,7 @@ def get_ack_status_batch(group: Group, events: List[Dict[str, Any]]) -> Dict[str
     Notes:
     - Only includes chat.message events with data.priority == "attention".
     - Recipient expansion is based on the message "to" tokens and the actor roster,
-      excluding the sender and actors created after the message timestamp.
+      excluding the sender and actors whose current generation starts after the message.
     - "user" is included only if explicitly targeted (to includes "user" or "@user").
     """
     actors = list_actors(group)
@@ -699,6 +747,13 @@ def get_ack_status_batch(group: Group, events: List[Dict[str, Any]]) -> Dict[str
             attention_ids.add(event_id)
 
     acked_by_message = _collect_chat_acks(group, event_ids=attention_ids)
+    actor_ids = [
+        str(actor.get("id") or "").strip()
+        for actor in actors
+        if isinstance(actor, dict) and str(actor.get("id") or "").strip()
+    ]
+    positions = _ledger_positions(group, attention_ids)
+    generations = actor_generation_positions(group, actor_ids)
 
     result: Dict[str, Dict[str, bool]] = {}
 
@@ -721,11 +776,6 @@ def get_ack_status_batch(group: Group, events: List[Dict[str, Any]]) -> Dict[str
         if not event_id:
             continue
 
-        ev_ts = str(ev.get("ts") or "").strip()
-        ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
-        if ev_dt is None:
-            continue
-
         by = str(ev.get("by") or "").strip()
 
         to_raw = data.get("to")
@@ -739,9 +789,13 @@ def get_ack_status_batch(group: Group, events: List[Dict[str, Any]]) -> Dict[str
             aid = str(actor.get("id") or "").strip()
             if not aid or aid == "user" or aid == by:
                 continue
-            created_ts = str(actor.get("created_at") or "").strip()
-            created_dt = parse_utc_iso(created_ts) if created_ts else None
-            if created_dt is not None and created_dt > ev_dt:
+            if not actor_existed_at_event(
+                group,
+                actor=actor,
+                event=ev,
+                positions=positions,
+                generations=generations,
+            ):
                 continue
             if not is_message_for_actor(group, actor_id=aid, event=ev):
                 continue
@@ -778,7 +832,7 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
 
     Notes:
     - Includes only local-group chat.message events (dst_group_id empty).
-    - Recipients are resolved from current roster with message-time existence checks.
+    - Recipients are resolved from current roster with actor-generation ledger checks.
     - "user" is included only when explicitly targeted.
     """
     actors = list_actors(group)
@@ -805,6 +859,12 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
         if isinstance(cursor, dict) and str(cursor.get("event_id") or "").strip()
     ]
     positions = _ledger_positions(group, [*target_ids, *cursor_event_ids])
+    actor_ids = [
+        str(actor.get("id") or "").strip()
+        for actor in actors
+        if isinstance(actor, dict) and str(actor.get("id") or "").strip()
+    ]
+    generations = actor_generation_positions(group, actor_ids)
 
     result: Dict[str, Dict[str, Dict[str, bool]]] = {}
 
@@ -822,11 +882,6 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
         if not event_id:
             continue
 
-        ev_ts = str(ev.get("ts") or "").strip()
-        ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
-        if ev_dt is None:
-            continue
-
         by = str(ev.get("by") or "").strip()
         is_attention = str(data.get("priority") or "normal").strip() == "attention"
         reply_required = bool(data.get("reply_required") is True)
@@ -842,9 +897,13 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
             aid = str(actor.get("id") or "").strip()
             if not aid or aid == "user" or aid == by:
                 continue
-            created_ts = str(actor.get("created_at") or "").strip()
-            created_dt = parse_utc_iso(created_ts) if created_ts else None
-            if created_dt is not None and created_dt > ev_dt:
+            if not actor_existed_at_event(
+                group,
+                actor=actor,
+                event=ev,
+                positions=positions,
+                generations=generations,
+            ):
                 continue
             if not is_message_for_actor(group, actor_id=aid, event=ev):
                 continue
@@ -1303,6 +1362,12 @@ def get_read_status_batch(
         if isinstance(cursor, dict) and str(cursor.get("event_id") or "").strip()
     ]
     positions = _ledger_positions(group, [*event_ids, *cursor_event_ids])
+    actor_ids = [
+        str(actor.get("id") or "").strip()
+        for actor in actors
+        if isinstance(actor, dict) and str(actor.get("id") or "").strip()
+    ]
+    generations = actor_generation_positions(group, actor_ids)
 
     result: Dict[str, Dict[str, bool]] = {}
 
@@ -1314,11 +1379,6 @@ def get_read_status_batch(
         if not event_id:
             continue
 
-        ev_ts = str(ev.get("ts") or "")
-        ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
-        if ev_dt is None:
-            continue
-
         by = str(ev.get("by") or "").strip()
         status: Dict[str, bool] = {}
 
@@ -1328,10 +1388,13 @@ def get_read_status_batch(
             actor_id = str(actor.get("id") or "").strip()
             if not actor_id or actor_id == "user" or actor_id == by:
                 continue
-            created_ts = str(actor.get("created_at") or "").strip()
-            created_dt = parse_utc_iso(created_ts) if created_ts else None
-            if created_dt is not None and created_dt > ev_dt:
-                # Actor did not exist yet at the time of this message.
+            if not actor_existed_at_event(
+                group,
+                actor=actor,
+                event=ev,
+                positions=positions,
+                generations=generations,
+            ):
                 continue
             if not is_message_for_actor(group, actor_id=actor_id, event=ev):
                 continue

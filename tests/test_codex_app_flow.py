@@ -486,6 +486,47 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_claude_error_result_emits_truthful_failed_terminal_event(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession, _claude_result_is_error
+
+        home, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._active_turn_id = "turn-error"
+            session._active_event_id = "event-error"
+
+            with (
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "set") as done_set,
+            ):
+                session._handle_result_event(
+                    {
+                        "type": "result",
+                        "subtype": "error_during_execution",
+                        "is_error": True,
+                        "result": "provider failed",
+                    }
+                )
+
+            done_set.assert_called_once()
+            event_types = [str(call.args[0]) for call in emit.call_args_list if call.args]
+            self.assertEqual(event_types, ["headless.turn.failed"])
+            failed_payload = emit.call_args.args[1]
+            self.assertEqual(failed_payload.get("turn_id"), "turn-error")
+            self.assertEqual(failed_payload.get("event_id"), "event-error")
+            self.assertEqual(failed_payload.get("status"), "error_during_execution")
+            self.assertEqual((failed_payload.get("error") or {}).get("message"), "provider failed")
+            self.assertTrue(_claude_result_is_error({"subtype": "error_max_turns"}))
+            self.assertFalse(_claude_result_is_error({"subtype": "success", "is_error": False}))
+        finally:
+            cleanup()
+
     def test_actor_list_uses_codex_supervisor_state_for_headless_working(self) -> None:
         from cccc.daemon.actors.actor_ops import handle_actor_list
 

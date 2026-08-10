@@ -222,7 +222,7 @@ fn create_pending_subscription(
 ) -> Result<String, String> {
     let store = GroupStore::new(home.clone()).map_err(|error| error.to_string())?;
     let now = chrono::Utc::now().timestamp() as f64;
-    cccc_core::integration_state::group_update(&store, group_id, "im_bridge", |value| {
+    cccc_core::im_state::update(&store, group_id, |value| {
         if !value.is_object() {
             *value = json!({});
         }
@@ -269,7 +269,7 @@ fn chat_authorization(
     let Ok(store) = GroupStore::new(home.clone()) else {
         return ChatAuthorization::default();
     };
-    let Ok(state) = cccc_core::integration_state::group_get(&store, group_id, "im_bridge") else {
+    let Ok(state) = cccc_core::im_state::load(&store, group_id) else {
         return ChatAuthorization::default();
     };
     ["authorized", "subscribers"]
@@ -319,7 +319,7 @@ fn persist_authorization_update(
     update: AuthorizedUpdate,
 ) -> Result<bool, String> {
     let store = GroupStore::new(home.clone()).map_err(|error| error.to_string())?;
-    cccc_core::integration_state::group_update(&store, group_id, "im_bridge", |value| {
+    cccc_core::im_state::update(&store, group_id, |value| {
         let Some(state) = value.as_object_mut() else {
             return Ok(false);
         };
@@ -488,7 +488,7 @@ mod tests {
     }
 
     fn authorize(store: &GroupStore, group_id: &str, paused: bool, verbose: bool) {
-        cccc_core::integration_state::group_update(store, group_id, "im_bridge", |state| {
+        cccc_core::im_state::update(store, group_id, |state| {
             *state = json!({"authorized":[{
                 "chat_id":"chat-1","platform":"telegram","thread_id":0,
                 "paused":paused,"verbose":verbose
@@ -508,8 +508,7 @@ mod tests {
             "chat-1",
             "/subscribe",
         ));
-        let state =
-            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
+        let state = cccc_core::im_state::load(&store, &group_id).expect("state");
         let key = state["pending"][0]["key"].as_str().expect("key");
         assert!(first.contains(key));
         assert!(first.contains("CCCC group \"commands\""));
@@ -517,8 +516,7 @@ mod tests {
             &home, &group_id, "telegram", "chat-1", "/sub",
         ));
         assert!(second.contains(key));
-        let state =
-            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
+        let state = cccc_core::im_state::load(&store, &group_id).expect("state");
         assert_eq!(state["pending"].as_array().expect("pending").len(), 1);
     }
 
@@ -541,13 +539,17 @@ mod tests {
             "1710000000.200",
             "/subscribe",
         );
-        let state =
-            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
-        assert_eq!(state["pending"].as_array().expect("pending").len(), 2);
-        assert_eq!(state["pending"][0]["thread_id"], "1710000000.100");
-        assert_eq!(state["pending"][1]["thread_id"], "1710000000.200");
+        let state = cccc_core::im_state::load(&store, &group_id).expect("state");
+        let pending = state["pending"].as_array().expect("pending");
+        assert_eq!(pending.len(), 2);
+        let mut thread_ids = pending
+            .iter()
+            .filter_map(|item| item["thread_id"].as_str())
+            .collect::<Vec<_>>();
+        thread_ids.sort_unstable();
+        assert_eq!(thread_ids, ["1710000000.100", "1710000000.200"]);
 
-        cccc_core::integration_state::group_update(&store, &group_id, "im_bridge", |state| {
+        cccc_core::im_state::update(&store, &group_id, |state| {
             state["authorized"] = json!([{
                 "chat_id":"channel-1","platform":"slack","thread_id":"1710000000.100"
             }]);
@@ -582,12 +584,11 @@ mod tests {
     fn expired_subscription_key_is_replaced() {
         let (_temp, home, store, group_id) = setup();
         let _ = inbound_decision_blocking(&home, &group_id, "telegram", "chat-1", "/subscribe");
-        let old = cccc_core::integration_state::group_get(&store, &group_id, "im_bridge")
-            .expect("state")["pending"][0]["key"]
+        let old = cccc_core::im_state::load(&store, &group_id).expect("state")["pending"][0]["key"]
             .as_str()
             .expect("key")
             .to_owned();
-        cccc_core::integration_state::group_update(&store, &group_id, "im_bridge", |state| {
+        cccc_core::im_state::update(&store, &group_id, |state| {
             state["pending"][0]["expires_at"] = json!(0.0);
             Ok(())
         })
@@ -638,7 +639,7 @@ mod tests {
     #[test]
     fn weixin_unsubscribe_survives_automatic_authorization_recovery() {
         let (_temp, home, store, group_id) = setup();
-        cccc_core::integration_state::group_update(&store, &group_id, "im_bridge", |state| {
+        cccc_core::im_state::update(&store, &group_id, |state| {
             *state = json!({"authorized":[{
                 "chat_id":"wx-user","platform":"weixin","thread_id":0,
                 "authorization_source":"weixin_login"
@@ -656,8 +657,7 @@ mod tests {
         ));
 
         assert!(body.contains("removed"));
-        let state =
-            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
+        let state = cccc_core::im_state::load(&store, &group_id).expect("state");
         assert_eq!(state["authorized"][0]["subscribed"], false);
         assert!(super::super::authorized_chats(&home, &group_id, "weixin").is_empty());
     }
@@ -752,9 +752,8 @@ mod tests {
         ));
         assert!(body.contains("QR"));
         assert!(body.contains("automatically") || body.contains("send plain text directly"));
-        let state =
-            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
-        assert!(state.get("pending").is_none());
+        let state = cccc_core::im_state::load(&store, &group_id).expect("state");
+        assert!(state["pending"].as_array().is_some_and(Vec::is_empty));
     }
 
     #[test]
@@ -768,8 +767,7 @@ mod tests {
             ));
             assert!(body.contains("enabled"));
         }
-        let state =
-            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
+        let state = cccc_core::im_state::load(&store, &group_id).expect("state");
         assert_eq!(state["authorized"][0]["verbose"], true);
 
         let body = reply(inbound_decision_blocking(
@@ -780,15 +778,14 @@ mod tests {
             "/verbose off",
         ));
         assert!(body.contains("disabled"));
-        let state =
-            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
+        let state = cccc_core::im_state::load(&store, &group_id).expect("state");
         assert_eq!(state["authorized"][0]["verbose"], false);
     }
 
     #[test]
     fn object_shaped_legacy_authorization_can_be_updated_and_removed() {
         let (_temp, home, store, group_id) = setup();
-        cccc_core::integration_state::group_update(&store, &group_id, "im_bridge", |state| {
+        cccc_core::im_state::update(&store, &group_id, |state| {
             *state = json!({"authorized":{"chat-1":{
                 "chat_id":"chat-1","platform":"telegram","paused":true
             }}});
@@ -813,8 +810,7 @@ mod tests {
             "/unsubscribe",
         ));
         assert!(body.contains("removed"));
-        let state =
-            cccc_core::integration_state::group_get(&store, &group_id, "im_bridge").expect("state");
-        assert!(state["authorized"].as_object().expect("object").is_empty());
+        let state = cccc_core::im_state::load(&store, &group_id).expect("state");
+        assert!(state["authorized"].as_array().expect("array").is_empty());
     }
 }

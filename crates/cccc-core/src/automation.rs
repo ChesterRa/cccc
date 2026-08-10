@@ -6,6 +6,7 @@ use std::io;
 use crate::actors;
 use crate::automation_render::notify_event;
 use crate::automation_schedule::is_due;
+use crate::group::automation_timing_value;
 use crate::{GroupDoc, GroupStore, HomeLayout, inbox, ledger};
 
 mod state;
@@ -157,11 +158,7 @@ fn tick_unread(
     state: &mut RuntimeState,
     result: &mut TickResult,
 ) -> io::Result<()> {
-    let threshold = group
-        .extra
-        .get("settings")
-        .and_then(Value::as_object)
-        .and_then(|settings| settings.get("unread_nudge_after_seconds"))
+    let threshold = automation_timing_value(group, "unread_nudge_after_seconds")
         .and_then(Value::as_i64)
         .unwrap_or(0);
     if threshold <= 0 {

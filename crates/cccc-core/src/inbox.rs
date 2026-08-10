@@ -1,6 +1,6 @@
 use cccc_contracts::{ActorRole, Event};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::PathBuf;
 
@@ -19,8 +19,10 @@ pub fn list_unread(
     group: &GroupDoc,
     actor_id: &str,
     limit: usize,
+    kind_filter: &str,
 ) -> io::Result<Vec<Event>> {
-    let mut unread = list_unread_many(home, group, &[actor_id.to_owned()], limit)?;
+    let mut unread =
+        list_unread_many_filtered(home, group, &[actor_id.to_owned()], limit, kind_filter)?;
     Ok(unread.remove(actor_id).unwrap_or_default())
 }
 
@@ -30,22 +32,41 @@ pub fn list_unread_many(
     actor_ids: &[String],
     limit: usize,
 ) -> io::Result<BTreeMap<String, Vec<Event>>> {
+    list_unread_many_filtered(home, group, actor_ids, limit, "all")
+}
+
+fn list_unread_many_filtered(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_ids: &[String],
+    limit: usize,
+    kind_filter: &str,
+) -> io::Result<BTreeMap<String, Vec<Event>>> {
     if actor_ids.is_empty() {
         return Ok(BTreeMap::new());
     }
     let store = GroupStore::new(home.clone())?;
     let state = load(home, &group.group_id)?;
     ledger::inspect(&store.ledger_path(&group.group_id)?, |events, positions| {
+        let generations = actor_generation_positions(events);
         actor_ids
             .iter()
             .map(|actor_id| {
-                let start = state
+                let cursor_start = state
                     .cursors
                     .get(actor_id)
                     .and_then(|id| positions.get(id))
                     .map_or(0, |index| index + 1);
+                let generation_start = generations.get(actor_id).copied().unwrap_or(0);
+                let start = cursor_start.max(generation_start);
                 let unread = events[start..]
                     .iter()
+                    .filter(|event| match kind_filter {
+                        "all" => matches!(event.kind.as_str(), "chat.message" | "system.notify"),
+                        "chat" => event.kind == "chat.message",
+                        "notify" => event.kind == "system.notify",
+                        _ => false,
+                    })
                     .filter(|event| is_for_actor(group, event, actor_id))
                     .take(limit.min(1000))
                     .cloned()
@@ -146,6 +167,38 @@ pub fn is_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
         || to.contains(&"@all")
         || (to.contains(&"@peers") && effective_role(group, actor_id) == Some(ActorRole::Peer))
         || (to.contains(&"@foreman") && effective_role(group, actor_id) == Some(ActorRole::Foreman))
+}
+
+pub fn actor_generation_positions(events: &[Event]) -> HashMap<String, usize> {
+    let mut positions = HashMap::new();
+    for (index, event) in events.iter().enumerate() {
+        if event.kind != "actor.add" {
+            continue;
+        }
+        let actor_id = event
+            .data
+            .get("actor")
+            .and_then(Value::as_object)
+            .and_then(|actor| actor.get("id"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim();
+        if !actor_id.is_empty() {
+            positions.insert(actor_id.to_owned(), index);
+        }
+    }
+    positions
+}
+
+pub fn actor_generation_contains(
+    generations: &HashMap<String, usize>,
+    event_positions: &HashMap<String, usize>,
+    actor_id: &str,
+    event: &Event,
+) -> Option<bool> {
+    let generation = generations.get(actor_id)?;
+    let event_position = event_positions.get(&event.id)?;
+    Some(event_position >= generation)
 }
 
 fn is_legacy_chat_notice(event: &Event) -> bool {

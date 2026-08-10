@@ -1,5 +1,5 @@
 use cccc_contracts::{DaemonRequest, utc_now};
-use cccc_core::{GroupStore, HomeLayout, integration_state};
+use cccc_core::{GroupStore, HomeLayout, assistant_state};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::io;
@@ -7,8 +7,6 @@ use uuid::Uuid;
 
 use super::{voice_input, voice_input_delivery};
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
-
-const KEY: &str = "assistants";
 
 pub(super) fn append(
     home: &HomeLayout,
@@ -32,7 +30,7 @@ pub(super) fn append_with_state(
         return Err(OpError::new("empty_voice_input", "text cannot be empty"));
     }
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
-    let state = integration_state::group_get(&store, &group_id, KEY).map_err(OpError::io)?;
+    let state = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     let assistant = state
         .get("assistant")
         .cloned()
@@ -69,12 +67,10 @@ pub(super) fn append_with_state(
     });
     let now = utc_now();
     let input_path = voice_input::input_log_path(home, &group_id);
-    let (candidate_input, input_created) = integration_state::group_update(
-        &store,
+    let (candidate_input, input_created) = assistant_state::update(
+        home,
         &group_id,
-        KEY,
-        |value| {
-            let root = voice_input::state_root(value);
+        |root| {
             prepare_state(root)?;
             if let Some(existing) =
                 voice_input::find_segment_io(&input_path, &session_id, &segment_id)?
@@ -127,7 +123,7 @@ pub(super) fn append_with_state(
         &by,
         candidate_input.as_ref(),
     )?;
-    let current = integration_state::group_get(&store, &group_id, KEY).map_err(OpError::io)?;
+    let current = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     object(json!({
         "group_id":group_id,
         "assistant":current.get("assistant").cloned().unwrap_or_else(voice_input::default_assistant),

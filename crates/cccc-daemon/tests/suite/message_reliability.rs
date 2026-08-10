@@ -48,6 +48,13 @@ fn directed_message_auto_wakes_an_offline_actor_exactly_once() {
     let group_id = group.result["group"]["group_id"]
         .as_str()
         .expect("group id");
+    let project = temp.path().join("project");
+    std::fs::create_dir(&project).expect("project");
+    call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":project,"by":"user"}),
+    );
     call(
         &home,
         "actor_add",

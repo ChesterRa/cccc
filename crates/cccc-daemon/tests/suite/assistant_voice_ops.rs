@@ -1,8 +1,20 @@
 use cccc_contracts::{
     Actor, ActorRole, ActorRuntime, DaemonRequest, DaemonResponse, Event, RunnerKind,
 };
-use cccc_core::{GroupStore, HomeLayout, Scope, ledger, ledger_archive};
+use cccc_core::{GroupStore, HomeLayout, Scope, assistant_state, ledger, ledger_archive};
 use serde_json::{Map, Value, json};
+
+fn load_voice_state(home: &HomeLayout, group_id: &str) -> Value {
+    assistant_state::load(home, group_id).expect("assistant state")
+}
+
+fn update_voice_state(
+    home: &HomeLayout,
+    group_id: &str,
+    change: impl FnOnce(&mut Map<String, Value>) -> std::io::Result<()>,
+) {
+    assistant_state::update(home, group_id, change).expect("assistant state update");
+}
 
 #[test]
 fn voice_input_is_durable_idempotent_and_delivered_to_internal_actor() {
@@ -76,7 +88,7 @@ fn voice_input_is_durable_idempotent_and_delivered_to_internal_actor() {
     assert!(workspace.join("docs/voice-secretary/meeting.md").is_file());
     let duplicate = ok(&home, "assistant_voice_transcript_append", args);
     assert_eq!(duplicate.result["input_event_created"], false);
-    let assistant_state = &store.load(&group.group_id).expect("load").extra["assistants"];
+    let assistant_state = load_voice_state(&home, &group.group_id);
     assert_eq!(assistant_state["sessions"][0]["capture_mode"], "document");
 
     let read = ok(
@@ -185,7 +197,7 @@ fn prompt_refine_round_trip_uses_distinct_input_and_draft_operations() {
     );
     assert!(submit.result.get("input_event").is_none());
 
-    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    let state = load_voice_state(&home, &group_id);
     assert_eq!(
         state["voice_prompt_requests"]["voice-prompt-test"]["composer_text"],
         "检查这个方案"
@@ -232,8 +244,7 @@ fn prompt_refine_reused_request_id_delivers_each_append_and_deduplicates_retries
     let retry = ok(&home, "assistant_voice_input_append", first_args);
     assert_eq!(retry.result["input_event_created"], false);
     assert_eq!(
-        store.load(&group_id).expect("load").extra["assistants"]["voice_prompt_drafts"]["voice-prompt-reused"]
-            ["status"],
+        load_voice_state(&home, &group_id)["voice_prompt_drafts"]["voice-prompt-reused"]["status"],
         "pending"
     );
 
@@ -260,7 +271,7 @@ fn prompt_refine_reused_request_id_delivers_each_append_and_deduplicates_retries
     assert!(second_text.contains("补充风险"));
     assert!(second_text.contains("再补充验收标准"));
 
-    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    let state = load_voice_state(&home, &group_id);
     assert_eq!(
         state["voice_prompt_requests"]["voice-prompt-reused"]["voice_transcripts"],
         json!(["补充风险", "再补充验收标准"])
@@ -322,7 +333,7 @@ fn voice_instruction_round_trip_persists_and_reports_the_ask_reply() {
 
     let retry = ok(&home, "assistant_voice_document_instruction", args);
     assert_eq!(retry.result["input_event_created"], false);
-    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    let state = load_voice_state(&home, &group_id);
     assert_eq!(state["ask_requests"].as_array().map(Vec::len), Some(1));
     assert_eq!(state["ask_requests"][0]["request_id"], "voice-ask-weather");
     assert_eq!(state["assistant"]["lifecycle"], "working");
@@ -371,6 +382,117 @@ fn voice_instruction_round_trip_persists_and_reports_the_ask_reply() {
 }
 
 #[test]
+fn voice_input_append_routes_voice_instruction_to_the_ask_pipeline() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let args = json!({
+        "group_id":group_id,
+        "kind":"voice_instruction",
+        "request_id":"voice-ask-generic-entry",
+        "input_append_id":"voice-ask-generic-entry-input",
+        "instruction":"Check the latest summary for omissions"
+    });
+    let input = ok(&home, "assistant_voice_input_append", args.clone());
+
+    assert_eq!(input.result["request_id"], "voice-ask-generic-entry");
+    assert_eq!(input.result["input_event_created"], true);
+    assert_eq!(input.result["ask_request"]["status"], "pending");
+    assert_eq!(
+        input.result["input_event"]["metadata"]["target_kind"],
+        "secretary"
+    );
+
+    let retry = ok(&home, "assistant_voice_input_append", args);
+    assert_eq!(retry.result["input_event_created"], false);
+    assert_eq!(retry.result["request_id"], "voice-ask-generic-entry");
+}
+
+#[test]
+fn voice_instruction_working_feedback_keeps_that_request_active() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    for request_id in ["voice-ask-older", "voice-ask-current"] {
+        ok(
+            &home,
+            "assistant_voice_document_instruction",
+            json!({
+                "group_id":group_id,
+                "request_id":request_id,
+                "input_append_id":format!("{request_id}-input"),
+                "instruction":format!("Handle {request_id}")
+            }),
+        );
+    }
+
+    let feedback = ok(
+        &home,
+        "assistant_voice_instruction_feedback",
+        json!({
+            "group_id":group_id,
+            "by":"voice-secretary",
+            "request_id":"voice-ask-current",
+            "status":"working"
+        }),
+    );
+
+    assert_eq!(feedback.result["assistant"]["lifecycle"], "working");
+    assert_eq!(
+        feedback.result["assistant"]["health"]["active_request_id"],
+        "voice-ask-current"
+    );
+    assert_eq!(
+        feedback.result["assistant"]["health"]["active_request_status"],
+        "working"
+    );
+}
+
+#[test]
+fn clearing_ask_history_keeps_late_feedback_reportable() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    ok(
+        &home,
+        "assistant_voice_document_instruction",
+        json!({
+            "group_id":group_id,
+            "request_id":"voice-ask-clear-late",
+            "input_append_id":"voice-ask-clear-late-input",
+            "instruction":"Finish this after the history is cleared"
+        }),
+    );
+
+    let cleared = ok(
+        &home,
+        "assistant_voice_ask_requests_clear",
+        json!({"group_id":group_id}),
+    );
+    assert_eq!(cleared.result["cleared_count"], 1);
+    assert_eq!(cleared.result["removed_count"], 1);
+    assert_eq!(cleared.result["kept_count"], 0);
+    assert!(
+        cleared.result["ask_requests"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    );
+
+    let feedback = ok(
+        &home,
+        "assistant_voice_instruction_feedback",
+        json!({
+            "group_id":group_id,
+            "by":"voice-secretary",
+            "request_id":"voice-ask-clear-late",
+            "status":"done",
+            "reply_text":"Finished after the user cleared the history."
+        }),
+    );
+    assert_eq!(feedback.result["ask_request"]["status"], "done");
+
+    let index = ok(&home, "assistant_state", json!({"group_id":group_id}));
+    assert_eq!(
+        index.result["latest_ask_request"]["request_id"],
+        "voice-ask-clear-late"
+    );
+}
+
+#[test]
 fn voice_instruction_feedback_requires_an_existing_request_and_secretary_actor() {
     let (_temp, home, _store, group_id) = enabled_voice_group();
     let forbidden = call(
@@ -410,7 +532,7 @@ fn voice_instruction_feedback_requires_an_existing_request_and_secretary_actor()
 
 #[test]
 fn document_instruction_targets_an_existing_document_and_requires_a_report() {
-    let (_temp, home, store, group_id) = enabled_voice_group();
+    let (_temp, home, _store, group_id) = enabled_voice_group();
     let saved = ok(
         &home,
         "assistant_voice_document_save",
@@ -444,7 +566,7 @@ fn document_instruction_targets_an_existing_document_and_requires_a_report() {
         input.result["input_event"]["trigger"]["intent_hint"],
         "document_instruction"
     );
-    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    let state = load_voice_state(&home, &group_id);
     assert_eq!(state["documents"].as_array().map(Vec::len), Some(1));
     assert_eq!(state["ask_requests"][0]["target_kind"], "document");
     assert_eq!(
@@ -455,7 +577,7 @@ fn document_instruction_targets_an_existing_document_and_requires_a_report() {
 
 #[test]
 fn archiving_document_removes_it_from_index_and_selects_the_next_active_document() {
-    let (_temp, home, store, group_id) = enabled_voice_group();
+    let (_temp, home, _store, group_id) = enabled_voice_group();
     let first = ok(
         &home,
         "assistant_voice_document_save",
@@ -475,7 +597,7 @@ fn archiving_document_removes_it_from_index_and_selects_the_next_active_document
         }),
     );
     assert_eq!(
-        store.load(&group_id).expect("load").extra["assistants"]["active_document_id"],
+        load_voice_state(&home, &group_id)["active_document_id"],
         second.result["document"]["document_id"]
     );
 
@@ -489,7 +611,7 @@ fn archiving_document_removes_it_from_index_and_selects_the_next_active_document
     );
     assert_eq!(archived.result["document"]["status"], "archived");
 
-    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    let state = load_voice_state(&home, &group_id);
     assert_eq!(
         state["active_document_id"],
         first.result["document"]["document_id"]
@@ -499,12 +621,17 @@ fn archiving_document_removes_it_from_index_and_selects_the_next_active_document
         "docs/voice-secretary/first.md"
     );
 
-    cccc_core::integration_state::group_update(&store, &group_id, "assistants", |value| {
-        value["active_document_id"] = second.result["document"]["document_id"].clone();
-        value["active_document_path"] = json!("docs/voice-secretary/second.md");
+    update_voice_state(&home, &group_id, |state| {
+        state.insert(
+            "active_document_id".into(),
+            second.result["document"]["document_id"].clone(),
+        );
+        state.insert(
+            "active_document_path".into(),
+            json!("docs/voice-secretary/second.md"),
+        );
         Ok(())
-    })
-    .expect("seed legacy archived active target");
+    });
 
     let index = ok(&home, "assistant_index", json!({"group_id":group_id}));
     assert_eq!(index.result["documents"].as_array().map(Vec::len), Some(1));
@@ -521,7 +648,7 @@ fn archiving_document_removes_it_from_index_and_selects_the_next_active_document
         index.result["active_document_path"],
         "docs/voice-secretary/first.md"
     );
-    let repaired = &store.load(&group_id).expect("load").extra["assistants"];
+    let repaired = load_voice_state(&home, &group_id);
     assert_eq!(
         repaired["active_document_id"],
         first.result["document"]["document_id"]
@@ -561,12 +688,17 @@ fn archiving_document_removes_it_from_index_and_selects_the_next_active_document
             "document_path":"docs/voice-secretary/first.md"
         }),
     );
-    cccc_core::integration_state::group_update(&store, &group_id, "assistants", |value| {
-        value["active_document_id"] = first.result["document"]["document_id"].clone();
-        value["active_document_path"] = json!("docs/voice-secretary/first.md");
+    update_voice_state(&home, &group_id, |state| {
+        state.insert(
+            "active_document_id".into(),
+            first.result["document"]["document_id"].clone(),
+        );
+        state.insert(
+            "active_document_path".into(),
+            json!("docs/voice-secretary/first.md"),
+        );
         Ok(())
-    })
-    .expect("seed legacy final archived target");
+    });
     let empty_index = ok(&home, "assistant_index", json!({"group_id":group_id}));
     assert_eq!(
         empty_index.result["documents"].as_array().map(Vec::len),
@@ -574,14 +706,14 @@ fn archiving_document_removes_it_from_index_and_selects_the_next_active_document
     );
     assert_eq!(empty_index.result["active_document_id"], "");
     assert_eq!(empty_index.result["active_document_path"], "");
-    let repaired_empty = &store.load(&group_id).expect("load").extra["assistants"];
+    let repaired_empty = load_voice_state(&home, &group_id);
     assert_eq!(repaired_empty["active_document_id"], "");
     assert_eq!(repaired_empty["active_document_path"], "");
 }
 
 #[test]
 fn semantic_voice_inputs_do_not_create_meeting_transcripts() {
-    let (temp, home, store, group_id) = enabled_voice_group();
+    let (temp, home, _store, group_id) = enabled_voice_group();
     let prompt = ok(
         &home,
         "assistant_voice_input_append",
@@ -614,7 +746,7 @@ fn semantic_voice_inputs_do_not_create_meeting_transcripts() {
         "voice-secretary-user-instruction"
     );
 
-    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    let state = load_voice_state(&home, &group_id);
     assert!(
         state["sessions"]
             .as_array()
@@ -639,7 +771,7 @@ fn semantic_voice_inputs_do_not_create_meeting_transcripts() {
 
 #[test]
 fn prompt_refine_rejects_empty_input_without_persisting_a_request() {
-    let (_temp, home, store, group_id) = enabled_voice_group();
+    let (_temp, home, _store, group_id) = enabled_voice_group();
     let response = call(
         &home,
         "assistant_voice_input_append",
@@ -657,7 +789,7 @@ fn prompt_refine_rejects_empty_input_without_persisting_a_request() {
         response.error.as_ref().map(|error| error.code.as_str()),
         Some("empty_prompt_refine_input")
     );
-    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    let state = load_voice_state(&home, &group_id);
     assert!(
         state
             .get("voice_prompt_requests")
@@ -667,7 +799,7 @@ fn prompt_refine_rejects_empty_input_without_persisting_a_request() {
 
 #[test]
 fn prompt_draft_submit_requires_existing_request_and_supports_no_op_and_ack() {
-    let (_temp, home, store, group_id) = enabled_voice_group();
+    let (_temp, home, _store, group_id) = enabled_voice_group();
     let missing = call(
         &home,
         "assistant_voice_prompt_draft_submit",
@@ -708,7 +840,7 @@ fn prompt_draft_submit_requires_existing_request_and_supports_no_op_and_ack() {
     );
     assert_eq!(no_op.result["prompt_draft"]["status"], "no_change");
     assert_eq!(no_op.result["prompt_draft"]["draft_text"], "");
-    assert!(store.load(&group_id).expect("load").extra["assistants"]["prompt_draft"].is_null());
+    assert!(load_voice_state(&home, &group_id)["prompt_draft"].is_null());
 
     ok(
         &home,
@@ -740,7 +872,7 @@ fn prompt_draft_submit_requires_existing_request_and_supports_no_op_and_ack() {
         }),
     );
     assert_eq!(ack.result["prompt_draft"]["status"], "applied");
-    let state = &store.load(&group_id).expect("load").extra["assistants"];
+    let state = load_voice_state(&home, &group_id);
     assert!(state["prompt_draft"].is_null());
     assert_eq!(
         state["voice_prompt_drafts"]["voice-prompt-ack"]["status"],
@@ -808,34 +940,112 @@ fn disabling_voice_secretary_removes_internal_actor_without_touching_documents()
             .any(|actor| actor.id == "voice-secretary")
     );
     assert_eq!(
-        loaded.extra["assistants"]["documents"][0]["content"],
+        load_voice_state(&home, &group.group_id)["documents"][0]["content"],
         "keep me"
     );
 }
 
 #[test]
-fn legacy_voice_secretary_shape_is_read_and_kept_in_sync() {
+fn legacy_voice_secretary_shape_is_migrated_to_canonical_runtime_state() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
     let store = GroupStore::new(home.clone()).expect("store");
     let group = store.create("legacy", "").expect("group");
     store.mutate(&group.group_id,|doc|{doc.extra.insert("assistants".into(),json!({"voice_secretary":{"assistant_id":"voice_secretary","enabled":true,"lifecycle":"idle","config":{"recognition_backend":"browser_asr"}}}));Ok(())}).expect("legacy state");
-    let index = ok(&home, "assistant_index", json!({"group_id":group.group_id}));
+    let index = ok(&home, "assistant_state", json!({"group_id":group.group_id}));
     assert_eq!(index.result["assistant"]["enabled"], true);
+    let legacy_alias = ok(&home, "assistant_index", json!({"group_id":group.group_id}));
+    assert_eq!(legacy_alias.result["assistant"]["enabled"], true);
     ok(
         &home,
         "assistant_settings_update",
         json!({"group_id":group.group_id,"patch":{"enabled":false,"config":{"recognition_language":"zh-CN"}}}),
     );
-    let state = &store.load(&group.group_id).expect("load").extra["assistants"];
-    assert_eq!(
-        state["assistant"]["config"]["recognition_language"],
-        "zh-CN"
-    );
+    let loaded = store.load(&group.group_id).expect("load");
+    let state = &loaded.extra["assistants"];
+    assert!(state.get("assistant").is_none());
     assert_eq!(
         state["voice_secretary"]["config"]["recognition_language"],
         "zh-CN"
+    );
+    assert_eq!(state["voice_secretary"]["enabled"], false);
+    let runtime = load_voice_state(&home, &group.group_id);
+    assert_eq!(runtime["assistant"]["lifecycle"], "disabled");
+}
+
+#[test]
+fn assistant_state_and_recording_lease_use_the_public_daemon_contract() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let state = ok(
+        &home,
+        "assistant_state",
+        json!({"group_id":group_id,"assistant_id":"voice_secretary"}),
+    );
+    assert_eq!(state.result["assistant"]["assistant_id"], "voice_secretary");
+    assert_eq!(state.result["recording_lease"], json!({}));
+
+    let acquired = ok(
+        &home,
+        "assistant_voice_recording_lease",
+        json!({"group_id":group_id,"action":"acquire","owner_id":"tab-a","ttl_seconds":30}),
+    );
+    let lease_id = acquired.result["lease_id"]
+        .as_str()
+        .expect("private lease token");
+    assert!(acquired.result["lease"].get("lease_id").is_none());
+
+    let conflict = call(
+        &home,
+        "assistant_voice_recording_lease",
+        json!({"group_id":group_id,"action":"acquire","owner_id":"tab-b"}),
+    );
+    assert!(!conflict.ok);
+    let conflict_error = conflict.error.expect("conflict error");
+    assert_eq!(conflict_error.code, "assistant_voice_recording_busy");
+    assert!(
+        conflict_error.details["active_lease"]
+            .get("lease_id")
+            .is_none()
+    );
+
+    let stale = ok(
+        &home,
+        "assistant_voice_recording_lease",
+        json!({"group_id":group_id,"action":"heartbeat","owner_id":"tab-a","lease_id":"stale"}),
+    );
+    assert_eq!(stale.result["lost"], true);
+    let active = ok(
+        &home,
+        "assistant_state",
+        json!({"group_id":group_id,"assistant_id":"voice_secretary"}),
+    );
+    assert_eq!(active.result["recording_lease"]["owner_id"], "tab-a");
+    assert!(active.result["recording_lease"].get("lease_id").is_none());
+
+    let heartbeat = ok(
+        &home,
+        "assistant_voice_recording_lease",
+        json!({"group_id":group_id,"action":"heartbeat","owner_id":"tab-a","lease_id":lease_id}),
+    );
+    assert_eq!(heartbeat.result["lost"], false);
+    assert_eq!(heartbeat.result["lease_id"], lease_id);
+    let released = ok(
+        &home,
+        "assistant_voice_recording_lease",
+        json!({"group_id":group_id,"action":"release","owner_id":"tab-a","lease_id":lease_id}),
+    );
+    assert_eq!(released.result["released"], true);
+    let status = ok(
+        &home,
+        "assistant_voice_recording_lease",
+        json!({"group_id":group_id,"action":"status"}),
+    );
+    assert_eq!(status.result["lease"], json!({}));
+    assert!(
+        home.root()
+            .join("state/voice_secretary_recording_lease.json")
+            .is_file()
     );
 }
 
@@ -872,7 +1082,7 @@ fn voice_input_retries_cleanly_after_document_preflight_failure() {
     let args = json!({"group_id":group.group_id,"by":"user","session_id":"retry-session","segment_id":"retry-segment","text":"必须可靠送达","document_path":"docs/voice-secretary/retry.md","is_final":true});
     let failed = call(&home, "assistant_voice_transcript_append", args.clone());
     assert!(!failed.ok);
-    let state = &store.load(&group.group_id).expect("load").extra["assistants"];
+    let state = load_voice_state(&home, &group.group_id);
     assert_eq!(state["input_latest_seq"].as_u64().unwrap_or(0), 0);
     assert!(
         !home
@@ -979,7 +1189,7 @@ fn enabling_voice_secretary_rolls_back_runtime_start_failure() {
         !restored
             .extra
             .get("assistants")
-            .and_then(|state| state.get("assistant"))
+            .and_then(|state| state.get("voice_secretary"))
             .and_then(|assistant| assistant.get("enabled"))
             .and_then(Value::as_bool)
             .unwrap_or(false)
@@ -1063,12 +1273,10 @@ fn durable_log_remains_idempotent_after_session_window_is_trimmed() {
     let (_temp, home, store, group_id) = enabled_voice_group();
     let args = json!({"group_id":group_id,"by":"user","session_id":"long-session","segment_id":"old-segment","text":"只处理一次","document_path":"docs/voice-secretary/long.md","is_final":true});
     ok(&home, "assistant_voice_transcript_append", args.clone());
-    store
-        .mutate(&group_id, |group| {
-            group.extra["assistants"]["sessions"][0]["segments"] = json!([]);
-            Ok(())
-        })
-        .expect("trim session window");
+    update_voice_state(&home, &group_id, |state| {
+        state["sessions"][0]["segments"] = json!([]);
+        Ok(())
+    });
     let duplicate = ok(&home, "assistant_voice_transcript_append", args);
     assert_eq!(duplicate.result["input_event_created"], false);
     let events = ledger::read_all(&store.ledger_path(&group_id).expect("ledger")).expect("events");
@@ -1284,7 +1492,7 @@ fn listing_reconciles_repository_document_edits_once() {
     );
     assert_eq!(second.result["documents"][0]["revision_count"], 2);
     assert_eq!(
-        store.load(&group_id).expect("load").extra["assistants"]["documents"][0]["content"],
+        load_voice_state(&home, &group_id)["documents"][0]["content"],
         "# Updated\n\n- 新内容\n"
     );
 
@@ -1353,7 +1561,7 @@ fn concurrent_document_lists_reconcile_only_once() {
 
 #[test]
 fn missing_repository_document_does_not_clear_registry_content() {
-    let (_temp, home, store, group_id) = enabled_voice_group();
+    let (_temp, home, _store, group_id) = enabled_voice_group();
     let saved = ok(
         &home,
         "assistant_voice_document_save",
@@ -1378,7 +1586,7 @@ fn missing_repository_document_does_not_clear_registry_content() {
     assert_eq!(listed.result["documents"][0]["content"], "preserve me");
     assert_eq!(listed.result["documents"][0]["revision_count"], 1);
     assert_eq!(
-        store.load(&group_id).expect("load").extra["assistants"]["documents"][0]["content"],
+        load_voice_state(&home, &group_id)["documents"][0]["content"],
         "preserve me"
     );
 }

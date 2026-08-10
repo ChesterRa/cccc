@@ -20,6 +20,7 @@ fn actor_lifecycle_controls_terminal_process() {
         .as_str()
         .expect("group id")
         .to_owned();
+    attach_project_scope(&home, &group_id, temp.path());
     assert!(
         call(
             &home,
@@ -70,6 +71,37 @@ fn actor_lifecycle_controls_terminal_process() {
     );
     assert_eq!(since.result["history"]["data"], "");
     assert_eq!(since.result["history"]["end_cursor"], end_cursor);
+    let missing_cursor = raw_call(
+        &home,
+        "terminal_since",
+        json!({"group_id":group_id,"actor_id":"peer1"}),
+    );
+    assert!(!missing_cursor.ok);
+    assert_eq!(
+        missing_cursor
+            .error
+            .as_ref()
+            .map(|error| error.code.as_str()),
+        Some("invalid_args")
+    );
+    let resized = call(
+        &home,
+        "term_resize",
+        json!({"group_id":group_id,"actor_id":"peer1","cols":100,"rows":30}),
+    );
+    assert!(resized.ok);
+    assert_eq!(resized.result["group_id"], group_id);
+    assert_eq!(resized.result["actor_id"], "peer1");
+    assert_eq!(resized.result["cols"], 100);
+    assert_eq!(resized.result["rows"], 30);
+    assert!(
+        call(
+            &home,
+            "terminal_resize",
+            json!({"group_id":group_id,"actor_id":"peer1","cols":101,"rows":31}),
+        )
+        .ok
+    );
     assert!(
         call(
             &home,
@@ -186,17 +218,332 @@ fn actor_lifecycle_controls_terminal_process() {
     assert!(cccc_runtime::status(&group_id, "peer-remove").is_err());
 }
 
+#[test]
+fn actor_update_enabled_keeps_persisted_and_live_lifecycle_in_sync() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"update lifecycle","by":"user"}),
+    );
+    let group_id = created.result["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    attach_project_scope(&home, &group_id, temp.path());
+    for actor_id in ["peer1", "keeper"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runner":"pty",
+                "runtime":"custom",
+                "command":["sh","-c","sleep 30"],
+                "by":"user"
+            }),
+        );
+        call(
+            &home,
+            "actor_start",
+            json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
+        );
+    }
+
+    let disabled = call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"enabled":false},
+            "by":"user"
+        }),
+    );
+    assert_eq!(disabled.result["actor"]["enabled"], false);
+    assert_eq!(disabled.result["event"]["kind"], "actor.update");
+    assert!(cccc_runtime::status(&group_id, "peer1").is_err());
+    assert!(
+        cccc_runtime::status(&group_id, "keeper").is_ok_and(|status| status.running),
+        "disabling one actor must not stop another"
+    );
+    assert!(
+        cccc_core::GroupStore::new(home.clone())
+            .expect("store")
+            .load(&group_id)
+            .expect("group")
+            .running,
+        "the keeper keeps the group running"
+    );
+
+    let enabled = call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"enabled":true},
+            "by":"user"
+        }),
+    );
+    assert_eq!(enabled.result["actor"]["enabled"], true);
+    assert!(cccc_runtime::status(&group_id, "peer1").is_ok_and(|status| status.running));
+
+    call(
+        &home,
+        "group_stop",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    let enabled_while_stopped = call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"enabled":true},
+            "by":"user"
+        }),
+    );
+    assert_eq!(enabled_while_stopped.result["actor"]["enabled"], true);
+    assert!(cccc_runtime::status(&group_id, "peer1").is_err());
+    let stopped = cccc_core::GroupStore::new(home.clone())
+        .expect("store")
+        .load(&group_id)
+        .expect("group");
+    assert!(!stopped.running);
+    assert_eq!(stopped.state, cccc_contracts::GroupState::Stopped);
+}
+
+#[test]
+fn actor_update_enable_rolls_back_when_runtime_start_fails() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"update rollback","by":"user"}),
+    );
+    let group_id = created.result["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    attach_project_scope(&home, &group_id, temp.path());
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"keeper",
+            "runner":"pty",
+            "runtime":"custom",
+            "command":["sh","-c","sleep 30"],
+            "by":"user"
+        }),
+    );
+    call(
+        &home,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"keeper","by":"user"}),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"broken",
+            "runner":"pty",
+            "runtime":"custom",
+            "command":["cccc-command-that-does-not-exist"],
+            "enabled":false,
+            "by":"user"
+        }),
+    );
+
+    let failed = raw_call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"broken",
+            "patch":{"enabled":true},
+            "by":"user"
+        }),
+    );
+    assert!(!failed.ok, "failed runtime launch must not report success");
+    let group = cccc_core::GroupStore::new(home.clone())
+        .expect("store")
+        .load(&group_id)
+        .expect("group");
+    assert!(
+        !group
+            .actors
+            .iter()
+            .find(|actor| actor.id == "broken")
+            .expect("broken actor")
+            .enabled
+    );
+    assert!(group.running, "the keeper must keep the group running");
+    assert!(cccc_runtime::status(&group_id, "broken").is_err());
+    let events = cccc_core::ledger::read_all(
+        &cccc_core::GroupStore::new(home.clone())
+            .expect("store")
+            .ledger_path(&group_id)
+            .expect("ledger path"),
+    )
+    .expect("ledger");
+    assert!(
+        !events
+            .iter()
+            .any(|event| { event.kind == "actor.update" && event.data["actor_id"] == "broken" })
+    );
+    call(
+        &home,
+        "group_stop",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+}
+
+#[test]
+fn actor_update_enabled_compensates_runtime_when_event_append_fails() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"update event rollback","by":"user"}),
+    );
+    let group_id = created.result["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    attach_project_scope(&home, &group_id, temp.path());
+    for actor_id in ["peer1", "keeper"] {
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":actor_id,
+                "runner":"pty",
+                "runtime":"custom",
+                "command":["sh","-c","sleep 30"],
+                "by":"user"
+            }),
+        );
+        call(
+            &home,
+            "actor_start",
+            json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
+        );
+    }
+
+    let backup = obstruct_ledger(&home, &group_id);
+    let failed_disable = raw_call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"enabled":false},
+            "by":"user"
+        }),
+    );
+    assert!(!failed_disable.ok);
+    let restored = cccc_core::GroupStore::new(home.clone())
+        .expect("store")
+        .load(&group_id)
+        .expect("group");
+    assert!(restored.actors[0].enabled);
+    assert!(restored.running);
+    assert!(cccc_runtime::status(&group_id, "peer1").is_ok_and(|status| status.running));
+    restore_ledger(&home, &group_id, &backup);
+
+    call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"enabled":false},
+            "by":"user"
+        }),
+    );
+    assert!(cccc_runtime::status(&group_id, "peer1").is_err());
+
+    let backup = obstruct_ledger(&home, &group_id);
+    let failed_enable = raw_call(
+        &home,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"enabled":true},
+            "by":"user"
+        }),
+    );
+    assert!(!failed_enable.ok);
+    let restored = cccc_core::GroupStore::new(home.clone())
+        .expect("store")
+        .load(&group_id)
+        .expect("group");
+    assert!(!restored.actors[0].enabled);
+    assert!(restored.running);
+    assert!(cccc_runtime::status(&group_id, "peer1").is_err());
+    restore_ledger(&home, &group_id, &backup);
+    call(
+        &home,
+        "group_stop",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+}
+
+fn obstruct_ledger(home: &HomeLayout, group_id: &str) -> std::path::PathBuf {
+    let ledger = cccc_core::GroupStore::new(home.clone())
+        .expect("store")
+        .ledger_path(group_id)
+        .expect("ledger path");
+    let backup = ledger.with_extension("jsonl.backup");
+    std::fs::rename(&ledger, &backup).expect("backup ledger");
+    std::fs::create_dir(&ledger).expect("obstruct ledger path");
+    backup
+}
+
+fn restore_ledger(home: &HomeLayout, group_id: &str, backup: &std::path::Path) {
+    let ledger = cccc_core::GroupStore::new(home.clone())
+        .expect("store")
+        .ledger_path(group_id)
+        .expect("ledger path");
+    std::fs::remove_dir(&ledger).expect("remove ledger obstruction");
+    std::fs::rename(backup, ledger).expect("restore ledger");
+}
+
+fn attach_project_scope(home: &HomeLayout, group_id: &str, temp_root: &std::path::Path) {
+    let project = temp_root.join("project");
+    std::fs::create_dir(&project).expect("project scope");
+    call(
+        home,
+        "attach",
+        json!({"group_id":group_id,"path":project,"by":"user"}),
+    );
+}
+
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
-    let request = DaemonRequest {
-        v: 1,
-        op: op.into(),
-        args: args.as_object().cloned().unwrap_or_else(Map::new),
-    };
-    let response = cccc_daemon::handle_request(home, &request);
+    let response = raw_call(home, op, args);
     assert!(
         response.ok,
         "{op} failed: {:?}",
         response.error.as_ref().map(|error| &error.message)
     );
     response
+}
+
+fn raw_call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
+    let request = DaemonRequest {
+        v: 1,
+        op: op.into(),
+        args: args.as_object().cloned().unwrap_or_else(Map::new),
+    };
+    cccc_daemon::handle_request(home, &request)
 }

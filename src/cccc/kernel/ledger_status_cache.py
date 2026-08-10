@@ -5,11 +5,14 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List
 
-from ..util.time import parse_utc_iso
 from .actors import list_actors
 from .group import Group, load_group
-from .inbox import is_message_for_actor
-from .ledger_index import lookup_event_by_id
+from .inbox import (
+    actor_existed_at_event,
+    actor_generation_positions,
+    is_message_for_actor,
+)
+from .ledger_index import lookup_event_by_id, lookup_event_positions
 
 _SCHEMA_VERSION = 1
 _DEFAULT_TIMEOUT_SECONDS = 5.0
@@ -31,7 +34,9 @@ def _connect(path: Path) -> sqlite3.Connection:
 
 
 def _meta_int(conn: sqlite3.Connection, key: str) -> int:
-    row = conn.execute("SELECT value FROM meta WHERE key = ?", (str(key or "").strip(),)).fetchone()
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = ?", (str(key or "").strip(),)
+    ).fetchone()
     if row is None:
         return 0
     try:
@@ -92,29 +97,52 @@ def _prune(conn: sqlite3.Connection) -> None:
     if not stale_ids:
         return
     placeholders = ", ".join("?" for _ in stale_ids)
-    conn.execute(f"DELETE FROM recipient_status WHERE event_id IN ({placeholders})", tuple(stale_ids))
-    conn.execute(f"DELETE FROM message_status_meta WHERE event_id IN ({placeholders})", tuple(stale_ids))
+    conn.execute(
+        f"DELETE FROM recipient_status WHERE event_id IN ({placeholders})",
+        tuple(stale_ids),
+    )
+    conn.execute(
+        f"DELETE FROM message_status_meta WHERE event_id IN ({placeholders})",
+        tuple(stale_ids),
+    )
 
 
 def _recipient_actor_ids(group: Group, event: Dict[str, Any]) -> List[str]:
     by = str(event.get("by") or "").strip()
-    ev_ts = str(event.get("ts") or "").strip()
-    ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
     data = event.get("data") if isinstance(event.get("data"), dict) else {}
     to_raw = data.get("to")
-    to_tokens = [str(item).strip() for item in to_raw] if isinstance(to_raw, list) else []
+    to_tokens = (
+        [str(item).strip() for item in to_raw] if isinstance(to_raw, list) else []
+    )
     to_set = {token for token in to_tokens if token}
 
+    actors = list_actors(group)
+    event_id = str(event.get("id") or "").strip()
+    event_position = (
+        lookup_event_positions(group.ledger_path, [event_id])[0] if event_id else None
+    )
+    positions = (
+        {event_id: event_position} if event_id and event_position is not None else {}
+    )
+    generations = actor_generation_positions(
+        group,
+        [str(actor.get("id") or "") for actor in actors if isinstance(actor, dict)],
+    )
+
     recipients: List[str] = []
-    for actor in list_actors(group):
+    for actor in actors:
         if not isinstance(actor, dict):
             continue
         actor_id = str(actor.get("id") or "").strip()
         if not actor_id or actor_id == "user" or actor_id == by:
             continue
-        created_ts = str(actor.get("created_at") or "").strip()
-        created_dt = parse_utc_iso(created_ts) if created_ts else None
-        if ev_dt is not None and created_dt is not None and created_dt > ev_dt:
+        if not actor_existed_at_event(
+            group,
+            actor=actor,
+            event=event,
+            positions=positions,
+            generations=generations,
+        ):
             continue
         if not is_message_for_actor(group, actor_id=actor_id, event=event):
             continue
@@ -153,7 +181,11 @@ def _write_event_status_rows(
     )
     recipients = _recipient_actor_ids(group, event)
     for actor_id in recipients:
-        obligation = obligation_status.get(actor_id) if isinstance(obligation_status.get(actor_id), dict) else {}
+        obligation = (
+            obligation_status.get(actor_id)
+            if isinstance(obligation_status.get(actor_id), dict)
+            else {}
+        )
         conn.execute(
             """
             INSERT INTO recipient_status(event_id, actor_id, is_read, is_acked, is_replied, reply_required)
@@ -208,8 +240,14 @@ def store_message_status_batch(
         conn.close()
 
 
-def get_cached_message_status_batch(group: Group, event_ids: List[str]) -> Dict[str, Dict[str, Any]]:
-    normalized_ids = [str(event_id or "").strip() for event_id in event_ids if str(event_id or "").strip()]
+def get_cached_message_status_batch(
+    group: Group, event_ids: List[str]
+) -> Dict[str, Dict[str, Any]]:
+    normalized_ids = [
+        str(event_id or "").strip()
+        for event_id in event_ids
+        if str(event_id or "").strip()
+    ]
     if not normalized_ids:
         return {}
     conn = _connect(_status_index_path(group))
@@ -316,10 +354,30 @@ def _apply_reply_update(conn: sqlite3.Connection, event_id: str, actor_id: str) 
     )
 
 
-def update_message_status_cache_on_append(event: Dict[str, Any]) -> None:
+def update_message_status_cache_on_append(
+    event: Dict[str, Any],
+    *,
+    cache_new_message: bool = False,
+) -> None:
+    """Maintain only already-materialized status state on the append path.
+
+    New message rows are read-through data and are intentionally populated by
+    the explicit warm/read path. Replies still update a cached target row, and
+    actor/read/ACK events still invalidate or update existing rows.
+    """
     group_id = str(event.get("group_id") or "").strip()
     kind = str(event.get("kind") or "").strip()
-    if not group_id or kind not in {"chat.message", "chat.read", "chat.ack"}:
+    if not group_id or kind not in {
+        "actor.add",
+        "actor.remove",
+        "chat.message",
+        "chat.read",
+        "chat.ack",
+    }:
+        return
+    data = event.get("data") if isinstance(event.get("data"), dict) else {}
+    reply_to = str(data.get("reply_to") or "").strip()
+    if kind == "chat.message" and not cache_new_message and not reply_to:
         return
     group = load_group(group_id)
     if group is None:
@@ -327,33 +385,39 @@ def update_message_status_cache_on_append(event: Dict[str, Any]) -> None:
     conn = _connect(_status_index_path(group))
     try:
         _ensure_schema(conn)
-        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if kind in {"actor.add", "actor.remove"}:
+            conn.execute("DELETE FROM recipient_status")
+            conn.execute("DELETE FROM message_status_meta")
+            conn.commit()
+            return
         if kind == "chat.message":
-            read_status: Dict[str, bool] = {}
-            ack_status: Dict[str, bool] = {}
-            obligation_status: Dict[str, Dict[str, bool]] = {}
-            recipients = _recipient_actor_ids(group, event)
-            is_attention = str(data.get("priority") or "normal").strip() == "attention"
-            reply_required = bool(data.get("reply_required") is True)
-            for actor_id in recipients:
-                read_status[actor_id] = False
-                if is_attention:
-                    ack_status[actor_id] = False
-                obligation_status[actor_id] = {
-                    "read": False,
-                    "acked": not is_attention,
-                    "replied": False,
-                    "reply_required": reply_required,
-                }
-            _write_event_status_rows(
-                conn,
-                group,
-                event,
-                read_status=read_status,
-                ack_status=ack_status,
-                obligation_status=obligation_status,
-            )
-            reply_to = str(data.get("reply_to") or "").strip()
+            if cache_new_message:
+                read_status: Dict[str, bool] = {}
+                ack_status: Dict[str, bool] = {}
+                obligation_status: Dict[str, Dict[str, bool]] = {}
+                recipients = _recipient_actor_ids(group, event)
+                is_attention = (
+                    str(data.get("priority") or "normal").strip() == "attention"
+                )
+                reply_required = bool(data.get("reply_required") is True)
+                for actor_id in recipients:
+                    read_status[actor_id] = False
+                    if is_attention:
+                        ack_status[actor_id] = False
+                    obligation_status[actor_id] = {
+                        "read": False,
+                        "acked": not is_attention,
+                        "replied": False,
+                        "reply_required": reply_required,
+                    }
+                _write_event_status_rows(
+                    conn,
+                    group,
+                    event,
+                    read_status=read_status,
+                    ack_status=ack_status,
+                    obligation_status=obligation_status,
+                )
             by = str(event.get("by") or "").strip()
             if reply_to and by:
                 _apply_reply_update(conn, reply_to, by)
@@ -383,4 +447,4 @@ def warm_message_status_cache_from_event(group: Group, event_id: str) -> None:
     event = lookup_event_by_id(group.ledger_path, event_id)
     if not isinstance(event, dict) or str(event.get("kind") or "") != "chat.message":
         return
-    update_message_status_cache_on_append(event)
+    update_message_status_cache_on_append(event, cache_new_message=True)

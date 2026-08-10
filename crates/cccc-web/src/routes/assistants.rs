@@ -7,7 +7,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use cccc_contracts::DaemonRequest;
 use cccc_core::GroupStore;
-use cccc_core::integration_state;
+use cccc_core::{assistant_state, voice_recording_lease};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::io;
@@ -23,13 +23,10 @@ mod voice_diarization;
 mod voice_final_asr;
 mod voice_inference;
 mod voice_pcm_recording;
-mod voice_recording_lease;
 mod voice_runtime;
 mod voice_session;
 mod voice_speaker_transcript;
 mod voice_ws_lifecycle;
-
-const STORE_KEY: &str = "assistants";
 
 #[derive(Debug, Default, Deserialize)]
 struct DocumentQuery {
@@ -240,7 +237,8 @@ async fn transcription_ws(
         &group_id,
         query.owner_id.trim(),
         query.lease_id.trim(),
-    )?;
+    )
+    .map_err(lease_error)?;
     Ok(ws.on_upgrade(move |socket| {
         serve_transcription_ws(state, group_id, query.owner_id, query.lease_id, socket)
     }))
@@ -253,6 +251,10 @@ async fn serve_transcription_ws(
     lease_id: String,
     mut socket: WebSocket,
 ) {
+    let group_title = GroupStore::new(state.home.clone())
+        .and_then(|store| store.load(&group_id))
+        .map(|group| group.title)
+        .unwrap_or_else(|_| group_id.clone());
     let loaded = load(&state, &group_id);
     let assistant = match loaded
         .map(|value| assistant(&value))
@@ -304,7 +306,13 @@ async fn serve_transcription_ws(
                 break;
             }
             if lease_renewed_at.elapsed() >= std::time::Duration::from_secs(5) {
-                match voice_recording_lease::renew(&state.home, &group_id, &owner_id, &lease_id) {
+                match voice_recording_lease::renew(
+                    &state.home,
+                    &group_id,
+                    &group_title,
+                    &owner_id,
+                    &lease_id,
+                ) {
                     Ok(true) => {}
                     Ok(false) => {
                         tracing::warn!(
@@ -559,11 +567,10 @@ async fn recording_lease(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    Ok(success(voice_recording_lease::update(
-        &state.home,
-        &group_id,
-        &body,
-    )?))
+    let mut args = object(body);
+    args.insert("group_id".into(), json!(group_id));
+    args.entry("by").or_insert_with(|| json!("user"));
+    call(&state, "assistant_voice_recording_lease", args).await
 }
 
 async fn model_install(
@@ -764,7 +771,7 @@ fn payload(
         .collect::<Map<_, _>>();
     let runtime = voice_asr::runtime_status();
     assistant["health"]["service"] = json!({"status":"ready","alive":true,"asr_command_configured":true,"asr_mock_configured":std::env::var_os("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT").is_some(),"implementation":"rust","runtime":runtime});
-    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"documents_by_path":documents.iter().filter_map(|item|item["document_path"].as_str().map(|path|(path.to_owned(),item.clone()))).collect::<Map<_,_>>(),"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":value["input_latest_seq"].as_u64().unwrap_or(0)>value["input_read_cursor"].as_u64().unwrap_or(0),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":models,"service_models_by_id":models_by_id,"service_runtime":runtime,"service_runtimes":[runtime],"service_runtimes_by_id":{"sherpa_onnx_streaming":runtime},"recording_lease":voice_recording_lease::current(&state.home)})
+    json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{"voice_secretary":assistant},"assistant":assistant,"documents":documents,"documents_by_path":documents.iter().filter_map(|item|item["document_path"].as_str().map(|path|(path.to_owned(),item.clone()))).collect::<Map<_,_>>(),"active_document_id":value["active_document_id"],"capture_target_document_id":value["active_document_id"],"active_document_path":value["active_document_path"],"capture_target_document_path":value["active_document_path"],"new_input_available":value["input_latest_seq"].as_u64().unwrap_or(0)>value["input_read_cursor"].as_u64().unwrap_or(0),"prompt_draft":value["prompt_draft"],"ask_requests":asks,"service_models":models,"service_models_by_id":models_by_id,"service_runtime":runtime,"service_runtimes":[runtime],"service_runtimes_by_id":{"sherpa_onnx_streaming":runtime},"recording_lease":voice_recording_lease::current(&state.home).unwrap_or_else(|_|json!({}))})
 }
 
 async fn runtime_assistant(state: &AppState, group_id: &str) -> Option<Value> {
@@ -772,7 +779,7 @@ async fn runtime_assistant(state: &AppState, group_id: &str) -> Option<Value> {
         .client
         .call(&DaemonRequest {
             v: 1,
-            op: "assistant_index".into(),
+            op: "assistant_state".into(),
             args: object(json!({"group_id":group_id})),
         })
         .await
@@ -794,19 +801,25 @@ fn assistant_mut(root: &mut Map<String, Value>) -> &mut Value {
     root.entry("assistant")
         .or_insert_with(|| legacy.unwrap_or_else(default_assistant))
 }
-fn root(value: &mut Value) -> &mut Map<String, Value> {
-    if !value.is_object() {
-        *value = json!({});
-    }
-    let root = value.as_object_mut().expect("assistant state initialized");
-    assistant_mut(root);
+fn root(value: &mut Map<String, Value>) -> &mut Map<String, Value> {
+    assistant_mut(value);
     for key in ["documents", "sessions", "ask_requests", "service_models"] {
-        root.entry(key).or_insert_with(|| json!([]));
+        value.entry(key).or_insert_with(|| json!([]));
     }
-    root
+    value
 }
 fn voice_error(error: voice_asr::VoiceError) -> ApiError {
     ApiError::bad_code(error.code, error.message, Value::Object(error.details))
+}
+fn lease_error(error: voice_recording_lease::LeaseError) -> ApiError {
+    let details = Value::Object(error.details);
+    if matches!(
+        error.code,
+        "assistant_voice_recording_busy" | "assistant_voice_recording_lease_lost"
+    ) {
+        return ApiError::conflict(error.code, error.message, details);
+    }
+    ApiError::bad_code(error.code, error.message, details)
 }
 async fn send_voice_ws_error(
     socket: &mut WebSocket,
@@ -815,17 +828,15 @@ async fn send_voice_ws_error(
     socket.send(Message::Text(json!({"type":"error","ok":false,"error":{"code":error.code,"message":error.message,"details":error.details}}).to_string().into())).await
 }
 pub(super) fn load(state: &AppState, group_id: &str) -> Result<Value, ApiError> {
-    let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
-    integration_state::group_get(&store, group_id, STORE_KEY)
+    assistant_state::load(&state.home, group_id)
         .map_err(|_| ApiError::not_found(format!("group not found: {group_id}")))
 }
 fn update<T>(
     state: &AppState,
     group_id: &str,
-    change: impl FnOnce(&mut Value) -> io::Result<T>,
+    change: impl FnOnce(&mut Map<String, Value>) -> io::Result<T>,
 ) -> Result<T, ApiError> {
-    let store = GroupStore::new(state.home.clone()).map_err(io_error)?;
-    integration_state::group_update(&store, group_id, STORE_KEY, change).map_err(state_error)
+    assistant_state::update(&state.home, group_id, change).map_err(state_error)
 }
 fn array<'a>(value: &'a Value, key: &str) -> &'a [Value] {
     value
@@ -862,7 +873,4 @@ fn state_error(error: io::Error) -> ApiError {
     } else {
         ApiError::bad(error.to_string())
     }
-}
-fn io_error(error: io::Error) -> ApiError {
-    ApiError::bad(error.to_string())
 }

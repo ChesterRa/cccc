@@ -14,8 +14,9 @@ cccc status
 cccc rust       # experimental Rust; use cccc python to return to stable Python
 ```
 
-The choice persists for later CLI and MCP invocations. Feature and integration
-parity is still in progress, so use Python for reliability-critical workflows.
+The choice persists for later CLI and MCP invocations. Complete feature and
+integration parity is not promised; Rust is a bounded evaluation surface for
+measured native benefits, so use Python for reliability-critical workflows.
 
 ## Step 1: Navigate to Your Project
 

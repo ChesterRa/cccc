@@ -13,9 +13,13 @@ class TestRustMcpPythonParity(unittest.TestCase):
         contract_path = root / "src/cccc/resources/mcp_tools.json"
         contract = json.loads(contract_path.read_text(encoding="utf-8"))
         rust = (root / "crates/cccc-mcp/src/tools.rs").read_text(encoding="utf-8")
+        rust_help = (root / "crates/cccc-core/src/group_prompts.rs").read_text(encoding="utf-8")
 
         self.assertEqual(MCP_TOOLS, contract)
         self.assertIn('include_str!("../../../src/cccc/resources/mcp_tools.json")', rust)
+        self.assertIn('include_str!("../../../src/cccc/resources/cccc-help.md")', rust_help)
+        self.assertFalse((root / "crates/cccc-mcp/resources/cccc-help.md").exists())
+        self.assertFalse((root / "crates/cccc-web/resources/cccc-help.md").exists())
         self.assertFalse((root / "crates/cccc-mcp/src/schemas.rs").exists())
 
     def test_full_contract_has_unique_complete_entries(self) -> None:

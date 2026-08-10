@@ -255,35 +255,22 @@ class TestMcpRuntimeContext(unittest.TestCase):
         self.assertEqual(args.get("by"), "管理员")
 
     def test_cccc_help_uses_recovered_actor_notes_when_env_missing(self) -> None:
-        from cccc.kernel.prompt_files import PromptFile
         from cccc.ports.mcp.common import _RuntimeContext
         from cccc.ports.mcp.server import handle_tool_call
-
-        prompt = "## @actor: 管理员\n只有你知道的密码base1234\n"
 
         with patch.dict(os.environ, {"CCCC_GROUP_ID": "", "CCCC_ACTOR_ID": ""}, clear=False), patch(
             "cccc.ports.mcp.server._runtime_context",
             return_value=_RuntimeContext(home="/tmp/cccc", group_id="g_help", actor_id="管理员"),
         ), patch(
-            "cccc.ports.mcp.server.load_group",
-            return_value=object(),
-        ), patch(
-            "cccc.ports.mcp.server.get_effective_role",
-            return_value="foreman",
-        ), patch(
-            "cccc.ports.mcp.server.read_group_prompt_file",
-            return_value=PromptFile(
-                filename="CCCC_HELP.md",
-                path="/tmp/CCCC_HELP.md",
-                found=True,
-                content=prompt,
-            ),
-        ), patch(
             "cccc.ports.mcp.server._append_runtime_help_addenda",
             side_effect=lambda markdown, group_id, actor_id: markdown,
         ), patch(
             "cccc.ports.mcp.server._call_daemon_or_raise",
-            return_value={},
+            side_effect=lambda request, **_kwargs: (
+                {"markdown": "## Notes for you\n\n只有你知道的密码base1234\n", "source_path": "/tmp/CCCC_HELP.md"}
+                if request.get("op") == "group_help_get"
+                else {}
+            ),
         ):
             out = handle_tool_call("cccc_help", {})
 

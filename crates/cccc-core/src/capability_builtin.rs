@@ -39,7 +39,7 @@ pub fn all() -> Vec<Capability> {
             "pack:space",
             "Group Space",
             &["cccc_space"],
-            &["space", "notebooklm"],
+            &["space", "notebooklm", "knowledge"],
         ),
         pack(
             "pack:automation",
@@ -49,9 +49,15 @@ pub fn all() -> Vec<Capability> {
         ),
         pack(
             "pack:context-advanced",
-            "Context Advanced",
-            &["cccc_context_sync", "cccc_memory_admin"],
-            &["context", "memory"],
+            "Extended Context + Delegation",
+            &[
+                "cccc_project_info",
+                "cccc_tracked_send",
+                "cccc_context_sync",
+                "cccc_memory",
+                "cccc_memory_admin",
+            ],
+            &["context", "delegation", "memory"],
         ),
         pack(
             "pack:headless-notify",
@@ -61,19 +67,27 @@ pub fn all() -> Vec<Capability> {
         ),
         pack(
             "pack:diagnostics",
-            "Terminal Debug",
-            &["cccc_terminal", "cccc_debug"],
-            &["terminal", "debug"],
+            "Workspace Utilities",
+            &[
+                "cccc_repo",
+                "cccc_presentation",
+                "cccc_terminal",
+                "cccc_debug",
+            ],
+            &["workspace", "repo", "presentation", "diagnostics"],
         ),
         pack(
             "pack:capability-admin",
             "Capability Admin",
             &[
+                "cccc_capability_state",
+                "cccc_capability_enable",
+                "cccc_capability_install",
                 "cccc_capability_import",
                 "cccc_capability_block",
                 "cccc_capability_uninstall",
             ],
-            &["capability", "admin"],
+            &["capability", "install", "admin", "governance"],
         ),
     ]
 }

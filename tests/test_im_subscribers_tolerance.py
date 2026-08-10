@@ -40,6 +40,37 @@ class TestIMSubscribersTolerance(unittest.TestCase):
             self.assertTrue(manager.is_subscribed("legacy"))
             self.assertFalse(manager.is_verbose("legacy"))
 
+    def test_provider_owned_opaque_thread_ids_are_preserved(self) -> None:
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        with tempfile.TemporaryDirectory() as td:
+            state_dir = Path(td)
+            payload = {
+                "slack-channel": {
+                    "subscribed": True,
+                    "thread_id": "1710000000.100",
+                    "platform": "slack",
+                },
+                "feishu-chat": {
+                    "subscribed": True,
+                    "thread_id": "om_thread_root",
+                    "platform": "feishu",
+                },
+                "slack-channel:1710000000.200": {
+                    "subscribed": True,
+                    "thread_id": "oops",
+                    "platform": "slack",
+                },
+            }
+            (state_dir / "im_subscribers.json").write_text(json.dumps(payload), encoding="utf-8")
+
+            manager = SubscriberManager(state_dir)
+
+            self.assertTrue(manager.is_subscribed("slack-channel", "1710000000.100"))
+            self.assertTrue(manager.is_subscribed("feishu-chat", "om_thread_root"))
+            self.assertTrue(manager.is_subscribed("slack-channel", "1710000000.200"))
+            self.assertFalse(manager.is_subscribed("slack-channel", "oops"))
+
 
 if __name__ == "__main__":
     unittest.main()

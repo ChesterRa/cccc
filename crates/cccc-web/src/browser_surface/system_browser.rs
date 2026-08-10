@@ -50,7 +50,7 @@ impl SystemBrowserLaunch {
                 "Chrome, Microsoft Edge, or Chromium is required for projected browser authentication"
             )
         })?;
-        let cdp_port = reserve_cdp_port()?;
+        let cdp_port = initial_cdp_port()?;
         let display = VirtualDisplay::start(width, height).await?;
         #[cfg(target_os = "linux")]
         let (vnc, vnc_error) = match &display {
@@ -110,8 +110,21 @@ impl SystemBrowserLaunch {
             if !extra_args.is_empty() {
                 config = config.args(extra_args);
             }
+            #[cfg(target_os = "linux")]
+            let vnc_port = self.vnc.as_ref().map(|vnc| vnc.port);
+            #[cfg(not(target_os = "linux"))]
+            let vnc_port: Option<u16> = None;
             let (mut browser, handler) =
-                Browser::launch(config.build().map_err(anyhow::Error::msg)?).await?;
+                Browser::launch(config.build().map_err(anyhow::Error::msg)?)
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "launch projected browser with cdp_port={} vnc_port={vnc_port:?}",
+                            self.cdp_port
+                        )
+                    })?;
+            self.cdp_port = browser_assigned_cdp_port(browser.websocket_address())
+                .context("projected browser did not report a usable CDP port")?;
             let pid = browser
                 .get_mut_child()
                 .and_then(|child| child.as_mut_inner().id())
@@ -315,6 +328,23 @@ async fn wait_for_browser_pid(profile: &Path, deadline: Instant) -> Result<u32> 
 fn reserve_cdp_port() -> Result<u16> {
     let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
     Ok(listener.local_addr()?.port())
+}
+
+#[cfg(target_os = "macos")]
+fn initial_cdp_port() -> Result<u16> {
+    reserve_cdp_port()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn initial_cdp_port() -> Result<u16> {
+    Ok(0)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn browser_assigned_cdp_port(websocket_address: &str) -> Option<u16> {
+    let authority = websocket_address.strip_prefix("ws://")?.split('/').next()?;
+    let port = authority.parse::<std::net::SocketAddr>().ok()?.port();
+    (port != 0).then_some(port)
 }
 
 fn window_position(background: bool) -> &'static str {
@@ -902,6 +932,26 @@ mod tests {
     #[test]
     fn reserves_a_nonzero_loopback_cdp_port() {
         assert_ne!(reserve_cdp_port().expect("CDP port"), 0);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn non_macos_browser_lets_chromium_assign_the_cdp_port_atomically() {
+        assert_eq!(initial_cdp_port().expect("initial CDP port"), 0);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn reads_the_browser_assigned_cdp_port_from_its_websocket_address() {
+        assert_eq!(
+            browser_assigned_cdp_port("ws://127.0.0.1:41234/devtools/browser/example"),
+            Some(41234)
+        );
+        assert_eq!(
+            browser_assigned_cdp_port("ws://[::1]:41235/devtools/browser/example"),
+            Some(41235)
+        );
+        assert_eq!(browser_assigned_cdp_port("https://127.0.0.1:41234"), None);
     }
 
     #[test]

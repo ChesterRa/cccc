@@ -3,7 +3,6 @@ use axum::extract::Query;
 use axum::http::{Request, StatusCode, header};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use cccc_core::integration_state;
 use cccc_core::{GroupStore, HomeLayout};
 use http_body_util::BodyExt;
 use serde::Deserialize;
@@ -172,7 +171,7 @@ async fn python_shaped_remote_pairing_response_becomes_active_without_claim_rout
         "preq_remote"
     );
     assert!(synced["result"]["outbound"]["remote_request"]["remote_send_token"].is_null());
-    let state = integration_state::global_get(&home, "group_bridge").expect("bridge state");
+    let state = cccc_core::group_bridge_legacy::load(&home).expect("bridge state");
     assert_eq!(state["trusts"][0]["credential"], "frs_remote_token");
     assert_eq!(
         state["trusts"][0]["trust_id"].as_str().map(str::len),
@@ -310,7 +309,7 @@ async fn list_repairs_legacy_active_outbound_when_matching_active_trust_exists()
     assert_eq!(listed["result"]["outbounds"][0]["status"], "approved");
 
     // Persisted once: a fresh load (no in-memory repair) still shows approved.
-    let state = integration_state::global_get(&home, "group_bridge").expect("bridge state");
+    let state = cccc_core::group_bridge_legacy::load(&home).expect("bridge state");
     assert_eq!(state["outbounds"][0]["status"], "approved");
     // The routing trust is untouched — repair only touches the outbound flow record.
     assert_eq!(state["trusts"][0]["status"], "active");
@@ -348,7 +347,7 @@ async fn list_leaves_legacy_active_outbound_alone_without_matching_trust() {
     )
     .await;
     assert_eq!(listed["result"]["outbounds"][0]["status"], "active");
-    let state = integration_state::global_get(&home, "group_bridge").expect("bridge state");
+    let state = cccc_core::group_bridge_legacy::load(&home).expect("bridge state");
     assert_eq!(state["outbounds"][0]["status"], "active");
 }
 
@@ -388,6 +387,6 @@ async fn list_does_not_cross_repair_outbounds_for_different_remote_group() {
     )
     .await;
     assert_eq!(listed["result"]["outbounds"][0]["status"], "active");
-    let state = integration_state::global_get(&home, "group_bridge").expect("bridge state");
+    let state = cccc_core::group_bridge_legacy::load(&home).expect("bridge state");
     assert_eq!(state["outbounds"][0]["status"], "active");
 }

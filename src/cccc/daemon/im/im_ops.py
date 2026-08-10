@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.group import Group, load_group
-from ...ports.im.auth import KeyManager
+from ...ports.im.auth import KeyManager, normalize_thread_id
 from ...ports.im.subscribers import SubscriberManager
 
 
@@ -43,7 +43,7 @@ def handle_im_bind_chat(args: Dict[str, Any]) -> DaemonResponse:
         return _error("invalid_key", "key not found or expired")
 
     chat_id = str(pending["chat_id"])
-    thread_id = int(pending.get("thread_id") or 0)
+    thread_id = normalize_thread_id(pending.get("thread_id"))
     platform = str(pending.get("platform") or "")
 
     km.authorize(chat_id, thread_id, platform, key)
@@ -90,10 +90,7 @@ def handle_im_reject_pending(args: Dict[str, Any]) -> DaemonResponse:
 def handle_im_revoke_chat(args: Dict[str, Any]) -> DaemonResponse:
     """Revoke authorization for a chat."""
     chat_id = str(args.get("chat_id") or "").strip()
-    try:
-        thread_id = int(args.get("thread_id") or 0)
-    except Exception:
-        thread_id = 0
+    thread_id = normalize_thread_id(args.get("thread_id"))
 
     if not chat_id:
         return _error("missing_chat_id", "chat_id is required")

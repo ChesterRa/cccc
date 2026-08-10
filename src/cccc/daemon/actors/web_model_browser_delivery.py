@@ -52,7 +52,12 @@ _PROVIDER_ENV_KEYS = (
     "CCCC_WEB_MODEL_PROVIDER",
     "CCCC_WEB_MODEL_BROWSER_PROVIDER",
 )
-_BROWSER_PROVIDERS = {"chatgpt_web", "browser_web_model", "chatgpt_browser"}
+_BROWSER_PROVIDERS = {
+    "chatgpt",
+    "chatgpt_web",
+    "browser_web_model",
+    "chatgpt_browser",
+}
 _PULL_MODES = {"", "pull", "native", "remote_mcp", "off", "disabled", "none"}
 _EXPLICIT_PULL_MODES = _PULL_MODES - {""}
 _BROWSER_MODES = {"browser", "chatgpt", "chatgpt_browser", "browser_delivery"}

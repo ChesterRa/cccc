@@ -84,8 +84,9 @@ python -m pip install -U --pre \
 > its stable default implementation. On Linux x86-64, Intel/Apple Silicon macOS,
 > and Windows x86-64, its platform wheel also includes a private, version-matched
 > **experimental Rust implementation** for opt-in performance evaluation with
-> `cccc rust`. Feature and integration parity is still in progress; use
-> `cccc python` for reliability-critical workflows. An optional
+> `cccc rust`. Complete feature and integration parity is not promised; Rust is
+> retained only as a bounded evaluation surface for measured native benefits.
+> Use `cccc python` for reliability-critical workflows. An optional
 > [experimental standalone Rust preview](#experimental-standalone-rust-preview)
 > is available for Rust-only deployment testing.
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { GROUP_STATUS_DOT_BASE_CLASS } from "./groupStatus";
 import { getGroupPresenceDotClass, getRuntimeIndicatorState } from "./statusIndicators";

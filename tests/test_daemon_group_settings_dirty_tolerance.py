@@ -4,6 +4,60 @@ import unittest
 
 
 class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
+    def test_group_load_promotes_only_known_legacy_flat_settings(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+        from cccc.kernel.group import load_group
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                create_resp, _ = handle_request(
+                    DaemonRequest.model_validate(
+                        {"op": "group_create", "args": {"title": "legacy-flat", "by": "user"}}
+                    )
+                )
+                self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+                group_id = str((create_resp.result or {}).get("group_id") or "").strip()
+                group = load_group(group_id)
+                self.assertIsNotNone(group)
+                assert group is not None
+                group.doc["automation"]["nudge_after_seconds"] = 123
+                group.doc["messaging"] = {"default_send_to": "foreman"}
+                group.doc["settings"] = {
+                    "nudge_after_seconds": 999,
+                    "nudge_digest_min_interval_seconds": 777,
+                    "default_send_to": "broadcast",
+                    "min_interval_seconds": 42,
+                    "auto_mark_on_delivery": False,
+                    "terminal_transcript_visibility": "all",
+                    "terminal_transcript_notify_tail": False,
+                    "terminal_transcript_notify_lines": 37,
+                    "panorama_enabled": True,
+                    "native_extension": {"keep": True},
+                }
+                group.save()
+
+                promoted = load_group(group_id)
+                self.assertIsNotNone(promoted)
+                assert promoted is not None
+                self.assertEqual(promoted.doc["automation"]["nudge_after_seconds"], 123)
+                self.assertEqual(promoted.doc["automation"]["nudge_digest_min_interval_seconds"], 777)
+                self.assertEqual(promoted.doc["messaging"]["default_send_to"], "foreman")
+                self.assertEqual(promoted.doc["delivery"]["min_interval_seconds"], 42)
+                self.assertFalse(promoted.doc["delivery"]["auto_mark_on_delivery"])
+                self.assertEqual(promoted.doc["terminal_transcript"]["visibility"], "all")
+                self.assertFalse(promoted.doc["terminal_transcript"]["notify_tail"])
+                self.assertEqual(promoted.doc["terminal_transcript"]["notify_lines"], 37)
+                self.assertTrue(promoted.doc["features"]["panorama_enabled"])
+                self.assertEqual(promoted.doc["settings"], {"native_extension": {"keep": True}})
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
     def test_group_settings_update_defaults_auto_mark_on_delivery_to_true(self) -> None:
         from cccc.contracts.v1 import DaemonRequest
         from cccc.daemon.server import handle_request

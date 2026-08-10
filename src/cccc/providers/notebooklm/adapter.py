@@ -706,16 +706,11 @@ def _extract_query_source_ids(options: Mapping[str, Any]) -> list[str] | None:
 
 
 async def _build_client(*, auth_payload: Dict[str, Any], timeout_seconds: float):
-    from ._vendor.notebooklm.auth import AuthTokens, extract_cookies_from_storage, fetch_tokens
+    from ._vendor.notebooklm.auth import AuthTokens
     from ._vendor.notebooklm.client import NotebookLMClient
 
-    cookies = extract_cookies_from_storage(auth_payload)
-    csrf_token, session_id = await fetch_tokens(cookies)
-    auth = AuthTokens(
-        cookies=cookies,
-        csrf_token=csrf_token,
-        session_id=session_id,
-    )
+    _ = auth_payload
+    auth = await AuthTokens.from_storage()
     return NotebookLMClient(auth, timeout=timeout_seconds)
 
 

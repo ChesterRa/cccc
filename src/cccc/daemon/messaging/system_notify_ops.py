@@ -5,9 +5,11 @@ from __future__ import annotations
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse, SystemNotifyData
+from ...kernel.actors import find_actor
 from ...kernel.group import load_group
-from ...kernel.inbox import find_event
+from ...kernel.inbox import find_event, is_message_for_actor
 from ...kernel.ledger import append_event
+from ...kernel.permissions import require_inbox_permission
 from .delivery import emit_system_notify
 
 
@@ -79,7 +81,6 @@ def handle_notify_ack(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     actor_id = str(args.get("actor_id") or "").strip()
     notify_event_id = str(args.get("notify_event_id") or "").strip()
-    by = str(args.get("by") or "user").strip()
 
     if not group_id:
         return _error("missing_group_id", "missing group_id")
@@ -87,16 +88,27 @@ def handle_notify_ack(args: Dict[str, Any]) -> DaemonResponse:
         return _error("missing_actor_id", "missing actor_id")
     if not notify_event_id:
         return _error("missing_notify_event_id", "missing notify_event_id")
+    by = str(args.get("by") or actor_id).strip() or actor_id
+    if by != actor_id:
+        return _error("permission_denied", "ack must be performed by the recipient (by must equal actor_id)")
 
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
+    if actor_id != "user" and not isinstance(find_actor(group, actor_id), dict):
+        return _error("unknown_actor", f"unknown actor: {actor_id}")
+    try:
+        require_inbox_permission(group, by=by, target_actor_id=actor_id)
+    except Exception as exc:
+        return _error("permission_denied", str(exc))
 
     notify_event = find_event(group, notify_event_id)
     if notify_event is None:
         return _error("event_not_found", f"event not found: {notify_event_id}")
     if str(notify_event.get("kind") or "") != "system.notify":
         return _error("invalid_event_kind", "event is not a system.notify")
+    if not is_message_for_actor(group, actor_id=actor_id, event=notify_event):
+        return _error("event_not_for_actor", f"event is not addressed to actor: {actor_id}")
 
     event = append_event(
         group.ledger_path,

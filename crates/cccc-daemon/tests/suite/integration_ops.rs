@@ -4,6 +4,106 @@ use cccc_core::HomeLayout;
 use serde_json::{Map, Value, json};
 
 #[test]
+fn im_auth_operations_use_python_compatible_state_and_standard_results() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"IM auth"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    store
+        .mutate(group_id, |group| {
+            group.extra.insert(
+                "im".into(),
+                json!({"platform":"telegram","bot_token_env":"TOKEN","enabled":false}),
+            );
+            Ok(())
+        })
+        .expect("config");
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_secs_f64();
+    std::fs::write(
+        store
+            .state_dir(group_id)
+            .expect("state dir")
+            .join("im_pending_keys.json"),
+        serde_json::to_vec_pretty(&json!({
+            "fresh-key":{
+                "chat_id":"chat-1","thread_id":9,"platform":"telegram","created_at":now
+            },
+            "expired-key":{
+                "chat_id":"old","thread_id":0,"platform":"telegram","created_at":now-1200.0
+            }
+        }))
+        .expect("pending json"),
+    )
+    .expect("pending fixture");
+
+    let pending = call(&home, "im_list_pending", json!({"group_id":group_id}));
+    assert_eq!(
+        pending.result["pending"].as_array().expect("pending").len(),
+        1
+    );
+    assert_eq!(pending.result["pending"][0]["key"], "fresh-key");
+    assert!(pending.result["pending"][0]["expires_in_seconds"].is_number());
+
+    let bound = call(
+        &home,
+        "im_bind_chat",
+        json!({"group_id":group_id,"key":"fresh-key"}),
+    );
+    assert_eq!(
+        Value::Object(bound.result),
+        json!({"chat_id":"chat-1","thread_id":9,"platform":"telegram"})
+    );
+    let state = cccc_core::im_state::load(&store, group_id).expect("state after bind");
+    assert_eq!(state["pending"], json!([]));
+    assert_eq!(state["authorized"][0]["chat_id"], "chat-1");
+    assert_eq!(state["subscribers"][0]["subscribed"], true);
+
+    let revoked = call(
+        &home,
+        "im_revoke_chat",
+        json!({"group_id":group_id,"chat_id":"chat-1","thread_id":9}),
+    );
+    assert_eq!(
+        Value::Object(revoked.result),
+        json!({"revoked":true,"unsubscribed":true})
+    );
+    let state = cccc_core::im_state::load(&store, group_id).expect("state after revoke");
+    assert_eq!(state["authorized"], json!([]));
+    assert_eq!(state["subscribers"][0]["subscribed"], false);
+
+    let invalid = raw_call(
+        &home,
+        "im_bind_chat",
+        json!({"group_id":group_id,"key":"expired-key"}),
+    );
+    assert_eq!(invalid.error.expect("invalid key").code, "invalid_key");
+
+    let missing_key = raw_call(&home, "im_bind_chat", json!({"group_id":group_id}));
+    assert_eq!(missing_key.error.expect("missing key").code, "missing_key");
+    let missing_group = raw_call(&home, "im_list_pending", json!({}));
+    assert_eq!(
+        missing_group.error.expect("missing group id").code,
+        "missing_group_id"
+    );
+    let unknown_group = raw_call(&home, "im_list_authorized", json!({"group_id":"g_missing"}));
+    assert_eq!(
+        unknown_group.error.expect("unknown group").code,
+        "group_not_found"
+    );
+    let missing_chat = raw_call(&home, "im_revoke_chat", json!({"group_id":group_id}));
+    assert_eq!(
+        missing_chat.error.expect("missing chat id").code,
+        "missing_chat_id"
+    );
+}
+
+#[test]
 fn chatgpt_web_model_actor_is_singleton_across_groups() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
@@ -74,9 +174,7 @@ fn actor_scope_paths_are_persisted_as_attached_scope_keys() {
         "attach",
         json!({"group_id":group_id,"path":project,"by":"user"}),
     );
-    let scope_key = attached.result["group"]["active_scope_key"]
-        .as_str()
-        .expect("scope key");
+    let scope_key = attached.result["scope_key"].as_str().expect("scope key");
 
     let added = call(
         &home,
@@ -125,6 +223,168 @@ fn actor_scope_paths_are_persisted_as_attached_scope_keys() {
         invalid.error.expect("scope error").code,
         "scope_not_attached"
     );
+}
+
+#[test]
+fn attach_selects_the_attached_group() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let project = temp.path().join("project");
+    std::fs::create_dir(&project).expect("project");
+    let target = call(&home, "group_create", json!({"title":"target"}));
+    let target_id = target.result["group"]["group_id"]
+        .as_str()
+        .expect("target group id");
+    let previous = call(&home, "group_create", json!({"title":"previous"}));
+    let previous_id = previous.result["group"]["group_id"]
+        .as_str()
+        .expect("previous group id");
+    assert_eq!(
+        cccc_core::active::get(&home)
+            .expect("active group")
+            .as_deref(),
+        Some(previous_id)
+    );
+
+    let attached = call(
+        &home,
+        "attach",
+        json!({"group_id":target_id,"path":project,"by":"user"}),
+    );
+    assert_eq!(attached.result["group_id"], target_id);
+    assert_eq!(
+        cccc_core::active::get(&home)
+            .expect("active group")
+            .as_deref(),
+        Some(target_id)
+    );
+
+    let fresh_home = HomeLayout::from_path(temp.path().join("fresh-home")).expect("fresh home");
+    let fresh_project = temp.path().join("fresh-project");
+    std::fs::create_dir(&fresh_project).expect("fresh project");
+    let created = call(
+        &fresh_home,
+        "attach",
+        json!({"path":fresh_project,"by":"user"}),
+    );
+    let created_id = created.result["group_id"]
+        .as_str()
+        .expect("created group id");
+    assert_eq!(
+        cccc_core::active::get(&fresh_home)
+            .expect("fresh active group")
+            .as_deref(),
+        Some(created_id)
+    );
+}
+
+#[test]
+fn scope_lifecycle_uses_canonical_receipts_state_and_events() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let scope_a = temp.path().join("scope-a");
+    let scope_b = temp.path().join("scope-b");
+    let unattached = temp.path().join("unattached");
+    for path in [&scope_a, &scope_b, &unattached] {
+        std::fs::create_dir(path).expect("scope directory");
+    }
+    let created = call(&home, "group_create", json!({"title":"scope lifecycle"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    let attached_a = call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":scope_a,"by":"user"}),
+    );
+    let scope_a_key = attached_a.result["scope_key"]
+        .as_str()
+        .expect("scope a key");
+    assert_eq!(attached_a.result["group_id"], group_id);
+    assert!(attached_a.result.get("group").is_none());
+    let attached_b = call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":scope_b,"by":"user"}),
+    );
+    let scope_b_key = attached_b.result["scope_key"]
+        .as_str()
+        .expect("scope b key");
+
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"scope-peer",
+            "default_scope_key":scope_a_key,
+            "enabled":false,
+            "by":"user"
+        }),
+    );
+    let selected = call(
+        &home,
+        "group_use",
+        json!({"group_id":group_id,"path":scope_a,"by":"user"}),
+    );
+    assert_eq!(selected.result["group_id"], group_id);
+    assert_eq!(selected.result["active_scope_key"], scope_a_key);
+    assert_eq!(selected.result["event"]["kind"], "group.set_active_scope");
+    assert_eq!(selected.result["event"]["scope_key"], scope_a_key);
+
+    let detached = call(
+        &home,
+        "group_detach_scope",
+        json!({"group_id":group_id,"scope_key":scope_a_key,"by":"user"}),
+    );
+    assert_eq!(detached.result["group_id"], group_id);
+    assert_eq!(detached.result["event"]["kind"], "group.detach_scope");
+    assert_eq!(detached.result["event"]["scope_key"], scope_a_key);
+
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let group = store.load(group_id).expect("group");
+    assert_eq!(group.active_scope_key, scope_b_key);
+    assert_eq!(group.scopes.len(), 1);
+    assert_eq!(group.scopes[0].scope_key, scope_b_key);
+    assert_eq!(group.actors[0].default_scope_key, scope_b_key);
+    let registry = cccc_core::Registry::load(&home).expect("registry");
+    assert_eq!(registry.groups[group_id].default_scope_key, scope_b_key);
+    assert!(!registry.defaults.contains_key(scope_a_key));
+    assert_eq!(registry.defaults[scope_b_key], group_id);
+
+    let events = cccc_core::ledger::read_all(&store.ledger_path(group_id).expect("ledger path"))
+        .expect("ledger");
+    let scope_kinds = events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind.as_str(),
+                "group.attach" | "group.set_active_scope" | "group.detach_scope"
+            )
+        })
+        .map(|event| event.kind.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        scope_kinds,
+        [
+            "group.attach",
+            "group.attach",
+            "group.set_active_scope",
+            "group.detach_scope"
+        ]
+    );
+
+    let before = group;
+    let invalid = raw_call(
+        &home,
+        "group_use",
+        json!({"group_id":group_id,"path":unattached,"by":"user"}),
+    );
+    assert_eq!(
+        invalid.error.expect("unattached scope").code,
+        "scope_not_attached"
+    );
+    assert_eq!(store.load(group_id).expect("unchanged group"), before);
 }
 
 #[test]
@@ -352,6 +612,29 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
     assert_eq!(
         health.result["error"]["code"],
         "space_provider_auth_invalid"
+    );
+    let auth_status = call(
+        &home,
+        "group_space_provider_auth",
+        json!({"provider":"notebooklm","by":"user","action":"status"}),
+    );
+    assert_eq!(auth_status.result["credential"]["configured"], true);
+    assert_eq!(auth_status.result["provider_state"]["write_ready"], false);
+    let provider_state_before_candidate = auth_status.result["provider_state"].clone();
+    let candidate_health = call(
+        &home,
+        "group_space_provider_health_check",
+        json!({"provider":"notebooklm","by":"user","auth_json":"{}"}),
+    );
+    assert_eq!(candidate_health.result["healthy"], false);
+    let auth_status_after_candidate = call(
+        &home,
+        "group_space_provider_auth",
+        json!({"provider":"notebooklm","by":"user","action":"status"}),
+    );
+    assert_eq!(
+        auth_status_after_candidate.result["provider_state"],
+        provider_state_before_candidate
     );
     let remote_status = call(
         &home,

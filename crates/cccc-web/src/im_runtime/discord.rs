@@ -5,8 +5,8 @@ use super::discord_reactions::DiscordReactions;
 use super::worker::Stopper;
 use super::{
     InboundDecision, InboundMetadata, completes_processing, dispatch_inbound_with,
-    inbound_decision, is_outbound_or_stream, processing_reply_to, resolve_credential,
-    spawn_outbound_matching, string, target_key,
+    inbound_decision, is_outbound_or_stream, processing_reply_to, resolve_config_credential,
+    spawn_outbound_matching, target_key,
 };
 use cccc_client::DaemonClient;
 use cccc_core::HomeLayout;
@@ -33,7 +33,7 @@ pub(super) async fn start(
     ledger_events: crate::ledger_event_hub::LedgerEventHub,
     deduper: Arc<super::discord_dedup::DiscordMessageDeduper>,
 ) -> Result<(Vec<JoinHandle<()>>, Stopper), String> {
-    let token = resolve_credential(&string(config, "bot_token_env"))?;
+    let token = resolve_config_credential(config, "bot_token", "bot_token_env")?;
     let http = Arc::new(Http::new(&token));
     let current_user = http
         .get_current_user()

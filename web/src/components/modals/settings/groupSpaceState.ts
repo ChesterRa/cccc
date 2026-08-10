@@ -1,5 +1,12 @@
 import type { GroupSpaceRemoteSpace } from "../../../types";
 
+export function isProviderConnectionVerified(
+  authConfigured: boolean,
+  writeReady: boolean,
+): boolean {
+  return authConfigured && writeReady;
+}
+
 export function shouldRefreshNotebookSpaces(
   writeReady: boolean,
   refreshSpaces: boolean,

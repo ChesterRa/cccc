@@ -151,7 +151,7 @@ async fn install(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    with_group(&state, "capability_install", group_id, body).await
+    with_group(&state, "capability_install_target", group_id, body).await
 }
 async fn source_delete(
     State(state): State<AppState>,

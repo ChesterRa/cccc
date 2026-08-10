@@ -28,13 +28,12 @@ fn apply_one(
         "coordination.brief.update" => update_brief(document, operation, by),
         "coordination.note.add" => add_note(document, operation, by),
         "task.create" => super::task_apply::create(document, operation, by),
-        "task.update" => super::task_apply::update(document, operation, false),
-        "task.move" => super::task_apply::update(document, operation, true),
+        "task.update" => super::task_apply::update(document, operation),
+        "task.move" => super::task_apply::move_task(document, operation),
         "task.restore" => super::task_apply::restore(document, operation),
         "task.delete" => super::task_apply::delete(document, operation),
         "agent_state.update" => super::agent_state_apply::update(document, operation),
         "agent_state.clear" => super::agent_state_apply::clear(document, operation),
-        "actor_notes.set" => set_actor_notes(document, operation),
         "meta.merge" => merge_meta(document, operation),
         _ => Err(io::Error::other(format!("unknown context op: {name}"))),
     }
@@ -81,15 +80,6 @@ fn add_note(doc: &mut ContextDoc, op: &Map<String, Value>, by: &str) -> io::Resu
     if target.len() > 100 {
         target.drain(..target.len() - 100);
     }
-    Ok(())
-}
-
-fn set_actor_notes(doc: &mut ContextDoc, op: &Map<String, Value>) -> io::Result<()> {
-    let actor = required(op, "actor_id")?;
-    doc.actor_notes.insert(
-        actor.into(),
-        op.get("notes").cloned().unwrap_or(Value::Null),
-    );
     Ok(())
 }
 

@@ -341,6 +341,8 @@ class AssistantVoiceDocumentInstructionRequest(BaseModel):
     document_path: str = Field(default="")
     instruction: str = Field(default="")
     source_text: str = Field(default="")
+    request_id: str = Field(default="")
+    input_append_id: str = Field(default="")
     trigger: Dict[str, Any] = Field(default_factory=dict)
     by: str = Field(default="user")
 
@@ -354,6 +356,7 @@ class AssistantVoiceInputRequest(BaseModel):
     voice_transcript: str = Field(default="")
     composer_text: str = Field(default="")
     request_id: str = Field(default="")
+    input_append_id: str = Field(default="")
     operation: str = Field(default="")
     composer_context: Dict[str, Any] = Field(default_factory=dict)
     composer_snapshot_hash: str = Field(default="")

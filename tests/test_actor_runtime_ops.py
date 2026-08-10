@@ -343,6 +343,10 @@ class TestActorRuntimeOps(unittest.TestCase):
                     "cccc.daemon.actors.web_model_browser_session.schedule_web_model_chatgpt_browser_session_warmup",
                     return_value=True,
                 ) as warmup,
+                patch(
+                    "cccc.daemon.actors.web_model_browser_delivery.schedule_web_model_browser_delivery",
+                    return_value=True,
+                ) as schedule_delivery,
             ):
                 result = actor_runtime_ops.start_actor_process(
                     group,
@@ -374,6 +378,10 @@ class TestActorRuntimeOps(unittest.TestCase):
             actor_id="chatgpt-web-1",
             reason="actor_start",
             retry_seconds=0.0,
+        )
+        schedule_delivery.assert_called_once_with(
+            group_id="g-test",
+            actor_id="chatgpt-web-1",
         )
 
     def test_opencode_actor_start_injects_inline_mcp_config_into_pty_env(self) -> None:
