@@ -31,9 +31,9 @@ Claude Code、Codex、ChatGPT Web など 17 のランタイムをひとつの永
 
 <div align="center">
 
-<img src="screenshots/overview.webp" alt="CCCC Web UI デスクトップ概要" width="76%">
+<a href="screenshots/overview.webp?raw=1" title="デスクトップ画像を原寸で表示"><img src="screenshots/overview.webp" alt="CCCC Web UI デスクトップ概要" width="76%" align="top"></a>
 &nbsp;
-<img src="screenshots/iphone.webp" alt="CCCC Web UI モバイル概要" width="20%">
+<a href="screenshots/iphone.webp?raw=1" title="モバイル画像を原寸で表示"><img src="screenshots/iphone.webp" alt="CCCC Web UI モバイル概要" width="20%" align="top"></a>
 
 </div>
 

@@ -31,9 +31,9 @@ One install command. No Rust toolchain or infrastructure required.
 
 <div align="center">
 
-<img src="screenshots/overview.webp" alt="CCCC Web UI desktop overview" width="76%">
+<a href="screenshots/overview.webp?raw=1" title="View desktop screenshot at full size"><img src="screenshots/overview.webp" alt="CCCC Web UI desktop overview" width="76%" align="top"></a>
 &nbsp;
-<img src="screenshots/iphone.webp" alt="CCCC Web UI mobile overview" width="20%">
+<a href="screenshots/iphone.webp?raw=1" title="View mobile screenshot at full size"><img src="screenshots/iphone.webp" alt="CCCC Web UI mobile overview" width="20%" align="top"></a>
 
 </div>
 

@@ -31,9 +31,9 @@ Claude Code、Codex、ChatGPT Web 等 17 种运行时，在同一个持久协作
 
 <div align="center">
 
-<img src="screenshots/overview.webp" alt="CCCC Web UI 桌面端概览" width="76%">
+<a href="screenshots/overview.webp?raw=1" title="查看桌面端大图"><img src="screenshots/overview.webp" alt="CCCC Web UI 桌面端概览" width="76%" align="top"></a>
 &nbsp;
-<img src="screenshots/iphone.webp" alt="CCCC Web UI 移动端概览" width="20%">
+<a href="screenshots/iphone.webp?raw=1" title="查看移动端大图"><img src="screenshots/iphone.webp" alt="CCCC Web UI 移动端概览" width="20%" align="top"></a>
 
 </div>
 
