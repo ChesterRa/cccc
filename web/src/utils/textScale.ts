@@ -1,7 +1,7 @@
 import type { TextScale } from "../types";
 
 export const TEXT_SCALE_STORAGE_KEY = "cccc-ui-text-scale";
-export const TEXT_SCALE_OPTIONS: TextScale[] = [90, 100, 125];
+export const TEXT_SCALE_OPTIONS: TextScale[] = [70, 90, 100, 125];
 export const DEFAULT_TEXT_SCALE: TextScale = 100;
 
 export function normalizeTextScale(value: unknown): TextScale {

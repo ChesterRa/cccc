@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex, Weak};
 use tokio::sync::{OwnedRwLockReadGuard, OwnedRwLockWriteGuard, RwLock};
 
 mod operation_access;
-use operation_access::{is_global_write, is_read_only};
+use operation_access::{is_global_write, is_read_only, uses_runtime_lock_only};
 
 #[derive(Clone, Default)]
 pub struct DispatchLocks {
@@ -94,6 +94,11 @@ enum Access {
 }
 
 fn access(request: &DaemonRequest) -> Access {
+    if uses_runtime_lock_only(&request.op) {
+        // These calls synchronize through session_runtime's own mutex. A group
+        // lock would deadlock a reply waiting for its matching poll/complete.
+        return Access::GlobalRead;
+    }
     let group_id = request
         .args
         .get("group_id")
@@ -160,6 +165,22 @@ mod tests {
             )),
             Access::GlobalWrite
         ));
+        for op in [
+            "group_bridge_session_open",
+            "group_bridge_session_poll",
+            "group_bridge_session_complete",
+            "group_bridge_session_close",
+            "group_bridge_session_ready",
+            "group_bridge_session_deliver",
+        ] {
+            assert!(
+                matches!(
+                    access(&request(op, json!({"group_id":"g_one"}))),
+                    Access::GlobalRead
+                ),
+                "{op} must use only the session runtime lock"
+            );
+        }
         for op in ["capability_install", "capability_install_target"] {
             assert!(
                 matches!(

@@ -113,6 +113,9 @@ export default defineConfig({
     port: 5555,
     strictPort: true,
     hmr: { host: "127.0.0.1", protocol: "ws", clientPort: 5555 },
-    proxy: { "/api": { target: backendTarget, changeOrigin: true, ws: true } },
+    proxy: {
+      "/api": { target: backendTarget, changeOrigin: true, ws: true },
+      "/ui/manifest.webmanifest": { target: backendTarget, changeOrigin: true },
+    },
   },
 });

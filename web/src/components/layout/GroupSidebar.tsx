@@ -15,6 +15,8 @@ import { GroupSidebarSortableList } from "./GroupSidebarSortableList";
 import { SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from "../../stores/useUIStore";
 import { useBrandingStore } from "../../stores";
 import { resolveThemeAwareLogoUrl } from "../../utils/branding";
+import { Button } from "../ui/button";
+import { IconButton } from "../ui/icon-button";
 
 export interface GroupSidebarProps {
   orderedGroups: GroupMeta[];
@@ -58,6 +60,7 @@ export function GroupSidebar({
   const { t } = useTranslation("layout");
   const branding = useBrandingStore((s) => s.branding);
   const logoSrc = resolveThemeAwareLogoUrl(branding.logo_icon_url, isDark);
+  const sidebarRef = useRef<HTMLElement | null>(null);
   const dragStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const [isResizing, setIsResizing] = useState(false);
   const archivedSet = useMemo(() => new Set(archivedGroupIds), [archivedGroupIds]);
@@ -127,7 +130,10 @@ export function GroupSidebar({
       if (isCollapsed) return;
       event.preventDefault();
       event.stopPropagation();
-      dragStateRef.current = { startX: event.clientX, startWidth: sidebarWidth };
+      dragStateRef.current = {
+        startX: event.clientX,
+        startWidth: sidebarRef.current?.getBoundingClientRect().width || sidebarWidth,
+      };
       setIsResizing(true);
       document.body.style.setProperty("cursor", "col-resize");
       document.body.style.setProperty("user-select", "none");
@@ -211,6 +217,7 @@ export function GroupSidebar({
   return (
     <>
       <aside
+        ref={sidebarRef}
         className={classNames(
           "h-full min-h-0 flex flex-col glass-sidebar",
           "fixed inset-y-0 left-0 md:relative md:inset-auto z-40",
@@ -254,46 +261,43 @@ export function GroupSidebar({
             </div>
 
             {!isCollapsed && !readOnly && onCreateGroup && (
-              <button
-                className={classNames(
-                  "inline-flex h-9 shrink-0 items-center justify-center rounded-lg px-3 text-[13px] font-medium transition-all glass-btn border-0 shadow-none",
-                  isDark
-                    ? "text-white/88 hover:text-white"
-                    : "text-[rgb(35,36,37)]/88 hover:text-[rgb(35,36,37)]",
-                )}
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="border-0 text-[13px] shadow-none"
                 onClick={onCreateGroup}
                 title={t("createNewGroup")}
                 aria-label={t("createNewGroup")}
               >
                 {t("newGroup")}
-              </button>
+              </Button>
             )}
 
             {!isCollapsed && (
               <div className="flex shrink-0 items-center gap-2">
                 {/* Collapse button - desktop only */}
-                <button
-                  className={classNames(
-                    "hidden md:flex h-8 w-8 items-center justify-center rounded-lg border border-transparent bg-transparent transition-all duration-150",
-                    "text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]",
-                  )}
+                <IconButton
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="hidden text-[var(--color-text-tertiary)] md:inline-flex"
                   onClick={onToggleCollapse}
-                  aria-label={t("collapseSidebar")}
-                  title={t("collapseSidebar")}
+                  label={t("collapseSidebar")}
                 >
                   <ChevronLeftIcon size={16} />
-                </button>
+                </IconButton>
                 {/* Close button - mobile only */}
-                <button
-                  className={classNames(
-                    "md:hidden p-2 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl transition-all glass-btn",
-                    "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)]",
-                  )}
+                <IconButton
+                  type="button"
+                  variant="secondary"
+                  size="touch"
+                  className="text-[var(--color-text-primary)] md:hidden"
                   onClick={onClose}
-                  aria-label={t("closeSidebar")}
+                  label={t("closeSidebar")}
                 >
                   <CloseIcon size={18} />
-                </button>
+                </IconButton>
               </div>
             )}
           </div>
@@ -302,29 +306,25 @@ export function GroupSidebar({
         {/* Collapsed: expand button and new button */}
         {isCollapsed && (
           <div className="p-2 flex flex-col items-center gap-2">
-            <button
-              className={classNames(
-                "w-11 h-11 rounded-xl flex items-center justify-center transition-all glass-btn",
-                "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)]",
-              )}
+            <IconButton
+              type="button"
+              variant="secondary"
+              size="touch"
+              className="text-[var(--color-text-primary)]"
               onClick={onToggleCollapse}
-              aria-label={t("expandSidebar")}
-              title={t("expandSidebar")}
+              label={t("expandSidebar")}
             >
               <ChevronRightIcon size={18} />
-            </button>
+            </IconButton>
             {!readOnly && onCreateGroup && (
-              <button
-                className={classNames(
-                  "w-11 h-11 rounded-xl flex items-center justify-center transition-all glass-btn-accent",
-                  "text-[rgb(35,36,37)] dark:text-white",
-                )}
+              <IconButton
+                type="button"
+                size="touch"
                 onClick={onCreateGroup}
-                aria-label={t("createNewGroup")}
-                title={t("createNewGroup")}
+                label={t("createNewGroup")}
               >
                 <PlusIcon size={18} />
-              </button>
+              </IconButton>
             )}
           </div>
         )}
@@ -348,12 +348,11 @@ export function GroupSidebar({
 
           {!isCollapsed && archivedGroups.length > 0 && (
             <div className="mt-4">
-              <button
+              <Button
                 type="button"
-                className={classNames(
-                  "w-full flex items-center justify-between rounded-xl px-2 py-2 transition-colors",
-                  "text-[rgb(35,36,37)] dark:text-white hover:text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]",
-                )}
+                variant="ghost"
+                size="sm"
+                className="w-full justify-between px-2 text-[var(--color-text-primary)]"
                 onClick={() => setArchivedOpen((prev) => !prev)}
                 aria-expanded={archivedPanelOpen}
               >
@@ -372,7 +371,7 @@ export function GroupSidebar({
                     archivedPanelOpen ? "rotate-180" : "",
                   )}
                 />
-              </button>
+              </Button>
               {archivedPanelOpen && (
                 <div className="mt-2">{renderGroupList(archivedGroups, "archived")}</div>
               )}
@@ -397,15 +396,9 @@ export function GroupSidebar({
                 {t("noGroupsDescription")}
               </div>
               {!readOnly && onCreateGroup && (
-                <button
-                  className={classNames(
-                    "text-sm px-5 py-2.5 rounded-xl font-medium min-h-[44px] transition-all glass-btn-accent",
-                    "text-[rgb(35,36,37)] dark:text-white",
-                  )}
-                  onClick={onCreateGroup}
-                >
+                <Button type="button" onClick={onCreateGroup}>
                   {t("createFirstGroup")}
-                </button>
+                </Button>
               )}
             </div>
           )}

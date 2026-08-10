@@ -108,7 +108,7 @@
     "saved": "品牌设置已保存。",
     "saveFailed": "保存品牌设置失败。",
     "logoTitle": "Logo 图标",
-    "logoHint": "显示在侧边栏头部和登录页。推荐使用 SVG 或 PNG。",
+    "logoHint": "显示在侧边栏头部、登录页和安装后的应用图标。推荐使用方形 SVG 或至少 192×192 的 PNG。",
     "uploadLogo": "上传 logo",
     "logoSaved": "Logo 已更新。",
     "logoReset": "Logo 已恢复默认。",

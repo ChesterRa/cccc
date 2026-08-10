@@ -38,6 +38,29 @@ async fn branding_is_public_to_read_and_admin_only_to_mutate() {
         "CCCC"
     );
 
+    let default_manifest = app
+        .clone()
+        .oneshot(
+            Request::get("/ui/manifest.webmanifest")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("manifest");
+    assert_eq!(default_manifest.status(), StatusCode::OK);
+    assert_eq!(
+        default_manifest.headers()[header::CONTENT_TYPE],
+        "application/manifest+json"
+    );
+    assert_eq!(
+        default_manifest.headers()[header::CACHE_CONTROL],
+        "no-cache"
+    );
+    assert_eq!(
+        json(default_manifest).await["icons"][0]["src"],
+        "/ui/logo.svg"
+    );
+
     let boundary = "branding-boundary";
     let body = format!(
         "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"logo.png\"\r\nContent-Type: image/png\r\n\r\npng-bytes\r\n--{boundary}--\r\n"
@@ -74,6 +97,23 @@ async fn branding_is_public_to_read_and_admin_only_to_mutate() {
     assert_eq!(uploaded.status(), StatusCode::OK);
     let uploaded = json(uploaded).await;
     assert_eq!(uploaded["result"]["branding"]["has_custom_logo_icon"], true);
+
+    let custom_manifest = app
+        .clone()
+        .oneshot(
+            Request::get("/ui/manifest.webmanifest")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("manifest");
+    let custom_manifest = json(custom_manifest).await;
+    assert_eq!(custom_manifest["icons"][0]["sizes"], "any");
+    assert!(
+        custom_manifest["icons"][0]["src"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("/api/v1/branding/assets/logo_icon?v="))
+    );
 
     let asset = app
         .clone()

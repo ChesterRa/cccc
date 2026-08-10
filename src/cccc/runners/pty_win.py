@@ -291,6 +291,11 @@ class PtySession:
         with self._lock:
             return int(getattr(self, "_backlog_start_offset", 0) or 0)
 
+    def backlog_end_offset(self) -> int:
+        """Absolute offset immediately after the newest retained PTY byte."""
+        with self._lock:
+            return int(getattr(self, "_backlog_end_offset", 0) or 0)
+
     def history_since(self, since: Optional[int]) -> bytes:
         data, start, end = self._backlog_snapshot()
         if since is None:
@@ -446,9 +451,15 @@ class PtySession:
                 sock = item[0]
                 since = item[1] if len(item) > 1 else None
                 control = bool(item[2]) if len(item) > 2 else True
+                on_replay_snapshot = item[3] if len(item) > 3 and callable(item[3]) else None
             else:
-                sock, since, control = item, None, True
-            self._attach_client_now(sock, since=since, control=control)
+                sock, since, control, on_replay_snapshot = item, None, True, None
+            self._attach_client_now(
+                sock,
+                since=since,
+                control=control,
+                on_replay_snapshot=on_replay_snapshot,
+            )
         self._drain_output_queue()
 
     def _drain_output_queue(self) -> None:
@@ -615,6 +626,7 @@ class PtySession:
         since: Optional[int] = None,
         mode: str = "control",
         takeover: bool = False,
+        on_replay_snapshot: Optional[Callable[[int, int], None]] = None,
     ) -> Dict[str, object]:
         requested_mode = str(mode or "control").strip().lower()
         control = requested_mode != "viewer"
@@ -636,7 +648,7 @@ class PtySession:
                     writable = True
                     writer_replaced = True
         try:
-            self._attach_q.put_nowait((sock, since, control))
+            self._attach_q.put_nowait((sock, since, control, on_replay_snapshot))
         except Exception:
             with self._lock:
                 if self._writer_fd == fileno:
@@ -702,7 +714,14 @@ class PtySession:
                     pass
                 break
 
-    def _attach_client_now(self, sock: socket.socket, *, since: Optional[int] = None, control: bool = True) -> None:
+    def _attach_client_now(
+        self,
+        sock: socket.socket,
+        *,
+        since: Optional[int] = None,
+        control: bool = True,
+        on_replay_snapshot: Optional[Callable[[int, int], None]] = None,
+    ) -> None:
         fileno = int(sock.fileno())
         if fileno < 0:
             try:
@@ -710,11 +729,6 @@ class PtySession:
             except Exception:
                 pass
             return
-        try:
-            sock.setblocking(False)
-        except Exception:
-            pass
-
         with self._lock:
             if fileno in self._clients:
                 return
@@ -740,6 +754,18 @@ class PtySession:
             outbuf = bytearray(backlog)
             client = _PtyClient(sock=sock, control=bool(control), writer=writer, outbuf=outbuf)
             self._clients[fileno] = client
+
+        if on_replay_snapshot is not None:
+            try:
+                on_replay_snapshot(start, end)
+            except Exception:
+                self.detach_client(fileno)
+                return
+
+        try:
+            sock.setblocking(False)
+        except Exception:
+            pass
 
         events = selectors.EVENT_READ
         if outbuf:
@@ -1025,6 +1051,20 @@ class PtySupervisor:
         except Exception:
             return 0
 
+    def backlog_end_offset(self, *, group_id: str, actor_id: str) -> int:
+        """Offset after the newest retained backlog byte (0 if unknown)."""
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        if not key[0] or not key[1]:
+            return 0
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None:
+            return 0
+        try:
+            return s.backlog_end_offset()
+        except Exception:
+            return 0
+
     def clear_backlog(self, *, group_id: str, actor_id: str) -> bool:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         if not key[0] or not key[1]:
@@ -1153,13 +1193,20 @@ class PtySupervisor:
         since: Optional[int] = None,
         mode: str = "control",
         takeover: bool = False,
+        on_replay_snapshot: Optional[Callable[[int, int], None]] = None,
     ) -> Dict[str, object]:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:
             s = self._sessions.get(key)
         if s is None or not s.is_running():
             raise RuntimeError("actor not running")
-        return s.attach_client(sock, since=since, mode=mode, takeover=takeover)
+        return s.attach_client(
+            sock,
+            since=since,
+            mode=mode,
+            takeover=takeover,
+            on_replay_snapshot=on_replay_snapshot,
+        )
 
     def bracketed_paste_enabled(self, *, group_id: str, actor_id: str) -> bool:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())

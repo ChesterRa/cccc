@@ -65,6 +65,47 @@
   max-width: 100%;
 }
 
+/* Keep wide Markdown tables inside the message surface without crushing every column. */
+.markdown-table-scroll {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  margin-block: 1rem;
+  padding-bottom: 0.25rem;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+
+.markdown-table-scroll:focus-visible {
+  border-radius: 0.375rem;
+  outline: 2px solid color-mix(in srgb, currentColor 35%, transparent);
+  outline-offset: 2px;
+}
+
+.prose.markdown-body .markdown-table-scroll > table {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  margin-block: 0;
+  table-layout: auto;
+}
+
+.prose.markdown-body .markdown-table-scroll th,
+.prose.markdown-body .markdown-table-scroll td {
+  min-width: 12rem;
+  max-width: 32rem;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.prose.markdown-body .markdown-table-scroll th:first-child,
+.prose.markdown-body .markdown-table-scroll td:first-child {
+  min-width: 8rem;
+}
+
 /* Code Block Wrapper & Header */
 .code-block-wrapper {
   margin-top: 0.75rem;

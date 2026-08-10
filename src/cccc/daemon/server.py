@@ -1189,15 +1189,20 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                     dump_response=_dump_response,
                     error=lambda code, message, details=None: _error(code, message, details=details),
                     actor_running=pty_runner.SUPERVISOR.actor_running,
-                    attach_actor_socket=lambda group_id, actor_id, sock2, since=None, mode="control", takeover=False: pty_runner.SUPERVISOR.attach(
+                    attach_actor_socket=lambda group_id, actor_id, sock2, since=None, mode="control", takeover=False, on_replay_snapshot=None: pty_runner.SUPERVISOR.attach(
                         group_id=group_id,
                         actor_id=actor_id,
                         sock=sock2,
                         since=since,
                         mode=mode,
                         takeover=takeover,
+                        on_replay_snapshot=on_replay_snapshot,
                     ),
                     backlog_start_offset=lambda group_id, actor_id: pty_runner.SUPERVISOR.backlog_start_offset(
+                        group_id=group_id,
+                        actor_id=actor_id,
+                    ),
+                    backlog_end_offset=lambda group_id, actor_id: pty_runner.SUPERVISOR.backlog_end_offset(
                         group_id=group_id,
                         actor_id=actor_id,
                     ),

@@ -6,12 +6,13 @@ import {
   decodeTerminalJsonFrame,
   encodeTerminalInputFrame,
   encodeTerminalResizeFrame,
+  filterTerminalInputForRuntime,
   isTerminalAttachNonRetryableErrorCode,
   isTerminalAttachStartupRaceErrorCode,
   parseTerminalBinaryFrame,
   shouldSuppressTerminalAttachErrorOutput,
-  shouldSuppressTerminalGeneratedInput,
   shouldRetryTerminalClose,
+  splitTerminalOutputByReplayBoundary,
   TERMINAL_FRAME_ATTACH,
   TERMINAL_FRAME_INPUT,
   TERMINAL_FRAME_INPUT_ACK,
@@ -89,58 +90,87 @@ describe("shouldRetryTerminalClose", () => {
   });
 });
 
-describe("shouldSuppressTerminalGeneratedInput", () => {
-  it("suppresses terminal query replies for codex PTY actors", () => {
-    expect(shouldSuppressTerminalGeneratedInput("\x1b[?1;2c", "codex")).toBe(true);
-    expect(shouldSuppressTerminalGeneratedInput("\x1b[?;2c", "codex")).toBe(true);
-    expect(shouldSuppressTerminalGeneratedInput("\x1b[>0;0;0c", "codex")).toBe(true);
-    expect(shouldSuppressTerminalGeneratedInput("\x1b]10;rgb:e2e2/e8e8/f0f0\x07", "codex")).toBe(
-      true,
-    );
-    expect(shouldSuppressTerminalGeneratedInput("\x1b]11;rgb:0f0f/1717/2a2a\x1b\\", "codex")).toBe(
-      true,
-    );
-    expect(shouldSuppressTerminalGeneratedInput("\x1b[I", "codex")).toBe(true);
-    expect(shouldSuppressTerminalGeneratedInput("\x1b[O", "codex")).toBe(true);
+describe("splitTerminalOutputByReplayBoundary", () => {
+  const summarize = (chunks: ReturnType<typeof splitTerminalOutputByReplayBoundary>) =>
+    chunks.map((chunk) => ({ data: Array.from(chunk.data), replaying: chunk.replaying }));
+
+  it("marks output before and after the replay boundary", () => {
+    const data = new Uint8Array([1, 2, 3, 4]);
+
+    expect(summarize(splitTerminalOutputByReplayBoundary(data, 10, 14))).toEqual([
+      { data: [1, 2, 3, 4], replaying: true },
+    ]);
+    expect(summarize(splitTerminalOutputByReplayBoundary(data, 14, 14))).toEqual([
+      { data: [1, 2, 3, 4], replaying: false },
+    ]);
   });
 
-  it("suppresses combined terminal query replies in one data event", () => {
-    const combined = "\x1b[?1;2c\x1b]10;rgb:e2e2/e8e8/f0f0\x07\x1b]11;rgb:0f0f/1717/2a2a\x1b\\";
-    expect(shouldSuppressTerminalGeneratedInput(combined, "codex")).toBe(true);
+  it("splits a frame that crosses from replay into live output", () => {
+    const data = new Uint8Array([1, 2, 3, 4]);
+
+    expect(summarize(splitTerminalOutputByReplayBoundary(data, 12, 14))).toEqual([
+      { data: [1, 2], replaying: true },
+      { data: [3, 4], replaying: false },
+    ]);
   });
 
-  it("keeps normal input and unsupported runtimes untouched", () => {
-    expect(shouldSuppressTerminalGeneratedInput("hello", "codex")).toBe(false);
-    expect(shouldSuppressTerminalGeneratedInput("\r", "codex")).toBe(false);
-    expect(shouldSuppressTerminalGeneratedInput("\x1b[?1;2c", "custom")).toBe(false);
-    expect(shouldSuppressTerminalGeneratedInput("\x1b]10;rgb:e2e2/e8e8/f0f0\x07", undefined)).toBe(
-      false,
-    );
+  it("treats output as live when an older server omits the boundary", () => {
+    const data = new Uint8Array([1, 2]);
+
+    expect(summarize(splitTerminalOutputByReplayBoundary(data, 10, null))).toEqual([
+      { data: [1, 2], replaying: false },
+    ]);
+  });
+});
+
+describe("filterTerminalInputForRuntime", () => {
+  it("forwards live color replies for color-querying PTY runtimes", () => {
+    const foreground = "\x1b]10;rgb:e2e2/e8e8/f0f0\x07";
+    const background = "\x1b]11;rgb:fafa/fafa/fafa\x1b\\";
+
+    for (const runtime of ["codex", "devin", "droid"]) {
+      expect(filterTerminalInputForRuntime(foreground, runtime)).toBe(foreground);
+      expect(filterTerminalInputForRuntime(background, runtime)).toBe(background);
+    }
   });
 
-  it("preserves existing suppression for runtimes that already needed it", () => {
-    expect(shouldSuppressTerminalGeneratedInput("\x1b[?1;2c", "droid")).toBe(true);
-    expect(shouldSuppressTerminalGeneratedInput("\x1b]11;rgb:0f0f/1717/2a2a\x1b\\", "droid")).toBe(
-      true,
-    );
+  it("keeps only live color replies from a combined generated-input event", () => {
+    const foreground = "\x1b]10;rgb:e2e2/e8e8/f0f0\x07";
+    const background = "\x1b]11;rgb:fafa/fafa/fafa\x1b\\";
+    const combined = `\x1b[?1;2c${foreground}${background}\x1b[I`;
+
+    for (const runtime of ["codex", "devin", "droid"]) {
+      expect(filterTerminalInputForRuntime(combined, runtime)).toBe(`${foreground}${background}`);
+    }
   });
 
-  it("suppresses terminal color query replies for Devin PTY actors", () => {
-    expect(shouldSuppressTerminalGeneratedInput("\x1b]10;rgb:1e1e/2929/3b3b\x07", "devin")).toBe(
-      true,
+  it("suppresses non-color generated input and bare color replies", () => {
+    for (const runtime of ["codex", "devin", "droid"]) {
+      expect(filterTerminalInputForRuntime("\x1b[?1;2c", runtime)).toBe("");
+      expect(filterTerminalInputForRuntime("\x1b[?;2c", runtime)).toBe("");
+      expect(filterTerminalInputForRuntime("\x1b[>0;0;0c", runtime)).toBe("");
+      expect(filterTerminalInputForRuntime("\x1b[I", runtime)).toBe("");
+      expect(filterTerminalInputForRuntime("\x1b[O", runtime)).toBe("");
+      expect(filterTerminalInputForRuntime("11;rgb:fafa/fafa/fafa", runtime)).toBe("");
+    }
+  });
+
+  it("suppresses terminal-generated replies while rendering retained history", () => {
+    const colorReply = "\x1b]11;rgb:fafa/fafa/fafa\x1b\\";
+    for (const runtime of ["codex", "devin", "droid", "custom"]) {
+      expect(filterTerminalInputForRuntime(colorReply, runtime, { replaying: true })).toBe("");
+      expect(filterTerminalInputForRuntime("\x1b[?1;2c", runtime, { replaying: true })).toBe("");
+      expect(filterTerminalInputForRuntime("hello", runtime, { replaying: true })).toBe("hello");
+    }
+  });
+
+  it("keeps normal input and unsupported live runtimes untouched", () => {
+    expect(filterTerminalInputForRuntime("hello", "codex")).toBe("hello");
+    expect(filterTerminalInputForRuntime("\r", "devin")).toBe("\r");
+    expect(filterTerminalInputForRuntime("10;rgb is not a full terminal reply", "devin")).toBe(
+      "10;rgb is not a full terminal reply",
     );
-    expect(shouldSuppressTerminalGeneratedInput("\x1b]11;rgb:fafa/fafa/fafa\x1b\\", "devin")).toBe(
-      true,
-    );
-    expect(
-      shouldSuppressTerminalGeneratedInput("10;rgb:1e1e/2929/3b3b11;rgb:fafa/fafa/fafa", "devin"),
-    ).toBe(true);
-    expect(shouldSuppressTerminalGeneratedInput("10;rgb:1e1e/2929/3b3b", "devin")).toBe(true);
-    expect(shouldSuppressTerminalGeneratedInput("hello", "devin")).toBe(false);
-    expect(shouldSuppressTerminalGeneratedInput("\r", "devin")).toBe(false);
-    expect(
-      shouldSuppressTerminalGeneratedInput("10;rgb is not a full terminal reply", "devin"),
-    ).toBe(false);
+    expect(filterTerminalInputForRuntime("\x1b[?1;2c", "custom")).toBe("\x1b[?1;2c");
   });
 });
 

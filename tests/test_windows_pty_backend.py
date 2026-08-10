@@ -1,6 +1,7 @@
 import os
 import queue
 import selectors
+import socket
 import threading
 import time
 import unittest
@@ -88,6 +89,41 @@ class TestWindowsPtyBackendInternals(unittest.TestCase):
         session._on_wake_readable()
 
         self.assertEqual(session.tail_output(max_bytes=32), b"hello")
+
+    def test_attach_boundary_matches_the_windows_backlog_snapshot(self) -> None:
+        from cccc.runners.pty_win import PtySession
+
+        class _AttachSelector:
+            def __init__(self) -> None:
+                self.register_calls = []
+
+            def register(self, sock, events, data=None) -> None:
+                self.register_calls.append((sock, events, data))
+
+        session = self._snapshot_session()
+        session._clients = {}
+        session._writer_fd = None
+        session._selector = _AttachSelector()
+        session._append_backlog(b"replay")
+        snapshots = []
+        client_sock, peer_sock = socket.socketpair()
+
+        def on_replay_snapshot(start: int, end: int) -> None:
+            snapshots.append((start, end))
+            self.assertIn(client_sock.fileno(), session._clients)
+            self.assertEqual(session._selector.register_calls, [])
+
+        try:
+            PtySession._attach_client_now(
+                session,
+                client_sock,
+                on_replay_snapshot=on_replay_snapshot,
+            )
+            self.assertEqual(snapshots, [(0, len(b"replay"))])
+            self.assertEqual(bytes(session._clients[client_sock.fileno()].outbuf), b"replay")
+        finally:
+            client_sock.close()
+            peer_sock.close()
 
     def test_reader_loop_drains_output_after_fast_process_exit(self) -> None:
         from cccc.runners.pty_win import PtySession

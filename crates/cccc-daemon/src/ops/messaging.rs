@@ -278,6 +278,7 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         &destination,
         &destination_by,
         &mut delivery_data,
+        false,
     )?;
 
     let source_event = if let Some(existing) = existing_source {
@@ -315,6 +316,15 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 }
 
 pub(super) fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
+    send_with_audience_policy(home, request, kind, false)
+}
+
+fn send_with_audience_policy(
+    home: &HomeLayout,
+    request: &DaemonRequest,
+    kind: &str,
+    allow_sender_only_audience: bool,
+) -> OpResult {
     let mut group = load(home, request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     if let Some(event) =
@@ -334,7 +344,12 @@ pub(super) fn send(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> Op
         .collect();
     if kind == "chat.message" {
         message_validation::normalize(home, &group, &mut data)?;
-        super::messaging_recipients::normalize_chat_data(&group, &by, &mut data)?;
+        super::messaging_recipients::normalize_chat_data(
+            &group,
+            &by,
+            &mut data,
+            allow_sender_only_audience,
+        )?;
         group = wake_idle_group(home, group, &by)?;
     } else if kind == "system.notify" {
         match data.get("im_visibility") {
@@ -366,22 +381,46 @@ fn reply(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group = load(home, request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     let target = find_event(home, &group.group_id, &reply_to)?;
+    let remote_reply = super::group_bridge::prepare_reply(home, &group, &target, request)?;
     let mut forwarded = request.clone();
     forwarded
         .args
         .insert("reply_to".into(), Value::String(reply_to));
     super::message_metadata::add_reply_snapshot(&target, &mut forwarded.args);
-    if recipient_tokens(&forwarded.args).is_empty() {
+    if let Some(prepared) = remote_reply.as_ref() {
+        prepared.apply_local_metadata(&target, &mut forwarded.args);
+    } else if recipient_tokens(&forwarded.args).is_empty() {
         forwarded.args.insert(
             "to".into(),
             json!(default_reply_recipients(&group, &by, &target)),
         );
     }
-    let response = send(home, &forwarded, "chat.message")?;
+    let mut response =
+        send_with_audience_policy(home, &forwarded, "chat.message", remote_reply.is_some())?;
+    if let Some(prepared) = remote_reply {
+        let source_event_id = response
+            .get("event")
+            .and_then(|event| event.get("id"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let remote_result = if source_event_id.is_empty() {
+            json!({"error":{
+                "code":"group_bridge_reply_failed",
+                "message":"local reply event has no id"
+            }})
+        } else {
+            match prepared.relay(home, request, source_event_id) {
+                Ok(result) => Value::Object(result),
+                Err(error) => json!({"error":{
+                    "code":error.code,"message":error.message,"details":error.details
+                }}),
+            }
+        };
+        response.insert("group_bridge_reply".into(), remote_result);
+    }
     // A reply is already durable at this point; acknowledgement is a
     // best-effort follow-up and must not turn a successful reply into failure.
     let ack_event = reply_ack(home, &group, &target, &by).unwrap_or(None);
-    let mut response = response;
     response.insert(
         "ack_event".into(),
         ack_event.map_or(Value::Null, |event| {

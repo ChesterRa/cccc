@@ -402,6 +402,7 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
             )
 
             def submit_client(_endpoint: str, body: dict, *, timeout_seconds: float = 3.0) -> dict:
+                self.assertEqual(timeout_seconds, 15.0)
                 from cccc.kernel.group_bridge.pairing import create_pairing_request, approve_pairing_request
 
                 request = create_pairing_request(
@@ -425,6 +426,7 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
                 )
 
             def status_client(endpoint: str, *, timeout_seconds: float = 3.0) -> dict:
+                self.assertEqual(timeout_seconds, 15.0)
                 self.assertIn(f"request_id={outbound['remote_request']['request_id']}", endpoint)
                 self.assertIn(f"invite_id={outbound['invite_id']}", endpoint)
                 from cccc.kernel.group_bridge.pairing import get_pairing_request_public_status
@@ -952,8 +954,12 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
             issuer_cleanup()
             joiner_cleanup()
 
-    def test_remote_client_uses_short_timeout_and_rejects_redirects(self) -> None:
-        from cccc.kernel.group_bridge.pairing_remote import _NoRedirectHandler, _default_remote_client
+    def test_remote_client_uses_pairing_timeout_and_rejects_redirects(self) -> None:
+        from cccc.kernel.group_bridge.pairing_remote import (
+            REMOTE_PAIRING_TIMEOUT_SECONDS,
+            _NoRedirectHandler,
+            _default_remote_client,
+        )
 
         captured = {}
 
@@ -965,10 +971,13 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
 
         with patch("cccc.kernel.group_bridge.pairing_remote.build_opener", return_value=FakeOpener()):
             with self.assertRaises(RuntimeError):
-                _default_remote_client("https://issuer.example/api/group-bridge/pairing/requests/remote", {"pairing_code": "ABCD-1234"}, timeout_seconds=3.0)
+                _default_remote_client(
+                    "https://issuer.example/api/group-bridge/pairing/requests/remote",
+                    {"pairing_code": "ABCD-1234"},
+                )
 
         self.assertEqual(captured["url"], "https://issuer.example/api/group-bridge/pairing/requests/remote")
-        self.assertEqual(captured["timeout"], 3.0)
+        self.assertEqual(captured["timeout"], REMOTE_PAIRING_TIMEOUT_SECONDS)
         with self.assertRaises(ValueError):
             _NoRedirectHandler().redirect_request(None, None, 302, "Found", {}, "https://other.example/")
 

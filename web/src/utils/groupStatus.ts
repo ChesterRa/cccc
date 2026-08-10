@@ -3,6 +3,8 @@ import type { GroupDoc, GroupMeta, GroupRuntimeStatus } from "../types";
 
 export type GroupStatusKey = "run" | "paused" | "idle" | "stop";
 
+export const GROUP_STATUS_DOT_BASE_CLASS = "size-[8px] shrink-0 rounded-full";
+
 export type GroupStatus = {
   key: GroupStatusKey;
   label: string;

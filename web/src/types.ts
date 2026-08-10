@@ -2,7 +2,7 @@
 
 // Theme types
 export type Theme = "light" | "dark" | "system";
-export type TextScale = 90 | 100 | 125;
+export type TextScale = 70 | 90 | 100 | 125;
 
 export type GroupRuntimeStatus = {
   lifecycle_state: "active" | "idle" | "paused" | "stopped" | string;

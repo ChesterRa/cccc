@@ -41,7 +41,7 @@ class TestWebManifestStatic(unittest.TestCase):
 
         return TestClient(create_app()), cleanup
 
-    def test_manifest_is_served_by_staticfiles_without_attachment_header(self) -> None:
+    def test_dynamic_manifest_overrides_the_packaged_static_file(self) -> None:
         client, cleanup = self._with_static_client()
         try:
             resp = client.get("/ui/manifest.webmanifest")
@@ -53,9 +53,32 @@ class TestWebManifestStatic(unittest.TestCase):
                 )
             )
             self.assertNotIn("content-disposition", resp.headers)
-            self.assertEqual(resp.text, '{"name":"CCCC"}\n')
+            self.assertEqual(resp.headers.get("cache-control"), "no-cache")
+            manifest = resp.json()
+            self.assertEqual(manifest["id"], "/ui/")
+            self.assertEqual(manifest["name"], "CCCC")
+            self.assertEqual(manifest["icons"][0]["src"], "/ui/logo.svg")
         finally:
             cleanup()
+
+    def test_manifest_builder_tracks_custom_branding(self) -> None:
+        from cccc.ports.web.branding import build_web_app_manifest
+
+        manifest = build_web_app_manifest(
+            {
+                "product_name": "Acme Console",
+                "logo_icon_asset_path": "state/web_branding/logo.png",
+                "updated_at": "2026-08-10T12:00:00Z",
+            }
+        )
+
+        self.assertEqual(manifest["name"], "Acme Console")
+        self.assertEqual(manifest["short_name"], "Acme Console")
+        self.assertEqual(manifest["icons"][0]["sizes"], "any")
+        self.assertEqual(
+            manifest["icons"][0]["src"],
+            "/api/v1/branding/assets/logo_icon?v=2026-08-10T12:00:00Z",
+        )
 
     def test_capability_center_path_serves_spa_index(self) -> None:
         client, cleanup = self._with_static_client()

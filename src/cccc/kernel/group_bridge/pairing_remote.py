@@ -16,6 +16,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from ...util.time import utc_now_iso
 from .pairing import get_local_identity, get_pairing_outbound, upsert_pairing_outbound
 from .pairing_outbound_sync import approve_outbound_from_remote_request
+from .pairing_remote_transport import REMOTE_PAIRING_TIMEOUT_SECONDS, format_transport_error
 from ..settings import resolve_remote_access_web_binding
 
 _REMOTE_REQUEST_PATH = "/api/group-bridge/pairing/requests/remote"
@@ -157,7 +158,7 @@ def submit_remote_pairing_request(
     }
     caller = client or _default_remote_client
     try:
-        result = caller(endpoint, body, timeout_seconds=3.0)
+        result = caller(endpoint, body, timeout_seconds=REMOTE_PAIRING_TIMEOUT_SECONDS)
         status = "submitted"
         error = ""
         request = result.get("request") if isinstance(result, dict) else None
@@ -208,7 +209,7 @@ def sync_remote_pairing_outbound(
     )
     caller = client or _default_remote_status_client
     try:
-        result = caller(endpoint, timeout_seconds=3.0)
+        result = caller(endpoint, timeout_seconds=REMOTE_PAIRING_TIMEOUT_SECONDS)
         request = result.get("request") if isinstance(result, dict) else None
         if not isinstance(request, dict):
             raise ValueError("remote pairing status unavailable")
@@ -227,7 +228,12 @@ def sync_remote_pairing_outbound(
         }, home=home)
 
 
-def _default_remote_client(endpoint: str, body: Dict[str, Any], *, timeout_seconds: float = 3.0) -> Dict[str, Any]:
+def _default_remote_client(
+    endpoint: str,
+    body: Dict[str, Any],
+    *,
+    timeout_seconds: float = REMOTE_PAIRING_TIMEOUT_SECONDS,
+) -> Dict[str, Any]:
     req = Request(
         endpoint,
         data=json.dumps(body).encode("utf-8"),
@@ -248,7 +254,11 @@ def _default_remote_client(endpoint: str, body: Dict[str, Any], *, timeout_secon
     return dict(result) if isinstance(result, dict) else {}
 
 
-def _default_remote_status_client(endpoint: str, *, timeout_seconds: float = 3.0) -> Dict[str, Any]:
+def _default_remote_status_client(
+    endpoint: str,
+    *,
+    timeout_seconds: float = REMOTE_PAIRING_TIMEOUT_SECONDS,
+) -> Dict[str, Any]:
     req = Request(endpoint, headers={"Accept": "application/json"}, method="GET")
     opener = build_opener(_NoRedirectHandler)
     redactions = _status_endpoint_redactions(endpoint)
@@ -391,8 +401,9 @@ def _redact_remote_detail(text: str, redactions: Dict[str, Any]) -> str:
 def _safe_error(exc: Exception) -> str:
     if isinstance(exc, _SafeRemotePairingError):
         return str(exc)[:240]
-    if isinstance(exc, TimeoutError):
-        return "remote pairing request timed out"
+    transport_error = format_transport_error("remote pairing request", exc)
+    if transport_error:
+        return transport_error
     if isinstance(exc, ValueError):
         msg = str(exc or "").lower()
         if "issuer_endpoint" in msg or "redirect" in msg:
@@ -403,8 +414,9 @@ def _safe_error(exc: Exception) -> str:
 def _safe_status_error(exc: Exception) -> str:
     if isinstance(exc, _SafeRemotePairingError):
         return str(exc)[:240]
-    if isinstance(exc, TimeoutError):
-        return "remote pairing status timed out"
+    transport_error = format_transport_error("remote pairing status", exc)
+    if transport_error:
+        return transport_error
     if isinstance(exc, ValueError):
         msg = str(exc or "").lower()
         if "issuer_endpoint" in msg or "redirect" in msg:

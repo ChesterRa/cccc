@@ -363,6 +363,7 @@ export default function App() {
       style={{
         height: "var(--app-viewport-height, 100dvh)",
         maxHeight: "var(--app-viewport-height, 100dvh)",
+        top: "var(--app-viewport-offset-top, 0px)",
       }}
     >
       <AppBackground isDark={isDark} />

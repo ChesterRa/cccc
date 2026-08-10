@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   FloatingPortal,
   autoUpdate,
@@ -15,7 +15,8 @@ import { CSS } from "@dnd-kit/utilities";
 import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
-import { GripIcon } from "../Icons";
+import { GroupMenuAction } from "./GroupMenuAction";
+import { GroupStatusIndicator } from "./GroupStatusIndicator";
 
 interface SortableGroupItemProps {
   group: GroupMeta;
@@ -56,9 +57,7 @@ export function SortableGroupItem({
     transition,
     isDragging,
   } = useSortable({ id: gid, disabled: dragDisabled });
-
   const style = { transform: CSS.Transform.toString(transform), transition };
-
   const status = getGroupStatusFromSource(group);
   const { refs, floatingStyles, context } = useFloating({
     open: menuOpen,
@@ -71,30 +70,82 @@ export function SortableGroupItem({
   const dismiss = useDismiss(context);
   const role = useRole(context, { role: "menu" });
   const { getFloatingProps } = useInteractions([dismiss, role]);
-  const setReference = useCallback((node: HTMLElement | null) => refs.setReference(node), [refs]);
-  const setFloating = useCallback((node: HTMLElement | null) => refs.setFloating(node), [refs]);
-  const setCombinedActivatorRef = useCallback(
-    (node: HTMLButtonElement | null) => {
+  const setItemActivatorRef = useCallback(
+    (node: HTMLElement | null) => {
       setActivatorNodeRef(node);
-      setReference(node);
+      refs.setReference(node);
     },
-    [setActivatorNodeRef, setReference],
+    [refs, setActivatorNodeRef],
   );
-  const dragListeners = useMemo(() => listeners ?? {}, [listeners]);
-  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
-  const suppressMenuClickRef = useRef(false);
+  const setFloating = useCallback((node: HTMLElement | null) => refs.setFloating(node), [refs]);
+
+  const handleContextMenu = (event: React.MouseEvent<HTMLElement>) => {
+    if (!onMenuAction || !menuActionLabel) return;
+    event.preventDefault();
+    refs.setPositionReference({
+      getBoundingClientRect: () => new DOMRect(event.clientX, event.clientY, 0, 0),
+    });
+    setMenuOpen(true);
+  };
+
+  const handleItemKeyDown = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (
+      onMenuAction &&
+      menuActionLabel &&
+      (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))
+    ) {
+      event.preventDefault();
+      refs.setPositionReference(event.currentTarget);
+      setMenuOpen(true);
+      return;
+    }
+    if (event.key === "Enter" || (dragDisabled && event.key === " ")) {
+      event.preventDefault();
+      onSelect();
+      return;
+    }
+    listeners?.onKeyDown?.(event);
+  };
+
+  const actionMenu = onMenuAction && menuActionLabel && (
+    <FloatingPortal>
+      {menuOpen && (
+        <div
+          ref={setFloating}
+          style={floatingStyles}
+          {...getFloatingProps({ "aria-label": menuAriaLabel || menuActionLabel })}
+          className="z-max min-w-[160px] rounded-xl p-1.5 shadow-2xl glass-panel"
+        >
+          <GroupMenuAction
+            label={menuActionLabel}
+            onClick={() => {
+              setMenuOpen(false);
+              onMenuAction();
+            }}
+          />
+        </div>
+      )}
+    </FloatingPortal>
+  );
 
   if (isCollapsed) {
     const initial = (group.title || gid).charAt(0).toUpperCase();
     return (
-      <div ref={setNodeRef} style={style} {...attributes}>
+      <div ref={setNodeRef} style={style}>
         <button
+          ref={setItemActivatorRef}
+          {...attributes}
+          {...listeners}
           className={classNames(
             "w-11 h-11 rounded-xl flex items-center justify-center transition-all relative",
+            !dragDisabled && "cursor-grab select-none active:cursor-grabbing",
             isDragging && "opacity-50 shadow-lg",
             isActive ? "glass-group-item-active" : "glass-group-item hover:scale-105",
           )}
           onClick={onSelect}
+          onContextMenu={handleContextMenu}
+          onKeyDown={handleItemKeyDown}
           onMouseEnter={onWarm}
           onFocus={onWarm}
           title={group.title || gid}
@@ -109,14 +160,12 @@ export function SortableGroupItem({
           >
             {initial}
           </span>
-          {/* Status dot */}
-          <span
-            className={classNames(
-              "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-[var(--color-bg-primary)]",
-              status.dotClass,
-            )}
+          <GroupStatusIndicator
+            status={status}
+            className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[var(--color-bg-primary)]"
           />
         </button>
+        {actionMenu}
       </div>
     );
   }
@@ -128,8 +177,12 @@ export function SortableGroupItem({
       className={classNames("group/item relative", isDragging && "z-50")}
     >
       <div
+        ref={setItemActivatorRef}
+        {...attributes}
+        {...listeners}
         className={classNames(
           "w-full px-3 py-3 rounded-xl transition-all min-h-[48px] flex items-center gap-2 relative",
+          !dragDisabled && "cursor-grab select-none active:cursor-grabbing",
           isDragging && "opacity-70 shadow-lg ring-2 ring-[rgb(143,163,187)]/24",
           isActive ? "glass-group-item-active" : "glass-group-item",
           isArchived && !isActive && "opacity-90",
@@ -137,89 +190,16 @@ export function SortableGroupItem({
         role="button"
         tabIndex={0}
         onClick={onSelect}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" && event.key !== " ") return;
-          event.preventDefault();
-          onSelect();
-        }}
+        onContextMenu={handleContextMenu}
+        onKeyDown={handleItemKeyDown}
       >
-        {onMenuAction && menuActionLabel ? (
-          <button
-            type="button"
-            {...attributes}
-            {...dragListeners}
-            ref={setCombinedActivatorRef}
-            className={classNames(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent bg-transparent transition-all duration-150 touch-none",
-              "cursor-grab active:cursor-grabbing text-[var(--color-text-tertiary)] opacity-0 md:group-hover/item:opacity-100 focus-visible:opacity-100",
-              menuOpen &&
-                "opacity-100 bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-sm",
-              !menuOpen && isActive && "opacity-100 text-[rgb(35,36,37)] dark:text-white",
-              !menuOpen &&
-                "hover:bg-[var(--glass-tab-bg-hover)] hover:border-[var(--glass-border-subtle)] hover:text-[var(--color-text-primary)]",
-              isDragging && "!opacity-100",
-            )}
-            aria-label={menuAriaLabel || menuActionLabel}
-            title={menuAriaLabel || menuActionLabel}
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            onPointerDown={(event: React.PointerEvent<HTMLButtonElement>) => {
-              event.stopPropagation();
-              pointerStartRef.current = { x: event.clientX, y: event.clientY };
-              suppressMenuClickRef.current = false;
-            }}
-            onPointerMove={(event: React.PointerEvent<HTMLButtonElement>) => {
-              const start = pointerStartRef.current;
-              if (!start) return;
-              const dx = Math.abs(event.clientX - start.x);
-              const dy = Math.abs(event.clientY - start.y);
-              if (dx > 4 || dy > 4) {
-                suppressMenuClickRef.current = true;
-              }
-            }}
-            onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
-              event.stopPropagation();
-              if (suppressMenuClickRef.current) {
-                suppressMenuClickRef.current = false;
-                pointerStartRef.current = null;
-                return;
-              }
-              pointerStartRef.current = null;
-              setMenuOpen((prev) => !prev);
-            }}
-          >
-            <GripIcon size={14} />
-          </button>
-        ) : !dragDisabled ? (
-          <button
-            type="button"
-            {...dragListeners}
-            {...attributes}
-            ref={setActivatorNodeRef}
-            className={classNames(
-              "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent bg-transparent transition-all duration-150 touch-none",
-              "cursor-grab active:cursor-grabbing text-[var(--color-text-tertiary)] opacity-0 md:group-hover/item:opacity-100 focus-visible:opacity-100",
-              "hover:bg-[var(--glass-tab-bg-hover)] hover:border-[var(--glass-border-subtle)] hover:text-[var(--color-text-primary)]",
-              isActive && "opacity-100 text-[rgb(35,36,37)] dark:text-white",
-              isDragging && "!opacity-100",
-            )}
-            aria-label="Drag group"
-            onPointerDown={(event) => event.stopPropagation()}
-          >
-            <GripIcon size={14} />
-          </button>
-        ) : null}
-
         <div
           className="flex-1 min-w-0 flex items-center justify-between gap-2 text-left"
           onMouseEnter={onWarm}
           onFocus={onWarm}
         >
           <div className="flex items-center gap-2 min-w-0">
-            {/* Status dot */}
-            <span
-              className={classNames("w-2.5 h-2.5 rounded-full flex-shrink-0", status.dotClass)}
-            />
+            <GroupStatusIndicator status={status} />
             <span
               className={classNames(
                 "text-sm font-medium truncate",
@@ -232,34 +212,8 @@ export function SortableGroupItem({
             </span>
           </div>
         </div>
-
-        {onMenuAction && menuActionLabel && (
-          <FloatingPortal>
-            {menuOpen && (
-              <div
-                ref={setFloating}
-                style={floatingStyles}
-                {...getFloatingProps()}
-                className="z-max min-w-[160px] rounded-xl p-1.5 shadow-2xl glass-panel"
-              >
-                <button
-                  type="button"
-                  className={classNames(
-                    "w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
-                    "text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]",
-                  )}
-                  onClick={() => {
-                    setMenuOpen(false);
-                    onMenuAction();
-                  }}
-                >
-                  {menuActionLabel}
-                </button>
-              </div>
-            )}
-          </FloatingPortal>
-        )}
       </div>
+      {actionMenu}
     </div>
   );
 }

@@ -113,6 +113,7 @@ class TestSocketSpecialOps(unittest.TestCase):
             error=lambda code, msg, details=None: self._error_payload(code, msg, details),
             actor_running=lambda _gid, _aid: True,
             backlog_start_offset=lambda _gid, _aid: 100,
+            backlog_end_offset=lambda _gid, _aid: 240,
             attach_actor_socket=lambda gid, aid, _sock, since=None: attached.append((gid, aid, since)),
             load_group=lambda _gid: {"group_id": "g1"},
             find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
@@ -124,6 +125,53 @@ class TestSocketSpecialOps(unittest.TestCase):
         self.assertTrue(handled)
         self.assertEqual(attached, [("g1", "a1", None)])
         self.assertEqual((sent[0].get("result") or {}).get("replay_cursor"), 100)
+        self.assertEqual((sent[0].get("result") or {}).get("replay_end_cursor"), 240)
+
+    def test_term_attach_uses_the_actual_attach_snapshot_boundary(self) -> None:
+        req = DaemonRequest.model_validate(
+            {"op": "term_attach", "args": {"group_id": "g1", "actor_id": "a1"}}
+        )
+        conn = _FakeConn()
+        sent: list[dict] = []
+
+        def attach(
+            _gid,
+            _aid,
+            _sock,
+            _since=None,
+            _mode="control",
+            _takeover=False,
+            *,
+            on_replay_snapshot=None,
+        ):
+            self.assertIsNotNone(on_replay_snapshot)
+            on_replay_snapshot(120, 275)
+            return {}
+
+        handled = try_handle_socket_special_op(
+            req,
+            conn,
+            send_json=lambda _conn, payload: sent.append(payload),
+            dump_response=lambda resp: resp.model_dump(),
+            error=lambda code, msg, details=None: self._error_payload(code, msg, details),
+            actor_running=lambda _gid, _aid: True,
+            backlog_start_offset=lambda _gid, _aid: (_ for _ in ()).throw(
+                AssertionError("stale start probe must not be used")
+            ),
+            backlog_end_offset=lambda _gid, _aid: (_ for _ in ()).throw(
+                AssertionError("stale end probe must not be used")
+            ),
+            attach_actor_socket=attach,
+            load_group=lambda _gid: {"group_id": "g1"},
+            find_actor=lambda _group, _aid: {"id": "a1", "runner": "pty"},
+            effective_runner_kind=lambda rk: rk,
+            supported_stream_kinds=lambda: {"chat.message"},
+            start_events_stream=lambda *_args: False,
+        )
+
+        self.assertTrue(handled)
+        self.assertEqual((sent[0].get("result") or {}).get("replay_cursor"), 120)
+        self.assertEqual((sent[0].get("result") or {}).get("replay_end_cursor"), 275)
 
     def test_term_attach_replay_cursor_honors_in_ring_since(self) -> None:
         # Reconnect with a cursor still inside the ring: replay_cursor == since, so

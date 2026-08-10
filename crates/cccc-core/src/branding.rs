@@ -1,6 +1,6 @@
 use cccc_contracts::utc_now;
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io;
@@ -128,6 +128,43 @@ pub fn payload(raw: &Map<String, Value>) -> Payload {
     }
 }
 
+pub fn web_app_manifest(raw: &Map<String, Value>) -> Value {
+    let branding = payload(raw);
+    let icons = if branding.has_custom_logo_icon {
+        vec![json!({
+            "src": branding.logo_icon_url,
+            "sizes": "any",
+            "purpose": "any"
+        })]
+    } else {
+        vec![
+            json!({
+                "src": "/ui/logo.svg",
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "any"
+            }),
+            json!({
+                "src": "/ui/logo.png",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any maskable"
+            }),
+        ]
+    };
+    json!({
+        "id": "/ui/",
+        "name": branding.product_name,
+        "short_name": branding.product_name,
+        "display": "standalone",
+        "theme_color": "#0f172a",
+        "background_color": "#0f172a",
+        "scope": "/ui/",
+        "start_url": "/ui/",
+        "icons": icons
+    })
+}
+
 pub fn asset_relative(raw: &Map<String, Value>, kind: &str) -> io::Result<String> {
     validate_kind(kind)?;
     Ok(raw
@@ -188,5 +225,44 @@ fn extension(mime: &str) -> &'static str {
         "image/avif" => ".avif",
         "image/x-icon" | "image/vnd.microsoft.icon" => ".ico",
         _ => ".bin",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::web_app_manifest;
+    use serde_json::{Map, json};
+
+    #[test]
+    fn manifest_uses_default_install_icons_without_custom_branding() {
+        let manifest = web_app_manifest(&Map::new());
+
+        assert_eq!(manifest["id"], "/ui/");
+        assert_eq!(manifest["name"], "CCCC");
+        assert_eq!(manifest["icons"][0]["src"], "/ui/logo.svg");
+        assert_eq!(manifest["icons"][1]["src"], "/ui/logo.png");
+    }
+
+    #[test]
+    fn manifest_tracks_the_custom_product_name_and_logo_version() {
+        let raw = json!({
+            "product_name": "Acme Console",
+            "logo_icon_asset_path": "state/web_branding/logo.png",
+            "updated_at": "2026-08-10T12:00:00Z"
+        })
+        .as_object()
+        .cloned()
+        .expect("branding object");
+
+        let manifest = web_app_manifest(&raw);
+
+        assert_eq!(manifest["name"], "Acme Console");
+        assert_eq!(manifest["short_name"], "Acme Console");
+        assert_eq!(
+            manifest["icons"][0]["src"],
+            "/api/v1/branding/assets/logo_icon?v=2026-08-10T12:00:00Z"
+        );
+        assert_eq!(manifest["icons"][0]["sizes"], "any");
+        assert_eq!(manifest["icons"].as_array().map(Vec::len), Some(1));
     }
 }

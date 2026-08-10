@@ -10,20 +10,16 @@ export type RuntimeIndicatorState = {
 
 export type GroupPresenceTone = "run" | "paused" | "idle" | "stop";
 
-export const STOPPED_INDICATOR_DOT_CLASS =
-  "bg-slate-400/70 ring-[1.5px] ring-inset ring-slate-300/70 dark:ring-slate-400/20 opacity-70";
+export const STOPPED_INDICATOR_DOT_CLASS = "bg-slate-400/65 dark:bg-slate-500/70";
 
-export const QUIET_RUN_INDICATOR_DOT_CLASS =
-  "bg-transparent ring-[1.5px] ring-inset ring-emerald-500/75 dark:ring-emerald-400/75";
+export const QUIET_RUN_INDICATOR_DOT_CLASS = "bg-emerald-500/70 dark:bg-emerald-400/75";
 
 const WORKING_INDICATOR_DOT_CLASS =
   "bg-emerald-500 ring-[1.5px] ring-emerald-200/90 shadow-[0_0_0_3px_rgba(16,185,129,0.12),0_0_18px_rgba(52,211,153,0.75)] dark:bg-emerald-400 dark:ring-emerald-400/35 dark:shadow-[0_0_0_3px_rgba(16,185,129,0.10),0_0_18px_rgba(52,211,153,0.75)] scale-110";
 
-const PAUSED_INDICATOR_DOT_CLASS =
-  "bg-amber-500 ring-[1.5px] ring-amber-200/90 dark:bg-amber-400 dark:ring-amber-400/25";
+const PAUSED_INDICATOR_DOT_CLASS = "bg-amber-500/80 dark:bg-amber-400/80";
 
-const IDLE_INDICATOR_DOT_CLASS =
-  "bg-sky-500 ring-[1.5px] ring-sky-200/90 dark:bg-sky-400 dark:ring-sky-400/25";
+const IDLE_INDICATOR_DOT_CLASS = "bg-sky-500/70 dark:bg-sky-400/75";
 
 export function getRuntimeIndicatorState(input: {
   isRunning: boolean;

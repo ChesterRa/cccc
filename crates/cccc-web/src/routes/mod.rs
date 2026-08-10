@@ -14,6 +14,7 @@ mod group_bridge_close;
 mod group_bridge_command_sessions;
 mod group_bridge_pairing;
 mod group_bridge_pairing_endpoint;
+mod group_bridge_pairing_http;
 mod group_bridge_seen;
 mod group_bridge_session;
 mod group_bridge_store;
@@ -45,6 +46,7 @@ mod streams;
 mod system;
 mod system_branding;
 mod system_branding_assets;
+mod system_branding_manifest;
 mod system_scope;
 mod terminal;
 mod terminal_ws;
@@ -83,6 +85,7 @@ pub fn router() -> Router<AppState> {
         .merge(system::routes())
         .merge(system_branding::routes())
         .merge(system_branding_assets::routes())
+        .merge(system_branding_manifest::routes())
         .merge(system_scope::routes())
         .merge(filesystem::routes())
         .merge(access_tokens::routes())

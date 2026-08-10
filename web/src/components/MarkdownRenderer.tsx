@@ -176,6 +176,7 @@ export function MarkdownRenderer({
     rendering: t("chat:mermaid.rendering"),
     renderFailed: t("chat:mermaid.renderFailed"),
     tooLarge: t("chat:mermaid.tooLarge"),
+    tableScrollRegion: t("chat:table.scrollRegion"),
   };
 
   const md = useMemo(() => {
@@ -185,6 +186,11 @@ export function MarkdownRenderer({
       typographer: true,
       breaks: true,
     });
+    const escapedTableScrollRegion = instance.utils.escapeHtml(labels.tableScrollRegion);
+    instance.renderer.rules.table_open = (tokens, idx, options, _env, self) =>
+      `<div class="markdown-table-scroll" role="region" tabindex="0" aria-label="${escapedTableScrollRegion}">${self.renderToken(tokens, idx, options)}`;
+    instance.renderer.rules.table_close = (tokens, idx, options, _env, self) =>
+      `${self.renderToken(tokens, idx, options)}</div>`;
     instance.renderer.rules.fence = (tokens, idx) => {
       const token = tokens[idx];
       const info = String(token.info || "").trim();
@@ -296,6 +302,7 @@ export function MarkdownRenderer({
     labels.expandDiagram,
     labels.renderFailed,
     labels.rendering,
+    labels.tableScrollRegion,
     labels.tooLarge,
     labels.viewDiagram,
     labels.viewSource,

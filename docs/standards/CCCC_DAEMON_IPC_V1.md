@@ -2736,7 +2736,11 @@ Result:
 
 #### `reply`
 
-Append a `chat.message` with `reply_to` and `quote_text`.
+Append a `chat.message` with `reply_to` and `quote_text`. When `reply_to`
+references an inbound `group_bridge_session` event, the daemon MUST resolve the
+active trust from the preserved source group and peer, keep one local reply
+record, and relay the reply to the preserved remote event and recipient. The
+`group_bridge:<peer>` provenance sender is never a local recipient token.
 
 Args:
 ```ts
@@ -2745,7 +2749,7 @@ Args:
   reply_to: string
   text: string
   by?: string
-  to?: string[]                 // defaults to original sender if omitted
+  to?: string[]                 // local: original sender; Group Bridge: preserved remote return target
   priority?: "normal" | "attention"
   attachments?: unknown[]
   refs?: ReferenceV1[]
@@ -2756,7 +2760,10 @@ Args:
 
 Result:
 ```ts
-{ event: CCCSEventV1 } // kind="chat.message"
+{
+  event: CCCSEventV1 // kind="chat.message"
+  group_bridge_reply?: { receipt?: unknown, error?: unknown }
+}
 ```
 
 #### `tracked_send`
@@ -3526,12 +3533,26 @@ Result:
 
 Args:
 ```ts
-{ group_id: string; actor_id: string }
+{
+  group_id: string
+  actor_id: string
+  since?: number
+  mode?: "control" | "viewer"
+  takeover?: boolean
+}
 ```
 
 Result (handshake):
 ```ts
-{ group_id: string; actor_id: string }
+{
+  group_id: string
+  actor_id: string
+  terminal_mode: "control" | "viewer"
+  terminal_writable: boolean
+  writer_replaced: boolean
+  replay_cursor: number
+  replay_end_cursor: number
+}
 ```
 
 After a successful handshake, the connection becomes a raw PTY stream (see §4.4).
@@ -3539,6 +3560,11 @@ After a successful handshake, the connection becomes a raw PTY stream (see §4.4
 Notes:
 - `term_resize` MUST be sent over a separate daemon connection (the PTY stream is not NDJSON).
 - `term_attach` returns `not_pty_actor` when the actor is not effectively running on the PTY runner.
+- `replay_cursor` and `replay_end_cursor` MUST come from the same backlog snapshot that is queued
+  for this attachment; sampling either cursor before the actual attach is not sufficient.
+- Bytes in `[replay_cursor, replay_end_cursor)` are retained history. Clients MUST NOT send
+  terminal-generated query replies while rendering that historical range; only live output after
+  `replay_end_cursor` may generate PTY input.
 
 ### 8.12 Ledger Maintenance
 

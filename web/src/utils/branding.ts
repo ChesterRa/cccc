@@ -5,6 +5,7 @@ export const DEFAULT_LOGO_ICON_URL = "/ui/logo.svg";
 export const DEFAULT_DARK_LOGO_ICON_URL = "/ui/logo-dark.svg";
 export const DEFAULT_FAVICON_URL = "/ui/logo.svg";
 export const DEFAULT_DOCUMENT_TITLE = "CCCC - AI Agent Collaboration";
+export const WEB_APP_MANIFEST_URL = "/ui/manifest.webmanifest";
 
 export const DEFAULT_WEB_BRANDING: WebBranding = {
   product_name: DEFAULT_PRODUCT_NAME,
@@ -68,6 +69,13 @@ function ensureLink(rel: string): HTMLLinkElement {
   return el;
 }
 
+export function resolveWebAppManifestUrl(updatedAt: string | null | undefined): string {
+  const version = String(updatedAt || "").trim();
+  return version
+    ? `${WEB_APP_MANIFEST_URL}?v=${encodeURIComponent(version)}`
+    : WEB_APP_MANIFEST_URL;
+}
+
 export function applyBrandingToDocument(
   value: Partial<WebBranding> | null | undefined,
 ): WebBranding {
@@ -77,6 +85,7 @@ export function applyBrandingToDocument(
   const iconHref = resolveThemeAwareFaviconUrl(branding.favicon_url, isDark);
   ensureLink("icon").href = iconHref;
   ensureLink("apple-touch-icon").href = iconHref;
+  ensureLink("manifest").href = resolveWebAppManifestUrl(branding.updated_at);
   return branding;
 }
 

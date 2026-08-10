@@ -24,6 +24,7 @@ const TRANSLATIONS: Record<string, string> = {
   "chat:mermaid.rendering": "Rendering diagram…",
   "chat:mermaid.renderFailed": "Render failed",
   "chat:mermaid.tooLarge": "Too large",
+  "chat:table.scrollRegion": "Scrollable table",
 };
 
 vi.mock("react-i18next", () => ({
@@ -211,5 +212,49 @@ describe("MarkdownRenderer Mermaid contract", () => {
       expect(chat.mermaid.renderFailed).toBeTruthy();
       expect(chat.mermaid.tooLarge).toBeTruthy();
     }
+  });
+});
+
+describe("MarkdownRenderer table contract", () => {
+  it("wraps Markdown tables in one keyboard-accessible horizontal scroll region", () => {
+    const html = renderToStaticMarkup(
+      <MarkdownRenderer
+        content={
+          "| Layer | Problem | Owner | Plan | Guardrail | Acceptance |\n| --- | --- | --- | --- | --- | --- |\n| Evidence | Long explanation | Qwen | Repair | No shortcuts | Verified |"
+        }
+      />,
+    );
+
+    expect(html).toContain(
+      '<div class="markdown-table-scroll" role="region" tabindex="0" aria-label="Scrollable table"><table>',
+    );
+    expect(html).toMatch(/<\/table>\s*<\/div>/);
+    expect(html.match(/markdown-table-scroll/g)).toHaveLength(1);
+  });
+
+  it("does not add a scroll region to ordinary Markdown", () => {
+    const html = renderToStaticMarkup(<MarkdownRenderer content="A short paragraph." />);
+
+    expect(html).not.toContain("markdown-table-scroll");
+    expect(html).not.toContain('role="region"');
+  });
+
+  it("ships the table region label in every supported locale", () => {
+    for (const chat of [enChat, jaChat, zhChat]) {
+      expect(chat.table.scrollRegion).toBeTruthy();
+    }
+  });
+
+  it("keeps overflow and column sizing scoped to the table wrapper", () => {
+    const stylesheet = readFileSync(resolve(process.cwd(), "src/styles/markdown.css"), "utf8");
+
+    expect(stylesheet).toContain(".markdown-table-scroll {");
+    expect(stylesheet).toMatch(/\.markdown-table-scroll\s*\{[^}]*overflow-x:\s*auto;/s);
+    expect(stylesheet).toMatch(
+      /\.prose\.markdown-body \.markdown-table-scroll > table\s*\{[^}]*width:\s*max-content;[^}]*min-width:\s*100%;/s,
+    );
+    expect(stylesheet).toMatch(
+      /\.prose\.markdown-body \.markdown-table-scroll (?:th|th,)\s*[\s\S]*?min-width:\s*12rem;/,
+    );
   });
 });

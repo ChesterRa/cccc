@@ -24,6 +24,7 @@ import {
   PauseIcon,
   CloseIcon,
 } from "../Icons";
+import { GroupStatusIndicator } from "./GroupStatusIndicator";
 
 export interface MobileMenuSheetProps {
   isOpen: boolean;
@@ -229,14 +230,7 @@ export function MobileMenuSheet({
             </div>
             {selectedStatus && (
               <div className="flex items-center gap-2 mt-1">
-                <span
-                  className={classNames(
-                    "text-xs px-2 py-0.5 rounded-full font-medium",
-                    selectedStatus.pillClass,
-                  )}
-                >
-                  {selectedStatus.label}
-                </span>
+                <GroupStatusIndicator status={selectedStatus} variant="badge" />
               </div>
             )}
           </div>

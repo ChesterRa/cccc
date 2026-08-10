@@ -28,12 +28,12 @@ describe("getActorTabIndicatorState", () => {
     ).toBe("");
   });
 
-  it("renders quiet running as a hollow ring instead of a weak solid dot", () => {
+  it("renders quiet running as the shared solid running tone", () => {
     expect(getActorTabIndicatorState({ isRunning: true, workingState: "" }).dotClass).toBe(
       QUIET_RUN_INDICATOR_DOT_CLASS,
     );
     expect(getActorTabIndicatorState({ isRunning: true, workingState: "" }).dotClass).toContain(
-      "bg-transparent",
+      "bg-emerald",
     );
   });
 

@@ -66,6 +66,7 @@ graphify-out
 
 # Local agent guide (not committed)
 AGENTS.md
+.graphifyignore
 .claude/skills
 .shared/
 .agents/

@@ -6,6 +6,7 @@ use std::time::Duration;
 use crate::dispatch::{OpError, OpResult, object, required_arg};
 
 mod payload;
+mod reply;
 mod session_runtime;
 mod state;
 #[cfg(test)]
@@ -41,6 +42,23 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
 }
 
 fn remote_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    remote_send_inner(home, request, true)
+}
+
+pub(super) fn prepare_reply(
+    home: &HomeLayout,
+    group: &cccc_core::GroupDoc,
+    target: &cccc_contracts::Event,
+    request: &DaemonRequest,
+) -> Result<Option<reply::PreparedReply>, OpError> {
+    reply::prepare(home, group, target, request)
+}
+
+fn remote_send_without_source_record(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
+    remote_send_inner(home, request, false)
+}
+
+fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: bool) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let registration_id = required_arg(request, "registration_id")?;
     let idempotency_key = required_arg(request, "idempotency_key")?;
@@ -78,18 +96,8 @@ fn remote_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .and_then(|receipt| receipt["attempt"].as_u64())
         .unwrap_or(0)
         + 1;
-    let endpoint = nonempty(&route, &["remote_endpoint", "endpoint", "url"]).ok_or_else(|| {
-        OpError::new(
-            "registration_invalid",
-            "registration has no remote endpoint",
-        )
-    })?;
-    let credential = nonempty(&route, &["credential", "token"]).ok_or_else(|| {
-        OpError::new(
-            "credential_unresolved",
-            "registration credential is unavailable",
-        )
-    })?;
+    let endpoint = nonempty(&route, &["remote_endpoint", "endpoint", "url"]);
+    let credential = nonempty(&route, &["credential", "token"]);
     let remote_group_id =
         nonempty(&route, &["remote_group_id", "target_group_id"]).unwrap_or_default();
     let title = GroupStore::new(home.clone())
@@ -115,6 +123,7 @@ fn remote_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             record_payload.insert("require_peer_insight".into(), required);
         }
         let mut body = payload;
+        payload::encode_outbound_attachments(home, &group_id, &mut body)?;
         let insight = cccc_core::peer_insight::normalize(request.args.get("insight"))
             .map_err(|message| OpError::new("invalid_insight", message))?;
         if insight.is_some() {
@@ -169,16 +178,47 @@ fn remote_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         "idempotency_key":idempotency_key,
         "payload":body.clone()
     });
-    let session_remote = crate::group_bridge_sessions::send(
-        &group_id,
-        &remote_group_id,
-        route["remote_peer_id"].as_str().unwrap_or(""),
-        session_request,
+    let daemon_session_remote = session_runtime::deliver(
+        home,
+        &DaemonRequest {
+            v: 1,
+            op: "group_bridge_session_deliver".into(),
+            args: json!({
+                "group_id":group_id,
+                "remote_group_id":remote_group_id,
+                "remote_peer_id":route["remote_peer_id"],
+                "idempotency_key":idempotency_key,
+                "payload":body,
+                "timeout_ms":5_000
+            })
+            .as_object()
+            .cloned()
+            .unwrap_or_default(),
+        },
     )
+    .ok()
+    .map(Value::Object)
     .filter(delivery_succeeded);
-    let remote_result = session_remote
-        .map(Ok)
-        .unwrap_or_else(|| post_delivery(&endpoint, &credential, &idempotency_key, &body));
+    let outgoing_session_remote = daemon_session_remote.or_else(|| {
+        crate::group_bridge_sessions::send(
+            &group_id,
+            &remote_group_id,
+            route["remote_peer_id"].as_str().unwrap_or(""),
+            session_request,
+        )
+        .filter(delivery_succeeded)
+    });
+    let remote_result = outgoing_session_remote.map(Ok).unwrap_or_else(|| {
+        match (endpoint.as_deref(), credential.as_deref()) {
+            (Some(endpoint), Some(credential)) => {
+                post_delivery(endpoint, credential, &idempotency_key, &body)
+            }
+            _ => Err(OpError::new(
+                "peer_session_unavailable",
+                "no live Group Bridge session and no authenticated HTTP fallback",
+            )),
+        }
+    });
     let remote = match remote_result {
         Ok(remote) => remote,
         Err(error) => {
@@ -203,7 +243,16 @@ fn remote_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .pointer("/result/receipt")
         .or_else(|| remote.get("receipt"))
         .cloned()
-        .unwrap_or_else(|| json!({"status":"delivered"}));
+        .unwrap_or_else(|| {
+            json!({
+                "status":"delivered",
+                "remote_event_id":remote
+                    .pointer("/result/event_id")
+                    .or_else(|| remote.get("event_id"))
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            })
+        });
     receipt["registration_id"] = json!(registration_id);
     receipt["idempotency_key"] = json!(idempotency_key);
     receipt["remote_group_id"] = json!(remote_group_id);
@@ -213,19 +262,26 @@ fn remote_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     receipt["max_attempts"] = json!(5);
     receipt["updated_at"] = json!(utc_now());
     store_delivery(home, receipt.clone())?;
-    let mut record = record_payload;
-    record.insert("group_id".into(), json!(group_id));
-    record.insert("dst_group_id".into(), json!(remote_group_id));
-    record.insert("by".into(), body["source_by"].clone());
-    record.insert("source_by".into(), body["source_by"].clone());
-    record.insert("src_group_id".into(), json!(group_id));
-    if let Some(value) = request.args.get("source_event_id").cloned() {
-        record.insert("src_event_id".into(), value);
-    }
-    record.insert("delivery_receipt".into(), receipt.clone());
-    let local = dispatch_message(home, "send_cross_group_remote_record", record)?;
+    let source_event = if record_source {
+        let mut record = record_payload;
+        record.insert("group_id".into(), json!(group_id));
+        record.insert("dst_group_id".into(), json!(remote_group_id));
+        record.insert("by".into(), body["source_by"].clone());
+        record.insert("source_by".into(), body["source_by"].clone());
+        record.insert("src_group_id".into(), json!(group_id));
+        if let Some(value) = request.args.get("source_event_id").cloned() {
+            record.insert("src_event_id".into(), value);
+        }
+        record.insert("delivery_receipt".into(), receipt.clone());
+        dispatch_message(home, "send_cross_group_remote_record", record)?
+            .get("source_event")
+            .cloned()
+            .unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
     object(json!({
-        "queued":false,"receipt":receipt,"source_event":local.get("source_event"),
+        "queued":false,"receipt":receipt,"source_event":source_event,
         "transport":"group_bridge_session","deduped":false
     }))
 }

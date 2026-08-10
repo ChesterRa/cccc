@@ -67,6 +67,10 @@ class TestPtyAttachSelectorEvents(unittest.TestCase):
                 client_sock.close()
             except Exception:
                 pass
+            try:
+                peer_sock.close()
+            except Exception:
+                pass
 
     def test_attach_from_current_cursor_does_not_replay_old_tui_backlog(self) -> None:
         session = self._session()
@@ -81,6 +85,40 @@ class TestPtyAttachSelectorEvents(unittest.TestCase):
             self.assertEqual(bytes(client.outbuf), b"")
             _, events, _ = session._selector.register_calls[-1]
             self.assertFalse(bool(events & selectors.EVENT_WRITE))
+        finally:
+            try:
+                client_sock.close()
+            except Exception:
+                pass
+            try:
+                peer_sock.close()
+            except Exception:
+                pass
+
+    def test_attach_boundary_matches_snapshot_and_later_output_stays_live(self) -> None:
+        session = self._session()
+        session._append_backlog(b"replay")
+        snapshots = []
+
+        client_sock, peer_sock = socket.socketpair()
+
+        def on_replay_snapshot(start: int, end: int) -> None:
+            snapshots.append((start, end))
+            self.assertIn(client_sock.fileno(), session._clients)
+            self.assertEqual(session._selector.register_calls, [])
+            # Model output delivered after the snapshot callback but before the
+            # selector begins flushing the socket.
+            session._clients[client_sock.fileno()].outbuf.extend(b"live")
+
+        try:
+            session._attach_client_now(
+                client_sock,
+                on_replay_snapshot=on_replay_snapshot,
+            )
+
+            self.assertEqual(snapshots, [(0, len(b"replay"))])
+            client = session._clients[client_sock.fileno()]
+            self.assertEqual(bytes(client.outbuf), b"replaylive")
         finally:
             try:
                 client_sock.close()

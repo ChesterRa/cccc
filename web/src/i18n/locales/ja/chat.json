@@ -69,6 +69,7 @@
     "renderFailed": "この図をレンダリングできませんでした。代わりにソースを表示します。",
     "tooLarge": "この図は安全にレンダリングするには大きすぎます。代わりにソースを表示します。"
   },
+  "table": { "scrollRegion": "横方向にスクロールできる表" },
   "webModelDelivery": {
     "submitting": "ChatGPT に配信中",
     "submitted": "ChatGPT に配信済み",

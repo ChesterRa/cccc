@@ -15,7 +15,7 @@ import type {
   GroupRuntimeStatus,
   TextScale,
 } from "../../types";
-import { SIDEBAR_COLLAPSED_WIDTH } from "../../stores/useUIStore";
+import { getSidebarWidthCssValue, SIDEBAR_COLLAPSED_WIDTH } from "../../stores/useUIStore";
 import { resolveRuntimeInspectorActor } from "./appShellRuntimeActors";
 import type { ComposerMentionKind } from "../../pages/chat/chatMentionSuggestions";
 
@@ -230,7 +230,9 @@ export function AppShell({
 }: AppShellProps) {
   const { t } = useTranslation("chat");
   const shellStyle = {
-    "--sidebar-width": `${sidebarCollapsed ? SIDEBAR_COLLAPSED_WIDTH : sidebarWidth}px`,
+    "--sidebar-width": sidebarCollapsed
+      ? `${SIDEBAR_COLLAPSED_WIDTH}px`
+      : getSidebarWidthCssValue(sidebarWidth),
   } as CSSProperties;
   const [mountedRuntimeActorsSnapshot, setMountedRuntimeActorsSnapshot] =
     useState<MountedRuntimeActorSnapshot>({ groupId: null, actorsById: {} });

@@ -22,6 +22,8 @@ import {
   MoreIcon,
   MenuIcon,
 } from "../Icons";
+import { IconButton } from "../ui/icon-button";
+import { GroupStatusIndicator } from "./GroupStatusIndicator";
 
 export interface AppHeaderProps {
   isDark: boolean;
@@ -75,14 +77,8 @@ export function AppHeader({
   const { t } = useTranslation("layout");
   const [pendingToggleAction, setPendingToggleAction] = useState<"launch" | "pause" | null>(null);
   const [hasObservedGroupBusy, setHasObservedGroupBusy] = useState(false);
-  const headerIconButtonBaseClass =
-    "flex items-center justify-center h-10 w-10 rounded-[14px] transition-all duration-150 active:scale-[0.95] shrink-0";
   const headerRailClass = "flex items-center gap-1 p-[3px]";
   const headerUtilityRailClass = "flex items-center gap-0.5 p-[3px]";
-  const headerMinorActionClass =
-    "hidden md:inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent bg-transparent text-[var(--color-text-tertiary)] transition-all hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]";
-  const headerRailButtonClass =
-    "flex items-center justify-center h-9 w-9 rounded-[14px] transition-all duration-150 active:scale-[0.95] shrink-0 border border-transparent bg-transparent text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)] disabled:opacity-45 disabled:text-[var(--color-text-tertiary)] disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-tertiary)]";
   const headerUtilityButtonClass =
     "flex items-center justify-center h-8 w-8 rounded-xl transition-all duration-150 active:scale-[0.95] shrink-0 border border-transparent bg-transparent text-[var(--color-text-tertiary)] hover:bg-[var(--glass-tab-bg-hover)] hover:text-[var(--color-text-primary)]";
   const headerRailDividerClass = "mx-1 h-5 w-px bg-[var(--glass-border-subtle)]";
@@ -196,18 +192,15 @@ export function AppHeader({
   return (
     <header className="absolute inset-x-0 top-0 z-20 flex h-14 flex-shrink-0 items-center justify-between gap-3 px-4 glass-header md:relative md:inset-auto md:px-5">
       <div className="flex min-w-0 items-center gap-2">
-        <button
-          className={classNames(
-            "md:hidden -ml-1",
-            headerIconButtonBaseClass,
-            "glass-btn",
-            "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
-          )}
+        <IconButton
+          type="button"
+          variant="secondary"
+          className="-ml-1 text-[var(--color-text-secondary)] md:hidden"
           onClick={onOpenSidebar}
-          aria-label={t("openSidebar")}
+          label={t("openSidebar")}
         >
           <MenuIcon size={18} />
-        </button>
+        </IconButton>
 
         <div className="min-w-0 flex items-center gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -224,25 +217,28 @@ export function AppHeader({
               />
             )}
             {selectedStatus && (
-              <span
-                className={classNames(
-                  "h-2.5 w-2.5 flex-shrink-0 rounded-full",
-                  selectedStatus.dotClass,
-                )}
-                title={selectedStatus.label}
-              />
+              <>
+                <GroupStatusIndicator status={selectedStatus} className="sm:hidden" />
+                <GroupStatusIndicator
+                  status={selectedStatus}
+                  variant="badge"
+                  className="hidden sm:inline-flex"
+                />
+              </>
             )}
           </div>
 
           {selectedGroupId && !webReadOnly && onOpenGroupEdit && (
-            <button
-              className={headerMinorActionClass}
+            <IconButton
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="hidden text-[var(--color-text-tertiary)] md:inline-flex"
               onClick={onOpenGroupEdit}
-              title={t("editGroup")}
-              aria-label={t("editGroup")}
+              label={t("editGroup")}
             >
               <EditIcon size={14} />
-            </button>
+            </IconButton>
           )}
         </div>
       </div>
@@ -254,55 +250,56 @@ export function AppHeader({
             {/* Desktop Actions */}
             <div className="mr-1 hidden items-center gap-1.5 md:flex">
               <div className={headerRailClass}>
-                <button
+                <IconButton
+                  type="button"
+                  variant="ghost"
+                  size="rail"
                   onClick={onOpenSearch}
                   disabled={!selectedGroupId}
-                  className={headerRailButtonClass}
-                  title={t("searchMessages")}
+                  className="text-[var(--color-text-secondary)]"
+                  label={t("searchMessages")}
                 >
-                  <span className="sr-only">{t("searchMessages")}</span>
                   <SearchIcon size={17} />
-                </button>
+                </IconButton>
 
-                <button
+                <IconButton
+                  type="button"
+                  variant="ghost"
+                  size="rail"
                   onClick={onOpenContext}
                   disabled={!selectedGroupId}
-                  className={headerRailButtonClass}
-                  title={t("context")}
+                  className="text-[var(--color-text-secondary)]"
+                  label={t("context")}
                 >
-                  <span className="sr-only">{t("context")}</span>
                   <ClipboardIcon size={17} />
-                </button>
+                </IconButton>
                 <span className={headerRailDividerClass} aria-hidden="true" />
-                <button
+                <IconButton
+                  type="button"
+                  variant="ghost"
                   onClick={handleToggleClick}
                   disabled={toggleDisabled}
                   className={classNames(
-                    "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0",
                     toggleControl.className,
                     toggleHardUnavailable && "opacity-45",
                   )}
-                  title={toggleTitle}
+                  label={toggleTitle}
                   aria-pressed={toggleControl.active}
                 >
-                  <span className="sr-only">{toggleTitle}</span>
                   {isPauseAction ? <PauseIcon size={17} /> : <PlayIcon size={17} />}
-                </button>
+                </IconButton>
 
-                <button
+                <IconButton
+                  type="button"
+                  variant="ghost"
                   onClick={handleStopClick}
                   disabled={stopDisabled}
-                  className={classNames(
-                    "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0",
-                    stopControl.className,
-                    stopHardUnavailable && "opacity-45",
-                  )}
-                  title={t("stopAllAgents")}
+                  className={classNames(stopControl.className, stopHardUnavailable && "opacity-45")}
+                  label={t("stopAllAgents")}
                   aria-pressed={stopControl.active}
                 >
-                  <span className="sr-only">{t("stopAllAgents")}</span>
                   <StopIcon size={17} />
-                </button>
+                </IconButton>
               </div>
 
               <div className={headerUtilityRailClass}>
@@ -331,33 +328,32 @@ export function AppHeader({
                   className="mx-0.5 h-4 w-px bg-[var(--glass-border-subtle)]"
                   aria-hidden="true"
                 />
-                <button
+                <IconButton
+                  type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={onOpenSettings}
                   disabled={!selectedGroupId}
                   className={classNames(
                     headerUtilityButtonClass,
                     "disabled:opacity-45 disabled:text-[var(--color-text-tertiary)]",
                   )}
-                  title={t("settings")}
+                  label={t("settings")}
                 >
-                  <span className="sr-only">{t("settings")}</span>
                   <SettingsIcon size={18} />
-                </button>
+                </IconButton>
               </div>
             </div>
 
-            <button
-              className={classNames(
-                "md:hidden",
-                headerIconButtonBaseClass,
-                "glass-btn",
-                "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
-              )}
+            <IconButton
+              type="button"
+              variant="secondary"
+              className="text-[var(--color-text-secondary)] md:hidden"
               onClick={onOpenMobileMenu}
-              title={t("menu")}
+              label={t("menu")}
             >
               <MoreIcon size={18} />
-            </button>
+            </IconButton>
           </>
         )}
       </div>

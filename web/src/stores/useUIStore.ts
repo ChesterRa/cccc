@@ -8,7 +8,8 @@ import {
 export const SIDEBAR_COLLAPSED_WIDTH = 60;
 export const SIDEBAR_DEFAULT_WIDTH = 248;
 export const SIDEBAR_MIN_WIDTH = 248;
-export const SIDEBAR_MAX_WIDTH = 480;
+export const SIDEBAR_MAX_WIDTH = 360;
+export const SIDEBAR_MAX_VIEWPORT_PERCENT = 34;
 
 interface UINotice {
   message: string;
@@ -114,6 +115,11 @@ export function clampSidebarWidth(value: number): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return SIDEBAR_DEFAULT_WIDTH;
   return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(numeric)));
+}
+
+export function getSidebarWidthCssValue(value: number): string {
+  const preferred = clampSidebarWidth(value);
+  return `clamp(${SIDEBAR_MIN_WIDTH}px, ${preferred}px, min(${SIDEBAR_MAX_WIDTH}px, ${SIDEBAR_MAX_VIEWPORT_PERCENT}vw))`;
 }
 
 function loadSidebarCollapsed(): boolean {

@@ -91,9 +91,13 @@ async fn serve(
     };
     let attach = frame(
         b'3',
-        json!({"terminal_writable":writable,"replay_cursor":initial.replay_cursor})
-            .to_string()
-            .as_bytes(),
+        json!({
+            "terminal_writable": writable,
+            "replay_cursor": initial.replay_cursor,
+            "replay_end_cursor": initial.replay_end_cursor,
+        })
+        .to_string()
+        .as_bytes(),
     );
     if socket.send(Message::Binary(attach.into())).await.is_err() {
         return;

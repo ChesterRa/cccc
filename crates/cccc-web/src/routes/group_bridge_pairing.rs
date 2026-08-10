@@ -12,6 +12,7 @@ use super::group_bridge::{ensure_access, required};
 use super::group_bridge_pairing_endpoint::{
     normalize_endpoint, preferred_issuer_endpoint, requester_endpoint,
 };
+use super::group_bridge_pairing_http::{get_remote, post_remote};
 use super::group_bridge_store::{BridgeStore, items, items_mut, short_id};
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, success};
@@ -685,49 +686,6 @@ fn normalize_remote_request(value: &Value) -> Value {
 fn pairing_code() -> String {
     let raw = Uuid::new_v4().simple().to_string().to_ascii_uppercase();
     format!("{}-{}", &raw[..4], &raw[4..8])
-}
-async fn post_remote(endpoint: &str, path: &str, body: &Value) -> (Value, String) {
-    let client = match reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(3))
-        .build()
-    {
-        Ok(client) => client,
-        Err(error) => return (json!({}), error.to_string()),
-    };
-    match client
-        .post(format!("{endpoint}{path}"))
-        .json(body)
-        .send()
-        .await
-    {
-        Ok(response) => parse_remote(response).await,
-        Err(error) => (json!({}), error.to_string()),
-    }
-}
-async fn get_remote(endpoint: &str, path: &str) -> (Value, String) {
-    let client = match reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(3))
-        .build()
-    {
-        Ok(client) => client,
-        Err(error) => return (json!({}), error.to_string()),
-    };
-    match client.get(format!("{endpoint}{path}")).send().await {
-        Ok(response) => parse_remote(response).await,
-        Err(error) => (json!({}), error.to_string()),
-    }
-}
-async fn parse_remote(response: reqwest::Response) -> (Value, String) {
-    let status = response.status();
-    match response.json::<Value>().await {
-        Ok(value) if status.is_success() => {
-            (value.get("result").cloned().unwrap_or(value), String::new())
-        }
-        Ok(value) => (json!({}), value.to_string()),
-        Err(error) => (json!({}), error.to_string()),
-    }
 }
 fn state_error(error: io::Error) -> ApiError {
     match error.kind() {

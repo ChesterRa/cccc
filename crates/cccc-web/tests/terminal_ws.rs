@@ -67,6 +67,10 @@ async fn first_websocket_attach_replays_current_raw_ansi_history() {
     let attach_payload: Value = serde_json::from_slice(&attach[1..]).expect("attach json");
     assert_eq!(attach_payload["terminal_writable"], false);
     assert_eq!(attach_payload["replay_cursor"], 0);
+    let replay_end_cursor = attach_payload["replay_end_cursor"]
+        .as_u64()
+        .expect("replay end cursor");
+    assert!(replay_end_cursor > 512 * 1024);
 
     let mut output = Vec::new();
     for _ in 0..20 {

@@ -108,7 +108,7 @@
     "saved": "ブランド設定を保存しました。",
     "saveFailed": "ブランド設定の保存に失敗しました。",
     "logoTitle": "Logo Icon",
-    "logoHint": "サイドバーヘッダーとサインイン画面に表示されます。SVG または PNG 推奨です。",
+    "logoHint": "サイドバーヘッダー、サインイン画面、インストール後のアプリアイコンに表示されます。正方形の SVG、または 192×192 以上の PNG を推奨します。",
     "uploadLogo": "Logo をアップロード",
     "logoSaved": "Logo を更新しました。",
     "logoReset": "Logo をデフォルトに戻しました。",

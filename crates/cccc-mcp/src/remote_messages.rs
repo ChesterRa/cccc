@@ -1,7 +1,6 @@
 use cccc_client::DaemonClient;
 use cccc_contracts::DaemonRequest;
-use cccc_contracts::Event;
-use cccc_core::{GroupStore, HomeLayout, integration_state, ledger};
+use cccc_core::{GroupStore, HomeLayout, integration_state};
 use reqwest::StatusCode;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -48,14 +47,14 @@ pub(crate) async fn try_send(
     args: Map<String, Value>,
 ) -> Option<Result<Value, String>> {
     let source_group_id = text(&args, "group_id")?.to_owned();
-    if let Err(error) = cccc_core::group_bridge_legacy::import_if_changed(home) {
-        return Some(Err(error.to_string()));
-    }
-    let state = match integration_state::global_get(home, STORE_KEY) {
-        Ok(state) => state,
-        Err(error) => return Some(Err(error.to_string())),
-    };
     if let Some(destination_group_id) = text(&args, "dst_group_id") {
+        if let Err(error) = cccc_core::group_bridge_legacy::import_if_changed(home) {
+            return Some(Err(error.to_string()));
+        }
+        let state = match integration_state::global_get(home, STORE_KEY) {
+            Ok(state) => state,
+            Err(error) => return Some(Err(error.to_string())),
+        };
         let trust = find_trust(&state, &source_group_id, destination_group_id, None)?;
         if !route_ready(client, trust).await {
             return Some(Err(
@@ -64,43 +63,10 @@ pub(crate) async fn try_send(
         }
         return Some(send_new(home, client, args, trust).await);
     }
-    let reply_to = text(&args, "reply_to")?;
-    let target = match find_event(home, &source_group_id, reply_to) {
-        Ok(target) => target,
-        Err(error) => return Some(Err(error)),
-    };
-    if target.data.get("source_platform").and_then(Value::as_str) != Some("group_bridge_session") {
-        return None;
-    }
-    let destination_group_id = target
-        .data
-        .get("src_group_id")
-        .and_then(Value::as_str)
-        .or_else(|| target.data.get("source_group_id").and_then(Value::as_str))
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    let remote_peer_id = target
-        .data
-        .get("source_user_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())?;
-    let Some(trust) = find_trust(
-        &state,
-        &source_group_id,
-        destination_group_id,
-        Some(remote_peer_id),
-    ) else {
-        return Some(Err(format!(
-            "group_bridge_reply_route_not_found: no active Group Bridge route found for reply source group={destination_group_id}"
-        )));
-    };
-    if !route_ready(client, trust).await {
-        return Some(Err(
-            "peer_session_unavailable: no active Group Bridge delivery route".into(),
-        ));
-    }
-    Some(send_reply(home, client, args, &target, trust).await)
+    // Replies, including Group Bridge replies, are owned by the daemon. Keeping
+    // one routing authority prevents the MCP adapter and Web path from applying
+    // different default recipients or relaying the same reply twice.
+    None
 }
 
 async fn send_new(
@@ -148,67 +114,6 @@ async fn send_new(
         "source_event":local.get("source_event"),
         "receipt":receipt,
         "transport":"group_bridge_session"
-    })))
-}
-
-async fn send_reply(
-    home: &HomeLayout,
-    client: &DaemonClient,
-    mut args: Map<String, Value>,
-    target: &Event,
-    trust: &Value,
-) -> Result<Value, String> {
-    ensure_message_access(trust)?;
-    normalize_author_and_recipients(&mut args);
-    let explicit_remote_to = recipients(&args);
-    let remote_to = if explicit_remote_to.is_empty() {
-        default_remote_reply_recipients(target)
-    } else {
-        explicit_remote_to
-    };
-    args.insert("to".into(), json!(remote_to.clone()));
-    validate_remote_payload(&args)?;
-    validate_peer_insight(&mut args)?;
-
-    let idempotency_key = text(&args, "idempotency_key")
-        .or_else(|| text(&args, "client_id"))
-        .map(str::to_owned)
-        .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
-    let mut local_args = args.clone();
-    local_args.insert("to".into(), json!(["user"]));
-    local_args.insert("client_id".into(), json!(idempotency_key));
-    local_args.remove("idempotency_key");
-    let local = daemon(client, "reply", local_args).await?;
-    let event = local
-        .get("event")
-        .cloned()
-        .ok_or("reply response has no event")?;
-    let source_event_id = event["id"].as_str().unwrap_or(&idempotency_key);
-    let remote_reply_to = target
-        .data
-        .get("src_event_id")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let remote_result = deliver(
-        home,
-        client,
-        &args,
-        trust,
-        &format!(
-            "reply:{source_event_id}:{}",
-            trust["registration_id"].as_str().unwrap_or("remote")
-        ),
-        source_event_id,
-        remote_reply_to,
-    )
-    .await;
-    let group_bridge_reply = match remote_result {
-        Ok(receipt) => json!({"receipt":receipt}),
-        Err(error) => json!({"error":{"code":"group_bridge_reply_failed","message":error}}),
-    };
-    Ok(crate::router::tool_result(json!({
-        "event":event,
-        "group_bridge_reply":group_bridge_reply
     })))
 }
 
@@ -569,48 +474,6 @@ fn find_trust<'a>(
     })
 }
 
-fn find_event(home: &HomeLayout, group_id: &str, event_id: &str) -> Result<Event, String> {
-    let path = GroupStore::new(home.clone())
-        .and_then(|store| store.ledger_path(group_id))
-        .map_err(|error| error.to_string())?;
-    ledger::find_event(&path, event_id)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| format!("event not found: {event_id}"))
-}
-
-fn default_remote_reply_recipients(target: &Event) -> Vec<String> {
-    let stored = recipients_from_value(target.data.get("remote_reply_to"));
-    if !stored.is_empty() {
-        return stored;
-    }
-    if let Some(source_by) = target
-        .data
-        .get("src_by")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        if matches!(source_by, "user" | "@user") {
-            return vec!["user".into()];
-        }
-        if !source_by.starts_with(['@', '#']) && !source_by.starts_with("group_bridge:") {
-            return vec![source_by.into()];
-        }
-    }
-    let original = recipients_from_value(target.data.get("to"));
-    if !original.is_empty()
-        && original.iter().all(|item| {
-            matches!(
-                item.as_str(),
-                "@all" | "@peers" | "@foreman" | "user" | "@user"
-            )
-        })
-    {
-        return original;
-    }
-    Vec::new()
-}
-
 fn recipients(args: &Map<String, Value>) -> Vec<String> {
     recipients_from_value(args.get("to"))
 }
@@ -758,6 +621,8 @@ mod tests {
     use axum::Json;
     use axum::routing::post;
     use axum::{Router, extract::State};
+    use cccc_contracts::Event;
+    use cccc_core::ledger;
     use std::sync::{Arc, Mutex};
 
     #[test]
@@ -1114,6 +979,7 @@ mod tests {
                 "remote_peer_id":"peer-remote",
                 "remote_endpoint":endpoint,
                 "credential":"secret",
+                "transport":"group_bridge_session",
                 "remote_access_level":"messages",
                 "status":"active"
             }]});
@@ -1153,10 +1019,9 @@ mod tests {
         .cloned()
         .expect("reply args");
 
-        try_send(&home, &client, args)
+        crate::router::call(&home, &client, "cccc_message_reply", args)
             .await
-            .expect("remote reply route")
-            .expect("relay reply");
+            .expect("relay reply through daemon");
         let payload = captured
             .lock()
             .expect("capture")
@@ -1181,6 +1046,118 @@ mod tests {
 
         daemon_task.abort();
         remote_task.abort();
+    }
+
+    #[tokio::test]
+    async fn remote_reply_uses_live_reverse_session_without_group_lock_deadlock() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("receiver", "").expect("group");
+        integration_state::global_update(&home, STORE_KEY, |state| {
+            *state = json!({"trusts":[{
+                "registration_id":"registration-session",
+                "group_id":group.group_id,"remote_group_id":"g_remote",
+                "remote_peer_id":"peer-remote","transport":"group_bridge_session",
+                "remote_access_level":"messages","status":"active"
+            }]});
+            Ok(())
+        })
+        .expect("bridge state");
+        let mut inbound = Event::new("chat.message", &group.group_id);
+        inbound.by = "group_bridge:peer-remote".into();
+        inbound.data = json!({
+            "text":"question","to":["user"],
+            "source_platform":"group_bridge_session",
+            "source_user_id":"peer-remote","src_group_id":"g_remote",
+            "src_event_id":"remote-origin-event","src_by":"original-agent",
+            "remote_reply_to":["original-agent"]
+        })
+        .as_object()
+        .cloned()
+        .expect("inbound data");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        ledger::append(&ledger_path, &inbound).expect("append inbound");
+
+        let daemon_home = home.clone();
+        let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+        wait_for_daemon(&home).await;
+        let client = DaemonClient::new(home.clone());
+        let route = json!({
+            "group_id":group.group_id,"remote_group_id":"g_remote",
+            "remote_peer_id":"peer-remote"
+        });
+        let opened = daemon(
+            &client,
+            "group_bridge_session_open",
+            route.as_object().cloned().expect("route"),
+        )
+        .await
+        .expect("open");
+
+        let reply_home = home.clone();
+        let reply_client = client.clone();
+        let group_id = group.group_id.clone();
+        let inbound_id = inbound.id.clone();
+        let reply_task = tokio::spawn(async move {
+            crate::router::call(
+                &reply_home,
+                &reply_client,
+                "cccc_message_reply",
+                json!({
+                    "group_id":group_id,"by":"user","reply_to":inbound_id,
+                    "text":"answer through reverse session",
+                    "insight":"Keeping the reply on the original remote thread avoids losing context."
+                })
+                .as_object()
+                .cloned()
+                .expect("reply args"),
+            )
+            .await
+        });
+
+        let mut poll_args = route.as_object().cloned().expect("poll route");
+        poll_args.insert("generation".into(), opened["generation"].clone());
+        poll_args.insert("timeout_ms".into(), json!(1_000));
+        let polled = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            daemon(&client, "group_bridge_session_poll", poll_args),
+        )
+        .await
+        .expect("poll must not wait for the reply group lock")
+        .expect("poll");
+        let frame = &polled["request"];
+        assert_eq!(frame["payload"]["to"], json!(["original-agent"]));
+        assert_eq!(frame["payload"]["reply_to"], "remote-origin-event");
+
+        let mut complete_args = route.as_object().cloned().expect("complete route");
+        complete_args.insert("generation".into(), opened["generation"].clone());
+        complete_args.insert("response_to".into(), frame["request_id"].clone());
+        complete_args.insert(
+            "result".into(),
+            json!({"ok":true,"event_id":"remote-session-reply"}),
+        );
+        daemon(&client, "group_bridge_session_complete", complete_args)
+            .await
+            .expect("complete");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(2), reply_task)
+            .await
+            .expect("reply must complete after the session response")
+            .expect("reply task")
+            .expect("reply");
+        assert_eq!(
+            result["structuredContent"]["group_bridge_reply"]["receipt"]["remote_event_id"],
+            "remote-session-reply"
+        );
+        assert_eq!(
+            ledger::read_all(&ledger_path)
+                .expect("events")
+                .into_iter()
+                .filter(|event| event.kind == "chat.message")
+                .count(),
+            2
+        );
+        daemon_task.abort();
     }
 
     #[tokio::test]
@@ -1356,6 +1333,7 @@ mod tests {
         let store = GroupStore::new(home.clone()).expect("store");
         let group = store.create("receiver", "").expect("group");
         let mut inbound = Event::new("chat.message", &group.group_id);
+        inbound.by = "group_bridge:peer-missing".into();
         inbound.data = json!({
             "source_platform":"group_bridge_session",
             "source_user_id":"peer-missing",
@@ -1378,11 +1356,19 @@ mod tests {
         .cloned()
         .expect("args");
 
-        let error = try_send(&home, &DaemonClient::new(home.clone()), args)
-            .await
-            .expect("remote reply classification")
-            .expect_err("missing route");
+        let daemon_home = home.clone();
+        let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+        wait_for_daemon(&home).await;
+        let error = crate::router::call(
+            &home,
+            &DaemonClient::new(home.clone()),
+            "cccc_message_reply",
+            args,
+        )
+        .await
+        .expect_err("missing route");
         assert!(error.contains("group_bridge_reply_route_not_found"));
+        daemon_task.abort();
     }
 
     #[tokio::test]
@@ -1397,6 +1383,7 @@ mod tests {
                 "remote_group_id":"g_remote",
                 "remote_endpoint":"http://127.0.0.1:9",
                 "credential":"secret",
+                "transport":"group_bridge_session",
                 "remote_access_level":"messages",
                 "status":"active"
             }]});
@@ -1404,6 +1391,7 @@ mod tests {
         })
         .expect("bridge state");
         let mut inbound = Event::new("chat.message", &group.group_id);
+        inbound.by = "group_bridge:peer-remote".into();
         inbound.data = json!({
             "source_platform":"group_bridge_session",
             "source_user_id":"peer-remote",
@@ -1426,11 +1414,19 @@ mod tests {
         .cloned()
         .expect("args");
 
-        let error = try_send(&home, &DaemonClient::new(home.clone()), args)
-            .await
-            .expect("remote reply classification")
-            .expect_err("trust without peer must not authorize reply");
+        let daemon_home = home.clone();
+        let daemon_task = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+        wait_for_daemon(&home).await;
+        let error = crate::router::call(
+            &home,
+            &DaemonClient::new(home.clone()),
+            "cccc_message_reply",
+            args,
+        )
+        .await
+        .expect_err("trust without peer must not authorize reply");
         assert!(error.contains("group_bridge_reply_route_not_found"));
+        daemon_task.abort();
     }
 
     #[test]

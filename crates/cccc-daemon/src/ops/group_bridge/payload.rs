@@ -152,6 +152,52 @@ pub(super) fn validate_remote_payload(payload: &mut Map<String, Value>) -> Resul
     Ok(())
 }
 
+pub(super) fn encode_outbound_attachments(
+    home: &HomeLayout,
+    group_id: &str,
+    payload: &mut Map<String, Value>,
+) -> Result<(), OpError> {
+    let Some(attachments) = payload.get_mut("attachments").and_then(Value::as_array_mut) else {
+        return Ok(());
+    };
+    for attachment in attachments {
+        let item = attachment
+            .as_object_mut()
+            .ok_or_else(|| OpError::new("invalid_attachments", "attachment must be an object"))?;
+        if item
+            .get("content_base64")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            item.remove("path");
+            continue;
+        }
+        let relative = item
+            .get("path")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| OpError::new("invalid_attachments", "attachment path is required"))?;
+        let path = cccc_core::blobs::resolve(home, group_id, relative)
+            .map_err(|error| OpError::new("invalid_attachments", error.to_string()))?;
+        let bytes = std::fs::read(path)
+            .map_err(|error| OpError::new("invalid_attachments", error.to_string()))?;
+        if bytes.len() > 10 * 1024 * 1024 {
+            return Err(OpError::new(
+                "invalid_attachments",
+                "remote attachment exceeds 10 MiB",
+            ));
+        }
+        item.insert("bytes".into(), json!(bytes.len()));
+        item.insert(
+            "content_base64".into(),
+            json!(base64::engine::general_purpose::STANDARD.encode(bytes)),
+        );
+        item.remove("path");
+    }
+    Ok(())
+}
+
 pub(super) fn store_remote_attachments(
     home: &HomeLayout,
     group_id: &str,

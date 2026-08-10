@@ -69,6 +69,7 @@
     "renderFailed": "Could not render this diagram. Showing its source instead.",
     "tooLarge": "This diagram is too large to render safely. Showing its source instead."
   },
+  "table": { "scrollRegion": "Scrollable table" },
   "webModelDelivery": {
     "submitting": "Delivering to ChatGPT",
     "submitted": "Delivered to ChatGPT",

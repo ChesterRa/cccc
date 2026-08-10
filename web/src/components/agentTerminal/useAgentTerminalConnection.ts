@@ -4,18 +4,20 @@ import type { Terminal } from "@xterm/xterm";
 import { fetchTerminalTail, withAuthToken } from "../../services/api";
 import type { TerminalSignal } from "../../stores/useTerminalSignalsStore";
 import { getTerminalSignalFromChunk } from "../../utils/terminalWorkingState";
+import { createTerminalReplayWriteGuard } from "./terminalReplayWriteGuard";
 import {
   buildTerminalWebSocketUrl,
   buildTerminalConnectionKey,
   decodeTerminalJsonFrame,
   encodeTerminalInputFrame,
   encodeTerminalResizeFrame,
+  filterTerminalInputForRuntime,
   isTerminalAttachNonRetryableErrorCode,
   isTerminalAttachStartupRaceErrorCode,
   parseTerminalBinaryFrame,
   shouldSuppressTerminalAttachErrorOutput,
-  shouldSuppressTerminalGeneratedInput,
   shouldRetryTerminalClose,
+  splitTerminalOutputByReplayBoundary,
 } from "../../utils/terminalConnection";
 
 export type AgentTerminalConnectionStatus =
@@ -142,6 +144,7 @@ export function useAgentTerminalConnection(args: {
 
   useEffect(() => {
     if (!activated || !isRunning || isHeadless || !terminalRef.current) return;
+    const replayWriteGuard = createTerminalReplayWriteGuard(terminalRef.current);
 
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
@@ -158,6 +161,7 @@ export function useAgentTerminalConnection(args: {
     // mount. The first attach replays the retained ANSI stream in bounded
     // chunks; reconnects then resume from this cursor.
     let deliveredCursor: number | null = null;
+    let replayEndCursor: number | null = null;
 
     // Seed the delivered-byte cursor from the daemon's attach frame. If the daemon
     // replayed from earlier than we asked (our cursor fell out of the ring buffer),
@@ -272,7 +276,7 @@ export function useAgentTerminalConnection(args: {
           }
         };
 
-        const handleDecoded = (data: string) => {
+        const handleDecoded = (data: string, replaying = false) => {
           if (disposed) return;
           const term = terminalRef.current;
           if (!term) return;
@@ -303,7 +307,7 @@ export function useAgentTerminalConnection(args: {
             });
           }
           try {
-            if (safe) term.write(safe);
+            if (safe) replayWriteGuard.write(safe, replaying);
           } catch (err) {
             console.error("terminal write failed", err);
           }
@@ -311,6 +315,10 @@ export function useAgentTerminalConnection(args: {
 
         const handleAttachResult = (result: Record<string, unknown>) => {
           deliveredCursor = seedCursorFromAttach(result, deliveredCursor);
+          const endCursor = Number(result?.replay_end_cursor);
+          replayEndCursor = Number.isFinite(endCursor)
+            ? Math.max(deliveredCursor ?? 0, endCursor)
+            : null;
           const writable = Boolean(result.terminal_writable);
           setTerminalWritable(writable);
           if (canControlRef.current && !writable) {
@@ -325,22 +333,26 @@ export function useAgentTerminalConnection(args: {
           }, TERMINAL_SHOW_DELAY_MS);
         };
 
+        const handleOutputPayload = (payload: Uint8Array) => {
+          const startCursor = deliveredCursor;
+          if (deliveredCursor !== null) deliveredCursor += payload.byteLength;
+          const chunks = splitTerminalOutputByReplayBoundary(payload, startCursor, replayEndCursor);
+          for (const chunk of chunks) {
+            handleDecoded(new TextDecoder().decode(chunk.data), chunk.replaying);
+          }
+        };
+
         ws.onmessage = (event) => {
           if (disposed) return;
 
           if (event.data instanceof ArrayBuffer) {
             const frame = parseTerminalBinaryFrame(event.data);
             if (!frame) {
-              if (deliveredCursor !== null) deliveredCursor += event.data.byteLength;
-              handleDecoded(new TextDecoder().decode(event.data));
+              handleOutputPayload(new Uint8Array(event.data));
               return;
             }
             if (frame.type === "output") {
-              // Advance the delivered-byte cursor by the raw PTY bytes received
-              // (matches the daemon's offset accounting) so reconnects can resume
-              // from exactly here.
-              if (deliveredCursor !== null) deliveredCursor += frame.payload.byteLength;
-              handleDecoded(new TextDecoder().decode(frame.payload));
+              handleOutputPayload(frame.payload);
               return;
             }
             if (frame.type === "attach") {
@@ -360,8 +372,7 @@ export function useAgentTerminalConnection(args: {
             }
           } else if (event.data instanceof Blob) {
             void event.data.arrayBuffer().then((buf) => {
-              if (deliveredCursor !== null) deliveredCursor += buf.byteLength;
-              handleDecoded(new TextDecoder().decode(buf));
+              handleOutputPayload(new Uint8Array(buf));
             });
           } else if (typeof event.data === "string") {
             try {
@@ -390,9 +401,7 @@ export function useAgentTerminalConnection(args: {
                 onStatusChangeRef.current?.();
               }
             } catch {
-              if (deliveredCursor !== null)
-                deliveredCursor += new TextEncoder().encode(event.data).length;
-              handleDecoded(event.data);
+              handleOutputPayload(new TextEncoder().encode(event.data));
             }
           }
         };
@@ -442,14 +451,17 @@ export function useAgentTerminalConnection(args: {
           disposable = term.onData((data) => {
             if (ws.readyState !== WebSocket.OPEN) return;
             const runtime = runtimeRef.current;
-            if (shouldSuppressTerminalGeneratedInput(data, runtime)) return;
-            if (data.includes("\r") || data.includes("\n") || data.includes("\x03")) {
+            const input = filterTerminalInputForRuntime(data, runtime, {
+              replaying: replayWriteGuard.isReplaying(),
+            });
+            if (!input) return;
+            if (input.includes("\r") || input.includes("\n") || input.includes("\x03")) {
               setTerminalSignalRef.current(groupId, actorId, {
                 kind: "working_output",
                 updatedAt: Date.now(),
               });
             }
-            ws.send(encodeTerminalInputFrame(data));
+            ws.send(encodeTerminalInputFrame(input));
           });
 
           resizeDisposable = term.onResize(({ cols, rows }) => {

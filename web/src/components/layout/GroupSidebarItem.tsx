@@ -3,6 +3,9 @@ import { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { getGroupStatusFromSource } from "../../utils/groupStatus";
 import { MoreIcon } from "../Icons";
+import { IconButton } from "../ui/icon-button";
+import { GroupMenuAction } from "./GroupMenuAction";
+import { GroupStatusIndicator } from "./GroupStatusIndicator";
 
 interface GroupSidebarItemProps {
   group: GroupMeta;
@@ -57,11 +60,9 @@ export function GroupSidebarItem({
         >
           {initial}
         </span>
-        <span
-          className={classNames(
-            "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-[var(--color-bg-primary)]",
-            status.dotClass,
-          )}
+        <GroupStatusIndicator
+          status={status}
+          className="absolute -bottom-0.5 -right-0.5 ring-2 ring-[var(--color-bg-primary)]"
         />
       </button>
     );
@@ -93,9 +94,7 @@ export function GroupSidebarItem({
           onFocus={onWarm}
         >
           <div className="flex items-center gap-2 min-w-0">
-            <span
-              className={classNames("w-2.5 h-2.5 rounded-full flex-shrink-0", status.dotClass)}
-            />
+            <GroupStatusIndicator status={status} />
             <span
               className={classNames(
                 "text-sm font-medium truncate",
@@ -111,10 +110,12 @@ export function GroupSidebarItem({
 
         {onMenuAction && menuActionLabel && (
           <div className="relative shrink-0">
-            <button
+            <IconButton
               type="button"
+              variant="ghost"
+              size="sm"
+              label={menuAriaLabel || menuActionLabel}
               className={classNames(
-                "flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent bg-transparent transition-all duration-150",
                 "text-[var(--color-text-tertiary)] opacity-0 md:group-hover/item:opacity-100 focus-visible:opacity-100",
                 menuOpen &&
                   "opacity-100 bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] shadow-sm",
@@ -122,31 +123,22 @@ export function GroupSidebarItem({
                 !menuOpen &&
                   "hover:bg-[var(--glass-tab-bg-hover)] hover:border-[var(--glass-border-subtle)] hover:text-[var(--color-text-primary)]",
               )}
-              aria-label={menuAriaLabel || menuActionLabel}
-              title={menuAriaLabel || menuActionLabel}
               onClick={(event) => {
                 event.stopPropagation();
                 setMenuOpen((prev) => !prev);
               }}
             >
               <MoreIcon size={16} />
-            </button>
+            </IconButton>
             {menuOpen && (
               <div className="absolute right-0 top-full z-20 mt-2 min-w-[160px] rounded-xl p-1.5 shadow-2xl glass-panel">
-                <button
-                  type="button"
-                  className={classNames(
-                    "w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
-                    "text-[var(--color-text-primary)] hover:bg-[var(--glass-tab-bg-hover)]",
-                  )}
-                  onClick={(event) => {
-                    event.stopPropagation();
+                <GroupMenuAction
+                  label={menuActionLabel}
+                  onClick={() => {
                     setMenuOpen(false);
                     onMenuAction();
                   }}
-                >
-                  {menuActionLabel}
-                </button>
+                />
               </div>
             )}
           </div>

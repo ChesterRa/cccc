@@ -424,15 +424,6 @@ def create_app() -> FastAPI:
             pass
 
     dist_dir = _resolve_web_dist_dir()
-    if dist_dir is not None:
-        @app.get("/ui/capabilities/", include_in_schema=False)
-        @app.get("/ui/capabilities", include_in_schema=False)
-        async def _capability_center_page() -> FileResponse:
-            return FileResponse(str(dist_dir / "index.html"))
-
-        app.router.routes.append(
-            HttpOnlyMount("/ui", app=StaticFiles(directory=str(dist_dir), html=True), name="ui")
-        )
 
     cors = str(os.environ.get("CCCC_WEB_CORS_ORIGINS") or "").strip()
     if cors:
@@ -542,5 +533,17 @@ def create_app() -> FastAPI:
         app.include_router(router)
     for router in create_nomcp_routers(route_ctx):
         app.include_router(router)
+
+    if dist_dir is not None:
+        @app.get("/ui/capabilities/", include_in_schema=False)
+        @app.get("/ui/capabilities", include_in_schema=False)
+        async def _capability_center_page() -> FileResponse:
+            return FileResponse(str(dist_dir / "index.html"))
+
+        # Keep the mount last so explicit UI routes such as the dynamic Web App
+        # Manifest can override files with the same path in an older dist.
+        app.router.routes.append(
+            HttpOnlyMount("/ui", app=StaticFiles(directory=str(dist_dir), html=True), name="ui")
+        )
 
     return app

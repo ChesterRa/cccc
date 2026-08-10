@@ -49,9 +49,11 @@ export const TERMINAL_FRAME_INPUT_ACK = 52; // "4"
 
 const terminalTextEncoder = new TextEncoder();
 const terminalTextDecoder = new TextDecoder();
-const terminalResponseSuppressionRuntimes = new Set(["codex", "devin", "droid"]);
+const terminalResponseFilteringRuntimes = new Set(["codex", "devin", "droid"]);
 const terminalGeneratedInputSequencePattern =
   /^(?:\x1b\[(?:\?|>)(?:\d+)?(?:;\d+)*c|\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)|\x1b\[[IO])+$/;
+const terminalColorReplySequencePattern =
+  /\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)/g;
 const bareTerminalColorReplyPattern =
   /^(?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:(?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4})*$/;
 
@@ -83,19 +85,58 @@ export function encodeTerminalResizeFrame(cols: number, rows: number): Uint8Arra
   );
 }
 
-export function shouldSuppressTerminalGeneratedInput(
+export function splitTerminalOutputByReplayBoundary(
+  data: Uint8Array,
+  startCursor: number | null,
+  replayEndCursor: number | null,
+): Array<{ data: Uint8Array; replaying: boolean }> {
+  if (data.byteLength === 0) return [];
+  if (
+    startCursor === null ||
+    replayEndCursor === null ||
+    !Number.isFinite(startCursor) ||
+    !Number.isFinite(replayEndCursor)
+  ) {
+    return [{ data, replaying: false }];
+  }
+
+  const replayBytes = Math.max(
+    0,
+    Math.min(data.byteLength, Math.floor(replayEndCursor - startCursor)),
+  );
+  if (replayBytes === 0) return [{ data, replaying: false }];
+  if (replayBytes === data.byteLength) return [{ data, replaying: true }];
+  return [
+    { data: data.subarray(0, replayBytes), replaying: true },
+    { data: data.subarray(replayBytes), replaying: false },
+  ];
+}
+
+export function filterTerminalInputForRuntime(
   data: string,
   runtime: string | null | undefined,
-): boolean {
+  options?: { replaying?: boolean },
+): string {
+  const text = String(data || "");
+  if (!text) return text;
   const normalizedRuntime = String(runtime || "")
     .trim()
     .toLowerCase();
-  if (!terminalResponseSuppressionRuntimes.has(normalizedRuntime)) return false;
-  const text = String(data || "");
-  if (!text) return false;
-  return (
-    terminalGeneratedInputSequencePattern.test(text) || bareTerminalColorReplyPattern.test(text)
-  );
+  const generatedInput = terminalGeneratedInputSequencePattern.test(text);
+  const bareColorReply = bareTerminalColorReplyPattern.test(text);
+
+  // Replaying retained output must be side-effect free. Otherwise an old color
+  // query is answered again after reconnect and the late reply can become
+  // literal prompt text in the runtime.
+  if (options?.replaying && (generatedInput || bareColorReply)) return "";
+  if (!terminalResponseFilteringRuntimes.has(normalizedRuntime)) return text;
+  if (bareColorReply) return "";
+  if (!generatedInput) return text;
+
+  // Live OSC 10/11 replies are required for TUI theme negotiation. Keep only
+  // those replies while removing device/focus responses that these runtimes
+  // may echo as literal prompt text.
+  return text.match(terminalColorReplySequencePattern)?.join("") || "";
 }
 
 export function decodeTerminalJsonFrame<T = Record<string, unknown>>(

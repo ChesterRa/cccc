@@ -36,6 +36,7 @@ import { copyTextToClipboard } from "../utils/copy";
 import { getStoppedTerminalOutputText } from "../utils/stoppedTerminalOutput";
 import { fetchTerminalTail } from "../services/api/diagnostics";
 import { useAgentTerminalConnection } from "./agentTerminal/useAgentTerminalConnection";
+import { attachTerminalTouchScroll } from "./agentTerminal/terminalTouchScroll";
 import {
   actorHasRuntimeResumeFailure,
   actorSupportsNewSession,
@@ -427,9 +428,9 @@ export function AgentTab({
     term.loadAddon(fitAddon);
     term.open(termRef.current);
     // Ensure focus works consistently across browsers (and prevents the inactive cursor style).
-    const onPointerDown = () => term.focus();
-    term.element?.addEventListener("mousedown", onPointerDown);
-    term.element?.addEventListener("touchstart", onPointerDown, { passive: true });
+    const onMouseDown = () => term.focus();
+    term.element?.addEventListener("mousedown", onMouseDown);
+    const detachTouchScroll = attachTerminalTouchScroll(term);
 
     const copySelection = async (): Promise<boolean> => {
       try {
@@ -520,9 +521,9 @@ export function AgentTab({
 
     return () => {
       if (fitFrame) cancelAnimationFrame(fitFrame);
+      detachTouchScroll();
       term.element?.removeEventListener("contextmenu", onContextMenu);
-      term.element?.removeEventListener("mousedown", onPointerDown);
-      term.element?.removeEventListener("touchstart", onPointerDown);
+      term.element?.removeEventListener("mousedown", onMouseDown);
       term.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;

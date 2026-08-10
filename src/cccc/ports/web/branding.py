@@ -132,3 +132,42 @@ def build_branding_payload(raw: Dict[str, Any]) -> Dict[str, Any]:
         "has_custom_favicon": bool(favicon_rel_path),
         "updated_at": updated_at,
     }
+
+
+def build_web_app_manifest(raw: Dict[str, Any]) -> Dict[str, Any]:
+    branding = build_branding_payload(raw)
+    if branding["has_custom_logo_icon"]:
+        icons = [
+            {
+                "src": branding["logo_icon_url"],
+                "sizes": "any",
+                "purpose": "any",
+            }
+        ]
+    else:
+        icons = [
+            {
+                "src": "/ui/logo.svg",
+                "sizes": "any",
+                "type": "image/svg+xml",
+                "purpose": "any",
+            },
+            {
+                "src": "/ui/logo.png",
+                "sizes": "512x512",
+                "type": "image/png",
+                "purpose": "any maskable",
+            },
+        ]
+    product_name = str(branding["product_name"])
+    return {
+        "id": "/ui/",
+        "name": product_name,
+        "short_name": product_name,
+        "display": "standalone",
+        "theme_color": "#0f172a",
+        "background_color": "#0f172a",
+        "scope": "/ui/",
+        "start_url": "/ui/",
+        "icons": icons,
+    }

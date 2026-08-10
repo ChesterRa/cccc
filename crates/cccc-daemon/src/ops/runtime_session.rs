@@ -6,10 +6,14 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+mod codex_hook;
 mod grok;
 pub use grok::{prepare as prepare_grok_command, prepare_fresh as prepare_fresh_grok_command};
 
 const DEFAULT_CAPTURE_SECONDS: f64 = 8.0;
+const STATUS_FALLBACK_GRACE: Duration = Duration::from_secs(2);
+const CODEX_HOOK_CAPTURE_SOURCE: &str = "codex_session_start_hook";
+const CODEX_STATUS_CAPTURE_SOURCE: &str = "codex_status_command";
 const NO_RESUME_VALUES: [&str; 4] = ["0", "false", "no", "off"];
 const CODEX_SUBCOMMANDS: [&str; 11] = [
     "app-server",
@@ -217,6 +221,26 @@ fn capture_codex_session(
         if !status.running || status.started_at != expected_started_at {
             return;
         }
+        let hook_pending = match codex_hook::observe(home, group_id, actor_id, status.pid) {
+            codex_hook::Observation::Ready(session_id) => {
+                if cccc_runtime::status(group_id, actor_id).is_ok_and(|current| {
+                    current.running && current.started_at == expected_started_at
+                }) {
+                    let _ = record_codex_session(
+                        home,
+                        group_id,
+                        actor_id,
+                        cwd,
+                        base_command,
+                        &session_id,
+                        CODEX_HOOK_CAPTURE_SOURCE,
+                    );
+                }
+                return;
+            }
+            codex_hook::Observation::Pending => true,
+            codex_hook::Observation::Unavailable => false,
+        };
         let history = cccc_runtime::history(group_id, actor_id, None, 64_000)
             .map(|page| page.data)
             .unwrap_or_default();
@@ -224,8 +248,15 @@ fn capture_codex_session(
             if cccc_runtime::status(group_id, actor_id)
                 .is_ok_and(|current| current.running && current.started_at == expected_started_at)
             {
-                let _ =
-                    record_codex_session(home, group_id, actor_id, cwd, base_command, &session_id);
+                let _ = record_codex_session(
+                    home,
+                    group_id,
+                    actor_id,
+                    cwd,
+                    base_command,
+                    &session_id,
+                    CODEX_STATUS_CAPTURE_SOURCE,
+                );
             }
             return;
         }
@@ -234,9 +265,14 @@ fn capture_codex_session(
         }
         let ready =
             first_output_at.is_some_and(|started| started.elapsed() >= Duration::from_millis(300));
-        if !submitted
-            && (ready || deadline.saturating_duration_since(Instant::now()) <= timeout / 2)
-        {
+        let fallback_grace = STATUS_FALLBACK_GRACE.min(timeout / 2);
+        let fallback_due = deadline.saturating_duration_since(Instant::now())
+            <= if hook_pending {
+                fallback_grace
+            } else {
+                timeout / 2
+            };
+        if !submitted && ((!hook_pending && ready) || fallback_due) {
             submitted = true;
             let payload =
                 if cccc_runtime::bracketed_paste_enabled(group_id, actor_id).unwrap_or(false) {
@@ -257,6 +293,7 @@ fn record_codex_session(
     cwd: &Path,
     base_command: &[String],
     session_id: &str,
+    captured_from: &str,
 ) -> std::io::Result<()> {
     let now = utc_now();
     let document = Map::from_iter([
@@ -278,7 +315,7 @@ fn record_codex_session(
             "resume_command_hint".into(),
             json!(format!("codex resume {session_id}")),
         ),
-        ("captured_from".into(), json!("codex_status_command")),
+        ("captured_from".into(), json!(captured_from)),
         ("status".into(), json!("usable")),
         ("resume_eligible".into(), json!(true)),
         ("last_seen_at".into(), json!(now)),
@@ -536,6 +573,56 @@ mod tests {
         assert_eq!(
             parse_codex_session_id(text).as_deref(),
             Some("019eece8-8c6d-7811-a700-26593825ae2d")
+        );
+    }
+
+    #[test]
+    fn hook_capture_replaces_failed_metadata_with_a_resumable_session() {
+        let (_temp, home, group_id, cwd) = fixture();
+        let base = command();
+        let old_session_id = "019eece8-8c6d-7811-a700-26593825ae2d";
+        record_codex_session(
+            &home,
+            &group_id,
+            "peer1",
+            &cwd,
+            &base,
+            old_session_id,
+            CODEX_STATUS_CAPTURE_SOURCE,
+        )
+        .expect("record old session");
+        mark_resume_failed(
+            &home,
+            &group_id,
+            "peer1",
+            "provider resume process exited early",
+        )
+        .expect("mark old session failed");
+        let current_session_id = "019fea2e-ea50-7b43-9fc7-efd55e70a585";
+
+        record_codex_session(
+            &home,
+            &group_id,
+            "peer1",
+            &cwd,
+            &base,
+            current_session_id,
+            CODEX_HOOK_CAPTURE_SOURCE,
+        )
+        .expect("record current hook session");
+
+        let stored = read(&home, &group_id, "peer1").expect("stored metadata");
+        assert_eq!(stored["provider_session_id"], current_session_id);
+        assert_eq!(stored["captured_from"], CODEX_HOOK_CAPTURE_SOURCE);
+        assert_eq!(stored["status"], "usable");
+        assert_eq!(stored["resume_eligible"], true);
+        assert_eq!(stored["failure_count"], 0);
+        assert_eq!(stored["last_resume_error"], "");
+
+        let prepared = prepare_codex_command(&home, &group_id, "peer1", &cwd, &base);
+        assert_eq!(
+            prepared.resumed_session_id.as_deref(),
+            Some(current_session_id)
         );
     }
 

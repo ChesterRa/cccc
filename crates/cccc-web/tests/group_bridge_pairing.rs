@@ -59,6 +59,45 @@ async fn connection_info_keeps_submitted_public_origin_in_final_payload() {
 }
 
 #[tokio::test]
+async fn remote_pairing_connect_failure_is_persisted_with_actionable_category() {
+    let unavailable = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+    let endpoint = format!("http://{}", unavailable.local_addr().expect("address"));
+    drop(unavailable);
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("store")
+        .create("joiner", "")
+        .expect("group");
+    let app = cccc_web::app(home);
+
+    let created = call(
+        &app,
+        "/api/group-bridge/pairing/remote-requests",
+        json!({
+            "local_group_id":group.group_id,
+            "local_group_title":"Joiner",
+            "payload":{
+                "issuer_endpoint":endpoint,
+                "issuer_group_id":"g_issuer",
+                "issuer_group_title":"Issuer",
+                "issuer_peer_id":"12D3KooIssuer",
+                "pairing_code":"ABCD-1234",
+                "invite_id":"pinv_remote"
+            }
+        }),
+    )
+    .await;
+
+    let outbound = &created["result"]["outbound"];
+    assert_eq!(outbound["status"], "failed");
+    let error = outbound["last_error"].as_str().expect("last error");
+    assert!(error.contains("remote pairing request failed (connect)"));
+    assert!(!error.contains("error sending request for url"));
+}
+
+#[tokio::test]
 async fn python_shaped_remote_pairing_response_becomes_active_without_claim_route() {
     let issuer = Router::new()
         .route(

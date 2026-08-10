@@ -31,6 +31,7 @@ from ....util.conv import coerce_bool
 from ....util.time import parse_utc_iso, utc_now_iso
 from ..branding import (
     build_branding_payload,
+    build_web_app_manifest,
     delete_branding_asset,
     normalize_branding_asset_kind,
     resolve_branding_asset_path,
@@ -144,6 +145,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             "<h3>cccc web</h3>"
             "<p>This is a minimal control-plane port. UI will live under <code>/ui</code> later.</p>"
             "<p>Try <code>/api/v1/ping</code> and <code>/api/v1/groups</code>.</p>"
+        )
+
+    @global_router.get("/ui/manifest.webmanifest", include_in_schema=False)
+    async def web_app_manifest() -> JSONResponse:
+        return JSONResponse(
+            content=build_web_app_manifest(get_web_branding_settings()),
+            headers={"Cache-Control": "no-cache"},
+            media_type="application/manifest+json",
         )
 
     @global_router.get("/favicon.ico")

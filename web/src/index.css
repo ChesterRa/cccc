@@ -171,7 +171,10 @@
 :root {
   /* Light theme (default for prefers-color-scheme: light) */
   --color-body-bg: #ffffff; /* Clean white canvas background like Codex */
-  --color-sidebar-bg: #fbfbfb; /* Soft neutral gray for the light sidebar */
+  --color-sidebar-bg: #f5f5f4; /* Codex-like warm neutral sidebar */
+  --color-sidebar-border: rgba(28, 29, 33, 0.08);
+  --color-sidebar-item-hover: rgba(28, 29, 33, 0.04);
+  --color-sidebar-item-active: rgba(28, 29, 33, 0.065);
   --color-chat-bg: rgba(255, 255, 255, 0.96); /* Soft glass paper tone for the main chat panel */
 
   --color-bg-primary: #ffffff;
@@ -298,6 +301,9 @@
 :root.dark {
   --color-body-bg: #090a0f; /* Soft indigo-tinted charcoal dark */
   --color-sidebar-bg: #10121a; /* Neutral dark with more air */
+  --color-sidebar-border: rgba(255, 255, 255, 0.08);
+  --color-sidebar-item-hover: rgba(255, 255, 255, 0.06);
+  --color-sidebar-item-active: rgba(255, 255, 255, 0.09);
   --color-chat-bg: rgba(22, 25, 36, 0.75); /* Slightly lighter */
 
   --color-bg-primary: #090a0f; /* Soft indigo-tinted charcoal dark */
@@ -428,6 +434,9 @@
   :root:not(.light):not(.dark) {
     --color-body-bg: #0f172a;
     --color-sidebar-bg: #1e293b;
+    --color-sidebar-border: rgba(255, 255, 255, 0.08);
+    --color-sidebar-item-hover: rgba(255, 255, 255, 0.06);
+    --color-sidebar-item-active: rgba(255, 255, 255, 0.09);
     --color-chat-bg: #1e293b;
 
     --color-bg-primary: #0f172a;
@@ -482,6 +491,7 @@
 
 html {
   height: 100%;
+  overflow: hidden;
 }
 
 body {
@@ -490,6 +500,7 @@ body {
   height: 100vh; /* Fallback for older browsers */
   height: 100dvh; /* Modern browsers: dynamic viewport height (excludes browser UI) */
   margin: 0;
+  overflow: hidden;
   overscroll-behavior: contain;
   /* Top safe area for notch/status bar, bottom handled by components */
   padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) 0 env(safe-area-inset-left, 0);
@@ -513,6 +524,7 @@ body {
 
 #root {
   height: 100%;
+  overflow: hidden;
 }
 
 /* Native select dropdowns are rendered by the OS and are only lightly stylable.
@@ -1252,7 +1264,7 @@ select {
   background: var(--color-sidebar-bg);
   backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
   -webkit-backdrop-filter: blur(var(--glass-blur-lg)) saturate(200%);
-  box-shadow: var(--glass-shadow), var(--glass-inner-glow);
+  box-shadow: none;
   position: relative;
 }
 
@@ -1263,7 +1275,7 @@ select {
   right: 0;
   bottom: 0;
   width: 1px;
-  background: var(--gradient-subtle);
+  background: var(--color-sidebar-border);
 }
 
 .dark .glass-sidebar {
@@ -1348,31 +1360,20 @@ select {
 
 @media (hover: hover) {
   .glass-group-item:hover {
-    background: var(--glass-bg-hover);
-    border-color: var(--glass-border-subtle);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    background: var(--color-sidebar-item-hover);
+    border-color: transparent;
+    box-shadow: none;
   }
 }
 
 .glass-group-item-active {
-  background: var(--color-chat-bg);
-  border-color: rgba(15, 23, 42, 0.06);
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.02),
-    0 4px 12px rgba(15, 23, 42, 0.03),
-    inset 0 1px 0 rgba(255, 255, 255, 1);
+  background: var(--color-sidebar-item-active);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .glass-group-item-active::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 50%;
-  background: var(--gradient-shine);
-  pointer-events: none;
-  border-radius: 12px 12px 0 0;
+  content: none;
 }
 
 .dark .glass-group-item:hover {

@@ -8,6 +8,7 @@ pub(super) fn normalize_chat_data(
     group: &GroupDoc,
     by: &str,
     data: &mut Map<String, Value>,
+    allow_sender_only_audience: bool,
 ) -> Result<(), OpError> {
     let text = data
         .get("text")
@@ -40,7 +41,9 @@ pub(super) fn normalize_chat_data(
     if recipients.is_empty() && raw.is_empty() {
         recipients.push(default_local_recipient(group, by).into());
     }
-    reject_sender_only_audience(group, by, &recipients)?;
+    if !allow_sender_only_audience {
+        reject_sender_only_audience(group, by, &recipients)?;
+    }
     data.insert("to".into(), json!(recipients));
     normalize_peer_insight(group, by, data)?;
     data.entry("format")

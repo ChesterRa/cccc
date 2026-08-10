@@ -108,7 +108,7 @@
     "saved": "Branding saved.",
     "saveFailed": "Failed to save branding.",
     "logoTitle": "Logo Icon",
-    "logoHint": "Shown in the sidebar header and sign-in screen. SVG or PNG is recommended.",
+    "logoHint": "Shown in the sidebar header, sign-in screen, and installed app icon. Use a square SVG or a PNG of at least 192×192.",
     "uploadLogo": "Upload logo",
     "logoSaved": "Logo updated.",
     "logoReset": "Logo reset to default.",

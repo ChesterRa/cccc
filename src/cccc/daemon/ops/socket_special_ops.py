@@ -23,6 +23,7 @@ from ..actors.web_model_browser_session import (
     can_attach_web_model_chatgpt_browser_socket,
     can_attach_web_model_chatgpt_browser_vnc_socket,
 )
+from .terminal_attach_ops import handle_terminal_attach
 
 
 def _set_blocking_io(conn: Any) -> None:
@@ -47,99 +48,27 @@ def try_handle_socket_special_op(
     effective_runner_kind: Callable[[str], str],
     supported_stream_kinds: Callable[[], Set[str]],
     start_events_stream: Callable[[Any, str, str, Optional[Set[str]], str, str], bool],
+    backlog_end_offset: Optional[Callable[[str, str], int]] = None,
 ) -> bool:
     op = str(getattr(req, "op", "") or "").strip()
     args = getattr(req, "args", None) or {}
 
     if op == "term_attach":
-        group_id = str(args.get("group_id") or "").strip()
-        actor_id = str(args.get("actor_id") or "").strip()
-        since_raw = args.get("since")
-        mode = str(args.get("mode") or "control").strip().lower()
-        if mode not in {"control", "viewer"}:
-            mode = "control"
-        takeover = bool(args.get("takeover")) if mode == "control" else False
-        since: Optional[int] = None
-        if since_raw is not None and str(since_raw).strip() != "":
-            try:
-                since = int(since_raw)
-            except Exception:
-                since = None
-        if not group_id:
-            resp = error("missing_group_id", "missing group_id")
-        elif not actor_id:
-            resp = error("missing_actor_id", "missing actor_id")
-        else:
-            group = load_group(group_id)
-            if group is None:
-                resp = error("group_not_found", f"group not found: {group_id}")
-            else:
-                actor = find_actor(group, actor_id)
-                if not isinstance(actor, dict):
-                    resp = error("actor_not_found", f"actor not found: {actor_id}")
-                else:
-                    runner_kind = str(actor.get("runner") or "pty").strip() or "pty"
-                    runner_effective = effective_runner_kind(runner_kind)
-                    if runner_effective != "pty":
-                        resp = error(
-                            "not_pty_actor",
-                            "terminal attach is only available for PTY actors",
-                            details={
-                                "runner": runner_kind,
-                                "runner_effective": runner_effective,
-                            },
-                        )
-                    elif not actor_running(group_id, actor_id):
-                        resp = error("actor_not_running", "actor is not running")
-                    else:
-                        resp = DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id})
-        try:
-            if resp.ok:
-                base_result = resp.result if isinstance(resp.result, dict) else {}
-                # Absolute offset of the first byte the client is about to receive.
-                # The client seeds its delivered-byte cursor from this and resumes
-                # from the exact gap on reconnect (no replay, no data loss).
-                #
-                # Safety invariant: the ring start offset is monotonic non-decreasing
-                # (it only advances as old bytes are evicted). This value is read
-                # slightly before _attach_client_now() takes its own backlog snapshot,
-                # so the snapshot's actual start is >= this value. The reported cursor
-                # is therefore always a LOWER BOUND on the true replay start: a stale
-                # cursor can only make the daemon re-send a few already-seen bytes
-                # (harmless duplicate), never skip unseen output (which would be data
-                # loss). The two can differ only if the ring evicts within the sub-ms
-                # attach-handoff window (a >2MB burst), and that case self-heals on the
-                # next runtime repaint.
-                try:
-                    start_offset = int(backlog_start_offset(group_id, actor_id))
-                except Exception:
-                    start_offset = 0
-                replay_cursor = max(int(since) if since is not None else 0, start_offset)
-                resp = DaemonResponse(
-                    ok=True,
-                    result={
-                        **base_result,
-                        "terminal_mode": mode,
-                        "terminal_writable": mode == "control",
-                        "writer_replaced": bool(takeover),
-                        "replay_cursor": replay_cursor,
-                    },
-                )
-            send_json(conn, dump_response(resp))
-            if resp.ok:
-                _set_blocking_io(conn)
-                try:
-                    attach_actor_socket(group_id, actor_id, conn, since, mode, takeover)
-                except TypeError:
-                    attach_actor_socket(group_id, actor_id, conn, since)
-                return True
-        except Exception:
-            pass
-        try:
-            conn.close()
-        except Exception:
-            pass
-        return True
+        return handle_terminal_attach(
+            req,
+            conn,
+            send_json=send_json,
+            dump_response=dump_response,
+            error=error,
+            actor_running=actor_running,
+            attach_actor_socket=attach_actor_socket,
+            backlog_start_offset=backlog_start_offset,
+            backlog_end_offset=backlog_end_offset,
+            load_group=load_group,
+            find_actor=find_actor,
+            effective_runner_kind=effective_runner_kind,
+            set_blocking_io=_set_blocking_io,
+        )
 
     if op == "events_stream":
         group_id = str(args.get("group_id") or "").strip()

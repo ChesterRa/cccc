@@ -5,6 +5,7 @@ import {
   DEFAULT_DOCUMENT_TITLE,
   DEFAULT_WEB_BRANDING,
   resolveDocumentTitle,
+  resolveWebAppManifestUrl,
 } from "../../src/utils/branding";
 
 type FakeLink = { rel: string; href: string };
@@ -48,6 +49,7 @@ describe("branding utils", () => {
       ...DEFAULT_WEB_BRANDING,
       product_name: "Acme Console",
       favicon_url: "/api/v1/branding/assets/favicon?v=test",
+      updated_at: "2026-08-10T12:00:00Z",
     });
 
     expect(branding.product_name).toBe("Acme Console");
@@ -58,5 +60,12 @@ describe("branding utils", () => {
     expect(
       (document.querySelector('link[rel="apple-touch-icon"]') as HTMLLinkElement | null)?.href,
     ).toContain("/api/v1/branding/assets/favicon?v=test");
+    expect(
+      (document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null)?.href,
+    ).toContain("/ui/manifest.webmanifest?v=2026-08-10T12%3A00%3A00Z");
+  });
+
+  it("keeps a stable manifest URL until branding has a version", () => {
+    expect(resolveWebAppManifestUrl(null)).toBe("/ui/manifest.webmanifest");
   });
 });
