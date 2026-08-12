@@ -1,5 +1,45 @@
 use crate::capabilities::Capability;
 
+pub const WEB_MODEL_CORE_TOOL_NAMES: &[&str] = &[
+    "cccc_help",
+    "cccc_bootstrap",
+    "cccc_capability_search",
+    "cccc_capability_use",
+    "cccc_inbox_list",
+    "cccc_inbox_mark_read",
+    "cccc_message_send",
+    "cccc_message_reply",
+    "cccc_file",
+    "cccc_context_get",
+    "cccc_coordination",
+    "cccc_task",
+    "cccc_agent_state",
+    "cccc_project_info",
+    "cccc_capability_state",
+    "cccc_capability_enable",
+    "cccc_capability_install",
+    "cccc_tracked_send",
+    "cccc_repo",
+    "cccc_presentation",
+    "cccc_memory",
+    "cccc_runtime_wait_next_turn",
+    "cccc_runtime_complete_turn",
+    "cccc_code_exec",
+    "cccc_code_wait",
+    "cccc_repo_edit",
+    "cccc_apply_patch",
+    "cccc_shell",
+    "cccc_exec_command",
+    "cccc_write_stdin",
+    "cccc_git",
+];
+
+pub fn is_builtin_capability_pack_tool(name: &str) -> bool {
+    all()
+        .iter()
+        .any(|capability| capability.tool_names.iter().any(|tool| tool == name))
+}
+
 pub fn all() -> Vec<Capability> {
     vec![
         pack(

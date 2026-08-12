@@ -160,6 +160,665 @@ fn chatgpt_web_model_actor_is_singleton_across_groups() {
 }
 
 #[test]
+fn actor_remove_ledger_failure_restores_authority_before_runtime_cleanup() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"remove rollback"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"web1",
+            "runtime":"web_model",
+            "env_private":{"TOKEN":"restore-me"},
+            "by":"user"
+        }),
+    );
+    let connector = json!({
+        "connector_id":"wmc_remove_rollback",
+        "group_id":group_id,
+        "actor_id":"web1",
+        "provider":"chatgpt",
+        "secret":"wmcs_remove_rollback",
+        "created_at":"2026-08-12T00:00:00Z",
+        "updated_at":"2026-08-12T00:00:00Z",
+        "revoked":false
+    });
+    cccc_core::web_model_connectors::replace_active(&home, &connector).expect("connector");
+
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let headless_state = store
+        .state_dir(group_id)
+        .expect("state dir")
+        .join("runners/headless/web1.json");
+    std::fs::create_dir_all(headless_state.parent().expect("headless parent"))
+        .expect("headless directory");
+    std::fs::write(&headless_state, b"{\"status\":\"working\"}\n").expect("headless fixture");
+
+    let ledger = store.ledger_path(group_id).expect("ledger path");
+    std::fs::remove_file(&ledger).expect("remove ledger");
+    std::fs::create_dir(&ledger).expect("replace ledger with directory");
+    let failed = raw_call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"web1","by":"user"}),
+    );
+
+    assert!(!failed.ok, "corrupt ledger unexpectedly accepted removal");
+    assert!(
+        store
+            .load(group_id)
+            .expect("restored group")
+            .actors
+            .iter()
+            .any(|actor| actor.id == "web1")
+    );
+    assert!(
+        headless_state.is_file(),
+        "runtime state was cleaned before commit"
+    );
+    let connectors = cccc_core::web_model_connectors::load(&home).expect("connectors");
+    assert_eq!(
+        connectors
+            .iter()
+            .find(|entry| entry["connector_id"] == "wmc_remove_rollback")
+            .expect("restored connector")["revoked"],
+        json!(false)
+    );
+    let secret_keys = call(
+        &home,
+        "actor_env_private_keys",
+        json!({"group_id":group_id,"actor_id":"web1","by":"user"}),
+    );
+    assert_eq!(secret_keys.result["keys"], json!(["TOKEN"]));
+}
+
+#[test]
+fn actor_stop_ledger_failure_restores_enabled_state() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"stop rollback"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"web1",
+            "runtime":"web_model",
+            "runner":"headless",
+            "by":"user"
+        }),
+    );
+
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    let before = store.load(group_id).expect("group before stop");
+    assert!(before.actors[0].enabled);
+    let ledger = store.ledger_path(group_id).expect("ledger path");
+    std::fs::remove_file(&ledger).expect("remove ledger");
+    std::fs::create_dir(&ledger).expect("replace ledger with directory");
+
+    let failed = raw_call(
+        &home,
+        "actor_stop",
+        json!({"group_id":group_id,"actor_id":"web1","by":"user"}),
+    );
+
+    assert!(!failed.ok, "corrupt ledger unexpectedly accepted stop");
+    let restored = store.load(group_id).expect("restored group");
+    assert!(restored.actors[0].enabled);
+    assert_eq!(restored.running, before.running);
+    assert_eq!(restored.state, before.state);
+}
+
+#[test]
+fn actor_add_validates_private_env_before_persisting_actor() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"private env validation"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+
+    let invalid_key = raw_call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"invalid-key",
+            "runtime":"codex",
+            "runner":"headless",
+            "env_private":{"BAD-KEY":"secret"},
+            "by":"user"
+        }),
+    );
+    assert_eq!(
+        invalid_key.error.expect("invalid key rejected").code,
+        "invalid_args"
+    );
+
+    let too_large = raw_call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"large-secret",
+            "runtime":"codex",
+            "runner":"headless",
+            "env_private":{"TOKEN":"x".repeat(200_001)},
+            "by":"user"
+        }),
+    );
+    assert_eq!(
+        too_large.error.expect("oversized value rejected").code,
+        "invalid_args"
+    );
+
+    let group = cccc_core::GroupStore::new(home).expect("store");
+    assert!(
+        group
+            .load(group_id)
+            .expect("group")
+            .actors
+            .iter()
+            .all(|actor| actor.id != "invalid-key" && actor.id != "large-secret")
+    );
+}
+
+#[test]
+fn actor_add_rejects_private_env_from_foreman() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"private env authority"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"lead",
+            "runtime":"codex",
+            "runner":"headless",
+            "by":"user"
+        }),
+    );
+
+    let denied = raw_call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "runtime":"codex",
+            "runner":"headless",
+            "env_private":{"TOKEN":"secret"},
+            "by":"lead"
+        }),
+    );
+
+    assert!(!denied.ok, "foreman unexpectedly persisted private env");
+    assert_eq!(
+        denied.error.expect("permission error").code,
+        "permission_denied"
+    );
+    let group = cccc_core::GroupStore::new(home)
+        .expect("store")
+        .load(group_id)
+        .expect("group");
+    assert!(group.actors.iter().all(|actor| actor.id != "peer1"));
+}
+
+#[test]
+fn web_model_actor_generation_retires_the_previous_browser_target() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"target retirement"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","by":"user"}),
+    );
+    let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+    assert_eq!(
+        store
+            .load(group_id)
+            .expect("new actor group")
+            .extra
+            .get("web_model_browser_targets"),
+        Some(&json!({}))
+    );
+    store
+        .mutate(group_id, |group| {
+            group.extra.insert(
+                "web_model_browser_targets".into(),
+                json!({"web1":{
+                    "state":"bound_existing_chat",
+                    "kind":"existing_chat",
+                    "url":"https://chatgpt.com/c/old-generation",
+                    "bootstrap_seed_digest":"old-seed",
+                    "last_delivery_id":"old-delivery"
+                }}),
+            );
+            group.extra.insert(
+                "web_model_delivery_preferences".into(),
+                json!({"web1":{
+                    "mode":"image_compat",
+                    "updated_at":"2026-08-11T00:00:00Z",
+                    "updated_by":"user"
+                }}),
+            );
+            group.extra.insert(
+                "runtime_states".into(),
+                json!({"web1":{
+                    "status":"working",
+                    "task_id":"old-rust-task"
+                }}),
+            );
+            Ok(())
+        })
+        .expect("target fixture");
+    let python_headless_state = home
+        .groups_dir()
+        .join(group_id)
+        .join("state/runners/headless/web1.json");
+    std::fs::create_dir_all(
+        python_headless_state
+            .parent()
+            .expect("headless state parent"),
+    )
+    .expect("headless state parent");
+    std::fs::write(
+        &python_headless_state,
+        serde_json::to_vec_pretty(&json!({
+            "v":1,
+            "kind":"headless",
+            "group_id":group_id,
+            "actor_id":"web1",
+            "status":"working",
+            "task_id":"old-python-task"
+        }))
+        .expect("headless state fixture"),
+    )
+    .expect("headless state fixture");
+    let current_connector = json!({
+        "connector_id":"wmc_current_generation",
+        "group_id":group_id,
+        "actor_id":"web1",
+        "provider":"chatgpt",
+        "secret":"wmcs_current_generation",
+        "created_at":"2026-08-11T00:00:00Z",
+        "updated_at":"2026-08-11T00:00:00Z",
+        "revoked":false
+    });
+    cccc_core::web_model_connectors::replace_active(&home, &current_connector)
+        .expect("current connector");
+
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"web1","by":"user"}),
+    );
+    let removed = store.load(group_id).expect("removed group");
+    assert!(
+        removed
+            .extra
+            .get("web_model_browser_targets")
+            .and_then(Value::as_object)
+            .is_none_or(|targets| !targets.contains_key("web1"))
+    );
+    assert!(
+        removed
+            .extra
+            .get("web_model_delivery_preferences")
+            .and_then(Value::as_object)
+            .is_none_or(|preferences| !preferences.contains_key("web1"))
+    );
+    assert!(
+        removed
+            .extra
+            .get("runtime_states")
+            .and_then(Value::as_object)
+            .is_none_or(|states| !states.contains_key("web1"))
+    );
+    assert!(!python_headless_state.exists());
+    let removed_connectors =
+        cccc_core::web_model_connectors::load(&home).expect("removed connectors");
+    assert!(
+        removed_connectors
+            .iter()
+            .find(|entry| entry["connector_id"] == "wmc_current_generation")
+            .expect("current connector")["revoked"]
+            .as_bool()
+            .unwrap_or(false)
+    );
+
+    // A pre-fix home can still contain an orphan target. Recreating that actor
+    // generation must consume it instead of inheriting the historical chat.
+    store
+        .mutate(group_id, |group| {
+            group.extra.insert(
+                "web_model_browser_targets".into(),
+                json!({"web1":{
+                    "state":"bound_existing_chat",
+                    "kind":"existing_chat",
+                    "url":"https://chatgpt.com/c/stale-pre-fix"
+                }}),
+            );
+            group.extra.insert(
+                "web_model_delivery_preferences".into(),
+                json!({"web1":{"mode":"image_compat","updated_by":"user"}}),
+            );
+            group.extra.insert(
+                "runtime_states".into(),
+                json!({"web1":{"status":"working","task_id":"stale-pre-fix"}}),
+            );
+            Ok(())
+        })
+        .expect("stale target fixture");
+    std::fs::write(
+        &python_headless_state,
+        serde_json::to_vec_pretty(&json!({
+            "v":1,
+            "kind":"headless",
+            "group_id":group_id,
+            "actor_id":"web1",
+            "status":"working",
+            "task_id":"stale-pre-fix"
+        }))
+        .expect("stale headless state fixture"),
+    )
+    .expect("stale headless state fixture");
+    let stale_connector = json!({
+        "connector_id":"wmc_stale_pre_fix",
+        "group_id":group_id,
+        "actor_id":"web1",
+        "provider":"chatgpt",
+        "secret":"wmcs_stale_pre_fix",
+        "created_at":"2026-08-11T01:00:00Z",
+        "updated_at":"2026-08-11T01:00:00Z",
+        "revoked":false
+    });
+    cccc_core::web_model_connectors::replace_active(&home, &stale_connector)
+        .expect("stale connector fixture");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","by":"user"}),
+    );
+    let recreated = store.load(group_id).expect("recreated group");
+    assert!(
+        recreated
+            .extra
+            .get("web_model_browser_targets")
+            .and_then(Value::as_object)
+            .is_none_or(|targets| !targets.contains_key("web1"))
+    );
+    assert!(
+        recreated
+            .extra
+            .get("web_model_delivery_preferences")
+            .and_then(Value::as_object)
+            .is_none_or(|preferences| !preferences.contains_key("web1"))
+    );
+    assert!(
+        recreated
+            .extra
+            .get("runtime_states")
+            .and_then(Value::as_object)
+            .is_none_or(|states| !states.contains_key("web1"))
+    );
+    assert!(!python_headless_state.exists());
+    let recreated_connectors =
+        cccc_core::web_model_connectors::load(&home).expect("recreated connectors");
+    assert!(
+        recreated_connectors
+            .iter()
+            .find(|entry| entry["connector_id"] == "wmc_stale_pre_fix")
+            .expect("stale connector")["revoked"]
+            .as_bool()
+            .unwrap_or(false)
+    );
+}
+
+#[test]
+fn actor_removal_retires_connectors_after_the_runtime_changes() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"connector retirement"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"former-web",
+            "runtime":"custom",
+            "runner":"pty",
+            "command":["sh"],
+            "enabled":false,
+            "by":"user"
+        }),
+    );
+    let connector = json!({
+        "connector_id":"wmc_former_web",
+        "group_id":group_id,
+        "actor_id":"former-web",
+        "provider":"chatgpt",
+        "secret":"wmcs_former_web",
+        "created_at":"2026-08-12T00:00:00Z",
+        "updated_at":"2026-08-12T00:00:00Z",
+        "revoked":false
+    });
+    cccc_core::web_model_connectors::replace_active(&home, &connector)
+        .expect("historical connector");
+
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"former-web","by":"user"}),
+    );
+
+    let connectors = cccc_core::web_model_connectors::load(&home).expect("connectors");
+    assert_eq!(
+        connectors
+            .iter()
+            .find(|entry| entry["connector_id"] == "wmc_former_web")
+            .expect("retired connector")["revoked"],
+        json!(true)
+    );
+}
+
+#[test]
+fn actor_private_env_requires_user_and_an_existing_custom_actor() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"actor secrets"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "runtime":"custom",
+            "env_private":{"TOKEN":"owner-secret"},
+            "by":"user"
+        }),
+    );
+
+    for response in [
+        raw_call(
+            &home,
+            "actor_env_private_keys",
+            json!({"group_id":group_id,"actor_id":"peer1","by":"peer1"}),
+        ),
+        raw_call(
+            &home,
+            "actor_env_private_update",
+            json!({
+                "group_id":group_id,
+                "actor_id":"peer1",
+                "by":"peer1",
+                "set":{"PWNED":"peer-write"}
+            }),
+        ),
+    ] {
+        assert_eq!(
+            response.error.expect("peer denial").code,
+            "permission_denied"
+        );
+    }
+
+    for response in [
+        raw_call(
+            &home,
+            "actor_env_private_keys",
+            json!({"group_id":group_id,"actor_id":"future","by":"user"}),
+        ),
+        raw_call(
+            &home,
+            "actor_env_private_update",
+            json!({
+                "group_id":group_id,
+                "actor_id":"future",
+                "by":"user",
+                "set":{"INJECTED":"before-actor-exists"}
+            }),
+        ),
+    ] {
+        assert_eq!(
+            response.error.expect("missing actor").code,
+            "actor_not_found"
+        );
+    }
+    let user_keys = call(
+        &home,
+        "actor_env_private_keys",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    assert_eq!(user_keys.result["group_id"], group_id);
+    assert_eq!(user_keys.result["keys"], json!(["TOKEN"]));
+
+    call(
+        &home,
+        "actor_profile_upsert",
+        json!({"profile_id":"linked-profile","name":"Linked","runtime":"codex"}),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"linked",
+            "profile_id":"linked-profile",
+            "by":"user"
+        }),
+    );
+    for response in [
+        raw_call(
+            &home,
+            "actor_env_private_keys",
+            json!({"group_id":group_id,"actor_id":"linked","by":"user"}),
+        ),
+        raw_call(
+            &home,
+            "actor_env_private_update",
+            json!({
+                "group_id":group_id,
+                "actor_id":"linked",
+                "by":"user",
+                "set":{"TOKEN":"denied"}
+            }),
+        ),
+    ] {
+        assert_eq!(
+            response.error.expect("linked actor denial").code,
+            "actor_profile_linked_readonly"
+        );
+    }
+
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"future","runtime":"custom","by":"user"}),
+    );
+    let future = call(
+        &home,
+        "actor_env_private_keys",
+        json!({"group_id":group_id,"actor_id":"future","by":"user"}),
+    );
+    assert_eq!(future.result["keys"], json!([]));
+
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"reused",
+            "runtime":"custom",
+            "env_private":{"OLD_TOKEN":"old-generation"},
+            "by":"user"
+        }),
+    );
+    let secret_dir = home.root().join("state/secrets/actors").join(group_id);
+    let residual_path = std::fs::read_dir(&secret_dir)
+        .expect("secret directory")
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+                && std::fs::read_to_string(path).is_ok_and(|text| text.contains("OLD_TOKEN"))
+        })
+        .expect("reused actor secret");
+    call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"reused","by":"user"}),
+    );
+    std::fs::write(&residual_path, b"{\"OLD_TOKEN\":\"old-generation\"}\n")
+        .expect("residual secret fixture");
+    call(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"reused","runtime":"custom","by":"user"}),
+    );
+    let reused = call(
+        &home,
+        "actor_env_private_keys",
+        json!({"group_id":group_id,"actor_id":"reused","by":"user"}),
+    );
+    assert_eq!(reused.result["keys"], json!([]));
+}
+
+#[test]
 fn actor_scope_paths_are_persisted_as_attached_scope_keys() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
@@ -518,16 +1177,13 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
         "actor_profile_upsert",
         json!({"profile_id":"legacy","name":"Legacy","env":{"LEGACY_TOKEN":"secret"}}),
     );
-    assert_eq!(
-        legacy.result["profile"]["env"],
-        json!({"LEGACY_TOKEN":"secret"})
-    );
+    assert_eq!(legacy.result["profile"]["env"], json!({}));
     let legacy_keys = call(
         &home,
         "actor_profile_secret_keys",
         json!({"profile_id":"legacy"}),
     );
-    assert_eq!(legacy_keys.result["keys"], json!([]));
+    assert_eq!(legacy_keys.result["keys"], json!(["LEGACY_TOKEN"]));
     let linked = call(
         &home,
         "actor_add",
@@ -700,6 +1356,185 @@ fn prompt_im_space_and_voice_operations_share_rust_state() {
                 .iter()
                 .all(|path| path.as_str().is_some_and(|path| path.ends_with(".md"))))
     );
+}
+
+#[test]
+fn rust_group_space_sync_status_reads_python_canonical_manifests() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let project = temp.path().join("project");
+    let space = project.join("space");
+    std::fs::create_dir_all(&space).expect("space root");
+    let created = call(&home, "group_create", json!({"title":"space sync status"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":project,"by":"user"}),
+    );
+    call(
+        &home,
+        "group_space_bind",
+        json!({
+            "group_id":group_id,"provider":"notebooklm","lane":"work",
+            "remote_space_id":"nb-work","by":"user"
+        }),
+    );
+    std::fs::write(
+        space.join(".space-sync-state.json"),
+        serde_json::to_vec_pretty(&json!({
+            "v":1,"group_id":group_id,"provider":"notebooklm",
+            "remote_space_id":"nb-work","last_run_at":"2026-08-11T00:00:00Z",
+            "state":"ok","converged":true,"unsynced_count":0,"uploaded":1
+        }))
+        .expect("work sync state"),
+    )
+    .expect("write work sync state");
+
+    let work = call(
+        &home,
+        "group_space_sync",
+        json!({
+            "group_id":group_id,"provider":"notebooklm","lane":"work","action":"status"
+        }),
+    );
+    assert_eq!(work.result["sync"]["available"], true);
+    assert_eq!(work.result["sync"]["remote_space_id"], "nb-work");
+    assert_eq!(work.result["sync"]["converged"], true);
+
+    call(
+        &home,
+        "group_space_bind",
+        json!({
+            "group_id":group_id,"provider":"notebooklm","lane":"memory",
+            "remote_space_id":"nb-memory","by":"user"
+        }),
+    );
+    let memory_root = cccc_core::GroupStore::new(home.clone())
+        .expect("store")
+        .state_dir(group_id)
+        .expect("state dir")
+        .join("memory");
+    std::fs::create_dir_all(&memory_root).expect("memory root");
+    std::fs::write(
+        memory_root.join("notebooklm_sync.json"),
+        serde_json::to_vec_pretty(&json!({
+            "v":1,"provider":"notebooklm","lane":"memory","group_id":group_id,
+            "group_label":"space-sync-status","remote_space_id":"nb-memory",
+            "last_scan_at":"2026-08-11T00:00:00Z","last_success_at":"2026-08-11T00:01:00Z",
+            "files":{"2026-08-10":{
+                "date":"2026-08-10","content_hash":"abc","entry_count":1,
+                "source_ids":["src-1"],"state":"succeeded"
+            }}
+        }))
+        .expect("memory sync state"),
+    )
+    .expect("write memory sync state");
+
+    let memory = call(
+        &home,
+        "group_space_sync",
+        json!({
+            "group_id":group_id,"provider":"notebooklm","lane":"memory","action":"status"
+        }),
+    );
+    assert_eq!(memory.result["sync"]["remote_space_id"], "nb-memory");
+    assert_eq!(
+        memory.result["sync"]["files"]["2026-08-10"]["state"],
+        "succeeded"
+    );
+    assert_eq!(memory.result["summary"]["eligible_daily_files"], 1);
+    assert_eq!(memory.result["summary"]["synced_daily_files"], 1);
+
+    let overview = call(
+        &home,
+        "group_space_status",
+        json!({"group_id":group_id,"provider":"notebooklm"}),
+    );
+    assert_eq!(overview.result["sync"]["remote_space_id"], "nb-work");
+    assert_eq!(overview.result["sync"]["converged"], true);
+    assert_eq!(overview.result["memory_sync"]["eligible_daily_files"], 1);
+    assert_eq!(overview.result["memory_sync"]["synced_daily_files"], 1);
+}
+
+#[test]
+fn rust_group_space_sync_is_truthfully_unavailable() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"space sync capability"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+
+    let capabilities = call(
+        &home,
+        "group_space_capabilities",
+        json!({"group_id":group_id,"provider":"notebooklm"}),
+    );
+    let available = capabilities.result["capabilities"]
+        .as_array()
+        .expect("capabilities");
+    assert!(!available.iter().any(|value| value == "sync"));
+    let unavailable = capabilities.result["unavailable_capabilities"]
+        .as_array()
+        .expect("unavailable capabilities");
+    assert!(unavailable.iter().any(|value| value == "sync.work"));
+    assert!(unavailable.iter().any(|value| value == "sync.memory"));
+
+    let response = raw_call(
+        &home,
+        "group_space_sync",
+        json!({
+            "group_id":group_id,
+            "provider":"notebooklm",
+            "lane":"work",
+            "action":"run",
+            "by":"user"
+        }),
+    );
+    assert_eq!(
+        response.error.expect("unsupported sync").code,
+        "capability_unavailable"
+    );
+}
+
+#[test]
+fn rust_daemon_provider_auth_mutations_do_not_report_synthetic_lifecycle() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+
+    let status = call(
+        &home,
+        "group_space_provider_auth",
+        json!({"provider":"notebooklm","by":"user","action":"status"}),
+    );
+    assert_eq!(status.result["auth"]["state"], "idle");
+
+    for action in ["start", "cancel", "disconnect"] {
+        let response = raw_call(
+            &home,
+            "group_space_provider_auth",
+            json!({"provider":"notebooklm","by":"user","action":action}),
+        );
+        assert_eq!(
+            response.error.expect("Web-owned auth lifecycle").code,
+            "capability_unavailable",
+            "action={action}"
+        );
+    }
+
+    let invalid = raw_call(
+        &home,
+        "group_space_provider_auth",
+        json!({"provider":"notebooklm","by":"user","action":"unknown"}),
+    );
+    assert_eq!(invalid.error.expect("invalid action").code, "invalid_args");
 }
 
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {

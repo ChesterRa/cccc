@@ -221,6 +221,45 @@ pub(crate) fn read_all_uncached(path: &Path) -> io::Result<Vec<Event>> {
     Ok(events)
 }
 
+pub(crate) fn validate_jsonl(path: &Path) -> io::Result<()> {
+    for source in source_paths(path)? {
+        if is_gzip(&source) {
+            validate_source_json(
+                BufReader::new(GzDecoder::new(File::open(&source)?)),
+                &source,
+            )?;
+        } else {
+            validate_source_json(BufReader::new(File::open(&source)?), &source)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_source_json(mut reader: impl BufRead, source: &Path) -> io::Result<()> {
+    let mut line = Vec::new();
+    let mut line_no = 0_usize;
+    while reader.read_until(b'\n', &mut line)? != 0 {
+        line_no += 1;
+        let raw = trim_ascii(&line);
+        if !raw.is_empty() {
+            let value: Value = serde_json::from_slice(raw).map_err(|error| {
+                io::Error::other(format!(
+                    "malformed ledger JSON at {}:{line_no}: {error}",
+                    source.display()
+                ))
+            })?;
+            if !value.is_object() {
+                return Err(io::Error::other(format!(
+                    "malformed ledger JSON at {}:{line_no}: event must be an object",
+                    source.display()
+                )));
+            }
+        }
+        line.clear();
+    }
+    Ok(())
+}
+
 fn source_paths(path: &Path) -> io::Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     let segments = path

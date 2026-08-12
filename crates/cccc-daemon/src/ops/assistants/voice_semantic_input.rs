@@ -66,52 +66,31 @@ pub(super) fn append_with_state(
         })
     });
     let now = utc_now();
-    let input_path = voice_input::input_log_path(home, &group_id);
-    let (candidate_input, input_created) = assistant_state::update(
+    assistant_state::update(home, &group_id, |root| prepare_state(root)).map_err(OpError::io)?;
+    let (candidate_input, input_created) = voice_input::append_input(
         home,
         &group_id,
-        |root| {
-            prepare_state(root)?;
-            if let Some(existing) =
-                voice_input::find_segment_io(&input_path, &session_id, &segment_id)?
-            {
-                let seq = existing["seq"].as_u64().unwrap_or(0);
-                let latest = root
-                    .get("input_latest_seq")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0);
-                root.insert("input_latest_seq".into(), json!(latest.max(seq)));
-                return Ok((Some(existing), false));
-            }
-            let next_seq = root
-                .get("input_latest_seq")
-                .and_then(Value::as_u64)
-                .unwrap_or(0)
-                + 1;
-            let record = json!({
-                "schema":1,
-                "seq":next_seq,
-                "input_id":format!("vin_{}",Uuid::new_v4().simple()),
-                "kind":kind,
-                "text":text,
-                "language":language,
-                "document_path":document_path,
-                "session_id":session_id,
-                "segment_id":segment_id,
-                "by":by,
-                "trigger":trigger,
-                "request_id":request_id,
-                "input_append_id":input_append_id,
-                "operation":string_arg(request,"operation").unwrap_or_default(),
-                "composer_snapshot_hash":string_arg(request,"composer_snapshot_hash").unwrap_or_default(),
-                "metadata":request.args.get("metadata").cloned().unwrap_or_else(||json!({})),
-                "created_at":now
-            });
-            voice_input::append_jsonl_io(&input_path, &record)?;
-            root.insert("input_latest_seq".into(), json!(next_seq));
-            root.insert("input_updated_at".into(), json!(now));
-            Ok((Some(record), true))
-        },
+        json!({
+            "schema":1,
+            "input_id":format!("vin_{}",Uuid::new_v4().simple()),
+            "kind":kind,
+            "group_id":group_id,
+            "assistant_id":"voice_secretary",
+            "text":text,
+            "language":language,
+            "document_path":document_path,
+            "session_id":session_id,
+            "segment_id":segment_id,
+            "by":by,
+            "trigger":trigger,
+            "request_id":request_id,
+            "input_append_id":input_append_id,
+            "operation":string_arg(request,"operation").unwrap_or_default(),
+            "composer_snapshot_hash":string_arg(request,"composer_snapshot_hash").unwrap_or_default(),
+            "metadata":request.args.get("metadata").cloned().unwrap_or_else(||json!({})),
+            "created_at":now,
+            "updated_at":now
+        }),
     )
     .map_err(OpError::io)?;
     let delivery = voice_input_delivery::deliver(
@@ -123,6 +102,11 @@ pub(super) fn append_with_state(
         &by,
         candidate_input.as_ref(),
     )?;
+    if delivery.notify.is_some() {
+        if let Some(input) = candidate_input.as_ref() {
+            voice_input::mark_delivered(home, &group_id, input).map_err(OpError::io)?;
+        }
+    }
     let current = assistant_state::load(home, &group_id).map_err(OpError::io)?;
     object(json!({
         "group_id":group_id,

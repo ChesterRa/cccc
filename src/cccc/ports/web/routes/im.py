@@ -17,15 +17,19 @@ from ....daemon.im.im_bridge_ops import (
     stop_im_bridges_for_group,
 )
 from ....kernel.group import load_group
+from ....kernel.im_state import (
+    im_state_lock,
+    retire_im_configuration,
+    set_im_configuration,
+    set_im_enabled,
+)
 from ....paths import ensure_home
 from ....ports.im.auth import KeyManager, normalize_thread_id
 from ....ports.im.config_schema import canonicalize_im_config
 from ....ports.im.subscribers import SubscriberManager
 from ....util.conv import coerce_bool
 from ....util.process import (
-    SOFT_TERMINATE_SIGNAL,
     best_effort_signal_pid,
-    pid_is_alive,
     resolve_background_python_argv,
     supervised_process_popen_kwargs,
 )
@@ -53,8 +57,6 @@ def _weixin_state_paths(group: Any) -> Dict[str, Any]:
     return {
         "state_dir": state_dir,
         "status_path": state_dir / "im_weixin_login.json",
-        "pid_path": state_dir / "im_weixin_login.pid",
-        "log_path": state_dir / "im_weixin_login.log",
         "cred_path": state_dir / "im_weixin_credentials.json",
         "context_cache_path": state_dir / "im_weixin_context_tokens.json",
     }
@@ -77,15 +79,20 @@ def _ensure_weixin_login_access(group: Any, user_id: str, *, force: bool) -> boo
     if not chat_id:
         return False
     state_dir = _weixin_state_paths(group)["state_dir"]
-    subscribers = SubscriberManager(state_dir)
-    existing = subscribers.get_subscriber(chat_id, 0)
-    if not force and existing is not None and not existing.subscribed:
-        return False
-    key_manager = KeyManager(state_dir)
-    if not key_manager.is_authorized(chat_id, 0):
-        key_manager.authorize_direct(chat_id, 0, "weixin", _WEIXIN_LOGIN_AUTH_SOURCE)
-    subscribers.subscribe(chat_id, chat_title=chat_id, thread_id=0, platform="weixin")
-    return True
+    with im_state_lock(state_dir):
+        subscribers = SubscriberManager(state_dir)
+        existing = subscribers.get_subscriber(chat_id, 0)
+        if not force and existing is not None and not existing.subscribed:
+            return False
+        key_manager = KeyManager(state_dir)
+        if not key_manager.is_authorized(chat_id, 0):
+            key_manager.authorize_direct(
+                chat_id, 0, "weixin", _WEIXIN_LOGIN_AUTH_SOURCE
+            )
+        subscribers.subscribe(
+            chat_id, chat_title=chat_id, thread_id=0, platform="weixin"
+        )
+        return True
 
 
 def _revoke_weixin_login_access(group: Any, user_id: str) -> None:
@@ -93,8 +100,9 @@ def _revoke_weixin_login_access(group: Any, user_id: str) -> None:
     if not chat_id:
         return
     state_dir = _weixin_state_paths(group)["state_dir"]
-    KeyManager(state_dir).revoke_direct(chat_id, 0, _WEIXIN_LOGIN_AUTH_SOURCE)
-    SubscriberManager(state_dir).unsubscribe(chat_id, 0)
+    with im_state_lock(state_dir):
+        KeyManager(state_dir).revoke_direct(chat_id, 0, _WEIXIN_LOGIN_AUTH_SOURCE)
+        SubscriberManager(state_dir).unsubscribe(chat_id, 0)
 
 
 def _normalize_weixin_login_status(value: Any) -> str:
@@ -324,7 +332,6 @@ async def _refresh_weixin_login_status(
 def _read_weixin_status(group: Any) -> Dict[str, Any]:
     paths = _weixin_state_paths(group)
     status_path = paths["status_path"]
-    pid_path = paths["pid_path"]
     data: Dict[str, Any] = {
         "status": "not_logged_in",
         "logged_in": False,
@@ -391,33 +398,7 @@ def _read_weixin_status(group: Any) -> Dict[str, Any]:
         data["auto_subscribed"] = _ensure_weixin_login_access(
             group, user_id, force=False
         )
-    if pid_path.exists():
-        try:
-            pid = int(pid_path.read_text(encoding="utf-8").strip())
-            if pid_is_alive(pid):
-                data["running"] = True
-                data["pid"] = pid
-            else:
-                pid_path.unlink(missing_ok=True)
-        except Exception:
-            pass
     return data
-
-
-def _stop_weixin_login_runner(group: Any) -> None:
-    pid_path = _weixin_state_paths(group)["pid_path"]
-    if not pid_path.exists():
-        return
-    try:
-        pid = int(pid_path.read_text(encoding="utf-8").strip())
-        if pid > 0:
-            best_effort_signal_pid(pid, SOFT_TERMINATE_SIGNAL, include_group=True)
-    except Exception:
-        pass
-    try:
-        pid_path.unlink(missing_ok=True)
-    except Exception:
-        pass
 
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
@@ -758,10 +739,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         account_id = str(status_before.get("account_id") or "").strip()
 
         if im_cfg:
-            im_cfg["enabled"] = False
-            group.doc["im"] = im_cfg
-            group.save()
-        _stop_weixin_login_runner(group)
+            set_im_enabled(req.group_id, False)
 
         def _killpg(pid: int, sig: signal.Signals) -> None:
             best_effort_signal_pid(pid, sig, include_group=True)
@@ -837,16 +815,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             )
 
         prev_im = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
-        prev_enabled = (
-            coerce_bool(prev_im.get("enabled"), default=False)
-            if isinstance(prev_im, dict)
-            else False
-        )
-
         # Build IM config draft then canonicalize to keep storage shape stable.
         im_cfg: Dict[str, Any] = {"platform": str(req.platform or "").strip().lower()}
-        if prev_enabled:
-            im_cfg["enabled"] = True
 
         platform = str(im_cfg.get("platform") or "").strip().lower()
         prev_files = prev_im.get("files") if isinstance(prev_im, dict) else None
@@ -902,10 +872,20 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 im_cfg["weixin_account_id"] = account_id
 
         im_cfg = canonicalize_im_config(im_cfg)
+        im_cfg["enabled"] = False
 
-        # Update group doc and save
-        group.doc["im"] = im_cfg
-        group.save()
+        # Replacing configuration invalidates the credentials and platform held
+        # by any current process. Stop that owned worker before committing the
+        # new disabled configuration; starting it again remains explicit.
+        stop_im_bridges_for_group(
+            ensure_home(),
+            group_id=req.group_id,
+            best_effort_killpg=lambda pid, sig: best_effort_signal_pid(
+                pid, sig, include_group=True
+            ),
+        )
+
+        set_im_configuration(req.group_id, im_cfg)
 
         return {"ok": True, "result": {"group_id": req.group_id, "im": im_cfg}}
 
@@ -933,22 +913,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             best_effort_killpg=_killpg,
         )
 
-        # 2. Clean up IM state files (graceful — ignore missing files)
-        state_dir = group.path / "state"
-        for fname in (
-            "im_subscribers.json",
-            "im_authorized_chats.json",
-            "im_pending_keys.json",
-        ):
-            try:
-                (state_dir / fname).unlink(missing_ok=True)
-            except Exception:
-                pass
-
-        # 3. Remove IM config from group doc
-        if "im" in group.doc:
-            del group.doc["im"]
-            group.save()
+        # 2. Clear canonical authority and consume former Rust durable shadows.
+        retire_im_configuration(req.group_id)
 
         return {"ok": True, "result": {"group_id": req.group_id, "im": None}}
 
@@ -992,8 +958,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         # Persist desired run-state for restart/autostart.
         im_cfg["enabled"] = True
-        group.doc["im"] = im_cfg
-        group.save()
+        set_im_enabled(req.group_id, True)
 
         platform = im_cfg.get("platform", "telegram")
 
@@ -1144,28 +1109,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         # Persist desired run-state for restart/autostart.
         raw_im_cfg = group.doc.get("im")
         if isinstance(raw_im_cfg, dict):
-            im_cfg = canonicalize_im_config(raw_im_cfg)
-            im_cfg["enabled"] = False
-            group.doc["im"] = im_cfg
-            try:
-                group.save()
-            except Exception:
-                pass
+            set_im_enabled(req.group_id, False)
 
-        stopped = 0
-        pid_path = group.path / "state" / "im_bridge.pid"
-
-        if pid_path.exists():
-            try:
-                pid = int(pid_path.read_text(encoding="utf-8").strip())
-                best_effort_signal_pid(pid, SOFT_TERMINATE_SIGNAL, include_group=True)
-                stopped += 1
-            except Exception:
-                pass
-            try:
-                pid_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+        stopped = stop_im_bridges_for_group(
+            ensure_home(),
+            group_id=req.group_id,
+            best_effort_killpg=lambda pid, sig: best_effort_signal_pid(
+                pid, sig, include_group=True
+            ),
+        )
 
         return {"ok": True, "result": {"group_id": req.group_id, "stopped": stopped}}
 

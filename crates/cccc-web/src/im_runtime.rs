@@ -88,11 +88,19 @@ impl ImWorkerRegistry {
         if let Ok(mut restoring) = self.restoring.lock() {
             restoring.extend(candidates.iter().map(|(group_id, _)| group_id.clone()));
         }
-        for (group_id, config) in candidates {
+        for (group_id, _snapshot_config) in candidates {
             let registry = Arc::clone(self);
             let home = home.clone();
             let client = client.clone();
             let task = runtime.spawn(async move {
+                let Some(config) = restore_config(&home, &group_id) else {
+                    registry
+                        .restoring
+                        .lock()
+                        .expect("IM restore registry poisoned")
+                        .remove(&group_id);
+                    return;
+                };
                 let result = registry
                     .start(home.clone(), client, &group_id, &config)
                     .await;
@@ -172,7 +180,6 @@ impl ImWorkerRegistry {
         group_id: &str,
     ) -> Result<Value, String> {
         self.stop(group_id).await;
-        self.weixin_logins.clear(group_id);
         let store = GroupStore::new(home.clone()).map_err(|error| error.to_string())?;
         cccc_core::im_state::update(&store, group_id, |value| {
             if !value.is_object() {
@@ -211,6 +218,12 @@ impl ImWorkerRegistry {
         group_id: &str,
         config: &Map<String, Value>,
     ) -> Result<(), String> {
+        if config.get("skip_pending_on_start").and_then(Value::as_bool) == Some(false) {
+            return Err(
+                "Rust IM worker does not support skip_pending_on_start=false; use the Python engine for backlog replay or set it to true"
+                    .into(),
+            );
+        }
         let (generation, previous) = self.begin_start(group_id).await;
         if let Some(previous) = previous {
             previous.shutdown().await;
@@ -347,7 +360,8 @@ impl ImWorkerRegistry {
         if let Some(worker) = worker {
             worker.shutdown().await;
         }
-        was_starting || was_running
+        let had_weixin_login = self.weixin_logins.clear(group_id);
+        was_starting || was_running || had_weixin_login
     }
 
     async fn begin_start(&self, group_id: &str) -> (u64, Option<WorkerHandles>) {
@@ -417,17 +431,24 @@ impl ImWorkerRegistry {
             .lock()
             .expect("IM generation registry poisoned")
             .clear();
+        self.weixin_logins.clear_all();
     }
 
     pub(crate) async fn stop_missing(&self, active_groups: &HashSet<String>) -> usize {
-        let stale = self
+        let mut stale = self
             .workers
             .lock()
             .expect("IM worker registry poisoned")
             .keys()
             .filter(|group_id| !active_groups.contains(*group_id))
             .cloned()
-            .collect::<Vec<_>>();
+            .collect::<HashSet<_>>();
+        stale.extend(
+            self.weixin_logins
+                .group_ids()
+                .into_iter()
+                .filter(|group_id| !active_groups.contains(group_id)),
+        );
         let mut stopped = 0;
         for group_id in stale {
             stopped += usize::from(self.stop(&group_id).await);
@@ -476,6 +497,15 @@ fn restore_candidates(home: &HomeLayout) -> Vec<(String, Map<String, Value>)> {
             Some((meta.group_id, state.get("config")?.as_object()?.clone()))
         })
         .collect()
+}
+
+fn restore_config(home: &HomeLayout, group_id: &str) -> Option<Map<String, Value>> {
+    let store = GroupStore::new(home.clone()).ok()?;
+    let state = cccc_core::im_state::load(&store, group_id).ok()?;
+    if !state["enabled"].as_bool().unwrap_or(false) {
+        return None;
+    }
+    state.get("config")?.as_object().cloned()
 }
 
 fn worker(tasks: Vec<JoinHandle<()>>, stopper: Stopper) -> WorkerHandles {
@@ -770,6 +800,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stop_retires_group_owned_weixin_login_attempt() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let registry = ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(home));
+        registry
+            .weixin_logins
+            .insert_test_attempt("g_deleted_login");
+        assert!(registry.weixin_logins.contains("g_deleted_login"));
+
+        registry.stop("g_deleted_login").await;
+
+        assert!(!registry.weixin_logins.contains("g_deleted_login"));
+    }
+
+    #[tokio::test]
+    async fn reaper_retires_login_attempt_without_network_worker() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let registry = ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(home));
+        registry.weixin_logins.insert_test_attempt("g_missing");
+
+        assert_eq!(registry.stop_missing(&HashSet::new()).await, 1);
+        assert!(!registry.weixin_logins.contains("g_missing"));
+    }
+
+    #[tokio::test]
     async fn stop_invalidates_a_pending_start_before_late_install() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -815,6 +871,76 @@ mod tests {
         let candidates = restore_candidates(&home);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].0, enabled.group_id);
+    }
+
+    #[tokio::test]
+    async fn restore_snapshot_does_not_reverse_a_newer_disable() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("restore race", "").expect("group");
+        cccc_core::im_state::update(&store, &group.group_id, |state| {
+            *state = json!({
+                "enabled":true,
+                "config":{
+                    "platform":"telegram",
+                    "bot_token_env":"CCCC_IM_RESTORE_TEST_TOKEN_THAT_DOES_NOT_EXIST"
+                }
+            });
+            Ok(())
+        })
+        .expect("enabled state");
+        let registry = Arc::new(ImWorkerRegistry::new(
+            crate::ledger_event_hub::LedgerEventHub::new(home.clone()),
+        ));
+
+        registry.restore_enabled(home.clone(), DaemonClient::new(home.clone()));
+        cccc_core::im_state::update(&store, &group.group_id, |state| {
+            state["enabled"] = Value::Bool(false);
+            Ok(())
+        })
+        .expect("disable after restore snapshot");
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while registry
+                .restoring
+                .lock()
+                .expect("restoring")
+                .contains(&group.group_id)
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("restore task settled");
+
+        let state = cccc_core::im_state::load(&store, &group.group_id).expect("state");
+        assert!(state.get("last_error").is_none_or(Value::is_null));
+        assert!(!registry.is_running(&group.group_id));
+    }
+
+    #[tokio::test]
+    async fn rust_worker_rejects_the_python_only_backlog_replay_policy() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let registry =
+            ImWorkerRegistry::new(crate::ledger_event_hub::LedgerEventHub::new(home.clone()));
+        let error = registry
+            .start(
+                home.clone(),
+                DaemonClient::new(home),
+                "g_policy",
+                json!({
+                    "platform":"telegram",
+                    "skip_pending_on_start":false
+                })
+                .as_object()
+                .expect("config"),
+            )
+            .await
+            .expect_err("Rust must not silently skip requested backlog replay");
+
+        assert!(error.contains("skip_pending_on_start=false"));
+        assert!(error.contains("Python"));
     }
 
     #[test]

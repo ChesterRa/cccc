@@ -51,6 +51,9 @@ from ...util.fs import atomic_write_json, read_json
 from ...util.time import parse_utc_iso, utc_now_iso
 
 
+_AUTOMATION_STATE_LOCK = threading.RLock()
+
+
 @dataclass(frozen=True)
 class AutomationConfig:
     """Automation configuration for a group."""
@@ -416,7 +419,9 @@ def _rule_next_fire_at(rule: AutomationRule, rule_state: Dict[str, Any], *, now_
             return None
 
     if trigger.kind == "at":
-        if coerce_bool(rule_state.get("at_fired"), default=False):
+        if coerce_bool(rule_state.get("at_fired"), default=False) or parse_utc_iso(
+            str(rule_state.get("last_fired_at") or "")
+        ) is not None:
             return None
         at_dt = parse_utc_iso(str(trigger.at or ""))
         if at_dt is None:
@@ -443,7 +448,10 @@ def build_automation_status(group: Group, *, now: Optional[datetime] = None) -> 
         completed = False
         completed_at = ""
         try:
-            if str(getattr(rule.trigger, "kind", "") or "").strip() == "at" and coerce_bool(st_dict.get("at_fired"), default=False):
+            if str(getattr(rule.trigger, "kind", "") or "").strip() == "at" and (
+                coerce_bool(st_dict.get("at_fired"), default=False)
+                or parse_utc_iso(str(st_dict.get("last_fired_at") or "")) is not None
+            ):
                 completed = True
                 completed_at = str(st_dict.get("last_fired_at") or "")
         except Exception:
@@ -766,7 +774,7 @@ class AutomationManager:
     """
     
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock = _AUTOMATION_STATE_LOCK
         self._memory_auto_in_flight: set[str] = set()
         self._group_tick_at: dict[str, float] = {}
         self._nudge_scan_at: dict[str, float] = {}
@@ -876,7 +884,8 @@ class AutomationManager:
 
         Design: we do not "catch up" on missed reminders; all timing starts from resume.
         """
-        now = utc_now_iso()
+        now_dt = datetime.now(timezone.utc)
+        now = _iso_utc(now_dt)
         with self._lock:
             state = _load_state(group)
             state["resume_at"] = now
@@ -889,10 +898,18 @@ class AutomationManager:
             # Reset user-defined automation rule timers to avoid "catch up" bursts.
             ruleset = _load_ruleset(group)
             for rule in ruleset.rules:
+                if not bool(rule.enabled):
+                    continue
                 rid = str(rule.id or "").strip()
                 if not rid:
                     continue
                 st_rule = _rule_state(state, rid)
+                if str(rule.trigger.kind or "").strip() == "at":
+                    at_dt = parse_utc_iso(str(getattr(rule.trigger, "at", "") or ""))
+                    if at_dt is None or at_dt > now_dt:
+                        continue
+                    st_rule["at_fired"] = True
+                    st_rule["last_slot_key"] = f"at:{_iso_utc(at_dt)}"
                 st_rule["last_fired_at"] = now
                 st_rule["last_error_at"] = ""
                 st_rule["last_error"] = ""
@@ -938,15 +955,10 @@ class AutomationManager:
             group = load_group(gid)
             if group is None:
                 continue
-            if not (
-                pty_runner.SUPERVISOR.group_running(gid)
-                or headless_runner.SUPERVISOR.group_running(gid)
-            ):
-                continue
             # Check group state - gate automation by state
             state = get_group_state(group)
-            if state == "paused":
-                continue  # paused: all automation disabled
+            if state in {"paused", "stopped"}:
+                continue  # paused/stopped: all automation disabled
             if state == "idle":
                 if not self._group_tick_due(gid, now_monotonic=now_monotonic, min_interval_seconds=30.0):
                     continue
@@ -1733,6 +1745,9 @@ class AutomationManager:
                     slot_key = f"cron:{_iso_utc(slot_utc)}"
                     if str(st.get("last_slot_key") or "") == slot_key:
                         continue
+                    last_fired = parse_utc_iso(str(st.get("last_fired_at") or ""))
+                    if last_fired is not None and last_fired >= slot_utc:
+                        continue
                     # Mark slot before delivery to avoid per-second re-evaluation in the same minute.
                     st["last_slot_key"] = slot_key
                     dirty = True
@@ -1743,7 +1758,9 @@ class AutomationManager:
                     if at_dt is None:
                         _record_error("invalid at trigger: expected RFC3339 timestamp")
                         continue
-                    if coerce_bool(st.get("at_fired"), default=False):
+                    if coerce_bool(st.get("at_fired"), default=False) or parse_utc_iso(
+                        str(st.get("last_fired_at") or "")
+                    ) is not None:
                         continue
                     if now < at_dt:
                         continue
@@ -1830,16 +1847,6 @@ class AutomationManager:
                     if not isinstance(actor, dict):
                         continue
                     runner_kind = str(actor.get("runner") or "pty").strip()
-                    try:
-                        running = (
-                            headless_runner.SUPERVISOR.actor_running(group.group_id, str(aid))
-                            if runner_kind == "headless"
-                            else pty_runner.SUPERVISOR.actor_running(group.group_id, str(aid))
-                        )
-                    except Exception:
-                        running = False
-                    if not running:
-                        continue
 
                     title = str(getattr(rule.action, "title", "") or "").strip() or "Reminder"
                     notify_data = SystemNotifyData(

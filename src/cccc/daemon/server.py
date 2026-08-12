@@ -98,6 +98,7 @@ from .messaging.delivery import (
     deliver_message_with_preamble,
     flush_pending_messages,
     request_flush_pending_messages,
+    recover_unread_pty_messages,
     tick_delivery,
     clear_preamble_sent,
     THROTTLE,
@@ -129,7 +130,7 @@ from .space.group_space_sync import process_due_space_syncs, sync_group_space_fi
 from .space.group_space_store import get_space_provider_state
 from .request_queue_policy import FAST_QUEUE_OPS, should_use_read_queue
 from .group.presentation_browser_runtime import close_all_browser_surface_sessions
-from .space.notebooklm_auth_browser_runtime import close_all_notebooklm_auth_browser_sessions
+from .space.notebooklm_auth_flow import shutdown_notebooklm_auth_flow
 from .actors.web_model_browser_session import close_all_web_model_chatgpt_browser_sessions
 
 _OBS_LOCK = threading.Lock()
@@ -635,6 +636,15 @@ def _maybe_autostart_enabled_im_bridges() -> None:
     autostart_enabled_im_bridges(ensure_home())
 
 
+def _reset_actor_delivery_state(group_id: str, actor_id: str, *, keep_pending: bool = True) -> None:
+    THROTTLE.reset_actor(group_id, actor_id, keep_pending=keep_pending)
+    if not keep_pending:
+        return
+    group = load_group(group_id)
+    if group is not None:
+        recover_unread_pty_messages(group, actor_id=actor_id)
+
+
 def _maybe_autostart_running_groups() -> None:
     from ..kernel.group import get_group_state
 
@@ -653,7 +663,7 @@ def _maybe_autostart_running_groups() -> None:
         write_headless_state=_write_headless_state,
         write_pty_state=lambda gid, aid, pid: _write_pty_state(gid, aid, pid=pid),
         clear_preamble_sent=clear_preamble_sent,
-        throttle_reset_actor=lambda gid, aid: THROTTLE.reset_actor(gid, aid, keep_pending=True),
+        throttle_reset_actor=_reset_actor_delivery_state,
         automation_on_resume=AUTOMATION.on_resume,
         get_group_state=get_group_state,
         load_actor_private_env=_load_actor_private_env,
@@ -731,6 +741,8 @@ def _start_actor_process(
     by: str,
     caller_id: str = "",
     is_admin: bool = False,
+    launch_only: bool = False,
+    launch_reason: str = "actor_start",
 ) -> Dict[str, Any]:
     return runtime_start_actor_process(
         group,
@@ -742,6 +754,8 @@ def _start_actor_process(
         by=by,
         caller_id=caller_id,
         is_admin=is_admin,
+        launch_only=launch_only,
+        launch_reason=launch_reason,
         find_scope_url=_find_scope_url,
         effective_runner_kind=_effective_runner_kind,
         merge_actor_env_with_private=_merge_actor_env_with_private,
@@ -753,7 +767,7 @@ def _start_actor_process(
         write_headless_state=_write_headless_state,
         write_pty_state=lambda gid, aid, pid: _write_pty_state(gid, aid, pid=pid),
         clear_preamble_sent=clear_preamble_sent,
-        throttle_reset_actor=lambda gid, aid: THROTTLE.reset_actor(gid, aid, keep_pending=True),
+        throttle_reset_actor=_reset_actor_delivery_state,
         supported_runtimes=SUPPORTED_RUNTIMES,
         load_actor_private_env=_load_actor_private_env,
         resolve_linked_actor_before_start=lambda grp, aid, caller_id="", is_admin=False: _resolve_linked_actor_before_start(
@@ -828,7 +842,7 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
         write_headless_state=_write_headless_state,
         write_pty_state=_write_pty_state,
         clear_preamble_sent=clear_preamble_sent,
-        throttle_reset_actor=THROTTLE.reset_actor,
+        throttle_reset_actor=_reset_actor_delivery_state,
         reset_automation_timers_if_active=_reset_automation_timers_if_active,
         supported_runtimes=SUPPORTED_RUNTIMES,
         pty_state_dir_for_group=lambda group_id: _pty_state_path(group_id, "_").parent,
@@ -1236,7 +1250,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     except Exception:
         pass
     try:
-        close_all_notebooklm_auth_browser_sessions()
+        shutdown_notebooklm_auth_flow()
     except Exception:
         pass
     try:

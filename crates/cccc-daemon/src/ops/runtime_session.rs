@@ -310,7 +310,7 @@ pub fn resume_failure(group_id: &str, actor_id: &str) -> Option<String> {
     resume_failure_marker(&history.data).map(str::to_owned)
 }
 
-fn resume_failure_marker(text: &str) -> Option<&'static str> {
+pub(super) fn resume_failure_marker(text: &str) -> Option<&'static str> {
     let plain = strip_ansi(text).to_ascii_lowercase();
     [
         "no conversation found",
@@ -356,6 +356,31 @@ pub fn remove(home: &HomeLayout, group_id: &str, actor_id: &str) -> std::io::Res
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),
+    }
+}
+
+pub fn snapshot(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+) -> std::io::Result<Option<Map<String, Value>>> {
+    let session_path = path(home, group_id, actor_id)?;
+    if !session_path.exists() {
+        return Ok(None);
+    }
+    read(home, group_id, actor_id).map(Some)
+}
+
+pub fn restore_snapshot(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    snapshot: Option<&Map<String, Value>>,
+) -> std::io::Result<()> {
+    if let Some(document) = snapshot {
+        write(home, group_id, actor_id, document)
+    } else {
+        remove(home, group_id, actor_id)
     }
 }
 

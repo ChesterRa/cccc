@@ -788,6 +788,18 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             record_chatgpt_browser_state,
         )
 
+        delivery_reset = {
+            "last_delivery_at": "",
+            "last_delivery_started_at": "",
+            "last_delivery_id": "",
+            "last_delivery_status": "",
+            "last_submission_evidence": "",
+            "last_send_selector": "",
+            "last_turn_id": "",
+            "last_event_ids": [],
+            "last_error": "",
+        }
+
         if bool(req.clear):
             await run_in_threadpool(
                 record_chatgpt_browser_state,
@@ -810,7 +822,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "bootstrap_seed_version": "",
                     "bootstrap_seed_digest": "",
                     "bootstrap_seed_conversation_url": "",
-                    "last_error": "",
+                    **delivery_reset,
                 },
             )
             return await _web_model_browser_payload(group_id, actor_id, {})
@@ -874,7 +886,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "bootstrap_seed_version": "",
                 "bootstrap_seed_digest": "",
                 "bootstrap_seed_conversation_url": "",
-                "last_error": "",
+                **delivery_reset,
             },
         )
         return await _web_model_browser_payload(group_id, actor_id, {})

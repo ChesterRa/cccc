@@ -15,14 +15,10 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     super::authorize_group_admin(&actor, "uninstall a capability")?;
     let groups = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let store = CapabilityStore::new(home.clone());
-    let removed_bindings = store
-        .remove_bindings_for_group(&capability_id, &actor.group_id)
-        .map_err(OpError::io)?;
-    let removed_group_marker = store
-        .set_removed_for_group(&capability_id, &actor.group_id, true)
+    let (removed_bindings, removed_group_marker, retain_installation) = store
+        .uninstall_for_group(&capability_id, &actor.group_id)
         .map_err(OpError::io)?;
     let removed_actor_autoload = remove_actor_autoload(&groups, &actor.group_id, &capability_id)?;
-    let retain_installation = store.has_bindings(&capability_id).map_err(OpError::io)?;
     let runtime = cleanup_runtime(home, &actor.group_id, &capability_id, retain_installation)?;
     let refresh_required = removed_bindings > 0
         || removed_group_marker
@@ -201,6 +197,35 @@ fn cleanup_runtime_globally(
             removed_installations,
             removed_recent_success,
         ))
+    })
+    .map_err(OpError::io)
+}
+
+pub(super) fn revoke_runtime_bindings(
+    home: &HomeLayout,
+    group_id: Option<&str>,
+    capability_id: &str,
+) -> Result<usize, OpError> {
+    let path = home.root().join("state/capabilities/runtime.json");
+    if !path.exists() {
+        return Ok(0);
+    }
+    with_exclusive_lock(&path.with_extension("json.lock"), || {
+        let mut runtime: Value = read_json(&path)?;
+        let removed = match group_id {
+            Some(group_id) => {
+                remove_runtime_bindings(runtime.get_mut("actor_instances"), group_id, capability_id)
+            }
+            None => remove_runtime_bindings_all_groups(
+                runtime.get_mut("actor_instances"),
+                capability_id,
+            ),
+        };
+        if removed > 0 {
+            runtime["updated_at"] = json!(utc_now());
+            write_json(&path, &runtime)?;
+        }
+        Ok(removed)
     })
     .map_err(OpError::io)
 }

@@ -384,6 +384,65 @@ class TestImSenderIdentity(unittest.TestCase):
                 bridge.stop()
             cleanup()
 
+    def test_bridge_restart_reuses_provider_message_id_for_daemon_idempotency(self) -> None:
+        _, cleanup = self._with_home()
+        bridges: List[IMBridge] = []
+        try:
+            group, _group_id = self._create_group_with_peer()
+            inbound = {
+                "chat_id": "cid_g1",
+                "chat_title": "ops",
+                "chat_type": "group",
+                "routed": True,
+                "thread_id": "1710000000.100",
+                "text": "只应进入 ledger 一次",
+                "from_user": "Alice",
+                "from_user_id": "staff_001",
+                "message_id": "msg_restart_001",
+                "timestamp": time.time(),
+            }
+            event_ids: List[str] = []
+            events: List[Dict[str, Any]] = []
+
+            for _ in range(2):
+                bridge = IMBridge(
+                    group=group,
+                    adapter=_FakeDingTalkAdapter([dict(inbound)]),
+                )
+                bridges.append(bridge)
+                self.assertTrue(bridge.start())
+                bridge.key_manager.is_authorized = lambda *_args, **_kwargs: True  # type: ignore[method-assign]
+                captured: List[Dict[str, Any]] = []
+
+                def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
+                    resp, _ = handle_request(DaemonRequest.model_validate(req))
+                    payload: Dict[str, Any] = {"ok": bool(resp.ok)}
+                    if resp.ok:
+                        payload["result"] = resp.result
+                    else:
+                        payload["error"] = resp.error.model_dump() if resp.error else {}
+                    captured.append(payload)
+                    return payload
+
+                bridge._daemon = _daemon  # type: ignore[method-assign]
+                bridge._process_inbound()
+                self.assertEqual(len(captured), 1)
+                event = ((captured[0].get("result") or {}).get("event") or {})
+                events.append(event)
+                event_ids.append(str(event.get("id") or ""))
+                bridge.stop()
+
+            self.assertTrue(event_ids[0])
+            self.assertEqual(event_ids[0], event_ids[1])
+            self.assertEqual(
+                str(events[-1].get("data", {}).get("client_id") or ""),
+                "im:dingtalk:cid_g1:1710000000.100:msg_restart_001",
+            )
+        finally:
+            for bridge in bridges:
+                bridge.stop()
+            cleanup()
+
     def test_bridge_inbound_wecom_file_image_is_normalized_to_image_blob(self) -> None:
         _, cleanup = self._with_home()
         bridge: IMBridge | None = None

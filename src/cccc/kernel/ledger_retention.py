@@ -15,6 +15,8 @@ from .ledger_state_snapshot import build_state_payload, current_ledger_basis
 from .ledger_segments import (
     compress_sealed_segments,
     ensure_ledger_layout,
+    iter_source_lines,
+    list_ledger_sources,
     load_ledger_manifest,
     rotate_active_ledger,
 )
@@ -56,8 +58,38 @@ def _ledger_lock_path(group: Group) -> Path:
     return group.path / "state" / "ledger" / "ledger.lock"
 
 
+def _validate_ledger_sources(group: Group) -> None:
+    for source in list_ledger_sources(group.path):
+        path = source.get("abs_path")
+        if not isinstance(path, Path) or not path.exists():
+            continue
+        display = str(source.get("path") or path.name)
+        for line_number, raw in enumerate(iter_source_lines(path), start=1):
+            if not raw.strip():
+                continue
+            try:
+                value = json.loads(raw)
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"malformed ledger JSON at {display}:{line_number}: {exc.msg}"
+                ) from exc
+            if not isinstance(value, dict):
+                raise ValueError(
+                    f"malformed ledger JSON at {display}:{line_number}: event must be an object"
+                )
+
+
 def snapshot(group: Group, *, reason: str = "manual") -> Dict[str, Any]:
     ensure_ledger_layout(group.path)
+    lk = acquire_lockfile(_ledger_lock_path(group), blocking=True)
+    try:
+        return _snapshot_locked(group, reason=reason)
+    finally:
+        release_lockfile(lk)
+
+
+def _snapshot_locked(group: Group, *, reason: str) -> Dict[str, Any]:
+    _validate_ledger_sources(group)
     active = group.ledger_path
     try:
         size = int(active.stat().st_size) if active.exists() else 0
@@ -130,6 +162,7 @@ def compact(group: Group, *, reason: str = "auto", force: bool = False) -> Dict[
     lock = _ledger_lock_path(group)
     lk = acquire_lockfile(lock, blocking=True)
     try:
+        _validate_ledger_sources(group)
         rotation = rotate_active_ledger(group.path, reason=reason)
         compressed = compress_sealed_segments(
             group.path,
@@ -147,7 +180,7 @@ def compact(group: Group, *, reason: str = "auto", force: bool = False) -> Dict[
             "manifest": load_ledger_manifest(group.path),
         }
         atomic_write_json(state_path, result)
-        snap = snapshot(group, reason=f"compact:{reason}")
+        snap = _snapshot_locked(group, reason=f"compact:{reason}")
         return {"ok": True, "skipped": False, "result": result, "snapshot": snap}
     finally:
         release_lockfile(lk)

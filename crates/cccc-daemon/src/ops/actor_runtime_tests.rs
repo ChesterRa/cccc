@@ -1,8 +1,8 @@
 use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, GroupState, RunnerKind};
-use cccc_core::{GroupStore, HomeLayout, Scope, actors};
+use cccc_core::{GroupStore, HomeLayout, Scope, actors, ledger};
 use serde_json::{Map, json};
 
-use super::{actor_runtime, runtime_restore};
+use super::{actor_delivery, actor_runtime, runtime_restore};
 
 #[test]
 fn restore_migrates_legacy_actor_scope_paths_even_for_stopped_groups() {
@@ -100,6 +100,76 @@ fn restores_enabled_actors_for_persisted_running_groups() {
 }
 
 #[test]
+fn restore_rehydrates_unread_pty_delivery_from_the_ledger() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("restore unread", "").expect("group");
+    let group_id = group.group_id.clone();
+    store
+        .mutate(&group_id, |group| {
+            group.scopes.push(Scope {
+                scope_key: "s_project".into(),
+                url: temp.path().to_string_lossy().into_owned(),
+                label: "project".into(),
+                git_remote: String::new(),
+            });
+            group.active_scope_key = "s_project".into();
+            let mut actor = Actor::new("peer1");
+            actor.runtime = ActorRuntime::Custom;
+            actor.runner = RunnerKind::Pty;
+            actor.submit = cccc_contracts::ActorSubmit::Newline;
+            actor.command = vec![
+                "sh".into(),
+                "-c".into(),
+                "stty -echo; IFS= read -r preamble; IFS= read -r message; printf 'RESTORED:%s' \"$message\"; sleep 2".into(),
+            ];
+            actors::add(group, actor)?;
+            group.running = true;
+            group.state = GroupState::Active;
+            Ok(())
+        })
+        .expect("configure group");
+    let mut event = cccc_contracts::Event::new("chat.message", &group_id);
+    event.by = "user".into();
+    event.data = json!({"to":["peer1"],"text":"message-before-restart"})
+        .as_object()
+        .cloned()
+        .expect("event data");
+    ledger::append(&store.ledger_path(&group_id).expect("ledger"), &event).expect("message");
+
+    runtime_restore::restore_running(&home).expect("restore");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        let response = crate::handle_request(
+            &home,
+            &DaemonRequest {
+                v: 1,
+                op: "terminal_tail".into(),
+                args: json!({"group_id":group_id,"actor_id":"peer1","by":"user"})
+                    .as_object()
+                    .cloned()
+                    .expect("args"),
+            },
+        );
+        if response.result["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("message-before-restart"))
+        {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "restored actor did not receive canonical unread work: {response:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    actor_delivery::shutdown_actor(&group_id, "peer1");
+    let _ = cccc_runtime::stop(&group_id, "peer1");
+}
+
+#[test]
 fn relaunch_preserves_runtime_metadata_but_new_session_clears_it() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -143,6 +213,65 @@ fn relaunch_preserves_runtime_metadata_but_new_session_clears_it() {
     assert!(request(&home, "actor_new_session", &group_id).ok);
     assert!(!session_path.exists());
     cccc_runtime::stop(&group_id, "peer1").expect("stop");
+}
+
+#[test]
+fn new_session_ledger_failure_restores_runtime_metadata_and_stops_replacement() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("session rollback", "").expect("group");
+    let group_id = group.group_id.clone();
+    store
+        .mutate(&group_id, |group| {
+            group.scopes.push(Scope {
+                scope_key: "s_project".into(),
+                url: temp.path().to_string_lossy().into_owned(),
+                label: "project".into(),
+                git_remote: String::new(),
+            });
+            group.active_scope_key = "s_project".into();
+            let mut actor = Actor::new("peer1");
+            actor.runtime = ActorRuntime::Codex;
+            actor.runner = RunnerKind::Pty;
+            actor.command = vec!["sh".into(), "-c".into(), "sleep 5".into()];
+            actors::add(group, actor)
+        })
+        .expect("actor");
+    let session_path = store
+        .state_dir(&group_id)
+        .expect("state")
+        .join("runtime_sessions/peer1.json");
+    cccc_core::fs::write_json(
+        &session_path,
+        &json!({
+            "runtime":"codex",
+            "status":"usable",
+            "resume_eligible":true,
+            "provider_session_id":"019eece8-8c6d-7811-a700-26593825ae2d"
+        }),
+    )
+    .expect("metadata");
+    let ledger_path = store.ledger_path(&group_id).expect("ledger");
+    std::fs::remove_file(&ledger_path).expect("remove ledger");
+    std::fs::create_dir(&ledger_path).expect("block ledger append");
+
+    let response = request(&home, "actor_new_session", &group_id);
+
+    assert!(
+        !response.ok,
+        "corrupt ledger unexpectedly accepted new session"
+    );
+    let restored: serde_json::Value =
+        cccc_core::fs::read_json(&session_path).expect("restored metadata");
+    assert_eq!(
+        restored["provider_session_id"],
+        "019eece8-8c6d-7811-a700-26593825ae2d"
+    );
+    assert!(
+        actor_runtime::status(&group_id, "peer1").is_none_or(|status| !status.running),
+        "replacement runtime survived failed commit"
+    );
 }
 
 fn request(home: &HomeLayout, op: &str, group_id: &str) -> cccc_contracts::DaemonResponse {

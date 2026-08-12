@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -19,7 +20,8 @@ from ...contracts.v1 import (
     SpaceQueueSummary,
 )
 from ...paths import ensure_home
-from ...util.fs import atomic_write_json, read_json
+from ...util.file_lock import acquire_lockfile, release_lockfile
+from ...util.fs import atomic_write_json, atomic_write_text, read_json
 from ...util.time import parse_utc_iso, utc_now_iso
 
 _PROVIDER_IDS = {"notebooklm"}
@@ -28,6 +30,9 @@ _JOB_ID_PREFIX = "spj_"
 _PROVIDER_SECRET_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DOC_CACHE_LOCK = threading.Lock()
 _DOC_CACHE: Dict[str, Tuple[Optional[Tuple[int, int]], Dict[str, Any]]] = {}
+_LEGACY_GROUP_SPACE_MIGRATION_LOCK = threading.Lock()
+_LEGACY_GROUP_SPACE_MIGRATED: set[Tuple[str, str]] = set()
+_LEGACY_GROUP_SPACE_SCANNED_HOMES: set[str] = set()
 _JOBS_SCAN_WARN_TS: float = 0.0
 _JOBS_SCAN_WARN_LOCK = threading.Lock()
 _JOBS_COMPACT_LOCK = threading.Lock()
@@ -54,9 +59,13 @@ def _jobs_scan_allowed(path: Path) -> bool:
         return True
     try:
         with _JOBS_COMPACT_LOCK:
-            if path.exists() and int(path.stat().st_size or 0) > limit:
-                doc = _load_cached_doc(path, normalize=_normalize_jobs_doc)
-                _compact_jobs_doc(path, doc, force=True)
+            lock = acquire_lockfile(path.with_suffix(".json.lock"), blocking=True)
+            try:
+                if path.exists() and int(path.stat().st_size or 0) > limit:
+                    doc = _normalize_jobs_doc(read_json(path))
+                    _compact_jobs_doc(path, doc, force=True)
+            finally:
+                release_lockfile(lock)
         if int(path.stat().st_size or 0) <= limit:
             return True
     except Exception:
@@ -125,6 +134,18 @@ def _provider_secret_path(provider: str) -> Path:
     return root / _provider_secret_filename(provider)
 
 
+def _provider_secret_lock_path(provider: str) -> Path:
+    return _provider_secret_path(provider).with_suffix(".json.lock")
+
+
+def _legacy_provider_secret_path() -> Path:
+    return ensure_home() / "space-credentials.json"
+
+
+def _legacy_provider_secret_marker_path() -> Path:
+    return _provider_secret_root(ensure_home()) / ".rust-credentials-migrated-v1"
+
+
 def _ensure_dir(path: Path, mode: int = 0o700) -> None:
     path.mkdir(parents=True, exist_ok=True)
     try:
@@ -140,6 +161,15 @@ def _safe_id(raw: Any, *, field: str) -> str:
     if "/" in value or "\\" in value or ".." in value:
         raise ValueError(f"invalid {field}")
     return value
+
+
+def _read_json_object_strict(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"expected JSON object: {path}")
+    return raw
 
 
 def _provider_or_raise(raw: Any) -> str:
@@ -207,7 +237,7 @@ def _update_doc_cache(path: Path, doc: Dict[str, Any]) -> None:
     cache_key = _doc_cache_key(path)
     signature = _doc_signature(path)
     with _DOC_CACHE_LOCK:
-        _DOC_CACHE[cache_key] = (signature, dict(doc))
+        _DOC_CACHE[cache_key] = (signature, copy.deepcopy(doc))
 
 
 def _load_cached_doc(path: Path, *, normalize: Callable[[Any], Dict[str, Any]]) -> Dict[str, Any]:
@@ -216,11 +246,11 @@ def _load_cached_doc(path: Path, *, normalize: Callable[[Any], Dict[str, Any]]) 
     with _DOC_CACHE_LOCK:
         cached = _DOC_CACHE.get(cache_key)
         if cached is not None and cached[0] == signature:
-            return dict(cached[1])
+            return copy.deepcopy(cached[1])
     doc = normalize(read_json(path))
     with _DOC_CACHE_LOCK:
-        _DOC_CACHE[cache_key] = (signature, dict(doc))
-    return dict(doc)
+        _DOC_CACHE[cache_key] = (signature, copy.deepcopy(doc))
+    return copy.deepcopy(doc)
 
 
 def _new_provider_state(provider: str = "notebooklm") -> Dict[str, Any]:
@@ -363,6 +393,110 @@ def _normalize_bindings_doc(raw: Any) -> Dict[str, Any]:
     doc["bindings"] = normalized
     doc["v"] = 2
     return doc
+
+
+def _legacy_group_space_marker_path(home: Path, group_id: str) -> Path:
+    return home / "groups" / group_id / "state" / ".rust-space-migrated-v1"
+
+
+def _legacy_space_job(group_id: str, raw: Any) -> Optional[Dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return None
+    job_id = str(raw.get("job_id") or raw.get("id") or "").strip()
+    if not job_id:
+        return None
+    candidate = {key: raw[key] for key in SpaceJob.model_fields if key in raw}
+    candidate.update(
+        {
+            "job_id": job_id,
+            "group_id": group_id,
+            "provider": "notebooklm",
+            "lane": str(raw.get("lane") or "work"),
+        }
+    )
+    try:
+        return SpaceJob.model_validate(candidate).model_dump(exclude_none=True)
+    except Exception:
+        return None
+
+
+def _migrate_legacy_group_space(group_id: str) -> None:
+    gid = _safe_id(group_id, field="group_id")
+    home = ensure_home()
+    migration_key = (str(home.resolve()), gid)
+    with _LEGACY_GROUP_SPACE_MIGRATION_LOCK:
+        if migration_key in _LEGACY_GROUP_SPACE_MIGRATED:
+            return
+
+        from ...kernel.group import load_group
+
+        group = load_group(gid)
+        if group is None:
+            return
+        legacy = group.doc.get("group_space")
+        marker_path = _legacy_group_space_marker_path(home, gid)
+        if isinstance(legacy, dict) and not marker_path.exists():
+            bindings_path = _bindings_path(home)
+            lock = acquire_lockfile(bindings_path.with_suffix(".json.lock"), blocking=True)
+            try:
+                bindings_doc = _normalize_bindings_doc(read_json(bindings_path))
+                bindings = bindings_doc.get("bindings") if isinstance(bindings_doc.get("bindings"), dict) else {}
+                per_group = bindings.get(gid) if isinstance(bindings.get(gid), dict) else {}
+                if not isinstance(per_group.get("notebooklm"), dict):
+                    lanes = _normalize_provider_binding_lanes(gid, "notebooklm", legacy.get("bindings"))
+                    if lanes:
+                        per_group["notebooklm"] = lanes
+                        bindings[gid] = per_group
+                        bindings_doc["bindings"] = bindings
+                        _save_doc(bindings_path, bindings_doc)
+            finally:
+                release_lockfile(lock)
+
+            jobs_path = _jobs_path(home)
+            lock = acquire_lockfile(jobs_path.with_suffix(".json.lock"), blocking=True)
+            try:
+                jobs_doc = _normalize_jobs_doc(read_json(jobs_path))
+                jobs = jobs_doc.get("jobs") if isinstance(jobs_doc.get("jobs"), dict) else {}
+                changed = False
+                for raw_job in legacy.get("jobs") if isinstance(legacy.get("jobs"), list) else []:
+                    item = _legacy_space_job(gid, raw_job)
+                    if item is None or item["job_id"] in jobs:
+                        continue
+                    jobs[item["job_id"]] = _stored_job_doc(home, item)
+                    changed = True
+                if changed:
+                    jobs_doc["jobs"] = jobs
+                    _save_doc(jobs_path, jobs_doc)
+            finally:
+                release_lockfile(lock)
+
+        if isinstance(legacy, dict):
+            current = load_group(gid)
+            if current is not None and isinstance(current.doc.get("group_space"), dict):
+                current.doc.pop("group_space", None)
+                current.save()
+
+        if not marker_path.exists():
+            _ensure_dir(marker_path.parent, 0o700)
+            atomic_write_text(marker_path, "migrated from group.yaml group_space\n")
+        _LEGACY_GROUP_SPACE_MIGRATED.add(migration_key)
+
+
+def _migrate_all_legacy_group_space() -> None:
+    home = ensure_home()
+    home_key = str(home.resolve())
+    with _LEGACY_GROUP_SPACE_MIGRATION_LOCK:
+        if home_key in _LEGACY_GROUP_SPACE_SCANNED_HOMES:
+            return
+    registry = read_json(home / "registry.json")
+    groups = registry.get("groups") if isinstance(registry, dict) and isinstance(registry.get("groups"), dict) else {}
+    for group_id in list(groups):
+        try:
+            _migrate_legacy_group_space(str(group_id))
+        except ValueError:
+            continue
+    with _LEGACY_GROUP_SPACE_MIGRATION_LOCK:
+        _LEGACY_GROUP_SPACE_SCANNED_HOMES.add(home_key)
 
 
 def _load_bindings_doc() -> Tuple[Path, Dict[str, Any]]:
@@ -530,11 +664,11 @@ def _compact_jobs_doc(path: Path, doc: Dict[str, Any], *, force: bool = False) -
     if not changed:
         return doc
 
-    for _, item in dropped:
-        _delete_payload_blob(home, str(item.get("payload_ref") or ""))
     next_doc = dict(doc)
     next_doc["jobs"] = kept_jobs
     _save_doc(path, next_doc)
+    for _, item in dropped:
+        _delete_payload_blob(home, str(item.get("payload_ref") or ""))
     return next_doc
 
 
@@ -544,8 +678,12 @@ def _load_jobs_doc() -> Tuple[Path, Dict[str, Any]]:
     doc = _load_cached_doc(path, normalize=_normalize_jobs_doc)
     if _jobs_doc_needs_compaction(doc):
         with _JOBS_COMPACT_LOCK:
-            doc = _load_cached_doc(path, normalize=_normalize_jobs_doc)
-            doc = _compact_jobs_doc(path, doc)
+            lock = acquire_lockfile(path.with_suffix(".json.lock"), blocking=True)
+            try:
+                doc = _normalize_jobs_doc(read_json(path))
+                doc = _compact_jobs_doc(path, doc)
+            finally:
+                release_lockfile(lock)
     return path, doc
 
 
@@ -587,39 +725,79 @@ def set_space_provider_state(
     touch_health: bool = False,
 ) -> Dict[str, Any]:
     pid = _provider_or_raise(provider)
-    path, doc = _load_providers_doc()
-    providers = doc.get("providers") if isinstance(doc.get("providers"), dict) else {}
-    current_raw = providers.get(pid) if isinstance(providers, dict) else None
-    current = (
-        dict(current_raw)
-        if isinstance(current_raw, dict)
-        else _new_provider_state(pid)
-    )
-    if enabled is not None:
-        current["enabled"] = bool(enabled)
-    if real_enabled is not None:
-        current["real_enabled"] = bool(real_enabled)
-    if mode is not None:
-        current["mode"] = str(mode)
-    if last_error is not None:
-        current["last_error"] = str(last_error or "") or None
-    if touch_health:
-        current["last_health_at"] = utc_now_iso()
-    model = SpaceProviderState.model_validate(current)
-    item = model.model_dump(exclude_none=True)
-    providers[pid] = item
-    doc["providers"] = providers
-    _save_doc(path, doc)
-    return dict(item)
+    path = _providers_path(ensure_home())
+    lock = acquire_lockfile(path.with_suffix(".json.lock"), blocking=True)
+    try:
+        doc = _normalize_providers_doc(read_json(path))
+        providers = doc.get("providers") if isinstance(doc.get("providers"), dict) else {}
+        current_raw = providers.get(pid) if isinstance(providers, dict) else None
+        current = dict(current_raw) if isinstance(current_raw, dict) else _new_provider_state(pid)
+        if enabled is not None:
+            current["enabled"] = bool(enabled)
+        if real_enabled is not None:
+            current["real_enabled"] = bool(real_enabled)
+        if mode is not None:
+            current["mode"] = str(mode)
+        if last_error is not None:
+            current["last_error"] = str(last_error or "") or None
+        if touch_health:
+            current["last_health_at"] = utc_now_iso()
+        model = SpaceProviderState.model_validate(current)
+        item = model.model_dump(exclude_none=True)
+        providers[pid] = item
+        doc["providers"] = providers
+        _save_doc(path, doc)
+        return dict(item)
+    finally:
+        release_lockfile(lock)
 
 
-def load_space_provider_secrets(provider: str = "notebooklm") -> Dict[str, str]:
-    pid = _provider_or_raise(provider)
-    path = _provider_secret_path(pid)
-    raw = read_json(path)
+def _migrate_legacy_space_provider_secret_unlocked(provider: str) -> None:
+    path = _provider_secret_path(provider)
+    legacy_path = _legacy_provider_secret_path()
+    if not legacy_path.exists():
+        return
+    raw = _read_json_object_strict(legacy_path)
+
+    marker_path = _legacy_provider_secret_marker_path()
+    providers = raw.get("providers") if isinstance(raw.get("providers"), dict) else {}
+    legacy_item = providers.get(provider) if isinstance(providers.get(provider), dict) else {}
+    if not marker_path.exists():
+        auth_json = str(legacy_item.get("auth_json") or "").strip()
+        if auth_json and not path.exists():
+            _ensure_dir(path.parent, 0o700)
+            atomic_write_json(path, {"NOTEBOOKLM_AUTH_JSON": auth_json}, indent=2)
+            try:
+                os.chmod(path, 0o600)
+            except Exception:
+                pass
+        _ensure_dir(marker_path.parent, 0o700)
+        atomic_write_text(marker_path, "migrated from space-credentials.json\n")
+
+    if provider not in providers:
+        return
+    providers = dict(providers)
+    providers.pop(provider, None)
+    next_raw = dict(raw)
+    if providers:
+        next_raw["providers"] = providers
+    else:
+        next_raw.pop("providers", None)
+    if next_raw:
+        atomic_write_json(legacy_path, next_raw, indent=2)
+        try:
+            os.chmod(legacy_path, 0o600)
+        except Exception:
+            pass
+    else:
+        legacy_path.unlink(missing_ok=True)
+
+
+def _load_space_provider_secrets_unlocked(provider: str) -> Dict[str, str]:
+    _migrate_legacy_space_provider_secret_unlocked(provider)
+    path = _provider_secret_path(provider)
+    raw = _read_json_object_strict(path)
     out: Dict[str, str] = {}
-    if not isinstance(raw, dict):
-        return out
     for key, value in raw.items():
         if value is None:
             continue
@@ -631,6 +809,15 @@ def load_space_provider_secrets(provider: str = "notebooklm") -> Dict[str, str]:
     return out
 
 
+def load_space_provider_secrets(provider: str = "notebooklm") -> Dict[str, str]:
+    pid = _provider_or_raise(provider)
+    lock = acquire_lockfile(_provider_secret_lock_path(pid), blocking=True)
+    try:
+        return _load_space_provider_secrets_unlocked(pid)
+    finally:
+        release_lockfile(lock)
+
+
 def update_space_provider_secrets(
     provider: str = "notebooklm",
     *,
@@ -639,30 +826,33 @@ def update_space_provider_secrets(
     clear: bool,
 ) -> Dict[str, str]:
     pid = _provider_or_raise(provider)
-    current = {} if clear else load_space_provider_secrets(pid)
-    for key in unset_keys:
-        kk = _validate_provider_secret_key(key)
-        current.pop(kk, None)
-    for key, value in set_vars.items():
-        kk = _validate_provider_secret_key(key)
-        current[kk] = str(value)
+    lock = acquire_lockfile(_provider_secret_lock_path(pid), blocking=True)
+    try:
+        current = {} if clear else _load_space_provider_secrets_unlocked(pid)
+        if clear:
+            _migrate_legacy_space_provider_secret_unlocked(pid)
+        for key in unset_keys:
+            kk = _validate_provider_secret_key(key)
+            current.pop(kk, None)
+        for key, value in set_vars.items():
+            kk = _validate_provider_secret_key(key)
+            current[kk] = str(value)
 
-    path = _provider_secret_path(pid)
-    root = path.parent
-    if not current:
-        try:
+        path = _provider_secret_path(pid)
+        root = path.parent
+        if not current:
             path.unlink(missing_ok=True)
+            return {}
+
+        _ensure_dir(root, 0o700)
+        atomic_write_json(path, current, indent=2)
+        try:
+            os.chmod(path, 0o600)
         except Exception:
             pass
-        return {}
-
-    _ensure_dir(root, 0o700)
-    atomic_write_json(path, current, indent=2)
-    try:
-        os.chmod(path, 0o600)
-    except Exception:
-        pass
-    return dict(current)
+        return dict(current)
+    finally:
+        release_lockfile(lock)
 
 
 def describe_space_provider_credential_state(
@@ -692,6 +882,7 @@ def describe_space_provider_credential_state(
 def get_space_bindings(group_id: str, provider: str = "notebooklm") -> Dict[str, Dict[str, Any]]:
     gid = _safe_id(group_id, field="group_id")
     pid = _provider_or_raise(provider)
+    _migrate_legacy_group_space(gid)
     _, doc = _load_bindings_doc()
     bindings = doc.get("bindings") if isinstance(doc.get("bindings"), dict) else {}
     per_group = bindings.get(gid) if isinstance(bindings.get(gid), dict) else {}
@@ -713,6 +904,7 @@ def get_space_binding(group_id: str, provider: str = "notebooklm", lane: str = "
     gid = _safe_id(group_id, field="group_id")
     pid = _provider_or_raise(provider)
     lid = _lane_or_raise(lane)
+    _migrate_legacy_group_space(gid)
     _, doc = _load_bindings_doc()
     bindings = doc.get("bindings") if isinstance(doc.get("bindings"), dict) else {}
     per_group = bindings.get(gid) if isinstance(bindings.get(gid), dict) else {}
@@ -729,6 +921,7 @@ def get_space_binding(group_id: str, provider: str = "notebooklm", lane: str = "
 def list_space_bindings(provider: str = "notebooklm", *, lane: str = "") -> List[Dict[str, Any]]:
     pid = _provider_or_raise(provider)
     lane_filter = _lane_or_raise(lane) if str(lane or "").strip() else ""
+    _migrate_all_legacy_group_space()
     _, doc = _load_bindings_doc()
     bindings = doc.get("bindings") if isinstance(doc.get("bindings"), dict) else {}
     out: List[Dict[str, Any]] = []
@@ -766,6 +959,7 @@ def upsert_space_binding(
     lid = _lane_or_raise(lane)
     rid = str(remote_space_id or "").strip()
     who = str(by or "user").strip() or "user"
+    _migrate_legacy_group_space(gid)
     payload = {
         "group_id": gid,
         "provider": pid,
@@ -778,17 +972,22 @@ def upsert_space_binding(
     model = SpaceBinding.model_validate(payload)
     out = model.model_dump(exclude_none=True)
 
-    path, doc = _load_bindings_doc()
-    bindings = doc.get("bindings") if isinstance(doc.get("bindings"), dict) else {}
-    per_group = bindings.get(gid) if isinstance(bindings.get(gid), dict) else {}
-    per_provider = per_group.get(pid) if isinstance(per_group.get(pid), dict) else {}
-    per_provider[lid] = out
-    for other in sorted(_SPACE_LANES):
-        per_provider.setdefault(other, _default_binding_doc(gid, pid, other))
-    per_group[pid] = per_provider
-    bindings[gid] = per_group
-    doc["bindings"] = bindings
-    _save_doc(path, doc)
+    path = _bindings_path(ensure_home())
+    lock = acquire_lockfile(path.with_suffix(".json.lock"), blocking=True)
+    try:
+        doc = _normalize_bindings_doc(read_json(path))
+        bindings = doc.get("bindings") if isinstance(doc.get("bindings"), dict) else {}
+        per_group = bindings.get(gid) if isinstance(bindings.get(gid), dict) else {}
+        per_provider = per_group.get(pid) if isinstance(per_group.get(pid), dict) else {}
+        per_provider[lid] = out
+        for other in sorted(_SPACE_LANES):
+            per_provider.setdefault(other, _default_binding_doc(gid, pid, other))
+        per_group[pid] = per_provider
+        bindings[gid] = per_group
+        doc["bindings"] = bindings
+        _save_doc(path, doc)
+    finally:
+        release_lockfile(lock)
     return dict(out)
 
 
@@ -949,6 +1148,7 @@ def enqueue_space_job(
     pid = _provider_or_raise(provider)
     lid = _lane_or_raise(lane)
     rid = str(remote_space_id or "").strip()
+    _migrate_legacy_group_space(gid)
     if not rid:
         raise ValueError("missing remote_space_id")
     if not isinstance(payload, dict):
@@ -961,51 +1161,56 @@ def enqueue_space_job(
         kind=str(kind or "context_sync"),
         payload_digest=digest,
     )
-    path, doc = _load_jobs_doc()
-    jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
+    path = _jobs_path(home)
+    lock = acquire_lockfile(path.with_suffix(".json.lock"), blocking=True)
+    try:
+        doc = _normalize_jobs_doc(read_json(path))
+        jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
 
-    for item in jobs.values():
-        if not isinstance(item, dict):
-            continue
-        try:
-            model = SpaceJob.model_validate(item)
-        except Exception:
-            continue
-        if model.group_id != gid:
-            continue
-        if model.provider != pid:
-            continue
-        if model.lane != lid:
-            continue
-        if model.remote_space_id != rid:
-            continue
-        if str(model.idempotency_key or "") != idem:
-            continue
-        if model.state in ("pending", "running", "succeeded"):
-            return _hydrated_job_doc(home, model.model_dump(exclude_none=True)), True
+        for existing in jobs.values():
+            if not isinstance(existing, dict):
+                continue
+            try:
+                model = SpaceJob.model_validate(existing)
+            except Exception:
+                continue
+            if model.group_id != gid:
+                continue
+            if model.provider != pid:
+                continue
+            if model.lane != lid:
+                continue
+            if model.remote_space_id != rid:
+                continue
+            if str(model.idempotency_key or "") != idem:
+                continue
+            if model.state in ("pending", "running", "succeeded"):
+                return _hydrated_job_doc(home, model.model_dump(exclude_none=True)), True
 
-    now = utc_now_iso()
-    job = SpaceJob(
-        job_id=_new_job_id(),
-        group_id=gid,
-        provider=pid,
-        lane=lid,
-        remote_space_id=rid,
-        kind=str(kind or "context_sync"),
-        payload=dict(payload),
-        payload_digest=digest,
-        idempotency_key=idem,
-        state="pending",
-        attempt=0,
-        max_attempts=max(1, int(max_attempts or 3)),
-        next_run_at=None,
-        created_at=now,
-        updated_at=now,
-    )
-    item = _stored_job_doc(home, job.model_dump(exclude_none=True))
-    jobs[item["job_id"]] = item
-    doc["jobs"] = jobs
-    _save_doc(path, doc)
+        now = utc_now_iso()
+        job = SpaceJob(
+            job_id=_new_job_id(),
+            group_id=gid,
+            provider=pid,
+            lane=lid,
+            remote_space_id=rid,
+            kind=str(kind or "context_sync"),
+            payload=dict(payload),
+            payload_digest=digest,
+            idempotency_key=idem,
+            state="pending",
+            attempt=0,
+            max_attempts=max(1, int(max_attempts or 3)),
+            next_run_at=None,
+            created_at=now,
+            updated_at=now,
+        )
+        item = _stored_job_doc(home, job.model_dump(exclude_none=True))
+        jobs[item["job_id"]] = item
+        doc["jobs"] = jobs
+        _save_doc(path, doc)
+    finally:
+        release_lockfile(lock)
     _append_history(item["job_id"], "created", {"kind": item.get("kind"), "lane": item.get("lane")})
     return _hydrated_job_doc(home, item), False
 
@@ -1027,19 +1232,24 @@ def get_space_job(job_id: str) -> Optional[Dict[str, Any]]:
 def _update_space_job(job_id: str, mutator: Callable[[Dict[str, Any]], Dict[str, Any]]) -> Dict[str, Any]:
     home = ensure_home()
     jid = _safe_id(job_id, field="job_id")
-    path, doc = _load_jobs_doc()
-    jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
-    item = jobs.get(jid)
-    if not isinstance(item, dict):
-        raise ValueError(f"job not found: {jid}")
-    current = _hydrated_job_doc(home, SpaceJob.model_validate(item).model_dump(exclude_none=True))
-    candidate = mutator(dict(current))
-    model = SpaceJob.model_validate(candidate)
-    out = _stored_job_doc(home, model.model_dump(exclude_none=True))
-    jobs[jid] = out
-    doc["jobs"] = jobs
-    _save_doc(path, doc)
-    return _hydrated_job_doc(home, out)
+    path = _jobs_path(home)
+    lock = acquire_lockfile(path.with_suffix(".json.lock"), blocking=True)
+    try:
+        doc = _normalize_jobs_doc(read_json(path))
+        jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
+        item = jobs.get(jid)
+        if not isinstance(item, dict):
+            raise ValueError(f"job not found: {jid}")
+        current = _hydrated_job_doc(home, SpaceJob.model_validate(item).model_dump(exclude_none=True))
+        candidate = mutator(dict(current))
+        model = SpaceJob.model_validate(candidate)
+        out = _stored_job_doc(home, model.model_dump(exclude_none=True))
+        jobs[jid] = out
+        doc["jobs"] = jobs
+        _save_doc(path, doc)
+        return _hydrated_job_doc(home, out)
+    finally:
+        release_lockfile(lock)
 
 
 def mark_space_job_running(job_id: str) -> Dict[str, Any]:
@@ -1161,6 +1371,7 @@ def list_space_jobs(
     home = ensure_home()
     gid = _safe_id(group_id, field="group_id")
     pid = _provider_or_raise(provider)
+    _migrate_legacy_group_space(gid)
     lane_filter = _lane_or_raise(lane) if str(lane or "").strip() else ""
     wanted_state = str(state or "").strip()
     wanted_remote = str(remote_space_id or "").strip()
@@ -1234,6 +1445,7 @@ def space_queue_summary(
 ) -> Dict[str, Any]:
     gid = _safe_id(group_id, field="group_id")
     pid = _provider_or_raise(provider)
+    _migrate_legacy_group_space(gid)
     lane_filter = _lane_or_raise(lane) if str(lane or "").strip() else ""
     wanted_remote = str(remote_space_id or "").strip()
     if not _jobs_scan_allowed(_jobs_path(ensure_home())):
@@ -1271,13 +1483,17 @@ def compact_space_jobs_storage() -> Dict[str, Any]:
     home = ensure_home()
     path = _jobs_path(home)
     with _JOBS_COMPACT_LOCK:
-        doc = _load_cached_doc(path, normalize=_normalize_jobs_doc)
-        before_jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
-        before_count = len(before_jobs)
-        before_size = int(path.stat().st_size or 0) if path.exists() else 0
-        next_doc = _compact_jobs_doc(path, doc, force=True)
-        after_jobs = next_doc.get("jobs") if isinstance(next_doc.get("jobs"), dict) else {}
-        after_size = int(path.stat().st_size or 0) if path.exists() else 0
+        lock = acquire_lockfile(path.with_suffix(".json.lock"), blocking=True)
+        try:
+            doc = _normalize_jobs_doc(read_json(path))
+            before_jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
+            before_count = len(before_jobs)
+            before_size = int(path.stat().st_size or 0) if path.exists() else 0
+            next_doc = _compact_jobs_doc(path, doc, force=True)
+            after_jobs = next_doc.get("jobs") if isinstance(next_doc.get("jobs"), dict) else {}
+            after_size = int(path.stat().st_size or 0) if path.exists() else 0
+        finally:
+            release_lockfile(lock)
     return {
         "before_jobs": before_count,
         "after_jobs": len(after_jobs),

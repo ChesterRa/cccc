@@ -8,6 +8,7 @@ DOCKERFILE = ROOT / "docker" / "Dockerfile.rust"
 def test_rust_builder_places_web_bundle_in_the_packaged_asset_directory() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
+    assert "FROM node:24-bookworm-slim AS web-builder" in text
     assert (
         "COPY --from=web-builder /src/web/dist "
         "./crates/cccc-web/assets/web-dist"

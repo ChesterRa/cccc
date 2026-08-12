@@ -186,15 +186,15 @@ pub fn validate(
     group_id: &str,
     owner_id: &str,
     lease_id: &str,
-) -> Result<(), LeaseError> {
+) -> Result<Value, LeaseError> {
     with_lock(home, || {
         let active = active_lease_locked(home, Utc::now().timestamp_millis())?;
-        if active.as_ref().is_some_and(|lease| {
+        if let Some(lease) = active.as_ref().filter(|lease| {
             lease["group_id"] == group_id
                 && lease["owner_id"] == owner_id
                 && lease["lease_id"] == lease_id
         }) {
-            return Ok(());
+            return Ok(public_lease(lease));
         }
         Err(LeaseError::new(
             "assistant_voice_recording_lease_lost",
@@ -259,12 +259,13 @@ fn next_lease(
     ttl_seconds: i64,
     now_ms: i64,
 ) -> Value {
-    let created_at = active
+    let generation = active.filter(|_| body["action"] == "heartbeat");
+    let created_at = generation
         .and_then(|lease| lease["created_at"].as_str())
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(cccc_contracts::utc_now);
-    let lease_id = active
+    let lease_id = generation
         .and_then(|lease| lease["lease_id"].as_str())
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
@@ -426,5 +427,44 @@ mod tests {
         assert!(release(&home, "g_one", "tab-1", lease_id).expect("release"));
         assert!(!release(&home, "g_one", "tab-1", lease_id).expect("idempotent release"));
         assert_eq!(current(&home).expect("empty"), json!({}));
+    }
+
+    #[test]
+    fn same_owner_reacquire_fences_the_old_connection() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let first = update(
+            &home,
+            "g_one",
+            "One",
+            &json!({
+                "action":"acquire",
+                "owner_id":"tab-1",
+                "capture_mode":"document",
+            }),
+        )
+        .expect("first acquire");
+        let first_id = first["lease_id"]
+            .as_str()
+            .expect("first lease id")
+            .to_owned();
+
+        let second = update(
+            &home,
+            "g_one",
+            "One",
+            &json!({"action":"acquire","owner_id":"tab-1"}),
+        )
+        .expect("replacement acquire");
+        let second_id = second["lease_id"]
+            .as_str()
+            .expect("second lease id")
+            .to_owned();
+        assert_ne!(second_id, first_id);
+        assert_eq!(second["lease"]["capture_mode"], "document");
+        assert!(!release(&home, "g_one", "tab-1", &first_id).expect("stale release"));
+        assert!(validate(&home, "g_one", "tab-1", &second_id).is_ok());
+        assert!(release(&home, "g_one", "tab-1", &second_id).expect("active release"));
     }
 }

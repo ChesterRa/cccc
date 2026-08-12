@@ -599,6 +599,13 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     authorize(&group, request)?;
     let raw = required_arg(request, "state")?;
     let state: GroupState = serde_json::from_value(Value::String(raw)).map_err(OpError::invalid)?;
+    let resumes_automation = matches!(group.state, GroupState::Paused)
+        && matches!(state, GroupState::Active | GroupState::Idle)
+        || matches!(group.state, GroupState::Idle) && matches!(state, GroupState::Active);
+    if resumes_automation {
+        cccc_core::automation::reset_rule_timers_on_resume(home, &group.group_id)
+            .map_err(OpError::io)?;
+    }
     if matches!(state, GroupState::Paused | GroupState::Stopped) {
         actor_delivery::shutdown_group(&group.group_id);
         super::local_headless::stop_group(&group.group_id);
@@ -616,12 +623,19 @@ fn set_state(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         request,
         json!({"new_state": updated.state}),
     )?;
+    if matches!(updated.state, GroupState::Active | GroupState::Idle) {
+        actor_delivery::dispatch_group_unread(home, &updated);
+    }
     object(json!({"group": group_runtime::group(updated)}))
 }
 
 fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult {
     let group = load(home, request)?;
     authorize(&group, request)?;
+    if value && !group.running {
+        cccc_core::automation::reset_rule_timers_on_resume(home, &group.group_id)
+            .map_err(OpError::io)?;
+    }
     let runtimes = if value {
         actor_runtime::start_group(home, &group)?
     } else {
@@ -641,6 +655,9 @@ fn running(home: &HomeLayout, request: &DaemonRequest, value: bool) -> OpResult 
         .map_err(OpError::io)?;
     let kind = if value { "group.start" } else { "group.stop" };
     append_group_event(home, &updated, kind, request, json!({}))?;
+    if value {
+        actor_delivery::dispatch_group_unread(home, &updated);
+    }
     object(json!({"group": group_runtime::group(updated), "running": value, "runtimes": runtimes}))
 }
 

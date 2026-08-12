@@ -1,7 +1,11 @@
 use cccc_core::{GroupStore, HomeLayout, assistant_state, group_bridge_legacy, integration_state};
 use serde_json::json;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -38,6 +42,98 @@ fn python(repo: &Path, home: &Path, script: &str, group_id: &str) {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn python_and_rust_serialize_group_bridge_state_with_the_shared_lock() {
+    let repo = workspace_root();
+    let temp = tempfile::tempdir().expect("temp home");
+    let home = HomeLayout::from_path(temp.path()).expect("home");
+    home.initialize().expect("initialize");
+    let script = r#"
+import sys
+from pathlib import Path
+import yaml
+from cccc.util.file_lock import acquire_lockfile, release_lockfile
+from cccc.util.fs import atomic_write_text
+
+home = Path(sys.argv[1])
+lock = acquire_lockfile(home / "group_bridge_state.lock", blocking=True)
+try:
+    print("locked", flush=True)
+    sys.stdin.readline()
+    atomic_write_text(
+        home / "group_bridge_pairing.yaml",
+        yaml.safe_dump({
+            "invites": {},
+            "requests": {},
+            "trusts": {
+                "trust_python_revoked": {
+                    "trust_id": "trust_python_revoked",
+                    "group_id": "g_local",
+                    "remote_group_id": "g_remote",
+                    "remote_peer_id": "peer_remote",
+                    "status": "revoked",
+                }
+            },
+            "outbounds": {},
+        }, sort_keys=True),
+    )
+finally:
+    release_lockfile(lock)
+"#;
+    let mut child = Command::new(python_executable(&repo))
+        .arg("-c")
+        .arg(script)
+        .arg(temp.path())
+        .env("CCCC_HOME", temp.path())
+        .env("PYTHONPATH", repo.join("src"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("spawn Python lock holder");
+    let mut child_stdin = child.stdin.take().expect("Python stdin");
+    let mut child_stdout = BufReader::new(child.stdout.take().expect("Python stdout"));
+    let mut ready = String::new();
+    child_stdout
+        .read_line(&mut ready)
+        .expect("Python ready line");
+    assert_eq!(ready.trim(), "locked");
+
+    let (sent, received) = mpsc::channel();
+    let rust_home = home.clone();
+    let writer = thread::spawn(move || {
+        sent.send(group_bridge_legacy::update(&rust_home, |state| {
+            state.insert(
+                "deliveries".into(),
+                json!([{
+                    "registration_id":"registration_rust",
+                    "idempotency_key":"delivery_rust",
+                    "status":"queued"
+                }]),
+            );
+            Ok(())
+        }))
+        .expect("send Rust result");
+    });
+    assert!(
+        received.recv_timeout(Duration::from_millis(100)).is_err(),
+        "Rust mutation bypassed the Python-held Group Bridge state lock"
+    );
+
+    child_stdin.write_all(b"release\n").expect("release Python");
+    drop(child_stdin);
+    let status = child.wait().expect("wait for Python");
+    received
+        .recv_timeout(Duration::from_secs(3))
+        .expect("Rust mutation after Python releases the lock")
+        .expect("Rust state update");
+    writer.join().expect("Rust writer");
+
+    assert!(status.success());
+    let bridge = group_bridge_legacy::load(&home).expect("shared bridge state");
+    assert_eq!(bridge["trusts"][0]["status"], "revoked");
+    assert_eq!(bridge["deliveries"][0]["status"], "queued");
 }
 
 #[test]
@@ -185,7 +281,7 @@ _save_runtime_state(group, state)
             .as_array_mut()
             .expect("asks")
             .push(json!({"request_id":"ask-rust","status":"pending"}));
-        state.insert("input_read_cursor".into(), json!(9));
+        state.insert("native_extension".into(), json!({"revision":9}));
         Ok(())
     })
     .expect("Rust voice update");
@@ -218,7 +314,7 @@ assert "session-python" in state["voice_sessions"]
 assert "session-rust" in state["voice_sessions"]
 assert "draft-rust" in state["voice_prompt_drafts"]
 assert "ask-rust" in state["voice_ask_requests"]
-assert state["rust_state"]["input_read_cursor"] == 9
+assert state["rust_state"]["native_extension"]["revision"] == 9
 state["assistants"]["voice_secretary"]["lifecycle"] = "idle"
 _save_runtime_state(group, state)
 "#,
@@ -227,5 +323,5 @@ _save_runtime_state(group, state)
 
     let voice = assistant_state::load(&home, &group.group_id).expect("final Rust voice load");
     assert_eq!(voice["assistant"]["lifecycle"], "idle");
-    assert_eq!(voice["input_read_cursor"], 9);
+    assert_eq!(voice["native_extension"]["revision"], 9);
 }

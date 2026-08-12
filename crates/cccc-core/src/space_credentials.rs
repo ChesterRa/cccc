@@ -84,6 +84,13 @@ pub fn resolve(home: &HomeLayout, provider: &str) -> io::Result<Option<String>> 
 }
 
 fn load(home: &HomeLayout, provider: &str) -> io::Result<Map<String, Value>> {
+    let target = path(home, provider);
+    with_exclusive_lock(&target.with_extension("json.lock"), || {
+        load_unlocked(home, provider)
+    })
+}
+
+fn load_unlocked(home: &HomeLayout, provider: &str) -> io::Result<Map<String, Value>> {
     migrate_legacy(home, provider)?;
     let path = path(home, provider);
     if path.exists() {
@@ -100,7 +107,7 @@ fn mutate<T>(
 ) -> io::Result<T> {
     let target = path(home, provider);
     with_exclusive_lock(&target.with_extension("json.lock"), || {
-        let mut doc = load(home, provider)?;
+        let mut doc = load_unlocked(home, provider)?;
         let result = change(&mut doc)?;
         if doc.is_empty() {
             let _ = std::fs::remove_file(&target);
@@ -124,23 +131,47 @@ fn migrate_legacy(home: &HomeLayout, provider: &str) -> io::Result<()> {
     let marker = home
         .root()
         .join("state/secrets/space_providers/.rust-credentials-migrated-v1");
-    if marker.exists() || !legacy.exists() {
+    if !legacy.exists() {
         return Ok(());
     }
-    let raw: Value = read_json(&legacy)?;
-    if let Some(auth_json) = raw
-        .get("providers")
-        .and_then(|providers| providers.get(provider))
-        .and_then(|item| item.get("auth_json"))
-        .and_then(Value::as_str)
-        && !target.exists()
-    {
-        write_secret_json(&target, &json!({NOTEBOOKLM_KEY:auth_json}))?;
+    let mut raw: Value = read_json(&legacy)?;
+    if !marker.exists() {
+        if let Some(auth_json) = raw
+            .get("providers")
+            .and_then(|providers| providers.get(provider))
+            .and_then(|item| item.get("auth_json"))
+            .and_then(Value::as_str)
+            && !target.exists()
+        {
+            write_secret_json(&target, &json!({NOTEBOOKLM_KEY:auth_json}))?;
+        }
+        if let Some(parent) = marker.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&marker, b"migrated from space-credentials.json\n")?;
     }
-    if let Some(parent) = marker.parent() {
-        std::fs::create_dir_all(parent)?;
+
+    let removed = raw
+        .get_mut("providers")
+        .and_then(Value::as_object_mut)
+        .is_some_and(|providers| providers.remove(provider).is_some());
+    if removed {
+        let providers_empty = raw
+            .get("providers")
+            .and_then(Value::as_object)
+            .is_some_and(Map::is_empty);
+        if providers_empty {
+            raw.as_object_mut()
+                .expect("legacy credential document is an object")
+                .remove("providers");
+        }
+        if raw.as_object().is_some_and(Map::is_empty) {
+            std::fs::remove_file(legacy)?;
+        } else {
+            write_secret_json(&legacy, &raw)?;
+        }
     }
-    std::fs::write(marker, b"migrated from space-credentials.json\n")
+    Ok(())
 }
 
 fn validate_provider(provider: &str) -> io::Result<()> {

@@ -9,7 +9,7 @@ use cccc_core::nomcp::Store;
 use serde::Deserialize;
 use serde_json::{Map, json};
 
-use super::nomcp::{auth_failure, authorize, failure};
+use super::nomcp::{auth_failure, failure};
 use super::nomcp_render;
 use crate::AppState;
 
@@ -83,18 +83,31 @@ async fn send(
     text: &str,
     title: &str,
 ) -> Response {
-    let Ok((session, _)) = authorize(state, sid, token) else {
-        return auth_failure(state, sid, token);
-    };
     if text.len() > 12 * 1024 {
         return failure(StatusCode::PAYLOAD_TOO_LARGE, "message is too large");
     }
-    if session.sent_message_ids.contains(msg_id) {
+    let store = match Store::new(state.home.clone()) {
+        Ok(store) => store,
+        Err(error) => return failure(StatusCode::INTERNAL_SERVER_ERROR, error),
+    };
+    let lock_store = store.clone();
+    let lock_sid = sid.to_owned();
+    let lock_token = token.to_owned();
+    let permit = match tokio::task::spawn_blocking(move || {
+        lock_store.authorize_advisory(&lock_sid, &lock_token)
+    })
+    .await
+    {
+        Ok(Ok(permit)) => permit,
+        Ok(Err(_)) => return auth_failure(state, sid, token),
+        Err(error) => return failure(StatusCode::INTERNAL_SERVER_ERROR, error),
+    };
+    if permit.session.sent_message_ids.contains(msg_id) {
         return Html(nomcp_render::html("No-MCP Advisory", "duplicate_ignored")).into_response();
     }
     let args = json!({
-        "group_id":session.group_id,"by":"nomcp-advisory","to":[session.recipient],
-        "text":text,"title":title,"reply_to":session.reply_to_event_id,"source_platform":"nomcp",
+        "group_id":permit.session.group_id,"by":"nomcp-advisory","to":[permit.session.recipient],
+        "text":text,"title":title,"reply_to":permit.session.reply_to_event_id,"source_platform":"nomcp",
         "source_user_id":sid,"client_id":format!("nomcp:{sid}:{msg_id}"),
         "refs":[{"source":"nomcp","cannot_execute_local_tools":true}]
     });
@@ -109,11 +122,7 @@ async fn send(
     if !response.is_ok_and(|item| item.ok) {
         return failure(StatusCode::SERVICE_UNAVAILABLE, "daemon send failed");
     }
-    let store = match Store::new(state.home.clone()) {
-        Ok(store) => store,
-        Err(error) => return failure(StatusCode::INTERNAL_SERVER_ERROR, error),
-    };
-    if let Err(error) = store.record_message(sid, msg_id) {
+    if let Err(error) = permit.record_message(msg_id) {
         return failure(StatusCode::INTERNAL_SERVER_ERROR, error);
     }
     Html(nomcp_render::html("No-MCP Advisory", "accepted")).into_response()

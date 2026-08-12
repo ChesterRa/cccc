@@ -626,7 +626,11 @@ def _anonymous_principal() -> Any:
 
 
 def _tokens_enabled() -> bool:
-    return bool(list_access_tokens())
+    try:
+        return bool(list_access_tokens())
+    except Exception:
+        # A present but unreadable credential store must never disable auth.
+        return True
 
 
 def _principal_kind(principal: Any) -> str:
@@ -770,7 +774,10 @@ def resolve_websocket_principal(websocket: WebSocket) -> Any:
             token = ""
     if not token:
         return _anonymous_principal()
-    entry = lookup_access_token(token)
+    try:
+        entry = lookup_access_token(token)
+    except Exception:
+        return _anonymous_principal()
     if not isinstance(entry, dict):
         return _anonymous_principal()
     return SimpleNamespace(

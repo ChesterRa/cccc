@@ -38,6 +38,7 @@ EventKind = Literal[
     "actor.start",
     "actor.stop",
     "actor.restart",
+    "actor.new_session",
     "actor.remove",
     "actor.activity",
     "context.sync",
@@ -187,6 +188,11 @@ class ActorLifecycleData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ActorNewSessionData(ActorLifecycleData):
+    runtime: Optional[AgentRuntime] = None
+    rotation: Optional[Literal["in_place"]] = None
+
+
 class ActorActivityData(BaseModel):
     """Periodic runtime status snapshot for running actors."""
     actors: List[Dict[str, Any]] = Field(default_factory=list)
@@ -282,6 +288,7 @@ _KIND_TO_MODEL = {
     "actor.start": ActorLifecycleData,
     "actor.stop": ActorLifecycleData,
     "actor.restart": ActorLifecycleData,
+    "actor.new_session": ActorNewSessionData,
     "actor.remove": ActorLifecycleData,
     "actor.activity": ActorActivityData,
     "context.sync": ContextSyncData,

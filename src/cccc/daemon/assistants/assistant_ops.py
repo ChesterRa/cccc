@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import copy
 import hashlib
 import json
 import logging
@@ -14,6 +15,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable, Dict, Optional
@@ -28,7 +30,13 @@ from ...kernel.prompt_files import resolve_active_scope_root
 from ...kernel.voice_secretary_actor import VOICE_SECRETARY_ACTOR_ID, get_voice_secretary_actor
 from ...paths import ensure_home
 from ...util.conv import coerce_bool
-from ...util.fs import atomic_write_json, atomic_write_text, read_json
+from ...util.file_lock import acquire_lockfile, release_lockfile
+from ...util.fs import (
+    atomic_write_json,
+    atomic_write_text,
+    merge_concurrent_document_changes,
+    read_json,
+)
 from ...util.time import parse_utc_iso, utc_now_iso
 from ..actors.actor_profile_runtime import resolve_linked_actor_before_start
 from ..messaging.delivery import dispatch_system_notify_event_to_actor, emit_system_notify
@@ -79,6 +87,7 @@ _VOICE_MODEL_INSTALL_THREADS: Dict[str, threading.Thread] = {}
 _VOICE_RUNTIME_INSTALL_LOCK = threading.Lock()
 _VOICE_RUNTIME_INSTALL_THREADS: Dict[str, threading.Thread] = {}
 _VOICE_RECORDING_LEASE_LOCK = threading.Lock()
+_VOICE_TRANSCRIPT_LOCK_STATE = threading.local()
 
 
 ASSISTANT_ID_VOICE_SECRETARY = "voice_secretary"
@@ -103,6 +112,7 @@ _MAX_PROMPT_DRAFT_CHARS = 16_000
 _MAX_AUDIO_BYTES = 100 * 1024 * 1024
 _MAX_VOICE_DOCUMENT_CHARS = 200_000
 _MAX_VOICE_DOCUMENTS = 100
+_MAX_VOICE_SESSION_RECORDS = 50
 _DEFAULT_AUTO_DOCUMENT_QUIET_MS = 5_000
 _DEFAULT_AUTO_DOCUMENT_MIN_CHARS = 700
 _DEFAULT_AUTO_DOCUMENT_FAST_MIN_CHARS = 120
@@ -114,6 +124,14 @@ _DEFAULT_AUTO_DOCUMENT_MIN_WINDOW_SEGMENTS = 3
 _DEFAULT_VOICE_DOCUMENT_DIR = "docs/voice-secretary"
 _VOICE_INPUT_NUDGE_RETRY_SECONDS = (180, 360, 720)
 _VOICE_PENDING_PROMPT_DRAFT_STALE_SECONDS = 1_800
+
+
+class _RuntimeState(dict[str, Any]):
+    """One mutable assistant-state snapshot with its read baseline."""
+
+    def __init__(self, payload: Dict[str, Any]) -> None:
+        super().__init__(payload)
+        self.baseline = copy.deepcopy(payload)
 _VOICE_RECORDING_LEASE_DEFAULT_TTL_SECONDS = 30
 _VOICE_RECORDING_LEASE_MIN_TTL_SECONDS = 5
 _VOICE_RECORDING_LEASE_MAX_TTL_SECONDS = 120
@@ -246,7 +264,41 @@ def _voice_recording_lease_path() -> Path:
     return ensure_home() / "state" / "voice_secretary_recording_lease.json"
 
 
-def _load_runtime_state(group: Group) -> Dict[str, Any]:
+def _voice_transcript_lock_path(group: Group) -> Path:
+    return ensure_home() / "voice-secretary" / group.group_id / "transcript.lock"
+
+
+@contextmanager
+def _voice_transcript_lock(group: Group):
+    path = _voice_transcript_lock_path(group)
+    held_paths = getattr(_VOICE_TRANSCRIPT_LOCK_STATE, "held_paths", set())
+    key = str(path)
+    if key in held_paths:
+        yield
+        return
+    file_lock = acquire_lockfile(path, blocking=True)
+    _VOICE_TRANSCRIPT_LOCK_STATE.held_paths = {*held_paths, key}
+    try:
+        yield
+    finally:
+        _VOICE_TRANSCRIPT_LOCK_STATE.held_paths = held_paths
+        release_lockfile(file_lock)
+
+
+@contextmanager
+def _voice_recording_lease_lock():
+    with _VOICE_RECORDING_LEASE_LOCK:
+        file_lock = acquire_lockfile(
+            _voice_recording_lease_path().with_suffix(".json.lock"),
+            blocking=True,
+        )
+        try:
+            yield
+        finally:
+            release_lockfile(file_lock)
+
+
+def _load_runtime_state_payload(group: Group) -> Dict[str, Any]:
     payload = read_json(_state_path(group))
     if not isinstance(payload, dict) or int(payload.get("schema") or 0) != _STATE_SCHEMA:
         return {
@@ -277,6 +329,10 @@ def _load_runtime_state(group: Group) -> Dict[str, Any]:
     }
 
 
+def _load_runtime_state(group: Group) -> _RuntimeState:
+    return _RuntimeState(_load_runtime_state_payload(group))
+
+
 def _voice_retention_ttl_seconds(group: Group) -> int:
     default_config = _ASSISTANT_DEFAULTS[ASSISTANT_ID_VOICE_SECRETARY].get("config") or {}
     stored = _stored_assistant_settings(group, ASSISTANT_ID_VOICE_SECRETARY)
@@ -288,7 +344,7 @@ def _voice_retention_ttl_seconds(group: Group) -> int:
     return min(max(0, value), 86_400)
 
 
-def _save_runtime_state(group: Group, payload: Dict[str, Any]) -> None:
+def _durable_runtime_state(group: Group, payload: Dict[str, Any]) -> Dict[str, Any]:
     assistants = payload.get("assistants") if isinstance(payload.get("assistants"), dict) else {}
     durable_assistants: Dict[str, Any] = {}
     for assistant_id, raw_entry in assistants.items():
@@ -306,7 +362,7 @@ def _save_runtime_state(group: Group, payload: Dict[str, Any]) -> None:
             }
         if entry:
             durable_assistants[str(assistant_id)] = entry
-    normalized = {
+    return {
         "schema": _STATE_SCHEMA,
         "group_id": group.group_id,
         "assistants": durable_assistants,
@@ -316,8 +372,253 @@ def _save_runtime_state(group: Group, payload: Dict[str, Any]) -> None:
         "voice_ask_requests": payload.get("voice_ask_requests") if isinstance(payload.get("voice_ask_requests"), dict) else {},
         _RUST_STATE_KEY: payload.get(_RUST_STATE_KEY) if isinstance(payload.get(_RUST_STATE_KEY), dict) else {},
     }
-    _state_path(group).parent.mkdir(parents=True, exist_ok=True)
-    atomic_write_json(_state_path(group), normalized, indent=2)
+
+
+def _save_runtime_state(group: Group, payload: Dict[str, Any]) -> None:
+    path = _state_path(group)
+    desired = _durable_runtime_state(group, payload)
+    baseline_source = payload.baseline if isinstance(payload, _RuntimeState) else desired
+    baseline = _durable_runtime_state(group, baseline_source)
+    lock = acquire_lockfile(path.with_suffix(".json.lock"), blocking=True)
+    try:
+        current = _durable_runtime_state(group, _load_runtime_state_payload(group))
+        merged = merge_concurrent_document_changes(
+            baseline,
+            desired,
+            current,
+            document=str(path),
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, merged, indent=2)
+    finally:
+        release_lockfile(lock)
+    payload.clear()
+    payload.update(copy.deepcopy(merged))
+    if isinstance(payload, _RuntimeState):
+        payload.baseline = copy.deepcopy(merged)
+
+
+def _is_document_transcript_segment(raw: Any) -> bool:
+    if not isinstance(raw, dict) or not str(raw.get("text") or "").strip():
+        return False
+    trigger = raw.get("trigger") if isinstance(raw.get("trigger"), dict) else {}
+    semantic_values = [
+        raw.get("kind"),
+        raw.get("input_kind"),
+        raw.get("capture_mode"),
+        trigger.get("kind"),
+        trigger.get("input_kind"),
+        trigger.get("capture_mode"),
+        trigger.get("mode"),
+        trigger.get("trigger_kind"),
+        trigger.get("source"),
+        trigger.get("dispatch_target"),
+        trigger.get("target_kind"),
+    ]
+    semantic_kinds = {
+        "prompt",
+        "prompt_refine",
+        "composer_prompt_refine",
+        "instruction",
+        "voice_instruction",
+        "user_instruction",
+        "composer",
+    }
+    return not any(str(value or "").strip().lower() in semantic_kinds for value in semantic_values)
+
+
+def _has_windowed_speaker_transcript(diarization: Dict[str, Any]) -> bool:
+    transcript_model = str(diarization.get("speaker_transcript_model_id") or "").strip().lower()
+    diarization_model = str(diarization.get("model_id") or "").strip().lower()
+    return bool(
+        transcript_model
+        and transcript_model != diarization_model
+        and "diarization" not in transcript_model
+        and "pyannote" not in transcript_model
+        and "3dspeaker" not in transcript_model
+    )
+
+
+def _public_voice_session(raw: Any, *, session_id: str = "", document_path: str = "") -> Dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {}
+    record = dict(raw)
+    clean_session_id = _safe_voice_session_id(record.get("session_id") or session_id)
+    if not clean_session_id:
+        return {}
+    capture_mode = str(record.get("capture_mode") or "").strip().lower()
+    if capture_mode and capture_mode != "document":
+        return {}
+    if not capture_mode and (
+        clean_session_id.startswith("input-")
+        or clean_session_id in {"voice-secretary-prompt-refine", "voice-secretary-user-instruction"}
+    ):
+        return {}
+    raw_segments = record.get("segments")
+    if not isinstance(raw_segments, list):
+        raw_segments = record.get("window_segments")
+    segments: list[Dict[str, Any]] = []
+    for raw_segment in raw_segments if isinstance(raw_segments, list) else []:
+        if not _is_document_transcript_segment(raw_segment):
+            continue
+        text = str(raw_segment.get("text") or "").strip()
+        if not text:
+            continue
+        segment = dict(raw_segment)
+        segment["session_id"] = str(segment.get("session_id") or clean_session_id)
+        segment["document_path"] = str(
+            segment.get("document_path") or record.get("document_path") or ""
+        ).strip()
+        segment["is_final"] = coerce_bool(segment.get("is_final"), default=True)
+        segments.append(segment)
+    clean_document_path = str(record.get("document_path") or "").strip()
+    requested_document_path = str(document_path or "").strip()
+    if requested_document_path:
+        matching_segments = [
+            item
+            for item in segments
+            if not str(item.get("document_path") or "").strip()
+            or str(item.get("document_path") or "").strip() == requested_document_path
+        ]
+        if clean_document_path != requested_document_path and not matching_segments:
+            return {}
+        clean_document_path = requested_document_path
+        segments = matching_segments
+    if not capture_mode and not segments:
+        return {}
+    record["schema"] = int(record.get("schema") or 1)
+    record["session_id"] = clean_session_id
+    record["capture_mode"] = "document"
+    record["document_path"] = clean_document_path
+    record["segments"] = segments
+    record["transcript"] = "\n".join(
+        str(item.get("text") or "").strip()
+        for item in segments
+        if coerce_bool(item.get("is_final"), default=True) and str(item.get("text") or "").strip()
+    )
+    raw_diarization = record.get("diarization")
+    if isinstance(raw_diarization, dict):
+        diarization = dict(raw_diarization)
+        raw_speaker_segments = diarization.get("speaker_transcript_segments")
+        diarization["speaker_transcript_segments"] = (
+            [
+                dict(item)
+                for item in raw_speaker_segments
+                if _is_document_transcript_segment(item)
+            ]
+            if _has_windowed_speaker_transcript(diarization)
+            and isinstance(raw_speaker_segments, list)
+            else []
+        )
+        record["diarization"] = diarization
+    return record
+
+
+def _select_public_voice_session(
+    runtime_state: Dict[str, Any],
+    *,
+    session_id: str = "",
+    document_path: str = "",
+) -> Dict[str, Any]:
+    sessions = runtime_state.get("voice_sessions")
+    if not isinstance(sessions, dict):
+        return {}
+    requested_session_id = str(session_id or "").strip()
+    if requested_session_id:
+        return _public_voice_session(
+            sessions.get(requested_session_id),
+            session_id=requested_session_id,
+            document_path=document_path,
+        )
+    ordered = sorted(
+        sessions.items(),
+        key=lambda item: (
+            str(item[1].get("updated_at") or item[1].get("created_at") or "")
+            if isinstance(item[1], dict)
+            else "",
+            str(item[0]),
+        ),
+        reverse=True,
+    )
+    for candidate_id, candidate in ordered:
+        projected = _public_voice_session(
+            candidate,
+            session_id=str(candidate_id),
+            document_path=document_path,
+        )
+        if projected:
+            return projected
+    return {}
+
+
+def _prune_voice_session_records(sessions: Dict[str, Any]) -> None:
+    overflow = len(sessions) - _MAX_VOICE_SESSION_RECORDS
+    if overflow <= 0:
+        return
+    ordered = sorted(
+        sessions.items(),
+        key=lambda item: (
+            str(item[1].get("updated_at") or item[1].get("created_at") or "")
+            if isinstance(item[1], dict)
+            else "",
+            str(item[0]),
+        ),
+    )
+    for session_id, _ in ordered[:overflow]:
+        sessions.pop(session_id, None)
+
+
+def _read_voice_document_transcript_session(group: Group, document_path: str) -> Dict[str, Any]:
+    requested_path = str(document_path or "").strip()
+    if not requested_path:
+        return {}
+    try:
+        _, record = _find_voice_document_by_path(
+            group,
+            document_path=requested_path,
+            create=False,
+        )
+    except Exception:
+        return {}
+    document_id = str(record.get("document_id") or "").strip()
+    if not document_id:
+        return {}
+    path = _voice_documents_root(group) / _safe_voice_document_id(document_id) / "transcript.jsonl"
+    if not path.is_file():
+        return {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {}
+    rows: list[Dict[str, Any]] = []
+    for line in lines[-1_000:]:
+        try:
+            row = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(row, dict) and str(row.get("text") or "").strip():
+            rows.append(row)
+    if not rows:
+        return {}
+    transcript = "\n".join(
+        str(row.get("text") or "").strip()
+        for row in rows
+        if coerce_bool(row.get("is_final"), default=True) and str(row.get("text") or "").strip()
+    )
+    return {
+        "schema": 1,
+        "group_id": group.group_id,
+        "session_id": f"document-{document_id}",
+        "status": "ready",
+        "capture_mode": "document",
+        "document_path": requested_path,
+        "created_at": str(rows[0].get("created_at") or ""),
+        "updated_at": str(rows[-1].get("updated_at") or rows[-1].get("created_at") or ""),
+        "segments": rows,
+        "transcript": transcript,
+        "diarization": {},
+        "source": "document_transcript",
+    }
 
 
 def _voice_recording_epoch_ms() -> int:
@@ -435,7 +736,7 @@ def _voice_recording_lease_result(
 
 
 def _current_public_voice_recording_lease() -> Dict[str, Any]:
-    with _VOICE_RECORDING_LEASE_LOCK:
+    with _voice_recording_lease_lock():
         return _public_voice_recording_lease(_active_voice_recording_lease_locked())
 
 
@@ -1126,6 +1427,17 @@ def _safe_voice_session_id(value: Any) -> str:
     return safe or f"session-{uuid.uuid4().hex}"
 
 
+def _require_safe_voice_session_id(value: Any) -> str:
+    raw = str(value or "").strip()
+    if (
+        not raw
+        or raw in {".", ".."}
+        or re.fullmatch(r"[A-Za-z0-9_.-]+", raw) is None
+    ):
+        raise ValueError("voice session/segment id must be one safe path component")
+    return raw
+
+
 def _voice_session_dir(group: Group, session_id: str):
     return ensure_home() / "voice-secretary" / group.group_id / _safe_voice_session_id(session_id)
 
@@ -1142,8 +1454,20 @@ def _voice_input_state_path(group: Group) -> Path:
     return ensure_home() / "voice-secretary" / group.group_id / "input_state.json"
 
 
+def _legacy_voice_input_stream_path(group: Group) -> Path:
+    return ensure_home() / "voice-secretary" / group.group_id / "inputs.jsonl"
+
+
+def _voice_input_state_lock_path(group: Group) -> Path:
+    return ensure_home() / "voice-secretary" / group.group_id / "input_state.json.lock"
+
+
 def _voice_documents_index_path(group: Group) -> Path:
     return _voice_documents_root(group) / "index.json"
+
+
+def _voice_documents_index_lock_path(group: Group) -> Path:
+    return _voice_documents_root(group) / "index.json.lock"
 
 
 def _safe_voice_document_id(value: Any = "") -> str:
@@ -1197,7 +1521,7 @@ def _safe_voice_document_rel_path(value: Any) -> str:
     return rel.as_posix().strip("/")
 
 
-def _load_voice_documents_index(group: Group) -> Dict[str, Any]:
+def _load_voice_documents_index_unmigrated(group: Group) -> Dict[str, Any]:
     payload = read_json(_voice_documents_index_path(group))
     if not isinstance(payload, dict) or int(payload.get("schema") or 0) != 1:
         return {"schema": 1, "group_id": group.group_id, "active_document_id": "", "documents": {}}
@@ -1210,7 +1534,7 @@ def _load_voice_documents_index(group: Group) -> Dict[str, Any]:
     }
 
 
-def _save_voice_documents_index(group: Group, payload: Dict[str, Any]) -> None:
+def _save_voice_documents_index_unlocked(group: Group, payload: Dict[str, Any]) -> None:
     documents = payload.get("documents") if isinstance(payload.get("documents"), dict) else {}
     items = sorted(
         [
@@ -1228,6 +1552,91 @@ def _save_voice_documents_index(group: Group, payload: Dict[str, Any]) -> None:
     }
     _voice_documents_index_path(group).parent.mkdir(parents=True, exist_ok=True)
     atomic_write_json(_voice_documents_index_path(group), normalized, indent=2)
+
+
+def _migrate_legacy_voice_documents(group: Group) -> None:
+    assistant_lock = acquire_lockfile(_state_path(group).with_suffix(".json.lock"), blocking=True)
+    try:
+        runtime_payload = read_json(_state_path(group))
+        runtime_payload = runtime_payload if isinstance(runtime_payload, dict) else {}
+        rust_state = runtime_payload.get(_RUST_STATE_KEY) if isinstance(runtime_payload.get(_RUST_STATE_KEY), dict) else {}
+        legacy_documents = [dict(item) for item in rust_state.get("documents", []) if isinstance(item, dict)]
+        legacy_active_id = str(rust_state.get("active_document_id") or "").strip()
+        legacy_active_path = str(rust_state.get("active_document_path") or "").strip()
+    finally:
+        release_lockfile(assistant_lock)
+    if not legacy_documents and not legacy_active_id and not legacy_active_path:
+        return
+
+    index_lock = acquire_lockfile(_voice_documents_index_lock_path(group), blocking=True)
+    try:
+        index = _load_voice_documents_index_unmigrated(group)
+        documents = index.setdefault("documents", {})
+        known_paths = {
+            _voice_document_path(record)
+            for record in documents.values()
+            if isinstance(record, dict) and _voice_document_path(record)
+        }
+        for record in legacy_documents:
+            document_path = _voice_document_path(record)
+            if not document_path or document_path in known_paths:
+                continue
+            document_id = str(record.get("document_id") or "").strip()
+            if not document_id or document_id in documents:
+                document_id = f"voice-doc-migrated-{hashlib.sha256(document_path.encode('utf-8')).hexdigest()[:16]}"
+            record["document_id"] = document_id
+            record["document_path"] = document_path
+            documents[document_id] = record
+            known_paths.add(document_path)
+        current_active = str(index.get("active_document_id") or "").strip()
+        if not current_active:
+            for document_id, record in documents.items():
+                if not isinstance(record, dict) or str(record.get("status") or "active") != "active":
+                    continue
+                if (legacy_active_id and document_id == legacy_active_id) or (
+                    legacy_active_path and _voice_document_path(record) == legacy_active_path
+                ):
+                    index["active_document_id"] = document_id
+                    break
+        _save_voice_documents_index_unlocked(group, index)
+    finally:
+        release_lockfile(index_lock)
+
+    assistant_lock = acquire_lockfile(_state_path(group).with_suffix(".json.lock"), blocking=True)
+    try:
+        runtime_payload = read_json(_state_path(group))
+        runtime_payload = runtime_payload if isinstance(runtime_payload, dict) else {
+            "schema": _STATE_SCHEMA,
+            "group_id": group.group_id,
+        }
+        rust_state = runtime_payload.get(_RUST_STATE_KEY) if isinstance(runtime_payload.get(_RUST_STATE_KEY), dict) else {}
+        rust_state = dict(rust_state)
+        for key in ("documents", "active_document_id", "active_document_path"):
+            rust_state.pop(key, None)
+        runtime_payload[_RUST_STATE_KEY] = rust_state
+        _state_path(group).parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(_state_path(group), runtime_payload, indent=2)
+    finally:
+        release_lockfile(assistant_lock)
+
+
+def _load_voice_documents_index(group: Group) -> Dict[str, Any]:
+    _migrate_legacy_voice_documents(group)
+    return _load_voice_documents_index_unmigrated(group)
+
+
+@contextmanager
+def _edit_voice_documents_index(group: Group):
+    """Hold the canonical index lock across one complete read-modify-write."""
+
+    _migrate_legacy_voice_documents(group)
+    index_lock = acquire_lockfile(_voice_documents_index_lock_path(group), blocking=True)
+    try:
+        payload = _load_voice_documents_index_unmigrated(group)
+        yield payload
+        _save_voice_documents_index_unlocked(group, payload)
+    finally:
+        release_lockfile(index_lock)
 
 
 def _resolve_voice_document_storage_path(group: Group, record: Dict[str, Any]) -> Path:
@@ -1443,8 +1852,9 @@ def _find_voice_document_by_path(
     document_path: str = "",
     create: bool = False,
     config: Optional[Dict[str, Any]] = None,
+    index: Optional[Dict[str, Any]] = None,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    index = _load_voice_documents_index(group)
+    index = index if index is not None else _load_voice_documents_index(group)
     documents = index.setdefault("documents", {})
     wanted = ""
     raw_path = str(document_path or "").strip()
@@ -1474,11 +1884,11 @@ def _find_voice_document_by_path(
                 documents[doc_id] = dict(record)
             return index, dict(record)
     if create and not raw_path:
-        return _get_voice_document(group, create=True, config=config)
+        return _get_voice_document(group, create=True, config=config, index=index)
     raise ValueError("voice secretary document not found")
 
 
-def _load_voice_input_state(group: Group) -> Dict[str, Any]:
+def _load_voice_input_state_unmigrated(group: Group) -> Dict[str, Any]:
     payload = read_json(_voice_input_state_path(group))
     if not isinstance(payload, dict) or int(payload.get("schema") or 0) != 1:
         return {
@@ -1515,6 +1925,142 @@ def _load_voice_input_state(group: Group) -> Dict[str, Any]:
         "last_input_envelope_id": str(payload.get("last_input_envelope_id") or ""),
         "last_read_new_input_at": str(payload.get("last_read_new_input_at") or ""),
     }
+
+
+def _read_voice_input_records_strict(path: Path) -> list[Dict[str, Any]]:
+    if not path.is_file():
+        return []
+    records: list[Dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line_number, line in enumerate(fh, start=1):
+            if not line.strip():
+                continue
+            try:
+                value = json.loads(line)
+            except Exception as exc:
+                raise ValueError(f"invalid Voice Secretary input JSON at {path}:{line_number}") from exc
+            if not isinstance(value, dict):
+                raise ValueError(f"invalid Voice Secretary input record at {path}:{line_number}")
+            records.append(value)
+    return records
+
+
+def _voice_input_event_identity(value: Dict[str, Any]) -> str:
+    session_id = str(value.get("session_id") or "").strip()
+    segment_id = str(value.get("segment_id") or "").strip()
+    if session_id and segment_id:
+        return f"segment\0{session_id}\0{segment_id}"
+    for field in ("input_append_id", "input_id"):
+        field_value = str(value.get(field) or "").strip()
+        if field_value:
+            return f"{field}\0{field_value}"
+    return ""
+
+
+def _voice_input_covered_cursor(coverage: list[tuple[int, bool]]) -> int:
+    cursor = 0
+    for seq, covered in sorted(coverage):
+        if not covered:
+            break
+        cursor = seq
+    return cursor
+
+
+def _migrate_legacy_voice_input(group: Group) -> None:
+    legacy_path = _legacy_voice_input_stream_path(group)
+    if not legacy_path.is_file():
+        return
+
+    assistant_lock = acquire_lockfile(_state_path(group).with_suffix(".json.lock"), blocking=True)
+    try:
+        runtime_payload = read_json(_state_path(group))
+        runtime_payload = runtime_payload if isinstance(runtime_payload, dict) else {}
+        rust_state = runtime_payload.get(_RUST_STATE_KEY) if isinstance(runtime_payload.get(_RUST_STATE_KEY), dict) else {}
+        legacy_read_cursor = max(0, int(rust_state.get("input_read_cursor") or 0))
+    finally:
+        release_lockfile(assistant_lock)
+
+    input_lock = acquire_lockfile(_voice_input_state_lock_path(group), blocking=True)
+    try:
+        canonical_path = _voice_input_stream_path(group)
+        canonical = _read_voice_input_records_strict(canonical_path)
+        legacy = _read_voice_input_records_strict(legacy_path)
+        state = _load_voice_input_state_unmigrated(group)
+        canonical_read = max(0, int(state.get("secretary_read_cursor") or 0))
+        canonical_delivery = max(
+            canonical_read,
+            max(0, int(state.get("secretary_delivery_cursor") or 0)),
+        )
+        latest = max(0, int(state.get("latest_seq") or 0))
+        identities: Dict[str, int] = {}
+        read_coverage: list[tuple[int, bool]] = []
+        delivery_coverage: list[tuple[int, bool]] = []
+        for index, event in enumerate(canonical):
+            seq = max(0, int(event.get("seq") or 0))
+            latest = max(latest, seq)
+            read_coverage.append((seq, bool(seq and seq <= canonical_read)))
+            delivery_coverage.append((seq, bool(seq and seq <= canonical_delivery)))
+            identity = _voice_input_event_identity(event)
+            if identity:
+                identities[identity] = index
+
+        appended: list[Dict[str, Any]] = []
+        for event in legacy:
+            legacy_seq = max(0, int(event.get("seq") or 0))
+            was_read = bool(legacy_seq and legacy_seq <= legacy_read_cursor)
+            identity = _voice_input_event_identity(event)
+            existing_index = identities.get(identity) if identity else None
+            if existing_index is not None:
+                if was_read:
+                    seq = read_coverage[existing_index][0]
+                    read_coverage[existing_index] = (seq, True)
+                    delivery_coverage[existing_index] = (seq, True)
+                continue
+            latest += 1
+            migrated = dict(event)
+            migrated["seq"] = latest
+            if identity:
+                identities[identity] = len(read_coverage)
+            read_coverage.append((latest, was_read))
+            delivery_coverage.append((latest, was_read))
+            appended.append(migrated)
+
+        if appended:
+            canonical_path.parent.mkdir(parents=True, exist_ok=True)
+            with canonical_path.open("a", encoding="utf-8") as fh:
+                for event in appended:
+                    fh.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+        state["latest_seq"] = latest
+        state["secretary_read_cursor"] = _voice_input_covered_cursor(read_coverage)
+        state["secretary_delivery_cursor"] = _voice_input_covered_cursor(delivery_coverage)
+        _save_voice_input_state(group, state)
+    finally:
+        release_lockfile(input_lock)
+
+    assistant_lock = acquire_lockfile(_state_path(group).with_suffix(".json.lock"), blocking=True)
+    try:
+        runtime_payload = read_json(_state_path(group))
+        runtime_payload = runtime_payload if isinstance(runtime_payload, dict) else {
+            "schema": _STATE_SCHEMA,
+            "group_id": group.group_id,
+        }
+        rust_state = runtime_payload.get(_RUST_STATE_KEY) if isinstance(runtime_payload.get(_RUST_STATE_KEY), dict) else {}
+        rust_state = dict(rust_state)
+        for key in ("input_latest_seq", "input_read_cursor", "input_updated_at"):
+            rust_state.pop(key, None)
+        runtime_payload[_RUST_STATE_KEY] = rust_state
+        _state_path(group).parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(_state_path(group), runtime_payload, indent=2)
+    finally:
+        release_lockfile(assistant_lock)
+    legacy_path.unlink()
+
+
+def _load_voice_input_state(group: Group) -> Dict[str, Any]:
+    _migrate_legacy_voice_input(group)
+    return _load_voice_input_state_unmigrated(group)
 
 
 def _save_voice_input_state(group: Group, state: Dict[str, Any]) -> None:
@@ -1664,6 +2210,7 @@ def _voice_input_event_public(event: Dict[str, Any]) -> Dict[str, Any]:
 def _find_voice_input_event(group: Group, *, session_id: str, segment_id: str) -> Dict[str, Any]:
     if not session_id or not segment_id:
         return {}
+    _migrate_legacy_voice_input(group)
     path = _voice_input_stream_path(group)
     if not path.is_file():
         return {}
@@ -1705,38 +2252,46 @@ def _append_voice_input_event(
     if not clean_text:
         raise ValueError("voice secretary input text is empty")
     now = utc_now_iso()
-    state = _load_voice_input_state(group)
-    seq = int(state.get("latest_seq") or 0) + 1
     document_path = _voice_document_path(document)
-    event = {
-        "schema": 1,
-        "seq": seq,
-        "kind": str(kind or "input").strip() or "input",
-        "group_id": group.group_id,
-        "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
-        "created_at": now,
-        "updated_at": now,
-        "text": clean_text,
-        "language": str(language or ""),
-        "document_path": document_path,
-        "filename": PurePosixPath(document_path).name if document_path else "",
-        "title": str(document.get("title") or ""),
-        "storage_kind": str(document.get("storage_kind") or ""),
-        "intent_hint": str(intent_hint or ""),
-        "source": str(source or ""),
-        "session_id": str(session_id or ""),
-        "segment_id": str(segment_id or ""),
-        "input_append_id": str(input_append_id or ""),
-        "by": str(by or ""),
-        "trigger": dict(trigger or {}),
-        "metadata": dict(metadata or {}),
-    }
-    path = _voice_input_stream_path(group)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
-    state["latest_seq"] = seq
-    state["last_input_appended_at"] = now
+    _migrate_legacy_voice_input(group)
+    input_lock = acquire_lockfile(_voice_input_state_lock_path(group), blocking=True)
+    try:
+        state = _load_voice_input_state_unmigrated(group)
+        seq = int(state.get("latest_seq") or 0) + 1
+        event = {
+            "schema": 1,
+            "seq": seq,
+            "kind": str(kind or "input").strip() or "input",
+            "group_id": group.group_id,
+            "assistant_id": ASSISTANT_ID_VOICE_SECRETARY,
+            "created_at": now,
+            "updated_at": now,
+            "text": clean_text,
+            "language": str(language or ""),
+            "document_path": document_path,
+            "filename": PurePosixPath(document_path).name if document_path else "",
+            "title": str(document.get("title") or ""),
+            "storage_kind": str(document.get("storage_kind") or ""),
+            "intent_hint": str(intent_hint or ""),
+            "source": str(source or ""),
+            "session_id": str(session_id or ""),
+            "segment_id": str(segment_id or ""),
+            "input_append_id": str(input_append_id or ""),
+            "by": str(by or ""),
+            "trigger": dict(trigger or {}),
+            "metadata": dict(metadata or {}),
+        }
+        path = _voice_input_stream_path(group)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        state["latest_seq"] = seq
+        state["last_input_appended_at"] = now
+        _save_voice_input_state(group, state)
+    finally:
+        release_lockfile(input_lock)
     idle_review_requested = _maybe_request_voice_idle_review_for_input(group, event, state)
     if emit_notify:
         if event["kind"] == "idle_review":
@@ -2452,8 +3007,19 @@ def _get_voice_document(
     document_id: str = "",
     create: bool = False,
     config: Optional[Dict[str, Any]] = None,
+    index: Optional[Dict[str, Any]] = None,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    index = _load_voice_documents_index(group)
+    if index is None and create:
+        with _edit_voice_documents_index(group) as locked_index:
+            _, record = _get_voice_document(
+                group,
+                document_id=document_id,
+                create=True,
+                config=config,
+                index=locked_index,
+            )
+            return locked_index, record
+    index = index if index is not None else _load_voice_documents_index(group)
     documents = index.setdefault("documents", {})
     wanted = _safe_voice_document_id(document_id) if document_id else str(index.get("active_document_id") or "").strip()
     record = documents.get(wanted) if wanted and isinstance(documents.get(wanted), dict) else None
@@ -2467,7 +3033,6 @@ def _get_voice_document(
         wanted = str(record.get("document_id") or "")
         documents[wanted] = record
         index["active_document_id"] = wanted
-        _save_voice_documents_index(group, index)
     if record is None:
         raise ValueError("voice secretary document not found")
     return index, dict(record)
@@ -2478,14 +3043,22 @@ def _create_new_voice_document(
     *,
     title: str = "",
     config: Optional[Dict[str, Any]] = None,
+    index: Optional[Dict[str, Any]] = None,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
-    index = _load_voice_documents_index(group)
+    if index is None:
+        with _edit_voice_documents_index(group) as locked_index:
+            _, record = _create_new_voice_document(
+                group,
+                title=title,
+                config=config,
+                index=locked_index,
+            )
+            return locked_index, record
     documents = index.setdefault("documents", {})
     record = _create_voice_document_record(group, title=title, config=config)
     doc_id = str(record.get("document_id") or "").strip()
     documents[doc_id] = record
     index["active_document_id"] = doc_id
-    _save_voice_documents_index(group, index)
     return index, dict(record)
 
 
@@ -2505,13 +3078,12 @@ def _select_next_active_voice_document_id(index: Dict[str, Any], *, exclude_docu
     return candidates[0][1] if candidates else ""
 
 
-def _save_voice_document_record(group: Group, index: Dict[str, Any], record: Dict[str, Any]) -> None:
+def _store_voice_document_record(index: Dict[str, Any], record: Dict[str, Any]) -> None:
     doc_id = str(record.get("document_id") or "").strip()
     if not doc_id:
         raise ValueError("missing document_id")
     documents = index.setdefault("documents", {})
     documents[doc_id] = dict(record)
-    _save_voice_documents_index(group, index)
 
 
 def _archive_voice_document_storage(group: Group, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -2599,7 +3171,7 @@ def _write_voice_document_content(
                 "content_chars": len(next_content),
             }
         )
-        _save_voice_document_record(group, index, record)
+        _store_voice_document_record(index, record)
         return record
     now = utc_now_iso()
     atomic_write_text(path, next_content, encoding="utf-8")
@@ -2633,7 +3205,7 @@ def _write_voice_document_content(
             "source_path": source_path,
         },
     )
-    _save_voice_document_record(group, index, record)
+    _store_voice_document_record(index, record)
     return record
 
 
@@ -2844,23 +3416,25 @@ def _flush_voice_session_window(
         "instruction_policy": _voice_instruction_policy(),
     }
     document_intent_hint = _infer_voice_transcript_intent(window_text, trigger_for_document)
-    if target_document_path:
-        document_index, document_record = _find_voice_document_by_path(
-            group,
-            document_path=target_document_path,
-            create=True,
-            config=assistant_config,
-        )
-    else:
-        document_index, document_record = _get_voice_document(
-            group,
-            document_id=target_document_id,
-            create=True,
-            config=assistant_config,
-        )
-    if str(document_record.get("status") or "active").strip().lower() == "active":
-        document_index["active_document_id"] = str(document_record.get("document_id") or target_document_id)
-        _save_voice_documents_index(group, document_index)
+    with _edit_voice_documents_index(group) as document_index:
+        if target_document_path:
+            _, document_record = _find_voice_document_by_path(
+                group,
+                document_path=target_document_path,
+                create=True,
+                config=assistant_config,
+                index=document_index,
+            )
+        else:
+            _, document_record = _get_voice_document(
+                group,
+                document_id=target_document_id,
+                create=True,
+                config=assistant_config,
+                index=document_index,
+            )
+        if str(document_record.get("status") or "active").strip().lower() == "active":
+            document_index["active_document_id"] = str(document_record.get("document_id") or target_document_id)
 
     document = _voice_document_public_record(group, document_record)
     source_segment = {
@@ -2959,6 +3533,20 @@ def _flush_stale_voice_session_windows(group: Group) -> int:
     max_window_seconds = _voice_auto_document_max_window_seconds(assistant_config)
     if max_window_seconds is None:
         return 0
+    with _voice_transcript_lock(group):
+        return _flush_stale_voice_session_windows_locked(
+            group,
+            assistant_config=assistant_config,
+            max_window_seconds=max_window_seconds,
+        )
+
+
+def _flush_stale_voice_session_windows_locked(
+    group: Group,
+    *,
+    assistant_config: Dict[str, Any],
+    max_window_seconds: int,
+) -> int:
     now = utc_now_iso()
     now_dt = parse_utc_iso(now)
     if now_dt is None:
@@ -3380,6 +3968,26 @@ def handle_assistant_state(args: Dict[str, Any]) -> DaemonResponse:
     if not suppress_retry_notify and (not assistant_id or assistant_id == ASSISTANT_ID_VOICE_SECRETARY):
         _maybe_emit_voice_input_retry_notify(group)
     runtime_state = _load_runtime_state(group)
+    if view == "voice_session":
+        requested_session_id = str(args.get("session_id") or "").strip()
+        requested_document_path = str(args.get("document_path") or "").strip()
+        document_session = (
+            _read_voice_document_transcript_session(group, requested_document_path)
+            if not requested_session_id
+            else {}
+        )
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "session": document_session
+                or _select_public_voice_session(
+                    runtime_state,
+                    session_id=requested_session_id,
+                    document_path=requested_document_path,
+                ),
+            },
+        )
     if assistant_id:
         if assistant_id not in _ASSISTANT_DEFAULTS:
             return _error("assistant_not_found", f"assistant not found: {assistant_id}")
@@ -4029,12 +4637,12 @@ def handle_assistant_voice_recording_lease(args: Dict[str, Any]) -> DaemonRespon
     assistant = _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY)
     if (
         not bool(assistant.get("enabled"))
-        and action in {"acquire", "heartbeat"}
+        and action == "acquire"
         and not disabled_assistant_allows_recording(action, dispatch_target)
     ):
         return _error("assistant_disabled", "voice_secretary is disabled")
 
-    with _VOICE_RECORDING_LEASE_LOCK:
+    with _voice_recording_lease_lock():
         now_ms = _voice_recording_epoch_ms()
         active = _active_voice_recording_lease_locked(now_ms=now_ms)
         if action == "status":
@@ -4066,7 +4674,6 @@ def handle_assistant_voice_recording_lease(args: Dict[str, Any]) -> DaemonRespon
                 ),
             )
 
-        same_owner_reacquire = False
         if action == "acquire" and active:
             active_owner_id = str(active.get("owner_id") or "").strip()
             active_group_id = str(active.get("group_id") or "").strip()
@@ -4077,7 +4684,6 @@ def handle_assistant_voice_recording_lease(args: Dict[str, Any]) -> DaemonRespon
                     "voice secretary recording is already active",
                     details={"active_lease": public_active},
                 )
-            same_owner_reacquire = True
 
         if active and str(active.get("owner_id") or "") != owner_id:
             public_active = _public_voice_recording_lease(active)
@@ -4099,8 +4705,15 @@ def handle_assistant_voice_recording_lease(args: Dict[str, Any]) -> DaemonRespon
                         lost=True,
                     ),
                 )
+            effective_dispatch_target = dispatch_target or str(active.get("dispatch_target") or "").strip().lower()
+            if (
+                not bool(assistant.get("enabled"))
+                and not disabled_assistant_allows_recording(action, effective_dispatch_target)
+            ):
+                return _error("assistant_disabled", "voice_secretary is disabled")
 
-        renew_existing = bool(active) and (action == "heartbeat" or same_owner_reacquire)
+        renew_existing = bool(active) and action == "heartbeat"
+        inherit_metadata = bool(active)
         created_at = str(active.get("created_at") or "") if renew_existing else ""
         if not created_at:
             created_at = utc_now_iso()
@@ -4113,9 +4726,12 @@ def handle_assistant_voice_recording_lease(args: Dict[str, Any]) -> DaemonRespon
             "owner_id": owner_id,
             "group_id": group.group_id,
             "group_title": str(group.doc.get("title") or group.group_id),
-            "capture_mode": capture_mode,
-            "recognition_backend": recognition_backend,
-            "dispatch_target": dispatch_target,
+            "capture_mode": capture_mode
+            or (str(active.get("capture_mode") or "") if inherit_metadata else ""),
+            "recognition_backend": recognition_backend
+            or (str(active.get("recognition_backend") or "") if inherit_metadata else ""),
+            "dispatch_target": dispatch_target
+            or (str(active.get("dispatch_target") or "") if inherit_metadata else ""),
             "by": by,
             "created_at": created_at,
             "updated_at": utc_now_iso(),
@@ -4278,6 +4894,48 @@ def handle_assistant_voice_transcript_append(
     if not bool(assistant.get("enabled")):
         return _error("assistant_disabled", "voice_secretary is disabled")
 
+    with _voice_transcript_lock(group):
+        return _handle_assistant_voice_transcript_append_locked(
+            group=group,
+            args=args,
+            by=by,
+            session_id=session_id,
+            segment_id=segment_id,
+            text=text,
+            language=language,
+            is_final=is_final,
+            flush=flush,
+            start_ms=start_ms,
+            end_ms=end_ms,
+            speaker_label=speaker_label,
+            raw_trigger=raw_trigger,
+            raw_requested_document_path=raw_requested_document_path,
+            assistant=assistant,
+            effective_runner_kind=effective_runner_kind,
+            start_actor_process=start_actor_process,
+        )
+
+
+def _handle_assistant_voice_transcript_append_locked(
+    *,
+    group: Group,
+    args: Dict[str, Any],
+    by: str,
+    session_id: str,
+    segment_id: str,
+    text: str,
+    language: str,
+    is_final: bool,
+    flush: bool,
+    start_ms: Optional[int],
+    end_ms: Optional[int],
+    speaker_label: str,
+    raw_trigger: Dict[str, Any],
+    raw_requested_document_path: str,
+    assistant: Dict[str, Any],
+    effective_runner_kind: Optional[Callable[[str], str]],
+    start_actor_process: Optional[Callable[..., dict[str, Any]]],
+) -> DaemonResponse:
     assistant_config = assistant.get("config") if isinstance(assistant.get("config"), dict) else {}
     effective_language = language or str(raw_trigger.get("language") or assistant_config.get("recognition_language") or "")
     intent_hint = _infer_voice_transcript_intent(text, raw_trigger)
@@ -4304,9 +4962,11 @@ def handle_assistant_voice_transcript_append(
         "text": text,
         "language": effective_language,
         "document_id": target_document_id,
+        "document_path": target_document_path,
         "intent_hint": intent_hint,
         "is_final": is_final,
         "source": str(raw_trigger.get("recognition_backend") or raw_trigger.get("source") or ""),
+        "trigger": raw_trigger,
         "by": by,
     }
     if start_ms is not None:
@@ -4351,11 +5011,34 @@ def handle_assistant_voice_transcript_append(
         window_segment_count = 0
     window_last_segment_id = segment_id if text and is_final else str(session_entry.get("window_last_segment_id") or session_entry.get("last_segment_id") or "")
     segment_count = int(session_entry.get("segment_count") or 0) + (1 if text else 0)
+    public_segments = [
+        dict(item)
+        for item in (
+            session_entry.get("segments")
+            if isinstance(session_entry.get("segments"), list)
+            else []
+        )
+        if isinstance(item, dict)
+    ]
+    if text and not any(str(item.get("segment_id") or "") == segment_id for item in public_segments):
+        public_segments.append(dict(segment))
+        if len(public_segments) > 200:
+            public_segments = public_segments[-200:]
+    public_transcript = "\n".join(
+        str(item.get("text") or "").strip()
+        for item in public_segments
+        if coerce_bool(item.get("is_final"), default=True) and str(item.get("text") or "").strip()
+    )
     session_entry.update(
         {
             "schema": 1,
             "session_id": session_id,
+            "group_id": group.group_id,
+            "capture_mode": "document",
+            "created_at": str(session_entry.get("created_at") or now),
             "updated_at": now,
+            "segments": public_segments,
+            "transcript": public_transcript,
             "window_text": window_text,
             "window_segments": window_segments,
             "window_started_at": window_started_at,
@@ -4372,6 +5055,7 @@ def handle_assistant_voice_transcript_append(
         }
     )
     sessions[session_id] = session_entry
+    _prune_voice_session_records(sessions)
     assistants = state.setdefault("assistants", {})
     assistant_entry = assistants.get(ASSISTANT_ID_VOICE_SECRETARY) if isinstance(assistants.get(ASSISTANT_ID_VOICE_SECRETARY), dict) else {}
     assistant_entry = dict(assistant_entry)
@@ -4464,23 +5148,27 @@ def handle_assistant_voice_transcript_append(
                 "window_segment_count": window_segment_count,
                 "instruction_policy": _voice_instruction_policy(),
             }
-            if target_document_path:
-                document_index, document_record = _find_voice_document_by_path(
-                    group,
-                    document_path=target_document_path,
-                    create=True,
-                    config=assistant_config,
-                )
-            else:
-                document_index, document_record = _get_voice_document(
-                    group,
-                    document_id=target_document_id,
-                    create=True,
-                    config=assistant_config,
-                )
-            if str(document_record.get("status") or "active").strip().lower() == "active":
-                document_index["active_document_id"] = str(document_record.get("document_id") or target_document_id)
-                _save_voice_documents_index(group, document_index)
+            with _edit_voice_documents_index(group) as document_index:
+                if target_document_path:
+                    _, document_record = _find_voice_document_by_path(
+                        group,
+                        document_path=target_document_path,
+                        create=True,
+                        config=assistant_config,
+                        index=document_index,
+                    )
+                else:
+                    _, document_record = _get_voice_document(
+                        group,
+                        document_id=target_document_id,
+                        create=True,
+                        config=assistant_config,
+                        index=document_index,
+                    )
+                if str(document_record.get("status") or "active").strip().lower() == "active":
+                    document_index["active_document_id"] = str(
+                        document_record.get("document_id") or target_document_id
+                    )
             document = _voice_document_public_record(group, document_record)
             source_segment = dict(segment)
             source_segment["text"] = document_source_text
@@ -4604,6 +5292,172 @@ def handle_assistant_voice_transcript_append(
     )
 
 
+def handle_assistant_voice_session_transcript_clear(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip()
+    requested_session_id = str(args.get("session_id") or "").strip()
+    requested_document_path = str(args.get("document_path") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if requested_session_id:
+        try:
+            requested_session_id = _require_safe_voice_session_id(requested_session_id)
+        except ValueError as exc:
+            return _error("invalid_args", str(exc))
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        _require_status_permission(group, assistant_id=ASSISTANT_ID_VOICE_SECRETARY, by=by)
+    except Exception as exc:
+        return _error("assistant_voice_session_transcript_clear_failed", str(exc))
+
+    with _voice_transcript_lock(group):
+        return _handle_assistant_voice_session_transcript_clear_locked(
+            group,
+            requested_session_id=requested_session_id,
+            requested_document_path=requested_document_path,
+        )
+
+
+def _handle_assistant_voice_session_transcript_clear_locked(
+    group: Group,
+    *,
+    requested_session_id: str,
+    requested_document_path: str,
+) -> DaemonResponse:
+    runtime_state = _load_runtime_state(group)
+    selected = _select_public_voice_session(
+        runtime_state,
+        session_id=requested_session_id,
+        document_path=requested_document_path,
+    )
+    selected_session_id = str(selected.get("session_id") or requested_session_id).strip()
+    selected_document_path = str(
+        requested_document_path or selected.get("document_path") or ""
+    ).strip()
+    cleared = False
+    sessions = runtime_state.get("voice_sessions")
+    if isinstance(sessions, dict) and selected_session_id:
+        raw_session = sessions.get(selected_session_id)
+        if isinstance(raw_session, dict):
+            session = dict(raw_session)
+            session["segments"] = []
+            session["transcript"] = ""
+            session["latest_partial"] = ""
+            session["transcript_cleared_at"] = utc_now_iso()
+            session["updated_at"] = session["transcript_cleared_at"]
+            sessions[selected_session_id] = session
+            _save_runtime_state(group, runtime_state)
+            cleared = True
+
+    if selected_session_id:
+        segment_path = _voice_session_dir(group, selected_session_id) / "transcripts" / "segments.jsonl"
+        try:
+            segment_path.unlink()
+            cleared = True
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            return _error("assistant_voice_session_transcript_clear_failed", str(exc))
+    if selected_document_path:
+        try:
+            _, document = _find_voice_document_by_path(
+                group,
+                document_path=selected_document_path,
+                create=False,
+            )
+        except Exception:
+            document = {}
+        document_id = str(document.get("document_id") or "").strip()
+        if document_id:
+            transcript_path = _voice_documents_root(group) / document_id / "transcript.jsonl"
+            try:
+                transcript_path.unlink()
+                cleared = True
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                return _error("assistant_voice_session_transcript_clear_failed", str(exc))
+
+    return DaemonResponse(
+        ok=True,
+        result={
+            "group_id": group.group_id,
+            "session_id": selected_session_id,
+            "cleared": cleared,
+        },
+    )
+
+
+def handle_assistant_voice_session_update(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    session_id = str(args.get("session_id") or "").strip()
+    by = str(args.get("by") or "assistant:voice_secretary").strip()
+    patch = args.get("patch") if isinstance(args.get("patch"), dict) else {}
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not session_id:
+        return _error("missing_session_id", "missing session_id")
+    try:
+        session_id = _require_safe_voice_session_id(session_id)
+    except ValueError as exc:
+        return _error("invalid_args", str(exc))
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+    try:
+        _require_status_permission(group, assistant_id=ASSISTANT_ID_VOICE_SECRETARY, by=by)
+    except Exception as exc:
+        return _error("assistant_voice_session_update_failed", str(exc))
+
+    allowed = {
+        "status",
+        "capture_mode",
+        "document_path",
+        "audio_duration_ms",
+        "diarization_ready",
+        "diarization_artifact_path",
+        "diarization",
+        "diarization_error",
+        "error",
+        "latest_partial",
+    }
+    now = utc_now_iso()
+    runtime_state = _load_runtime_state(group)
+    sessions = runtime_state.setdefault("voice_sessions", {})
+    current = sessions.get(session_id) if isinstance(sessions.get(session_id), dict) else {}
+    session = {
+        "schema": 1,
+        "group_id": group.group_id,
+        "session_id": session_id,
+        "capture_mode": "document",
+        "created_at": str(current.get("created_at") or now),
+        "segments": list(current.get("segments")) if isinstance(current.get("segments"), list) else [],
+        "transcript": str(current.get("transcript") or ""),
+        **current,
+    }
+    for key in allowed:
+        if key in patch:
+            session[key] = patch[key]
+    if coerce_bool(session.get("diarization_ready"), default=False):
+        session.pop("diarization_error", None)
+        if session.get("error") is None:
+            session.pop("error", None)
+    session["capture_mode"] = "document"
+    session["updated_at"] = now
+    sessions[session_id] = session
+    _prune_voice_session_records(sessions)
+    _save_runtime_state(group, runtime_state)
+    return DaemonResponse(
+        ok=True,
+        result={
+            "group_id": group.group_id,
+            "session": _public_voice_session(session, session_id=session_id),
+        },
+    )
+
+
 def handle_assistant_voice_document_list(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     include_archived = coerce_bool(args.get("include_archived"), default=False)
@@ -4658,12 +5512,17 @@ def handle_assistant_voice_document_select(args: Dict[str, Any]) -> DaemonRespon
         return _error("group_not_found", f"group not found: {group_id}")
     try:
         _require_document_write_permission(group, by=by)
-        index, record = _find_voice_document_by_path(group, document_path=document_path, create=False)
-        if str(record.get("status") or "active").strip().lower() != "active":
-            return _error("assistant_voice_document_select_failed", "voice secretary document is archived")
-        document_id = str(record.get("document_id") or "").strip()
-        index["active_document_id"] = document_id
-        _save_voice_documents_index(group, index)
+        with _edit_voice_documents_index(group) as index:
+            _, record = _find_voice_document_by_path(
+                group,
+                document_path=document_path,
+                create=False,
+                index=index,
+            )
+            if str(record.get("status") or "active").strip().lower() != "active":
+                return _error("assistant_voice_document_select_failed", "voice secretary document is archived")
+            document_id = str(record.get("document_id") or "").strip()
+            index["active_document_id"] = document_id
         document = _voice_document_public_record(group, record)
         try:
             _append_voice_input_event(
@@ -4703,20 +5562,25 @@ def handle_assistant_voice_document_input_read(args: Dict[str, Any]) -> DaemonRe
     try:
         _flush_stale_voice_session_windows(group)
         read_at = utc_now_iso()
-        state = _load_voice_input_state(group)
-        cursor = int(state.get("secretary_read_cursor") or 0)
-        items = _read_voice_input_events(group, after_seq=cursor)
-        state["last_read_new_input_at"] = read_at
-        if items:
-            state["secretary_read_cursor"] = max(int(item.get("seq") or 0) for item in items)
-            state["secretary_delivery_cursor"] = max(
-                int(state.get("secretary_delivery_cursor") or 0),
-                int(state.get("secretary_read_cursor") or 0),
-            )
-            if int(state.get("secretary_read_cursor") or 0) >= int(state.get("latest_seq") or 0):
-                state["last_notify_at"] = ""
-                state["retry_count"] = 0
-        _save_voice_input_state(group, state)
+        _migrate_legacy_voice_input(group)
+        input_lock = acquire_lockfile(_voice_input_state_lock_path(group), blocking=True)
+        try:
+            state = _load_voice_input_state_unmigrated(group)
+            cursor = int(state.get("secretary_read_cursor") or 0)
+            items = _read_voice_input_events(group, after_seq=cursor)
+            state["last_read_new_input_at"] = read_at
+            if items:
+                state["secretary_read_cursor"] = max(int(item.get("seq") or 0) for item in items)
+                state["secretary_delivery_cursor"] = max(
+                    int(state.get("secretary_delivery_cursor") or 0),
+                    int(state.get("secretary_read_cursor") or 0),
+                )
+                if int(state.get("secretary_read_cursor") or 0) >= int(state.get("latest_seq") or 0):
+                    state["last_notify_at"] = ""
+                    state["retry_count"] = 0
+            _save_voice_input_state(group, state)
+        finally:
+            release_lockfile(input_lock)
         public_items = [_voice_input_event_public(item) for item in items]
         grouped = _group_voice_input_by_target(items)
         grouped = _annotate_voice_input_previous_tails(group, grouped, items)
@@ -4783,49 +5647,58 @@ def handle_assistant_voice_document_save(args: Dict[str, Any]) -> DaemonResponse
         _require_document_write_permission(group, by=by)
         assistant = _effective_assistant(group, ASSISTANT_ID_VOICE_SECRETARY)
         config = assistant.get("config") if isinstance(assistant.get("config"), dict) else {}
-        if create_new:
-            index, record = _create_new_voice_document(group, title=title, config=config)
-        else:
-            if not content_provided:
-                return _error("assistant_voice_document_save_failed", "content is required for document save")
-            if not document_path:
-                return _error("missing_document_path", "missing document_path")
-            index, record = _find_voice_document_by_path(group, document_path=document_path, create=True, config=config)
-        existing_status = str(record.get("status") or "active").strip().lower() or "active"
-        if existing_status != "active" and status != "active":
-            return _error(
-                "assistant_voice_document_save_failed",
-                "voice secretary document is archived; create or select an active document",
-            )
-        if create_new and title:
-            record["title"] = title[:160]
-        if status in {"active", "archived"}:
-            record["status"] = status
-        elif status:
-            return _error("invalid_document_status", "status must be active or archived")
-        if str(record.get("status") or "active").strip().lower() == "archived":
-            record = _archive_voice_document_storage(group, record)
-            if str(index.get("active_document_id") or "").strip() == str(record.get("document_id") or "").strip():
-                index["active_document_id"] = _select_next_active_voice_document_id(
-                    index,
-                    exclude_document_id=str(record.get("document_id") or "").strip(),
+        with _edit_voice_documents_index(group) as index:
+            if create_new:
+                _, record = _create_new_voice_document(group, title=title, config=config, index=index)
+            else:
+                if not content_provided:
+                    return _error("assistant_voice_document_save_failed", "content is required for document save")
+                if not document_path:
+                    return _error("missing_document_path", "missing document_path")
+                _, record = _find_voice_document_by_path(
+                    group,
+                    document_path=document_path,
+                    create=True,
+                    config=config,
+                    index=index,
                 )
-        if content_provided:
-            updated = _write_voice_document_content(
-                group,
-                index,
-                record,
-                content=content,
-                reason="voice_input" if by == _assistant_principal(ASSISTANT_ID_VOICE_SECRETARY) else "manual_save",
-                by=by,
-            )
-            if by == _assistant_principal(ASSISTANT_ID_VOICE_SECRETARY):
-                updated = dict(updated)
-                index_after_write = _load_voice_documents_index(group)
-                _save_voice_document_record(group, index_after_write, updated)
-        else:
-            _save_voice_document_record(group, index, record)
-            updated = record
+            existing_status = str(record.get("status") or "active").strip().lower() or "active"
+            if existing_status != "active" and status != "active":
+                return _error(
+                    "assistant_voice_document_save_failed",
+                    "voice secretary document is archived; create or select an active document",
+                )
+            if create_new and title:
+                record["title"] = title[:160]
+            if status in {"active", "archived"}:
+                record["status"] = status
+            elif status:
+                return _error("invalid_document_status", "status must be active or archived")
+            if str(record.get("status") or "active").strip().lower() == "archived":
+                record = _archive_voice_document_storage(group, record)
+                if str(index.get("active_document_id") or "").strip() == str(
+                    record.get("document_id") or ""
+                ).strip():
+                    index["active_document_id"] = _select_next_active_voice_document_id(
+                        index,
+                        exclude_document_id=str(record.get("document_id") or "").strip(),
+                    )
+            if content_provided:
+                updated = _write_voice_document_content(
+                    group,
+                    index,
+                    record,
+                    content=content,
+                    reason=(
+                        "voice_input"
+                        if by == _assistant_principal(ASSISTANT_ID_VOICE_SECRETARY)
+                        else "manual_save"
+                    ),
+                    by=by,
+                )
+            else:
+                _store_voice_document_record(index, record)
+                updated = record
         event = append_event(
             group.ledger_path,
             kind="assistant.voice.document",
@@ -5456,16 +6329,24 @@ def handle_assistant_voice_document_archive(args: Dict[str, Any]) -> DaemonRespo
         return _error("group_not_found", f"group not found: {group_id}")
     try:
         _require_document_write_permission(group, by=by)
-        index, record = _find_voice_document_by_path(group, document_path=document_path, create=False)
-        record = _archive_voice_document_storage(group, record)
-        record["status"] = "archived"
-        record["updated_at"] = utc_now_iso()
-        if str(index.get("active_document_id") or "").strip() == str(record.get("document_id") or "").strip():
-            index["active_document_id"] = _select_next_active_voice_document_id(
-                index,
-                exclude_document_id=str(record.get("document_id") or "").strip(),
+        with _edit_voice_documents_index(group) as index:
+            _, record = _find_voice_document_by_path(
+                group,
+                document_path=document_path,
+                create=False,
+                index=index,
             )
-        _save_voice_document_record(group, index, record)
+            record = _archive_voice_document_storage(group, record)
+            record["status"] = "archived"
+            record["updated_at"] = utc_now_iso()
+            if str(index.get("active_document_id") or "").strip() == str(
+                record.get("document_id") or ""
+            ).strip():
+                index["active_document_id"] = _select_next_active_voice_document_id(
+                    index,
+                    exclude_document_id=str(record.get("document_id") or "").strip(),
+                )
+            _store_voice_document_record(index, record)
         event = append_event(
             group.ledger_path,
             kind="assistant.voice.document",
@@ -5978,6 +6859,10 @@ def try_handle_assistant_op(
             effective_runner_kind=effective_runner_kind,
             start_actor_process=start_actor_process,
         )
+    if op == "assistant_voice_session_transcript_clear":
+        return handle_assistant_voice_session_transcript_clear(args)
+    if op == "assistant_voice_session_update":
+        return handle_assistant_voice_session_update(args)
     if op == "assistant_voice_document_list":
         return handle_assistant_voice_document_list(args)
     if op == "assistant_voice_document_select":

@@ -5,6 +5,72 @@ from unittest.mock import patch
 
 
 class TestDeliveryStateBehavior(unittest.TestCase):
+    def test_actor_activation_rehydrates_unread_before_existing_newer_work(self) -> None:
+        from cccc.daemon.messaging import delivery
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.ledger import append_event
+        from cccc.kernel.registry import load_registry
+
+        old_home = os.environ.get("CCCC_HOME")
+        td_ctx = tempfile.TemporaryDirectory()
+        try:
+            td = td_ctx.__enter__()
+            os.environ["CCCC_HOME"] = td
+            group = create_group(load_registry(), title="delivery-rehydrate")
+            add_actor(group, actor_id="peer1", runtime="custom", command=["sh", "-c", "sleep 30"])
+            event = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={
+                    "to": ["peer1"],
+                    "text": "message-A",
+                    "format": "plain",
+                    "priority": "normal",
+                    "reply_required": False,
+                },
+            )
+            newer = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group.group_id,
+                scope_key="",
+                by="user",
+                data={
+                    "to": ["peer1"],
+                    "text": "message-B",
+                    "format": "plain",
+                    "priority": "normal",
+                    "reply_required": False,
+                },
+            )
+
+            with patch.object(delivery, "THROTTLE", delivery.DeliveryThrottle()):
+                delivery.queue_chat_message(
+                    group,
+                    actor_id="peer1",
+                    event_id=newer["id"],
+                    by="user",
+                    to=["peer1"],
+                    text="message-B",
+                    ts=newer["ts"],
+                )
+                self.assertEqual(delivery.recover_unread_pty_messages(group, actor_id="peer1"), 1)
+                pending = delivery.THROTTLE.take_pending(group.group_id, "peer1")
+
+            self.assertEqual([item.event_id for item in pending], [event["id"], newer["id"]])
+            self.assertIn("message-A", pending[0].text)
+            self.assertIn("message-B", pending[1].text)
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+            td_ctx.__exit__(None, None, None)
+
     def test_should_deliver_message_respects_idle_and_paused_semantics(self) -> None:
         from cccc.daemon.messaging.delivery import should_deliver_message
         from cccc.kernel.group import create_group, set_group_state

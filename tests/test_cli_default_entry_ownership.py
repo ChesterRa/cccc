@@ -1,4 +1,6 @@
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from typing import Callable
@@ -91,6 +93,26 @@ class TestCliDefaultEntryOwnership(unittest.TestCase):
             self.assertFalse((daemon_dir / "ccccd.sock").exists())
             self.assertFalse((daemon_dir / "ccccd.addr.json").exists())
             self.assertFalse((daemon_dir / "ccccd.pid").exists())
+        finally:
+            cleanup()
+
+    def test_wait_for_daemon_shutdown_requires_process_exit_and_lock_release(self) -> None:
+        from cccc.cli import common
+        from cccc.util.file_lock import acquire_lockfile, release_lockfile
+
+        home, cleanup = self._with_home()
+        try:
+            lock = acquire_lockfile(home / "daemon" / "ccccd.lock", blocking=False)
+            release = threading.Thread(
+                target=lambda: (time.sleep(0.15), release_lockfile(lock)),
+                daemon=True,
+            )
+            release.start()
+            started = time.monotonic()
+            with patch.object(common, "pid_is_alive", return_value=False):
+                self.assertTrue(common._wait_for_daemon_shutdown(home, pid=1234, timeout_s=1.0))
+            self.assertGreaterEqual(time.monotonic() - started, 0.1)
+            release.join(timeout=1.0)
         finally:
             cleanup()
 

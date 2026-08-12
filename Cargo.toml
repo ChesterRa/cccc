@@ -73,6 +73,7 @@ tokio = { version = "1.47", features = ["fs", "io-std", "io-util", "macros", "ne
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+url = "2.5"
 tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
 tower = "0.5"
 mime_guess = "2.0"

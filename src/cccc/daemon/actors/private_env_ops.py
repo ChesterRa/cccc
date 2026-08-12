@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 from pathlib import Path
 from typing import Any, Dict
 
 from ...paths import ensure_home
+from ...util.file_lock import acquire_lockfile, release_lockfile
 from ...util.fs import atomic_write_json, read_json
 
 _PRIVATE_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -35,6 +37,50 @@ def _private_env_actor_filename(actor_id: str) -> str:
         slug = "actor"
     slug = slug[:24]
     return f"{slug}.{digest}.json"
+
+
+def _migrate_legacy_actor_private_env(home: Path, group_id: str) -> None:
+    """Consume Rust's former group-local secret store before canonical access."""
+    gdir = _private_env_group_dir(home, group_id=group_id)
+    marker = gdir / ".rust-actor-secrets-migrated-v1"
+    legacy = home / "groups" / group_id / "state" / "actor-secrets.json"
+    if marker.exists() or not legacy.exists():
+        return
+    _ensure_private_env_dir(_private_env_root(home))
+    _ensure_private_env_dir(gdir)
+    lock = acquire_lockfile(gdir / ".migration.lock", blocking=True)
+    try:
+        if marker.exists():
+            return
+        raw = json.loads(legacy.read_text(encoding="utf-8"))
+        actors = raw.get("actors") if isinstance(raw, dict) else None
+        if isinstance(actors, dict):
+            for actor_id, values in actors.items():
+                if not isinstance(values, dict):
+                    continue
+                target = gdir / _private_env_actor_filename(str(actor_id))
+                if target.exists():
+                    continue
+                migrated = {
+                    str(key): str(value)
+                    for key, value in values.items()
+                    if isinstance(key, str)
+                    and _PRIVATE_ENV_KEY_RE.match(key)
+                    and value is not None
+                }
+                if not migrated:
+                    continue
+                _ensure_private_env_dir(_private_env_root(home))
+                _ensure_private_env_dir(gdir)
+                atomic_write_json(target, migrated, indent=2)
+                try:
+                    os.chmod(target, 0o600)
+                except Exception:
+                    pass
+        _ensure_private_env_dir(gdir)
+        marker.write_text("migrated from state/actor-secrets.json\n", encoding="utf-8")
+    finally:
+        release_lockfile(lock)
 
 
 def _ensure_private_env_dir(path: Path) -> None:
@@ -84,14 +130,17 @@ def _private_env_path(group_id: str, actor_id: str) -> Path:
     return gdir / _private_env_actor_filename(actor_id)
 
 
-def load_actor_private_env(group_id: str, actor_id: str) -> dict[str, str]:
-    try:
-        path = _private_env_path(group_id, actor_id)
-    except Exception:
+def _private_env_lock_path(path: Path) -> Path:
+    # Shared with Rust: <actor-slug>.<digest>.json.lock.
+    return path.with_suffix(path.suffix + ".lock")
+
+
+def _load_actor_private_env_path(path: Path) -> dict[str, str]:
+    if not path.exists():
         return {}
-    raw = read_json(path)
+    raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
-        return {}
+        raise ValueError(f"actor private env store must be a JSON object: {path}")
     out: dict[str, str] = {}
     for k, v in raw.items():
         if not isinstance(k, str):
@@ -105,6 +154,28 @@ def load_actor_private_env(group_id: str, actor_id: str) -> dict[str, str]:
     return out
 
 
+def _write_actor_private_env_path(path: Path, values: dict[str, str]) -> None:
+    if not values:
+        path.unlink(missing_ok=True)
+        return
+    _ensure_private_env_dir(path.parent.parent)
+    _ensure_private_env_dir(path.parent)
+    atomic_write_json(path, values, indent=2)
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+
+
+def load_actor_private_env(group_id: str, actor_id: str) -> dict[str, str]:
+    _migrate_legacy_actor_private_env(ensure_home(), group_id)
+    try:
+        path = _private_env_path(group_id, actor_id)
+    except Exception:
+        return {}
+    return _load_actor_private_env_path(path)
+
+
 def update_actor_private_env(
     group_id: str,
     actor_id: str,
@@ -113,55 +184,36 @@ def update_actor_private_env(
     unset_keys: list[str],
     clear: bool,
 ) -> dict[str, str]:
-    current: dict[str, str] = {} if clear else load_actor_private_env(group_id, actor_id)
-    for k in unset_keys:
-        current.pop(k, None)
-    for k, v in set_vars.items():
-        current[k] = v
-
+    home = ensure_home()
+    _migrate_legacy_actor_private_env(home, group_id)
     try:
-        home = ensure_home()
-        root = _private_env_root(home)
-        gdir = _private_env_group_dir(home, group_id=group_id)
-        path = gdir / _private_env_actor_filename(actor_id)
-    except Exception:
-        raise RuntimeError("invalid private env path")
+        path = _private_env_group_dir(home, group_id=group_id) / _private_env_actor_filename(actor_id)
+    except Exception as error:
+        raise RuntimeError("invalid private env path") from error
 
-    if not current:
-        try:
-            path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        try:
-            if gdir.exists() and gdir.is_dir() and not any(gdir.iterdir()):
-                gdir.rmdir()
-        except Exception:
-            pass
-        return {}
-
-    _ensure_private_env_dir(root)
-    _ensure_private_env_dir(gdir)
-    atomic_write_json(path, current, indent=2)
+    lock = acquire_lockfile(_private_env_lock_path(path), blocking=True)
     try:
-        os.chmod(path, 0o600)
-    except Exception:
-        pass
-    return dict(current)
+        current: dict[str, str] = {} if clear else _load_actor_private_env_path(path)
+        for k in unset_keys:
+            current.pop(k, None)
+        for k, v in set_vars.items():
+            current[k] = v
+        _write_actor_private_env_path(path, current)
+        return dict(current)
+    finally:
+        release_lockfile(lock)
 
 
 def delete_actor_private_env(group_id: str, actor_id: str) -> None:
+    home = ensure_home()
+    _migrate_legacy_actor_private_env(home, group_id)
+    gdir = _private_env_group_dir(home, group_id=group_id)
+    path = gdir / _private_env_actor_filename(actor_id)
+    lock = acquire_lockfile(_private_env_lock_path(path), blocking=True)
     try:
-        home = ensure_home()
-        gdir = _private_env_group_dir(home, group_id=group_id)
-        path = gdir / _private_env_actor_filename(actor_id)
         path.unlink(missing_ok=True)
-        if gdir.exists() and gdir.is_dir() and not any(gdir.iterdir()):
-            try:
-                gdir.rmdir()
-            except Exception:
-                pass
-    except Exception:
-        pass
+    finally:
+        release_lockfile(lock)
 
 
 def delete_group_private_env(group_id: str) -> None:
@@ -180,6 +232,8 @@ def copy_group_private_env(source_group_id: str, target_group_id: str) -> int:
     """Copy actor private-env files between groups without exposing secret values."""
     try:
         home = ensure_home()
+        _migrate_legacy_actor_private_env(home, source_group_id)
+        _migrate_legacy_actor_private_env(home, target_group_id)
         src = _private_env_group_dir(home, group_id=source_group_id)
         dst = _private_env_group_dir(home, group_id=target_group_id)
     except Exception:

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NoReturn, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ....kernel.access_tokens import (
+    LastAdminRequiredError,
     create_access_token,
     delete_access_token,
     list_access_tokens,
@@ -54,6 +55,13 @@ def _ensure_scoped_groups_present(allowed_groups: List[str]) -> None:
             "message": "scoped access tokens must include at least one allowed group",
             "details": {},
         },
+    )
+
+
+def _last_admin_required(message: str) -> NoReturn:
+    raise HTTPException(
+        status_code=400,
+        detail={"code": "last_admin_required", "message": message, "details": {}},
     )
 
 
@@ -148,11 +156,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         cleaned_allowed_groups = _clean_allowed_groups(req.allowed_groups) if req.allowed_groups is not None else list(current.get("allowed_groups") or [])
         if not next_is_admin:
             _ensure_scoped_groups_present(cleaned_allowed_groups)
-        entry = update_access_token(
-            raw_token,
-            allowed_groups=cleaned_allowed_groups if (req.allowed_groups is not None or not next_is_admin) else None,
-            is_admin=req.is_admin,
-        )
+        try:
+            entry = update_access_token(
+                raw_token,
+                allowed_groups=cleaned_allowed_groups if (req.allowed_groups is not None or not next_is_admin) else None,
+                is_admin=req.is_admin,
+            )
+        except LastAdminRequiredError as exc:
+            _last_admin_required(str(exc))
         if entry is None:
             raise HTTPException(
                 status_code=404,
@@ -189,7 +200,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         else:
             current_request_token = str(request.cookies.get("cccc_access_token") or request.query_params.get("token") or "").strip()
         deleted_current_session = bool(current_request_token) and current_request_token == raw_token
-        if not delete_access_token(raw_token):
+        try:
+            deleted = delete_access_token(raw_token)
+        except LastAdminRequiredError as exc:
+            _last_admin_required(str(exc))
+        if not deleted:
             raise HTTPException(
                 status_code=404,
                 detail={"code": "not_found", "message": "access token not found", "details": {}},

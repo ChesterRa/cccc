@@ -1,8 +1,9 @@
 use axum::extract::ws::{WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use cccc_core::GroupStore;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -39,8 +40,10 @@ async fn info(
     Path(group_id): Path<String>,
     Query(query): Query<SlotQuery>,
 ) -> ApiResult {
+    validate_group(&state, &group_id)?;
+    let slot = normalize_slot(&query.slot)?;
     Ok(success(
-        json!({"group_id":group_id,"browser_surface":state.browser_surfaces.info(&key(&group_id,&query.slot)).await}),
+        json!({"group_id":group_id,"browser_surface":state.browser_surfaces.info(&key(&group_id,&slot)).await}),
     ))
 }
 
@@ -49,7 +52,8 @@ async fn open(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let slot = body.get("slot").and_then(Value::as_str).unwrap_or("");
+    validate_group(&state, &group_id)?;
+    let slot = normalize_slot(body.get("slot").and_then(Value::as_str).unwrap_or(""))?;
     let url = body.get("url").and_then(Value::as_str).unwrap_or("");
     let width = body
         .get("width")
@@ -66,11 +70,11 @@ async fn open(
         .root()
         .join("state/presentation_browser")
         .join(&group_id)
-        .join(slot)
+        .join(&slot)
         .join("profile");
     let surface = state
         .browser_surfaces
-        .open(&key(&group_id, slot), &profile, url, width, height)
+        .open(&key(&group_id, &slot), &profile, url, width, height)
         .await
         .map_err(|error| ApiError::bad(error.to_string()))?;
     Ok(success(
@@ -83,14 +87,15 @@ async fn close(
     Path(group_id): Path<String>,
     Json(body): Json<Value>,
 ) -> ApiResult {
-    let slot = body.get("slot").and_then(Value::as_str).unwrap_or("");
+    validate_group(&state, &group_id)?;
+    let slot = normalize_slot(body.get("slot").and_then(Value::as_str).unwrap_or(""))?;
     let closed = state
         .browser_surfaces
-        .close(&key(&group_id, slot))
+        .close(&key(&group_id, &slot))
         .await
         .map_err(|error| ApiError::bad(error.to_string()))?;
     Ok(success(
-        json!({"group_id":group_id,"closed":closed,"browser_surface":state.browser_surfaces.info(&key(&group_id,slot)).await}),
+        json!({"group_id":group_id,"closed":closed,"browser_surface":state.browser_surfaces.info(&key(&group_id,&slot)).await}),
     ))
 }
 
@@ -110,16 +115,15 @@ async fn upgrade(
             .await;
         });
     }
+    if let Err(error) = validate_group(&state, &group_id) {
+        return error.into_response();
+    }
+    let slot = match normalize_slot(&query.slot) {
+        Ok(slot) => slot,
+        Err(error) => return error.into_response(),
+    };
     let vnc = query.mode.trim().eq_ignore_ascii_case("vnc");
-    ws.on_upgrade(move |socket| {
-        serve(
-            socket,
-            state,
-            key(&group_id, &query.slot),
-            vnc,
-            query.viewer_mode,
-        )
-    })
+    ws.on_upgrade(move |socket| serve(socket, state, key(&group_id, &slot), vnc, query.viewer_mode))
 }
 
 async fn serve(socket: WebSocket, state: AppState, key: String, vnc: bool, viewer_mode: String) {
@@ -141,6 +145,31 @@ async fn serve(socket: WebSocket, state: AppState, key: String, vnc: bool, viewe
         )
         .await;
     }
+}
+
+fn validate_group(state: &AppState, group_id: &str) -> Result<(), ApiError> {
+    let store =
+        GroupStore::new(state.home.clone()).map_err(|error| ApiError::bad(error.to_string()))?;
+    match store.load(group_id) {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Err(
+            ApiError::not_found_code("group_not_found", format!("group not found: {group_id}")),
+        ),
+        Err(error) => Err(ApiError::bad(error.to_string())),
+    }
+}
+
+fn normalize_slot(value: &str) -> Result<String, ApiError> {
+    let mut slot = value.trim().to_ascii_lowercase().replace('_', "-");
+    if slot.chars().all(|character| character.is_ascii_digit()) && !slot.is_empty() {
+        slot = format!("slot-{}", slot.parse::<u8>().unwrap_or_default());
+    }
+    if !matches!(slot.as_str(), "slot-1" | "slot-2" | "slot-3" | "slot-4") {
+        return Err(ApiError::bad(
+            "slot must be one of: slot-1, slot-2, slot-3, slot-4",
+        ));
+    }
+    Ok(slot)
 }
 
 fn key(group_id: &str, slot: &str) -> String {

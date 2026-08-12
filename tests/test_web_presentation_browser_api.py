@@ -83,6 +83,38 @@ class TestWebPresentationBrowserApi(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_browser_surface_session_rejects_non_web_urls_before_replacing_runtime(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "browser-url-boundary", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "")
+
+            def fake_call_daemon(req: dict):
+                daemon_resp, _ = self._call(str(req.get("op") or ""), dict(req.get("args") or {}))
+                payload = {"ok": bool(daemon_resp.ok)}
+                if daemon_resp.result is not None:
+                    payload["result"] = daemon_resp.result
+                if daemon_resp.error is not None:
+                    payload["error"] = daemon_resp.error.model_dump(mode="json", exclude_none=True)
+                return payload
+
+            with patch(
+                "cccc.daemon.group.presentation_browser_ops.open_browser_surface_session"
+            ) as open_runtime, patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
+                with self._client() as client:
+                    resp = client.post(
+                        f"/api/v1/groups/{group_id}/presentation/browser_surface/session",
+                        json={"slot": "slot-1", "url": "file:///etc/passwd", "by": "user"},
+                    )
+
+            self.assertEqual(resp.status_code, 200)
+            self.assertFalse(bool(resp.json().get("ok")))
+            self.assertEqual(resp.json()["error"]["code"], "invalid_url")
+            open_runtime.assert_not_called()
+        finally:
+            cleanup()
+
     def test_browser_surface_session_info_route_returns_idle_state(self) -> None:
         _, cleanup = self._with_home()
         try:

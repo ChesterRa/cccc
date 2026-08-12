@@ -107,6 +107,42 @@ class TestGroupBridgeDispatch(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_python_replays_rust_delivered_receipt_without_network_recall(self) -> None:
+        from cccc.daemon.group_bridge.remote_dispatch import deliver_enqueued
+        from cccc.daemon.group_bridge.transports.base import RemoteSendResult
+        from cccc.kernel.group_bridge.receipts import record_receipt
+
+        _, cleanup = self._with_home()
+        try:
+            reg = self._make_registration()
+            rid = reg["registration_id"]
+            record_receipt(
+                rid,
+                "rust-success",
+                {
+                    "ok": True,
+                    "status": "delivered",
+                    "remote_event_id": "remote-rust-1",
+                    "transport": "group_bridge_session",
+                },
+            )
+            fake = _CountingTransport(
+                RemoteSendResult(ok=True, status="sent", remote_event_id="duplicate", transport="fake")
+            )
+
+            replay = deliver_enqueued(
+                registration_id=rid,
+                idempotency_key="rust-success",
+                transport_factory=lambda _name: fake,
+                credential="secret",
+            )
+
+            self.assertEqual(replay["status"], "delivered")
+            self.assertEqual(replay["remote_event_id"], "remote-rust-1")
+            self.assertEqual(fake.calls, 0)
+        finally:
+            cleanup()
+
     def test_deliver_preserves_full_payload(self) -> None:
         from cccc.daemon.group_bridge.remote_dispatch import deliver_enqueued, enqueue_remote_send
         from cccc.daemon.group_bridge.transports.base import RemoteSendResult

@@ -4831,6 +4831,27 @@ class TestCapabilityOps(unittest.TestCase):
         self.assertTrue(command and str(command[0]) == "npx")
         called_cmd = probe.call_args[0][0]
         self.assertTrue(isinstance(called_cmd, list) and called_cmd and str(called_cmd[0]) == "npx")
+        install_requests = probe.call_args[0][1]
+        self.assertEqual(
+            [str(item.get("method") or "") for item in install_requests],
+            ["initialize", "notifications/initialized", "tools/list"],
+        )
+
+        with patch(
+            "cccc.daemon.ops.capability_ops._stdio_mcp_roundtrip",
+            return_value=[{"jsonrpc": "2.0", "id": 2, "result": {"content": [{"type": "text", "text": "ok"}]}}],
+        ) as invoke:
+            result = ops._invoke_installed_external_tool(
+                install,
+                real_tool_name="demo",
+                arguments={"value": "hello"},
+            )
+        self.assertEqual(str((result.get("content") or [{}])[0].get("text") or ""), "ok")
+        invoke_requests = invoke.call_args[0][1]
+        self.assertEqual(
+            [str(item.get("method") or "") for item in invoke_requests],
+            ["initialize", "notifications/initialized", "tools/call"],
+        )
 
     def test_install_external_capability_package_falls_back_to_command_candidates(self) -> None:
         from cccc.daemon.ops import capability_ops as ops

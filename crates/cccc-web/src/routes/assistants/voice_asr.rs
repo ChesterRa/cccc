@@ -193,6 +193,38 @@ pub fn runtime_status() -> Value {
     })
 }
 
+pub fn streaming_backend_status(home: &HomeLayout, requested: &str) -> Value {
+    let catalog = match catalog(home) {
+        Ok(value) => value,
+        Err(error) => {
+            return json!({
+                "ready":false,
+                "status":"failed",
+                "model_id":"",
+                "error":{"code":error.code,"message":error.message,"details":error.details}
+            });
+        }
+    };
+    let model = catalog
+        .get(requested)
+        .filter(|model| model.streaming.is_some())
+        .or_else(|| catalog.get(DEFAULT_STREAMING_MODEL_ID));
+    let Some(model) = model else {
+        return json!({
+            "ready":false,
+            "status":"not_installed",
+            "model_id":DEFAULT_STREAMING_MODEL_ID
+        });
+    };
+    let status = model_status(home, model);
+    json!({
+        "ready":status["streaming_ready"].as_bool().unwrap_or(false),
+        "status":status["status"],
+        "model_id":model.model_id,
+        "error":status["error"]
+    })
+}
+
 pub fn list_models(home: &HomeLayout) -> Result<Vec<Value>, VoiceError> {
     Ok(catalog(home)?
         .into_values()

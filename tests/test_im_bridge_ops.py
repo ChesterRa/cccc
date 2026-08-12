@@ -1,6 +1,8 @@
 import tempfile
 import unittest
+import os
 from pathlib import Path
+from unittest.mock import patch
 
 from cccc.daemon.im.im_bridge_ops import (
     cleanup_invalid_im_bridges,
@@ -8,9 +10,55 @@ from cccc.daemon.im.im_bridge_ops import (
     stop_all_im_bridges,
     stop_im_bridges_for_group,
 )
+from cccc.util.file_lock import acquire_lockfile, release_lockfile
 
 
 class TestImBridgeOps(unittest.TestCase):
+    def test_stop_group_refuses_live_pid_without_owned_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            pid_path = home / "groups" / "g_test" / "state" / "im_bridge.pid"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text("424242", encoding="utf-8")
+            signaled: list[int] = []
+
+            with patch("cccc.daemon.im.im_bridge_ops.pid_is_alive", return_value=True):
+                stopped = stop_im_bridges_for_group(
+                    home,
+                    group_id="g_test",
+                    best_effort_killpg=lambda pid, _sig: signaled.append(pid),
+                )
+
+            self.assertEqual(stopped, 0)
+            self.assertEqual(signaled, [])
+            self.assertFalse(pid_path.exists())
+
+    def test_stop_group_signals_the_current_singleton_lock_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            state_dir = home / "groups" / "g_test" / "state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            pid_path = state_dir / "im_bridge.pid"
+            pid_path.write_text(str(os.getpid()), encoding="utf-8")
+            lock = acquire_lockfile(state_dir / "im_bridge.lock", blocking=False)
+            lock.seek(0)
+            lock.write(f"{os.getpid()}\n".encode())
+            lock.truncate()
+            lock.flush()
+            signaled: list[int] = []
+            try:
+                stopped = stop_im_bridges_for_group(
+                    home,
+                    group_id="g_test",
+                    best_effort_killpg=lambda pid, _sig: signaled.append(pid),
+                )
+            finally:
+                release_lockfile(lock)
+
+            self.assertEqual(stopped, 1)
+            self.assertEqual(signaled, [os.getpid()])
+            self.assertFalse(pid_path.exists())
+
     def test_stop_group_no_group_id(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
@@ -79,10 +127,10 @@ class TestImBridgeOps(unittest.TestCase):
 
 
 class TestImUnsetOrphanScan(unittest.TestCase):
-    """T208: cmd_im_unset must terminate orphan bridge processes even when pid file is missing."""
+    """T208: cmd_im_unset must route orphan cleanup through the owned helper."""
 
     def test_unset_kills_orphan_when_no_pidfile(self) -> None:
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import patch
 
         with tempfile.TemporaryDirectory() as td:
             home = Path(td)
@@ -110,11 +158,17 @@ class TestImUnsetOrphanScan(unittest.TestCase):
 
             orphan_pid = 99999
 
-            # Mock _im_find_bridge_pids_by_script to return the orphan pid
-            # Mock _resolve_group_id to return our test group_id
-            # Mock ensure_home to return our temp dir
+            def mock_stop(home_arg, *, group_id: str, best_effort_killpg):
+                self.assertEqual(home_arg, home)
+                self.assertEqual(group_id, "g_test_orphan")
+                best_effort_killpg(orphan_pid, 15)
+                return 1
+
             with (
-                patch("cccc.cli.im_cmds._im_find_bridge_pids_by_script", return_value=[orphan_pid]),
+                patch(
+                    "cccc.cli.im_cmds.stop_im_bridges_for_group",
+                    side_effect=mock_stop,
+                ),
                 patch("cccc.cli.im_cmds._resolve_group_id", return_value=group_id),
                 patch("cccc.cli.im_cmds.best_effort_signal_pid", side_effect=mock_signal),
                 patch("cccc.kernel.group.ensure_home", return_value=home),
@@ -136,6 +190,62 @@ class TestImUnsetOrphanScan(unittest.TestCase):
             with open(group_yaml, encoding="utf-8") as f:
                 doc = yaml.safe_load(f)
             self.assertNotIn("im", doc)
+
+
+class TestImSetLifecycle(unittest.TestCase):
+    def test_set_stops_the_old_worker_and_disables_autostart(self) -> None:
+        import argparse
+
+        import yaml
+
+        from cccc.cli.im_cmds import cmd_im_set
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            group_id = "g_test_replace"
+            group_dir = home / "groups" / group_id
+            group_dir.mkdir(parents=True)
+            group_yaml = group_dir / "group.yaml"
+            group_yaml.write_text(
+                f"v: 1\ngroup_id: {group_id}\ntitle: test\ntopic: ''\n"
+                "created_at: '2026-01-01T00:00:00Z'\nupdated_at: '2026-01-01T00:00:00Z'\n"
+                "running: true\nstate: active\nactive_scope_key: ''\nscopes: []\nactors: []\n"
+                "im:\n  platform: telegram\n  bot_token_env: OLD_TOKEN\n  enabled: true\n",
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(
+                group=group_id,
+                platform="discord",
+                bot_token_env="NEW_TOKEN",
+                app_token_env="",
+                token_env="",
+                token="",
+                app_key_env="",
+                app_secret_env="",
+                domain="",
+                robot_code_env="",
+                robot_code="",
+                wecom_bot_id="",
+                wecom_secret="",
+                weixin_account_id="",
+            )
+
+            with (
+                patch("cccc.cli.im_cmds._resolve_group_id", return_value=group_id),
+                patch("cccc.cli.im_cmds.ensure_home", return_value=home),
+                patch("cccc.kernel.group.ensure_home", return_value=home),
+                patch(
+                    "cccc.cli.im_cmds.stop_im_bridges_for_group",
+                    return_value=1,
+                ) as stop,
+            ):
+                rc = cmd_im_set(args)
+
+            self.assertEqual(rc, 0)
+            stop.assert_called_once()
+            doc = yaml.safe_load(group_yaml.read_text(encoding="utf-8"))
+            self.assertEqual(doc["im"]["platform"], "discord")
+            self.assertFalse(bool(doc["im"].get("enabled")))
 
 
 if __name__ == "__main__":

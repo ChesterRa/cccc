@@ -1,6 +1,8 @@
 use cccc_contracts::{DaemonRequest, utc_now};
 use cccc_core::{GroupStore, HomeLayout};
 use serde_json::{Map, Value, json};
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::dispatch::{OpError, OpResult, object, required_arg};
@@ -41,6 +43,109 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
 
 fn remote_send(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     remote_send_inner(home, request, true)
+}
+
+pub(crate) fn schedule_pending_route_retry(
+    home: HomeLayout,
+    group_id: String,
+    remote_group_id: String,
+    remote_peer_id: String,
+) {
+    type RetryKey = (String, String, String, String);
+    static ACTIVE: OnceLock<Mutex<HashSet<RetryKey>>> = OnceLock::new();
+    let key = (
+        home.root().to_string_lossy().into_owned(),
+        group_id.clone(),
+        remote_group_id.clone(),
+        remote_peer_id.clone(),
+    );
+    let active = ACTIVE.get_or_init(|| Mutex::new(HashSet::new()));
+    if !active
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(key.clone())
+    {
+        return;
+    }
+    std::thread::spawn(move || {
+        retry_pending_for_route(&home, &group_id, &remote_group_id, &remote_peer_id);
+        ACTIVE
+            .get_or_init(|| Mutex::new(HashSet::new()))
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&key);
+    });
+}
+
+fn retry_pending_for_route(
+    home: &HomeLayout,
+    group_id: &str,
+    remote_group_id: &str,
+    remote_peer_id: &str,
+) {
+    let Ok(state) = bridge_state(home) else {
+        return;
+    };
+    let route_ids = items(&state, "trusts")
+        .iter()
+        .filter(|trust| {
+            trust["status"] == "active"
+                && trust["group_id"] == group_id
+                && trust["remote_group_id"] == remote_group_id
+                && trust["remote_peer_id"] == remote_peer_id
+        })
+        .filter_map(|trust| nonempty(trust, &["registration_id", "trust_id"]))
+        .collect::<HashSet<_>>();
+    if route_ids.is_empty() {
+        return;
+    }
+    let pending = items(&state, "deliveries")
+        .iter()
+        .filter(|receipt| {
+            receipt["status"] == "retrying"
+                && receipt["registration_id"]
+                    .as_str()
+                    .is_some_and(|id| route_ids.contains(id))
+                && receipt["attempt"].as_u64().unwrap_or(0)
+                    < receipt["max_attempts"].as_u64().unwrap_or(5)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    for receipt in pending {
+        let Some(registration_id) = receipt["registration_id"].as_str() else {
+            continue;
+        };
+        let Some(idempotency_key) = receipt["idempotency_key"].as_str() else {
+            continue;
+        };
+        let payload = receipt
+            .get("source_record_payload")
+            .filter(|value| value.is_object())
+            .or_else(|| receipt.get("payload").filter(|value| value.is_object()))
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let mut args = json!({
+            "group_id":group_id,
+            "registration_id":registration_id,
+            "idempotency_key":idempotency_key,
+            "by":payload.get("source_by").cloned().unwrap_or_else(|| json!("user")),
+            "payload":payload
+        })
+        .as_object()
+        .cloned()
+        .expect("retry request is an object");
+        if let Some(value) = receipt.get("source_event_id").cloned() {
+            args.insert("source_event_id".into(), value);
+        }
+        let _ = remote_send(
+            home,
+            &DaemonRequest {
+                v: 1,
+                op: "remote_send".into(),
+                args,
+            },
+        );
+    }
 }
 
 pub(super) fn prepare_reply(
@@ -243,7 +348,7 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
         .cloned()
         .unwrap_or_else(|| {
             json!({
-                "status":"delivered",
+                "status":"sent",
                 "remote_event_id":remote
                     .pointer("/result/event_id")
                     .or_else(|| remote.get("event_id"))
@@ -251,10 +356,32 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
                     .unwrap_or(Value::Null)
             })
         });
+    let remote_event_id = receipt
+        .get("remote_event_id")
+        .or_else(|| receipt.get("event_id"))
+        .cloned()
+        .or_else(|| {
+            remote
+                .pointer("/result/event/id")
+                .or_else(|| remote.pointer("/result/event_id"))
+                .or_else(|| remote.get("event_id"))
+                .cloned()
+        })
+        .unwrap_or(Value::Null);
+    receipt["status"] = json!("sent");
+    receipt["remote_event_id"] = remote_event_id;
+    if let Some(fields) = receipt.as_object_mut() {
+        fields.remove("event_id");
+    }
     receipt["registration_id"] = json!(registration_id);
     receipt["idempotency_key"] = json!(idempotency_key);
     receipt["remote_group_id"] = json!(remote_group_id);
-    receipt["transport"] = json!("group_bridge_session");
+    if receipt["transport"]
+        .as_str()
+        .is_none_or(|transport| transport.trim().is_empty())
+    {
+        receipt["transport"] = json!("group_bridge_session");
+    }
     receipt["ok"] = json!(true);
     receipt["attempt"] = json!(attempt);
     receipt["max_attempts"] = json!(5);
@@ -368,10 +495,14 @@ fn receive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     args.insert("client_id".into(), json!(idempotency_key));
     args.remove("source_by");
     args.remove("idempotency_key");
+    let target_group = GroupStore::new(home.clone())
+        .and_then(|store| store.load(&target_group_id))
+        .map_err(OpError::io)?;
+    super::messaging_recipients::apply_cross_group_recipient(&target_group, &mut args)?;
     let result = dispatch_message(home, "send", args)?;
     let receipt = json!({
         "registration_id":registration_id,"idempotency_key":idempotency_key,
-        "status":"delivered","event_id":result["event"]["id"],"delivered_at":utc_now(),
+        "status":"sent","event_id":result["event"]["id"],"delivered_at":utc_now(),
         "transport":"group_bridge_session"
     });
     store_delivery(home, receipt.clone())?;
@@ -440,9 +571,22 @@ fn post_delivery(
         && fallback_value.get("error").is_none()
         && fallback_value["result"]["isError"] != true
     {
+        let remote_event_id = fallback_value["result"]["content"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item["text"].as_str())
+            .find_map(|text| serde_json::from_str::<Value>(text).ok())
+            .and_then(|result| {
+                result
+                    .pointer("/event/id")
+                    .or_else(|| result.pointer("/result/event/id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
         Ok(json!({"receipt":{
-            "status":"delivered","idempotency_key":idempotency_key,
-            "transport":"group_bridge_mcp"
+            "status":"sent","idempotency_key":idempotency_key,
+            "remote_event_id":remote_event_id,"transport":"group_bridge_mcp"
         }}))
     } else {
         Err(OpError::new(

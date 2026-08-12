@@ -58,6 +58,11 @@ async fn run_stdio_loop(home: &HomeLayout) -> Result<()> {
                 continue;
             }
         };
+        if !request.is_object() {
+            let response = handle(home, &client, &request, None).await;
+            write_response(&mut output, &response).await?;
+            continue;
+        }
         if request.get("id").is_none() {
             continue;
         }
@@ -104,37 +109,83 @@ async fn handle(
     request: &Value,
     context: Option<RequestContext<'_>>,
 ) -> Value {
+    if !request.is_object() {
+        return protocol_error(Value::Null, -32600, "Invalid Request");
+    }
     let id = request.get("id").cloned().unwrap_or(Value::Null);
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
     let result = match method {
-        "initialize" => Ok(json!({
+        "initialize" => json!({
             "protocolVersion": negotiated_protocol_version(request),
             "capabilities": {"tools": {"listChanged": false}},
             "serverInfo": {"name": "cccc-mcp", "version": env!("CARGO_PKG_VERSION")},
-        })),
-        "ping" => Ok(json!({})),
+        }),
+        "ping" => json!({}),
         "tools/list" => {
-            Ok(json!({"tools": visible_tools_with_context(home, client, context).await}))
+            json!({"tools": visible_tools_with_context(home, client, context).await})
         }
         "tools/call" => {
-            let params = request.get("params").and_then(Value::as_object);
-            let name = params
-                .and_then(|value| value.get("name"))
+            let Some(params) = request.get("params").and_then(Value::as_object) else {
+                return protocol_error(id, -32602, "tools/call params must be an object");
+            };
+            let Some(name) = params
+                .get("name")
                 .and_then(Value::as_str)
-                .unwrap_or("");
-            let arguments = params
-                .and_then(|value| value.get("arguments"))
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default();
-            router::call_with_context(home, client, name, arguments, context).await
+                .filter(|name| !name.is_empty())
+            else {
+                return protocol_error(id, -32602, "tools/call name must be a non-empty string");
+            };
+            let arguments = match params.get("arguments") {
+                None => serde_json::Map::new(),
+                Some(Value::Object(arguments)) => arguments.clone(),
+                Some(_) => {
+                    return protocol_error(id, -32602, "tools/call arguments must be an object");
+                }
+            };
+            if !tools::contains(name)
+                && !visible_tools_with_context(home, client, context)
+                    .await
+                    .iter()
+                    .any(|tool| tool["name"].as_str() == Some(name))
+            {
+                return protocol_error(id, -32602, &format!("Unknown tool: {name}"));
+            }
+            return match router::call_with_context(home, client, name, arguments, context, false)
+                .await
+            {
+                Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
+                Err(message) => {
+                    json!({"jsonrpc":"2.0","id":id,"result":tool_error_result(&message)})
+                }
+            };
         }
-        _ => Err(format!("unknown method: {method}")),
+        notification if notification.starts_with("notifications/") => return json!({}),
+        _ => return protocol_error(id, -32601, &format!("Method not found: {method}")),
     };
-    match result {
-        Ok(value) => json!({"jsonrpc":"2.0","id":id,"result":value}),
-        Err(message) => json!({"jsonrpc":"2.0","id":id,"error":{"code":-32602,"message":message}}),
-    }
+    json!({"jsonrpc":"2.0","id":id,"result":result})
+}
+
+fn protocol_error(id: Value, code: i64, message: &str) -> Value {
+    json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
+}
+
+fn tool_error_result(message: &str) -> Value {
+    let (code, message) = message
+        .split_once(": ")
+        .filter(|(code, _)| {
+            !code.is_empty()
+                && code
+                    .chars()
+                    .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
+        })
+        .unwrap_or(("tool_execution_error", message));
+    let payload = json!({"error":{"code":code,"message":message}});
+    let text = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".into());
+    json!({
+        "content":[{"type":"text","text":text}],
+        "structuredContent":payload,
+        "isError":true
+    })
 }
 
 fn negotiated_protocol_version(request: &Value) -> &'static str {
@@ -193,17 +244,17 @@ async fn visible_tools_with_context(
             v: 1,
             op: "capability_state".into(),
             args: serde_json::Map::from_iter([
-                ("group_id".into(), Value::String(group_id)),
+                ("group_id".into(), Value::String(group_id.clone())),
                 ("actor_id".into(), Value::String(actor_id.clone())),
-                ("by".into(), Value::String(actor_id)),
+                ("by".into(), Value::String(actor_id.clone())),
             ]),
         })
         .await;
     let Ok(response) = response else {
-        return core_tools(catalog);
+        return actor_fallback_tools(home, catalog, &group_id, &actor_id);
     };
     if !response.ok {
-        return core_tools(catalog);
+        return actor_fallback_tools(home, catalog, &group_id, &actor_id);
     }
     let visible = response
         .result
@@ -236,6 +287,32 @@ async fn visible_tools_with_context(
             output.push(tool.clone());
         }
     }
+    output
+}
+
+fn actor_fallback_tools(
+    home: &HomeLayout,
+    catalog: Vec<Value>,
+    group_id: &str,
+    actor_id: &str,
+) -> Vec<Value> {
+    let web_model = cccc_core::GroupStore::new(home.clone())
+        .and_then(|store| store.load(group_id))
+        .ok()
+        .and_then(|group| group.actors.into_iter().find(|actor| actor.id == actor_id))
+        .is_some_and(|actor| actor.runtime == cccc_contracts::ActorRuntime::WebModel);
+    if !web_model {
+        return core_tools(catalog);
+    }
+    let mut output = catalog
+        .into_iter()
+        .filter(|tool| {
+            tool["name"]
+                .as_str()
+                .is_some_and(|name| cccc_core::WEB_MODEL_CORE_TOOL_NAMES.contains(&name))
+        })
+        .collect::<Vec<_>>();
+    hide_disabled_code_mode_tools(&mut output);
     output
 }
 
@@ -313,6 +390,79 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn protocol_and_tool_execution_errors_use_distinct_envelopes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+
+        let unknown_method = super::handle_request(
+            &home,
+            &json!({"jsonrpc":"2.0","id":1,"method":"unknown/method","params":{}}),
+        )
+        .await;
+        assert_eq!(unknown_method["error"]["code"], -32601);
+
+        let invalid_request = super::handle_request(&home, &json!([])).await;
+        assert_eq!(invalid_request["error"]["code"], -32600);
+
+        let notification = super::handle_request(
+            &home,
+            &json!({
+                "jsonrpc":"2.0","method":"notifications/initialized","params":{}
+            }),
+        )
+        .await;
+        assert_eq!(notification, json!({}));
+
+        let malformed = super::handle_request(
+            &home,
+            &json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":[]}),
+        )
+        .await;
+        assert_eq!(malformed["error"]["code"], -32602);
+
+        let unknown_tool = super::handle_request(
+            &home,
+            &json!({
+                "jsonrpc":"2.0","id":3,"method":"tools/call",
+                "params":{"name":"not_a_tool","arguments":{}}
+            }),
+        )
+        .await;
+        assert_eq!(unknown_tool["error"]["code"], -32602);
+        assert!(
+            unknown_tool["error"]["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Unknown tool"))
+        );
+
+        let omitted_arguments = super::handle_request(
+            &home,
+            &json!({
+                "jsonrpc":"2.0","id":5,"method":"tools/call",
+                "params":{"name":"cccc_help"}
+            }),
+        )
+        .await;
+        assert!(omitted_arguments["result"]["content"].is_array());
+        assert!(omitted_arguments["result"]["structuredContent"].is_object());
+
+        let execution_error = super::handle_request(
+            &home,
+            &json!({
+                "jsonrpc":"2.0","id":6,"method":"tools/call",
+                "params":{"name":"cccc_repo","arguments":{"action":"info"}}
+            }),
+        )
+        .await;
+        assert_eq!(execution_error["result"]["isError"], true);
+        assert_eq!(
+            execution_error["result"]["structuredContent"]["error"]["code"],
+            "tool_execution_error"
+        );
+        assert!(execution_error.get("error").is_none());
+    }
+
     #[test]
     fn unscoped_fallback_remains_the_thirteen_core_tools() {
         let names = super::core_tools(super::tools::catalog())
@@ -337,6 +487,35 @@ mod tests {
         .into_iter()
         .map(str::to_owned)
         .collect::<BTreeSet<_>>();
+
+        assert_eq!(names, expected);
+    }
+
+    #[tokio::test]
+    async fn web_model_schema_stays_fixed_while_daemon_is_unavailable() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("web model schema", "").expect("group");
+        let mut actor = cccc_contracts::Actor::new("web1");
+        actor.runtime = cccc_contracts::ActorRuntime::WebModel;
+        cccc_core::actors::add(&mut group, actor).expect("add actor");
+        store.save(&group).expect("save group");
+
+        let client = cccc_client::DaemonClient::new(home.clone());
+        let names = super::visible_tools_for_actor(&home, &client, &group.group_id, "web1")
+            .await
+            .into_iter()
+            .filter_map(|tool| tool["name"].as_str().map(str::to_owned))
+            .collect::<BTreeSet<_>>();
+        let mut expected = cccc_core::WEB_MODEL_CORE_TOOL_NAMES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect::<BTreeSet<_>>();
+        if !super::code_mode::enabled() {
+            expected.remove("cccc_code_exec");
+            expected.remove("cccc_code_wait");
+        }
 
         assert_eq!(names, expected);
     }

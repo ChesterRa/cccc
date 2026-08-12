@@ -17,7 +17,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
 
 fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    store(home)?.load(&group_id).map_err(OpError::not_found)?;
+    load_group(home, &group_id)?;
     let contexts = ContextStore::new(home.clone()).map_err(OpError::io)?;
     let document = contexts.load(&group_id).map_err(OpError::io)?;
     let version = contexts.version(&document).map_err(OpError::io)?;
@@ -35,7 +35,7 @@ fn get(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
-    let group = store(home)?.load(&group_id).map_err(OpError::not_found)?;
+    let group = load_group(home, &group_id)?;
     let operations = parse_operations(request)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
     let contexts = ContextStore::new(home.clone()).map_err(OpError::io)?;
@@ -79,6 +79,7 @@ fn sync(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
 
 fn task_list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
+    load_group(home, &group_id)?;
     let contexts = ContextStore::new(home.clone()).map_err(OpError::io)?;
     let document = contexts.load(&group_id).map_err(OpError::io)?;
     if let Some(task_id) = string_arg(request, "task_id").filter(|value| !value.trim().is_empty()) {
@@ -115,6 +116,12 @@ fn task_list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         })
         .collect();
     object(json!({"tasks": tasks}))
+}
+
+fn load_group(home: &HomeLayout, group_id: &str) -> Result<GroupDoc, OpError> {
+    store(home)?
+        .load(group_id)
+        .map_err(|_| OpError::new("group_not_found", format!("group not found: {group_id}")))
 }
 
 fn parse_operations(request: &DaemonRequest) -> Result<Vec<Map<String, Value>>, OpError> {

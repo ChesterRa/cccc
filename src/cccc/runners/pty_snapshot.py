@@ -114,6 +114,26 @@ class PtyBacklogSnapshot:
             "cursor_expired": requested_start < self.start_cursor,
         }
 
+    def replay_page(
+        self,
+        *,
+        after: int,
+        end_cursor: Optional[int],
+        limit_bytes: int,
+    ) -> tuple[Dict[str, object], int]:
+        complete_end = self.start_cursor + complete_utf8_prefix_len(self.data)
+        requested_end = complete_end if end_cursor is None else int(end_cursor)
+        replay_end = min(max(requested_end, self.start_cursor), complete_end)
+        retained = PtyBacklogSnapshot(
+            data=self.data[: replay_end - self.start_cursor],
+            start_cursor=self.start_cursor,
+            end_cursor=replay_end,
+        )
+        return (
+            retained.history_since_page(after=after, limit_bytes=limit_bytes),
+            replay_end,
+        )
+
 
 class PtyBacklogSnapshotCache:
     def __init__(

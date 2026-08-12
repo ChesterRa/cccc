@@ -29,7 +29,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20.19.5"
+          node-version: "24.19.0"
           cache: npm
           cache-dependency-path: web/package-lock.json
 
@@ -58,14 +58,9 @@ jobs:
           python -m twine check dist/*
 
       - name: Smoke installed portable Python wheel
-        timeout-minutes: 2
+        timeout-minutes: 5
         shell: bash
-        run: |
-          python -m venv .release-smoke
-          .release-smoke/bin/python -m pip install --no-deps --force-reinstall dist/*.whl
-          expected="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-          actual="$(CCCC_HOME="$RUNNER_TEMP/cccc-python-release-smoke" .release-smoke/bin/cccc version)"
-          test "$actual" = "$expected"
+        run: python scripts/tests/smoke_wheel_frontdoor.py dist/*.whl --expect-rust unavailable
 
       - name: Upload shared Web bundle
         uses: actions/upload-artifact@v4
@@ -132,6 +127,10 @@ jobs:
           python scripts/verify_native_wheel.py "$wheel_path" --platform-tag manylinux_2_28_x86_64
           auditwheel show "$wheel_path"
 
+      - name: Smoke installed Linux dual-engine wheel
+        timeout-minutes: 5
+        run: python scripts/tests/smoke_wheel_frontdoor.py wheelhouse/final/*.whl --expect-rust available
+
       - name: Upload Linux native wheel
         uses: actions/upload-artifact@v4
         with:
@@ -160,7 +159,7 @@ jobs:
             repair: delocate
             arch: arm64
             artifact: macos-arm64
-          - os: windows-latest
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
             binary: target/x86_64-pc-windows-msvc/release/cccc.exe
             platform_tag: win_amd64
@@ -240,6 +239,10 @@ jobs:
         run: |
           wheel_path="$(find wheelhouse/final -maxdepth 1 -name '*.whl' -print -quit)"
           python scripts/verify_native_wheel.py "$wheel_path" --platform-tag "${{ matrix.platform_tag }}"
+
+      - name: Smoke installed dual-engine wheel
+        timeout-minutes: 5
+        run: python scripts/tests/smoke_wheel_frontdoor.py wheelhouse/final/*.whl --expect-rust available
 
       - name: Upload native wheel
         uses: actions/upload-artifact@v4

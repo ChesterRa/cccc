@@ -12,8 +12,10 @@ from ...kernel.inbox import set_cursor
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
 from ...kernel.runtime import get_runtime_command_with_flags
+from ...kernel.web_model_connectors import retire_web_model_connectors_for_actor
 from ...util.conv import coerce_bool
 from ..context.context_ops import _schedule_summary_snapshot_rebuild
+from ..runner_state_ops import headless_state_path
 from .actor_runtime_ops import resolve_actor_launch_config
 from .actor_profile_runtime import actor_profile_ref, apply_profile_link_to_actor
 from .actor_profile_store import ProfileResolver, get_actor_profile_by_ref, normalize_actor_profile_ref
@@ -67,6 +69,8 @@ def handle_actor_add(
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
     before_foreman = foreman_id(group)
+    actor_added = False
+    effective_actor_id = ""
 
     try:
         require_actor_permission(group, by=by, action="actor.add")
@@ -231,14 +235,30 @@ def handle_actor_add(
             runner=runner,  # type: ignore
             runtime=runtime,  # type: ignore
         )
-
+        actor_added = True
         effective_actor_id = str(actor.get("id") or actor_id).strip() or actor_id
 
-        if runtime == "web_model":
-            try:
-                clear_web_model_chatgpt_browser_actor_runtime(group_id=group.group_id, actor_id=effective_actor_id)
-            except Exception:
-                pass
+        try:
+            headless_state_path(group.group_id, effective_actor_id).unlink(missing_ok=True)
+        except Exception as error:
+            raise RuntimeError("failed to retire stale headless runtime state") from error
+
+        try:
+            retire_web_model_connectors_for_actor(group.group_id, effective_actor_id)
+        except Exception as error:
+            raise RuntimeError("failed to retire stale web-model connector") from error
+        try:
+            clear_web_model_chatgpt_browser_actor_runtime(
+                group_id=group.group_id,
+                actor_id=effective_actor_id,
+            )
+        except Exception:
+            pass
+
+        # Actor-private values belong to one actor generation. Clear any residue
+        # left by an interrupted/legacy removal before applying this generation's
+        # explicit, inherited, or profile-controlled values.
+        delete_actor_private_env(group.group_id, effective_actor_id)
 
         if linked_profile_id and isinstance(linked_profile, dict):
             actor = apply_profile_link_to_actor(
@@ -263,25 +283,38 @@ def handle_actor_add(
                 )
 
         if env_private_raw is not None:
-            try:
-                update_actor_private_env(
-                    group.group_id,
-                    effective_actor_id,
-                    set_vars=env_private_set,
-                    unset_keys=[],
-                    clear=True,
-                )
-            except Exception:
-                try:
-                    remove_actor(group, effective_actor_id)
-                except Exception:
-                    pass
-                try:
-                    delete_actor_private_env(group.group_id, effective_actor_id)
-                except Exception:
-                    pass
-                raise RuntimeError("failed to store env_private")
+            update_actor_private_env(
+                group.group_id,
+                effective_actor_id,
+                set_vars=env_private_set,
+                unset_keys=[],
+                clear=True,
+            )
+
+        event = append_event(
+            group.ledger_path,
+            kind="actor.add",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={"actor": actor},
+        )
     except Exception as e:
+        rollback_failures: list[str] = []
+        if actor_added and effective_actor_id:
+            try:
+                remove_actor(group, effective_actor_id)
+            except Exception as rollback_error:
+                rollback_failures.append(f"actor: {rollback_error}")
+            try:
+                delete_actor_private_env(group.group_id, effective_actor_id)
+            except Exception as rollback_error:
+                rollback_failures.append(f"private_env: {rollback_error}")
+        if rollback_failures:
+            return _error(
+                "rollback_failed",
+                f"{e}; rollback failed: {'; '.join(rollback_failures)}",
+            )
         return _error("actor_add_failed", str(e))
 
     try:
@@ -290,14 +323,6 @@ def handle_actor_add(
     except Exception:
         pass
 
-    event = append_event(
-        group.ledger_path,
-        kind="actor.add",
-        group_id=group.group_id,
-        scope_key="",
-        by=by,
-        data={"actor": actor},
-    )
     try:
         set_cursor(group, actor_id, event_id=str(event.get("id") or ""), ts=str(event.get("ts") or ""))
     except Exception:

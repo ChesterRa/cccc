@@ -1,8 +1,10 @@
 import os
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import yaml
 
@@ -38,6 +40,154 @@ class TestGroupBridgePairing(unittest.TestCase):
             self.assertNotIn("secret", first)
             self.assertNotIn("private_key", first)
         finally:
+            cleanup()
+
+    def test_concurrent_first_identity_callers_return_the_same_peer(self) -> None:
+        from cccc.daemon.group_bridge import identity as signing_identity
+        from cccc.kernel.group_bridge.pairing import get_local_identity
+
+        _, cleanup = self._with_home()
+        first_save_started = threading.Event()
+        release_first_save = threading.Event()
+        second_lock_attempted = threading.Event()
+        second_finished = threading.Event()
+        returned: list[str] = []
+        errors: list[BaseException] = []
+        original_acquire = signing_identity.acquire_lockfile
+        original_save = signing_identity._save_yaml
+
+        def observed_acquire(path, *, blocking=True):
+            if threading.current_thread().name == "identity-caller-b":
+                second_lock_attempted.set()
+            return original_acquire(path, blocking=blocking)
+
+        def controlled_save(path, payload):
+            if threading.current_thread().name == "identity-caller-a":
+                first_save_started.set()
+                if not release_first_save.wait(timeout=3.0):
+                    raise AssertionError("timed out waiting to release the identity write")
+            return original_save(path, payload)
+
+        def load_identity() -> None:
+            try:
+                returned.append(str(get_local_identity().get("peer_id") or ""))
+            except BaseException as exc:  # pragma: no cover - asserted below
+                errors.append(exc)
+            finally:
+                if threading.current_thread().name == "identity-caller-b":
+                    second_finished.set()
+
+        first = threading.Thread(target=load_identity, name="identity-caller-a")
+        second = threading.Thread(target=load_identity, name="identity-caller-b")
+        try:
+            with (
+                mock.patch.object(signing_identity, "acquire_lockfile", side_effect=observed_acquire),
+                mock.patch.object(signing_identity, "_save_yaml", side_effect=controlled_save),
+            ):
+                first.start()
+                self.assertTrue(first_save_started.wait(timeout=2.0))
+                second.start()
+                self.assertTrue(second_lock_attempted.wait(timeout=2.0))
+                self.assertFalse(second_finished.wait(timeout=0.1))
+                release_first_save.set()
+                first.join(timeout=3.0)
+                second.join(timeout=3.0)
+
+            self.assertFalse(first.is_alive())
+            self.assertFalse(second.is_alive())
+            self.assertEqual(errors, [])
+            self.assertEqual(len(returned), 2)
+            self.assertEqual(len(set(returned)), 1)
+            self.assertEqual(get_local_identity()["peer_id"], returned[0])
+        finally:
+            release_first_save.set()
+            first.join(timeout=1.0)
+            second.join(timeout=1.0)
+            cleanup()
+
+    def test_concurrent_update_cannot_resurrect_a_revoked_trust(self) -> None:
+        from cccc.kernel.group_bridge import pairing
+
+        _, cleanup = self._with_home()
+        initial = {
+            "invites": {},
+            "requests": {},
+            "trusts": {
+                "trust_demo": {
+                    "trust_id": "trust_demo",
+                    "group_id": "g_local",
+                    "remote_group_id": "g_remote",
+                    "remote_peer_id": "peer_remote",
+                    "access_level": "messages",
+                    "status": "active",
+                    "created_at": "2026-08-11T00:00:00Z",
+                    "updated_at": "2026-08-11T00:00:00Z",
+                }
+            },
+            "outbounds": {},
+        }
+        pairing._save_store(initial)
+        revoke_at_save = threading.Event()
+        release_revoke = threading.Event()
+        update_started = threading.Event()
+        update_finished = threading.Event()
+        revoked: list[dict] = []
+        revoke_errors: list[BaseException] = []
+        update_errors: list[BaseException] = []
+        original_save = pairing._save_store
+
+        def controlled_save(store, home=None):
+            if threading.current_thread().name == "trust-revoke":
+                revoke_at_save.set()
+                if not release_revoke.wait(timeout=3.0):
+                    raise AssertionError("timed out waiting to release trust revocation")
+            return original_save(store, home)
+
+        def revoke() -> None:
+            try:
+                revoked.append(pairing.revoke_trust("trust_demo", revoked_by="owner"))
+            except BaseException as exc:  # pragma: no cover - asserted below
+                revoke_errors.append(exc)
+
+        def update_access() -> None:
+            update_started.set()
+            try:
+                pairing.update_trust_access_level(
+                    "trust_demo", "read", updated_by="concurrent-update"
+                )
+            except BaseException as exc:
+                update_errors.append(exc)
+            finally:
+                update_finished.set()
+
+        revoke_thread = threading.Thread(target=revoke, name="trust-revoke")
+        update_thread = threading.Thread(target=update_access, name="stale-access-update")
+        try:
+            with mock.patch.object(pairing, "_save_store", side_effect=controlled_save):
+                revoke_thread.start()
+                self.assertTrue(revoke_at_save.wait(timeout=2.0))
+                update_thread.start()
+                self.assertTrue(update_started.wait(timeout=2.0))
+                self.assertFalse(update_finished.wait(timeout=0.1))
+                release_revoke.set()
+                revoke_thread.join(timeout=3.0)
+                update_thread.join(timeout=3.0)
+
+            self.assertFalse(revoke_thread.is_alive())
+            self.assertFalse(update_thread.is_alive())
+            self.assertEqual(revoke_errors, [])
+            self.assertEqual(len(revoked), 1)
+            self.assertEqual(revoked[0]["status"], "revoked")
+            self.assertEqual(len(update_errors), 1)
+            self.assertIn("trust is not active", str(update_errors[0]))
+            self.assertEqual(
+                pairing.list_trusts(group_id="g_local")[0]["status"],
+                "revoked",
+            )
+        finally:
+            release_revoke.set()
+            revoke_thread.join(timeout=1.0)
+            update_thread.join(timeout=1.0)
             cleanup()
 
     def test_invite_request_approve_creates_group_bridge_session_registration(self) -> None:

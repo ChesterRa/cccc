@@ -216,6 +216,194 @@ async fn browser_session_projects_the_shared_target_contract() {
 }
 
 #[tokio::test]
+async fn python_pending_new_chat_handoff_never_resubmits_before_url_binding() {
+    if !chrome_available() {
+        return;
+    }
+    let _browser_test = browser_test_lock().lock().await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let created = daemon_sync(
+        &home,
+        "group_create",
+        json!({"title":"Python pending new-chat handoff"}),
+    );
+    let group_id = created["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    daemon_sync(
+        &home,
+        "actor_add",
+        json!({"group_id":group_id,"actor_id":"web1","runtime":"web_model","runner":"headless","role":"peer","by":"user"}),
+    );
+    daemon_sync(
+        &home,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"web1","by":"user"}),
+    );
+    let first = daemon_sync(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["web1"],"text":"Python already submitted this batch"}),
+    );
+    let first_turn = daemon_sync(
+        &home,
+        "web_model_runtime_wait_next_turn",
+        json!({"group_id":group_id,"actor_id":"web1"}),
+    );
+    daemon_sync(
+        &home,
+        "web_model_runtime_complete_turn",
+        json!({
+            "group_id":group_id,
+            "actor_id":"web1",
+            "by":"web1",
+            "turn_id":first_turn["turn"]["turn_id"],
+            "event_ids":first_turn["turn"]["event_ids"],
+            "delivery_id":"python-pending-delivery",
+            "status":"done"
+        }),
+    );
+    let (page_url, page_server) = prompt_page().await;
+    let store = GroupStore::new(home.clone()).expect("group store");
+    integration_state::group_update(
+        &store,
+        &group_id,
+        super::web_model_browser::TARGETS_KEY,
+        |value| {
+            value.as_object_mut().expect("target map").insert(
+                "web1".into(),
+                json!({
+                    "state":"new_chat_submitted",
+                    "kind":"new_chat",
+                    "url":page_url,
+                    "saved_at":"2026-08-11T00:00:00Z",
+                    "submitted_at":"2026-08-11T00:00:01Z",
+                    "delivery_id":"python-pending-delivery",
+                    "next_delivery":"wait_for_new_chat_bind",
+                    "last_delivery_id":"python-pending-delivery",
+                    "last_delivery_turn_id":first_turn["turn"]["turn_id"],
+                    "last_delivery_event_ids":first_turn["turn"]["event_ids"],
+                    "last_delivery_status":"pending_new_chat_bind",
+                    "last_submission_evidence":{
+                        "submission_evidence":"message_echo",
+                        "tab_url":page_url
+                    },
+                    "last_error":"python-pending-handoff"
+                }),
+            );
+            Ok(())
+        },
+    )
+    .expect("Python pending target");
+
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_daemon(&home).await;
+    let (shutdown, _) = broadcast::channel(2);
+    let (app, _, surfaces, app_state) = crate::app_with_shutdown(
+        home.clone(),
+        shutdown.clone(),
+        crate::WebMode::Normal,
+        None,
+        crate::LiveBinding::from_env(),
+    );
+    let session_key = super::web_model_browser::key(&group_id, "web1");
+    surfaces
+        .open(
+            &session_key,
+            &temp.path().join("profile"),
+            &page_url,
+            800,
+            600,
+        )
+        .await
+        .expect("browser surface");
+    request_json(
+        &app,
+        Request::post("/api/v1/web-model/connectors")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"group_id":group_id,"actor_id":"web1","provider":"chatgpt_web"}).to_string(),
+            ))
+            .expect("create connector request"),
+    )
+    .await;
+    let client = DaemonClient::new(home.clone());
+    let second = client
+        .call(&request(
+            "send",
+            json!({"group_id":group_id,"by":"user","to":["web1"],"text":"wait for the Python-created chat URL"}),
+        ))
+        .await
+        .expect("send later turn");
+    super::web_model_delivery::ensure_worker(app_state, group_id.clone(), "web1".into()).await;
+    let deadline = Instant::now() + IDLE_POLL_INTERVAL + Duration::from_secs(2);
+    let inspected = loop {
+        let payload = request_json(
+            &app,
+            Request::get(format!(
+                "/api/v1/web-model/browser-session?group_id={group_id}&actor_id=web1&inspect=true"
+            ))
+            .body(Body::empty())
+            .expect("browser state request"),
+        )
+        .await;
+        if payload["result"]["browser_session"]["delivery_target"]["last_error"]
+            == "conversation_url_pending"
+        {
+            break payload;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "Rust worker did not inspect the Python pending target: {payload}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    let page = surfaces
+        .sessions
+        .lock()
+        .await
+        .get(&session_key)
+        .expect("session")
+        .page
+        .clone();
+    let send_clicks: i64 = page
+        .evaluate("globalThis.sendClicks || 0")
+        .await
+        .expect("send click count")
+        .into_value()
+        .expect("send click number");
+    let still_unread = client
+        .call(&request(
+            "web_model_runtime_wait_next_turn",
+            json!({"group_id":group_id,"actor_id":"web1"}),
+        ))
+        .await
+        .expect("pending runtime turn");
+    let _ = shutdown.send(());
+    let _ = surfaces.close(&session_key).await;
+    daemon.abort();
+    let _ = daemon.await;
+    page_server.abort();
+
+    assert!(first["event"]["id"].as_str().is_some());
+    assert!(second.ok);
+    assert_eq!(send_clicks, 0);
+    assert_eq!(
+        inspected["result"]["browser_session"]["pending_new_chat_submitted"],
+        true
+    );
+    assert_eq!(still_unread.result["status"], "work_available");
+    assert_eq!(
+        still_unread.result["turn"]["event_ids"],
+        json!([second.result["event"]["id"].clone()])
+    );
+}
+
+#[tokio::test]
 async fn browser_session_inspection_does_not_deliver_or_commit_messages() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -480,6 +668,31 @@ async fn connector_mcp_uses_its_bound_actor_for_listing_and_calls() {
         .expect("connector id");
     let secret = create["result"]["secret"].as_str().expect("secret");
     let endpoint = format!("/mcp/web-model/{connector_id}?token={secret}");
+    let probe_response = app
+        .clone()
+        .oneshot(
+            Request::get(&endpoint)
+                .header(header::ACCEPT, "text/event-stream")
+                .body(Body::empty())
+                .expect("connector probe request"),
+        )
+        .await
+        .expect("connector probe response");
+    assert_eq!(probe_response.status(), StatusCode::OK);
+    assert_eq!(
+        probe_response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok()),
+        Some("text/event-stream")
+    );
+    let probe_body = probe_response
+        .into_body()
+        .collect()
+        .await
+        .expect("probe body")
+        .to_bytes();
+    assert!(probe_body.starts_with(b": cccc web-model connector ready"));
     let listed = request_json(
         &app,
         Request::post(&endpoint)
@@ -537,6 +750,81 @@ async fn connector_mcp_uses_its_bound_actor_for_listing_and_calls() {
             .expect("code mode request"),
     )
     .await;
+    let unadvertised_actor_call = request_json(
+        &app,
+        Request::post(&endpoint)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "jsonrpc":"2.0",
+                    "id":4,
+                    "method":"tools/call",
+                    "params":{
+                        "name":"cccc_actor",
+                        "arguments":{"action":"list"}
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("unadvertised actor request"),
+    )
+    .await;
+    let omitted_arguments_help = request_json(
+        &app,
+        Request::post(&endpoint)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "jsonrpc":"2.0",
+                    "id":5,
+                    "method":"tools/call",
+                    "params":{"name":"cccc_help"}
+                })
+                .to_string(),
+            ))
+            .expect("omitted arguments request"),
+    )
+    .await;
+    let capability_actor_call = request_json(
+        &app,
+        Request::post(&endpoint)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "jsonrpc":"2.0",
+                    "id":6,
+                    "method":"tools/call",
+                    "params":{
+                        "name":"cccc_capability_use",
+                        "arguments":{
+                            "tool_name":"cccc_actor",
+                            "tool_arguments":{"action":"list"}
+                        }
+                    }
+                })
+                .to_string(),
+            ))
+            .expect("capability-routed actor request"),
+    )
+    .await;
+    let initialized_notification_status = app
+        .clone()
+        .oneshot(
+            Request::post(&endpoint)
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    json!({
+                        "jsonrpc":"2.0",
+                        "method":"notifications/initialized",
+                        "params":{}
+                    })
+                    .to_string(),
+                ))
+                .expect("initialized notification"),
+        )
+        .await
+        .expect("initialized notification response")
+        .status();
     let forbidden_status = app
         .clone()
         .oneshot(
@@ -545,7 +833,7 @@ async fn connector_mcp_uses_its_bound_actor_for_listing_and_calls() {
                 .body(Body::from(
                     json!({
                         "jsonrpc":"2.0",
-                        "id":4,
+                        "id":7,
                         "method":"tools/call",
                         "params":{
                             "name":"cccc_bootstrap",
@@ -580,6 +868,25 @@ async fn connector_mcp_uses_its_bound_actor_for_listing_and_calls() {
         "completed"
     );
     assert_eq!(code_exec["result"]["structuredContent"]["output"], "true");
+    assert_eq!(
+        unadvertised_actor_call["result"]["isError"], true,
+        "unadvertised call response: {unadvertised_actor_call}"
+    );
+    assert!(
+        unadvertised_actor_call["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("is not available to Web Model actors"))
+    );
+    assert!(omitted_arguments_help["result"]["content"].is_array());
+    assert_eq!(
+        capability_actor_call["result"]["structuredContent"]["tool_called"],
+        true
+    );
+    assert_eq!(
+        capability_actor_call["result"]["structuredContent"]["tool_result"]["actors"][0]["id"],
+        "web1"
+    );
+    assert_eq!(initialized_notification_status, StatusCode::ACCEPTED);
     assert_eq!(forbidden_status, StatusCode::FORBIDDEN);
 }
 

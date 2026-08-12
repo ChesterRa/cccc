@@ -296,6 +296,419 @@ fn local_skill_uninstall_is_group_scoped_and_reenable_clears_marker() {
 }
 
 #[test]
+fn group_block_revokes_group_bindings_and_runtime_exposure() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("capability block revocation", "")
+        .expect("group");
+    let capability_id = "pack:space";
+
+    call(
+        &home,
+        "capability_enable",
+        json!({
+            "group_id":group.group_id,"capability_id":capability_id,
+            "scope":"group","enabled":true,"by":"user"
+        }),
+    );
+    let runtime_path = home.root().join("state/capabilities/runtime.json");
+    std::fs::create_dir_all(runtime_path.parent().expect("runtime parent")).expect("runtime dir");
+    write_json(
+        &runtime_path,
+        json!({
+            "v":2,
+            "actor_instances":{
+                (group.group_id.clone()):{
+                    "peer-1":{
+                        (capability_id):{
+                            "artifact_id":"art_test","state":"ready"
+                        }
+                    }
+                }
+            }
+        }),
+    );
+
+    let blocked = call(
+        &home,
+        "capability_block",
+        json!({
+            "group_id":group.group_id,"capability_id":capability_id,
+            "scope":"group","blocked":true,"reason":"unsafe","by":"user"
+        }),
+    );
+
+    assert!(
+        blocked["action_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("cblk_"))
+    );
+    assert_eq!(blocked["state"], "blocked");
+    assert_eq!(blocked["blocked"], true);
+    assert_eq!(blocked["removed_bindings"], 1);
+    assert_eq!(blocked["removed_runtime_bindings"], 1);
+    assert_eq!(blocked["refresh_required"], true);
+    let state: Value = serde_json::from_slice(
+        &std::fs::read(home.root().join("state/capabilities/state.json")).expect("state"),
+    )
+    .expect("state JSON");
+    assert!(state["group_enabled"].get(&group.group_id).is_none());
+    let runtime: Value = serde_json::from_slice(&std::fs::read(runtime_path).expect("runtime"))
+        .expect("runtime JSON");
+    assert!(
+        runtime["actor_instances"]
+            .get(&group.group_id)
+            .and_then(|actors| actors.get("peer-1"))
+            .and_then(|capabilities| capabilities.get(capability_id))
+            .is_none()
+    );
+
+    let reenable = call(
+        &home,
+        "capability_enable",
+        json!({
+            "group_id":group.group_id,"capability_id":capability_id,
+            "scope":"group","enabled":true,"by":"user"
+        }),
+    );
+    assert_eq!(reenable["state"], "blocked");
+    assert_eq!(reenable["enabled"], false);
+    assert_eq!(reenable["reason"], "blocked_by_group_policy");
+    let state: Value = serde_json::from_slice(
+        &std::fs::read(home.root().join("state/capabilities/state.json")).expect("state"),
+    )
+    .expect("state JSON");
+    assert!(state["group_enabled"].get(&group.group_id).is_none());
+}
+
+#[test]
+fn expired_block_does_not_prevent_enable_or_effective_exposure() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("expired capability block", "")
+        .expect("group");
+    let state_path = home.root().join("state/capabilities/state.json");
+    std::fs::create_dir_all(state_path.parent().expect("state parent")).expect("state dir");
+    write_json(
+        &state_path,
+        json!({
+            "v":1,
+            "group_blocked":{
+                (group.group_id.clone()):{
+                    "pack:space":{
+                        "reason":"temporary","by":"user",
+                        "blocked_at":"2000-01-01T00:00:00Z",
+                        "expires_at":"2000-01-01T00:00:01Z"
+                    }
+                }
+            }
+        }),
+    );
+
+    let enabled = call(
+        &home,
+        "capability_enable",
+        json!({
+            "group_id":group.group_id,"capability_id":"pack:space",
+            "scope":"group","enabled":true,"by":"user"
+        }),
+    );
+    assert_ne!(enabled["state"], "blocked");
+    assert_eq!(enabled["enabled"], true);
+    let effective = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+    );
+    assert_eq!(effective["enabled_capabilities"], json!(["pack:space"]));
+}
+
+#[test]
+fn non_object_capability_state_fails_closed_without_overwrite() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("invalid capability state", "")
+        .expect("group");
+    let state_path = home.root().join("state/capabilities/state.json");
+    std::fs::create_dir_all(state_path.parent().expect("state parent")).expect("state dir");
+    write_json(&state_path, json!([]));
+    let before = std::fs::read(&state_path).expect("state bytes");
+
+    let result = response(
+        &home,
+        "capability_enable",
+        json!({
+            "group_id":group.group_id,"capability_id":"pack:space",
+            "scope":"group","enabled":true,"by":"user"
+        }),
+    );
+
+    assert!(!result.ok);
+    assert_eq!(std::fs::read(&state_path).expect("state bytes"), before);
+}
+
+#[test]
+fn allowlist_expected_revision_is_checked_inside_the_write_lock() {
+    use fs2::FileExt;
+    use std::fs::OpenOptions;
+    use std::sync::{Arc, Barrier};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let revision = call(&home, "capability_allowlist_get", json!({}))["revision"]
+        .as_str()
+        .expect("revision")
+        .to_owned();
+    let lock_path = home
+        .root()
+        .join("config/capability-allowlist.user.yaml.lock");
+    std::fs::create_dir_all(lock_path.parent().expect("lock parent")).expect("lock dir");
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .expect("lockfile");
+    lock.lock_exclusive().expect("hold allowlist lock");
+
+    let barrier = Arc::new(Barrier::new(3));
+    let mut workers = Vec::new();
+    for (name, level) in [("source-a", "mounted"), ("source-b", "indexed")] {
+        let home = home.clone();
+        let revision = revision.clone();
+        let barrier = Arc::clone(&barrier);
+        workers.push(std::thread::spawn(move || {
+            barrier.wait();
+            response(
+                &home,
+                "capability_allowlist_update",
+                json!({
+                    "by":"user","mode":"patch","expected_revision":revision,
+                    "patch":{"defaults":{"source_level":{(name):level}}}
+                }),
+            )
+        }));
+    }
+    barrier.wait();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    FileExt::unlock(&lock).expect("release allowlist lock");
+
+    let responses = workers
+        .into_iter()
+        .map(|worker| worker.join().expect("worker"))
+        .collect::<Vec<_>>();
+    assert_eq!(responses.iter().filter(|response| response.ok).count(), 1);
+    assert_eq!(
+        responses
+            .iter()
+            .filter_map(|response| response.error.as_ref())
+            .filter(|error| error.code == "allowlist_revision_mismatch")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn capability_state_reports_assignment_usage_and_enforces_self_inspection() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"capability usage"}));
+    let group_id = created["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    for actor_id in ["peer-a", "peer-b"] {
+        call(
+            &home,
+            "actor_add",
+            json!({"group_id":group_id,"actor_id":actor_id,"by":"user"}),
+        );
+    }
+    call(
+        &home,
+        "capability_enable",
+        json!({
+            "group_id":group_id,"by":"user","actor_id":"peer-a",
+            "capability_id":"pack:space","scope":"actor","enabled":true
+        }),
+    );
+
+    let state = call(
+        &home,
+        "capability_state",
+        json!({
+            "group_id":group_id,"by":"user","actor_id":"user",
+            "capability_id":"pack:space"
+        }),
+    );
+    let usage = &state["capability_usage"];
+    assert_eq!(usage["capability_id"], "pack:space");
+    assert_eq!(usage["used"], true);
+    assert_eq!(usage["group_enabled"], false);
+    assert_eq!(usage["group_actor_count"], 2);
+    assert_eq!(usage["active_actor_count"], 1);
+    assert_eq!(usage["actor_enabled"][0]["actor_id"], "peer-a");
+
+    let denied = response(
+        &home,
+        "capability_state",
+        json!({"group_id":group_id,"by":"peer-b","actor_id":"peer-a"}),
+    );
+    assert_eq!(
+        denied.error.expect("cross-actor inspection denial").code,
+        "permission_denied"
+    );
+}
+
+#[test]
+fn capability_enable_returns_the_declared_lifecycle_shape() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("capability enable receipt", "")
+        .expect("group");
+
+    let enabled = call(
+        &home,
+        "capability_enable",
+        json!({
+            "group_id":group.group_id,"capability_id":"pack:space",
+            "scope":"group","enabled":true,"by":"user"
+        }),
+    );
+    assert!(
+        enabled["action_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("cact_"))
+    );
+    assert_eq!(enabled["group_id"], group.group_id);
+    assert_eq!(enabled["actor_id"], "user");
+    assert_eq!(enabled["scope"], "group");
+    assert_eq!(enabled["enabled"], true);
+    assert_eq!(enabled["state"], "activation_pending");
+    assert_eq!(enabled["refresh_required"], true);
+
+    let disabled = call(
+        &home,
+        "capability_enable",
+        json!({
+            "group_id":group.group_id,"capability_id":"pack:space",
+            "scope":"group","enabled":false,"by":"user"
+        }),
+    );
+    assert!(
+        disabled["action_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("cact_"))
+    );
+    assert_eq!(disabled["enabled"], false);
+    assert_eq!(disabled["state"], "disabled");
+    assert_eq!(disabled["refresh_required"], true);
+}
+
+#[test]
+fn external_stdio_capability_completes_the_mcp_initialized_handshake() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let group = GroupStore::new(home.clone())
+        .expect("groups")
+        .create("strict MCP lifecycle", "")
+        .expect("group");
+    let server = temp.path().join("strict_mcp.py");
+    std::fs::write(
+        &server,
+        r#"import json, sys
+initialized = False
+for raw in sys.stdin:
+    message = json.loads(raw)
+    method = message.get("method")
+    if method == "initialize":
+        print(json.dumps({"jsonrpc":"2.0","id":message["id"],"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"strict","version":"1"}}}), flush=True)
+    elif method == "notifications/initialized":
+        initialized = True
+    elif method == "tools/list":
+        if not initialized:
+            print(json.dumps({"jsonrpc":"2.0","id":message["id"],"error":{"code":-32002,"message":"not initialized"}}), flush=True)
+        else:
+            print(json.dumps({"jsonrpc":"2.0","id":message["id"],"result":{"tools":[{"name":"echo","description":"Echo","inputSchema":{"type":"object","properties":{}}}]}}), flush=True)
+    elif method == "tools/call":
+        if not initialized:
+            print(json.dumps({"jsonrpc":"2.0","id":message["id"],"error":{"code":-32002,"message":"not initialized"}}), flush=True)
+        else:
+            print(json.dumps({"jsonrpc":"2.0","id":message["id"],"result":{"content":[{"type":"text","text":"ok"}]}}), flush=True)
+"#,
+    )
+    .expect("strict MCP fixture");
+    cccc_core::capabilities::CapabilityStore::new(home.clone())
+        .import_record(json!({
+            "capability_id":"mcp:test:strict","kind":"mcp_toolpack","name":"Strict MCP",
+            "source_id":"manual_import","qualification_status":"qualified",
+            "enable_supported":true,"install_mode":"command",
+            "install_spec":{"command_candidates":[
+                ["python3",server.to_string_lossy()],
+                ["python",server.to_string_lossy()]
+            ]}
+        }))
+        .expect("catalog record");
+
+    let enabled = call(
+        &home,
+        "capability_enable",
+        json!({
+            "group_id":group.group_id,"actor_id":"user","by":"user",
+            "capability_id":"mcp:test:strict","scope":"actor","enabled":true
+        }),
+    );
+    assert_eq!(enabled["state"], "activation_pending");
+    let state = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+    );
+    let tool_name = state["dynamic_tools"][0]["name"]
+        .as_str()
+        .expect("dynamic tool")
+        .to_owned();
+    let invoked = call(
+        &home,
+        "capability_tool_call",
+        json!({
+            "group_id":group.group_id,"actor_id":"user","by":"user",
+            "tool_name":tool_name,"arguments":{"value":"hello"}
+        }),
+    );
+    assert_eq!(invoked["capability_id"], "mcp:test:strict");
+    assert_eq!(invoked["result"]["content"][0]["text"], "ok");
+    let runtime: Value = serde_json::from_slice(
+        &std::fs::read(home.root().join("state/capabilities/runtime.json")).expect("runtime"),
+    )
+    .expect("runtime JSON");
+    assert_eq!(
+        runtime["actor_instances"][&group.group_id]["user"]["mcp:test:strict"]["state"],
+        "verified"
+    );
+    assert_eq!(
+        runtime["recent_success"]["mcp:test:strict"]["success_count"],
+        1
+    );
+    let after = call(
+        &home,
+        "capability_state",
+        json!({"group_id":group.group_id,"actor_id":"user","by":"user"}),
+    );
+    assert_eq!(after["dynamic_tools"][0]["name"], tool_name);
+}
+
+#[test]
 fn target_install_is_the_only_daemon_operation_name() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");

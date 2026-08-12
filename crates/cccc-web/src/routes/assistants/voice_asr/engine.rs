@@ -284,16 +284,22 @@ fn file_starts_with_riff(path: &Path) -> Result<bool, VoiceError> {
 }
 
 fn mock_transcript() -> Option<Value> {
-    std::env::var("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT")
-        .ok()
+    mock_transcript_text()
         .map(|text| json!({"text":text,"bytes":0,"model_id":"mock","sample_rate":16000}))
 }
 
+fn mock_transcript_text() -> Option<String> {
+    std::env::var("CCCC_VOICE_SECRETARY_ASR_MOCK_TEXT").ok()
+}
+
 pub struct StreamingSession {
-    recognizer: OnlineRecognizer,
-    stream: OnlineStream,
+    recognizer: Option<OnlineRecognizer>,
+    stream: Option<OnlineStream>,
     pub model_id: String,
     last_text: String,
+    mock_text: Option<String>,
+    mock_received_audio: bool,
+    mock_partial_emitted: bool,
 }
 
 pub fn diarize_pcm16_file(
@@ -431,6 +437,17 @@ fn diarize_samples(
 
 impl StreamingSession {
     pub fn open(home: &HomeLayout, model_id: &str) -> Result<Self, VoiceError> {
+        if let Some(text) = mock_transcript_text() {
+            return Ok(Self {
+                recognizer: None,
+                stream: None,
+                model_id: "mock".into(),
+                last_text: String::new(),
+                mock_text: Some(text),
+                mock_received_audio: false,
+                mock_partial_emitted: false,
+            });
+        }
         let model = streaming_model(home, model_id)?;
         let config = online_recognizer_config(home, &model)?;
         let recognizer = OnlineRecognizer::create(&config).ok_or_else(|| {
@@ -441,10 +458,13 @@ impl StreamingSession {
         })?;
         let stream = recognizer.create_stream();
         Ok(Self {
-            recognizer,
-            stream,
+            recognizer: Some(recognizer),
+            stream: Some(stream),
             model_id: model.model_id,
             last_text: String::new(),
+            mock_text: None,
+            mock_received_audio: false,
+            mock_partial_emitted: false,
         })
     }
 
@@ -465,24 +485,75 @@ impl StreamingSession {
                 "PCM16 byte length must be even",
             ));
         }
+        if let Some(text) = self.mock_text.as_deref() {
+            if bytes.is_empty() {
+                return Ok(None);
+            }
+            self.mock_received_audio = true;
+            if self.mock_partial_emitted {
+                return Ok(None);
+            }
+            self.mock_partial_emitted = true;
+            return Ok(Some(json!({
+                "type":"partial","ok":true,"text":text,"is_final":false,
+                "model_id":self.model_id
+            })));
+        }
+        let recognizer = self.recognizer.as_ref().ok_or_else(|| {
+            VoiceError::new(
+                "asr_runtime_not_ready",
+                "streaming recognizer is not initialized",
+            )
+        })?;
+        let stream = self.stream.as_ref().ok_or_else(|| {
+            VoiceError::new(
+                "asr_runtime_not_ready",
+                "streaming recognizer is not initialized",
+            )
+        })?;
         let samples = pcm16_samples(bytes);
-        self.stream.accept_waveform(sample_rate, &samples);
-        while self.recognizer.is_ready(&self.stream) {
-            self.recognizer.decode(&self.stream);
+        stream.accept_waveform(sample_rate, &samples);
+        while recognizer.is_ready(stream) {
+            recognizer.decode(stream);
         }
         self.current_event(false)
     }
 
     pub fn finish(&mut self) -> Option<Value> {
-        self.stream.input_finished();
-        while self.recognizer.is_ready(&self.stream) {
-            self.recognizer.decode(&self.stream);
+        if let Some(text) = self.mock_text.as_deref() {
+            if !self.mock_received_audio {
+                return None;
+            }
+            self.mock_received_audio = false;
+            self.mock_partial_emitted = false;
+            return Some(json!({
+                "type":"final","ok":true,"text":text,"is_final":true,
+                "model_id":self.model_id
+            }));
+        }
+        let recognizer = self.recognizer.as_ref()?;
+        let stream = self.stream.as_ref()?;
+        stream.input_finished();
+        while recognizer.is_ready(stream) {
+            recognizer.decode(stream);
         }
         self.current_event(true).ok().flatten()
     }
 
     fn current_event(&mut self, force_final: bool) -> Result<Option<Value>, VoiceError> {
-        let Some(result) = self.recognizer.get_result(&self.stream) else {
+        let recognizer = self.recognizer.as_ref().ok_or_else(|| {
+            VoiceError::new(
+                "asr_runtime_not_ready",
+                "streaming recognizer is not initialized",
+            )
+        })?;
+        let stream = self.stream.as_ref().ok_or_else(|| {
+            VoiceError::new(
+                "asr_runtime_not_ready",
+                "streaming recognizer is not initialized",
+            )
+        })?;
+        let Some(result) = recognizer.get_result(stream) else {
             return Ok(None);
         };
         let text = clean_transcript(&result.text);
@@ -490,9 +561,9 @@ impl StreamingSession {
             return Ok(None);
         }
         self.last_text.clone_from(&text);
-        let is_final = force_final || result.is_final || self.recognizer.is_endpoint(&self.stream);
+        let is_final = force_final || result.is_final || recognizer.is_endpoint(stream);
         if is_final {
-            self.recognizer.reset(&self.stream);
+            recognizer.reset(stream);
             self.last_text.clear();
         }
         Ok(Some(

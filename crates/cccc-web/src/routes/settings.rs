@@ -140,9 +140,33 @@ async fn automation_update(
     call(
         &state,
         "group_automation_update",
-        object(json!({"group_id":group_id,"patch":body,"by":"user"})),
+        automation_update_args(group_id, body)?,
     )
     .await
+}
+
+fn automation_update_args(
+    group_id: String,
+    body: Value,
+) -> Result<serde_json::Map<String, Value>, crate::api::ApiError> {
+    let mut body = body_object(body)?;
+    let rules = body.remove("rules").unwrap_or_else(|| json!([]));
+    let snippets = body.remove("snippets").unwrap_or_else(|| json!({}));
+    let by = body
+        .remove("by")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "user".into());
+    let mut args = object(json!({
+        "group_id":group_id,
+        "ruleset":{"rules":rules,"snippets":snippets},
+        "by":by
+    }));
+    if let Some(expected_version) = body.remove("expected_version")
+        && !expected_version.is_null()
+    {
+        args.insert("expected_version".into(), expected_version);
+    }
+    Ok(args)
 }
 async fn automation_manage(
     State(state): State<AppState>,
@@ -194,5 +218,26 @@ mod tests {
         assert_eq!(settings["terminal_transcript_notify_lines"], json!(37));
         assert_eq!(settings["panorama_enabled"], json!(true));
         assert_eq!(settings["native_extension"], json!({"keep":true}));
+    }
+
+    #[test]
+    fn automation_update_wraps_the_native_web_payload_in_the_daemon_contract() {
+        let args = automation_update_args(
+            "g_demo".into(),
+            json!({
+                "rules":[{"id":"standup"}],
+                "snippets":{"standup":"check in"},
+                "expected_version":7,
+                "by":"user"
+            }),
+        )
+        .expect("automation args");
+
+        assert_eq!(args["group_id"], json!("g_demo"));
+        assert_eq!(args["ruleset"]["rules"][0]["id"], json!("standup"));
+        assert_eq!(args["ruleset"]["snippets"]["standup"], json!("check in"));
+        assert_eq!(args["expected_version"], json!(7));
+        assert_eq!(args["by"], json!("user"));
+        assert!(args.get("patch").is_none());
     }
 }

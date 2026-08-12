@@ -319,6 +319,20 @@ class PtySession:
             end_cursor=end,
         ).history_since_page(after=after, limit_bytes=limit_bytes)
 
+    def replay_page(
+        self,
+        *,
+        after: int,
+        end_cursor: Optional[int],
+        limit_bytes: int = 512 * 1024,
+    ) -> Tuple[Dict[str, object], int]:
+        data, start, end = self._backlog_snapshot()
+        return PtyBacklogSnapshot(
+            data=data,
+            start_cursor=start,
+            end_cursor=end,
+        ).replay_page(after=after, end_cursor=end_cursor, limit_bytes=limit_bytes)
+
     def clear_backlog(self) -> None:
         with self._lock:
             try:
@@ -1084,6 +1098,26 @@ class PtySupervisor:
         except Exception:
             return {"data": b"", "start_cursor": 0, "end_cursor": 0, "has_more": False, "cursor_expired": False}
 
+    def active_replay_page(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        after: int,
+        end_cursor: Optional[int],
+        limit_bytes: int = 512 * 1024,
+    ) -> Optional[Tuple[Dict[str, object], int]]:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            session = self._sessions.get(key)
+        if session is None or not session.is_running():
+            return None
+        return session.replay_page(
+            after=after,
+            end_cursor=end_cursor,
+            limit_bytes=int(limit_bytes or 0),
+        )
+
     def backlog_start_offset(self, *, group_id: str, actor_id: str) -> int:
         """Oldest retained backlog offset for an actor (0 if unknown)."""
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
@@ -1331,13 +1365,14 @@ class PtySupervisor:
             return None
         return None
 
-    def resize(self, *, group_id: str, actor_id: str, cols: int, rows: int) -> None:
+    def resize(self, *, group_id: str, actor_id: str, cols: int, rows: int) -> bool:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:
             s = self._sessions.get(key)
-        if s is None:
-            return
+        if s is None or not s.is_running():
+            return False
         s.resize(cols=int(cols), rows=int(rows))
+        return True
 
     def write_input(self, *, group_id: str, actor_id: str, data: bytes) -> bool:
         if not data:

@@ -139,7 +139,10 @@ pub fn clear(
     store: &GroupStore,
     group_id: &str,
     requested: &str,
+    by: &str,
 ) -> io::Result<(Vec<String>, Snapshot)> {
+    let group = store.load(group_id)?;
+    validate_publisher(&group, by)?;
     let mut snapshot = load(store, group_id)?;
     let requested = normalize_slot(requested, false)?;
     let clear_all = requested.is_empty();
@@ -486,6 +489,7 @@ fn fill_reference(
         content.blob_rel_path = Some(relative);
     } else if !request.url.trim().is_empty() {
         let url = request.url.trim().to_owned();
+        validate_remote_url(&url)?;
         *source_ref = defaulted(std::mem::take(source_ref), url.clone());
         content.mime_type = mime_guess::from_path(&url)
             .first()
@@ -495,6 +499,17 @@ fn fill_reference(
     } else {
         return Err(io::Error::other(
             "card requires path, url, or blob_rel_path",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_remote_url(value: &str) -> io::Result<()> {
+    let parsed = url::Url::parse(value.trim())
+        .map_err(|_| io::Error::other("presentation URL must be a valid HTTP(S) URL"))?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err(io::Error::other(
+            "presentation URL must be a valid HTTP(S) URL",
         ));
     }
     Ok(())
@@ -655,7 +670,7 @@ fn file_name(path: &Path) -> String {
         .into()
 }
 
-fn save(store: &GroupStore, group_id: &str, snapshot: &Snapshot) -> io::Result<()> {
+pub fn save(store: &GroupStore, group_id: &str, snapshot: &Snapshot) -> io::Result<()> {
     write_json(&path(store, group_id)?, snapshot)
 }
 

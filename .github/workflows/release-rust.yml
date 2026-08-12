@@ -21,7 +21,7 @@ jobs:
           python-version: "3.14"
       - uses: actions/setup-node@v4
         with:
-          node-version: "20.19.5"
+          node-version: "24.19.0"
           cache: npm
           cache-dependency-path: web/package-lock.json
       - name: Verify shared release identity
@@ -40,22 +40,60 @@ jobs:
           path: web/dist
           if-no-files-found: error
 
-  build:
+  build-linux:
+    needs: web
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    container: quay.io/pypa/manylinux_2_28_x86_64:latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-rust-web-bundle
+          path: web/dist
+      - name: Install native build dependencies
+        run: dnf install -y cmake perl-core
+      - name: Select Python 3.14
+        run: echo "/opt/python/cp314-cp314/bin" >> "$GITHUB_PATH"
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-unknown-linux-gnu-standalone
+      - name: Build Rust distribution
+        run: |
+          touch web/dist/index.html
+          cargo build --release --locked --features standalone -p cccc --bin cccc
+          strip target/release/cccc
+          python scripts/check_release_versions.py --rust-binary target/release/cccc
+          python scripts/verify_standalone_binary.py --platform linux target/release/cccc
+      - name: Package Linux distribution
+        shell: bash
+        run: |
+          version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
+          package="cccc-v${version}-x86_64-unknown-linux-gnu"
+          mkdir -p "dist/${package}"
+          cp target/release/cccc "dist/${package}/"
+          cp LICENSE README.md docs/rust-migration.md "dist/${package}/"
+          tar -C dist -czf "dist/${package}.tar.gz" "${package}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cccc-x86_64-unknown-linux-gnu
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  build-desktop:
     needs: web
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            archive: tar.gz
           - os: macos-15-intel
             target: x86_64-apple-darwin
             archive: tar.gz
           - os: macos-14
             target: aarch64-apple-darwin
             archive: tar.gz
-          - os: windows-latest
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
             archive: zip
     runs-on: ${{ matrix.os }}
@@ -76,6 +114,8 @@ jobs:
         with:
           key: ${{ matrix.target }}
       - name: Build Rust distribution
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
         run: cargo build --release --locked --target ${{ matrix.target }} -p cccc --bin cccc
       - name: Smoke native Rust binary
         shell: bash
@@ -85,6 +125,10 @@ jobs:
             *-windows-*) binary="${binary}.exe" ;;
           esac
           "$binary" --version
+      - name: Verify macOS dependency boundary
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: python3 scripts/verify_standalone_binary.py --platform macos target/${{ matrix.target }}/release/cccc
       - name: Resolve package name
         shell: bash
         run: |
@@ -114,7 +158,9 @@ jobs:
           if-no-files-found: error
 
   prepare:
-    needs: build
+    needs:
+      - build-linux
+      - build-desktop
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -145,7 +191,13 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             verifier: unix
-          - os: windows-latest
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            verifier: unix
+          - os: macos-14
+            target: aarch64-apple-darwin
+            verifier: unix
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
             verifier: windows
     runs-on: ${{ matrix.os }}

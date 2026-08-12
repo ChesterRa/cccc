@@ -106,11 +106,11 @@ For all non-streaming operations, requests and responses are framed as:
 - **One JSON object per line**, delimited by a single `\n` (newline).
 - Encoding MUST be UTF‑8.
 
-Baseline behavior (implemented by CCCC v0.5.x):
-- A connection accepts multiple request lines and produces one response line for each request.
-- Requests on one connection are processed strictly serially.
+Baseline behavior:
+- A daemon MAY accept multiple request lines on one connection or close the connection after any response.
+- When multiple requests are accepted, they are processed strictly serially and produce one response line each.
 - Clients MUST NOT pipeline requests (there is no request id / multiplexing in v1).
-- Clients SHOULD reuse successful connections, but MUST tolerate the daemon closing a connection after any response and reconnect through endpoint discovery.
+- Clients MUST tolerate the daemon closing a connection after any response and reconnect through endpoint discovery before the next request. The reference non-streaming client opens a fresh local connection for each call because v1 has no request id with which to make a close-versus-write race safely replayable.
 
 ### 4.3 Size Limits
 
@@ -1517,6 +1517,10 @@ Result:
 { group_id: string }
 ```
 
+Notes:
+- Successful deletion MUST revoke every remote connector credential bound to the deleted group. A failure that leaves the group registered and available MUST preserve its pre-delete connector authority.
+- Successful deletion MUST retire every local external-space binding, queued job, and referenced job payload owned by the deleted group. It MUST NOT delete the user's remote notebook or other provider space. A failure that leaves the group registered and available MUST restore the pre-delete local binding and queue state.
+
 #### `group_use`
 
 Set the active scope for a group using `path` (must already be attached).
@@ -1599,7 +1603,42 @@ configuration remains in `group.yaml`.
 
 Args:
 ```ts
-{ group_id: string; assistant_id?: "voice_secretary" }
+{
+  group_id: string
+  assistant_id?: "voice_secretary"
+  view?: "voice_session" | string
+  session_id?: string
+  document_path?: string
+  suppress_retry_notify?: boolean
+}
+```
+
+`view="voice_session"` is the common Python/Rust session projection used by
+the Web meeting view. With `session_id`, it returns that document-capture
+session. Without `session_id`, `document_path` first resolves the durable
+cross-session transcript at
+`$CCCC_HOME/voice-secretary/<group_id>/documents/<document_id>/transcript.jsonl`;
+when no document transcript exists, it falls back to the latest matching
+session in `state/assistants.json`. Prompt-refinement, composer, and instruction
+semantic inputs are never projected as meeting transcript. The document
+transcript projection has `source="document_transcript"` and may aggregate rows
+from several recording sessions.
+
+Specialized result for `view="voice_session"`:
+```ts
+{
+  group_id: string
+  session: {
+    session_id: string
+    capture_mode: "document"
+    document_path?: string
+    status?: string
+    segments: Array<Record<string, unknown>>
+    transcript?: string
+    diarization?: Record<string, unknown>
+    source?: "document_transcript"
+  } | Record<string, never>
+}
 ```
 
 Result:
@@ -1713,6 +1752,16 @@ resolved under that workspace; otherwise the daemon falls back to CCCC_HOME.
 Raw transcript/source/input sidecars stay in CCCC_HOME.
 `external_provider_asr` must remain explicit opt-in.
 
+The cross-engine semantic input authority is
+`$CCCC_HOME/voice-secretary/<group_id>/input_events.jsonl`; its daemon-owned
+read/delivery cursor and retry timing live in the sibling `input_state.json`.
+Implementations MUST NOT maintain an engine-private sequence or cursor. The
+former Rust `inputs.jsonl` and `groups/<group_id>/state/assistants.json:rust_state.input_*`
+shape is a one-way migration source: canonical input/state commit first, then
+the legacy log and cursor fields are retired. If independently written streams
+must be merged, migration may conservatively replay an already-read item but
+MUST NOT advance across or skip an unread item.
+
 Result:
 ```ts
 { group_id: string; assistant: Record<string, unknown>; event: CCCSEventV1 }
@@ -1825,6 +1874,7 @@ Args:
   ttl_seconds?: number     // default 30; bounded by the daemon
   capture_mode?: string
   recognition_backend?: string
+  dispatch_target?: string
 }
 ```
 
@@ -1843,6 +1893,7 @@ Result:
     group_title?: string
     capture_mode?: string
     recognition_backend?: string
+    dispatch_target?: string
     by?: string
     created_at?: string
     updated_at?: string
@@ -1853,16 +1904,33 @@ Result:
 
 If another live lease exists, `acquire` / `heartbeat` returns
 `assistant_voice_recording_busy` with `details.active_lease`.
+Every successful `acquire` creates a fresh `lease_id`, including when the
+`owner_id` matches the active lease, so cleanup from an older connection cannot
+release its replacement.
 `heartbeat` only refreshes the matching active `owner_id` + `lease_id`; it never
 creates a new lease. Stale `heartbeat` / `release` requests return `lost` or
-`released=false` without modifying a newer lease.
+`released=false` without modifying a newer lease. An omitted heartbeat metadata
+field preserves the value from the active lease. The transcription WebSocket
+binds its start frame to the lease's `capture_mode`, `recognition_backend`, and
+`dispatch_target`; changing capture scope requires a new lease.
+
+All implementations MUST serialize lease mutations and every read that may
+expire and clear the lease through
+`$CCCC_HOME/state/voice_secretary_recording_lease.json.lock`. A process-local
+lock alone is insufficient because Python and Rust Web/daemon processes may use
+the same home. `acquire` and `heartbeat` MAY operate while Voice Secretary is
+disabled only when the effective `dispatch_target` is `composer`; an omitted
+heartbeat target inherits the active lease target. This direct-dictation path
+MUST NOT create Voice Secretary input, session, document, or diarization state.
 
 #### `assistant_voice_transcript_append`
 
 Append a stable transcript segment for Voice Secretary. Web/browser ASR and
 service-local ASR converge here. The daemon writes stable segments to
 `$CCCC_HOME/voice-secretary/<group_id>/<session_id>/transcripts/segments.jsonl`,
-keeps a short in-memory/session window in group assistant runtime state, and
+updates the bounded shared session projection in
+`groups/<group_id>/state/assistants.json`, appends final document-capture rows
+to `$CCCC_HOME/voice-secretary/<group_id>/documents/<document_id>/transcript.jsonl`, and
 by default appends a semantic input event for the current Voice Secretary
 markdown working document. The working document is a user-facing repo artifact;
 raw transcript/source/revision sidecars remain in CCCC_HOME. When new input is
@@ -1878,11 +1946,11 @@ created while the actor was stopped, the daemon re-dispatches that same notify:
 headless runtimes receive it as a control turn, and PTY runtimes receive it
 through the pending delivery queue so lazy preamble delivery is triggered.
 
-Rust commits an input under the group lock in this order: validate or create the
-Markdown target, append the stable segment log, append the semantic input log,
-then advance group session/cursor state. Retrying the same `session_id` and
-`segment_id` is idempotent. Document paths must be repository-relative `.md`
-paths and must not traverse symbolic links.
+The group operation validates or creates the Markdown target before committing
+transcript/session/input state. Retrying the same `session_id` and `segment_id`
+is idempotent for the stable session, document transcript, and semantic input
+records. Document paths must be repository-relative `.md` paths and must not
+traverse symbolic links.
 
 Idempotency is checked against the complete semantic input log, not the bounded
 session display window. If the input log was committed but its ledger input or
@@ -1894,14 +1962,27 @@ repository-relative markdown path. `document_id` may exist in daemon sidecar
 state as an implementation detail, but runtime actors and Web clients should
 route by `document_path`.
 
+Repository markdown is the document-content authority. The cross-engine
+document registry and active selection live at
+`$CCCC_HOME/voice-secretary/<group_id>/documents/index.json`; implementations
+serialize mutations with the sibling `index.json.lock`. The former Rust
+`groups/<group_id>/state/assistants.json:rust_state.documents/active_document_*`
+shape is a one-way migration source. Canonical index entries win path conflicts,
+unique legacy entries are retained, and the legacy fields are removed only
+after the canonical index commits. Implementations MUST NOT keep an
+engine-private active-document selection.
+
 `assistant_index`, `assistant_voice_document_list`, and
 `assistant_voice_document_select` reconcile repository Markdown edits into the
-daemon document index before returning. Reconciliation updates content, hash,
-character count, and revision only when file content changed. Missing files do
-not clear indexed content, and path/symbolic-link validation is applied before
-reading. The emitted `assistant.voice.document` reconciliation event is an
-auxiliary signal; index persistence and ledger append are not one atomic
-transaction.
+daemon document index before returning. Reconciliation also discovers
+previously unindexed `.md` files under the effective `document_default_dir`, as
+runtime actors may create working documents directly in the repository; an
+archived or deleted indexed path MUST NOT be rediscovered as active.
+Reconciliation updates content, hash, character count, and revision only when
+file content changed. Missing files do not clear indexed content, and
+path/symbolic-link validation is applied before reading. The emitted
+`assistant.voice.document` reconciliation event is an auxiliary signal; index
+persistence and ledger append are not one atomic transaction.
 
 Args:
 ```ts
@@ -1946,6 +2027,60 @@ Result:
   actor_notify_delivered?: boolean
   actor_notify_delivery_error?: string
 }
+```
+
+#### `assistant_voice_session_update`
+
+Persist a Web-owned completion projection (currently speaker diarization) into
+the shared Python/Rust session authority before publishing its completion
+event. This is an internal daemon boundary used by browser capture; callers do
+not replace transcript segments through this operation.
+
+Voice-session mutation is limited to the user, the
+`assistant:voice_secretary` principal, or a foreman allowed to update group
+settings. A `session_id` used for filesystem-backed state MUST be canonicalized
+to one safe path component or rejected before any state or filesystem mutation;
+caller-controlled absolute paths and `.` / `..` components MUST never be joined
+into the Voice Secretary storage root.
+
+Args:
+```ts
+{
+  group_id: string
+  session_id: string
+  by?: "assistant:voice_secretary" | string
+  patch: {
+    status?: string
+    document_path?: string
+    audio_duration_ms?: number
+    diarization_ready?: boolean
+    diarization_artifact_path?: string
+    diarization?: Record<string, unknown>
+    diarization_error?: Record<string, unknown>
+    error?: Record<string, unknown> | null
+    latest_partial?: string
+  }
+}
+```
+
+Result:
+```ts
+{ group_id: string; session: Record<string, unknown> }
+```
+
+#### `assistant_voice_session_transcript_clear`
+
+Clear the selected session display transcript and the matching durable document
+transcript. Document Markdown content is not deleted.
+
+Args:
+```ts
+{ group_id: string; session_id?: string; document_path?: string; by?: string }
+```
+
+Result:
+```ts
+{ group_id: string; session_id: string; cleared: boolean }
 ```
 
 #### `assistant_voice_document_list`
@@ -2326,18 +2461,21 @@ Args:
       scope?: "group" | "personal"
       owner_actor_id?: string | null
       to?: string[]
-      trigger?:
+      trigger:
         | { kind: "interval"; every_seconds: number }
         | { kind: "cron"; cron: string; timezone?: string }
         | { kind: "at"; at: string } // RFC3339
-      action?: {
-        kind?: "notify"
-        title?: string
-        snippet_ref?: string | null
-        message?: string
-        priority?: "low" | "normal" | "high" | "urgent"
-        requires_ack?: boolean
-      }
+      action?:
+        | {
+            kind?: "notify"
+            title?: string
+            snippet_ref?: string | null
+            message?: string
+            priority?: "low" | "normal" | "high" | "urgent"
+            requires_ack?: boolean
+          }
+        | { kind: "group_state"; state?: "active" | "idle" | "paused" | "stopped" }
+        | { kind: "actor_control"; operation?: "start" | "stop" | "restart"; targets?: string[] }
     }>
     snippets: Record<string, string>
   }
@@ -2367,12 +2505,14 @@ Result:
     snippets: Record<string, string>
   }
   status: Record<string, {
-    last_fired_at?: string
-    last_error_at?: string
-    last_error?: string
-    next_fire_at?: string
+    last_fired_at: string
+    last_error_at: string
+    last_error: string
+    next_fire_at: string
+    completed: boolean
+    completed_at: string
   }>
-  supported_vars: string[] // e.g. interval_minutes, group_title, actor_names, scheduled_at
+  supported_vars: string[] // exactly: interval_minutes, group_title, actor_names, scheduled_at
   version: number
   server_now: string
   config_path: string
@@ -2381,6 +2521,26 @@ Result:
 
 Notes:
 - `by` as a peer receives a filtered view: group rules + own personal rules.
+- Rule IDs are non-empty and unique within a ruleset. Unknown fields and invalid
+  trigger/action combinations are rejected instead of being persisted for one
+  engine to ignore later.
+- `group_state` and `actor_control` actions require an `at` trigger. Actor
+  callers may manage only `notify` rules; a peer may mutate only its own
+  personal notification rule targeting itself.
+- The first tick of a newly enabled interval rule establishes its clock and
+  does not fire immediately. A paused or stopped group runs no automation. An
+  idle group runs user rules but suppresses the built-in `standup` rule.
+- Resume never catches up missed work: interval and cron clocks are rebased,
+  missed one-time rules are completed without execution, and future one-time
+  rules remain eligible.
+- A notification firing completes only after at least one `system.notify` has
+  been appended durably for an enabled matching recipient. Recipient delivery
+  does not require a currently running actor process. A successfully completed
+  one-time rule is disabled.
+- `group.yaml:automation` and `state/automation.json` are the shared config and
+  runtime authorities. The single-daemon process lock owns scheduling; engine
+  handoff consumes these files and does not introduce a second scheduler lease
+  or retry journal.
 
 #### `group_automation_manage`
 
@@ -2510,6 +2670,8 @@ Notes:
 - `profile_id` links the actor to a global Actor Profile and applies profile-controlled runtime fields + profile secrets.
 - When `profile_id` is used, `env_private` is rejected (linked actor private env is profile-controlled).
 - The appended `actor.add` event starts that actor id's current generation. The daemon MUST initialize the new generation's read boundary at that append position, so events from before the add are not delivered as unread. Removing and later re-adding the same actor id starts a new generation at the later `actor.add` position.
+- A new actor generation MUST NOT inherit Web Model delivery preferences or persisted runner/turn status left by an earlier generation with the same actor id.
+- For a Web Model actor, successful add MUST establish the current generation's missing browser target as canonical empty state. A legacy actor-scoped browser shadow MUST NOT populate the new generation merely because it uses the same actor id.
 - Adding an enabled actor to an `active` or `idle` group MAY start it immediately and transition the group's runtime to running. Adding one to a `paused` or `stopped` group MUST only persist the actor and MUST NOT change the group lifecycle state.
 - When immediate startup is attempted, startup capability baselines follow the same rules as `actor_start` below.
 
@@ -2558,6 +2720,10 @@ Args:
 { group_id: string; actor_id: string; by?: string }
 ```
 
+Notes:
+- Removing an actor ends that actor id's current generation. Actor-generation-scoped browser target, bootstrap, delivery receipt, delivery preference, and persisted runner/turn state MUST be retired before the operation reports success. A shared provider login profile MAY remain.
+- Every remote connector credential bound to the removed actor generation MUST be revoked before the operation reports success. Re-adding the same actor id MUST NOT restore authority to a connector from an earlier generation.
+
 Result:
 ```ts
 { actor_id: string; event: CCCSEventV1 }
@@ -2594,8 +2760,9 @@ Result:
 ```
 
 Notes:
-- Supported for `claude`, `codex`, and Grok PTY actors.
-- Stops the current actor runtime if present, clears CCCC's saved runtime session metadata for that actor, then starts the actor with the same runtime settings.
+- Supported for Antigravity, `claude`, `codex`, and Grok PTY actors.
+- A running Antigravity actor starts a fresh provider conversation through its native `/clear` boundary while preserving the authenticated PTY process. A stopped Antigravity actor starts normally with the same runtime settings.
+- Other supported runtimes stop the current actor process if present, clear CCCC's saved runtime session metadata for that actor, then start the actor with the same runtime settings.
 - Does not delete provider-side conversation/session history.
 
 #### `runtime_hermes_status`
@@ -3119,8 +3286,17 @@ Args:
 
 Result:
 ```ts
-{ cursor: { event_id: string; ts: string; updated_at: string }; event: CCCSEventV1 }
+{
+  cursor: { event_id: string; ts: string; updated_at: string }
+  event: CCCSEventV1
+  ack_event?: CCCSEventV1 | null
+}
 ```
+
+When the recipient performs an explicit self-action (`by == actor_id`) on an
+`attention` message, the daemon MAY also append a distinct `chat.ack` and
+return it as `ack_event`. A read cursor alone MUST NOT be reported as an ACK;
+the `chat.ack` event remains the only attention completion signal.
 
 #### `inbox_mark_all_read`
 
@@ -3745,6 +3921,9 @@ Args:
 { group_id: string; actor_id: string; cols: number; rows: number }
 ```
 
+`cols` MUST be in `10..=65535` and `rows` MUST be in `2..=65535`; invalid or
+missing dimensions return `invalid_size` without resizing the PTY.
+
 Result:
 ```ts
 { group_id: string; actor_id: string; cols: number; rows: number }
@@ -3823,6 +4002,112 @@ from its source snapshot through active-ledger replacement and manifest
 publication. It MUST NOT rotate or report success while an earlier writer still
 owns that lock; snapshot and segment metadata MUST include every write committed
 before the lock is released to compaction.
+
+### 8.13 Presentation State
+
+The canonical group Presentation snapshot is
+`groups/<group_id>/state/presentation.json`. Ports MUST use the daemon
+operations below for snapshot mutations; a browser-surface session is
+ephemeral and is not part of this durable state.
+
+#### `presentation_get`
+
+Args:
+```ts
+{ group_id: string }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  presentation: {
+    v: 1
+    updated_at: string
+    highlight_slot_id: "" | "slot-1" | "slot-2" | "slot-3" | "slot-4"
+    slots: Array<{
+      slot_id: "slot-1" | "slot-2" | "slot-3" | "slot-4"
+      index: 1 | 2 | 3 | 4
+      card?: Record<string, unknown>
+    }>
+  }
+}
+```
+
+#### `presentation_publish`
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  slot?: "auto" | "slot-1" | "slot-2" | "slot-3" | "slot-4"
+  card_type?: "markdown" | "table" | "image" | "pdf" | "file" | "web_preview"
+  title?: string
+  summary?: string
+  source_label?: string
+  source_ref?: string
+  content?: string
+  table?: Record<string, unknown> | Array<Record<string, unknown>>
+  path?: string
+  url?: string
+  blob_rel_path?: string
+}
+```
+
+`by` MUST identify `user`, `system`, or an actor in the group. Workspace paths
+MUST resolve below the active scope. A stored remote `url` MUST be an absolute
+HTTP(S) URL with a host; local or generated content uses `path`, `content`, or
+`blob_rel_path` instead. `auto` selects the first empty slot, then the oldest
+published slot.
+
+Result:
+```ts
+{
+  group_id: string
+  slot_id: string
+  card: Record<string, unknown>
+  presentation: Record<string, unknown>
+  replaced: boolean
+  event: CCCSEventV1
+  event_id: string // compatibility alias of event.id
+}
+```
+
+The event kind is `presentation.publish`; its data is
+`{slot_id,title,card_type,source_label,source_ref,summary}`.
+
+#### `presentation_clear`
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  slot?: "slot-1" | "slot-2" | "slot-3" | "slot-4"
+  all?: boolean
+}
+```
+
+`by` has the same validation as `presentation_publish`. `all=true` clears all
+slots regardless of `slot`; an omitted/empty `slot` also means all slots.
+
+Result:
+```ts
+{
+  group_id: string
+  slot_id: string // populated only when exactly one occupied slot was cleared
+  cleared_slots: string[]
+  presentation: Record<string, unknown>
+  event: CCCSEventV1
+  event_id: string // compatibility alias of event.id
+}
+```
+
+The event kind is `presentation.clear`; its data is
+`{slot_id,cleared_all,cleared_slots}`. For both mutation operations, the
+snapshot update and ledger event form one acknowledged transition: if event
+append fails, the prior snapshot MUST be restored before failure is returned.
 
 ### 8.14 Presentation Browser Surface (Optional)
 
@@ -3908,6 +4193,25 @@ Streaming mode:
 - To protect daemon responsiveness, a daemon MAY drop slow subscribers (clients SHOULD reconnect and reconcile).
 
 ### 8.16 IM Authentication
+
+The durable group-local IM authority is `group.yaml:im` for provider
+configuration and the sibling state files `im_pending_keys.json`,
+`im_authorized_chats.json`, and `im_subscribers.json` for delivery targets.
+Implementations MUST serialize reads that can cause a write and every
+read-modify-write across those classes with
+`groups/<group_id>/state/im_state.lock`; a long-running worker MUST refresh
+authorization and subscription truth after acquiring that lock rather than
+continue from a process-private startup snapshot. Binding and revocation MUST
+update their coupled authorization/subscription records under one such
+transaction.
+
+The former Rust `group.yaml:im_bridge` durable fields (`config`, `enabled`,
+`authorized`, `pending`, and `subscribers`) are a one-way migration source.
+Canonical classes win when present, and imported fields MUST be retired after
+canonical commit. An explicit IM unset MUST clear the canonical target files
+and consume those legacy durable fields so a later engine switch cannot restore
+configuration or delivery authority. Non-durable runtime diagnostics in
+`im_bridge` MAY remain.
 
 Across IM authentication and subscriber state, `thread_id` is a platform-owned
 opaque identifier. Implementations MUST preserve it as either a legacy JSON
@@ -4156,6 +4460,9 @@ The daemon accepts the Python-compatible Group Bridge operations:
 
 Implementations MUST persist delivery receipts and MUST NOT create duplicate
 events when the same registration and idempotency key are retried.
+The canonical receipt lifecycle is `queued`, `sending`, `retrying`, `sent`, or
+`failed`; `sent` and `failed` are terminal. Readers MUST also treat the legacy
+Rust success value `delivered` as terminal, but new receipts MUST write `sent`.
 
 The cross-engine persistence authority is the Python-compatible set of
 purpose-specific files in `CCCC_HOME`:
@@ -4368,6 +4675,8 @@ Result:
     examples: Record<string, Record<string, unknown>>
   }
   notes: string[]
+  capabilities: string[]
+  unavailable_capabilities: string[]
 }
 ```
 
@@ -4645,6 +4954,10 @@ Args:
 ```
 
 Result (`action=status|run`) returns the targeted lane state in `sync`, and `sync_result` for `action=run`.
+Implementations that list `sync.work` or `sync.memory` in
+`unavailable_capabilities` MUST still expose canonical read-only status after an
+engine switch, but MUST reject `action=run` with `capability_unavailable` before
+performing provider-side mutations.
 
 #### `group_space_provider_credential_status`
 
@@ -4815,6 +5128,10 @@ Result:
 Notes:
 - `start` may open a browser on the daemon host for Google sign-in when `projected` is false.
 - `start` SHOULD expose the sign-in flow through a projected browser surface when `projected=true`.
+- When the daemon advertises both provider-auth browser attach capabilities as
+  false and a product Web process owns the browser lifecycle, daemon-level
+  `start`/`cancel`/`disconnect` MUST return `capability_unavailable`; `status`
+  remains a valid durable credential/provider-state projection.
 - Provider write readiness remains gated by `auth_configured` and runtime mode.
 
 #### `space_provider_auth_browser_attach`

@@ -1,9 +1,9 @@
 use super::{
     commit_reaped, start, start_with_history, status, stop, stop_all, stop_if_started_at,
-    submit_interruptible, submit_sequence_interruptible,
+    submit_interruptible, submit_sequence_interruptible, write,
 };
 use crate::registry::lookup;
-use crate::{HistoryConfig, LaunchSpec, history, history_since};
+use crate::{HistoryConfig, LaunchSpec, RuntimeError, history, history_since};
 use cccc_contracts::RunnerKind;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -97,6 +97,28 @@ fn restarts_a_naturally_exited_session_without_reap() {
     assert!(!status("g_restart_exited", "peer1").expect("status").running);
     start(spec(&temp, "g_restart_exited", "peer1", "sleep 30")).expect("restart");
     stop("g_restart_exited", "peer1").expect("cleanup");
+}
+
+#[test]
+fn write_rejects_a_naturally_exited_session_before_reap() {
+    let _guard = test_guard();
+    let temp = tempfile::tempdir().expect("tempdir");
+    let group_id = "g_write_exited";
+    let actor_id = "peer1";
+    start(spec(&temp, group_id, actor_id, "exit 0")).expect("start");
+    for _ in 0..100 {
+        if !status(group_id, actor_id).expect("status").running {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    assert!(matches!(
+        write(group_id, actor_id, b"must-not-be-reported-as-delivered"),
+        Err(RuntimeError::NotFound(group, actor))
+            if group == group_id && actor == actor_id
+    ));
+    stop(group_id, actor_id).expect("cleanup");
 }
 
 #[test]

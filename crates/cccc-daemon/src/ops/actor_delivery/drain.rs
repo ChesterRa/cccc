@@ -80,6 +80,7 @@ pub(crate) fn drain_group(home: &HomeLayout, group_id: &str) {
         });
         if advanced {
             record_read_event(&store, &group_id, &actor_id, &delivered);
+            dispatch_unread(home, &group, &actor_id);
         }
     }
     if let Ok(mut completions) = completions().lock() {
@@ -198,7 +199,7 @@ fn auto_mark_on_delivery(group: &GroupDoc) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cccc_contracts::Actor;
+    use cccc_contracts::{Actor, ActorRuntime};
 
     #[test]
     fn resolves_completed_prefix_beyond_legacy_thousand_event_window() {
@@ -228,5 +229,59 @@ mod tests {
         assert_eq!(unread.len(), 1_005);
         assert_eq!(delivered.len(), 1_005);
         assert_eq!(delivered.last().map(String::as_str), Some("event-1004"));
+    }
+
+    #[test]
+    fn draining_a_full_recovery_window_refills_from_the_canonical_inbox() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("delivery refill", "").expect("group");
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::Custom;
+        actor.command = vec!["sh".into(), "-c".into(), "sleep 30".into()];
+        group.actors.push(actor);
+        store.save(&group).expect("save actor");
+
+        let mut event_ids = Vec::new();
+        for index in 0..=QUEUE_CAPACITY {
+            let mut event = Event::new("chat.message", &group.group_id);
+            event.id = format!("event-{index}");
+            event.by = "user".into();
+            event.data = json!({"to":["peer1"],"text":index})
+                .as_object()
+                .cloned()
+                .expect("data");
+            ledger::append(&store.ledger_path(&group.group_id).expect("ledger"), &event)
+                .expect("append event");
+            event_ids.push(event.id);
+        }
+        for event_id in event_ids.iter().take(QUEUE_CAPACITY) {
+            in_flight().lock().expect("in flight").insert((
+                group.group_id.clone(),
+                "peer1".into(),
+                event_id.clone(),
+            ));
+            record_completion(DeliveryCompletion {
+                group_id: group.group_id.clone(),
+                actor_id: "peer1".into(),
+                event_id: event_id.clone(),
+            });
+        }
+
+        drain_group(&home, &group.group_id);
+
+        assert_eq!(
+            inbox::cursor(&home, &group.group_id, "peer1").expect("cursor"),
+            Some(event_ids[QUEUE_CAPACITY - 1].clone())
+        );
+        assert!(in_flight().lock().expect("in flight").contains(&(
+            group.group_id.clone(),
+            "peer1".into(),
+            event_ids[QUEUE_CAPACITY].clone(),
+        )));
+
+        shutdown_actor(&group.group_id, "peer1");
+        let _ = cccc_runtime::stop(&group.group_id, "peer1");
     }
 }

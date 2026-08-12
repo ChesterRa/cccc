@@ -112,7 +112,7 @@ im:
 | `/unsubscribe` | Unsubscribe |
 | `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/status` | Show group status |
-| `/pause` / `/resume` | Pause/resume message delivery |
+| `/pause` / `/resume` | Pause/resume delivery for the current chat or thread |
 | `/help` | Show help |
 
 Notes:
@@ -204,6 +204,17 @@ Notes:
 - One-time rules auto-mark as completed after firing.
 - Completed one-time rules are disabled (no repeated fire).
 - UI supports clearing completed items for cleanup.
+
+### Scheduling and Lifecycle Semantics
+
+- A new interval rule starts its clock on the first scheduler tick; it does not
+  fire immediately.
+- Paused and stopped groups run no automation. Idle groups continue user rules
+  but suppress the built-in standup reminder.
+- Resume does not replay missed interval, cron, or one-time work. Future
+  one-time rules remain scheduled.
+- Notifications are durable ledger events for enabled matching recipients, so
+  the recipient runtime does not need to be running when the rule fires.
 
 ### Built-in Automation
 

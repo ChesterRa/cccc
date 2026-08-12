@@ -124,8 +124,65 @@ pub fn cursor(home: &HomeLayout, group_id: &str, actor_id: &str) -> io::Result<O
         .cloned())
 }
 
+pub fn cursor_details(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+) -> io::Result<(String, String, String)> {
+    let event_id = cursor(home, group_id, actor_id)?.unwrap_or_default();
+    let cursor_path = path(home, group_id)?;
+    if !cursor_path.exists() {
+        return Ok((event_id, String::new(), String::new()));
+    }
+    let doc = read_json::<Value>(&cursor_path)?;
+    let record = doc.get(actor_id).and_then(Value::as_object);
+    Ok((
+        event_id,
+        record
+            .and_then(|value| value.get("ts"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        record
+            .and_then(|value| value.get("updated_at"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+    ))
+}
+
 pub fn cursors(home: &HomeLayout, group_id: &str) -> io::Result<BTreeMap<String, String>> {
     Ok(load_effective(home, group_id)?.cursors)
+}
+
+pub fn latest_unread(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    kind_filter: &str,
+) -> io::Result<Option<Event>> {
+    let store = GroupStore::new(home.clone())?;
+    let state = load(home, &group.group_id)?;
+    ledger::inspect(&store.ledger_path(&group.group_id)?, |events, positions| {
+        let generations = actor_generation_positions(events);
+        let cursor_start = state
+            .cursors
+            .get(actor_id)
+            .and_then(|id| positions.get(id))
+            .map_or(0, |index| index + 1);
+        let generation_start = generations.get(actor_id).copied().unwrap_or(0);
+        events[cursor_start.max(generation_start)..]
+            .iter()
+            .filter(|event| match kind_filter {
+                "all" => matches!(event.kind.as_str(), "chat.message" | "system.notify"),
+                "chat" => event.kind == "chat.message",
+                "notify" => event.kind == "system.notify",
+                _ => false,
+            })
+            .filter(|event| is_for_actor(group, event, actor_id))
+            .next_back()
+            .cloned()
+    })
 }
 
 pub fn is_for_actor(group: &GroupDoc, event: &Event, actor_id: &str) -> bool {
@@ -239,8 +296,8 @@ fn load(home: &HomeLayout, group_id: &str) -> io::Result<InboxState> {
     };
     let cursors = doc
         .as_object()
-        .into_iter()
-        .flatten()
+        .ok_or_else(|| io::Error::other("read cursor document must be an object"))?
+        .iter()
         .filter_map(|(actor_id, cursor)| {
             cursor
                 .as_str()
@@ -260,7 +317,14 @@ fn save(
     updated_ts: &str,
 ) -> io::Result<()> {
     let path = path(home, group_id)?;
-    let previous = read_json::<Value>(&path).unwrap_or_else(|_| json!({}));
+    let previous = if path.exists() {
+        read_json::<Value>(&path)?
+            .as_object()
+            .cloned()
+            .ok_or_else(|| io::Error::other("read cursor document must be an object"))?
+    } else {
+        Map::new()
+    };
     let mut output = Map::new();
     for (actor_id, event_id) in &state.cursors {
         let ts = if actor_id == updated_actor_id {

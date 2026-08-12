@@ -23,6 +23,7 @@ mod context;
 mod context_projection;
 mod diagnostics;
 mod group_bridge;
+pub(crate) use group_bridge::schedule_pending_route_retry;
 mod group_copy;
 mod group_create_rollback;
 mod group_creation;

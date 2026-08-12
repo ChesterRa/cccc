@@ -6,17 +6,21 @@ import os
 import re
 import secrets
 import shlex
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, get_args
 
 from ...contracts.v1 import ActorProfile, ActorProfileRef, AgentRuntime
 from ...kernel.runtime import get_runtime_command_with_flags
 from ...paths import ensure_home
+from ...util.file_lock import acquire_lockfile, release_lockfile
 from ...util.fs import atomic_write_json, read_json
 from ...util.time import utc_now_iso
 
 _PROFILE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _SUPPORTED_PROFILE_RUNTIMES = {str(item) for item in get_args(AgentRuntime)}
+_PROFILE_MIGRATION_PROCESS_LOCK = threading.RLock()
+_PROFILE_MIGRATED_HOMES: set[str] = set()
 
 
 class ProfileRevisionMismatchError(RuntimeError):
@@ -138,12 +142,136 @@ def _normalize_profiles_doc(raw: Any) -> Dict[str, Any]:
     return doc
 
 
+def _read_json_object_strict(path: Path) -> Dict[str, Any]:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"expected JSON object: {path}")
+    return raw
+
+
+def _load_profiles_doc_unmigrated(home: Path) -> tuple[Path, Dict[str, Any]]:
+    path = _profiles_path(home)
+    raw = _read_json_object_strict(path) if path.exists() else {}
+    return path, _normalize_profiles_doc(raw)
+
+
+def _ensure_actor_profile_state_migrated(home: Path) -> None:
+    """Consume former Rust profile stores and move canonical env into secrets once per process."""
+    home_key = str(home.resolve())
+    with _PROFILE_MIGRATION_PROCESS_LOCK:
+        if home_key in _PROFILE_MIGRATED_HOMES:
+            return
+        root = _profiles_root(home)
+        _ensure_dir(root, 0o700)
+        marker = root / ".rust-profiles-migrated-v1"
+        lock = acquire_lockfile(root / ".migration.lock", blocking=True)
+        try:
+            path, doc = _load_profiles_doc_unmigrated(home)
+            raw_profiles = doc.get("profiles") if isinstance(doc.get("profiles"), dict) else {}
+            doc["profiles"] = raw_profiles
+            changed = False
+
+            legacy_secret_profiles: Dict[str, Any] = {}
+            if not marker.exists():
+                legacy_profiles_path = home / "profiles.json"
+                if legacy_profiles_path.exists():
+                    legacy_doc = _read_json_object_strict(legacy_profiles_path)
+                    legacy_profiles = legacy_doc.get("profiles")
+                    if isinstance(legacy_profiles, dict):
+                        for legacy_key, raw_profile in legacy_profiles.items():
+                            model = _model_from_raw_profile(raw_profile, storage_key=str(legacy_key))
+                            if model is None:
+                                continue
+                            _, existing = _find_profile_entry(
+                                raw_profiles,
+                                model.id,
+                                scope=model.scope,
+                                owner_id=model.owner_id,
+                            )
+                            if existing is not None:
+                                continue
+                            storage_key = _profile_storage_key(
+                                model.id,
+                                scope=model.scope,
+                                owner_id=model.owner_id,
+                            )
+                            raw_profiles[storage_key] = model.model_dump(exclude_none=True)
+                            changed = True
+                legacy_secrets_path = home / "profile-secrets.json"
+                if legacy_secrets_path.exists():
+                    legacy_secrets_doc = _read_json_object_strict(legacy_secrets_path)
+                    raw_legacy_secrets = legacy_secrets_doc.get("profiles")
+                    if isinstance(raw_legacy_secrets, dict):
+                        legacy_secret_profiles = raw_legacy_secrets
+
+            secret_updates: Dict[Path, Dict[str, str]] = {}
+            for profile_id, values in legacy_secret_profiles.items():
+                if not isinstance(values, dict):
+                    continue
+                _, model = _find_profile_entry(
+                    raw_profiles,
+                    str(profile_id),
+                    scope="global",
+                    owner_id="",
+                )
+                if model is None:
+                    continue
+                target = _profile_secret_path(model.model_dump(exclude_none=True))
+                if target.exists():
+                    continue
+                migrated = {
+                    str(key): str(value)
+                    for key, value in values.items()
+                    if isinstance(key, str) and str(key).strip() and value is not None
+                }
+                if migrated:
+                    secret_updates[target] = migrated
+
+            for storage_key, raw_profile in list(raw_profiles.items()):
+                if not isinstance(raw_profile, dict):
+                    continue
+                env = raw_profile.get("env")
+                if not isinstance(env, dict) or not env:
+                    continue
+                model = _model_from_raw_profile(raw_profile, storage_key=str(storage_key))
+                if model is None:
+                    continue
+                target = _profile_secret_path(model.model_dump(exclude_none=True))
+                current = secret_updates.get(target)
+                if current is None:
+                    current_raw = _read_json_object_strict(target) if target.exists() else {}
+                    current = {
+                        str(key): str(value)
+                        for key, value in current_raw.items()
+                        if isinstance(key, str) and str(key).strip() and value is not None
+                    }
+                for key, value in env.items():
+                    if isinstance(key, str) and str(key).strip() and value is not None:
+                        current[str(key)] = str(value)
+                secret_updates[target] = current
+                raw_profile["env"] = {}
+                changed = True
+
+            for target, values in secret_updates.items():
+                _ensure_dir(target.parent, 0o700)
+                atomic_write_json(target, values, indent=2)
+                try:
+                    os.chmod(target, 0o600)
+                except Exception:
+                    pass
+            if changed:
+                _save_profiles_doc(path, doc)
+            if not marker.exists():
+                marker.write_text("migrated from Rust profile storage\n", encoding="utf-8")
+        finally:
+            release_lockfile(lock)
+        _PROFILE_MIGRATED_HOMES.add(home_key)
+
+
 def _load_profiles_doc() -> tuple[Path, Dict[str, Any]]:
     home = ensure_home()
-    path = _profiles_path(home)
-    raw = read_json(path)
-    doc = _normalize_profiles_doc(raw)
-    return path, doc
+    _ensure_actor_profile_state_migrated(home)
+    return _load_profiles_doc_unmigrated(home)
 
 
 def _save_profiles_doc(path: Path, doc: Dict[str, Any]) -> None:
@@ -303,13 +431,15 @@ def _save_actor_profile(
     submit = str(profile.get("submit") if "submit" in profile else existing.get("submit") or "enter").strip() or "enter"
     name = str(profile.get("name") if "name" in profile else existing.get("name") or "").strip()
 
-    env_in = profile.get("env") if "env" in profile else existing.get("env")
-    env: Dict[str, str] = {}
-    if isinstance(env_in, dict):
+    legacy_env: Dict[str, str] = {}
+    if "env" in profile:
+        env_in = profile.get("env")
+        if not isinstance(env_in, dict):
+            raise ValueError("profile.env must be an object")
         for key, value in env_in.items():
             if not isinstance(key, str):
                 continue
-            env[str(key)] = str(value)
+            legacy_env[str(key)] = str(value)
 
     command_in = profile.get("command") if "command" in profile else existing.get("command")
     command = [] if runtime == "web_model" else _normalize_profile_command(runtime=runtime, runner=runner, command=command_in)
@@ -352,7 +482,7 @@ def _save_actor_profile(
         "runner": runner,
         "command": command,
         "submit": submit,
-        "env": env,
+        "env": {},
         "created_at": str(existing.get("created_at") or now),
         "updated_at": now,
         "revision": int(existing.get("revision") or 0) + 1,
@@ -364,6 +494,17 @@ def _save_actor_profile(
         raw_profiles.pop(existing_key, None)
     # Store by composite key so duplicate ids can exist across scope/owner.
     raw_profiles[storage_key] = model.model_dump(exclude_none=True)
+    if legacy_env:
+        update_actor_profile_secrets(
+            {
+                "profile_id": model.id,
+                "profile_scope": model.scope,
+                "profile_owner": model.owner_id,
+            },
+            set_vars=legacy_env,
+            unset_keys=[],
+            clear=False,
+        )
     _save_profiles_doc(path, doc)
     return model
 
@@ -532,9 +673,10 @@ def _profile_secret_path(ref: ActorProfileRef | Dict[str, Any] | str) -> Path:
 
 
 def load_actor_profile_secrets(ref: ActorProfileRef | Dict[str, Any] | str) -> Dict[str, str]:
+    _ensure_actor_profile_state_migrated(ensure_home())
     normalized = normalize_actor_profile_ref(ref)
     path = _profile_secret_path(normalized)
-    raw = read_json(path)
+    raw = _read_json_object_strict(path) if path.exists() else {}
     out: Dict[str, str] = {}
     if not isinstance(raw, dict):
         return out
@@ -557,6 +699,7 @@ def update_actor_profile_secrets(
     unset_keys: List[str],
     clear: bool,
 ) -> Dict[str, str]:
+    _ensure_actor_profile_state_migrated(ensure_home())
     normalized = normalize_actor_profile_ref(ref)
     current = {} if clear else load_actor_profile_secrets(normalized)
     for key in unset_keys:
@@ -583,6 +726,7 @@ def update_actor_profile_secrets(
 
 
 def delete_actor_profile_secrets(ref: ActorProfileRef | Dict[str, Any] | str) -> None:
+    _ensure_actor_profile_state_migrated(ensure_home())
     normalized = normalize_actor_profile_ref(ref)
     path = _profile_secret_path(normalized)
     try:

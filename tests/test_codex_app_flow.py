@@ -1372,6 +1372,129 @@ class TestCodexAppFlow(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_codex_turn_loop_announces_acceptance_before_fast_terminal_notification(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._session_state.thread_id = "thread-1"
+            session._turn_queue.put_nowait(
+                _PendingTurn(text="hello", event_id="evt-fast", ts="2026-04-08T00:00:00Z")
+            )
+            session._turn_queue.put_nowait(None)
+
+            def finish_before_returning(*_args, **_kwargs):
+                session._handle_notification(
+                    "turn/completed",
+                    {"turn": {"id": "turn-fast", "status": "completed"}},
+                )
+                return {"turn": {"id": "turn-fast"}}
+
+            with (
+                patch.object(session, "is_running", side_effect=[True, True, True]),
+                patch.object(session, "_request", side_effect=finish_before_returning),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch.object(session._turn_done, "wait", return_value=True),
+                patch("cccc.daemon.codex_app_sessions.auto_mark_headless_delivery_started", return_value=True),
+            ):
+                session._turn_loop()
+
+            emitted = [(str(call.args[0]), call.args[1]) for call in emit.call_args_list if call.args]
+            event_types = [event_type for event_type, _payload in emitted]
+            self.assertLess(
+                event_types.index("headless.turn.started"),
+                event_types.index("headless.turn.completed"),
+            )
+            completed = next(payload for event_type, payload in emitted if event_type == "headless.turn.completed")
+            self.assertEqual(completed.get("event_id"), "evt-fast")
+        finally:
+            cleanup()
+
+    def test_codex_server_request_receives_explicit_unsupported_response(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+
+            class FakeProc:
+                stdin = io.StringIO()
+
+            session._proc = FakeProc()
+            session._running = True
+            session._handle_protocol_message(
+                {
+                    "jsonrpc": "2.0",
+                    "id": "input-1",
+                    "method": "item/tool/requestUserInput",
+                    "params": {"turnId": "turn-1"},
+                }
+            )
+
+            response = json.loads(session._proc.stdin.getvalue())
+            self.assertEqual(response.get("id"), "input-1")
+            self.assertEqual((response.get("error") or {}).get("code"), -32601)
+        finally:
+            cleanup()
+
+    def test_claude_turn_loop_announces_acceptance_before_fast_terminal_event(self) -> None:
+        from cccc.daemon.claude_app_sessions import ClaudeAppSession, _PendingTurn
+
+        home, cleanup = self._with_home()
+        try:
+            session = ClaudeAppSession(
+                group_id="g_test",
+                actor_id="peer1",
+                cwd=Path(home),
+                env={},
+            )
+            session._turn_queue.put_nowait(
+                _PendingTurn(text="hello", event_id="evt-fast", ts="2026-04-08T00:00:00Z")
+            )
+            session._turn_queue.put_nowait(None)
+
+            def finish_before_returning(_data):
+                session._handle_event(
+                    {
+                        "type": "result",
+                        "subtype": "success",
+                        "is_error": False,
+                    }
+                )
+                return True
+
+            with (
+                patch.object(session, "is_running", side_effect=[True, True]),
+                patch.object(session, "_write_stdin", side_effect=finish_before_returning),
+                patch.object(session, "_persist_state"),
+                patch.object(session, "_emit") as emit,
+                patch("cccc.daemon.claude_app_sessions.auto_mark_headless_delivery_started", return_value=True),
+            ):
+                session._turn_loop()
+
+            emitted = [(str(call.args[0]), call.args[1]) for call in emit.call_args_list if call.args]
+            event_types = [event_type for event_type, _payload in emitted]
+            self.assertLess(
+                event_types.index("headless.turn.started"),
+                event_types.index("headless.turn.completed"),
+            )
+            completed = next(payload for event_type, payload in emitted if event_type == "headless.turn.completed")
+            self.assertEqual(completed.get("event_id"), "evt-fast")
+        finally:
+            cleanup()
+
     def test_codex_turn_start_timeout_stops_session_without_idle_overwrite(self) -> None:
         from cccc.daemon.codex_app_sessions import CodexAppSession, _PendingTurn
 
@@ -3897,6 +4020,28 @@ class TestCodexAppFlow(unittest.TestCase):
 
             self.assertEqual(str(session._session_state.status or ""), "idle")
             self.assertIsNone(session._session_state.current_task_id)
+        finally:
+            cleanup()
+
+    def test_codex_thread_status_notification_restores_active_turn_from_waiting(self) -> None:
+        from cccc.daemon.codex_app_sessions import CodexAppSession
+
+        home, cleanup = self._with_home()
+        try:
+            session = CodexAppSession(group_id="g_test", actor_id="peer1", cwd=Path(home), env={})
+            session._running = True
+            session._session_state.thread_id = "thread-1"
+            session._session_state.status = "waiting"
+            session._active_turn_id = "turn-1"
+            session._active_event_id = "event-1"
+
+            session._handle_notification(
+                "thread/status/changed",
+                {"threadId": "thread-1", "status": {"type": "active", "activeFlags": []}},
+            )
+
+            self.assertEqual(str(session._session_state.status or ""), "working")
+            self.assertEqual(str(session._session_state.current_task_id or ""), "turn-1")
         finally:
             cleanup()
 

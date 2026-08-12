@@ -98,7 +98,9 @@ def parse_message(text: str) -> ParsedCommand:
 
     # Check for commands (must start with /)
     # Support @BotName /command format (Telegram group privacy mode)
-    cmd_match = re.match(r"^(?:@\S+\s+)?/(\w+)(?:@\S+)?(?:\s+(.*))?$", text, re.IGNORECASE | re.DOTALL)
+    cmd_match = re.match(
+        r"^(?:@\S+\s+)?/(\w+)(?:@\S+)?(?:\s+(.*))?$", text, re.IGNORECASE | re.DOTALL
+    )
 
     if cmd_match:
         cmd_name = cmd_match.group(1).lower()
@@ -106,10 +108,14 @@ def parse_message(text: str) -> ParsedCommand:
         cmd_args = cmd_args_str.split() if cmd_args_str else []
 
         cmd_type = _map_command(cmd_name)
-        return ParsedCommand(type=cmd_type, text=cmd_args_str, mentions=mentions, args=cmd_args)
+        return ParsedCommand(
+            type=cmd_type, text=cmd_args_str, mentions=mentions, args=cmd_args
+        )
 
     # Regular message
-    return ParsedCommand(type=CommandType.MESSAGE, text=text, mentions=mentions, args=[])
+    return ParsedCommand(
+        type=CommandType.MESSAGE, text=text, mentions=mentions, args=[]
+    )
 
 
 def is_recognized_command(text: str) -> bool:
@@ -200,8 +206,8 @@ def format_help(platform: str = "telegram") -> str:
   /context - show project coordination (brief/tasks/agents)
 
 🎮 Control:
-  /pause - pause message delivery
-  /resume - resume message delivery
+  /pause - pause delivery for this chat
+  /resume - resume delivery for this chat
   /launch - start all agents
   /quit - stop all agents
 
@@ -241,6 +247,7 @@ def format_status(
     im_status: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Format status response."""
+
     def _actor_label(actor_doc: dict) -> str:
         actor_id = str(actor_doc.get("id") or "").strip() or "?"
         title = str(actor_doc.get("title") or "").strip()
@@ -271,6 +278,7 @@ def format_status(
         authorized = bool(im_status.get("authorized"))
         subscribed = bool(im_status.get("subscribed"))
         verbose = bool(im_status.get("verbose"))
+        paused = bool(im_status.get("paused"))
         thread_id = normalize_thread_id(im_status.get("thread_id"))
         lines.append("IM:")
         chat_bits = [
@@ -280,11 +288,20 @@ def format_status(
         ]
         if thread_id:
             chat_bits.append(f"thread {thread_id}")
+        chat_bits.append(f"paused {_format_bool(paused)}")
         lines.append(f"  Platform: {platform}")
         lines.append(f"  This chat: {' | '.join(chat_bits)}")
 
-        capabilities = im_status.get("capabilities") if isinstance(im_status.get("capabilities"), dict) else {}
-        features = capabilities.get("features") if isinstance(capabilities.get("features"), dict) else {}
+        capabilities = (
+            im_status.get("capabilities")
+            if isinstance(im_status.get("capabilities"), dict)
+            else {}
+        )
+        features = (
+            capabilities.get("features")
+            if isinstance(capabilities.get("features"), dict)
+            else {}
+        )
         if features:
             lines.append("  Capabilities:")
             lines.append(
@@ -323,16 +340,28 @@ def format_context(context: dict) -> str:
     """Format context response."""
     lines = ["📋 Project Coordination", ""]
 
-    coordination = context.get("coordination") if isinstance(context.get("coordination"), dict) else {}
-    brief = coordination.get("brief") if isinstance(coordination.get("brief"), dict) else {}
+    coordination = (
+        context.get("coordination")
+        if isinstance(context.get("coordination"), dict)
+        else {}
+    )
+    brief = (
+        coordination.get("brief") if isinstance(coordination.get("brief"), dict) else {}
+    )
     objective = brief.get("objective")
     current_focus = brief.get("current_focus")
-    constraints = brief.get("constraints") if isinstance(brief.get("constraints"), list) else []
+    constraints = (
+        brief.get("constraints") if isinstance(brief.get("constraints"), list) else []
+    )
 
     if objective:
-        lines.append(f"🎯 Objective: {str(objective)[:200]}{'...' if len(str(objective)) > 200 else ''}")
+        lines.append(
+            f"🎯 Objective: {str(objective)[:200]}{'...' if len(str(objective)) > 200 else ''}"
+        )
     if current_focus:
-        lines.append(f"📐 Focus: {str(current_focus)[:300]}{'...' if len(str(current_focus)) > 300 else ''}")
+        lines.append(
+            f"📐 Focus: {str(current_focus)[:300]}{'...' if len(str(current_focus)) > 300 else ''}"
+        )
     if constraints:
         lines.append("⛳ Constraints:")
         for item in constraints[:4]:
@@ -354,15 +383,27 @@ def format_context(context: dict) -> str:
             lines.append(f"  🔄 {task.get('title', '?')}{assignee_str}{parent_str}")
         lines.append("")
 
-    attention = context.get("attention") if isinstance(context.get("attention"), dict) else {}
-    blocked = attention.get("blocked") if isinstance(attention.get("blocked"), list) else []
-    waiting_user = attention.get("waiting_user") if isinstance(attention.get("waiting_user"), list) else []
+    attention = (
+        context.get("attention") if isinstance(context.get("attention"), dict) else {}
+    )
+    blocked = (
+        attention.get("blocked") if isinstance(attention.get("blocked"), list) else []
+    )
+    waiting_user = (
+        attention.get("waiting_user")
+        if isinstance(attention.get("waiting_user"), list)
+        else []
+    )
     if blocked:
         lines.append(f"⛔ Blocked: {len(blocked)}")
     if waiting_user:
         lines.append(f"🙋 Waiting on user: {len(waiting_user)}")
 
-    agent_states = context.get("agent_states") if isinstance(context.get("agent_states"), list) else []
+    agent_states = (
+        context.get("agent_states")
+        if isinstance(context.get("agent_states"), list)
+        else []
+    )
     focus_lines = []
     for item in agent_states[:6]:
         if not isinstance(item, dict):

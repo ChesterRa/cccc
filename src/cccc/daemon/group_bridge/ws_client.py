@@ -42,11 +42,14 @@ def connect_group_bridge_session_once(
     connect_timeout: float | None = None,
     handshake_timeout: float | None = None,
     idle_tick_seconds: float = 30.0,
+    stop: threading.Event | None = None,
 ) -> Dict[str, Any]:
     connector = connect or _default_connect
     connect_timeout_value = max(0.1, float(connect_timeout if connect_timeout is not None else timeout or 5.0))
     handshake_timeout_value = max(0.1, float(handshake_timeout if handshake_timeout is not None else timeout or 5.0))
     idle_tick_value = max(0.1, float(idle_tick_seconds or 30.0))
+    if stop is not None and stop.is_set():
+        return {"ok": True, "stopped": True}
     try:
         ws = connector(group_bridge_session_ws_url(remote_base_url), connect_timeout_value)
     except Exception as exc:
@@ -82,12 +85,16 @@ def connect_group_bridge_session_once(
             initial_frame = _ws_recv_json_or_idle(ws)
             if initial_frame is not _IDLE:
                 _handle_session_frame(ws, initial_frame, peer=peer, handler=handler, send_lock=send_lock)
-            _set_ws_timeout(ws, idle_tick_value)
+            _set_ws_timeout(ws, min(idle_tick_value, 0.5) if stop is not None else idle_tick_value)
             if on_ready is not None:
                 on_ready()
             while True:
+                if stop is not None and stop.is_set():
+                    return {"ok": True, "stopped": True}
                 frame = _ws_recv_json_or_idle(ws)
                 if frame is _IDLE:
+                    if stop is not None and stop.is_set():
+                        return {"ok": True, "stopped": True}
                     _ws_send_json(ws, {"type": "ping"}, send_lock=send_lock)
                     continue
                 _handle_session_frame(ws, frame, peer=peer, handler=handler, send_lock=send_lock)
@@ -130,6 +137,7 @@ def start_group_bridge_session_client(
                 connect_timeout=connect_timeout,
                 handshake_timeout=handshake_timeout,
                 idle_tick_seconds=idle_tick_seconds,
+                stop=stop_event,
             )
             if not stop_event.is_set():
                 error = result.get("error") if isinstance(result.get("error"), dict) else {}

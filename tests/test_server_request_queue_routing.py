@@ -12,7 +12,7 @@ class TestServerRequestQueueRouting(unittest.TestCase):
         read_queue = object()
         message_lanes = object()
         slow_queue = object()
-        for op in ("reply", "send_files"):
+        for op in ("reply", "send_files", "tracked_send"):
             with self.subTest(op=op):
                 req = SimpleNamespace(op=op, args={"group_id": "g1"})
 
@@ -51,7 +51,7 @@ class TestServerRequestQueueRouting(unittest.TestCase):
         read_queue = object()
         message_lanes = object()
         slow_queue = object()
-        for op in ("actor_notes_get", "context_get", "group_help_get"):
+        for op in ("actor_notes_get", "context_get", "group_help_get", "presentation_get"):
             with self.subTest(op=op):
                 req = SimpleNamespace(op=op, args={"group_id": "g1"})
 
@@ -63,6 +63,25 @@ class TestServerRequestQueueRouting(unittest.TestCase):
                 )
 
                 self.assertIs(selected, read_queue)
+
+    def test_presentation_mutations_use_the_single_writer_queue(self) -> None:
+        from cccc.daemon.server import _request_queue_for
+
+        read_queue = object()
+        message_lanes = object()
+        slow_queue = object()
+        for op in ("presentation_publish", "presentation_clear"):
+            with self.subTest(op=op):
+                req = SimpleNamespace(op=op, args={"group_id": "g1"})
+
+                selected = _request_queue_for(
+                    req,
+                    read_queue=read_queue,
+                    message_lanes=message_lanes,
+                    slow_queue=slow_queue,
+                )
+
+                self.assertIs(selected, slow_queue)
 
     def test_terminal_transcript_ops_stay_on_slow_queue(self) -> None:
         from cccc.daemon.server import _request_queue_for

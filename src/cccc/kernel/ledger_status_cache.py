@@ -14,7 +14,7 @@ from .inbox import (
 )
 from .ledger_index import lookup_event_by_id, lookup_event_positions
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _DEFAULT_TIMEOUT_SECONDS = 5.0
 _MAX_CACHED_MESSAGES = 2000
 logger = logging.getLogger("cccc.ledger.status_cache")
@@ -200,7 +200,7 @@ def _write_event_status_rows(
                 event_id,
                 actor_id,
                 1 if bool(read_status.get(actor_id)) else 0,
-                1 if bool(ack_status.get(actor_id) or obligation.get("acked")) else 0,
+                1 if bool(ack_status.get(actor_id)) else 0,
                 1 if bool(obligation.get("replied")) else 0,
                 1 if bool(obligation.get("reply_required")) else 0,
             ),
@@ -313,23 +313,6 @@ def get_cached_message_status_batch(
 
 
 def _apply_read_update(conn: sqlite3.Connection, event_id: str, actor_id: str) -> None:
-    row = conn.execute(
-        "SELECT is_attention FROM message_status_meta WHERE event_id = ?",
-        (event_id,),
-    ).fetchone()
-    if row is None:
-        return
-    is_attention = bool(int(row[0] or 0))
-    if is_attention:
-        conn.execute(
-            """
-            UPDATE recipient_status
-            SET is_read = 1, is_acked = 1
-            WHERE event_id = ? AND actor_id = ?
-            """,
-            (event_id, actor_id),
-        )
-        return
     conn.execute(
         "UPDATE recipient_status SET is_read = 1 WHERE event_id = ? AND actor_id = ?",
         (event_id, actor_id),
@@ -347,7 +330,7 @@ def _apply_reply_update(conn: sqlite3.Connection, event_id: str, actor_id: str) 
     conn.execute(
         """
         UPDATE recipient_status
-        SET is_replied = 1, is_acked = 1
+        SET is_replied = 1
         WHERE event_id = ? AND actor_id = ?
         """,
         (event_id, actor_id),
@@ -406,7 +389,7 @@ def update_message_status_cache_on_append(
                         ack_status[actor_id] = False
                     obligation_status[actor_id] = {
                         "read": False,
-                        "acked": not is_attention,
+                        "acked": False,
                         "replied": False,
                         "reply_required": reply_required,
                     }

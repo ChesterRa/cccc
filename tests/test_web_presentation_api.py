@@ -52,7 +52,19 @@ class TestWebPresentationApi(unittest.TestCase):
             )
             self.assertTrue(publish.ok, getattr(publish, "error", None))
 
-            with patch("cccc.ports.web.app.call_daemon", side_effect=AssertionError("presentation_get should not call daemon")):
+            daemon_requests: list[dict] = []
+
+            def fake_call_daemon(req: dict):
+                daemon_requests.append(req)
+                resp, _ = self._call(str(req.get("op") or ""), dict(req.get("args") or {}))
+                payload = {"ok": bool(resp.ok)}
+                if resp.result is not None:
+                    payload["result"] = resp.result
+                if resp.error is not None:
+                    payload["error"] = resp.error.model_dump(mode="json", exclude_none=True)
+                return payload
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
                 with self._client() as client:
                     resp = client.get(f"/api/v1/groups/{group_id}/presentation")
 
@@ -61,6 +73,10 @@ class TestWebPresentationApi(unittest.TestCase):
             self.assertTrue(bool(payload.get("ok")))
             self.assertEqual(payload["result"]["presentation"]["highlight_slot_id"], "slot-1")
             self.assertEqual(payload["result"]["presentation"]["slots"][0]["card"]["title"], "Report")
+            self.assertEqual(
+                [request for request in daemon_requests if request.get("op") == "presentation_get"],
+                [{"op": "presentation_get", "args": {"group_id": group_id}}],
+            )
         finally:
             cleanup()
 
@@ -268,6 +284,37 @@ class TestWebPresentationApi(unittest.TestCase):
             self.assertEqual(payload["result"]["card"]["card_type"], "markdown")
             self.assertEqual(payload["result"]["card"]["title"], "notes.md")
             self.assertEqual(payload["result"]["presentation"]["highlight_slot_id"], "slot-1")
+        finally:
+            cleanup()
+
+    def test_group_presentation_publish_upload_rejects_non_utf8_markdown(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "web-presentation-invalid-markdown", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "")
+            daemon_requests: list[dict] = []
+
+            def fake_call_daemon(req: dict):
+                daemon_requests.append(req)
+                resp, _ = self._call(str(req.get("op") or ""), dict(req.get("args") or {}))
+                payload = {"ok": bool(resp.ok)}
+                if resp.result is not None:
+                    payload["result"] = resp.result
+                if resp.error is not None:
+                    payload["error"] = resp.error.model_dump(mode="json", exclude_none=True)
+                return payload
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=fake_call_daemon):
+                with self._client() as client:
+                    resp = client.post(
+                        f"/api/v1/groups/{group_id}/presentation/publish_upload",
+                        data={"slot": "slot-1", "by": "user"},
+                        files={"file": ("invalid.md", b"# invalid\n\xff", "text/markdown")},
+                    )
+
+            self.assertEqual(resp.status_code, 400)
+            self.assertFalse(any(request.get("op") == "presentation_publish" for request in daemon_requests))
         finally:
             cleanup()
 

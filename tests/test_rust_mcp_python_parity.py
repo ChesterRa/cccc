@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import unittest
 from pathlib import Path
 
@@ -22,6 +23,22 @@ class TestRustMcpPythonParity(unittest.TestCase):
         self.assertFalse((root / "crates/cccc-web/resources/cccc-help.md").exists())
         self.assertFalse((root / "crates/cccc-mcp/src/schemas.rs").exists())
 
+    def test_python_and_rust_web_model_fixed_surfaces_match(self) -> None:
+        from cccc.kernel.capabilities import WEB_MODEL_CORE_TOOLS
+
+        root = Path(__file__).resolve().parents[1]
+        rust = (root / "crates/cccc-core/src/capability_builtin.rs").read_text(encoding="utf-8")
+        match = re.search(
+            r"pub const WEB_MODEL_CORE_TOOL_NAMES: &\[&str\] = &\[(.*?)\];",
+            rust,
+            flags=re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        rust_names = re.findall(r'"(cccc_[a-z0-9_]+)"', match.group(1) if match else "")
+
+        self.assertEqual(rust_names, list(WEB_MODEL_CORE_TOOLS))
+        self.assertEqual(len(rust_names), 31)
+
     def test_full_contract_has_unique_complete_entries(self) -> None:
         names = [str(tool.get("name") or "") for tool in MCP_TOOLS]
         self.assertEqual(len(names), 59)
@@ -29,6 +46,31 @@ class TestRustMcpPythonParity(unittest.TestCase):
         for tool in MCP_TOOLS:
             self.assertEqual(set(tool) - {"annotations"}, {"name", "description", "inputSchema"})
             self.assertEqual(tool["inputSchema"].get("type"), "object")
+
+    def test_read_only_hints_are_truthful_for_fixed_and_mixed_surfaces(self) -> None:
+        by_name = {str(tool.get("name") or ""): tool for tool in MCP_TOOLS}
+        for name in {
+            "cccc_help",
+            "cccc_bootstrap",
+            "cccc_project_info",
+            "cccc_inbox_list",
+            "cccc_repo",
+            "cccc_runtime_list",
+            "cccc_runtime_wait_next_turn",
+            "cccc_capability_state",
+            "cccc_context_get",
+            "cccc_debug",
+        }:
+            self.assertTrue((by_name[name].get("annotations") or {}).get("readOnlyHint"), name)
+
+        for name in {
+            "cccc_capability_search",
+            "cccc_file",
+            "cccc_presentation",
+            "cccc_memory",
+            "cccc_terminal",
+        }:
+            self.assertIsNot((by_name[name].get("annotations") or {}).get("readOnlyHint"), True, name)
 
 
 if __name__ == "__main__":

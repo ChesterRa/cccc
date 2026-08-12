@@ -5,9 +5,8 @@ use chromiumoxide::Page;
 use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use chromiumoxide::cdp::browser_protocol::input::{
     DispatchKeyEventParams, DispatchKeyEventType, DispatchMouseEventParams, DispatchMouseEventType,
-    InsertTextParams,
+    InsertTextParams, MouseButton,
 };
-use chromiumoxide::layout::Point;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -22,7 +21,30 @@ impl BrowserSurfaces {
             .get_mut(key)
             .context("browser surface is not active")?;
         match command.get("t").and_then(Value::as_str).unwrap_or("") {
+            "ping" => return Ok(()),
+            "navigate" => {
+                let url = command
+                    .get("url")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim();
+                if url.is_empty() {
+                    bail!("browser navigate command requires url");
+                }
+                super::validate_browser_surface_url(url)?;
+                super::navigation::goto_dom_content_loaded(&session.page, url).await?;
+            }
             "click" => {
+                let (button, buttons) = match command
+                    .get("button")
+                    .and_then(Value::as_str)
+                    .unwrap_or("left")
+                {
+                    "left" => (MouseButton::Left, 1),
+                    "middle" => (MouseButton::Middle, 4),
+                    "right" => (MouseButton::Right, 2),
+                    value => bail!("unsupported browser mouse button: {value}"),
+                };
                 let existing_pages = session
                     .browser
                     .pages()
@@ -32,11 +54,24 @@ impl BrowserSurfaces {
                     .collect::<HashSet<_>>();
                 let x = number(command, "x");
                 let y = number(command, "y");
-                let retarget_script = format!(
-                    "(() => {{ const node = document.elementFromPoint({x}, {y}); const link = node?.closest?.('a[href]'); if (link?.target === '_blank') link.target = '_self'; }})()"
-                );
-                session.page.evaluate(retarget_script).await?;
-                session.page.click(Point::new(x, y)).await?;
+                if button == MouseButton::Left {
+                    let retarget_script = format!(
+                        "(() => {{ const node = document.elementFromPoint({x}, {y}); const link = node?.closest?.('a[href]'); if (link?.target === '_blank') link.target = '_self'; }})()"
+                    );
+                    session.page.evaluate(retarget_script).await?;
+                }
+                let mut pressed =
+                    DispatchMouseEventParams::new(DispatchMouseEventType::MousePressed, x, y);
+                pressed.button = Some(button.clone());
+                pressed.buttons = Some(buttons);
+                pressed.click_count = Some(1);
+                session.page.execute(pressed).await?;
+                let mut released =
+                    DispatchMouseEventParams::new(DispatchMouseEventType::MouseReleased, x, y);
+                released.button = Some(button);
+                released.buttons = Some(0);
+                released.click_count = Some(1);
+                session.page.execute(released).await?;
                 tokio::time::sleep(std::time::Duration::from_millis(150)).await;
                 if let Some(page) = session
                     .browser
@@ -75,7 +110,7 @@ impl BrowserSurfaces {
                 session.page.execute(wheel).await?;
             }
             "back" => {
-                session.page.evaluate("history.back()").await?;
+                super::navigation::go_back_dom_content_loaded(&session.page).await?;
             }
             "refresh" => {
                 session.page.reload().await?;
@@ -105,6 +140,12 @@ impl BrowserSurfaces {
             }
             _ => bail!("unsupported browser command"),
         }
+        session.url = session
+            .page
+            .url()
+            .await?
+            .unwrap_or_else(|| session.url.clone());
+        session.updated_at = utc_now();
         Ok(())
     }
 }

@@ -227,6 +227,8 @@ class ClaudeAppSession:
         self._tool_activity_context: Dict[str, Dict[str, Any]] = {}
         self._active_control_kind = ""
         self._active_payload: Optional[_PendingTurn] = None
+        self._active_turn_announced = True
+        self._pending_turn_events: list[Dict[str, Any]] = []
 
     # ── state persistence ───────────────────────────────────────────────
 
@@ -722,6 +724,11 @@ class ClaudeAppSession:
             self._session_state.current_task_id = None
             self._session_state.updated_at = utc_now_iso()
             self._active_control_kind = ""
+            self._active_turn_id = ""
+            self._active_event_id = ""
+            self._active_payload = None
+            self._active_turn_announced = True
+            self._pending_turn_events.clear()
             self._resumed_provider_session_id = ""
         if was_running:
             exit_code = proc.poll() if proc else None
@@ -1004,6 +1011,8 @@ class ClaudeAppSession:
             with self._lock:
                 self._active_control_kind = str(payload.control_kind or "").strip().lower()
                 self._active_payload = payload
+                self._active_turn_announced = False
+                self._pending_turn_events.clear()
 
             # Reset streaming state for new turn
             self._last_text_snapshot = ""
@@ -1036,9 +1045,12 @@ class ClaudeAppSession:
                 logger.warning("claude stdin write failed: group=%s actor=%s", self.group_id, self.actor_id)
                 with self._lock:
                     self._session_state.status = "idle"
+                    self._active_turn_id = ""
                     self._active_event_id = ""
                     self._active_control_kind = ""
                     self._active_payload = None
+                    self._active_turn_announced = True
+                    self._pending_turn_events.clear()
                     self._session_state.current_task_id = None
                     self._session_state.updated_at = utc_now_iso()
                 self._persist_state()
@@ -1078,12 +1090,23 @@ class ClaudeAppSession:
                     },
                 )
 
+            with self._lock:
+                self._active_turn_announced = True
+                pending_events = list(self._pending_turn_events)
+                self._pending_turn_events.clear()
+            for pending_event in pending_events:
+                self._handle_event(pending_event)
+
             # Wait for turn completion (signaled from _handle_event)
             self._turn_done.wait()
 
     # ── event handling ──────────────────────────────────────────────────
 
     def _handle_event(self, event: Dict[str, Any]) -> None:
+        with self._lock:
+            if self._active_payload is not None and not self._active_turn_announced:
+                self._pending_turn_events.append(dict(event))
+                return
         event_type = str(event.get("type") or "").strip()
         if not event_type:
             return
@@ -1347,6 +1370,8 @@ class ClaudeAppSession:
             self._active_event_id = ""
             self._active_control_kind = ""
             self._active_payload = None
+            self._active_turn_announced = True
+            self._pending_turn_events.clear()
             self._session_state.status = "idle"
             self._session_state.current_task_id = None
             self._session_state.updated_at = now
@@ -1631,6 +1656,8 @@ class ClaudeAppSession:
             self._active_event_id = ""
             self._active_control_kind = ""
             self._active_payload = None
+            self._active_turn_announced = True
+            self._pending_turn_events.clear()
             self._session_state.status = "idle"
             self._session_state.current_task_id = None
             self._session_state.updated_at = now

@@ -71,46 +71,49 @@ fn save_bindings(home: &HomeLayout, group_id: &str, state: &Value) -> Result<(),
     let path = space_path(home, "bindings.json");
     with_exclusive_lock(&path.with_extension("json.lock"), || {
         let mut doc = read_doc_io(&path)?;
-        doc["v"] = json!(2);
-        doc.as_object_mut()
-            .expect("bindings document is an object")
-            .entry("created_at")
-            .or_insert_with(|| json!(utc_now()));
-        doc["updated_at"] = json!(utc_now());
-        let bindings = object_field(&mut doc, "bindings");
-        let group = bindings.entry(group_id).or_insert_with(|| json!({}));
-        let mut lanes = state["bindings"].clone();
-        for lane in ["memory", "work"] {
-            let binding = object(&mut lanes)
-                .entry(lane)
-                .or_insert_with(|| default_binding(group_id, "notebooklm", lane));
-            let binding = object(binding);
-            binding.remove("id");
-            binding.insert("group_id".into(), json!(group_id));
-            binding.insert("provider".into(), json!("notebooklm"));
-            binding.insert("lane".into(), json!(lane));
-            binding
-                .entry("remote_space_id")
-                .or_insert_with(|| json!(""));
-            binding.entry("bound_by").or_insert_with(|| json!(""));
-            binding
-                .entry("bound_at")
-                .or_insert_with(|| json!(utc_now()));
-            let status = if binding["remote_space_id"]
-                .as_str()
-                .unwrap_or_default()
-                .is_empty()
-            {
-                "unbound"
-            } else {
-                "bound"
-            };
-            binding.entry("status").or_insert_with(|| json!(status));
-        }
-        object(group).insert("notebooklm".into(), lanes);
+        put_group_bindings(&mut doc, group_id, state["bindings"].clone());
         write_json(&path, &doc)
     })
     .map_err(OpError::io)
+}
+
+fn put_group_bindings(doc: &mut Value, group_id: &str, mut lanes: Value) {
+    doc["v"] = json!(2);
+    doc.as_object_mut()
+        .expect("bindings document is an object")
+        .entry("created_at")
+        .or_insert_with(|| json!(utc_now()));
+    doc["updated_at"] = json!(utc_now());
+    for lane in ["memory", "work"] {
+        let binding = object(&mut lanes)
+            .entry(lane)
+            .or_insert_with(|| default_binding(group_id, "notebooklm", lane));
+        let binding = object(binding);
+        binding.remove("id");
+        binding.insert("group_id".into(), json!(group_id));
+        binding.insert("provider".into(), json!("notebooklm"));
+        binding.insert("lane".into(), json!(lane));
+        binding
+            .entry("remote_space_id")
+            .or_insert_with(|| json!(""));
+        binding.entry("bound_by").or_insert_with(|| json!(""));
+        binding
+            .entry("bound_at")
+            .or_insert_with(|| json!(utc_now()));
+        let status = if binding["remote_space_id"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+        {
+            "unbound"
+        } else {
+            "bound"
+        };
+        binding.entry("status").or_insert_with(|| json!(status));
+    }
+    let bindings = object_field(doc, "bindings");
+    let group = bindings.entry(group_id).or_insert_with(|| json!({}));
+    object(group).insert("notebooklm".into(), lanes);
 }
 
 fn save_jobs(home: &HomeLayout, group_id: &str, state: &Value) -> Result<(), OpError> {
@@ -192,23 +195,88 @@ fn migrate_legacy_group(home: &HomeLayout, group_id: &str) -> Result<(), OpError
         .join("groups")
         .join(group_id)
         .join("state/.rust-space-migrated-v1");
-    if marker.exists() {
-        return Ok(());
-    }
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let group = store.load(group_id).map_err(OpError::io)?;
-    if let Some(legacy) = group
+    let legacy = group
         .extra
         .get("group_space")
         .filter(|value| value.is_object())
+        .cloned();
+    if let Some(legacy) = legacy.as_ref()
+        && !marker.exists()
     {
-        save_bindings(home, group_id, legacy)?;
-        save_jobs(home, group_id, legacy)?;
+        merge_legacy_bindings(home, group_id, legacy)?;
+        merge_legacy_jobs(home, group_id, legacy)?;
     }
-    if let Some(parent) = marker.parent() {
-        std::fs::create_dir_all(parent).map_err(OpError::io)?;
+    if legacy.is_some() {
+        store
+            .mutate(group_id, |group| {
+                group.extra.remove("group_space");
+                Ok(())
+            })
+            .map_err(OpError::io)?;
     }
-    std::fs::write(marker, b"migrated from group.yaml group_space\n").map_err(OpError::io)
+    if !marker.exists() {
+        if let Some(parent) = marker.parent() {
+            std::fs::create_dir_all(parent).map_err(OpError::io)?;
+        }
+        std::fs::write(marker, b"migrated from group.yaml group_space\n").map_err(OpError::io)?;
+    }
+    Ok(())
+}
+
+fn merge_legacy_bindings(home: &HomeLayout, group_id: &str, legacy: &Value) -> Result<(), OpError> {
+    let path = space_path(home, "bindings.json");
+    with_exclusive_lock(&path.with_extension("json.lock"), || {
+        let mut doc = read_doc_io(&path)?;
+        let canonical_exists = doc
+            .get("bindings")
+            .and_then(|bindings| bindings.get(group_id))
+            .and_then(|group| group.get("notebooklm"))
+            .is_some_and(Value::is_object);
+        if !canonical_exists {
+            put_group_bindings(&mut doc, group_id, legacy["bindings"].clone());
+            write_json(&path, &doc)?;
+        }
+        Ok(())
+    })
+    .map_err(OpError::io)
+}
+
+fn merge_legacy_jobs(home: &HomeLayout, group_id: &str, legacy: &Value) -> Result<(), OpError> {
+    let path = space_path(home, "jobs.json");
+    with_exclusive_lock(&path.with_extension("json.lock"), || {
+        let mut doc = read_doc_io(&path)?;
+        let jobs = object_field(&mut doc, "jobs");
+        let mut changed = false;
+        for job in legacy["jobs"].as_array().into_iter().flatten() {
+            let id = job["job_id"]
+                .as_str()
+                .or_else(|| job["id"].as_str())
+                .unwrap_or_default();
+            if id.is_empty() || jobs.contains_key(id) {
+                continue;
+            }
+            let mut job = job.clone();
+            object(&mut job).remove("id");
+            job["job_id"] = json!(id);
+            job["group_id"] = json!(group_id);
+            normalize_job(&mut job);
+            jobs.insert(id.into(), job);
+            changed = true;
+        }
+        if changed {
+            doc["v"] = json!(2);
+            doc.as_object_mut()
+                .expect("jobs document is an object")
+                .entry("created_at")
+                .or_insert_with(|| json!(utc_now()));
+            doc["updated_at"] = json!(utc_now());
+            write_json(&path, &doc)?;
+        }
+        Ok(())
+    })
+    .map_err(OpError::io)
 }
 
 fn migrate_legacy_providers(home: &HomeLayout) -> Result<(), OpError> {

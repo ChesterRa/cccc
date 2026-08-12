@@ -26,6 +26,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
+from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 from ...util.process import terminate_pid
@@ -48,6 +49,14 @@ _VNC_START_TIMEOUT_SECONDS = 3.0
 _XVFB_FIRST_DISPLAY = 99
 _XVFB_LAST_DISPLAY = 199
 _XVFB_START_TIMEOUT_SECONDS = 5.0
+
+
+def validate_projected_browser_url(value: object) -> str:
+    url = str(value or "").strip()
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("browser surface URL must use http or https")
+    return url
 
 
 def ensure_dir(path: Path, mode: int = 0o700) -> None:
@@ -307,6 +316,15 @@ def _system_browser_binaries(channel: str) -> list[str]:
             _append("microsoft-edge")
             _append("microsoft-edge-stable")
     return out
+
+
+def system_browser_path() -> Path | None:
+    """Return the first system browser accepted by Python projected auth surfaces."""
+    for channel in ("chrome", "msedge"):
+        binaries = _system_browser_binaries(channel)
+        if binaries:
+            return Path(binaries[0])
+    return None
 
 
 def _pick_free_port() -> int:
@@ -913,6 +931,7 @@ def launch_projected_browser_runtime(
     existing_browser_metadata: dict[str, Any] | None = None,
     startup_metadata_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> PlaywrightProjectedRuntime:
+    url = validate_projected_browser_url(url)
     sync_playwright = ensure_sync_playwright()
     playwright_cm = sync_playwright()
     pw = playwright_cm.__enter__()
@@ -1494,7 +1513,7 @@ class ProjectedBrowserSession:
         if kind == "ping":
             return {"ok": True}
         if kind == "navigate":
-            runtime.navigate(url=str(payload.get("url") or "").strip())
+            runtime.navigate(url=validate_projected_browser_url(payload.get("url")))
         elif kind == "back":
             runtime.back()
         elif kind == "refresh":
@@ -2030,6 +2049,7 @@ class ProjectedBrowserSessionManager:
         existing_browser_metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_key = str(key or "").strip()
+        url = validate_projected_browser_url(url)
         replacement = ProjectedBrowserSession(
             session_key=normalized_key,
             profile_dir=profile_dir,
@@ -2083,6 +2103,17 @@ class ProjectedBrowserSessionManager:
             return {"closed": False, "browser_surface": self.info(key=normalized_key)}
         session.close()
         return {"closed": True, "browser_surface": self.info(key=normalized_key)}
+
+    def close_prefix(self, *, prefix: str) -> int:
+        normalized_prefix = str(prefix or "")
+        if not normalized_prefix:
+            return 0
+        with self._lock:
+            keys = [key for key in self._sessions if key.startswith(normalized_prefix)]
+            sessions = [self._sessions.pop(key) for key in keys]
+        for session in sessions:
+            session.close()
+        return len(sessions)
 
     def close_all(self) -> None:
         with self._lock:

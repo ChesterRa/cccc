@@ -98,6 +98,25 @@ Claude Code and Codex CLI support both PTY and headless operation. Most other CL
 
 Cline is currently integrated as a fresh-start PTY runtime. CCCC does not persist or reuse Cline's `--id` session identifier, so stopping and starting a Cline actor opens a new Cline TUI session.
 
+### PTY delivery and recovery
+
+A successful `send` means that CCCC durably appended the event and scheduled
+best-effort runtime delivery; it does not prove that the provider application
+consumed the text. For PTY actors, CCCC submits messages in ledger order and
+advances the delivery cursor only after a live PTY accepts the write. An
+already-exited session is rejected before that cursor advances. A process can
+still die after the operating system accepts the bytes but before completion is
+recorded, so recovery is deliberately at-least-once rather than provider-level
+exactly-once.
+
+Failed work remains unread and stays ahead of later work. Actor/group
+activation and daemon restore rebuild pending PTY delivery from the canonical
+ledger and inbox rather than an engine-private queue. Recovery uses a bounded
+256-event memory window and refills it after completed prefixes, so a large
+backlog remains ordered without creating an unbounded queue. Switching engines
+does not transfer a live PTY process, its input mode, preamble memory, or hot
+terminal ring; restart and delivery recovery use the shared durable state.
+
 ### Codex and Claude PTY Hook State
 
 The Rust and Python daemons do not parse PTY output to infer activity for eligible provider sessions. Codex PTY activity comes from lifecycle hooks injected only into processes that CCCC starts: prompt and tool events report `working`, permission requests report `waiting`, and verified stop/session events report `idle` or `stopped`. CCCC registers only events in the current [Codex Hooks contract](https://developers.openai.com/codex/hooks); non-zero tool commands still complete through `PostToolUse`, and Codex does not currently expose separate `PostToolUseFailure` or `StopFailure` events. Every injected hook process carries a per-launch fence, and Codex turn-scoped events must identify the active provider turn or its bound tool operation. Tool operations are observed serially: a second operation cannot start before the active one closes, and operation-specific events must carry the exact active operation ID. Late events from an older launch, session, turn, or operation cannot overwrite current state.
@@ -125,6 +144,12 @@ or `cancelled`, or an explicit provider error, is persisted as
 cursor, so a provider failure is not silently retried, but it does release the
 session lane for later queued turns.
 
+Daemon-managed Codex runs with non-interactive approval policy. If app-server
+nevertheless sends a provider-initiated approval, user-input, elicitation, or
+tool request, CCCC returns an explicit JSON-RPC unsupported-method error instead
+of hanging the turn or approving it implicitly. Use the PTY runner when the
+provider workflow requires interactive approval or input.
+
 Daemon-managed Codex headless actors persist the app-server thread in the
 shared runtime-session state. An ordinary actor stop/start, including a switch
 between the Python and experimental Rust backends, resumes that exact thread
@@ -141,15 +166,22 @@ workspace, stable command, model, and saved-state status. Wrapper commands and
 commands that already contain Claude session-control flags remain user-owned
 and are not rewritten. `actor_new_session` clears the saved session, and
 `CCCC_RUNTIME_RESUME=0` disables reuse. If the provider rejects a saved session
-during startup, CCCC reports that start as failed and marks the id ineligible;
-the next explicit start creates a fresh session rather than retrying the dead
-id. CCCC does not hide that failure behind an automatic retry. A delayed
-rejection after successful initialization remains a separate integration
-boundary.
+during startup, CCCC reports that start as failed and marks the id ineligible.
+If a process survives startup but the first streamed result rejects that same
+resume, CCCC records `headless.session.resume_failed`, marks the id ineligible,
+and stops that provider session. The next start creates a fresh session rather
+than retrying the dead id; CCCC does not hide either failure behind an automatic
+retry.
 
 `web_model` keeps the pull-consumer contract: an external executor calls `cccc_runtime_wait_next_turn` and `cccc_runtime_complete_turn`. The experimental Rust backend also exposes this generic pull contract to programmatically configured `custom+headless` actors; the stable Python backend and standard Web actor editor do not currently expose that combination. These actors do not claim to have a local provider process.
 
 CCCC also preserves current Grok Build PTY sessions with its native `--session-id` and `--resume` flags. A fresh actor launch receives a CCCC-owned UUID; later starts resume that exact actor session rather than using Grok's directory-wide `--continue` selection. Commands that already contain Grok session-control flags remain user-owned and are not rewritten. Set `CCCC_RUNTIME_RESUME=0` to disable provider-session reuse globally.
+
+For a running Antigravity PTY actor, `actor_new_session` submits the runtime's
+native `/clear` command. This creates a new provider conversation while keeping
+the authenticated process, project, and terminal sandbox alive. A stopped
+Antigravity actor starts normally. Ordinary stop/start behavior remains
+process-based and does not claim provider-session resume semantics.
 
 ## ChatGPT Web Model
 

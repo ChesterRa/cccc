@@ -1,209 +1,188 @@
 use super::*;
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 pub(super) fn handle(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let lane = lane(request)?;
     let action = string_arg(request, "action").unwrap_or_else(|| "run".into());
+    let provider = provider(request);
+    require_notebooklm(&provider)?;
+
     if action == "status" {
-        let value = load(home, &group_id)?;
-        return object(json!({
-            "group_id":group_id,"provider":provider(request),"lane":lane,
-            "sync":value.get("sync").and_then(|sync|sync.get(&lane)).cloned()
-                .unwrap_or_else(||json!({"status":"never","converged":false}))
-        }));
+        return status(home, &group_id, &provider, &lane);
     }
     if action != "run" {
         return Err(OpError::new("invalid_args", "action must be status or run"));
     }
-    let provider = provider(request);
-    require_notebooklm(&provider)?;
-    let value = load(home, &group_id)?;
-    let remote_space_id = binding_id(&value, &lane)?;
-    let root_path = sync_root(home, &group_id, &lane)?;
-    let files = collect_files(&root_path, lane == "memory")?;
-    let previous = value
-        .get("sync")
-        .and_then(|sync| sync.get(&lane))
-        .and_then(|sync| sync.get("items"))
-        .and_then(Value::as_object)
-        .cloned()
-        .unwrap_or_default();
-    let mut next = Map::new();
-    let mut added = 0_u64;
-    let mut updated = 0_u64;
-    let mut unchanged = 0_u64;
-    for path in files {
-        let file_size = std::fs::metadata(&path).map_err(OpError::io)?.len();
-        if file_size > MAX_LOCAL_FILE_SIZE_BYTES {
-            return Err(OpError::new(
-                "space_source_file_too_large",
-                format!(
-                    "sync source exceeds the {} byte limit: {}",
-                    MAX_LOCAL_FILE_SIZE_BYTES,
-                    path.display()
-                ),
-            ));
-        }
-        let relative = path
-            .strip_prefix(&root_path)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        let content = std::fs::read_to_string(&path).map_err(OpError::io)?;
-        let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
-        let old = previous.get(&relative);
-        if old.and_then(|item| item["content_hash"].as_str()) == Some(hash.as_str()) {
-            next.insert(relative, old.cloned().unwrap_or(Value::Null));
-            unchanged += 1;
-            continue;
-        }
-        let source = notebooklm::add_text(home, &remote_space_id, &relative, &content)?;
-        if let Some(source_id) = old.and_then(|item| item["source_id"].as_str()) {
-            // Publish the replacement before removing the previous source.
-            // A failed upload must never erase the last good remote copy.
-            notebooklm::delete_source(home, &remote_space_id, source_id)?;
-            updated += 1;
-        } else {
-            added += 1;
-        }
-        next.insert(relative, json!({
-            "source_id":source.id,"content_hash":hash,"bytes":content.len(),"updated_at":utc_now()
-        }));
-    }
-    let removed_paths = previous
-        .keys()
-        .filter(|path| !next.contains_key(*path))
-        .cloned()
-        .collect::<Vec<_>>();
-    for path in &removed_paths {
-        if let Some(source_id) = previous[path]["source_id"].as_str() {
-            notebooklm::delete_source(home, &remote_space_id, source_id)?;
-        }
-    }
-    let result = json!({
-        "status":"succeeded","converged":true,"provider":provider,"lane":lane,
-        "remote_space_id":remote_space_id,"root":root_path,"items":next,
-        "added":added,"updated":updated,"removed":removed_paths.len(),"unchanged":unchanged,
-        "last_sync_at":utc_now()
-    });
-    update(home, &group_id, |value| {
-        let root = root(value);
-        let sync = root.entry("sync").or_insert_with(|| json!({}));
-        if !sync.is_object() {
-            *sync = json!({});
-        }
-        sync.as_object_mut()
-            .expect("sync initialized")
-            .insert(lane.clone(), result.clone());
-        Ok(())
-    })?;
-    object(
-        json!({"group_id":group_id,"provider":provider,"lane":lane,"sync":result,"sync_result":{"ok":true,"converged":true}}),
-    )
+    Err(OpError::new(
+        "capability_unavailable",
+        "Native Rust Group Space sync is not available; use the Python engine for work or memory sync",
+    ))
 }
 
-fn sync_root(home: &HomeLayout, group_id: &str, lane: &str) -> Result<PathBuf, OpError> {
-    if lane == "memory" {
-        return cccc_core::memory::MemoryStore::new(home.clone())
-            .layout(group_id, None)
-            .map(|layout| layout.daily_dir)
-            .map_err(OpError::io);
+fn status(home: &HomeLayout, group_id: &str, provider: &str, lane: &str) -> OpResult {
+    let state = load(home, group_id)?;
+    if lane == "work" {
+        let sync = work_status_value(home, group_id, &state)?;
+        return object(json!({"group_id":group_id,"provider":provider,"lane":"work","sync":sync}));
     }
+    let (sync, summary) = memory_status_values(home, group_id, provider, &state)?;
+    object(json!({
+        "group_id":group_id,"provider":provider,"lane":"memory",
+        "sync":sync,"summary":summary
+    }))
+}
+
+pub(super) fn work_status_value(
+    home: &HomeLayout,
+    group_id: &str,
+    state: &Value,
+) -> Result<Value, OpError> {
+    let Some(space_root) = work_space_root(home, group_id)? else {
+        return Ok(json!({"available":false,"reason":"no_local_scope"}));
+    };
+    let mut sync = Value::Object(read_json_object(
+        &space_root.join(".space-sync-state.json"),
+    )?);
+    sync["available"] = json!(true);
+    sync["space_root"] = json!(space_root);
+    let binding = &state["bindings"]["work"];
+    let bound_remote_id = binding["remote_space_id"].as_str().unwrap_or_default();
+    let binding_active = binding["status"].as_str() == Some("bound") && !bound_remote_id.is_empty();
+    let stored_remote_id = sync["remote_space_id"].as_str().unwrap_or_default();
+    if !binding_active {
+        sync = neutral_work_sync(&space_root, "", "work_lane_unbound");
+    } else if stored_remote_id != bound_remote_id {
+        sync = neutral_work_sync(
+            &space_root,
+            bound_remote_id,
+            if stored_remote_id.is_empty() {
+                "sync_state_not_ready"
+            } else {
+                "binding_remote_mismatch"
+            },
+        );
+    }
+    Ok(sync)
+}
+
+pub(super) fn memory_status_values(
+    home: &HomeLayout,
+    group_id: &str,
+    provider: &str,
+    state: &Value,
+) -> Result<(Value, Value), OpError> {
+    let manifest_path = home
+        .root()
+        .join("groups")
+        .join(group_id)
+        .join("state/memory/notebooklm_sync.json");
+    let binding = &state["bindings"]["memory"];
+    let bound_remote_id = binding["remote_space_id"].as_str().unwrap_or_default();
+    let mut sync = Value::Object(read_json_object(&manifest_path)?);
+    let stored_remote_id = sync["remote_space_id"].as_str().unwrap_or_default();
+    if bound_remote_id.is_empty()
+        || (!stored_remote_id.is_empty() && stored_remote_id != bound_remote_id)
+    {
+        sync = json!({});
+    }
+    sync["v"] = json!(1);
+    sync["provider"] = json!(provider);
+    sync["lane"] = json!("memory");
+    sync["group_id"] = json!(group_id);
+    sync["remote_space_id"] = json!(bound_remote_id);
+    sync["manifest_path"] = json!(manifest_path);
+    if !sync["files"].is_object() {
+        sync["files"] = json!({});
+    }
+    let summary = memory_summary(&sync, &manifest_path);
+    Ok((sync, summary))
+}
+
+fn work_space_root(home: &HomeLayout, group_id: &str) -> Result<Option<PathBuf>, OpError> {
     let group = GroupStore::new(home.clone())
         .and_then(|store| store.load(group_id))
         .map_err(OpError::io)?;
-    let scope = group
+    Ok(group
         .scopes
         .iter()
         .find(|scope| scope.scope_key == group.active_scope_key)
         .or_else(|| group.scopes.first())
-        .ok_or_else(|| OpError::new("scope_required", "work sync requires an active scope"))?;
-    let root = Path::new(&scope.url).join("space");
-    std::fs::create_dir_all(&root).map_err(OpError::io)?;
-    Ok(root)
+        .map(|scope| Path::new(&scope.url).join("space")))
 }
 
-fn collect_files(root: &Path, historical_daily_only: bool) -> Result<Vec<PathBuf>, OpError> {
-    let mut output = Vec::new();
-    collect(root, root, &mut output)?;
-    if historical_daily_only {
-        let today = utc_now().get(..10).unwrap_or_default().to_owned();
-        output.retain(|path| {
-            let historical = path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .and_then(|value| value.get(..10))
-                .is_some_and(|date| date < today.as_str());
-            historical
-                && std::fs::read_to_string(path).is_ok_and(|content| has_daily_content(&content))
-        });
+fn read_json_object(path: &Path) -> Result<Map<String, Value>, OpError> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Map::new()),
+        Err(error) => return Err(OpError::io(error)),
+    };
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(Value::Object(value)) => Ok(value),
+        Ok(_) => Err(OpError::new(
+            "invalid_state",
+            format!("{} must contain a JSON object", path.display()),
+        )),
+        Err(error) => Err(OpError::new(
+            "invalid_state",
+            format!("failed to parse {}: {error}", path.display()),
+        )),
     }
-    output.sort();
-    Ok(output)
 }
 
-fn has_daily_content(content: &str) -> bool {
-    content
-        .lines()
-        .map(str::trim)
-        .any(|line| !line.is_empty() && !line.starts_with('#'))
+fn neutral_work_sync(space_root: &Path, remote_space_id: &str, reason: &str) -> Value {
+    json!({
+        "available":true,"reason":reason,"space_root":space_root,
+        "remote_space_id":remote_space_id,"last_run_at":"","converged":false,
+        "unsynced_count":0,"failed_count":0,"failed_items":[],"uploaded":0,
+        "updated":0,"deleted":0,"reused":0,"remote_sources":0,
+        "materialized_sources":0,"remote_artifacts":0,"downloaded_artifacts":0,
+        "pruned_artifacts":0,"last_error":"","failure_signature":"",
+        "last_fingerprint":{},"errors":[]
+    })
 }
 
-fn collect(root: &Path, path: &Path, output: &mut Vec<PathBuf>) -> Result<(), OpError> {
-    for entry in std::fs::read_dir(path).map_err(OpError::io)? {
-        let entry = entry.map_err(OpError::io)?;
-        let path = entry.path();
-        let file_type = entry.file_type().map_err(OpError::io)?;
-        if file_type.is_symlink() {
-            continue;
+fn memory_summary(sync: &Value, manifest_path: &Path) -> Value {
+    let mut pending = 0_u64;
+    let mut running = 0_u64;
+    let mut failed = 0_u64;
+    let mut blocked = 0_u64;
+    let mut eligible = 0_u64;
+    let mut synced = 0_u64;
+    let mut empty = 0_u64;
+    let mut last_eligible = "";
+    let mut last_synced = "";
+    for (date, item) in sync["files"].as_object().into_iter().flatten() {
+        let state = item["state"].as_str().unwrap_or_default();
+        match state {
+            "pending" => pending += 1,
+            "running" => running += 1,
+            "failed" => failed += 1,
+            "blocked" => blocked += 1,
+            "skipped_empty" => empty += 1,
+            _ => {}
         }
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with('.') {
-            continue;
-        }
-        let excluded_top_level = entry.path().parent().is_some_and(|parent| parent == root)
-            && matches!(
-                name.as_ref(),
-                "artifacts" | "remote_sources" | "remote-sources"
-            );
-        if excluded_top_level {
-            continue;
-        }
-        if file_type.is_dir() {
-            collect(root, &path, output)?;
-        } else if file_type.is_file()
-            && path
-                .extension()
-                .and_then(|value| value.to_str())
-                .is_some_and(|value| matches!(value.to_ascii_lowercase().as_str(), "md" | "txt"))
-        {
-            output.push(path);
+        if item["entry_count"].as_u64().unwrap_or(0) > 0 {
+            eligible += 1;
+            if date.as_str() > last_eligible {
+                last_eligible = date;
+            }
+            if state == "succeeded" {
+                synced += 1;
+                if date.as_str() > last_synced {
+                    last_synced = date;
+                }
+            }
         }
     }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::collect_files;
-    use tempfile::tempdir;
-
-    #[test]
-    fn work_sync_skips_hidden_generated_and_symlinked_content() {
-        let temp = tempdir().expect("temp");
-        let root = temp.path().join("space");
-        std::fs::create_dir_all(root.join("artifacts")).expect("artifacts");
-        std::fs::create_dir_all(root.join(".sync")).expect("hidden");
-        std::fs::write(root.join("keep.md"), "keep").expect("keep");
-        std::fs::write(root.join("artifacts/report.md"), "generated").expect("generated");
-        std::fs::write(root.join(".sync/state.txt"), "state").expect("state");
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(temp.path(), root.join("outside")).expect("symlink");
-
-        let files = collect_files(&root, false).expect("files");
-        assert_eq!(files, vec![root.join("keep.md")]);
-    }
+    json!({
+        "lane":"memory","manifest_path":manifest_path,
+        "last_scan_at":sync.get("last_scan_at").cloned().unwrap_or(Value::Null),
+        "last_success_at":sync.get("last_success_at").cloned().unwrap_or(Value::Null),
+        "pending_files":pending,"running_files":running,"failed_files":failed,
+        "blocked_files":blocked,"eligible_daily_files":eligible,
+        "synced_daily_files":synced,"empty_daily_skipped":empty,
+        "last_eligible_daily_date":if last_eligible.is_empty(){Value::Null}else{json!(last_eligible)},
+        "last_synced_daily_date":if last_synced.is_empty(){Value::Null}else{json!(last_synced)}
+    })
 }

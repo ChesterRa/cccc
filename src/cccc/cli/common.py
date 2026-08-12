@@ -214,6 +214,28 @@ def _terminate_same_home_daemons(home: Path, *, extra_pids: list[int] | None = N
     return True
 
 
+def _daemon_lock_released(home: Path) -> bool:
+    try:
+        probe = acquire_lockfile(home / "daemon" / "ccccd.lock", blocking=False)
+    except LockUnavailableError:
+        return False
+    except Exception:
+        return False
+    release_lockfile(probe)
+    return True
+
+
+def _wait_for_daemon_shutdown(home: Path, *, pid: int, timeout_s: float = 15.0) -> bool:
+    deadline = time.monotonic() + max(0.0, float(timeout_s))
+    while True:
+        process_exited = pid <= 0 or not pid_is_alive(pid)
+        if process_exited and _daemon_lock_released(home):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def _stop_existing_web_runtime(home: Path) -> bool:
     runtime = read_web_runtime_state(home)
     candidate_pids = web_runtime_pid_candidates(runtime)
@@ -255,6 +277,8 @@ def _stop_existing_daemon(home: Path) -> bool:
                 return False
             if call_daemon({"op": "ping"}, timeout_s=0.5).get("ok"):
                 return False
+        elif not _wait_for_daemon_shutdown(home, pid=daemon_pid):
+            return False
     else:
         pid_path = home / "daemon" / "ccccd.pid"
         try:

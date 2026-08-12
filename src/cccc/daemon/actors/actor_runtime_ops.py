@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import inspect
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..mcp_install import prepare_runtime_mcp_env
+from ..runner_state_ops import headless_state_running, remove_headless_state, remove_pty_state_if_pid
 from ..runtime_session_ops import start_pty_actor_with_runtime_resume
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
@@ -76,6 +78,55 @@ def model_from_runtime_command(command: List[str]) -> str:
         if item.startswith("--model="):
             return item.split("=", 1)[1].strip()
     return ""
+
+
+def actor_runtime_running(
+    group_id: str,
+    actor: Dict[str, Any],
+    *,
+    effective_runner_kind: Callable[[str], str],
+) -> bool:
+    """Return process-local runtime truth for one actor."""
+    actor_id = str(actor.get("id") or "").strip()
+    if not actor_id:
+        return False
+    runtime = str(actor.get("runtime") or "codex").strip().lower() or "codex"
+    runner_effective = effective_runner_kind(str(actor.get("runner") or "pty"))
+    if runtime == "web_model" and runner_effective == "headless":
+        return bool(headless_state_running(group_id, actor_id))
+    if actor_uses_codex_app_server_state(actor):
+        return bool(codex_app_supervisor.actor_running(group_id, actor_id))
+    if runtime == "codex" and runner_effective == "headless":
+        return bool(codex_app_supervisor.actor_running(group_id, actor_id))
+    if runtime == "claude" and runner_effective == "headless":
+        return bool(claude_app_supervisor.actor_running(group_id, actor_id))
+    if runner_effective == "headless":
+        return bool(headless_runner.SUPERVISOR.actor_running(group_id, actor_id))
+    return bool(pty_runner.SUPERVISOR.actor_running(group_id, actor_id))
+
+
+def stop_actor_runtime_handles(
+    group_id: str,
+    actor_id: str,
+    actor: Dict[str, Any],
+    *,
+    effective_runner_kind: Callable[[str], str],
+) -> None:
+    """Stop the runtime selected by the actor document and retire hot state."""
+    runtime = str(actor.get("runtime") or "codex").strip().lower() or "codex"
+    runner_effective = effective_runner_kind(str(actor.get("runner") or "pty"))
+    if actor_uses_codex_app_server_state(actor):
+        codex_app_supervisor.stop_actor(group_id=group_id, actor_id=actor_id)
+    elif runtime == "codex" and runner_effective == "headless":
+        codex_app_supervisor.stop_actor(group_id=group_id, actor_id=actor_id)
+    elif runtime == "claude" and runner_effective == "headless":
+        claude_app_supervisor.stop_actor(group_id=group_id, actor_id=actor_id)
+    elif runner_effective == "headless":
+        headless_runner.SUPERVISOR.stop_actor(group_id=group_id, actor_id=actor_id)
+    else:
+        pty_runner.SUPERVISOR.stop_actor(group_id=group_id, actor_id=actor_id)
+    remove_pty_state_if_pid(group_id, actor_id, pid=0)
+    remove_headless_state(group_id, actor_id)
 
 
 def _coerce_string_env(raw: Any) -> Dict[str, str]:
@@ -272,6 +323,8 @@ def start_actor_process(
     supported_runtimes: tuple[str, ...],
     resolve_linked_actor_before_start: Optional[Callable[[Any, str], Dict[str, Any]]] = None,
     load_actor_private_env: Optional[Callable[[str, str], Dict[str, str]]] = None,
+    launch_only: bool = False,
+    launch_reason: str = "actor_start",
 ) -> Dict[str, Any]:
     try:
         launch_spec = resolve_actor_launch_spec(
@@ -301,6 +354,12 @@ def start_actor_process(
     cwd = launch_spec["cwd"]
     runtime = launch_spec["runtime"]
     runner = launch_spec["runner"]
+    before_group_doc = copy.deepcopy(group.doc)
+    runtime_was_running = actor_runtime_running(
+        group.group_id,
+        actor,
+        effective_runner_kind=effective_runner_kind,
+    )
 
     def _launch_env() -> Dict[str, str]:
         return prepare_runtime_mcp_env(runtime, inject_actor_context_env(effective_env, group.group_id, actor_id))
@@ -344,7 +403,7 @@ def start_actor_process(
                     schedule_web_model_chatgpt_browser_session_warmup(
                         group_id=group.group_id,
                         actor_id=actor_id,
-                        reason="actor_start",
+                        reason=str(launch_reason or "actor_start"),
                         retry_seconds=0.0,
                     )
                     schedule_web_model_browser_delivery(
@@ -411,7 +470,18 @@ def start_actor_process(
             except Exception:
                 pass
     except Exception as e:
-        return {"success": False, "error": f"failed to start session: {e}"}
+        rollback_error = ""
+        if not runtime_was_running:
+            try:
+                stop_actor_runtime_handles(
+                    group.group_id,
+                    actor_id,
+                    actor,
+                    effective_runner_kind=effective_runner_kind,
+                )
+            except Exception as rollback_exc:
+                rollback_error = f"; rollback failed: {rollback_exc}"
+        return {"success": False, "error": f"failed to start session: {e}{rollback_error}"}
 
     clear_preamble_sent(group, actor_id)
     throttle_reset_actor(group.group_id, actor_id)
@@ -420,25 +490,50 @@ def start_actor_process(
     except Exception:
         pass
 
+    if launch_only:
+        return {
+            "success": True,
+            "actor": actor,
+            "event": None,
+            "effective_runner": effective_runner,
+            "error": None,
+        }
+
     try:
         if str(group.doc.get("state") or "").strip() == "stopped":
             group.doc["state"] = "active"
         group.doc["running"] = True
         group.save()
-    except Exception:
-        pass
-
-    start_data: Dict[str, Any] = {"actor_id": actor_id, "runner": runner}
-    if effective_runner != runner:
-        start_data["runner_effective"] = effective_runner
-    start_event = append_event(
-        group.ledger_path,
-        kind="actor.start",
-        group_id=group.group_id,
-        scope_key="",
-        by=by,
-        data=start_data,
-    )
+        start_data: Dict[str, Any] = {"actor_id": actor_id, "runner": runner}
+        if effective_runner != runner:
+            start_data["runner_effective"] = effective_runner
+        start_event = append_event(
+            group.ledger_path,
+            kind="actor.start",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data=start_data,
+        )
+    except Exception as original:
+        rollback_failures: list[str] = []
+        if not runtime_was_running:
+            try:
+                stop_actor_runtime_handles(
+                    group.group_id,
+                    actor_id,
+                    actor,
+                    effective_runner_kind=effective_runner_kind,
+                )
+            except Exception as rollback_error:
+                rollback_failures.append(f"runtime: {rollback_error}")
+        try:
+            group.doc = copy.deepcopy(before_group_doc)
+            group.save()
+        except Exception as rollback_error:
+            rollback_failures.append(f"group: {rollback_error}")
+        suffix = f"; rollback failed: {'; '.join(rollback_failures)}" if rollback_failures else ""
+        return {"success": False, "error": f"failed to commit actor start: {original}{suffix}"}
 
     from ...kernel.events import publish_event
     publish_event("actor.start", {"group_id": group.group_id, "actor_id": actor_id})

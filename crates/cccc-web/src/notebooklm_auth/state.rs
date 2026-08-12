@@ -63,7 +63,6 @@ impl AuthFlowManager {
         {
             inner.state.finished_at = utc_now();
             inner.state.updated_at = inner.state.finished_at.clone();
-            inner.active = None;
         }
     }
 

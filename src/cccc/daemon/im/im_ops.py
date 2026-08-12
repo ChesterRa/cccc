@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.group import Group, load_group
+from ...kernel.im_state import im_state_lock
 from ...ports.im.auth import KeyManager, normalize_thread_id
 from ...ports.im.subscribers import SubscriberManager
 
@@ -38,19 +39,21 @@ def handle_im_bind_chat(args: Dict[str, Any]) -> DaemonResponse:
     if err is not None:
         return err
 
-    pending = km.get_pending_key(key)
-    if pending is None:
-        return _error("invalid_key", "key not found or expired")
+    state_dir = group.path / "state"
+    with im_state_lock(state_dir):
+        pending = km.get_pending_key(key)
+        if pending is None:
+            return _error("invalid_key", "key not found or expired")
 
-    chat_id = str(pending["chat_id"])
-    thread_id = normalize_thread_id(pending.get("thread_id"))
-    platform = str(pending.get("platform") or "")
+        chat_id = str(pending["chat_id"])
+        thread_id = normalize_thread_id(pending.get("thread_id"))
+        platform = str(pending.get("platform") or "")
 
-    km.authorize(chat_id, thread_id, platform, key)
+        km.authorize(chat_id, thread_id, platform, key)
 
-    # Auto-subscribe the chat so the user doesn't need a separate /subscribe step.
-    sm = SubscriberManager(group.path / "state")
-    sm.subscribe(chat_id, chat_title="", thread_id=thread_id, platform=platform)
+        # Binding grants outbound delivery in the same state transaction.
+        sm = SubscriberManager(state_dir)
+        sm.subscribe(chat_id, chat_title="", thread_id=thread_id, platform=platform)
 
     return DaemonResponse(ok=True, result={
         "chat_id": chat_id,
@@ -99,13 +102,13 @@ def handle_im_revoke_chat(args: Dict[str, Any]) -> DaemonResponse:
     if err is not None:
         return err
 
-    revoked = km.revoke(chat_id, thread_id)
+    state_dir = group.path / "state"
+    with im_state_lock(state_dir):
+        revoked = km.revoke(chat_id, thread_id)
 
-    # Keep revoke semantics coherent:
-    # once authorization is revoked, outbound delivery subscription should also
-    # be deactivated so the chat stops receiving messages immediately.
-    sm = SubscriberManager(group.path / "state")
-    unsubscribed = sm.unsubscribe(chat_id, thread_id=thread_id)
+        # A revoke deactivates inbound trust and outbound delivery together.
+        sm = SubscriberManager(state_dir)
+        unsubscribed = sm.unsubscribe(chat_id, thread_id=thread_id)
 
     return DaemonResponse(ok=True, result={"revoked": revoked, "unsubscribed": bool(unsubscribed)})
 

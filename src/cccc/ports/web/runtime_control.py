@@ -133,11 +133,13 @@ def has_admin_access_token(home: Optional[Path] = None) -> bool:
 
 
 def web_listener_auth_error(*, home: Path, host: str, public_url: str = "") -> Optional[str]:
-    if (
-        not remote_web_exposure(host=host, public_url=public_url)
-        or allow_unauthenticated_web_listener()
-        or has_admin_access_token(home)
-    ):
+    if not remote_web_exposure(host=host, public_url=public_url) or allow_unauthenticated_web_listener():
+        return None
+    try:
+        admin_token_available = has_admin_access_token(home)
+    except Exception:
+        return "refusing remote Web exposure because the access token store is unavailable"
+    if admin_token_available:
         return None
     return (
         "refusing remote Web exposure without an administrator access token; "

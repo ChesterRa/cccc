@@ -5,6 +5,25 @@ from pathlib import Path
 
 
 class TestIMSubscribersTolerance(unittest.TestCase):
+    def test_stale_manager_snapshot_does_not_drop_another_subscriber(self) -> None:
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        with tempfile.TemporaryDirectory() as td:
+            state_dir = Path(td)
+            first = SubscriberManager(state_dir)
+            second = SubscriberManager(state_dir)
+
+            first.subscribe("chat-a", platform="telegram")
+            second.subscribe("chat-b", platform="telegram")
+
+            self.assertEqual(
+                {
+                    item.chat_id
+                    for item in SubscriberManager(state_dir).get_subscribed_targets()
+                },
+                {"chat-a", "chat-b"},
+            )
+
     def test_load_tolerates_dirty_bool_and_int_values(self) -> None:
         from cccc.ports.im.subscribers import SubscriberManager
 

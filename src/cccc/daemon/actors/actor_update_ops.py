@@ -2,25 +2,16 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Sequence
+import copy
+from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
-from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
-from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
-from ..mcp_install import prepare_runtime_mcp_env
-from ..runtime_session_ops import start_pty_actor_with_runtime_resume
 from ...kernel.actors import find_actor, is_internal_actor, is_supported_internal_actor, list_actors, update_actor
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
-from ...kernel.runtime import runtime_start_preflight_error
-from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
-from ...runners import headless as headless_runner
-from ...runners import pty as pty_runner
-from ...runners.platform_support import pty_support_error_message
 from ...util.conv import coerce_bool
-from .actor_runtime_ops import model_from_runtime_command, resolve_actor_launch_spec
+from .actor_runtime_ops import actor_runtime_running, stop_actor_runtime_handles
 from .actor_profile_runtime import (
     PROFILE_CONTROLLED_FIELDS,
     actor_profile_id,
@@ -69,23 +60,12 @@ def handle_actor_update(
     *,
     foreman_id: Callable[[Any], str],
     maybe_reset_automation_on_foreman_change: Callable[..., None],
-    find_scope_url: Callable[[Any, str], str],
+    start_actor_process: Callable[..., Dict[str, Any]],
     effective_runner_kind: Callable[[str], str],
-    ensure_mcp_installed: Callable[..., Any],
-    merge_actor_env_with_private: Callable[[str, str, Dict[str, Any]], Dict[str, Any]],
-    inject_actor_context_env: Callable[..., Dict[str, Any]],
-    normalize_runtime_command: Callable[[str, list[str]], list[str]],
-    prepare_pty_env: Callable[[Dict[str, Any]], Dict[str, Any]],
-    pty_backlog_bytes: Callable[[], int],
-    write_headless_state: Callable[[str, str], None],
-    write_pty_state: Callable[..., None],
-    clear_preamble_sent: Callable[[Any, str], None],
     throttle_reset_actor: Callable[..., None],
-    remove_headless_state: Callable[[str, str], None],
-    remove_pty_state_if_pid: Callable[..., None],
-    supported_runtimes: Sequence[str],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
     load_actor_profile_secrets: Callable[[Any], Dict[str, str]],
+    load_actor_private_env: Callable[[str, str], Dict[str, str]],
     update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
@@ -131,7 +111,71 @@ def handle_actor_update(
     actor_existing = find_actor(group, actor_id)
     if not isinstance(actor_existing, dict):
         return _error("actor_not_found", f"actor not found: {actor_id}")
+    try:
+        require_actor_permission(group, by=by, action="actor.update", target_actor_id=actor_id)
+    except Exception as error:
+        return _error("actor_update_failed", str(error))
     linked_before = is_actor_profile_linked(actor_existing)
+    before_group_doc = copy.deepcopy(group.doc)
+    try:
+        before_private_env = load_actor_private_env(group_id, actor_id)
+    except Exception as error:
+        return _error("actor_update_failed", str(error))
+    runtime_was_running = actor_runtime_running(
+        group.group_id,
+        actor_existing,
+        effective_runner_kind=effective_runner_kind,
+    )
+    runtime_effect = "none"
+    runtime_actor: Dict[str, Any] = dict(actor_existing)
+
+    def _rollback(code: str, message: str) -> DaemonResponse:
+        failures: list[str] = []
+        if runtime_effect == "started":
+            try:
+                stop_actor_runtime_handles(
+                    group.group_id,
+                    actor_id,
+                    runtime_actor,
+                    effective_runner_kind=effective_runner_kind,
+                )
+            except Exception as error:
+                failures.append(f"runtime: {error}")
+        try:
+            group.doc = copy.deepcopy(before_group_doc)
+            group.save()
+        except Exception as error:
+            failures.append(f"group: {error}")
+        try:
+            update_actor_private_env(
+                group.group_id,
+                actor_id,
+                set_vars=dict(before_private_env),
+                unset_keys=[],
+                clear=True,
+            )
+        except Exception as error:
+            failures.append(f"private_env: {error}")
+        if runtime_effect == "stopped" and runtime_was_running:
+            restored_actor = find_actor(group, actor_id)
+            if not isinstance(restored_actor, dict):
+                failures.append("runtime: restored actor is missing")
+            else:
+                restarted = start_actor_process(
+                    group,
+                    actor_id,
+                    command=list(restored_actor.get("command") or []),
+                    env=dict(restored_actor.get("env") or {}),
+                    runner=str(restored_actor.get("runner") or "pty"),
+                    runtime=str(restored_actor.get("runtime") or "codex"),
+                    by="system",
+                    launch_only=True,
+                )
+                if not restarted.get("success"):
+                    failures.append(f"runtime: {restarted.get('error') or 'failed to restart'}")
+        if failures:
+            return _error("rollback_failed", f"{message}; rollback failed: {'; '.join(failures)}")
+        return _error(code, message)
     controlled_patch_keys = sorted([key for key in PROFILE_CONTROLLED_FIELDS if key in patch])
     if linked_before and controlled_patch_keys:
         return _error(
@@ -162,7 +206,6 @@ def handle_actor_update(
         patch["capability_hidden"] = _normalize_capability_id_list(patch.get("capability_hidden"))
     actor: Dict[str, Any]
     try:
-        require_actor_permission(group, by=by, action="actor.update", target_actor_id=actor_id)
         current_actor = find_actor(group, actor_id) or {}
         if (
             enabled_patched
@@ -237,7 +280,7 @@ def handle_actor_update(
         else:
             actor = dict(actor)
     except Exception as e:
-        return _error("actor_update_failed", str(e))
+        return _rollback("actor_update_failed", str(e))
 
     if enabled_patched:
         if coerce_bool(actor.get("enabled"), default=False):
@@ -252,209 +295,50 @@ def handle_actor_update(
                         caller_id=str(args.get("caller_id") or "").strip(),
                         is_admin=coerce_bool(args.get("is_admin"), default=False),
                     )
-                except Exception as e:
-                    return _error("profile_not_found", str(e))
-                try:
-                    launch_spec = resolve_actor_launch_spec(
-                        group,
-                        actor_id,
-                        command=list(actor.get("command") or []) if isinstance(actor.get("command"), list) else [],
-                        env=dict(actor.get("env") or {}) if isinstance(actor.get("env"), dict) else {},
-                        runner=str(actor.get("runner") or "pty"),
-                        runtime=str(actor.get("runtime") or "codex"),
-                        find_scope_url=find_scope_url,
-                        effective_runner_kind=effective_runner_kind,
-                        normalize_runtime_command=normalize_runtime_command,
-                        supported_runtimes=list(supported_runtimes),
-                        caller_id=str(args.get("caller_id") or "").strip(),
-                        is_admin=coerce_bool(args.get("is_admin"), default=False),
-                        merge_actor_env_with_private=merge_actor_env_with_private,
-                    )
-                except ValueError as e:
-                    msg = str(e)
-                    if msg == "no active scope for group":
-                        return _error(
+                except Exception as error:
+                    return _rollback("profile_not_found", str(error))
+                runtime_actor = dict(actor)
+                started = start_actor_process(
+                    group,
+                    actor_id,
+                    command=list(actor.get("command") or []),
+                    env=dict(actor.get("env") or {}),
+                    runner=str(actor.get("runner") or "pty"),
+                    runtime=str(actor.get("runtime") or "codex"),
+                    by=by,
+                    caller_id=str(args.get("caller_id") or "").strip(),
+                    is_admin=coerce_bool(args.get("is_admin"), default=False),
+                    launch_only=True,
+                )
+                if not started.get("success"):
+                    message = str(started.get("error") or "unknown error")
+                    if message == "no active scope for group":
+                        return _rollback(
                             "missing_project_root",
                             "missing project root for group (no active scope)",
-                            details={"hint": "Attach a project root first (e.g. cccc attach <path> --group <id>)"},
                         )
-                    if msg.startswith("scope not attached:"):
-                        scope_key = msg.partition(":")[2].strip()
-                        return _error(
-                            "scope_not_attached",
-                            msg,
-                            details={
-                                "group_id": group.group_id,
-                                "actor_id": actor_id,
-                                "scope_key": scope_key,
-                                "hint": "Attach this scope to the group (cccc attach <path> --group <id>)",
-                            },
-                        )
-                    if msg.startswith("project root path does not exist:"):
-                        return _error(
-                            "invalid_project_root",
-                            "project root path does not exist",
-                            details={
-                                "group_id": group.group_id,
-                                "actor_id": actor_id,
-                                "scope_key": str(actor.get("default_scope_key") or group.doc.get("active_scope_key") or "").strip(),
-                                "path": msg.partition(":")[2].strip(),
-                                "hint": "Re-attach a valid project root (cccc attach <path> --group <id>)",
-                            },
-                        )
-                    if msg.startswith("unsupported runtime:"):
-                        runtime = msg.partition(":")[2].strip()
-                        return _error(
-                            "unsupported_runtime",
-                            msg,
-                            details={
-                                "group_id": group.group_id,
-                                "actor_id": actor_id,
-                                "runtime": runtime,
-                                "supported": list(supported_runtimes),
-                                "hint": "Change the actor runtime to a supported one.",
-                            },
-                        )
-                    if msg == "custom runtime requires a command (PTY runner)":
-                        return _error(
-                            "missing_command",
-                            msg,
-                            details={
-                                "group_id": group.group_id,
-                                "actor_id": actor_id,
-                                "runtime": str(actor.get("runtime") or "codex").strip() or "codex",
-                                "hint": "Set actor.command (or switch runner to headless).",
-                            },
-                        )
-                    return _error("actor_update_failed", msg)
-
-                cwd = launch_spec["cwd"]
-                runner_kind = str(launch_spec["runner"])
-                runner_effective = str(launch_spec["effective_runner"])
-                runtime = str(launch_spec["runtime"])
-                effective_env = dict(launch_spec["merged_env"])
-
-                def _launch_env() -> Dict[str, str]:
-                    return prepare_runtime_mcp_env(
-                        runtime,
-                        inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id),
-                    )
-
-                if runner_effective != "headless":
-                    if not bool(getattr(pty_runner, "PTY_SUPPORTED", False)):
-                        return _error("actor_update_failed", pty_support_error_message() or "PTY runner is not supported in this environment.")
-                    try:
-                        mcp_env = _launch_env()
-                        mcp_ready = bool(
-                            ensure_mcp_installed(
-                                runtime,
-                                cwd,
-                                env=mcp_env,
-                            )
-                        )
-                    except Exception as e:
-                        return _error("actor_update_failed", f"failed to install MCP: {e}")
-                    if not mcp_ready:
-                        return _error("actor_update_failed", f"failed to install MCP for runtime: {runtime}")
-                    runtime_error = runtime_start_preflight_error(runtime, launch_spec["effective_command"], runner=runner_effective)
-                    if runtime_error:
-                        return _error("runtime_unavailable", runtime_error)
-
-                if actor_uses_codex_app_server_state(actor):
-                    session = codex_app_supervisor.start_pty_app_actor(
-                        group_id=group.group_id,
-                        actor_id=actor_id,
-                        cwd=cwd,
-                        env=_launch_env(),
-                        model=model_from_runtime_command(launch_spec["effective_command"]),
-                        remote_tui_base_command=list(launch_spec["effective_command"]),
-                        max_backlog_bytes=pty_backlog_bytes(),
-                    )
-                    try:
-                        write_pty_state(group.group_id, actor_id, pid=session.remote_tui_pid())
-                    except Exception:
-                        pass
-                elif runner_effective == "headless":
-                    if runtime == "web_model":
-                        try:
-                            write_headless_state(group.group_id, actor_id)
-                        except Exception:
-                            pass
-                    elif runtime == "codex":
-                        codex_app_supervisor.start_actor(
-                            group_id=group.group_id,
-                            actor_id=actor_id,
-                            cwd=cwd,
-                            env=_launch_env(),
-                            model=model_from_runtime_command(launch_spec["effective_command"]),
-                        )
-                    elif runtime == "claude":
-                        claude_app_supervisor.start_actor(
-                            group_id=group.group_id,
-                            actor_id=actor_id,
-                            cwd=cwd,
-                            env=_launch_env(),
-                            model=model_from_runtime_command(launch_spec["effective_command"]),
-                        )
-                    else:
-                        headless_runner.SUPERVISOR.start_actor(
-                            group_id=group.group_id,
-                            actor_id=actor_id,
-                            cwd=cwd,
-                            env=_launch_env(),
-                        )
-                        try:
-                            write_headless_state(group.group_id, actor_id)
-                        except Exception:
-                            pass
-                else:
-                    session = start_pty_actor_with_runtime_resume(
-                        group_id=group.group_id,
-                        actor_id=actor_id,
-                        cwd=cwd,
-                        base_command=launch_spec["effective_command"],
-                        env=prepare_pty_env(_launch_env()),
-                        runtime=runtime,
-                        model=model_from_runtime_command(launch_spec["effective_command"]),
-                        max_backlog_bytes=pty_backlog_bytes(),
-                        runtime_start_preflight_error=runtime_start_preflight_error,
-                    )
-                    try:
-                        write_pty_state(group.group_id, actor_id, pid=session.pid)
-                    except Exception:
-                        pass
-
-                clear_preamble_sent(group, actor_id)
-                throttle_reset_actor(group.group_id, actor_id, keep_pending=True)
+                    if message.startswith("scope not attached:"):
+                        return _rollback("scope_not_attached", message)
+                    if message.startswith("project root path does not exist:"):
+                        return _rollback("invalid_project_root", "project root path does not exist")
+                    if message.startswith("unsupported runtime:"):
+                        return _rollback("unsupported_runtime", message)
+                    if message == "custom runtime requires a command (PTY runner)":
+                        return _rollback("missing_command", message)
+                    return _rollback("actor_update_failed", message)
+                if not runtime_was_running:
+                    runtime_effect = "started"
         else:
-            runner_kind = str(actor.get("runner") or "pty").strip() or "pty"
-            runner_effective = effective_runner_kind(runner_kind)
-            runtime = str(actor.get("runtime") or "codex").strip() or "codex"
-            if runtime == "web_model" and runner_effective == "headless":
-                remove_headless_state(group.group_id, actor_id)
-                remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-            elif actor_uses_codex_app_server_state(actor):
-                codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
-                remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-                remove_headless_state(group.group_id, actor_id)
-            elif runtime == "codex" and runner_effective == "headless":
-                codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
-                remove_headless_state(group.group_id, actor_id)
-                remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-            elif runtime == "claude" and runner_effective == "headless":
-                claude_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
-                remove_headless_state(group.group_id, actor_id)
-                remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-            elif runner_effective == "headless":
-                headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
-                remove_headless_state(group.group_id, actor_id)
-                remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-            else:
-                pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
-                remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-                remove_headless_state(group.group_id, actor_id)
-            throttle_reset_actor(group.group_id, actor_id, keep_pending=True)
+            if runtime_was_running:
+                runtime_effect = "stopped"
             try:
+                stop_actor_runtime_handles(
+                    group.group_id,
+                    actor_id,
+                    actor_existing,
+                    effective_runner_kind=effective_runner_kind,
+                )
+                throttle_reset_actor(group.group_id, actor_id, keep_pending=True)
                 any_enabled = any(
                     coerce_bool(item.get("enabled"), default=True)
                     for item in list_actors(group)
@@ -463,11 +347,9 @@ def handle_actor_update(
                 if not any_enabled:
                     group.doc["running"] = False
                     group.save()
-            except Exception:
-                pass
+            except Exception as error:
+                return _rollback("actor_update_failed", str(error))
 
-    if enabled_patched:
-        maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
     event_data: Dict[str, Any] = {
         "actor_id": actor_id,
         "patch": patch,
@@ -480,14 +362,19 @@ def handle_actor_update(
     if profile_converted:
         event_data["profile_action"] = "convert_to_custom"
 
-    event = append_event(
-        group.ledger_path,
-        kind="actor.update",
-        group_id=group.group_id,
-        scope_key="",
-        by=by,
-        data=event_data,
-    )
+    try:
+        event = append_event(
+            group.ledger_path,
+            kind="actor.update",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data=event_data,
+        )
+    except Exception as error:
+        return _rollback("actor_update_failed", str(error))
+    if enabled_patched:
+        maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
     return DaemonResponse(ok=True, result={"actor": actor, "event": event})
 
 
@@ -497,23 +384,12 @@ def try_handle_actor_update_op(
     *,
     foreman_id: Callable[[Any], str],
     maybe_reset_automation_on_foreman_change: Callable[..., None],
-    find_scope_url: Callable[[Any, str], str],
+    start_actor_process: Callable[..., Dict[str, Any]],
     effective_runner_kind: Callable[[str], str],
-    ensure_mcp_installed: Callable[..., Any],
-    merge_actor_env_with_private: Callable[[str, str, Dict[str, Any]], Dict[str, Any]],
-    inject_actor_context_env: Callable[..., Dict[str, Any]],
-    normalize_runtime_command: Callable[[str, list[str]], list[str]],
-    prepare_pty_env: Callable[[Dict[str, Any]], Dict[str, Any]],
-    pty_backlog_bytes: Callable[[], int],
-    write_headless_state: Callable[[str, str], None],
-    write_pty_state: Callable[..., None],
-    clear_preamble_sent: Callable[[Any, str], None],
     throttle_reset_actor: Callable[..., None],
-    remove_headless_state: Callable[[str, str], None],
-    remove_pty_state_if_pid: Callable[..., None],
-    supported_runtimes: Sequence[str],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
     load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    load_actor_private_env: Callable[[str, str], Dict[str, str]],
     update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> Optional[DaemonResponse]:
     if op == "actor_update":
@@ -521,23 +397,12 @@ def try_handle_actor_update_op(
             args,
             foreman_id=foreman_id,
             maybe_reset_automation_on_foreman_change=maybe_reset_automation_on_foreman_change,
-            find_scope_url=find_scope_url,
+            start_actor_process=start_actor_process,
             effective_runner_kind=effective_runner_kind,
-            ensure_mcp_installed=ensure_mcp_installed,
-            merge_actor_env_with_private=merge_actor_env_with_private,
-            inject_actor_context_env=inject_actor_context_env,
-            normalize_runtime_command=normalize_runtime_command,
-            prepare_pty_env=prepare_pty_env,
-            pty_backlog_bytes=pty_backlog_bytes,
-            write_headless_state=write_headless_state,
-            write_pty_state=write_pty_state,
-            clear_preamble_sent=clear_preamble_sent,
             throttle_reset_actor=throttle_reset_actor,
-            remove_headless_state=remove_headless_state,
-            remove_pty_state_if_pid=remove_pty_state_if_pid,
-            supported_runtimes=supported_runtimes,
             get_actor_profile=get_actor_profile,
             load_actor_profile_secrets=load_actor_profile_secrets,
+            load_actor_private_env=load_actor_private_env,
             update_actor_private_env=update_actor_private_env,
         )
     return None

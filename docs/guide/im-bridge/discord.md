@@ -201,8 +201,8 @@ CCCC formats responses with Discord embeds for better readability when appropria
 | `/send @all <message>` | Send to all agents |
 | `/send @peers <message>` | Send to non-foreman agents |
 | `/status` | Show group and agent status |
-| `/pause` | Pause message delivery |
-| `/resume` | Resume message delivery |
+| `/pause` | Pause delivery for this channel or thread |
+| `/resume` | Resume delivery for this channel or thread |
 | `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/help` | Show available commands |
 

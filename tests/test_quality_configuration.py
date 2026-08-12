@@ -22,7 +22,7 @@ def _assert_vite_plus_package_contract(package: dict[str, object]) -> None:
         "typecheck": "tsc --noEmit -p tsconfig.json",
     }
     assert scripts == expected_scripts
-    assert package["engines"] == {"node": "^20.19.0 || ^22.18.0 || >=24.11.0"}
+    assert package["engines"] == {"node": "^22.18.0 || >=24.11.0"}
     assert "devEngines" not in package
 
     dev_dependencies = package["devDependencies"]

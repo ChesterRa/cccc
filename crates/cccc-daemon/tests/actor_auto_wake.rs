@@ -54,6 +54,39 @@ async fn directed_message_auto_wakes_a_stopped_actor() {
     })
     .await;
 
+    call(
+        &client,
+        "group_set_state",
+        json!({"group_id":group_id,"state":"paused","by":"user"}),
+    )
+    .await;
+    call(
+        &client,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-C"}),
+    )
+    .await;
+    call(
+        &client,
+        "group_set_state",
+        json!({"group_id":group_id,"state":"active","by":"user"}),
+    )
+    .await;
+
+    wait_for_terminal(&client, &group_id, "message-C").await;
+    wait_until_async(|| async {
+        let inbox = call(
+            &client,
+            "inbox_list",
+            json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+        )
+        .await;
+        inbox.result["messages"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    })
+    .await;
+
     shutdown(&client, daemon).await;
     drop(temp);
 }
@@ -85,6 +118,162 @@ async fn directed_message_does_not_wake_an_explicitly_stopped_group() {
     )
     .await;
     assert_eq!(group.result["group"]["state"], "stopped");
+
+    shutdown(&client, daemon).await;
+    drop(temp);
+}
+
+#[tokio::test]
+async fn failed_session_does_not_let_a_followup_overtake_unread_work() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("failed-session-recovery", false).await;
+    call(
+        &client,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"command":["sh","-c","exit 0"]},
+            "by":"user"
+        }),
+    )
+    .await;
+    call(
+        &client,
+        "actor_restart",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
+    .await;
+    call(
+        &client,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-A"}),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs(8)).await;
+
+    let failed_inbox = call(
+        &client,
+        "inbox_list",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
+    .await;
+    assert_eq!(
+        failed_inbox.result["messages"][0]["data"]["text"],
+        "message-A"
+    );
+
+    call(
+        &client,
+        "group_set_state",
+        json!({"group_id":group_id,"state":"paused","by":"user"}),
+    )
+    .await;
+    call(
+        &client,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-B"}),
+    )
+    .await;
+    call(
+        &client,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"command":["sh","-c","stty -echo; IFS= read -r preamble; IFS= read -r first; IFS= read -r second; printf 'RECOVERED:%s\\nFOLLOWUP:%s' \"$first\" \"$second\"; sleep 2"]},
+            "by":"user"
+        }),
+    )
+    .await;
+    call(
+        &client,
+        "group_set_state",
+        json!({"group_id":group_id,"state":"active","by":"user"}),
+    )
+    .await;
+
+    let output = wait_for_terminal(&client, &group_id, "message-B").await;
+    let first = output.find("message-A").expect("message A delivered");
+    let second = output.find("message-B").expect("message B delivered");
+    assert!(first < second, "follow-up overtook unread work: {output:?}");
+    wait_until_async(|| async {
+        let inbox = call(
+            &client,
+            "inbox_list",
+            json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+        )
+        .await;
+        inbox.result["messages"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    })
+    .await;
+
+    shutdown(&client, daemon).await;
+    drop(temp);
+}
+
+#[tokio::test]
+async fn actor_start_retries_unread_after_a_failed_session_without_new_work() {
+    let _guard = DAEMON_TEST_LOCK.lock().await;
+    let (temp, daemon, client, group_id) = setup("failed-session-start-recovery", false).await;
+    call(
+        &client,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"command":["sh","-c","exit 0"]},
+            "by":"user"
+        }),
+    )
+    .await;
+    call(
+        &client,
+        "actor_restart",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
+    .await;
+    call(
+        &client,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["peer1"],"text":"message-A"}),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs(8)).await;
+
+    call(
+        &client,
+        "actor_update",
+        json!({
+            "group_id":group_id,
+            "actor_id":"peer1",
+            "patch":{"command":["sh","-c","stty -echo; IFS= read -r preamble; IFS= read -r message; printf 'RECOVERED:%s' \"$message\"; sleep 2"]},
+            "by":"user"
+        }),
+    )
+    .await;
+    call(
+        &client,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    )
+    .await;
+
+    wait_for_terminal(&client, &group_id, "message-A").await;
+    wait_until_async(|| async {
+        let inbox = call(
+            &client,
+            "inbox_list",
+            json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+        )
+        .await;
+        inbox.result["messages"]
+            .as_array()
+            .is_some_and(Vec::is_empty)
+    })
+    .await;
 
     shutdown(&client, daemon).await;
     drop(temp);
@@ -154,7 +343,7 @@ async fn setup(
     (temp, daemon, client, group_id)
 }
 
-async fn wait_for_terminal(client: &DaemonClient, group_id: &str, expected: &str) {
+async fn wait_for_terminal(client: &DaemonClient, group_id: &str, expected: &str) -> String {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
     loop {
         let response = raw_call(
@@ -168,7 +357,10 @@ async fn wait_for_terminal(client: &DaemonClient, group_id: &str, expected: &str
                 .as_str()
                 .is_some_and(|text| text.contains(expected))
         {
-            return;
+            return response.result["text"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
         }
         assert!(
             tokio::time::Instant::now() < deadline,

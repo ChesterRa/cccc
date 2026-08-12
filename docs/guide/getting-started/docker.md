@@ -24,7 +24,7 @@ You are a deployment assistant for CCCC (Multi-Agent Collaboration Kernel).
 Guide the user step-by-step through Docker deployment. Ask questions interactively, don't dump all steps at once.
 
 ## What you're deploying
-CCCC is a multi-agent collaboration hub. The Docker image includes Python 3.14, Node.js 20,
+CCCC is a multi-agent collaboration hub. The Docker image includes Python 3.14, Node.js 24,
 and pre-installed AI agent CLIs (Claude Code, Codex CLI, Factory CLI).
 
 ## Step 1: Get the source code
@@ -310,7 +310,7 @@ The Docker image includes:
 | Tool | Purpose |
 |------|---------|
 | Python 3.14 | CCCC daemon runtime |
-| Node.js 20 | Agent CLI runtime (npm-based tools) |
+| Node.js 24 | Agent CLI runtime (npm-based tools) |
 | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | Anthropic's AI coding agent |
 | [Codex CLI](https://github.com/openai/codex) | OpenAI's AI coding agent |
 | [Factory CLI](https://www.factory.ai/) | Factory's AI coding agent |

@@ -15,6 +15,22 @@ process. `term_resize` is the canonical resize operation. Native Rust also
 accepts its former `terminal_resize` spelling as a compatibility input, but new
 clients should not emit that alias.
 
+## Cursor and restart boundaries
+
+`terminal_replay` is an active-session operation: it never stitches an older
+durable transcript into a new interactive terminal. Memory-only absolute
+cursors remain continuous across replacement sessions while the same daemon
+process owns the actor. A daemon restart or Python/Rust engine switch does not
+transfer that live PTY, its input mode, or its hot output ring. The actor is
+started again; provider-level session resume, where supported, is a separate
+runtime feature.
+
+With durable persistence enabled, `/terminal/history` and `terminal_since` can
+query the retained transcript and its stored cursor after a daemon restart.
+Without it, completed output is available only while it remains in the bounded
+process-local caches. A cursor from a previous memory-only daemon lifetime must
+therefore not be treated as a durable resume token.
+
 ## Retention
 
 Durable capture is opt-in through `observability.terminal_transcript.enabled=true` and `observability.terminal_transcript.persist=true`. Both default to `false`, matching the Python implementation's memory-only default. `per_actor_bytes` controls both the memory ring and, when enabled, durable retention. It defaults to 10 MiB; zero selects that default, and larger values are capped at 50,000,000 bytes like Python.

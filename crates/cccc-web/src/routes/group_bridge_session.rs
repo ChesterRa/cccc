@@ -6,7 +6,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use cccc_contracts::{DaemonRequest, utc_now};
-use cccc_core::{GroupStore, actors, ledger};
+use cccc_core::{GroupStore, ledger};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -14,7 +14,7 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::group_bridge_command_sessions;
-use super::group_bridge_store::{BridgeStore, items, items_mut};
+use super::group_bridge_store::{BridgeStore, items};
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, call, success};
 
@@ -522,141 +522,31 @@ async fn receive_delivery(
             "source group does not match registration",
         ));
     }
-    if !has_remote_recipient(body.get("to")) {
-        return Err(ApiError::bad_code(
-            "missing_remote_recipient",
-            "remote group bridge messages require explicit to",
-            json!({}),
-        ));
-    }
-    if body["refs"]
-        .as_array()
-        .is_some_and(|references| !references.is_empty())
-    {
-        return Err(ApiError::bad_code(
-            "unsupported_refs",
-            "refs are not supported by Group Bridge sessions",
-            json!({}),
-        ));
-    }
-    if body
-        .get("priority")
-        .and_then(Value::as_str)
-        .is_some_and(|priority| !matches!(priority, "normal" | "attention"))
-    {
-        return Err(ApiError::bad_code(
-            "invalid_payload",
-            "priority must be normal or attention",
-            json!({}),
-        ));
-    }
     let idempotency_key = body["idempotency_key"]
         .as_str()
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
-    let bridge = BridgeStore::new(&state.home);
-    if let Some(receipt) = items(&bridge.load().map_err(io_error)?, "deliveries")
-        .iter()
-        .find(|item| {
-            item["registration_id"] == registration["registration_id"]
-                && item["idempotency_key"] == idempotency_key
+    let response = call(
+        state,
+        "group_bridge_receive_remote_send",
+        json!({
+            "target_group_id":group_id,
+            "src_group_id":remote_group_id,
+            "remote_peer_id":remote_peer_id,
+            "idempotency_key":idempotency_key,
+            "payload":body
         })
+        .as_object()
         .cloned()
-    {
-        return Ok(json!({"receipt":receipt,"deduped":true}));
+        .expect("Group Bridge receive request is an object"),
+    )
+    .await?;
+    let mut result = response.0["result"].clone();
+    if let Some(fields) = result.as_object_mut() {
+        fields.remove("ok");
     }
-    let mut args = body.as_object().cloned().unwrap_or_default();
-    let source_by = args
-        .get("source_by")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or("")
-        .to_owned();
-    let src_event_id = args
-        .get("src_event_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .unwrap_or("")
-        .to_owned();
-    args.insert("group_id".into(), json!(group_id));
-    args.insert(
-        "by".into(),
-        json!(format!("group_bridge:{}", remote_peer_id)),
-    );
-    args.insert("source_group_id".into(), json!(source_group_id));
-    args.insert("src_group_id".into(), json!(source_group_id));
-    args.insert("src_event_id".into(), json!(src_event_id));
-    args.insert("src_by".into(), json!(source_by));
-    args.insert(
-        "source_group_title".into(),
-        body["source_group_title"].clone(),
-    );
-    args.insert("source_platform".into(), json!("group_bridge_session"));
-    args.insert(
-        "source_user_name".into(),
-        registration["remote_group_title"].clone(),
-    );
-    args.insert(
-        "source_user_id".into(),
-        registration["remote_peer_id"].clone(),
-    );
-    let remote_reply_to = remote_reply_recipients(&source_by);
-    if !remote_reply_to.is_empty() {
-        args.insert("remote_reply_to".into(), json!(remote_reply_to));
-    }
-    args.remove("source_by");
-    args.remove("idempotency_key");
-    resolve_cross_group_foreman(&state.home, group_id, &mut args)?;
-    if let Some(attachments) = args.get_mut("attachments").and_then(Value::as_array_mut) {
-        for attachment in attachments {
-            let Some(item) = attachment.as_object_mut() else {
-                continue;
-            };
-            let Some(encoded) = item
-                .remove("content_base64")
-                .and_then(|value| value.as_str().map(str::to_owned))
-            else {
-                continue;
-            };
-            let bytes = base64::engine::general_purpose::STANDARD
-                .decode(encoded)
-                .map_err(|_| ApiError::bad("invalid remote attachment encoding"))?;
-            if bytes.len() > 10 * 1024 * 1024 {
-                return Err(ApiError::bad("remote attachment exceeds 10 MiB"));
-            }
-            let blob = cccc_core::blobs::store(&state.home, group_id, &bytes)
-                .map_err(|error| ApiError::bad(error.to_string()))?;
-            item.insert("path".into(), json!(blob.path));
-            item.insert("bytes".into(), json!(blob.bytes));
-            item.insert("sha256".into(), json!(blob.sha256));
-        }
-    }
-    let response = call(state, "send", args).await?;
-    let event = response.0["result"]["event"].clone();
-    let receipt = json!({
-        "registration_id":registration["registration_id"],
-        "idempotency_key":idempotency_key,"status":"delivered",
-        "event_id":event["id"],"delivered_at":utc_now()
-    });
-    bridge
-        .update(|value| {
-            items_mut(value, "deliveries").push(receipt.clone());
-            Ok(())
-        })
-        .map_err(io_error)?;
-    Ok(json!({"receipt":receipt,"event":event,"deduped":false}))
-}
-
-fn remote_reply_recipients(source_by: &str) -> Vec<String> {
-    let sender = source_by.trim();
-    if sender == "user" || sender == "@user" {
-        return vec!["user".into()];
-    }
-    if sender.is_empty() || sender.starts_with(['@', '#']) || sender.starts_with("group_bridge:") {
-        return Vec::new();
-    }
-    vec![sender.into()]
+    Ok(result)
 }
 
 pub(super) async fn send_remote(
@@ -673,9 +563,6 @@ pub(super) async fn send_remote(
         item["group_id"] == source_group_id
             && item["remote_group_id"] == destination_group_id
             && item["status"] == "active"
-            && item["credential"]
-                .as_str()
-                .is_some_and(|value| !value.is_empty())
     })?;
     if !matches!(
         trust["remote_access_level"].as_str().unwrap_or("messages"),
@@ -685,128 +572,59 @@ pub(super) async fn send_remote(
             "remote trust does not allow messages",
         )));
     }
-    let endpoint = trust["remote_endpoint"]
-        .as_str()
-        .unwrap_or("")
-        .trim_end_matches('/');
-    let credential = trust["credential"].as_str().unwrap_or("");
+    let registration_id = ["registration_id", "trust_id"]
+        .into_iter()
+        .find_map(|field| {
+            trust[field]
+                .as_str()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .map(str::to_owned);
+    let Some(registration_id) = registration_id else {
+        return Some(Err(ApiError::bad(
+            "active Group Bridge trust is missing route identity",
+        )));
+    };
     let idempotency_key = body["client_id"]
         .as_str()
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
         .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
-    let source_title = GroupStore::new(state.home.clone())
-        .and_then(|store| store.load(source_group_id))
-        .map(|group| group.title)
-        .unwrap_or_default();
-    let mut payload = body.as_object().cloned().unwrap_or_default();
-    payload.remove("dst_group_id");
-    default_remote_recipient(&mut payload);
-    payload.insert("source_group_id".into(), json!(source_group_id));
-    payload.insert("src_group_id".into(), json!(source_group_id));
-    payload.insert("source_group_title".into(), json!(source_title));
-    payload.insert(
-        "source_by".into(),
-        body.get("by").cloned().unwrap_or_else(|| json!("user")),
-    );
-    payload.insert(
-        "src_event_id".into(),
-        body.get("src_event_id")
-            .cloned()
-            .filter(|value| value.as_str().is_some_and(|value| !value.trim().is_empty()))
-            .unwrap_or_else(|| json!(idempotency_key)),
-    );
-    payload.insert("idempotency_key".into(), json!(idempotency_key));
-    if let Some(reply_to) = body
-        .get("remote_reply_to_event_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        payload.insert("reply_to".into(), json!(reply_to));
+    let mut payload = Map::new();
+    for field in [
+        "text",
+        "format",
+        "priority",
+        "reply_required",
+        "to",
+        "refs",
+        "attachments",
+    ] {
+        if let Some(value) = body.get(field).cloned() {
+            payload.insert(field.into(), value);
+        }
     }
-    let client = match reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-    {
-        Ok(client) => client,
-        Err(error) => return Some(Err(ApiError::bad(error.to_string()))),
-    };
-    let response = match client
-        .post(format!("{endpoint}/api/group-bridge/session/send"))
-        .bearer_auth(credential)
-        .json(&Value::Object(payload.clone()))
-        .send()
-        .await
-    {
-        Ok(response) => response,
-        Err(error) => {
-            return Some(Err(ApiError::bad(format!(
-                "remote delivery failed: {error}"
-            ))));
-        }
-    };
-    let status = response.status();
-    let remote = match response.json::<Value>().await {
-        Ok(value) if status.is_success() => value,
-        Ok(value)
-            if matches!(
-                status,
-                StatusCode::UNAUTHORIZED
-                    | StatusCode::FORBIDDEN
-                    | StatusCode::NOT_FOUND
-                    | StatusCode::METHOD_NOT_ALLOWED
-                    | StatusCode::UNPROCESSABLE_ENTITY
-            ) =>
-        {
-            match send_via_remote_mcp(
-                &client,
-                endpoint,
-                credential,
-                Value::Object(payload),
-                &idempotency_key,
-            )
-            .await
-            {
-                Ok(value) => value,
-                Err(error) => {
-                    return Some(Err(ApiError::bad(format!(
-                        "remote delivery rejected: {value}; MCP fallback failed: {error}"
-                    ))));
-                }
-            }
-        }
-        Ok(value) => {
-            return Some(Err(ApiError::bad(format!(
-                "remote delivery rejected: {value}"
-            ))));
-        }
-        Err(error) => {
-            return Some(Err(ApiError::bad(format!(
-                "invalid remote response: {error}"
-            ))));
-        }
-    };
-    let receipt = remote
-        .pointer("/result/receipt")
-        .or_else(|| remote.get("receipt"))
-        .cloned()
-        .unwrap_or_else(|| json!({"status":"delivered","idempotency_key":idempotency_key}));
-    let mut record = body.as_object().cloned().unwrap_or_default();
-    default_remote_recipient(&mut record);
-    record.insert("group_id".into(), json!(source_group_id));
-    record.insert("dst_group_id".into(), json!(destination_group_id));
-    record.insert("delivery_receipt".into(), receipt.clone());
-    let local = match call(state, "send_cross_group_remote_record", record).await {
-        Ok(value) => value,
-        Err(error) => return Some(Err(error)),
-    };
-    Some(Ok(success(json!({
-        "source_event":local.0["result"]["source_event"],
-        "receipt":receipt,
-        "transport":"group_bridge_session"
-    }))))
+    default_remote_recipient(&mut payload);
+    let mut args = json!({
+        "group_id":source_group_id,
+        "registration_id":registration_id,
+        "idempotency_key":idempotency_key,
+        "by":body.get("by").cloned().unwrap_or_else(|| json!("user")),
+        "insight":body.get("insight").cloned().unwrap_or(Value::Null),
+        "require_peer_insight":body.get("require_peer_insight").cloned().unwrap_or(Value::Bool(false)),
+        "payload":payload
+    })
+    .as_object()
+    .cloned()
+    .expect("remote send request is an object");
+    if let Some(value) = body.get("src_event_id").cloned() {
+        args.insert("source_event_id".into(), value);
+    }
+    if let Some(value) = body.get("remote_reply_to_event_id").cloned() {
+        args.insert("reply_to_remote_event_id".into(), value);
+    }
+    Some(call(state, "remote_send", args).await)
 }
 
 fn has_remote_recipient(value: Option<&Value>) -> bool {
@@ -822,95 +640,6 @@ fn default_remote_recipient(args: &mut Map<String, Value>) {
     if !has_remote_recipient(args.get("to")) {
         args.insert("to".into(), json!(["@foreman"]));
     }
-}
-
-fn resolve_cross_group_foreman(
-    home: &cccc_core::HomeLayout,
-    group_id: &str,
-    args: &mut Map<String, Value>,
-) -> Result<(), ApiError> {
-    let requested = args
-        .get("to")
-        .and_then(Value::as_array)
-        .is_some_and(|items| {
-            items.len() == 1 && items[0].as_str() == Some(actors::CROSS_GROUP_FOREMAN_RECIPIENT)
-        });
-    if !requested {
-        return Ok(());
-    }
-    let group = GroupStore::new(home.clone())
-        .and_then(|store| store.load(group_id))
-        .map_err(io_error)?;
-    let foreman = actors::unique_available_foreman(&group).map_err(|error| match error {
-        actors::UniqueForemanError::NotFound => ApiError::bad_code(
-            "foreman_not_found",
-            "target group has no available foreman",
-            json!({}),
-        ),
-        actors::UniqueForemanError::NotUnique => ApiError::bad_code(
-            "foreman_not_unique",
-            "target group has more than one available foreman",
-            json!({}),
-        ),
-    })?;
-    args.insert("to".into(), json!([foreman.id]));
-    Ok(())
-}
-
-async fn send_via_remote_mcp(
-    client: &reqwest::Client,
-    endpoint: &str,
-    credential: &str,
-    payload: Value,
-    idempotency_key: &str,
-) -> Result<Value, String> {
-    let mut arguments = payload.as_object().cloned().unwrap_or_default();
-    for key in [
-        "source_group_id",
-        "source_group_title",
-        "idempotency_key",
-        "dst_group_id",
-        "group_id",
-        "by",
-    ] {
-        arguments.remove(key);
-    }
-    arguments.insert("client_id".into(), json!(idempotency_key));
-    let response = client
-        .post(format!("{endpoint}/mcp/group-bridge"))
-        .bearer_auth(credential)
-        .json(&json!({
-            "jsonrpc":"2.0","id":idempotency_key,"method":"tools/call",
-            "params":{"name":"cccc_message_send","arguments":arguments}
-        }))
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    let status = response.status();
-    let value = response
-        .json::<Value>()
-        .await
-        .map_err(|error| error.to_string())?;
-    if !status.is_success() || value.get("error").is_some() || value["result"]["isError"] == true {
-        return Err(value.to_string());
-    }
-    let event_id = value["result"]["content"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|item| item["text"].as_str())
-        .find_map(|text| serde_json::from_str::<Value>(text).ok())
-        .and_then(|result| {
-            result
-                .pointer("/event/id")
-                .or_else(|| result.pointer("/result/event/id"))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        });
-    Ok(json!({"receipt":{
-        "status":"delivered","idempotency_key":idempotency_key,
-        "remote_event_id":event_id,"transport":"group_bridge_mcp"
-    }}))
 }
 
 fn authorize(state: &AppState, credential: &str) -> Result<Value, ApiError> {

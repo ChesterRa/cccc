@@ -133,15 +133,6 @@ fn canonical_to_flat(canonical: &Value, group: &GroupDoc) -> Value {
         .and_then(Value::as_object)
         .cloned()
         .unwrap_or_default();
-    for (key, default) in [
-        ("documents", json!([])),
-        ("active_document_id", json!("")),
-        ("active_document_path", json!("")),
-        ("input_latest_seq", json!(0)),
-        ("input_read_cursor", json!(0)),
-    ] {
-        flat.entry(key).or_insert(default);
-    }
     for key in ["voice_prompt_drafts", "voice_prompt_requests"] {
         flat.insert(
             key.into(),
@@ -565,7 +556,7 @@ mod tests {
                     "ask-new":{"request_id":"ask-new","status":"pending","updated_at":"2026-08-10T02:00:00Z"},
                     "ask-old":{"request_id":"ask-old","status":"pending","updated_at":"2026-08-10T01:00:00Z"}
                 },
-                "rust_state":{"input_read_cursor":7}
+                "rust_state":{"native_extension":{"revision":7}}
             }),
         )
         .expect("canonical state");
@@ -576,7 +567,7 @@ mod tests {
         assert_eq!(state["ask_requests"][0]["request_id"], "ask-new");
         assert_eq!(state["sessions"][0]["session_id"], "session-old");
         assert_eq!(state["sessions"][1]["session_id"], "session-new");
-        assert_eq!(state["input_read_cursor"], 7);
+        assert_eq!(state["native_extension"]["revision"], 7);
     }
 
     #[test]
@@ -589,8 +580,7 @@ mod tests {
                     json!({
                         "assistant":{"enabled":true,"config":{"recognition_language":"ja"},"lifecycle":"idle","health":{"source":"rust"}},
                         "voice_prompt_drafts":{"draft-a":{"request_id":"draft-a","status":"pending"}},
-                        "ask_requests":[{"request_id":"ask-a","status":"pending"}],
-                        "input_read_cursor":3
+                        "ask_requests":[{"request_id":"ask-a","status":"pending"}]
                     }),
                 );
                 Ok(())
@@ -616,7 +606,6 @@ mod tests {
         assert_eq!(state["assistant"]["health"]["source"], "python");
         assert_eq!(state["prompt_draft"]["request_id"], "draft-a");
         assert_eq!(state["ask_requests"][0]["request_id"], "ask-a");
-        assert_eq!(state["input_read_cursor"], 3);
         let group = store.load(&group.group_id).expect("group");
         assert_eq!(group.extra["assistants"][ASSISTANT_ID]["enabled"], true);
         assert_eq!(
@@ -651,7 +640,7 @@ mod tests {
                 "ask_requests".into(),
                 json!([{"request_id":"ask-a","status":"pending"}]),
             );
-            state.insert("input_read_cursor".into(), json!(9));
+            state.insert("native_extension".into(), json!({"revision":9}));
             Ok(())
         })
         .expect("update");
@@ -684,6 +673,6 @@ mod tests {
             canonical["voice_ask_requests"]["ask-a"]["status"],
             "pending"
         );
-        assert_eq!(canonical[RUST_STATE_KEY]["input_read_cursor"], 9);
+        assert_eq!(canonical[RUST_STATE_KEY]["native_extension"]["revision"], 9);
     }
 }

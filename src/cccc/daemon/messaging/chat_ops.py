@@ -630,6 +630,8 @@ def handle_tracked_send(
         "insight": insight,
         "require_peer_insight": coerce_bool(args.get("require_peer_insight")),
     }
+    if "__group_state_at_accept" in args:
+        message_args["__group_state_at_accept"] = str(args.get("__group_state_at_accept") or "")
     if client_id:
         message_args["client_id"] = client_id
 

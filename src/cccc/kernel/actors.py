@@ -31,6 +31,9 @@ _RESERVED_IDS = frozenset({
 
 INTERNAL_KIND_VOICE_SECRETARY = "voice_secretary"
 SUPPORTED_INTERNAL_ACTOR_KINDS = frozenset({INTERNAL_KIND_VOICE_SECRETARY})
+_WEB_MODEL_DELIVERY_PREFERENCES_KEY = "web_model_delivery_preferences"
+_RUNTIME_STATES_KEY = "runtime_states"
+_WEB_MODEL_BROWSER_TARGETS_KEY = "web_model_browser_targets"
 
 
 def _normalize_capability_id_list(raw: Any) -> List[str]:
@@ -250,6 +253,15 @@ def add_actor(
         created_at=now,
         updated_at=now,
     )
+    preferences = group.doc.get(_WEB_MODEL_DELIVERY_PREFERENCES_KEY)
+    if isinstance(preferences, dict):
+        preferences.pop(aid, None)
+    runtime_states = group.doc.get(_RUNTIME_STATES_KEY)
+    if isinstance(runtime_states, dict):
+        runtime_states.pop(aid, None)
+    browser_targets = group.doc.get(_WEB_MODEL_BROWSER_TARGETS_KEY)
+    if isinstance(browser_targets, dict):
+        browser_targets.pop(aid, None)
     _ensure_actor_list(group).append(actor.model_dump(exclude_none=True))
     group.save()
     
@@ -269,6 +281,15 @@ def remove_actor(group: Group, actor_id: str) -> None:
     actors[:] = [a for a in actors if not (isinstance(a, dict) and a.get("id") == aid)]
     if len(actors) == before:
         raise ValueError(f"actor not found: {aid}")
+    preferences = group.doc.get(_WEB_MODEL_DELIVERY_PREFERENCES_KEY)
+    if isinstance(preferences, dict):
+        preferences.pop(aid, None)
+    runtime_states = group.doc.get(_RUNTIME_STATES_KEY)
+    if isinstance(runtime_states, dict):
+        runtime_states.pop(aid, None)
+    browser_targets = group.doc.get(_WEB_MODEL_BROWSER_TARGETS_KEY)
+    if isinstance(browser_targets, dict):
+        browser_targets.pop(aid, None)
     group.save()
 
 

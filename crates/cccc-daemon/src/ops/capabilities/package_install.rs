@@ -153,6 +153,7 @@ fn probe_stdio(capability_id: &str, command: &[String]) -> Result<Vec<Value>, Op
         .map_err(install_error)?;
     let requests = [
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"cccc-capability-runtime","version":"1.0"}}}),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}),
     ];
     let mut stdin = child
@@ -229,6 +230,20 @@ fn probe_http(capability_id: &str, url: &str) -> Result<Vec<Value>, OpError> {
         .get("Mcp-Session-Id")
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
+    let mut initialized = client
+        .post(url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .json(&json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}));
+    if let Some(session) = session.as_ref() {
+        initialized = initialized.header("Mcp-Session-Id", session);
+    }
+    let initialized = initialized.send().map_err(install_error)?;
+    if !initialized.status().is_success() {
+        return Err(install_error(format!(
+            "remote MCP initialized notification returned {}",
+            initialized.status()
+        )));
+    }
     let mut request = client
         .post(url)
         .header(reqwest::header::ACCEPT, "application/json")

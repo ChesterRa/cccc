@@ -1,22 +1,30 @@
-# Experimental Rust Implementation and Product Distribution
+# Python/Rust Dual-Engine Product and Distribution
 
 The stable, recommended CCCC product distribution remains `cccc-pair` on PyPI,
 with Python as its stable default implementation. Supported native wheels also
 bundle a private, version-matched **experimental Rust implementation** for
-explicit performance evaluation. The repository separately publishes that same
-experimental engine as a standalone Rust preview for supported platforms. Both
-channels share the product version, data contracts, and public command, while the
-standalone artifact contains no Python fallback or implementation selector.
+explicit evaluation and day-to-day use within its declared scope. The repository
+separately publishes that same experimental engine as a standalone Rust preview
+for supported platforms. Both channels share the product version, data
+contracts, and public command, while the standalone artifact contains no Python
+fallback or implementation selector.
 
 Experimental means the Rust implementation is release-tested for its declared
-scope but does not promise complete feature and integration parity with Python.
-Use `cccc python` for reliability-critical workflows. CCCC does not pursue
-breadth-first parity as an end in itself: native work must close a high-severity
-shared-state/security gap or earn a predeclared, correctness-bearing performance
-threshold. Promotion out of experimental is gate-based rather than time-based:
-it requires repeatable material gains on recurring product paths after equivalent
-Python-side simplification, plus the selected state, integration, and
-supported-platform gates for the promoted scope.
+scope but does not yet promise complete feature and integration coverage.
+Use `cccc python` for reliability-critical workflows until the relevant Rust
+journeys are promoted. CCCC expects Python and Rust to evolve in parallel for
+the long term: Python prioritizes flexibility and fast integration, while Rust
+prioritizes native distribution, startup, resource use, robustness, and
+performance. This is not mechanical parity—shared contracts, persisted state,
+security, and advertised product outcomes must converge, while implementation
+details and temporarily asymmetric features may differ explicitly.
+
+Promotion out of experimental is gate-based rather than time-based. It requires
+the promoted product journeys, bidirectional shared-state handoff, failure
+isolation, supported-platform artifacts, and truthful capability/UI boundaries
+to pass, together with measured operational value relative to maintenance cost.
+Rust promotion does not imply Python retirement; changing the default engine or
+retiring an implementation is a separate product decision.
 
 Prereleases use one canonical product identity and tag such as `v0.4.34-rc2`.
 The Python manifest represents that identity as PEP 440 `0.4.34rc2`, while the
@@ -101,16 +109,65 @@ Rust binary cannot overwrite its containing wheel independently. The standalone
 preview contains Rust only, so `cccc python` and implementation switching are
 intentionally unavailable there.
 
+### Uninstall without removing user data
+
+Before uninstalling, run `cccc home` to record the active data directory and
+`cccc daemon stop` if CCCC is running. A pip installation is owned by pip:
+
+```bash
+python -m pip uninstall cccc-pair
+```
+
+For a default standalone installation on macOS or Linux, remove only the two
+files owned by the installer, and only after verifying the complete ownership
+marker:
+
+```bash
+test "$(cat "$HOME/.local/bin/.cccc-standalone" 2>/dev/null)" = "standalone-v1" && \
+  rm "$HOME/.local/bin/cccc" "$HOME/.local/bin/.cccc-standalone"
+```
+
+For a custom `CCCC_INSTALL_DIR`, apply the same exact-marker check to that
+directory. Do not remove the directory itself: it may contain commands owned by
+other tools. The Unix installer may add the general-purpose `~/.local/bin`
+directory to the shell PATH; leaving that entry is intentional because other
+user commands can depend on it.
+
+On Windows, the default standalone directory is
+`%LOCALAPPDATA%\CCCC\bin`. Stop CCCC, verify that
+`.cccc-standalone` contains only `standalone-v1`, then remove only `cccc.exe`
+and `.cccc-standalone`. Remove that exact directory from the User PATH through
+Windows Environment Variables if the standalone installer added it and the
+directory is no longer used.
+
+Uninstall does not remove `CCCC_HOME`. Groups, ledgers, credentials, browser
+profiles, and settings therefore survive reinstall. Back up and erase that
+recorded directory separately only when permanent data deletion is intended.
+
 The Python release builds one source distribution and portable fallback wheel,
 then builds native wheels for Linux x86-64, Intel macOS, Apple Silicon macOS, and
 Windows x86-64 in parallel. Linux targets the manylinux 2.28 baseline and is
 repaired with `auditwheel`; macOS and Windows dependencies are checked and
 repaired with `delocate` and `delvewheel`. Publication begins only after the
-exact six-file set passes metadata and platform-payload checks. Unsupported
-platforms receive the portable wheel and report Rust as unavailable. The
-standalone workflow builds native archives for the same four targets, reuses one
-Web bundle, executes every binary, and verifies final Linux and Windows installer
-candidates before publish.
+portable wheel passes its installed Python launcher/MCP/daemon smoke and the
+exact six-file set passes metadata and platform-payload checks. Every native
+wheel is then installed and must pass Python/Rust launcher selection, MCP,
+daemon lifecycle, and engine-switch smoke. Unsupported platforms receive the
+portable wheel and report Rust as unavailable. The standalone workflow builds
+native archives for the same four targets, reuses one Web bundle, executes every
+binary, and verifies every final Linux, Intel macOS, Apple Silicon macOS, and
+Windows installer candidate before publish.
+
+The standalone Linux x86-64 artifact is built against the same manylinux 2.28
+ABI baseline as the native wheel and statically carries the OpenSSL used by its
+native-TLS dependency; it therefore requires glibc 2.28 or newer but not a
+distribution OpenSSL package. A pre-package check rejects newer GLIBC, GLIBCXX,
+or CXXABI references and non-baseline shared libraries. Both macOS artifacts
+declare macOS 11.0 as their minimum deployment target and may link only Apple
+system libraries. Windows x86-64 is built and verified on the pinned Windows
+Server 2022 runner with the static MSVC runtime. These are artifact boundaries,
+not a promise that every optional external browser, microphone, GPU, or provider
+integration is available on every host.
 
 Cargo remains a workspace development tool and the crates stay non-publishable.
 The experimental standalone workflow builds and verifies all four supported
@@ -221,10 +278,12 @@ NotebookLM authentication. IM start requests sent directly to the daemon are
 delegated to the Web-owned integration worker, preserving one lifecycle owner.
 Both implementations now use the stable top-level `im` configuration and the
 existing pending, authorized-chat, and subscriber JSON files as the durable IM
-state. Rust normalizes literal credentials and `*_env` references to the same
-stored fields, while `im_bridge` is limited to runtime diagnostics and bounded
-legacy import. Switching engines therefore does not copy, fork, or resurrect IM
-configuration and authorization state.
+state. Web, daemon, and bridge processes serialize those classes with the same
+per-group IM lock and refresh durable authorization before delivery. Rust
+normalizes literal credentials and `*_env` references to the same stored
+fields, while `im_bridge` is limited to runtime diagnostics and bounded legacy
+import. Unset consumes the former durable shadow, so switching engines does not
+copy, fork, or resurrect IM configuration and authorization state.
 `cccc doctor` reports daemon identity/version, the invoked executable, PATH
 resolution and duplicate `cccc` commands, PTY support, browser discovery, and
 Linux display helpers so installation failures are visible from the CLI.
@@ -260,18 +319,19 @@ references, and delivery receipts share the same
 live remote delivery remain part of the wider experimental Rust journey; the
 authorization and receipt store no longer require staying on one engine.
 
-The Rust NotebookLM adapter owns notebook sources, Studio artifact
-create/list/download operations, and incremental work/memory synchronization.
-Sync hashes local text files, replaces changed remote sources, removes deleted
-sources, and persists convergence state in the group-space document. Source
-refresh invokes NotebookLM's refresh RPC, and synchronous artifact generation
-can wait for completion and save into the attached scope's `space/artifacts/`.
+The Rust NotebookLM adapter owns notebook sources and Studio artifact
+create/list/download operations. Source refresh invokes NotebookLM's refresh
+RPC, and synchronous artifact generation can wait for completion and save into
+the attached scope's `space/artifacts/`. Native Rust reads the canonical work
+sync state and memory manifest written by Python, but remote work/memory sync is
+currently unavailable: `group_space_sync action=run` fails before provider-side
+mutation instead of maintaining a second or incomplete manifest.
 
 Native Rust `resource_ingest` currently accepts `pasted_text` only. File, URL,
 YouTube, and Drive resource ingestion fail with `capability_unavailable`
-instead of being silently converted to pasted text; local `.md`/`.txt` files
-remain supported through `group_space_sync`. Query
-`group_space_capabilities` before using implementation-specific source types.
+instead of being silently converted to pasted text. Use the Python engine for
+local file synchronization and query `group_space_capabilities` before using
+implementation-specific source types.
 Artifact generation defaults to `wait=false` and `save_to_space=false`. Rust
 does not yet run Python's background auto-save worker; list or download the
 completed remote artifact later, or explicitly request synchronous wait and
@@ -400,11 +460,12 @@ A release is publishable only when all of these remain true:
 - The Python source distribution, portable wheel, and four native wheels form one
   version-matched set and pass metadata, size, and payload checks; all four
   standalone native archives and their checksum set are complete.
-- CI runs offline status, daemon lifecycle, MCP initialization, and a real
-  `cccc_code_exec` cell against the built Rust binary. Manual final-installer
-  verification repeats the complete Unix flow; Windows verifies installed
-  offline status, MCP startup, daemon lifecycle, and executable release after
-  shutdown.
+- CI installs the portable and native wheels and runs their declared launcher,
+  MCP, daemon-lifecycle, and engine-switch journeys. It also runs offline status,
+  daemon lifecycle, MCP initialization, and a real `cccc_code_exec` cell against
+  the built Rust binary. Final-installer verification repeats the complete Unix
+  flow on Linux and both macOS architectures; Windows verifies installed offline
+  status, MCP startup, daemon lifecycle, and executable release after shutdown.
 - Python, Cargo, the lockfile, and the Git tag resolve to one release identity.
 - The native binary runs without a Python backend dependency.
 - The cross-language persisted-state tests pass in their dedicated interop job.

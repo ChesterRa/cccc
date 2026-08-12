@@ -1,7 +1,13 @@
 import base64
+import http.server
+import importlib.util
 import os
+import shutil
 import socket
+import tempfile
+import threading
 import time
+from pathlib import Path
 import unittest
 from unittest.mock import Mock, patch
 
@@ -266,6 +272,69 @@ def _recv_socket_line(sock: socket.socket, *, timeout: float = 1.0) -> str:
 
 
 class TestProjectedBrowserRuntime(unittest.TestCase):
+    @unittest.skipUnless(
+        importlib.util.find_spec("playwright")
+        and (shutil.which("google-chrome") or shutil.which("chromium")),
+        "Playwright and a local Chrome/Chromium are required",
+    )
+    def test_real_browser_core_interactions(self) -> None:
+        from cccc.daemon.browser.projected_browser_runtime import launch_projected_browser_runtime
+
+        body = b"""<!doctype html><style>html,body{margin:0}#input{position:absolute;left:20px;top:20px;width:240px;height:40px}#target{position:absolute;left:20px;top:100px;width:240px;height:80px}#scroller{position:absolute;left:400px;top:20px;width:300px;height:240px;overflow:auto}#content{height:1800px}</style><input id=\"input\"><div id=\"target\">target</div><div id=\"scroller\"><div id=\"content\">scroll</div></div><script>target.addEventListener('contextmenu',event=>{event.preventDefault();document.body.dataset.button=String(event.button)})</script>"""
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, _format: str, *args: object) -> None:
+                del args
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        runtime = None
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                try:
+                    base_url = f"http://127.0.0.1:{server.server_port}"
+                    runtime_path = Path(temp_dir) / "profile"
+                    runtime = launch_projected_browser_runtime(
+                        profile_dir=runtime_path,
+                        url=f"{base_url}/start",
+                        width=800,
+                        height=600,
+                        headless=True,
+                        channel_candidates=("chrome", None),
+                    )
+                    self.assertTrue(runtime_path.is_dir())
+                    runtime.click(x=80, y=40)
+                    runtime.input_text(text="hello")
+                    runtime.key_press(key="Backspace")
+                    self.assertEqual(runtime.page.locator("#input").input_value(), "hell")
+
+                    runtime.click(x=80, y=130, button="right")
+                    self.assertEqual(runtime.page.locator("body").get_attribute("data-button"), "2")
+                    runtime.scroll(x=500, y=100, dx=0, dy=240)
+                    runtime.page.wait_for_function(
+                        "document.querySelector('#scroller').scrollTop >= 200"
+                    )
+                    runtime.resize(width=960, height=720)
+                    self.assertEqual(runtime.page.viewport_size, {"width": 960, "height": 720})
+                    runtime.navigate(url=f"{base_url}/next")
+                    self.assertEqual(runtime.current_url(), f"{base_url}/next")
+                finally:
+                    if runtime is not None:
+                        runtime.close()
+                        runtime = None
+        finally:
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=2.0)
+
     def test_x11vnc_env_strips_wayland_session_markers(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime
 
@@ -435,6 +504,48 @@ class TestProjectedBrowserRuntime(unittest.TestCase):
                         pass
             finally:
                 manager.close(key="test-capture-failure-session")
+
+    def test_non_web_url_cannot_replace_or_navigate_an_active_session(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as runtime
+
+        fake_runtime = _CountingCaptureRuntime()
+        with patch.object(runtime, "launch_projected_browser_runtime", return_value=fake_runtime) as launch:
+            manager = runtime.ProjectedBrowserSessionManager(idle_message="No test browser session.")
+            try:
+                state = manager.open(
+                    key="test-url-boundary-session",
+                    profile_dir=runtime.Path("/tmp/projected-browser-url-boundary-test"),
+                    url="https://example.com/",
+                    width=1280,
+                    height=800,
+                    headless=False,
+                    channel_candidates=("chrome",),
+                )
+                self.assertEqual(state["state"], "ready")
+
+                with self.assertRaisesRegex(ValueError, "must use http or https"):
+                    manager.open(
+                        key="test-url-boundary-session",
+                        profile_dir=runtime.Path("/tmp/projected-browser-url-boundary-test"),
+                        url="file:///etc/passwd",
+                        width=1280,
+                        height=800,
+                        headless=False,
+                        channel_candidates=("chrome",),
+                    )
+
+                self.assertEqual(manager.info(key="test-url-boundary-session")["state"], "ready")
+                self.assertEqual(launch.call_count, 1)
+                with self.assertRaisesRegex(RuntimeError, "must use http or https"):
+                    manager.execute(
+                        key="test-url-boundary-session",
+                        kind="navigate",
+                        payload={"url": "file:///etc/passwd"},
+                        timeout=1.0,
+                    )
+                self.assertEqual(fake_runtime.command_urls, [])
+            finally:
+                manager.close(key="test-url-boundary-session")
 
     def test_projected_browser_drains_commands_before_next_capture(self) -> None:
         from cccc.daemon.browser import projected_browser_runtime as runtime

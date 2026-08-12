@@ -4,23 +4,28 @@ pub(super) fn provider_auth(home: &HomeLayout, request: &DaemonRequest) -> OpRes
     require_user(request)?;
     let provider = provider(request);
     let action = string_arg(request, "action").unwrap_or_else(|| "status".into());
-    if action == "start"
-        && space_credentials::resolve(home, &provider)
-            .map_err(OpError::io)?
-            .is_none()
-    {
+    require_notebooklm(&provider)?;
+    if !matches!(
+        action.as_str(),
+        "status" | "start" | "cancel" | "disconnect"
+    ) {
         return Err(OpError::new(
-            "credential_missing",
-            "configure a NotebookLM Playwright storage-state JSON before starting authentication",
+            "invalid_args",
+            "action must be status, start, cancel, or disconnect",
         ));
     }
-    require_notebooklm(&provider)?;
+    if action != "status" {
+        return Err(OpError::new(
+            "capability_unavailable",
+            "Native Rust NotebookLM authentication is owned by CCCC Web; use the Web or Rust CLI auth route",
+        ));
+    }
     let credential = space_credentials::status(home, &provider).map_err(OpError::io)?;
     object(json!({
         "provider":provider,
         "provider_state":provider_runtime_state(home, &provider)?,
         "credential":credential,
-        "auth":{"provider":provider,"state":if matches!(action.as_str(),"cancel"|"disconnect"){"canceled"}else if action=="start"{"running"}else{"idle"},"updated_at":utc_now(),"error":null}
+        "auth":{"provider":provider,"state":"idle","updated_at":utc_now(),"error":null}
     }))
 }
 

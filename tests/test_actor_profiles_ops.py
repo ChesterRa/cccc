@@ -237,6 +237,110 @@ class TestActorProfilesOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_profile_upsert_migrates_legacy_env_to_secret_store(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            created, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "profile": {
+                        "id": "legacy-env",
+                        "name": "Legacy Env",
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "env": {"LEGACY_TOKEN": "secret-value"},
+                    },
+                },
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            profile = (created.result or {}).get("profile") if isinstance(created.result, dict) else {}
+            self.assertEqual(profile.get("env"), {})
+
+            from cccc.daemon.actors.actor_profile_store import load_actor_profile_secrets
+
+            self.assertEqual(
+                load_actor_profile_secrets("legacy-env"),
+                {"LEGACY_TOKEN": "secret-value"},
+            )
+            public_doc = Path(home) / "state" / "actor_profiles" / "profiles.json"
+            self.assertNotIn("secret-value", public_doc.read_text(encoding="utf-8"))
+
+            updated, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "expected_revision": 1,
+                    "profile": {
+                        "id": "legacy-env",
+                        "name": "Legacy Env Updated",
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "env": {"SECOND_TOKEN": "second-value"},
+                    },
+                },
+            )
+            self.assertTrue(updated.ok, getattr(updated, "error", None))
+            updated_profile = (updated.result or {}).get("profile") if isinstance(updated.result, dict) else {}
+            self.assertEqual(updated_profile.get("env"), {})
+            self.assertEqual(
+                load_actor_profile_secrets("legacy-env"),
+                {
+                    "LEGACY_TOKEN": "secret-value",
+                    "SECOND_TOKEN": "second-value",
+                },
+            )
+            self.assertNotIn("second-value", public_doc.read_text(encoding="utf-8"))
+        finally:
+            cleanup()
+
+    def test_existing_canonical_profile_env_is_migrated_even_with_legacy_marker(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            self._write_raw_profiles(
+                home,
+                {
+                    "canonical-env": {
+                        "id": "canonical-env",
+                        "name": "Canonical Env",
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "command": [],
+                        "submit": "enter",
+                        "env": {"TOKEN": "canonical-secret"},
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "updated_at": "2026-01-01T00:00:00Z",
+                        "revision": 1,
+                    }
+                },
+            )
+            profile_root = Path(home) / "state" / "actor_profiles"
+            (profile_root / ".rust-profiles-migrated-v1").write_text(
+                "migrated from Rust profile storage\n",
+                encoding="utf-8",
+            )
+
+            response, _ = self._call(
+                "actor_profile_get",
+                {"by": "user", "profile_id": "canonical-env"},
+            )
+            self.assertTrue(response.ok, getattr(response, "error", None))
+            profile = (response.result or {}).get("profile") if isinstance(response.result, dict) else {}
+            self.assertEqual(profile.get("env"), {})
+
+            from cccc.daemon.actors.actor_profile_store import load_actor_profile_secrets
+
+            self.assertEqual(
+                load_actor_profile_secrets("canonical-env"),
+                {"TOKEN": "canonical-secret"},
+            )
+            self.assertNotIn(
+                "canonical-secret",
+                (profile_root / "profiles.json").read_text(encoding="utf-8"),
+            )
+        finally:
+            cleanup()
+
     def test_linked_actor_is_runtime_readonly_and_convert_to_custom(self) -> None:
         _, cleanup = self._with_home()
         try:

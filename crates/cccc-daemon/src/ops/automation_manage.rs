@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 
 use super::automation_rule_access::{
-    authorize as authorize_existing, required_text, validate as validate_rule,
+    authorize as authorize_existing, expected_version, required_text, validate as validate_rule,
 };
 use crate::dispatch::{OpError, string_arg};
 
@@ -27,7 +27,7 @@ pub(super) fn apply(group: &GroupDoc, request: &DaemonRequest) -> Result<Outcome
         .get("version")
         .and_then(Value::as_u64)
         .unwrap_or(1);
-    if let Some(expected) = request.args.get("expected_version").and_then(Value::as_u64)
+    if let Some(expected) = expected_version(&request.args)?
         && expected != current_version
     {
         return Err(OpError::new(

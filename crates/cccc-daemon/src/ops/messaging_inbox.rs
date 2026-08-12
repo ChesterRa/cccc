@@ -1,4 +1,4 @@
-use cccc_contracts::DaemonRequest;
+use cccc_contracts::{DaemonRequest, Event};
 use cccc_core::permissions;
 use cccc_core::{GroupDoc, HomeLayout, actors};
 use cccc_core::{inbox, ledger};
@@ -19,8 +19,8 @@ pub fn list(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let kind_filter = kind_filter(request)?;
     let messages =
         inbox::list_unread(home, &group, &actor_id, limit, &kind_filter).map_err(OpError::io)?;
-    let cursor = inbox::cursor(home, &group.group_id, &actor_id).map_err(OpError::io)?;
-    object(json!({"messages": messages, "cursor": {"event_id": cursor, "ts": ""}}))
+    let cursor = cursor_value(home, &group.group_id, &actor_id)?;
+    object(json!({"messages": messages, "cursor": cursor}))
 }
 
 pub fn mark_read(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -28,18 +28,35 @@ pub fn mark_read(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let actor_id = required_arg(request, "actor_id")?;
     let event_id = required_arg(request, "event_id")?;
     authorize(&group, request, &actor_id)?;
-    inbox::mark_read(home, &group.group_id, &actor_id, &event_id).map_err(OpError::not_found)?;
+    let target = validate_read_target(home, &group, &actor_id, &event_id)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    // Validate the shared cursor document before committing the read event.
+    // Append first so a failed ledger write cannot make unread work disappear.
+    inbox::cursor_details(home, &group.group_id, &actor_id).map_err(OpError::io)?;
     let event = append(
         home,
         &group.group_id,
         "chat.read",
-        &string_arg(request, "by").unwrap_or_else(|| "user".into()),
+        &by,
         json!({"actor_id": actor_id, "event_id": event_id})
             .as_object()
             .cloned()
             .unwrap_or_default(),
     )?;
-    object(json!({"cursor": {"event_id": event_id, "ts": event.ts}, "event": event}))
+    inbox::mark_read(home, &group.group_id, &actor_id, &event_id).map_err(OpError::io)?;
+    let ack_event = if by == actor_id
+        && target.kind == "chat.message"
+        && target.data.get("priority").and_then(Value::as_str) == Some("attention")
+    {
+        ack(home, request, "chat.ack")?
+            .get("event")
+            .cloned()
+            .unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
+    let cursor = cursor_value(home, &group.group_id, &actor_id)?;
+    object(json!({"cursor": cursor, "event": event, "ack_event": ack_event}))
 }
 
 pub fn mark_all(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -47,11 +64,11 @@ pub fn mark_all(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let actor_id = required_arg(request, "actor_id")?;
     authorize(&group, request, &actor_id)?;
     let kind_filter = kind_filter(request)?;
-    let unread =
-        inbox::list_unread(home, &group, &actor_id, 1000, &kind_filter).map_err(OpError::io)?;
-    let Some(last) = unread.last() else {
+    let Some(last) =
+        inbox::latest_unread(home, &group, &actor_id, &kind_filter).map_err(OpError::io)?
+    else {
         return object(
-            json!({"cursor": {"event_id": inbox::cursor(home, &group.group_id, &actor_id).map_err(OpError::io)?}, "event": null}),
+            json!({"cursor": cursor_value(home, &group.group_id, &actor_id)?, "event": null}),
         );
     };
     let mut forwarded = request.clone();
@@ -59,6 +76,55 @@ pub fn mark_all(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .args
         .insert("event_id".into(), Value::String(last.id.clone()));
     mark_read(home, &forwarded)
+}
+
+fn cursor_value(home: &HomeLayout, group_id: &str, actor_id: &str) -> Result<Value, OpError> {
+    let (event_id, ts, updated_at) =
+        inbox::cursor_details(home, group_id, actor_id).map_err(OpError::io)?;
+    Ok(json!({"event_id": event_id, "ts": ts, "updated_at": updated_at}))
+}
+
+fn validate_read_target(
+    home: &HomeLayout,
+    group: &GroupDoc,
+    actor_id: &str,
+    event_id: &str,
+) -> Result<Event, OpError> {
+    let target = find_event(home, &group.group_id, event_id)?;
+    if !matches!(target.kind.as_str(), "chat.message" | "system.notify") {
+        return Err(OpError::new(
+            "invalid_event_kind",
+            "event kind must be chat.message or system.notify",
+        ));
+    }
+    if target.by == actor_id || !inbox::is_for_actor(group, &target, actor_id) {
+        return Err(OpError::new(
+            "event_not_for_actor",
+            format!("event is not addressed to actor: {actor_id}"),
+        ));
+    }
+    if actor_id == "user" {
+        return Ok(target);
+    }
+    let path = crate::dispatch::store(home)?
+        .ledger_path(&group.group_id)
+        .map_err(OpError::io)?;
+    let existed = ledger::inspect(&path, |events, positions| {
+        let generations = inbox::actor_generation_positions(events);
+        inbox::actor_generation_contains(&generations, positions, actor_id, &target)
+    })
+    .map_err(OpError::io)?
+    .unwrap_or_else(|| {
+        actors::find(group, actor_id)
+            .is_some_and(|actor| actor.created_at.is_empty() || actor.created_at <= target.ts)
+    });
+    if !existed {
+        return Err(OpError::new(
+            "event_not_for_actor",
+            format!("event predates the current actor generation: {actor_id}"),
+        ));
+    }
+    Ok(target)
 }
 
 fn kind_filter(request: &DaemonRequest) -> Result<String, OpError> {

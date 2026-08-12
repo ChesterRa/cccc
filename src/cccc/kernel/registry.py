@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+import copy
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from ..paths import ensure_home
-from ..util.fs import atomic_write_json, read_json
+from ..util.file_lock import acquire_lockfile, release_lockfile
+from ..util.fs import atomic_write_json, merge_concurrent_document_changes, read_json
 from ..util.time import utc_now_iso
 
 
@@ -24,6 +26,10 @@ def _new_registry_doc() -> Dict[str, Any]:
 class Registry:
     path: Path
     doc: Dict[str, Any]
+    _baseline: Dict[str, Any] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        self._baseline = copy.deepcopy(self.doc)
 
     @property
     def groups(self) -> Dict[str, Any]:
@@ -42,20 +48,35 @@ class Registry:
         return d
 
     def save(self) -> None:
-        self.doc.setdefault("v", 1)
-        self.doc["updated_at"] = utc_now_iso()
-        expected = dict(self.doc)
+        lock = acquire_lockfile(self.path.with_suffix(".json.lock"), blocking=True)
         try:
-            atomic_write_json(self.path, expected)
-        except Exception:
-            if read_json(self.path) != expected:
-                raise
+            current = read_json(self.path) if self.path.exists() else copy.deepcopy(self._baseline)
+            if not isinstance(current, dict):
+                current = {}
+            baseline = copy.deepcopy(self._baseline)
+            desired = copy.deepcopy(self.doc)
+            for document in (baseline, desired, current):
+                document.pop("updated_at", None)
+            expected = merge_concurrent_document_changes(
+                baseline,
+                desired,
+                current,
+                document=str(self.path),
+            )
+            expected.setdefault("v", 1)
+            expected["updated_at"] = utc_now_iso()
+            try:
+                atomic_write_json(self.path, expected)
+            except Exception:
+                if read_json(self.path) != expected:
+                    raise
+            self.doc = copy.deepcopy(expected)
+            self._baseline = copy.deepcopy(expected)
+        finally:
+            release_lockfile(lock)
 
 
-def load_registry() -> Registry:
-    home = ensure_home()
-    path = home / "registry.json"
-    raw = read_json(path)
+def _normalize_registry_doc(raw: Any) -> tuple[Dict[str, Any], bool]:
     dirty = False
     if not isinstance(raw, dict) or not raw:
         doc = _new_registry_doc()
@@ -77,8 +98,21 @@ def load_registry() -> Registry:
         if not str(doc.get("updated_at") or "").strip():
             doc["updated_at"] = utc_now_iso()
             dirty = True
+    return doc, dirty
+
+
+def load_registry() -> Registry:
+    home = ensure_home()
+    path = home / "registry.json"
+    doc, dirty = _normalize_registry_doc(read_json(path))
     if dirty:
-        atomic_write_json(path, doc)
+        lock = acquire_lockfile(path.with_suffix(".json.lock"), blocking=True)
+        try:
+            doc, dirty = _normalize_registry_doc(read_json(path))
+            if dirty:
+                atomic_write_json(path, doc)
+        finally:
+            release_lockfile(lock)
     return Registry(path=path, doc=doc)
 
 

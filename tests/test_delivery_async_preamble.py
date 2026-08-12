@@ -195,6 +195,70 @@ class TestAsyncFirstDelivery(unittest.TestCase):
             self.assertTrue(reacquired)
             delivery.THROTTLE.end_delivery("g-test", "peer1")
 
+    def test_failed_message_is_retried_before_a_followup(self) -> None:
+        from cccc.daemon.messaging import delivery
+
+        group = self._group()
+        attempts: list[str] = []
+
+        def fake_submit(
+            _group,
+            *,
+            actor_id: str,
+            text: str,
+            file_fallback: bool = False,
+            wait_for_submit: bool = False,
+        ) -> bool:
+            self.assertEqual(actor_id, "peer1")
+            self.assertTrue(wait_for_submit)
+            attempts.append(text)
+            return len(attempts) > 1
+
+        with patch.object(delivery, "THROTTLE", delivery.DeliveryThrottle()), patch(
+            "cccc.daemon.messaging.delivery.find_actor",
+            return_value={"id": "peer1", "runner": "pty"},
+        ), patch(
+            "cccc.daemon.messaging.delivery.should_deliver_message", return_value=True
+        ), patch(
+            "cccc.daemon.messaging.delivery.is_preamble_sent", return_value=True
+        ), patch(
+            "cccc.daemon.messaging.delivery.pty_runner.SUPERVISOR.startup_times",
+            return_value=(None, None),
+        ), patch(
+            "cccc.daemon.messaging.delivery.pty_submit_text", side_effect=fake_submit
+        ), patch(
+            "cccc.daemon.messaging.delivery._get_auto_mark_on_delivery", return_value=False
+        ), patch.object(
+            delivery, "DEFAULT_DELIVERY_RETRY_INTERVAL_SECONDS", 0
+        ):
+            delivery.queue_chat_message(
+                group,
+                actor_id="peer1",
+                event_id="e1",
+                by="user",
+                to=["peer1"],
+                text="message-A",
+                ts="2026-03-23T00:00:00Z",
+            )
+            self.assertFalse(delivery.flush_pending_messages(group, actor_id="peer1"))
+            self.assertTrue(delivery.THROTTLE.has_pending("g-test", "peer1"))
+
+            delivery.queue_chat_message(
+                group,
+                actor_id="peer1",
+                event_id="e2",
+                by="user",
+                to=["peer1"],
+                text="message-B",
+                ts="2026-03-23T00:00:01Z",
+            )
+            self.assertTrue(delivery.flush_pending_messages(group, actor_id="peer1"))
+
+        self.assertEqual(len(attempts), 2)
+        self.assertIn("message-A", attempts[0])
+        self.assertIn("message-A", attempts[1])
+        self.assertIn("message-B", attempts[1])
+
     def test_first_flush_waits_for_bracketed_paste_before_preamble(self) -> None:
         from cccc.daemon.messaging import delivery
 

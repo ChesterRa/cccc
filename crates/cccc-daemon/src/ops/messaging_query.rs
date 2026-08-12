@@ -177,8 +177,10 @@ fn matches_kind(event: &Event, kind: Kind) -> bool {
 }
 
 fn ledger_path(home: &HomeLayout, request: &DaemonRequest) -> Result<std::path::PathBuf, OpError> {
-    let group_id = required_arg(request, "group_id")?;
-    store(home)?.ledger_path(&group_id).map_err(OpError::io)
+    let group = super::messaging::load(home, request)?;
+    store(home)?
+        .ledger_path(&group.group_id)
+        .map_err(OpError::io)
 }
 
 fn result(home: &HomeLayout, request: &DaemonRequest, page: Page) -> OpResult {

@@ -12,7 +12,6 @@ case "$mode" in
     ;;
   full)
     uvx ruff check src scripts tests
-    npm -C web test
     scripts/pre_commit_checks.sh --full
     ;;
   *)

@@ -1,7 +1,10 @@
+import json
 import os
 import shutil
 import tempfile
+import threading
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -891,6 +894,130 @@ class TestMaintenanceOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_ledger_maintenance_rejects_malformed_middle_record_before_mutation(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+
+            create, _ = self._call(
+                "group_create",
+                {"title": "ledger-corruption", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            first, _ = self._call(
+                "send",
+                {"group_id": group_id, "text": "before", "by": "user", "to": ["user"]},
+            )
+            self.assertTrue(first.ok, getattr(first, "error", None))
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            with Path(group.ledger_path).open("ab") as handle:
+                handle.write(b'{"broken":\n')
+            second, _ = self._call(
+                "send",
+                {"group_id": group_id, "text": "after", "by": "user", "to": ["user"]},
+            )
+            self.assertTrue(second.ok, getattr(second, "error", None))
+            original = Path(group.ledger_path).read_bytes()
+
+            snapshot, _ = self._call(
+                "ledger_snapshot",
+                {"group_id": group_id, "by": "user", "reason": "corrupt"},
+            )
+            self.assertFalse(snapshot.ok)
+            self.assertEqual(str(getattr(snapshot.error, "code", "")), "ledger_snapshot_failed")
+            self.assertIn("malformed ledger JSON", str(getattr(snapshot.error, "message", "")))
+
+            compact, _ = self._call(
+                "ledger_compact",
+                {"group_id": group_id, "by": "user", "reason": "corrupt", "force": True},
+            )
+            self.assertFalse(compact.ok)
+            self.assertEqual(str(getattr(compact.error, "code", "")), "ledger_compact_failed")
+            self.assertIn("malformed ledger JSON", str(getattr(compact.error, "message", "")))
+            self.assertEqual(Path(group.ledger_path).read_bytes(), original)
+            segment_dir = group.path / "state" / "ledger" / "segments"
+            self.assertFalse(segment_dir.exists() and any(segment_dir.iterdir()))
+        finally:
+            cleanup()
+
+    def test_ledger_snapshot_waits_for_an_inflight_writer(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+            from cccc.kernel.ledger_retention import _ledger_lock_path, snapshot
+            from cccc.util.file_lock import acquire_lockfile, release_lockfile
+
+            create, _ = self._call(
+                "group_create",
+                {"title": "locked-snapshot", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+
+            payload = json.dumps(
+                {
+                    "v": 1,
+                    "id": "writer-event",
+                    "ts": "2026-08-12T00:00:00Z",
+                    "kind": "chat.message",
+                    "group_id": group_id,
+                    "scope_key": "",
+                    "by": "user",
+                    "data": {"text": "committed"},
+                },
+                separators=(",", ":"),
+            ).encode("utf-8")
+            split = len(payload) // 2
+            lock = acquire_lockfile(_ledger_lock_path(group), blocking=True)
+            writer = Path(group.ledger_path).open("ab")
+            writer.write(payload[:split])
+            writer.flush()
+            os.fsync(writer.fileno())
+
+            started = threading.Event()
+            finished = threading.Event()
+            outcome: dict[str, object] = {}
+
+            def run_snapshot() -> None:
+                started.set()
+                try:
+                    outcome["result"] = snapshot(group, reason="writer-lock")
+                except Exception as exc:  # pragma: no cover - asserted below
+                    outcome["error"] = exc
+                finally:
+                    finished.set()
+
+            worker = threading.Thread(target=run_snapshot)
+            worker.start()
+            self.assertTrue(started.wait(timeout=1.0))
+            self.assertFalse(
+                finished.wait(timeout=0.2),
+                "snapshot must wait for the canonical writer lock",
+            )
+
+            writer.write(payload[split:] + b"\n")
+            writer.flush()
+            os.fsync(writer.fileno())
+            writer.close()
+            release_lockfile(lock)
+            worker.join(timeout=2.0)
+
+            self.assertFalse(worker.is_alive())
+            self.assertNotIn("error", outcome)
+            result = outcome.get("result")
+            self.assertIsInstance(result, dict)
+            self.assertEqual(((result or {}).get("last_event") or {}).get("id"), "writer-event")
+        finally:
+            cleanup()
+
     def test_ledger_retention_defaults_rotate_active_ledger_at_five_mb(self) -> None:
         from cccc.kernel.ledger_retention import LedgerRetentionConfig
 
@@ -910,27 +1037,78 @@ class TestMaintenanceOps(unittest.TestCase):
             )
             self.assertFalse(tiny.ok)
             self.assertEqual(str(getattr(tiny.error, "code", "") or ""), "invalid_size")
+
+            too_large, _ = self._call(
+                "term_resize",
+                {"group_id": group_id, "actor_id": "peer1", "cols": 65_536, "rows": 24},
+            )
+            self.assertFalse(too_large.ok)
+            self.assertEqual(str(getattr(too_large.error, "code", "") or ""), "invalid_size")
         finally:
             cleanup()
 
-    def test_term_resize_accepts_minimum_supported_size(self) -> None:
+    def test_term_resize_rejects_invalid_or_inactive_actor_targets(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "resize-targets", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add_pty, _ = self._call(
+                "actor_add",
+                {"group_id": group_id, "actor_id": "pty-stopped", "runtime": "codex", "runner": "pty", "by": "user"},
+            )
+            self.assertTrue(add_pty.ok, getattr(add_pty, "error", None))
+            add_headless, _ = self._call(
+                "actor_add",
+                {"group_id": group_id, "actor_id": "headless", "runtime": "web_model", "runner": "headless", "by": "user"},
+            )
+            self.assertTrue(add_headless.ok, getattr(add_headless, "error", None))
+
+            for actor_id, expected_code in (
+                ("missing", "actor_not_found"),
+                ("headless", "not_pty_actor"),
+                ("pty-stopped", "actor_not_running"),
+            ):
+                with self.subTest(actor_id=actor_id):
+                    response, _ = self._call(
+                        "term_resize",
+                        {"group_id": group_id, "actor_id": actor_id, "cols": 80, "rows": 24},
+                    )
+                    self.assertFalse(response.ok)
+                    self.assertEqual(str(getattr(response.error, "code", "") or ""), expected_code)
+        finally:
+            cleanup()
+
+    def test_term_resize_accepts_minimum_supported_size_for_running_pty(self) -> None:
         _, cleanup = self._with_home()
         try:
             create, _ = self._call("group_create", {"title": "resize-min", "topic": "", "by": "user"})
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
-
-            ok, _ = self._call(
-                "term_resize",
-                {"group_id": group_id, "actor_id": "peer1", "cols": 10, "rows": 2},
+            add, _ = self._call(
+                "actor_add",
+                {"group_id": group_id, "actor_id": "peer1", "runtime": "codex", "runner": "pty", "by": "user"},
             )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            with patch(
+                "cccc.daemon.ops.maintenance_ops.pty_runner.SUPERVISOR.resize",
+                return_value=True,
+            ) as resize:
+                ok, _ = self._call(
+                    "term_resize",
+                    {"group_id": group_id, "actor_id": "peer1", "cols": 10, "rows": 2},
+                )
             self.assertTrue(ok.ok, getattr(ok, "error", None))
             result = ok.result if isinstance(ok.result, dict) else {}
             self.assertIsInstance(result, dict)
             assert isinstance(result, dict)
             self.assertEqual(int(result.get("cols") or 0), 10)
             self.assertEqual(int(result.get("rows") or 0), 2)
+            resize.assert_called_once_with(group_id=group_id, actor_id="peer1", cols=10, rows=2)
         finally:
             cleanup()
 

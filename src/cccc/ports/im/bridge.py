@@ -25,6 +25,7 @@ from ...daemon.server import call_daemon
 from ...kernel.actors import list_actors, resolve_recipient_tokens
 from ...kernel.blobs import resolve_blob_attachment_path
 from ...kernel.group import Group, load_group
+from ...kernel.im_state import im_state_lock
 from ...kernel.messaging import disabled_recipient_actor_ids, get_default_send_to
 from ...kernel.peer_insight import append_peer_perspective
 from ...paths import ensure_home
@@ -488,6 +489,18 @@ class IMBridge:
             parsed = parse_message(text)
 
             # Handle commands
+            if self.subscribers.is_paused(
+                chat_id, thread_id=thread_id
+            ) and parsed.type in {
+                CommandType.SEND,
+                CommandType.MESSAGE,
+            }:
+                self.adapter.send_message(
+                    chat_id,
+                    "⏸ This subscription is paused. Send /resume to continue.",
+                    thread_id=thread_id,
+                )
+                continue
             if parsed.type == CommandType.SUBSCRIBE:
                 self._handle_subscribe(chat_id, chat_title, thread_id=thread_id)
             elif parsed.type == CommandType.UNSUBSCRIBE:
@@ -607,12 +620,6 @@ class IMBridge:
 
     def _process_outbound(self) -> None:
         """Process outbound events from ledger."""
-        # Reload subscriber state from disk so that subscriptions created by the
-        # daemon (e.g. auto-subscribe on bind) are picked up without restarting.
-        self.subscribers._load()
-        # Reload authorized-chat state as revoke/bind is performed by daemon.
-        self.key_manager._load()
-
         events = self.watcher.poll()
         actor_labels = self._actor_display_map()
 
@@ -1093,14 +1100,26 @@ class IMBridge:
         self, chat_id: str, chat_title: str, thread_id: ThreadId = 0
     ) -> None:
         """Handle /subscribe command."""
-        # Reload auth state on-demand as subscribe semantics depend on current
-        # authorization truth (bind/revoke can happen in daemon/web concurrently).
-        self.key_manager._load()
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
+        with im_state_lock(self.group.path / "state"):
+            authorized = self.key_manager.is_authorized(chat_id, thread_id, platform)
+            key = (
+                ""
+                if authorized
+                else self.key_manager.generate_key(chat_id, thread_id, platform)
+            )
+            if authorized:
+                was_subscribed = self.subscribers.is_subscribed(
+                    chat_id, thread_id=thread_id
+                )
+                sub = self.subscribers.subscribe(
+                    chat_id,
+                    chat_title,
+                    thread_id=thread_id,
+                    platform=platform,
+                )
 
-        # If the chat is not yet authorized, generate a binding key.
-        if not self.key_manager.is_authorized(chat_id, thread_id, platform):
-            key = self.key_manager.generate_key(chat_id, thread_id, platform)
+        if not authorized:
             self.adapter.send_message(
                 chat_id,
                 f"🔑 Authorization required.\n\n"
@@ -1118,11 +1137,6 @@ class IMBridge:
                 f"[subscribe] Pending auth key generated for chat={chat_id} thread={thread_id}"
             )
             return
-
-        was_subscribed = self.subscribers.is_subscribed(chat_id, thread_id=thread_id)
-        sub = self.subscribers.subscribe(
-            chat_id, chat_title, thread_id=thread_id, platform=platform
-        )
         verbose_str = "on" if sub.verbose else "off"
         platform = (
             str(getattr(self.adapter, "platform", "") or "").strip().lower()
@@ -1151,11 +1165,9 @@ class IMBridge:
 
     def _handle_unsubscribe(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /unsubscribe command — also revokes authorization so re-subscribe requires key."""
-        # Reload auth state — authorization may have been granted by the daemon
-        # process (im_bind_chat), so in-memory _authorized can be stale.
-        self.key_manager._load()
-        was_subscribed = self.subscribers.unsubscribe(chat_id, thread_id=thread_id)
-        self.key_manager.revoke(chat_id, thread_id)
+        with im_state_lock(self.group.path / "state"):
+            was_subscribed = self.subscribers.unsubscribe(chat_id, thread_id=thread_id)
+            self.key_manager.revoke(chat_id, thread_id)
         if was_subscribed:
             self.adapter.send_message(
                 chat_id,
@@ -1226,6 +1238,7 @@ class IMBridge:
             "authorized": self.key_manager.is_authorized(chat_id, thread_id, platform),
             "subscribed": self.subscribers.is_subscribed(chat_id, thread_id=thread_id),
             "verbose": self.subscribers.is_verbose(chat_id, thread_id=thread_id),
+            "paused": self.subscribers.is_paused(chat_id, thread_id=thread_id),
             "thread_id": thread_id,
             "capabilities": capabilities,
         }
@@ -1252,53 +1265,33 @@ class IMBridge:
 
     def _handle_pause(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /pause command."""
-        resp = self._daemon(
-            {
-                "op": "group_set_state",
-                "args": {
-                    "group_id": self.group.group_id,
-                    "state": "paused",
-                    "by": "user",
-                },
-            }
-        )
-        if resp.get("ok"):
+        paused = self.subscribers.set_paused(chat_id, True, thread_id=thread_id)
+        if paused:
             self.adapter.send_message(
                 chat_id,
-                "⏸ Group paused. Message delivery stopped.",
+                "⏸ Subscription paused. Message delivery stopped for this chat.",
                 thread_id=thread_id,
             )
         else:
-            error = resp.get("error", {}).get("message", "unknown error")
             self.adapter.send_message(
-                chat_id, f"❌ Failed to pause: {error}", thread_id=thread_id
+                chat_id, "ℹ️ Please /subscribe first.", thread_id=thread_id
             )
-        self._log(f"[pause] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
+        self._log(f"[pause] chat={chat_id} thread={thread_id} ok={paused}")
 
     def _handle_resume(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /resume command."""
-        resp = self._daemon(
-            {
-                "op": "group_set_state",
-                "args": {
-                    "group_id": self.group.group_id,
-                    "state": "active",
-                    "by": "user",
-                },
-            }
-        )
-        if resp.get("ok"):
+        resumed = self.subscribers.set_paused(chat_id, False, thread_id=thread_id)
+        if resumed:
             self.adapter.send_message(
                 chat_id,
-                "▶️ Group resumed. Message delivery active.",
+                "▶️ Subscription resumed. Message delivery is active for this chat.",
                 thread_id=thread_id,
             )
         else:
-            error = resp.get("error", {}).get("message", "unknown error")
             self.adapter.send_message(
-                chat_id, f"❌ Failed to resume: {error}", thread_id=thread_id
+                chat_id, "ℹ️ Please /subscribe first.", thread_id=thread_id
             )
-        self._log(f"[resume] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
+        self._log(f"[resume] chat={chat_id} thread={thread_id} ok={resumed}")
 
     def _handle_launch(self, chat_id: str, thread_id: ThreadId = 0) -> None:
         """Handle /launch command."""
@@ -1514,6 +1507,18 @@ class IMBridge:
         cleaned_mention_user_ids = [
             str(item).strip() for item in (mention_user_ids or []) if str(item).strip()
         ]
+        source_platform = str(getattr(self.adapter, "platform", "") or "").strip()
+        thread_token = str(normalize_thread_id(thread_id) or "").strip()
+        source_target = (
+            chat_id
+            if not thread_token or thread_token == "0"
+            else f"{chat_id}:{thread_token}"
+        )
+        client_id = (
+            f"im:{source_platform}:{source_target}:{message_id}"
+            if source_platform and message_id
+            else ""
+        )
 
         resp = self._daemon(
             {
@@ -1525,13 +1530,11 @@ class IMBridge:
                     "to": canonical_to,
                     "path": "",
                     "attachments": stored_attachments,
-                    "source_platform": str(
-                        getattr(self.adapter, "platform", "") or ""
-                    ).strip()
-                    or None,
+                    "source_platform": source_platform or None,
                     "source_user_name": from_user or None,
                     "source_user_id": from_user_id or None,
                     "mention_user_ids": cleaned_mention_user_ids or None,
+                    "client_id": client_id or None,
                 },
             }
         )

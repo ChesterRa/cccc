@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from typing import Callable
 
@@ -13,6 +14,8 @@ TokenPartsGetter = Callable[[Request], tuple[str, str]]
 PublicPathChecker = Callable[[Request], bool]
 PrincipalResolver = Callable[[Request], object]
 TokensActiveGetter = Callable[[], bool]
+
+logger = logging.getLogger(__name__)
 
 
 def _is_read_only_safe(method: str, path: str) -> bool:
@@ -89,11 +92,27 @@ class AuthMiddleware:
         if logout_marker and token_source == "cookie":
             provided_token = ""
             token_source = ""
-        principal = self._resolve_principal(request if not logout_marker else request)
-        stale_cookie = logout_marker and bool(str(request.cookies.get("cccc_access_token") or "").strip())
-        if logout_marker and stale_cookie:
-            principal = type(principal)(kind="anonymous")
-        tokens_active = bool(self._tokens_active())
+        try:
+            principal = self._resolve_principal(request)
+            stale_cookie = logout_marker and bool(str(request.cookies.get("cccc_access_token") or "").strip())
+            if logout_marker and stale_cookie:
+                principal = type(principal)(kind="anonymous")
+            tokens_active = bool(self._tokens_active())
+        except Exception:
+            logger.exception("failed to read CCCC access token store")
+            resp = JSONResponse(
+                status_code=500,
+                content={
+                    "ok": False,
+                    "error": {
+                        "code": "auth_store_error",
+                        "message": "access token store is unavailable",
+                        "details": {},
+                    },
+                },
+            )
+            await resp(scope, receive, send)
+            return
 
         if not self._is_public_path(request) and provided_token and principal.kind != "user":
             if token_source in ("header", "query") or tokens_active:

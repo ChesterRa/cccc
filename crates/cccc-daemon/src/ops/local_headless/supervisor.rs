@@ -142,7 +142,14 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
         next_request_id: AtomicU64::new(1),
         pending: Mutex::new(HashMap::new()),
         thread_id: Mutex::new(String::new()),
-        active_event_id: Mutex::new(String::new()),
+        resumed_provider_session_id: Mutex::new(
+            claude_session
+                .as_ref()
+                .filter(|(_, resumed)| *resumed)
+                .map(|(session_id, _)| session_id.clone())
+                .unwrap_or_default(),
+        ),
+        active_turn: Mutex::new(None),
         completion: (Mutex::new(0), Condvar::new()),
         turns,
     });
@@ -213,7 +220,7 @@ pub fn start(home: &HomeLayout, group: &GroupDoc, actor: &Actor) -> io::Result<(
         text: bootstrap,
         event_id: String::new(),
         event_ts: String::new(),
-        control: true,
+        control_kind: "bootstrap".into(),
     });
     super::output::emit(&item, "headless.session.started", Map::new());
     Ok(())
@@ -276,7 +283,7 @@ pub fn submit(home: &HomeLayout, group: &GroupDoc, actor: &Actor, event: &Event)
     if !item.running() {
         return false;
     }
-    let Some((delivery, control)) = render_turn(event) else {
+    let Some((delivery, control_kind)) = render_turn(event) else {
         return false;
     };
     let queued = item
@@ -285,7 +292,7 @@ pub fn submit(home: &HomeLayout, group: &GroupDoc, actor: &Actor, event: &Event)
             text: delivery,
             event_id: event.id.clone(),
             event_ts: event.ts.clone(),
-            control,
+            control_kind,
         })
         .is_ok();
     if queued {
@@ -300,9 +307,17 @@ pub fn submit(home: &HomeLayout, group: &GroupDoc, actor: &Actor, event: &Event)
     queued
 }
 
-fn render_turn(event: &Event) -> Option<(String, bool)> {
-    super::super::actor_delivery_render::render_batch(std::slice::from_ref(event))
-        .map(|text| (text, event.kind == "system.notify"))
+fn render_turn(event: &Event) -> Option<(String, String)> {
+    super::super::actor_delivery_render::render_batch(std::slice::from_ref(event)).map(|text| {
+        (
+            text,
+            if event.kind == "system.notify" {
+                "system_notify".into()
+            } else {
+                String::new()
+            },
+        )
+    })
 }
 
 fn lookup(key: &Key) -> Option<Arc<Session>> {
@@ -766,6 +781,127 @@ while IFS= read -r line; do :; done
         assert!(lines[1].contains(&format!("--session-id {recovered_session}")));
         stop(&group.group_id, &actor.id);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn delayed_claude_resume_rejection_is_invalidated_before_retry() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let mut group = GroupStore::new(home.clone())
+            .expect("store")
+            .create("delayed stale Claude resume", "")
+            .expect("group");
+        group.scopes.push(Scope {
+            scope_key: "s_project".into(),
+            url: temp.path().to_string_lossy().into_owned(),
+            label: "project".into(),
+            git_remote: String::new(),
+        });
+        group.active_scope_key = "s_project".into();
+
+        let executable = temp.path().join("claude");
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "$CCCC_TEST_ARGS"
+case " $* " in
+  *' --resume '*)
+    IFS= read -r line || exit 0
+    printf '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"No conversation found for stale session"}\n'
+    while IFS= read -r line; do :; done
+    ;;
+  *)
+    while IFS= read -r line; do
+      printf '{"type":"result","subtype":"success","is_error":false}\n'
+    done
+    ;;
+esac
+"#,
+        )
+        .expect("fake Claude");
+        let mut permissions = std::fs::metadata(&executable)
+            .expect("fake Claude metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions).expect("fake Claude executable");
+
+        let args_log = temp.path().join("claude-args.log");
+        let mut actor = Actor::new("headless");
+        actor.role = Some(ActorRole::Foreman);
+        actor.runtime = ActorRuntime::Claude;
+        actor.runner = RunnerKind::Headless;
+        actor.command = vec![executable.to_string_lossy().into_owned()];
+        actor.env.insert(
+            "CCCC_TEST_ARGS".into(),
+            args_log.to_string_lossy().into_owned(),
+        );
+        group.actors.push(actor.clone());
+
+        let mut command_env = actor.env.clone();
+        let (_, session_command) =
+            provider_command(&home, &group, &actor, &mut command_env).expect("provider command");
+        let stale_session = "42e9ef0c-3b75-43a0-9056-eef13dd1061d";
+        crate::ops::runtime_session::record_claude_headless_session(
+            &home,
+            &group.group_id,
+            &actor.id,
+            temp.path(),
+            &session_command,
+            stale_session,
+            false,
+        )
+        .expect("seed stale session");
+
+        start(&home, &group, &actor).expect("provider survives startup grace");
+        let session_path = GroupStore::new(home.clone())
+            .expect("store")
+            .state_dir(&group.group_id)
+            .expect("state dir")
+            .join("runtime_sessions")
+            .join(format!("{}.json", actor.id));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let rejected = loop {
+            let document: serde_json::Value =
+                cccc_core::fs::read_json(&session_path).expect("runtime session metadata");
+            if document["status"] == "resume_failed" {
+                break document;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "delayed resume rejection was not persisted: {document}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        assert_eq!(rejected["resume_eligible"], false);
+        assert_eq!(rejected["provider_session_id"], stale_session);
+        assert!(!running(&group.group_id, &actor.id));
+        let events_path = GroupStore::new(home.clone())
+            .expect("store")
+            .state_dir(&group.group_id)
+            .expect("state dir")
+            .join("headless/events.jsonl");
+        let events = std::fs::read_to_string(events_path).expect("headless events");
+        assert!(events.contains("headless.session.resume_failed"));
+
+        start(&home, &group, &actor).expect("fresh retry");
+        let recovered: serde_json::Value =
+            cccc_core::fs::read_json(&session_path).expect("recovered session metadata");
+        let recovered_session = recovered["provider_session_id"]
+            .as_str()
+            .expect("recovered session id");
+        assert_ne!(recovered_session, stale_session);
+        assert_eq!(recovered["status"], "usable");
+        assert_eq!(recovered["resume_eligible"], true);
+        let launches = std::fs::read_to_string(&args_log).expect("Claude argv log");
+        let lines = launches.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains(&format!("--resume {stale_session}")));
+        assert!(lines[1].contains(&format!("--session-id {recovered_session}")));
+        stop(&group.group_id, &actor.id);
+    }
 }
 #[test]
 fn headless_turn_uses_complete_envelope_and_control_semantics() {
@@ -786,7 +922,7 @@ fn headless_turn_uses_complete_envelope_and_control_semantics() {
     .cloned()
     .expect("message");
     let (rendered, control) = render_turn(&message).expect("turn");
-    assert!(!control);
+    assert!(control.is_empty());
     for expected in [
         "IMPORTANT",
         "REPLY REQUIRED",
@@ -807,5 +943,8 @@ fn headless_turn_uses_complete_envelope_and_control_semantics() {
         .as_object()
         .cloned()
         .expect("notify");
-    assert!(render_turn(&notify).expect("notify turn").1);
+    assert_eq!(
+        render_turn(&notify).expect("notify turn").1,
+        "system_notify"
+    );
 }

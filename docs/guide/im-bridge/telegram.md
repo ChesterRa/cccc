@@ -187,8 +187,8 @@ Attach files to your message. They're downloaded and stored in CCCC's blob stora
 | `/send @all <message>` | Send to all agents |
 | `/send @peers <message>` | Send to non-foreman agents |
 | `/status` | Show group and agent status |
-| `/pause` | Pause message delivery |
-| `/resume` | Resume message delivery |
+| `/pause` | Pause delivery for this chat or topic |
+| `/resume` | Resume delivery for this chat or topic |
 | `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/help` | Show available commands |
 

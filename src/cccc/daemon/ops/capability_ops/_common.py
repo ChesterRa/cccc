@@ -15,6 +15,7 @@ from ....contracts.v1 import DaemonError, DaemonResponse
 from ....kernel.actors import get_effective_role
 from ....kernel.group import load_group
 from ....paths import ensure_home
+from ....util.file_lock import acquire_lockfile, release_lockfile
 
 _SOURCE_IDS = (
     "manual_import",
@@ -42,11 +43,45 @@ _SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _ARG_TEMPLATE_RE = re.compile(r"\{[a-zA-Z_][a-zA-Z0-9_]*\}")
 _ENV_FORWARD_TEMPLATE_RE = re.compile(r"^([A-Z][A-Z0-9_]*)=\{[a-zA-Z_][a-zA-Z0-9_]*\}$")
 _CLAWSKILLS_ENTRY_RE = re.compile(r"\{[^{}]*\}")
-_STATE_LOCK = threading.RLock()
-_CATALOG_LOCK = threading.RLock()
-_RUNTIME_LOCK = threading.RLock()
+class _CapabilityDocumentLock:
+    """Reentrant process and cross-process lock for one shared capability document."""
+
+    def __init__(self, lock_relative_path: str) -> None:
+        self._lock_relative_path = lock_relative_path
+        self._thread_lock = threading.RLock()
+        self._local = threading.local()
+
+    def __enter__(self) -> _CapabilityDocumentLock:
+        self._thread_lock.acquire()
+        depth = int(getattr(self._local, "depth", 0) or 0)
+        try:
+            if depth == 0:
+                path = ensure_home() / self._lock_relative_path
+                self._local.file = acquire_lockfile(path, blocking=True)
+            self._local.depth = depth + 1
+            return self
+        except Exception:
+            self._thread_lock.release()
+            raise
+
+    def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
+        depth = int(getattr(self._local, "depth", 1) or 1) - 1
+        self._local.depth = depth
+        try:
+            if depth == 0:
+                lockfile = getattr(self._local, "file", None)
+                if lockfile is not None:
+                    release_lockfile(lockfile)
+                    del self._local.file
+        finally:
+            self._thread_lock.release()
+
+
+_STATE_LOCK = _CapabilityDocumentLock("state/capabilities/state.json.lock")
+_CATALOG_LOCK = _CapabilityDocumentLock("state/capabilities/catalog.json.lock")
+_RUNTIME_LOCK = _CapabilityDocumentLock("state/capabilities/runtime.json.lock")
 _AUDIT_LOCK = threading.RLock()
-_POLICY_LOCK = threading.RLock()
+_POLICY_LOCK = _CapabilityDocumentLock("config/capability-allowlist.user.yaml.lock")
 _REMOTE_SOURCE_CACHE_LOCK = threading.RLock()
 _OPENCLAW_TREE_CACHE: Dict[str, Any] = {"fetched_at": 0.0, "paths": []}
 

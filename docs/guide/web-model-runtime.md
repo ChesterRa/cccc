@@ -24,7 +24,7 @@ Mental model: the ChatGPT Web Model actor is a normal CCCC agent whose model sur
 
 Connector model: CCCC currently supports one ChatGPT Web Model actor per CCCC instance. That actor owns one active remote MCP URL and one target ChatGPT conversation. Rotating the MCP URL creates a new secret and revokes the previous active URL.
 
-MCP tool model: ChatGPT registers a remote MCP schema up front, so the ChatGPT Web Model connector advertises a stable built-in CCCC tool schema instead of a role-filtered progressive list. Calls are still authorized with the bound actor identity. The ChatGPT Web Model peer can use the normal peer surface plus local workspace tools (`cccc_repo_edit`, `cccc_shell`, `cccc_git`); control, diagnostics, capability administration, and other management tools require the actor to be the group foreman.
+MCP tool model: ChatGPT registers a remote MCP schema up front, so the ChatGPT Web Model connector advertises the same fixed default 31-tool built-in schema in both CCCC engines instead of extending that schema with newly discovered capability tools. Explicitly disabling CCCC code mode removes its two code-mode tools; daemon restart timing does not collapse the remaining Web Model schema to the ordinary 13-tool fallback. Calls are still authorized with the connector-bound actor identity. A Web Model actor cannot bypass that surface by naming an unadvertised tool directly. A group foreman can reach an enabled built-in capability-pack tool through `cccc_capability_use`; a peer cannot use that route to acquire foreman management authority.
 
 ## Requirements
 
@@ -132,6 +132,7 @@ For remote-MCP pull mode, prompt the model to use CCCC explicitly:
 - **MCP URL is localhost or HTTP**: ChatGPT cannot reach local URLs. Set a public HTTPS URL in `Settings > Global > Web Access`, then rotate/copy the MCP URL again.
 - **ChatGPT cannot see the CCCC connector**: first use a ChatGPT model/account with Developer mode and the CCCC app enabled. If a GPT Pro chat exposes the connector only when an image is attached, select **GPT Pro (experimental)** in that actor's runtime panel; CCCC still cannot guarantee or control ChatGPT-side MCP availability.
 - **CCCC still says the MCP app is not connected**: after creating the app in ChatGPT, ask the model to call `cccc_bootstrap` once, or refresh the app/tool list in ChatGPT settings.
+- **ChatGPT says `CCCC tool has been disabled`**: first refresh the CCCC app/tool list, enable the connector for the current chat, and approve the trusted call in ChatGPT. That wording is normally ChatGPT-side permission or connector state. Treat it as a CCCC policy failure only when the CCCC connector activity panel records a concrete error such as `code_mode_disabled` or `permission_denied` for the same call.
 - **ChatGPT is signed in but CCCC has not confirmed it**: open the embedded browser in `Settings > Global > ChatGPT Web Model` and use `Check status` if needed.
 - **Messages go to the wrong ChatGPT chat**: open `Settings > Global > ChatGPT Web Model`, check `Saved target`, then choose `Use current browser chat`, `Start new chat on next delivery`, or paste an explicit `chatgpt.com/c/...` URL and click `Save target`.
 
@@ -235,8 +236,9 @@ curl -s "$CONNECTOR_URL" \
 - `web_model` does not spawn a local PTY or local headless model process.
 - Connector secrets are one-time visible; CCCC stores only a hash.
 - Connector activity is best-effort diagnostic state. `Settings > Global > ChatGPT Web Model` shows the latest remote method/tool, wait status, delivery or turn id, error, and last-seen time after ChatGPT calls the connector.
-- `cccc_repo` is read-only and annotated as read-only for MCP clients.
-- The ChatGPT Web Model `tools/list` is intentionally stable for ChatGPT registration. Seeing a management tool in ChatGPT does not grant permission; role checks happen on `tools/call`.
+- Unknown or malformed tool calls return JSON-RPC protocol errors. A known tool that fails execution or policy checks returns an MCP tool result with `isError: true`; both engines include a machine-readable payload in `structuredContent` and the text content.
+- Only tools whose declared operation is read-only are annotated with `readOnlyHint: true`. Mixed-action and mutating tools remain unannotated so a client is not encouraged to bypass approval for a write path.
+- The ChatGPT Web Model `tools/list` is intentionally stable for ChatGPT registration. Direct calls remain limited to that advertised surface; hidden built-in capability-pack tools must pass through `cccc_capability_use` and its actor-role checks.
 - ChatGPT Web Model local-power tools (`cccc_repo_edit`, `cccc_shell`, `cccc_git`) are actor-bound to the single ChatGPT Web Model actor identity and constrained to the active workspace scope.
 - ChatGPT proactive delivery depends on the shared projected browser session and an active logged-in browser profile.
 - New ChatGPT chats are supported through a saved pending target: the first successful browser delivery commits the submitted batch, then CCCC waits for ChatGPT to expose the concrete `chatgpt.com/c/...` URL before binding future deliveries to that conversation. Ordinary browser history such as `last_tab_url` is diagnostic only and is never treated as a saved target.

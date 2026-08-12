@@ -98,6 +98,33 @@ def _write_snapshot(group_id: str, snapshot: PresentationSnapshot) -> None:
     atomic_write_json(path, snapshot.model_dump(mode="json", exclude_none=True), indent=2)
 
 
+def _commit_snapshot_event(
+    *,
+    group: Any,
+    previous: PresentationSnapshot,
+    snapshot: PresentationSnapshot,
+    kind: str,
+    by: str,
+    data: Dict[str, Any],
+) -> Dict[str, Any]:
+    _write_snapshot(group.group_id, snapshot)
+    try:
+        return append_event(
+            group.ledger_path,
+            kind=kind,
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data=data,
+        )
+    except Exception as exc:
+        try:
+            _write_snapshot(group.group_id, previous)
+        except Exception as rollback_exc:
+            raise RuntimeError(f"{exc}; rollback_failed: {rollback_exc}") from exc
+        raise
+
+
 def _close_browser_surface_session_quietly(group_id: str, slot_id: str) -> None:
     try:
         close_browser_surface_session(group_id=group_id, slot_id=slot_id)
@@ -197,6 +224,18 @@ def _path_suffix_hint(path_text: str) -> str:
     except Exception:
         candidate = path_text
     return Path(str(candidate or "")).suffix.lower()
+
+
+def _validate_remote_url(value: str) -> str:
+    url = str(value or "").strip()
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname
+    except ValueError as exc:
+        raise ValueError("presentation URL must be a valid HTTP(S) URL") from exc
+    if parsed.scheme.lower() not in {"http", "https"} or not hostname:
+        raise ValueError("presentation URL must be a valid HTTP(S) URL")
+    return url
 
 
 def _guess_card_type(*, explicit: str, path: str, url: str, content: str, table: Any) -> str:
@@ -398,6 +437,7 @@ def _build_card(
         elif blob_rel_path_text:
             blob_rel_path_text, mime_type = _normalize_blob_reference(group, blob_rel_path_text)
         elif url_text:
+            url_text = _validate_remote_url(url_text)
             source_ref_text = source_ref_text or url_text
         else:
             raise ValueError("web_preview card requires path, url, blob_rel_path, or inline content")
@@ -450,6 +490,7 @@ def _build_card(
         source_ref_text = source_ref_text or blob_rel_path_text
         source_label_text = source_label_text or file_name
     elif url_text:
+        url_text = _validate_remote_url(url_text)
         suffix = _path_suffix_hint(url_text)
         mime_type = str(mimetypes.guess_type(f"file{suffix}")[0] or "")
         file_name = Path(urlparse(url_text).path or "").name or title_text
@@ -550,14 +591,11 @@ def handle_presentation_publish(args: Dict[str, Any]) -> DaemonResponse:
         slots=next_slots,
     )
     try:
-        if replacing_existing_card:
-            _close_browser_surface_session_quietly(group.group_id, slot_id)
-        _write_snapshot(group.group_id, next_snapshot)
-        event = append_event(
-            group.ledger_path,
+        event = _commit_snapshot_event(
+            group=group,
+            previous=snapshot,
+            snapshot=next_snapshot,
             kind="presentation.publish",
-            group_id=group.group_id,
-            scope_key="",
             by=by,
             data={
                 "slot_id": slot_id,
@@ -568,6 +606,8 @@ def handle_presentation_publish(args: Dict[str, Any]) -> DaemonResponse:
                 "summary": card.summary,
             },
         )
+        if replacing_existing_card:
+            _close_browser_surface_session_quietly(group.group_id, slot_id)
     except Exception as exc:
         return _error("presentation_publish_failed", str(exc))
     return DaemonResponse(
@@ -577,7 +617,9 @@ def handle_presentation_publish(args: Dict[str, Any]) -> DaemonResponse:
             "slot_id": slot_id,
             "card": card.model_dump(mode="json", exclude_none=True),
             "presentation": next_snapshot.model_dump(mode="json", exclude_none=True),
+            "replaced": replacing_existing_card,
             "event": event,
+            "event_id": str(event.get("id") or ""),
         },
     )
 
@@ -625,14 +667,11 @@ def handle_presentation_clear(args: Dict[str, Any]) -> DaemonResponse:
         slots=next_slots,
     )
     try:
-        _write_snapshot(group.group_id, next_snapshot)
-        for cleared_slot_id in cleared_slots:
-            _close_browser_surface_session_quietly(group.group_id, cleared_slot_id)
-        event = append_event(
-            group.ledger_path,
+        event = _commit_snapshot_event(
+            group=group,
+            previous=snapshot,
+            snapshot=next_snapshot,
             kind="presentation.clear",
-            group_id=group.group_id,
-            scope_key="",
             by=by,
             data={
                 "slot_id": cleared_slots[0] if len(cleared_slots) == 1 else "",
@@ -640,15 +679,19 @@ def handle_presentation_clear(args: Dict[str, Any]) -> DaemonResponse:
                 "cleared_slots": cleared_slots,
             },
         )
+        for cleared_slot_id in cleared_slots:
+            _close_browser_surface_session_quietly(group.group_id, cleared_slot_id)
     except Exception as exc:
         return _error("presentation_clear_failed", str(exc))
     return DaemonResponse(
         ok=True,
         result={
             "group_id": group.group_id,
+            "slot_id": cleared_slots[0] if len(cleared_slots) == 1 else "",
             "cleared_slots": cleared_slots,
             "presentation": next_snapshot.model_dump(mode="json", exclude_none=True),
             "event": event,
+            "event_id": str(event.get("id") or ""),
         },
     )
 

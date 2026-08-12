@@ -47,11 +47,11 @@ pub async fn authorize(
 ) -> Response {
     let store = match AccessTokenStore::new(state.home.clone()) {
         Ok(store) => store,
-        Err(error) => return failure(StatusCode::INTERNAL_SERVER_ERROR, "auth_store_error", error),
+        Err(error) => return auth_store_failure(error),
     };
     let tokens = match store.list() {
         Ok(tokens) => tokens,
-        Err(error) => return failure(StatusCode::INTERNAL_SERVER_ERROR, "auth_store_error", error),
+        Err(error) => return auth_store_failure(error),
     };
     if tokens.is_empty() {
         request.extensions_mut().insert(Principal::local_admin());
@@ -61,7 +61,7 @@ pub async fn authorize(
     let principal = match store.lookup(&raw) {
         Ok(Some(token)) => Some(Principal::from_token(token)),
         Ok(None) => None,
-        Err(error) => return failure(StatusCode::INTERNAL_SERVER_ERROR, "auth_store_error", error),
+        Err(error) => return auth_store_failure(error),
     };
     if is_public(request.method(), request.uri().path()) {
         if let Some(principal) = principal {
@@ -212,8 +212,13 @@ fn group_from_path(path: &str) -> Option<&str> {
     group_id.starts_with("g_").then_some(group_id)
 }
 
-fn failure(status: StatusCode, code: &str, error: impl std::fmt::Display) -> Response {
-    failure_text(status, code, &error.to_string())
+fn auth_store_failure(error: impl std::fmt::Display) -> Response {
+    tracing::error!(%error, "failed to read CCCC access token store");
+    failure_text(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "auth_store_error",
+        "access token store is unavailable",
+    )
 }
 
 fn failure_text(status: StatusCode, code: &str, message: &str) -> Response {

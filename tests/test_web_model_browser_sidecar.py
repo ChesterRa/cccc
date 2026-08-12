@@ -412,6 +412,113 @@ class TestWebModelBrowserSidecar(unittest.TestCase):
         )
         self.assertEqual(snapshot.get("tone"), "needs")
 
+    def test_session_payload_preserves_canonical_delivery_status_in_target(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import _session_payload
+
+        payload = _session_payload(
+            {
+                "conversation_url": "https://chatgpt.com/c/test",
+                "last_delivery_status": "ambiguous",
+                "last_delivery_status_canonical": "completion_ambiguous",
+                "last_delivery_id": "delivery-1",
+            },
+            check_alive=False,
+        )
+
+        self.assertEqual(payload.get("last_delivery_status"), "ambiguous")
+        self.assertEqual(
+            (payload.get("delivery_target") or {}).get("last_delivery_status"),
+            "completion_ambiguous",
+        )
+
+    def test_health_snapshot_reports_completion_conflict_as_failure(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            build_chatgpt_web_model_health_snapshot,
+        )
+
+        snapshot = build_chatgpt_web_model_health_snapshot(
+            group_id="g-test",
+            actor_id="peer1",
+            browser_session={
+                "active": True,
+                "ready": True,
+                "tab_url": "https://chatgpt.com/c/test",
+                "conversation_url": "https://chatgpt.com/c/test",
+                "last_delivery_status": "completion_conflict",
+                "last_delivery_at": "2026-05-04T00:00:00Z",
+                "last_error": "completion receipt conflicts with this delivery",
+                "delivery_target": {
+                    "last_delivery_status": "completion_conflict",
+                },
+            },
+            browser_surface={"active": True, "state": "ready"},
+        )
+
+        delivery = snapshot.get("delivery") or {}
+        self.assertEqual(delivery.get("state"), "failed")
+        self.assertFalse(delivery.get("cursor_committed"))
+        self.assertEqual(
+            (snapshot.get("next_action") or {}).get("recommended"),
+            "retry_delivery",
+        )
+
+    def test_health_snapshot_does_not_claim_completion_ambiguity_committed(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            build_chatgpt_web_model_health_snapshot,
+        )
+
+        snapshot = build_chatgpt_web_model_health_snapshot(
+            group_id="g-test",
+            actor_id="peer1",
+            browser_session={
+                "active": True,
+                "ready": True,
+                "tab_url": "https://chatgpt.com/c/test",
+                "conversation_url": "https://chatgpt.com/c/test",
+                "last_delivery_status": "ambiguous",
+                "delivery_target": {
+                    "last_delivery_status": "completion_ambiguous",
+                },
+                "last_error": "completion response was not available",
+            },
+            browser_surface={"active": True, "state": "ready"},
+        )
+
+        delivery = snapshot.get("delivery") or {}
+        self.assertEqual(delivery.get("state"), "ambiguous")
+        self.assertFalse(delivery.get("cursor_committed"))
+
+    def test_health_snapshot_does_not_age_deferred_delivery_into_failure(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import (
+            build_chatgpt_web_model_health_snapshot,
+        )
+
+        with patch(
+            "cccc.ports.web_model_browser_sidecar.utc_now_iso",
+            return_value="2026-05-04T00:03:00Z",
+        ):
+            snapshot = build_chatgpt_web_model_health_snapshot(
+                group_id="g-test",
+                actor_id="peer1",
+                browser_session={
+                    "active": True,
+                    "ready": True,
+                    "tab_url": "https://chatgpt.com/c/test",
+                    "conversation_url": "https://chatgpt.com/c/test",
+                    "last_delivery_status": "submitting",
+                    "last_delivery_started_at": "2026-05-04T00:00:00Z",
+                    "last_delivery_timeout_seconds": 120,
+                    "delivery_target": {"last_delivery_status": "deferred"},
+                },
+                browser_surface={"active": True, "state": "ready"},
+            )
+
+        delivery = snapshot.get("delivery") or {}
+        self.assertEqual(delivery.get("state"), "submitting")
+        self.assertEqual(delivery.get("label"), "Waiting to submit")
+        self.assertFalse(delivery.get("cursor_committed"))
+        self.assertEqual((snapshot.get("next_action") or {}).get("recommended"), "none")
+
     def test_health_snapshot_ages_out_stale_browser_delivery_submitting(self) -> None:
         from cccc.ports.web_model_browser_sidecar import (
             build_chatgpt_web_model_health_snapshot,
@@ -2243,6 +2350,32 @@ document.querySelector('[data-testid="send-button"]').addEventListener('click', 
         finally:
             cleanup()
 
+    def test_browser_target_persistence_failure_is_not_silently_accepted(self) -> None:
+        from cccc.ports.web_model_browser_sidecar import record_chatgpt_browser_state
+
+        home, cleanup = self._with_home()
+        try:
+            group_id = "g-target-write-failure"
+            (Path(home) / "groups" / group_id).mkdir(parents=True)
+
+            class _BrokenGroup:
+                doc = {"web_model_browser_targets": {}}
+
+                def save(self) -> None:
+                    raise OSError("simulated canonical target write failure")
+
+            with patch("cccc.kernel.group.load_group", return_value=_BrokenGroup()):
+                with self.assertRaisesRegex(
+                    OSError, "simulated canonical target write failure"
+                ):
+                    record_chatgpt_browser_state(
+                        group_id,
+                        "web1",
+                        {"conversation_url": "https://chatgpt.com/c/must-persist"},
+                    )
+        finally:
+            cleanup()
+
     def test_provisional_rust_target_is_exposed_as_invalid_not_bound(self) -> None:
         from cccc.ports.web_model_browser_sidecar import (
             _write_state,
@@ -3300,6 +3433,33 @@ document.querySelector('[data-testid="send-button"]').addEventListener('click', 
             ) as stop_profile:
                 sidecar.close_chatgpt_browser_session("g-test", "peer1")
 
+            stop_profile.assert_called_once_with(str(profile_dir))
+        finally:
+            cleanup()
+
+    def test_close_chatgpt_browser_session_never_trusts_the_cached_pid(self) -> None:
+        from cccc.ports import web_model_browser_sidecar as sidecar
+
+        _, cleanup = self._with_home()
+        try:
+            profile_dir = sidecar.chatgpt_browser_profile_dir("g-test", "peer1")
+            sidecar.record_chatgpt_browser_process_state(
+                {
+                    "pid": 424242,
+                    "cdp_port": 0,
+                    "profile_dir": str(profile_dir),
+                    "visibility": "projected",
+                },
+            )
+            with (
+                patch.object(sidecar, "terminate_pid") as terminate_pid,
+                patch.object(
+                    sidecar, "_stop_browser_profile_processes"
+                ) as stop_profile,
+            ):
+                sidecar.close_chatgpt_browser_session("g-test", "peer1")
+
+            terminate_pid.assert_not_called()
             stop_profile.assert_called_once_with(str(profile_dir))
         finally:
             cleanup()

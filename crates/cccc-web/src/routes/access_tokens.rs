@@ -3,6 +3,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use cccc_core::access_tokens::is_last_admin_required;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -130,18 +131,6 @@ async fn update(
         return error(StatusCode::NOT_FOUND, "not_found", "access token not found");
     };
     let next_admin = body.is_admin.unwrap_or(current.is_admin);
-    if current.is_admin
-        && !next_admin
-        && store.list().map_or(true, |tokens| {
-            tokens.iter().filter(|token| token.is_admin).count() <= 1
-        })
-    {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "last_admin_required",
-            "cannot demote the last administrator access token",
-        );
-    }
     let effective_groups = groups.clone().unwrap_or(current.allowed_groups);
     if !next_admin && effective_groups.is_empty() {
         return error(
@@ -155,6 +144,14 @@ async fn update(
             Json(json!({"ok":true,"result":{"access_token":mask(&token)}})).into_response()
         }
         Ok(None) => error(StatusCode::NOT_FOUND, "not_found", "access token not found"),
+        Err(error_value) if is_last_admin_required(&error_value) => error(
+            StatusCode::BAD_REQUEST,
+            "last_admin_required",
+            error_value
+                .to_string()
+                .strip_prefix("last_admin_required: ")
+                .unwrap_or("an administrator access token is required"),
+        ),
         Err(error_value) => server_error(error_value),
     }
 }
@@ -175,26 +172,20 @@ async fn remove(
         Ok(store) => store,
         Err(error_value) => return server_error(error_value),
     };
-    let deleting_last_admin = store.list().is_ok_and(|tokens| {
-        tokens.iter().filter(|token| token.is_admin).count() == 1
-            && tokens
-                .iter()
-                .any(|token| token.is_admin && token.token_id() == id)
-            && tokens.len() > 1
-    });
-    if deleting_last_admin {
-        return error(
-            StatusCode::BAD_REQUEST,
-            "last_admin_required",
-            "cannot delete the last administrator while scoped tokens remain",
-        );
-    }
     match store.delete(&id) {
         Ok(Some(token)) => {
             let remain = store.list().map_or(true, |items| !items.is_empty());
             Json(json!({"ok":true,"result":{"deleted":true,"access_tokens_remain":remain,"deleted_current_session":token.token==principal.raw_token}})).into_response()
         }
         Ok(None) => error(StatusCode::NOT_FOUND, "not_found", "access token not found"),
+        Err(error_value) if is_last_admin_required(&error_value) => error(
+            StatusCode::BAD_REQUEST,
+            "last_admin_required",
+            error_value
+                .to_string()
+                .strip_prefix("last_admin_required: ")
+                .unwrap_or("an administrator access token is required"),
+        ),
         Err(error_value) => server_error(error_value),
     }
 }

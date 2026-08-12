@@ -35,8 +35,6 @@ def load_active() -> Dict[str, Any]:
         "active_group_id": active_group_id,
         "updated_at": str(doc.get("updated_at") or utc_now_iso()),
     }
-    if doc != normalized:
-        _write_committed(p, normalized)
     return normalized
 
 

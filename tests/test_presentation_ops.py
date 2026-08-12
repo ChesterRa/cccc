@@ -53,6 +53,11 @@ class TestPresentationOps(unittest.TestCase):
             )
             self.assertTrue(publish.ok, getattr(publish, "error", None))
             self.assertEqual(str((publish.result or {}).get("slot_id") or ""), "slot-1")
+            self.assertFalse(bool((publish.result or {}).get("replaced")))
+            self.assertEqual(
+                str((publish.result or {}).get("event_id") or ""),
+                str(((publish.result or {}).get("event") or {}).get("id") or ""),
+            )
             card = (publish.result or {}).get("card") or {}
             self.assertEqual(str(card.get("card_type") or ""), "markdown")
             self.assertEqual(str(card.get("title") or ""), "Weekly Summary")
@@ -106,6 +111,11 @@ class TestPresentationOps(unittest.TestCase):
                 )
             self.assertTrue(cleared.ok, getattr(cleared, "error", None))
             self.assertEqual((cleared.result or {}).get("cleared_slots") or [], ["slot-2"])
+            self.assertEqual(str((cleared.result or {}).get("slot_id") or ""), "slot-2")
+            self.assertEqual(
+                str((cleared.result or {}).get("event_id") or ""),
+                str(((cleared.result or {}).get("event") or {}).get("id") or ""),
+            )
             close_mock.assert_called_once_with(group_id=group_id, slot_id="slot-2")
 
             fetched, _ = self._call("presentation_get", {"group_id": group_id})
@@ -188,7 +198,94 @@ class TestPresentationOps(unittest.TestCase):
                 )
 
             self.assertTrue(updated.ok, getattr(updated, "error", None))
+            self.assertTrue(bool((updated.result or {}).get("replaced")))
             close_mock.assert_called_once_with(group_id=group_id, slot_id="slot-3")
+        finally:
+            cleanup()
+
+    def test_failed_ledger_append_rolls_back_publish_and_clear_state(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "presentation-rollback", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "")
+
+            with patch(
+                "cccc.daemon.group.presentation_ops.append_event",
+                side_effect=OSError("forced ledger failure"),
+            ):
+                failed_publish, _ = self._call(
+                    "presentation_publish",
+                    {
+                        "group_id": group_id,
+                        "slot": "slot-1",
+                        "content": "must roll back",
+                        "by": "user",
+                    },
+                )
+            self.assertFalse(failed_publish.ok)
+            after_failed_publish, _ = self._call("presentation_get", {"group_id": group_id})
+            self.assertTrue(
+                all(
+                    not slot.get("card")
+                    for slot in (after_failed_publish.result or {}).get("presentation", {}).get("slots", [])
+                )
+            )
+
+            published, _ = self._call(
+                "presentation_publish",
+                {
+                    "group_id": group_id,
+                    "slot": "slot-1",
+                    "content": "keep me",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(published.ok, getattr(published, "error", None))
+            with patch(
+                "cccc.daemon.group.presentation_ops.append_event",
+                side_effect=OSError("forced ledger failure"),
+            ):
+                failed_clear, _ = self._call(
+                    "presentation_clear",
+                    {"group_id": group_id, "slot": "slot-1", "by": "user"},
+                )
+            self.assertFalse(failed_clear.ok)
+            after_failed_clear, _ = self._call("presentation_get", {"group_id": group_id})
+            card = (after_failed_clear.result or {}).get("presentation", {}).get("slots", [])[0].get("card")
+            self.assertEqual(str((card or {}).get("content", {}).get("markdown") or ""), "keep me")
+        finally:
+            cleanup()
+
+    def test_remote_reference_rejects_non_http_url_without_mutating_snapshot(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "presentation-url-boundary", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "")
+
+            published, _ = self._call(
+                "presentation_publish",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "slot": "slot-1",
+                    "card_type": "web_preview",
+                    "url": "javascript:alert(document.domain)",
+                },
+            )
+            self.assertFalse(published.ok)
+
+            fetched, _ = self._call("presentation_get", {"group_id": group_id})
+            self.assertTrue(fetched.ok, getattr(fetched, "error", None))
+            slots = (fetched.result or {}).get("presentation", {}).get("slots") or []
+            self.assertTrue(all(not slot.get("card") for slot in slots))
         finally:
             cleanup()
 

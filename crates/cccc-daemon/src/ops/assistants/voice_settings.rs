@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use crate::dispatch::{OpError, OpResult, object, required_arg, string_arg};
 use crate::ops::{actor_delivery, actor_runtime, actor_secrets};
 
-use super::voice_document_state;
+use super::{voice_document_state, voice_input};
 
 const KEY: &str = "assistants";
 const ASSISTANT_ID: &str = "voice_secretary";
@@ -20,8 +20,11 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let group = store.load(&group_id).map_err(OpError::not_found)?;
     let state = assistant_state::load(home, &group_id).map_err(OpError::io)?;
+    let document_state = voice_document_state::load(home, &group_id).map_err(OpError::io)?;
+    let (input_latest, input_covered) =
+        voice_input::status(home, &group_id).map_err(OpError::io)?;
     let assistant = project_actor_runtime(&group, effective_assistant(&state));
-    let docs = state["documents"]
+    let docs = document_state["documents"]
         .as_array()
         .into_iter()
         .flatten()
@@ -47,8 +50,12 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 .map(|path| (path.to_owned(), item.clone()))
         })
         .collect::<Map<_, _>>();
-    let configured_active_id = state["active_document_id"].as_str().unwrap_or_default();
-    let configured_active_path = state["active_document_path"].as_str().unwrap_or_default();
+    let configured_active_id = document_state["active_document_id"]
+        .as_str()
+        .unwrap_or_default();
+    let configured_active_path = document_state["active_document_path"]
+        .as_str()
+        .unwrap_or_default();
     let active_document =
         voice_document_state::resolved_active(&docs, configured_active_id, configured_active_path);
     let active_document_id = active_document
@@ -58,7 +65,7 @@ pub fn index(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .and_then(|document| document["document_path"].as_str())
         .unwrap_or_default();
     object(
-        json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{ASSISTANT_ID:assistant},"assistant":assistant,"documents":docs,"documents_by_path":documents_by_path,"active_document_id":active_document_id,"active_document_path":active_document_path,"capture_target_document_id":active_document_id,"capture_target_document_path":active_document_path,"new_input_available":state["input_latest_seq"].as_u64().unwrap_or(0)>state["input_read_cursor"].as_u64().unwrap_or(0),"prompt_draft":state["prompt_draft"],"ask_requests":asks,"latest_ask_request":asks.first().cloned(),"recording_lease":voice_recording_lease::current(home).map_err(|error|OpError::new(error.code,error.message))?}),
+        json!({"group_id":group_id,"assistants":[assistant],"assistants_by_id":{ASSISTANT_ID:assistant},"assistant":assistant,"documents":docs,"documents_by_path":documents_by_path,"active_document_id":active_document_id,"active_document_path":active_document_path,"capture_target_document_id":active_document_id,"capture_target_document_path":active_document_path,"new_input_available":input_latest>input_covered,"prompt_draft":state["prompt_draft"],"ask_requests":asks,"latest_ask_request":asks.first().cloned(),"recording_lease":voice_recording_lease::current(home).map_err(|error|OpError::new(error.code,error.message))?}),
     )
 }
 
@@ -112,67 +119,74 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         actor_delivery::shutdown_actor(&group_id, ACTOR_ID);
         let _ = actor_runtime::apply(home, &before, ACTOR_ID, "actor.stop");
     }
-    store
-        .mutate(&group_id, |group| {
-            if enabled && !group.actors.iter().any(|actor| actor.id == ACTOR_ID) {
-                let mut actor = group
-                    .actors
-                    .iter()
-                    .find(|actor| {
-                        cccc_core::actors::effective_role(group, &actor.id)
-                            == Some(ActorRole::Foreman)
-                    })
-                    .cloned()
-                    .ok_or_else(|| {
-                        std::io::Error::new(std::io::ErrorKind::NotFound, "foreman actor not found")
-                    })?;
-                actor.id = ACTOR_ID.into();
-                actor.role = None;
-                actor.title = "Voice Secretary".into();
-                actor.internal_kind = Some(ASSISTANT_ID.into());
-                actor.enabled = true;
-                actor.profile_id.clear();
-                actor.profile_owner.clear();
-                actor.created_at = utc_now();
-                actor.updated_at = utc_now();
-                group.actors.push(actor);
-            } else if !enabled {
-                group.actors.retain(|actor| actor.id != ACTOR_ID);
-            }
-            let state = group.extra.entry(KEY).or_insert_with(|| json!({}));
-            if !state.is_object() {
-                *state = json!({});
-            }
-            let root = state.as_object_mut().expect("assistant config initialized");
-            let assistant = root.entry(ASSISTANT_ID).or_insert_with(|| {
-                json!({
-                    "enabled":false,
-                    "config":default_assistant()["config"].clone()
+    let retiring_actor = !enabled && actor_existed;
+    if retiring_actor {
+        actor_secrets::remove(home, &group_id, ACTOR_ID)?;
+    }
+    let mutation = store.mutate(&group_id, |group| {
+        if enabled && !group.actors.iter().any(|actor| actor.id == ACTOR_ID) {
+            let mut actor = group
+                .actors
+                .iter()
+                .find(|actor| {
+                    cccc_core::actors::effective_role(group, &actor.id) == Some(ActorRole::Foreman)
                 })
-            });
-            if !assistant.is_object() {
-                *assistant = json!({});
+                .cloned()
+                .ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "foreman actor not found")
+                })?;
+            actor.id = ACTOR_ID.into();
+            actor.role = None;
+            actor.title = "Voice Secretary".into();
+            actor.internal_kind = Some(ASSISTANT_ID.into());
+            actor.enabled = true;
+            actor.profile_id.clear();
+            actor.profile_owner.clear();
+            actor.created_at = utc_now();
+            actor.updated_at = utc_now();
+            group.actors.push(actor);
+        } else if !enabled {
+            group.actors.retain(|actor| actor.id != ACTOR_ID);
+        }
+        let state = group.extra.entry(KEY).or_insert_with(|| json!({}));
+        if !state.is_object() {
+            *state = json!({});
+        }
+        let root = state.as_object_mut().expect("assistant config initialized");
+        let assistant = root.entry(ASSISTANT_ID).or_insert_with(|| {
+            json!({
+                "enabled":false,
+                "config":default_assistant()["config"].clone()
+            })
+        });
+        if !assistant.is_object() {
+            *assistant = json!({});
+        }
+        assistant["enabled"] = json!(enabled);
+        if let Some(config) = patch.get("config").and_then(Value::as_object) {
+            let target = assistant
+                .as_object_mut()
+                .expect("assistant config initialized")
+                .entry("config")
+                .or_insert_with(|| default_assistant()["config"].clone());
+            if !target.is_object() {
+                *target = json!({});
             }
-            assistant["enabled"] = json!(enabled);
-            if let Some(config) = patch.get("config").and_then(Value::as_object) {
-                let target = assistant
+            settings::merge(
+                target
                     .as_object_mut()
-                    .expect("assistant config initialized")
-                    .entry("config")
-                    .or_insert_with(|| default_assistant()["config"].clone());
-                if !target.is_object() {
-                    *target = json!({});
-                }
-                settings::merge(
-                    target
-                        .as_object_mut()
-                        .expect("assistant config map initialized"),
-                    config,
-                );
-            }
-            Ok(())
-        })
-        .map_err(OpError::io)?;
+                    .expect("assistant config map initialized"),
+                config,
+            );
+        }
+        Ok(())
+    });
+    if let Err(error) = mutation {
+        if retiring_actor {
+            actor_secrets::replace(home, &group_id, ACTOR_ID, actor_secrets_before.clone())?;
+        }
+        return Err(OpError::io(error));
+    }
     let after = store.load(&group_id).map_err(OpError::not_found)?;
     if enabled && !actor_existed {
         if let Some(foreman_id) = foreman_id {
@@ -187,11 +201,6 @@ pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 actor_secrets::update(home, &forwarded)?;
             }
         }
-    } else if !enabled && actor_existed {
-        let mut forwarded = request.clone();
-        forwarded.args.insert("actor_id".into(), json!(ACTOR_ID));
-        forwarded.args.insert("clear".into(), json!(true));
-        actor_secrets::update(home, &forwarded)?;
     }
     let actor_started = if enabled && after.running {
         match actor_runtime::apply(home, &after, ACTOR_ID, "actor.start") {

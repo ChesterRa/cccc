@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -25,6 +26,106 @@ class TestInboxReadOps(unittest.TestCase):
         from cccc.daemon.server import handle_request
 
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
+
+    def test_malformed_cursor_store_fails_closed_without_overwrite(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create", {"title": "cursor-corruption", "topic": "", "by": "user"}
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            sent, _ = self._call(
+                "send",
+                {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "hello"},
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            event_id = str((((sent.result or {}).get("event") or {}).get("id")) or "")
+            self.assertTrue(event_id)
+            cursor_path = Path(home) / "groups" / group_id / "state" / "read_cursors.json"
+            cursor_path.parent.mkdir(parents=True, exist_ok=True)
+            malformed = b"{malformed"
+            cursor_path.write_bytes(malformed)
+
+            response, _ = self._call(
+                "inbox_mark_read",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "event_id": event_id,
+                    "by": "peer1",
+                },
+            )
+
+            self.assertFalse(response.ok)
+            self.assertEqual(cursor_path.read_bytes(), malformed)
+        finally:
+            cleanup()
+
+    def test_inbox_mark_read_ledger_failure_keeps_the_message_unread(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create", {"title": "cursor-rollback", "topic": "", "by": "user"}
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            sent, _ = self._call(
+                "send",
+                {"group_id": group_id, "by": "user", "to": ["peer1"], "text": "keep unread"},
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            event_id = str((((sent.result or {}).get("event") or {}).get("id")) or "")
+
+            with patch(
+                "cccc.daemon.messaging.inbox_read_ops.append_event",
+                side_effect=OSError("injected ledger failure"),
+            ):
+                response, _ = self._call(
+                    "inbox_mark_read",
+                    {
+                        "group_id": group_id,
+                        "actor_id": "peer1",
+                        "event_id": event_id,
+                        "by": "peer1",
+                    },
+                )
+
+            self.assertFalse(response.ok)
+            inbox, _ = self._call(
+                "inbox_list",
+                {"group_id": group_id, "actor_id": "peer1", "by": "peer1"},
+            )
+            self.assertTrue(inbox.ok, getattr(inbox, "error", None))
+            self.assertEqual(
+                [item.get("id") for item in (inbox.result or {}).get("messages", [])],
+                [event_id],
+            )
+        finally:
+            cleanup()
 
     def test_inbox_mark_read_emits_chat_ack_for_attention(self) -> None:
         _, cleanup = self._with_home()
@@ -690,6 +791,22 @@ class TestInboxReadOps(unittest.TestCase):
                 False,
             )
 
+            append_event(
+                group.ledger_path,
+                kind="chat.read",
+                group_id=group_id,
+                scope_key="",
+                by="user",
+                data={"actor_id": "peer1", "event_id": message_id},
+            )
+            after_read = get_cached_message_status_batch(group, [message_id])
+            self.assertEqual(after_read[message_id]["read_status"].get("peer1"), True)
+            self.assertEqual(after_read[message_id]["ack_status"].get("peer1"), False)
+            self.assertEqual(
+                after_read[message_id]["obligation_status"]["peer1"].get("acked"),
+                False,
+            )
+
             reply = append_event(
                 group.ledger_path,
                 kind="chat.message",
@@ -708,7 +825,27 @@ class TestInboxReadOps(unittest.TestCase):
                 after_reply[message_id]["obligation_status"]["peer1"].get("replied"),
                 True,
             )
+            self.assertEqual(after_reply[message_id]["ack_status"].get("peer1"), False)
+            self.assertEqual(
+                after_reply[message_id]["obligation_status"]["peer1"].get("acked"),
+                False,
+            )
             self.assertNotIn(reply_id, after_reply)
+
+            append_event(
+                group.ledger_path,
+                kind="chat.ack",
+                group_id=group_id,
+                scope_key="",
+                by="peer1",
+                data={"actor_id": "peer1", "event_id": message_id},
+            )
+            after_ack = get_cached_message_status_batch(group, [message_id])
+            self.assertEqual(after_ack[message_id]["ack_status"].get("peer1"), True)
+            self.assertEqual(
+                after_ack[message_id]["obligation_status"]["peer1"].get("acked"),
+                True,
+            )
 
             removed, _ = self._call(
                 "actor_remove",
@@ -781,6 +918,10 @@ class TestInboxReadOps(unittest.TestCase):
                 },
             )
             self.assertTrue(added.ok, getattr(added, "error", None))
+            actor_add_id = str(
+                ((added.result or {}).get("event") or {}).get("id") or ""
+            )
+            self.assertTrue(actor_add_id)
             with patch(
                 "cccc.kernel.ledger.Event",
                 side_effect=lambda **kwargs: ContractEvent(
@@ -799,6 +940,33 @@ class TestInboxReadOps(unittest.TestCase):
                         "priority": "attention",
                         "reply_required": True,
                     },
+                )
+            other_actor = append_event(
+                group.ledger_path,
+                kind="chat.message",
+                group_id=group_id,
+                scope_key="",
+                by="user",
+                data={"text": "for another actor", "to": ["peer2"]},
+            )
+
+            for event_id, expected_code in (
+                (before_actor["id"], "event_not_for_actor"),
+                (actor_add_id, "invalid_event_kind"),
+                (other_actor["id"], "event_not_for_actor"),
+            ):
+                rejected_read, _ = self._call(
+                    "inbox_mark_read",
+                    {
+                        "group_id": group_id,
+                        "actor_id": "peer1",
+                        "event_id": event_id,
+                        "by": "peer1",
+                    },
+                )
+                self.assertFalse(rejected_read.ok)
+                self.assertEqual(
+                    getattr(rejected_read.error, "code", ""), expected_code
                 )
 
             inbox, _ = self._call(
@@ -846,6 +1014,20 @@ class TestInboxReadOps(unittest.TestCase):
                 },
             )
             self.assertTrue(accepted.ok, getattr(accepted, "error", None))
+            marked, _ = self._call(
+                "inbox_mark_read",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "event_id": after_actor["id"],
+                    "by": "peer1",
+                },
+            )
+            self.assertTrue(marked.ok, getattr(marked, "error", None))
+            cursor = (marked.result or {}).get("cursor") or {}
+            self.assertEqual(cursor.get("event_id"), after_actor["id"])
+            self.assertEqual(cursor.get("ts"), after_actor["ts"])
+            self.assertTrue(str(cursor.get("updated_at") or ""))
 
             warm_message_status_cache_from_event(group, after_actor["id"])
             self.assertIn(
@@ -890,6 +1072,19 @@ class TestInboxReadOps(unittest.TestCase):
             self.assertFalse(stale_ack.ok)
             self.assertEqual(
                 getattr(stale_ack.error, "code", ""), "event_not_for_actor"
+            )
+            stale_read, _ = self._call(
+                "inbox_mark_read",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "event_id": after_actor["id"],
+                    "by": "peer1",
+                },
+            )
+            self.assertFalse(stale_read.ok)
+            self.assertEqual(
+                getattr(stale_read.error, "code", ""), "event_not_for_actor"
             )
         finally:
             cleanup()

@@ -27,7 +27,21 @@ pub struct LedgerSnapshot {
 
 pub fn snapshot(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<LedgerSnapshot> {
     let store = GroupStore::new(home.clone())?;
-    let events = ledger::read_all(&store.ledger_path(group_id)?)?;
+    let ledger_path = store.ledger_path(group_id)?;
+    let lock = ledger::acquire_writer_lock(&ledger_path)?;
+    let result = snapshot_locked(&store, group_id, reason, &ledger_path);
+    let unlock = FileExt::unlock(&lock);
+    result.and_then(|value| unlock.map(|()| value))
+}
+
+fn snapshot_locked(
+    store: &GroupStore,
+    group_id: &str,
+    reason: &str,
+    ledger_path: &Path,
+) -> io::Result<LedgerSnapshot> {
+    ledger::validate_jsonl(ledger_path)?;
+    let events = ledger::read_all(ledger_path)?;
     let bytes = serde_json::to_vec(&events).map_err(io::Error::other)?;
     let state = store.state_dir(group_id)?.join("ledger/snapshots");
     fs::create_dir_all(&state)?;
@@ -64,7 +78,7 @@ pub fn compact(home: &HomeLayout, group_id: &str, reason: &str) -> io::Result<Op
         if !active.exists() || active.metadata()?.len() == 0 {
             return Ok(None);
         }
-        snapshot(home, group_id, reason)?;
+        snapshot_locked(&store, group_id, reason, &active)?;
         let state = store.state_dir(group_id)?.join("ledger");
         let segments = state.join("segments");
         fs::create_dir_all(&segments)?;
@@ -432,6 +446,46 @@ mod tests {
     }
 
     #[test]
+    fn maintenance_rejects_malformed_middle_record_before_rotation() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("corrupt compact", "").expect("group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        ledger::append(&ledger_path, &Event::new("chat.message", &group.group_id))
+            .expect("first append");
+        fs::OpenOptions::new()
+            .append(true)
+            .open(&ledger_path)
+            .expect("corruption fixture")
+            .write_all(b"{\"broken\":\n")
+            .expect("malformed middle record");
+        ledger::append(&ledger_path, &Event::new("chat.message", &group.group_id))
+            .expect("second append");
+        let original = fs::read(&ledger_path).expect("active bytes");
+
+        let snapshot_error = snapshot(&home, &group.group_id, "corrupt")
+            .expect_err("snapshot must reject malformed source truth");
+        assert!(snapshot_error.to_string().contains("malformed ledger JSON"));
+
+        let compact_error = compact(&home, &group.group_id, "corrupt")
+            .expect_err("compaction must reject malformed source truth");
+        assert!(compact_error.to_string().contains("malformed ledger JSON"));
+        assert_eq!(fs::read(&ledger_path).expect("active bytes"), original);
+        let segment_dir = store
+            .state_dir(&group.group_id)
+            .expect("state")
+            .join("ledger/segments");
+        assert!(
+            !segment_dir.exists()
+                || fs::read_dir(segment_dir)
+                    .expect("segments")
+                    .next()
+                    .is_none()
+        );
+    }
+
+    #[test]
     fn compact_waits_for_the_writer_lock_and_snapshots_its_commit() {
         let temp = tempfile::tempdir().expect("tempdir");
         let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -484,5 +538,56 @@ mod tests {
             manifest["segments"][0]["line_count"],
             snapshot["event_count"]
         );
+    }
+
+    #[test]
+    fn snapshot_waits_for_the_writer_lock_before_validating_the_ledger() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("locked snapshot", "").expect("group");
+        let ledger_path = store.ledger_path(&group.group_id).expect("ledger");
+        ledger::append(&ledger_path, &Event::new("chat.message", &group.group_id))
+            .expect("seed append");
+
+        let lock = ledger::acquire_writer_lock(&ledger_path).expect("writer lock");
+        let mut writer = fs::OpenOptions::new()
+            .append(true)
+            .open(&ledger_path)
+            .expect("active writer");
+        let writer_event = Event::new("chat.message", &group.group_id);
+        let encoded = serde_json::to_vec(&writer_event).expect("event json");
+        let split = encoded.len() / 2;
+        writer
+            .write_all(&encoded[..split])
+            .expect("partial writer append");
+        writer.sync_all().expect("partial writer sync");
+
+        let snapshot_home = home.clone();
+        let snapshot_group_id = group.group_id.clone();
+        let (started_tx, started_rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            started_tx.send(()).expect("started receiver");
+            snapshot(&snapshot_home, &snapshot_group_id, "writer-lock")
+        });
+        started_rx.recv().expect("snapshot started");
+        thread::sleep(Duration::from_millis(250));
+        assert!(
+            !handle.is_finished(),
+            "snapshot must not validate an append while its writer lock is held"
+        );
+
+        writer
+            .write_all(&encoded[split..])
+            .expect("finish writer append");
+        writer.write_all(b"\n").expect("writer newline");
+        writer.sync_all().expect("writer sync");
+        drop(writer);
+        FileExt::unlock(&lock).expect("writer unlock");
+        drop(lock);
+
+        let result = handle.join().expect("snapshot thread").expect("snapshot");
+        assert_eq!(result.last_event_id, writer_event.id);
+        assert_eq!(result.event_count, 2);
     }
 }

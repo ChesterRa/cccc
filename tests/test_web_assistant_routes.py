@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import hashlib
 import json
 import os
@@ -61,6 +62,24 @@ class TestWebAssistantRoutes(unittest.TestCase):
 
     def _attach_scope(self, group_id: str, path: str) -> None:
         resp = self._local_call_daemon({"op": "attach", "args": {"group_id": group_id, "path": path, "by": "user"}})
+        self.assertTrue(bool(resp.get("ok")), resp)
+
+    def _enable_voice_secretary(self, group_id: str) -> None:
+        self._add_foreman(group_id)
+        repo = Path(os.environ["CCCC_HOME"]) / f"repo-{group_id}"
+        repo.mkdir(parents=True, exist_ok=True)
+        self._attach_scope(group_id, str(repo))
+        resp = self._local_call_daemon(
+            {
+                "op": "assistant_settings_update",
+                "args": {
+                    "group_id": group_id,
+                    "assistant_id": "voice_secretary",
+                    "patch": {"enabled": True},
+                    "by": "user",
+                },
+            }
+        )
         self.assertTrue(bool(resp.get("ok")), resp)
 
     def _write_voice_model_manifest(self, home: str, *, model_id: str = "mock_asr") -> Path:
@@ -176,6 +195,80 @@ class TestWebAssistantRoutes(unittest.TestCase):
                 os.environ.pop("CCCC_VOICE_SECRETARY_ASR_COMMAND", None)
             cleanup()
 
+    def test_voice_diarization_completion_persists_shared_session_projection(self) -> None:
+        from cccc.ports.web.routes.groups import _run_voice_meeting_diarization_background
+
+        home, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            pcm16_path = Path(home) / "meeting.pcm16"
+            pcm16_path.write_bytes(b"\x00\x00" * 160)
+            daemon_requests: list[dict] = []
+
+            async def daemon(request: dict):
+                daemon_requests.append(request)
+                return {"ok": True, "result": {}}
+
+            async def diarize(*_args, **_kwargs):
+                return {
+                    "model_id": "mock-diarization",
+                    "segments": [{"speaker_label": "Speaker 1", "start_ms": 0, "end_ms": 10}],
+                }
+
+            async def transcribe(*_args, **_kwargs):
+                return [
+                    {
+                        "speaker_label": "Speaker 1",
+                        "text": "shared final transcript",
+                        "start_ms": 0,
+                        "end_ms": 10,
+                    }
+                ]
+
+            async def apply(*_args, **_kwargs):
+                return {"ok": True, "result": {"applied": True}}
+
+            with patch(
+                "cccc.ports.web.routes.groups.run_final_diarization_file",
+                side_effect=diarize,
+            ), patch(
+                "cccc.ports.web.routes.groups.build_offline_speaker_transcript_segments",
+                side_effect=transcribe,
+            ), patch(
+                "cccc.ports.web.routes.groups.apply_final_speaker_transcript_to_document",
+                side_effect=apply,
+            ):
+                asyncio.run(
+                    _run_voice_meeting_diarization_background(
+                        daemon=daemon,
+                        group_id=group_id,
+                        session_id="shared-diarization",
+                        pcm16_path=pcm16_path,
+                        document_path="docs/voice-secretary/shared.md",
+                        selected_model_id="mock-diarization",
+                        sample_rate=16000,
+                        audio_duration_ms=10,
+                        language="en-US",
+                        selected_asr_model_id="mock-asr",
+                    )
+                )
+
+            update = next(
+                request
+                for request in daemon_requests
+                if request.get("op") == "assistant_voice_session_update"
+            )
+            patch_value = (update.get("args") or {}).get("patch") or {}
+            self.assertTrue(bool(patch_value.get("diarization_ready")))
+            self.assertEqual(
+                (((patch_value.get("diarization") or {}).get("speaker_transcript_segments")) or [])[0][
+                    "text"
+                ],
+                "shared final transcript",
+            )
+        finally:
+            cleanup()
+
     def test_web_voice_secretary_transcription_rejects_declared_oversize_binary(self) -> None:
         from cccc.ports.web.app import create_app
 
@@ -193,6 +286,149 @@ class TestWebAssistantRoutes(unittest.TestCase):
                     )
             self.assertEqual(response.status_code, 413)
             self.assertEqual((response.json().get("error") or {}).get("code"), "audio_too_large")
+        finally:
+            cleanup()
+
+    def test_voice_streaming_default_limit_matches_the_public_100_mib_contract(self) -> None:
+        from cccc.ports.web.routes.groups import _voice_streaming_pcm16_max_bytes
+
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("CCCC_VOICE_SECRETARY_STREAMING_PCM16_MAX_BYTES", None)
+            self.assertEqual(_voice_streaming_pcm16_max_bytes(), 100 * 1024 * 1024)
+
+    def test_web_voice_secretary_stream_requires_matching_daemon_lease(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        try:
+            class FakeStreamingSession:
+                async def send(self, _payload: dict):
+                    return None
+
+                async def receive(self, timeout=None):
+                    return {"type": "closed"}
+
+                async def close(self):
+                    return None
+
+            async def fake_open_streaming_session(_model_id: str = ""):
+                return FakeStreamingSession()
+
+            group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon), patch(
+                "cccc.ports.web.routes.groups.open_sherpa_streaming_session",
+                side_effect=fake_open_streaming_session,
+            ):
+                with TestClient(create_app()) as client:
+                    lease_response = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/recording_lease",
+                        json={
+                            "action": "acquire",
+                            "owner_id": "lease-owner",
+                            "capture_mode": "prompt",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "dispatch_target": "composer",
+                        },
+                    )
+                    self.assertTrue(bool(lease_response.json().get("ok")), lease_response.json())
+
+                    with client.websocket_connect(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws"
+                        "?owner_id=lease-owner&lease_id=wrong-token"
+                    ) as ws:
+                        ws.send_json(
+                            {
+                                "type": "start",
+                                "seq": 1,
+                                "session_id": "wrong-lease",
+                                "capture_mode": "prompt",
+                                "dispatch_target": "composer",
+                                "sample_rate": 16000,
+                            }
+                        )
+                        error = ws.receive_json()
+
+            self.assertFalse(bool(error.get("ok")), error)
+            self.assertEqual(
+                ((error.get("error") or {}).get("code")),
+                "assistant_voice_recording_lease_lost",
+            )
+        finally:
+            cleanup()
+
+    def test_web_voice_secretary_stream_releases_matching_lease_on_disconnect(self) -> None:
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        try:
+            class FakeStreamingSession:
+                async def send(self, _payload: dict):
+                    return None
+
+                async def receive(self, timeout=None):
+                    return {"type": "closed"}
+
+                async def close(self):
+                    return None
+
+            async def fake_open_streaming_session(_model_id: str = ""):
+                return FakeStreamingSession()
+
+            group_id = self._create_group()
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon), patch(
+                "cccc.ports.web.routes.groups.open_sherpa_streaming_session",
+                side_effect=fake_open_streaming_session,
+            ):
+                with TestClient(create_app()) as client:
+                    lease_response = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/recording_lease",
+                        json={
+                            "action": "acquire",
+                            "owner_id": "first-owner",
+                            "capture_mode": "prompt",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "dispatch_target": "composer",
+                        },
+                    )
+                    lease_body = lease_response.json()
+                    self.assertTrue(bool(lease_body.get("ok")), lease_body)
+                    lease_id = str(((lease_body.get("result") or {}).get("lease_id")) or "")
+                    self.assertTrue(lease_id)
+
+                    with client.websocket_connect(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws"
+                        f"?owner_id=first-owner&lease_id={lease_id}"
+                    ) as ws:
+                        ws.send_json(
+                            {
+                                "type": "start",
+                                "seq": 1,
+                                "session_id": "lease-disconnect",
+                                "capture_mode": "prompt",
+                                "dispatch_target": "composer",
+                                "sample_rate": 16000,
+                            }
+                        )
+                        self.assertEqual(ws.receive_json().get("type"), "ready")
+
+                    reacquire_response = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/recording_lease",
+                        json={
+                            "action": "acquire",
+                            "owner_id": "second-owner",
+                            "capture_mode": "prompt",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "dispatch_target": "composer",
+                        },
+                    )
+                    reacquire_body = reacquire_response.json()
+
+            self.assertTrue(bool(reacquire_body.get("ok")), reacquire_body)
+            self.assertEqual(
+                (((reacquire_body.get("result") or {}).get("lease") or {}).get("owner_id")),
+                "second-owner",
+            )
         finally:
             cleanup()
 
@@ -233,6 +469,7 @@ class TestWebAssistantRoutes(unittest.TestCase):
                 return {"ok": True, "result": {"applied": True}}
 
             group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
             with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon), patch(
                 "cccc.ports.web.routes.groups.open_sherpa_streaming_session",
                 side_effect=fake_open_streaming_session,
@@ -244,8 +481,23 @@ class TestWebAssistantRoutes(unittest.TestCase):
                 side_effect=fake_apply_final_text,
             ):
                 with TestClient(create_app()) as client:
+                    lease_response = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/recording_lease",
+                        json={
+                            "action": "acquire",
+                            "owner_id": "disconnect-owner",
+                            "capture_mode": "document",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "dispatch_target": "document",
+                        },
+                    )
+                    lease_body = lease_response.json()
+                    self.assertTrue(bool(lease_body.get("ok")), lease_body)
+                    lease_id = str(((lease_body.get("result") or {}).get("lease_id")) or "")
+                    self.assertTrue(lease_id)
                     with client.websocket_connect(
                         f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws"
+                        f"?owner_id=disconnect-owner&lease_id={lease_id}"
                     ) as ws:
                         ws.send_json(
                             {
@@ -253,6 +505,7 @@ class TestWebAssistantRoutes(unittest.TestCase):
                                 "seq": 1,
                                 "session_id": "stream-disconnect",
                                 "capture_mode": "document",
+                                "dispatch_target": "document",
                                 "document_path": "docs/meeting.md",
                                 "sample_rate": 16000,
                                 "language": "en-US",
@@ -307,15 +560,40 @@ class TestWebAssistantRoutes(unittest.TestCase):
                 return fake_session
 
             group_id = self._create_group()
+            self._enable_voice_secretary(group_id)
             with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon), patch(
                 "cccc.ports.web.routes.groups.open_sherpa_streaming_session",
                 side_effect=fake_open_streaming_session,
             ):
                 with TestClient(create_app()) as client:
+                    lease_response = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/recording_lease",
+                        json={
+                            "action": "acquire",
+                            "owner_id": "oversized-owner",
+                            "capture_mode": "document",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "dispatch_target": "document",
+                        },
+                    )
+                    lease_body = lease_response.json()
+                    self.assertTrue(bool(lease_body.get("ok")), lease_body)
+                    lease_id = str(((lease_body.get("result") or {}).get("lease_id")) or "")
+                    self.assertTrue(lease_id)
                     with client.websocket_connect(
                         f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws"
+                        f"?owner_id=oversized-owner&lease_id={lease_id}"
                     ) as ws:
-                        ws.send_json({"type": "start", "seq": 1, "session_id": "stream-too-large", "sample_rate": 16000})
+                        ws.send_json(
+                            {
+                                "type": "start",
+                                "seq": 1,
+                                "session_id": "stream-too-large",
+                                "capture_mode": "document",
+                                "dispatch_target": "document",
+                                "sample_rate": 16000,
+                            }
+                        )
                         ready = ws.receive_json()
                         self.assertEqual(ready.get("type"), "ready")
                         ws.send_json(
@@ -388,9 +666,48 @@ class TestWebAssistantRoutes(unittest.TestCase):
                             "dispatch_target": "composer",
                         },
                     )
-                    self.assertTrue(bool(lease_response.json().get("ok")), lease_response.json())
+                    lease_body = lease_response.json()
+                    self.assertTrue(bool(lease_body.get("ok")), lease_body)
+                    lease_id = str(((lease_body.get("result") or {}).get("lease_id")) or "")
+                    self.assertTrue(lease_id)
                     with client.websocket_connect(
                         f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws"
+                        f"?owner_id=direct-owner&lease_id={lease_id}"
+                    ) as ws:
+                        ws.send_json(
+                            {
+                                "type": "start",
+                                "seq": 1,
+                                "session_id": "direct-scope-mismatch",
+                                "capture_mode": "document",
+                                "dispatch_target": "document",
+                                "document_path": "docs/should-not-exist.md",
+                                "sample_rate": 16000,
+                            }
+                        )
+                        mismatch = ws.receive_json()
+                    self.assertEqual(
+                        ((mismatch.get("error") or {}).get("code")),
+                        "assistant_voice_recording_lease_mismatch",
+                    )
+
+                    lease_response = client.post(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/recording_lease",
+                        json={
+                            "action": "acquire",
+                            "owner_id": "direct-owner",
+                            "capture_mode": "prompt",
+                            "recognition_backend": "assistant_service_local_asr",
+                            "dispatch_target": "composer",
+                        },
+                    )
+                    lease_body = lease_response.json()
+                    self.assertTrue(bool(lease_body.get("ok")), lease_body)
+                    lease_id = str(((lease_body.get("result") or {}).get("lease_id")) or "")
+                    self.assertTrue(lease_id)
+                    with client.websocket_connect(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws"
+                        f"?owner_id=direct-owner&lease_id={lease_id}"
                     ) as ws:
                         ws.send_json(
                             {
@@ -741,6 +1058,81 @@ class TestWebAssistantRoutes(unittest.TestCase):
             self.assertTrue(bool(state_body.get("ok")), state_body)
             documents = ((state_body.get("result") or {}).get("documents_by_id")) or {}
             self.assertIn(document_id, documents)
+        finally:
+            cleanup()
+
+    def test_web_voice_secretary_sessions_read_and_clear_shared_daemon_state(self) -> None:
+        from cccc.daemon.assistants import assistant_ops
+        from cccc.kernel.group import load_group
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            state = assistant_ops._load_runtime_state(group)
+            state["voice_sessions"]["rust-shared-session"] = {
+                "schema": 1,
+                "group_id": group_id,
+                "session_id": "rust-shared-session",
+                "capture_mode": "document",
+                "document_path": "docs/voice-secretary/shared.md",
+                "created_at": "2026-08-11T01:00:00Z",
+                "updated_at": "2026-08-11T01:00:01Z",
+                "segments": [
+                    {
+                        "segment_id": "rust-shared-segment",
+                        "session_id": "rust-shared-session",
+                        "document_path": "docs/voice-secretary/shared.md",
+                        "text": "shared Rust transcript",
+                        "is_final": True,
+                    }
+                ],
+                "transcript": "shared Rust transcript",
+                "latest_partial": "pending partial",
+            }
+            assistant_ops._save_runtime_state(group, state)
+
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                with TestClient(create_app()) as client:
+                    latest = client.get(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/sessions/latest",
+                        params={"document_path": "docs/voice-secretary/shared.md"},
+                    )
+                    self.assertEqual(latest.status_code, 200)
+                    latest_session = ((latest.json().get("result") or {}).get("session")) or {}
+                    self.assertEqual(latest_session.get("session_id"), "rust-shared-session")
+                    self.assertEqual(
+                        [item.get("text") for item in (latest_session.get("segments") or [])],
+                        ["shared Rust transcript"],
+                    )
+
+                    selected = client.get(
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/sessions/rust-shared-session",
+                    )
+                    self.assertEqual(selected.status_code, 200)
+                    self.assertEqual(
+                        (((selected.json().get("result") or {}).get("session")) or {}).get(
+                            "session_id"
+                        ),
+                        "rust-shared-session",
+                    )
+
+                    cleared = client.request(
+                        "DELETE",
+                        f"/api/v1/groups/{group_id}/assistants/voice_secretary/sessions/latest/transcript",
+                        json={"document_path": "docs/voice-secretary/shared.md", "by": "user"},
+                    )
+                    self.assertEqual(cleared.status_code, 200)
+                    self.assertTrue(bool((cleared.json().get("result") or {}).get("cleared")))
+
+            state_after = assistant_ops._load_runtime_state(group)
+            session_after = state_after["voice_sessions"]["rust-shared-session"]
+            self.assertEqual(session_after.get("segments"), [])
+            self.assertEqual(session_after.get("transcript"), "")
+            self.assertEqual(session_after.get("latest_partial"), "")
         finally:
             cleanup()
 

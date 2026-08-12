@@ -36,12 +36,24 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let records = match kind {
         TargetKind::CapabilityId => {
             let enabled = enable(home, &group_id, &actor_id, &scope, ttl_seconds, &target)?;
+            let use_ready = enabled
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let enabled_ids = if use_ready {
+                vec![target.clone()]
+            } else {
+                Vec::new()
+            };
             return object(json!({
                 "action_id":action_id,"group_id":group_id,"actor_id":actor_id,
                 "target":target,"target_kind":"capability_id","scope":scope,
-                "installed_capability_ids":[target],"enabled_capability_ids":[target],
-                "use_ready_capability_ids":[target],"requires_setup":false,
-                "refresh_required":true,"enable_result":enabled,"state":"ready"
+                "installed_capability_ids":[target],"enabled_capability_ids":enabled_ids,
+                "use_ready_capability_ids":enabled_ids,
+                "requires_setup":!use_ready,
+                "refresh_required":enabled.get("refresh_required").and_then(Value::as_bool).unwrap_or(false),
+                "state":if use_ready {"ready"} else {"needs_setup"},
+                "enable_result":enabled
             }));
         }
         TargetKind::Local => local_records(&target)?,
@@ -117,19 +129,28 @@ pub(super) fn run(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 }
             }
         };
+        let active_after_import = enable_result
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         installed.push(capability.id.clone());
-        enabled.push(capability.id.clone());
+        if active_after_import {
+            enabled.push(capability.id.clone());
+        }
         imported.push(json!({
-            "capability_id":capability.id,"ok":true,"state":"ready",
-            "active_after_import":true,"record":record,"enable_result":enable_result
+            "capability_id":capability.id,"ok":true,
+            "state":enable_result.get("state").and_then(Value::as_str).unwrap_or("blocked"),
+            "active_after_import":active_after_import,"record":record,"enable_result":enable_result
         }));
     }
+    let requires_setup = enabled.len() < installed.len();
     object(json!({
         "action_id":action_id,"group_id":group_id,"actor_id":actor_id,
         "target":target,"target_kind":kind.as_str(),"scope":scope,
         "installed_capability_ids":installed,"enabled_capability_ids":enabled,
-        "use_ready_capability_ids":enabled,"requires_setup":false,
-        "refresh_required":true,"imported_capabilities":imported,"state":"ready"
+        "use_ready_capability_ids":enabled,"requires_setup":requires_setup,
+        "refresh_required":true,"imported_capabilities":imported,
+        "state":if requires_setup {"needs_setup"} else {"ready"}
     }))
 }
 
@@ -142,6 +163,23 @@ pub(super) fn enable(
     capability_id: &str,
 ) -> Result<Map<String, Value>, OpError> {
     let store = CapabilityStore::new(home.clone());
+    if let Some((blocked_scope, block)) = store
+        .blocked_for_group(capability_id, group_id)
+        .map_err(OpError::io)?
+    {
+        let reason = if blocked_scope == "global" {
+            "blocked_by_global_policy"
+        } else {
+            "blocked_by_group_policy"
+        };
+        return object(json!({
+            "group_id":group_id,"actor_id":actor_id,"capability_id":capability_id,
+            "scope":scope,"enabled":false,"state":"blocked",
+            "refresh_required":false,"reason":reason,
+            "policy_level":"blocked","blocked_scope":blocked_scope,
+            "blocked_reason":block.get("reason").and_then(Value::as_str).unwrap_or("")
+        }));
+    }
     let record = store.catalog_record(capability_id).map_err(OpError::io)?;
     if let Some(record) = record.as_ref() {
         validate_enableable(record, capability_id)?;

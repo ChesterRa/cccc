@@ -1,8 +1,10 @@
 use cccc_contracts::DaemonRequest;
 use cccc_core::HomeLayout;
-use cccc_core::fs::{read_yaml, with_exclusive_lock, write_yaml};
+use cccc_core::fs::{read_yaml, write_yaml};
+use fs2::FileExt;
 use serde_json::{Value, json};
 use sha1::{Digest, Sha1};
+use std::fs::OpenOptions;
 use std::io;
 
 use crate::dispatch::{OpError, OpResult, object, string_arg};
@@ -35,35 +37,25 @@ pub(super) fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "only user can update capability allowlist overlay",
         ));
     }
-    let current = snapshot(home)?;
-    let expected = string_arg(request, "expected_revision").unwrap_or_default();
-    if !expected.is_empty() && current["revision"].as_str() != Some(&expected) {
-        let mut error = OpError::new(
-            "allowlist_revision_mismatch",
-            "expected_revision does not match current revision",
-        );
-        error
-            .details
-            .insert("current_revision".into(), current["revision"].clone());
-        return Err(error);
-    }
-    let overlay = next_overlay(home, request)?;
-    let path = overlay_path(home);
-    with_exclusive_lock(&path.with_extension("yaml.lock"), || {
-        if overlay.as_object().is_some_and(serde_json::Map::is_empty) {
-            match std::fs::remove_file(&path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error),
-            }
-        } else {
-            write_yaml(&path, &overlay)
+    with_overlay_lock(home, || {
+        let current = snapshot(home)?;
+        let expected = string_arg(request, "expected_revision").unwrap_or_default();
+        if !expected.is_empty() && current["revision"].as_str() != Some(&expected) {
+            let mut error = OpError::new(
+                "allowlist_revision_mismatch",
+                "expected_revision does not match current revision",
+            );
+            error
+                .details
+                .insert("current_revision".into(), current["revision"].clone());
+            return Err(error);
         }
+        let overlay = next_overlay(home, request)?;
+        persist_overlay(home, &overlay)?;
+        let mut result = snapshot(home)?;
+        result["updated"] = json!(true);
+        object(result)
     })
-    .map_err(OpError::io)?;
-    let mut result = snapshot(home)?;
-    result["updated"] = json!(true);
-    object(result)
 }
 
 pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -73,16 +65,52 @@ pub(super) fn reset(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             "only user can reset capability allowlist overlay",
         ));
     }
+    with_overlay_lock(home, || {
+        let path = overlay_path(home);
+        let removed = match std::fs::remove_file(&path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+            Err(error) => return Err(OpError::io(error)),
+        };
+        let mut result = snapshot(home)?;
+        result["reset"] = json!(true);
+        result["removed_overlay_file"] = json!(removed);
+        object(result)
+    })
+}
+
+fn with_overlay_lock<T>(
+    home: &HomeLayout,
+    operation: impl FnOnce() -> Result<T, OpError>,
+) -> Result<T, OpError> {
+    let path = overlay_path(home).with_extension("yaml.lock");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(OpError::io)?;
+    }
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(path)
+        .map_err(OpError::io)?;
+    file.lock_exclusive().map_err(OpError::io)?;
+    let result = operation();
+    let _ = FileExt::unlock(&file);
+    result
+}
+
+fn persist_overlay(home: &HomeLayout, overlay: &Value) -> Result<(), OpError> {
     let path = overlay_path(home);
-    let removed = match std::fs::remove_file(&path) {
-        Ok(()) => true,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
-        Err(error) => return Err(OpError::io(error)),
-    };
-    let mut result = snapshot(home)?;
-    result["reset"] = json!(true);
-    result["removed_overlay_file"] = json!(removed);
-    object(result)
+    if overlay.as_object().is_some_and(serde_json::Map::is_empty) {
+        match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(OpError::io(error)),
+        }
+    } else {
+        write_yaml(&path, overlay).map_err(OpError::io)
+    }
 }
 
 fn snapshot(home: &HomeLayout) -> Result<Value, OpError> {

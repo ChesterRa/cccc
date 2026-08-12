@@ -30,7 +30,10 @@ from .transports.base import (
     get_transport,
 )
 
-_TERMINAL = {"sent", "failed"}
+# Rust prerelease builds wrote ``delivered`` for successful receipts. Treat it
+# as a terminal read-compatibility alias so an engine switch never recalls the
+# transport. New writers use the canonical ``sent`` status.
+_TERMINAL = {"sent", "delivered", "failed"}
 _DEFAULT_MAX_ATTEMPTS = 5
 _BACKOFF_SECONDS = (2, 5, 15, 30, 60)
 _SENDING_STALE_SECONDS = 120

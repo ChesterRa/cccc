@@ -65,6 +65,174 @@ class TestWebImStart(unittest.TestCase):
         group = create_group(reg, title=title, topic="")
         return group.group_id
 
+    def test_saving_new_im_config_stops_the_old_worker_and_disables_autostart(
+        self,
+    ) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("im-config-replace")
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["im"] = {
+                "platform": "telegram",
+                "bot_token_env": "OLD_TELEGRAM_TOKEN",
+                "enabled": True,
+            }
+            group.save()
+
+            with patch(
+                "cccc.ports.web.routes.im.stop_im_bridges_for_group",
+                return_value=1,
+            ) as stop:
+                with TestClient(create_app()) as client:
+                    response = client.post(
+                        "/api/im/set",
+                        json={
+                            "group_id": gid,
+                            "platform": "discord",
+                            "bot_token_env": "NEW_DISCORD_TOKEN",
+                        },
+                    )
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(bool(response.json().get("ok")))
+            stop.assert_called_once()
+            saved = load_group(gid)
+            self.assertIsNotNone(saved)
+            assert saved is not None
+            self.assertEqual(saved.doc["im"]["platform"], "discord")
+            self.assertFalse(bool(saved.doc["im"].get("enabled")))
+        finally:
+            cleanup()
+
+    def test_saving_im_config_waits_for_the_shared_im_state_lock(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+        import time
+
+        from cccc.kernel.group import load_group
+        from cccc.ports.web.app import create_app
+        from cccc.util.file_lock import acquire_lockfile, release_lockfile
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("im-config-lock")
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            assert group is not None
+            lock = acquire_lockfile(
+                group.path / "state" / "im_state.lock", blocking=True
+            )
+            try:
+                entered = threading.Event()
+
+                def stopped(*_args, **_kwargs):
+                    entered.set()
+                    return 0
+
+                with patch(
+                    "cccc.ports.web.routes.im.stop_im_bridges_for_group",
+                    side_effect=stopped,
+                ):
+                    with TestClient(create_app()) as client:
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(
+                                client.post,
+                                "/api/im/set",
+                                json={
+                                    "group_id": gid,
+                                    "platform": "telegram",
+                                    "bot_token_env": "LOCKED_TOKEN",
+                                },
+                            )
+                            self.assertTrue(entered.wait(timeout=1))
+                            time.sleep(0.05)
+                            self.assertFalse(future.done())
+                            release_lockfile(lock)
+                            lock = None
+                            response = future.result(timeout=2)
+            finally:
+                if lock is not None:
+                    release_lockfile(lock)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(bool(response.json().get("ok")))
+        finally:
+            cleanup()
+
+    def test_stopping_im_waits_for_the_shared_im_state_lock(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+        import threading
+        import time
+
+        from cccc.kernel.group import load_group
+        from cccc.kernel.im_state import set_im_enabled
+        from cccc.ports.web.app import create_app
+        from cccc.util.file_lock import acquire_lockfile, release_lockfile
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("im-stop-lock")
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["im"] = {
+                "platform": "telegram",
+                "bot_token_env": "LOCKED_TOKEN",
+                "enabled": True,
+            }
+            group.save()
+            lock = acquire_lockfile(
+                group.path / "state" / "im_state.lock", blocking=True
+            )
+            try:
+                entered = threading.Event()
+
+                def enabled(group_id, value):
+                    entered.set()
+                    return set_im_enabled(group_id, value)
+
+                with (
+                    patch(
+                        "cccc.ports.web.routes.im.set_im_enabled",
+                        side_effect=enabled,
+                    ),
+                    patch(
+                        "cccc.ports.web.routes.im.stop_im_bridges_for_group",
+                        return_value=0,
+                    ),
+                ):
+                    with TestClient(create_app()) as client:
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            future = executor.submit(
+                                client.post,
+                                "/api/im/stop",
+                                json={"group_id": gid},
+                            )
+                            if not entered.wait(timeout=1):
+                                release_lockfile(lock)
+                                lock = None
+                                self.fail(
+                                    "IM stop did not enter the shared state update"
+                                )
+                            time.sleep(0.05)
+                            self.assertFalse(future.done())
+                            release_lockfile(lock)
+                            lock = None
+                            response = future.result(timeout=2)
+            finally:
+                if lock is not None:
+                    release_lockfile(lock)
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(bool(response.json().get("ok")))
+        finally:
+            cleanup()
+
     def test_im_start_uses_detached_child_process_defaults(self) -> None:
         from cccc.ports.web.app import create_app
 
@@ -619,6 +787,11 @@ class TestWebImStart(unittest.TestCase):
                     ),
                     encoding="utf-8",
                 )
+                # Legacy builds once exposed a login-runner pidfile even though
+                # the current SDK login flow has no child process. It must be inert.
+                (state_dir / "im_weixin_login.pid").write_text(
+                    "434343", encoding="utf-8"
+                )
                 key_manager = KeyManager(state_dir)
                 key_manager.authorize_direct(
                     "wx-user-logout", 0, "weixin", "weixin_login"
@@ -630,12 +803,19 @@ class TestWebImStart(unittest.TestCase):
                     platform="weixin",
                 )
 
-                with patch(
-                    "cccc.ports.web.routes.im.stop_im_bridges_for_group", return_value=0
+                with (
+                    patch(
+                        "cccc.ports.web.routes.im.stop_im_bridges_for_group",
+                        return_value=0,
+                    ),
+                    patch(
+                        "cccc.ports.web.routes.im.best_effort_signal_pid"
+                    ) as signal_pid,
                 ):
                     logout_resp = client.post(
                         "/api/im/weixin/logout", json={"group_id": gid}
                     )
+                signal_pid.assert_not_called()
 
             payload = logout_resp.json()
             self.assertTrue(bool(payload.get("ok")), payload)

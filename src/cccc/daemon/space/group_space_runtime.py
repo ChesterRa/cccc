@@ -14,6 +14,7 @@ from .group_space_memory_sync import (
 )
 from .group_space_provider import SpaceProviderError, provider_ingest, provider_query
 from .group_space_store import (
+    _migrate_all_legacy_group_space,
     cancel_space_job,
     get_space_binding,
     get_space_job,
@@ -285,6 +286,7 @@ def run_space_query(
 
 def process_due_space_jobs(*, limit: int = 20) -> Dict[str, Any]:
     max_items = max(1, min(int(limit or 20), 200))
+    _migrate_all_legacy_group_space()
     due_jobs = list_due_space_jobs(limit=max_items)
     processed = 0
     succeeded = 0

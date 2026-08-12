@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import copy
+import logging
 from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
@@ -11,6 +13,7 @@ from ...kernel.events import publish_event
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
+from ...kernel.web_model_connectors import restore_web_model_connectors, retire_web_model_connectors_for_actor
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
@@ -19,6 +22,8 @@ from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
 from ..context.context_ops import _schedule_summary_snapshot_rebuild
 from ..runtime_session_ops import remove_runtime_session
 from .web_model_browser_session import clear_web_model_chatgpt_browser_actor_runtime
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -33,6 +38,8 @@ def handle_actor_remove(
     remove_headless_state: Callable[[str, str], None],
     remove_pty_state_if_pid: Callable[..., None],
     throttle_clear_actor: Callable[[str, str], None],
+    load_actor_private_env: Callable[[str, str], Dict[str, str]],
+    update_actor_private_env: Callable[..., Dict[str, str]],
     delete_actor_private_env: Callable[[str, str], None],
     delete_actor_avatar: Callable[[str], None],
 ) -> DaemonResponse:
@@ -45,47 +52,23 @@ def handle_actor_remove(
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
     before_foreman = foreman_id(group)
+    before_group_doc = copy.deepcopy(group.doc)
     avatar_rel_path = ""
+    group_changed = False
+    retired_connectors: list[Dict[str, Any]] = []
+    original_private_env: Dict[str, str] = {}
+    private_env_retired = False
     try:
         require_actor_permission(group, by=by, action="actor.remove", target_actor_id=actor_id)
         actor_doc = find_actor(group, actor_id)
         if isinstance(actor_doc, dict):
             avatar_rel_path = str(actor_doc.get("avatar_asset_path") or "").strip()
-        is_web_model = isinstance(actor_doc, dict) and str(actor_doc.get("runtime") or "").strip() == "web_model"
-        if is_web_model:
-            browser_targets = group.doc.get("web_model_browser_targets")
-            if isinstance(browser_targets, dict):
-                browser_targets.pop(actor_id, None)
+        original_private_env = load_actor_private_env(group.group_id, actor_id)
+        browser_targets = group.doc.get("web_model_browser_targets")
+        if isinstance(browser_targets, dict):
+            browser_targets.pop(actor_id, None)
         remove_actor(group, actor_id)
-        if is_web_model:
-            try:
-                clear_web_model_chatgpt_browser_actor_runtime(group_id=group.group_id, actor_id=actor_id)
-            except Exception:
-                pass
-            refreshed_group = load_group(group.group_id)
-            if refreshed_group is not None:
-                group = refreshed_group
-        codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
-        claude_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
-        pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
-        remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-        headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
-        remove_headless_state(group.group_id, actor_id)
-        remove_runtime_session(group.group_id, actor_id)
-        throttle_clear_actor(group.group_id, actor_id)
-        delete_actor_private_env(group.group_id, actor_id)
-        if avatar_rel_path:
-            delete_actor_avatar(avatar_rel_path)
-    except Exception as e:
-        return _error("actor_remove_failed", str(e))
-
-    try:
-        ContextStorage(group).bump_version_state(actors_changed=True)
-        _schedule_summary_snapshot_rebuild(group.group_id)
-    except Exception:
-        pass
-
-    try:
+        group_changed = True
         any_enabled = any(
             coerce_bool(item.get("enabled"), default=True)
             for item in list_actors(group)
@@ -94,19 +77,88 @@ def handle_actor_remove(
         if not any_enabled:
             group.doc["running"] = False
             group.save()
+        retired_connectors = retire_web_model_connectors_for_actor(group.group_id, actor_id)
+        delete_actor_private_env(group.group_id, actor_id)
+        private_env_retired = True
+        event = append_event(
+            group.ledger_path,
+            kind="actor.remove",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={"actor_id": actor_id},
+        )
+    except Exception as error:
+        rollback_failures: list[str] = []
+        if group_changed:
+            try:
+                group.doc = copy.deepcopy(before_group_doc)
+                group.save()
+            except Exception as rollback_error:
+                rollback_failures.append(f"group: {rollback_error}")
+        if retired_connectors:
+            try:
+                restore_web_model_connectors(retired_connectors)
+            except Exception as rollback_error:
+                rollback_failures.append(f"connectors: {rollback_error}")
+        if private_env_retired and original_private_env:
+            try:
+                update_actor_private_env(
+                    group.group_id,
+                    actor_id,
+                    set_vars=original_private_env,
+                    unset_keys=[],
+                    clear=True,
+                )
+            except Exception as rollback_error:
+                rollback_failures.append(f"private_env: {rollback_error}")
+        if rollback_failures:
+            return _error(
+                "rollback_failed",
+                f"{error}; rollback failed: {'; '.join(rollback_failures)}",
+            )
+        return _error("actor_remove_failed", str(error))
+
+    cleanup_steps = [
+        lambda: codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id),
+        lambda: claude_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id),
+        lambda: pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id),
+        lambda: headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id),
+        lambda: remove_pty_state_if_pid(group.group_id, actor_id, pid=0),
+        lambda: remove_headless_state(group.group_id, actor_id),
+        lambda: remove_runtime_session(group.group_id, actor_id),
+        lambda: throttle_clear_actor(group.group_id, actor_id),
+        lambda: clear_web_model_chatgpt_browser_actor_runtime(
+            group_id=group.group_id,
+            actor_id=actor_id,
+        ),
+    ]
+    if avatar_rel_path:
+        cleanup_steps.append(lambda: delete_actor_avatar(avatar_rel_path))
+    for cleanup in cleanup_steps:
+        try:
+            cleanup()
+        except Exception as cleanup_error:
+            LOGGER.warning(
+                "post-commit actor removal cleanup failed: group=%s actor=%s err=%s",
+                group.group_id,
+                actor_id,
+                cleanup_error,
+            )
+
+    try:
+        ContextStorage(group).bump_version_state(actors_changed=True)
+        _schedule_summary_snapshot_rebuild(group.group_id)
     except Exception:
         pass
-
-    event = append_event(
-        group.ledger_path,
-        kind="actor.remove",
-        group_id=group.group_id,
-        scope_key="",
-        by=by,
-        data={"actor_id": actor_id},
-    )
-    publish_event("actor.remove", {"group_id": group.group_id, "actor_id": actor_id})
-    maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
+    try:
+        publish_event("actor.remove", {"group_id": group.group_id, "actor_id": actor_id})
+    except Exception:
+        pass
+    try:
+        maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
+    except Exception:
+        pass
     return DaemonResponse(ok=True, result={"actor_id": actor_id, "event": event})
 
 
@@ -119,6 +171,8 @@ def try_handle_actor_membership_op(
     remove_headless_state: Callable[[str, str], None],
     remove_pty_state_if_pid: Callable[..., None],
     throttle_clear_actor: Callable[[str, str], None],
+    load_actor_private_env: Callable[[str, str], Dict[str, str]],
+    update_actor_private_env: Callable[..., Dict[str, str]],
     delete_actor_private_env: Callable[[str, str], None],
     delete_actor_avatar: Callable[[str], None],
 ) -> Optional[DaemonResponse]:
@@ -130,6 +184,8 @@ def try_handle_actor_membership_op(
             remove_headless_state=remove_headless_state,
             remove_pty_state_if_pid=remove_pty_state_if_pid,
             throttle_clear_actor=throttle_clear_actor,
+            load_actor_private_env=load_actor_private_env,
+            update_actor_private_env=update_actor_private_env,
             delete_actor_private_env=delete_actor_private_env,
             delete_actor_avatar=delete_actor_avatar,
         )

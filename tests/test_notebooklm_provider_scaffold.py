@@ -330,6 +330,133 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
         kwargs = captured.get("kwargs") if isinstance(captured.get("kwargs"), dict) else {}
         self.assertEqual(str(getattr(kwargs.get("style"), "name", "") or ""), "SCIENTIFIC")
 
+    def test_artifact_generation_routes_every_supported_kind_to_its_vendor_method(self) -> None:
+        from cccc.providers.notebooklm.adapter import _generate_artifact_async
+
+        calls: list[tuple[str, tuple, dict]] = []
+
+        class _FakeStatus:
+            task_id = "task_1"
+            status = "queued"
+            url = ""
+            error = ""
+            error_code = ""
+            metadata = {}
+
+        class _FakeArtifacts:
+            def __getattr__(self, name: str):
+                async def _call(*args, **kwargs):
+                    calls.append((name, args, kwargs))
+                    if name == "generate_mind_map":
+                        return type("MindMap", (), {"note_id": "note_1"})()
+                    return _FakeStatus()
+
+                return _call
+
+        class _FakeClient:
+            artifacts = _FakeArtifacts()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        async def _fake_build_client(*, auth_payload, timeout_seconds):
+            _ = auth_payload, timeout_seconds
+            return _FakeClient()
+
+        methods = {
+            "audio": "generate_audio",
+            "video": "generate_video",
+            "report": "generate_report",
+            "study_guide": "generate_study_guide",
+            "quiz": "generate_quiz",
+            "flashcards": "generate_flashcards",
+            "infographic": "generate_infographic",
+            "slide_deck": "generate_slide_deck",
+            "data_table": "generate_data_table",
+            "mind_map": "generate_mind_map",
+        }
+        with patch("cccc.providers.notebooklm.adapter._build_client", side_effect=_fake_build_client):
+            for kind, expected_method in methods.items():
+                with self.subTest(kind=kind):
+                    calls.clear()
+                    out = asyncio.run(
+                        _generate_artifact_async(
+                            notebook_id="nb_1",
+                            kind=kind,
+                            options={"source_ids": ["src_1"]},
+                            auth_payload={},
+                            timeout_seconds=10.0,
+                        )
+                    )
+                    self.assertEqual([call[0] for call in calls], [expected_method])
+                    self.assertEqual(out.get("kind"), kind)
+                    self.assertTrue(str(out.get("task_id") or ""))
+
+    def test_artifact_download_routes_every_supported_kind_and_format(self) -> None:
+        from cccc.providers.notebooklm.adapter import _download_artifact_async
+
+        calls: list[tuple[str, tuple, dict]] = []
+
+        class _FakeArtifacts:
+            def __getattr__(self, name: str):
+                async def _call(*args, **kwargs):
+                    calls.append((name, args, kwargs))
+                    return args[1]
+
+                return _call
+
+        class _FakeClient:
+            artifacts = _FakeArtifacts()
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        async def _fake_build_client(*, auth_payload, timeout_seconds):
+            _ = auth_payload, timeout_seconds
+            return _FakeClient()
+
+        methods = {
+            "audio": "download_audio",
+            "video": "download_video",
+            "report": "download_report",
+            "study_guide": "download_report",
+            "quiz": "download_quiz",
+            "flashcards": "download_flashcards",
+            "infographic": "download_infographic",
+            "slide_deck": "download_slide_deck",
+            "data_table": "download_data_table",
+            "mind_map": "download_mind_map",
+        }
+        with tempfile.TemporaryDirectory() as raw, patch(
+            "cccc.providers.notebooklm.adapter._build_client",
+            side_effect=_fake_build_client,
+        ):
+            for kind, expected_method in methods.items():
+                with self.subTest(kind=kind):
+                    calls.clear()
+                    out = asyncio.run(
+                        _download_artifact_async(
+                            notebook_id="nb_1",
+                            kind=kind,
+                            output_path=os.path.join(raw, f"{kind}.out"),
+                            artifact_id="art_1",
+                            output_format="html",
+                            auth_payload={},
+                            timeout_seconds=10.0,
+                        )
+                    )
+                    self.assertEqual([call[0] for call in calls], [expected_method])
+                    self.assertTrue(out.get("downloaded"))
+                    self.assertEqual(calls[0][2].get("artifact_id"), "art_1")
+                    if kind in {"quiz", "flashcards"}:
+                        self.assertEqual(calls[0][2].get("output_format"), "html")
+
     def test_v080_source_mutations_treat_no_exception_as_success(self) -> None:
         import asyncio
 

@@ -115,6 +115,106 @@ async fn web_owned_browser_surfaces_keep_product_routes_and_durable_targets() {
     daemon.await.expect("daemon task").expect("daemon");
 }
 
+#[tokio::test]
+async fn presentation_browser_routes_reject_missing_groups_and_unsafe_slots_before_launch() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let created = daemon_call(&home, "group_create", json!({"title":"browser boundary"}));
+    let group_id = created["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
+    let app = cccc_web::app(home.clone());
+
+    let escaped_profile_root = temp.path().join("escaped-profile-root");
+    let unsafe_slot = request_json(
+        &app,
+        Request::post(format!(
+            "/api/v1/groups/{group_id}/presentation/browser_surface/session"
+        ))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({
+                "slot": escaped_profile_root,
+                "url": "http://127.0.0.1:1",
+                "width": 800,
+                "height": 600
+            })
+            .to_string(),
+        ))
+        .expect("unsafe-slot request"),
+    )
+    .await;
+    assert_eq!(unsafe_slot["status"], StatusCode::BAD_REQUEST.as_u16());
+    assert_eq!(unsafe_slot["body"]["error"]["code"], "invalid_request");
+    assert!(
+        !escaped_profile_root.exists(),
+        "an invalid slot must not create a browser profile outside CCCC_HOME"
+    );
+    assert!(
+        unsafe_slot["body"]["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("slot must be one of"))
+    );
+
+    let local_file = temp.path().join("private.html");
+    std::fs::write(&local_file, "private browser content").expect("local file");
+    let local_file_url = format!("file://{}", local_file.display());
+    let local_file_response = request_json(
+        &app,
+        Request::post(format!(
+            "/api/v1/groups/{group_id}/presentation/browser_surface/session"
+        ))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({"slot":"slot-1","url":local_file_url,"width":800,"height":600}).to_string(),
+        ))
+        .expect("local-file request"),
+    )
+    .await;
+    if local_file_response["status"] == StatusCode::OK.as_u16() {
+        let _ = request_json(
+            &app,
+            Request::post(format!(
+                "/api/v1/groups/{group_id}/presentation/browser_surface/session/close"
+            ))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"slot":"slot-1"}).to_string()))
+            .expect("cleanup request"),
+        )
+        .await;
+    }
+    assert_eq!(
+        local_file_response["status"],
+        StatusCode::BAD_REQUEST.as_u16()
+    );
+    assert_eq!(
+        local_file_response["body"]["error"]["code"],
+        "invalid_request"
+    );
+    assert!(
+        !home
+            .root()
+            .join("state/presentation_browser")
+            .join(&group_id)
+            .join("slot-1")
+            .join("profile")
+            .exists(),
+        "a rejected URL must not create or replace the browser profile"
+    );
+
+    let missing = request_json(
+        &app,
+        Request::get("/api/v1/groups/g_missing/presentation/browser_surface/session?slot=slot-1")
+            .body(Body::empty())
+            .expect("missing-group request"),
+    )
+    .await;
+    assert_eq!(missing["status"], StatusCode::NOT_FOUND.as_u16());
+    assert_eq!(missing["body"]["error"]["code"], "group_not_found");
+}
+
 fn daemon_call(home: &HomeLayout, op: &str, args: Value) -> Value {
     let response = cccc_daemon::handle_request(
         home,

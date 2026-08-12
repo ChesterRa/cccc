@@ -58,6 +58,33 @@ async fn finish_only_removes_matching_session() {
 }
 
 #[tokio::test]
+async fn finish_retains_matching_session_until_cleanup_completes() {
+    let manager = AuthFlowManager::default();
+    manager.inner.lock().await.active = Some(active("current"));
+
+    manager
+        .finish("current", "succeeded", "done", "connected", None)
+        .await;
+
+    {
+        let inner = manager.inner.lock().await;
+        assert_eq!(inner.state.state, "succeeded");
+        assert!(!inner.state.finished_at.is_empty());
+        assert_eq!(
+            inner
+                .active
+                .as_ref()
+                .expect("cleanup owns the flow")
+                .session_id,
+            "current"
+        );
+    }
+
+    manager.clear_active("current").await;
+    assert!(manager.inner.lock().await.active.is_none());
+}
+
+#[tokio::test]
 async fn shutdown_does_not_replace_idle_state() {
     let manager = AuthFlowManager::default();
     let browsers = BrowserSurfaces::default();

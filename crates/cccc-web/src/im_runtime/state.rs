@@ -61,28 +61,21 @@ pub(super) fn authorized_chats_from_store(
     group_id: &str,
     platform: &str,
 ) -> Vec<AuthorizedChat> {
-    let mut chats = HashMap::new();
-    if let Ok(value) = cccc_core::im_state::load(store, group_id) {
-        let has_canonical_authorization = ["authorized", "subscribers"]
-            .into_iter()
-            .any(|key| value.get(key).is_some());
-        for key in ["authorized", "subscribers"] {
-            collect_active_chats(value.get(key), platform, &mut chats);
-        }
-        if has_canonical_authorization {
-            return into_authorized_chats(chats);
-        }
-    }
-    if let Ok(state_dir) = store.state_dir(group_id) {
-        for name in ["im_authorized_chats.json", "im_subscribers.json"] {
-            if let Ok(raw) = std::fs::read_to_string(state_dir.join(name))
-                && let Ok(value) = serde_json::from_str::<Value>(&raw)
-            {
-                collect_active_chats(Some(&value), platform, &mut chats);
-            }
-        }
-    }
-    into_authorized_chats(chats)
+    let Ok(value) = cccc_core::im_state::load(store, group_id) else {
+        return Vec::new();
+    };
+    let mut authorized = HashMap::new();
+    collect_active_chats(value.get("authorized"), platform, &mut authorized);
+    let mut subscribers = HashMap::new();
+    collect_active_chats(value.get("subscribers"), platform, &mut subscribers);
+    subscribers.retain(|key, verbose| {
+        let Some(authorized_verbose) = authorized.get(key) else {
+            return false;
+        };
+        *verbose |= *authorized_verbose;
+        true
+    });
+    into_authorized_chats(subscribers)
 }
 
 fn collect_active_chats(
@@ -371,24 +364,38 @@ mod tests {
         });
         assert_eq!(
             targets,
-            vec![
-                AuthorizedChat {
-                    chat_id: "legacy".into(),
-                    thread_id: String::new(),
-                    verbose: false,
-                },
-                AuthorizedChat {
-                    chat_id: "telegram-chat".into(),
-                    thread_id: String::new(),
-                    verbose: true,
-                },
-                AuthorizedChat {
-                    chat_id: "telegram-chat".into(),
-                    thread_id: "42".into(),
-                    verbose: false,
-                },
-            ]
+            vec![AuthorizedChat {
+                chat_id: "telegram-chat".into(),
+                thread_id: String::new(),
+                verbose: true,
+            }]
         );
+    }
+
+    #[test]
+    fn outbound_targets_require_both_authorization_and_subscription() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("IM trust boundary", "").expect("group");
+        cccc_core::im_state::update(&store, &group.group_id, |state| {
+            *state = json!({
+                "authorized":[
+                    {"chat_id":"both","platform":"telegram"},
+                    {"chat_id":"authorization-only","platform":"telegram"}
+                ],
+                "subscribers":[
+                    {"chat_id":"both","platform":"telegram","subscribed":true},
+                    {"chat_id":"subscription-only","platform":"telegram","subscribed":true}
+                ]
+            });
+            Ok(())
+        })
+        .expect("state");
+
+        let targets = authorized_chats_from_store(&store, &group.group_id, "telegram");
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].chat_id, "both");
     }
 
     #[test]

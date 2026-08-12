@@ -95,18 +95,24 @@ fn running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpResul
             });
         });
     }
-    update(home, &group_id, |state| {
-        state.insert("enabled".into(), Value::Bool(false));
-        state.insert("running".into(), Value::Bool(false));
-        state.insert("pid".into(), Value::Null);
-        state.insert("last_error".into(), Value::Null);
-        state.insert("updated_at".into(), json!(utc_now()));
-        Ok(())
-    })?;
-    object(status_payload(&group_id, &load(home, &group_id)?))
+    delegate_worker_action(home, &group_id, "stop").inspect_err(|error| {
+        let _ = update(home, &group_id, |state| {
+            state.insert("enabled".into(), Value::Bool(false));
+            state.insert("running".into(), Value::Bool(false));
+            state.insert("pid".into(), Value::Null);
+            state.insert("adapter_available".into(), Value::Bool(false));
+            state.insert("last_error".into(), json!(error.message));
+            state.insert("updated_at".into(), json!(utc_now()));
+            Ok(())
+        });
+    })
 }
 
 fn delegate_start(home: &HomeLayout, group_id: &str) -> OpResult {
+    delegate_worker_action(home, group_id, "start")
+}
+
+fn delegate_worker_action(home: &HomeLayout, group_id: &str, action: &str) -> OpResult {
     let global = settings::load(home).map_err(OpError::io)?;
     let host = global
         .remote_access
@@ -132,7 +138,7 @@ fn delegate_start(home: &HomeLayout, group_id: &str) -> OpResult {
         .build()
         .map_err(OpError::invalid)?;
     let mut request = client
-        .post(format!("http://{}:{port}/api/im/start", url_host(host)))
+        .post(format!("http://{}:{port}/api/im/{action}", url_host(host)))
         .json(&json!({"group_id":group_id}));
     if let Some(token) = AccessTokenStore::new(home.clone())
         .map_err(OpError::io)?
@@ -146,7 +152,9 @@ fn delegate_start(home: &HomeLayout, group_id: &str) -> OpResult {
     let response = request.send().map_err(|error| {
         OpError::new(
             "adapter_unavailable",
-            format!("Rust IM network workers require the Web service; run `cccc` ({error})"),
+            format!(
+                "Rust IM network worker {action} requires the Web service; run `cccc` ({error})"
+            ),
         )
     })?;
     let status = response.status();
@@ -160,7 +168,7 @@ fn delegate_start(home: &HomeLayout, group_id: &str) -> OpResult {
         let message = body
             .pointer("/error/message")
             .and_then(Value::as_str)
-            .unwrap_or("Rust Web rejected the IM start request");
+            .unwrap_or("Rust Web rejected the IM worker request");
         return Err(OpError::new("adapter_unavailable", message));
     }
     body.get("result")
@@ -463,8 +471,8 @@ fn legacy_target_from_key(key: &str) -> (String, Value) {
 #[cfg(test)]
 mod tests {
     use super::{
-        bind, delegate_start, normalize_config, preserve_config_policy, revoke, status_payload,
-        url_host,
+        bind, delegate_start, normalize_config, preserve_config_policy, revoke, running,
+        status_payload, url_host,
     };
     use cccc_contracts::DaemonRequest;
     use cccc_core::{GroupStore, HomeLayout, im_state, settings};
@@ -724,5 +732,75 @@ mod tests {
         assert_eq!(result["running"], true);
         assert_eq!(result["adapter_available"], true);
         server.join().expect("server");
+    }
+
+    #[test]
+    fn daemon_im_stop_delegates_to_the_web_owned_worker() {
+        let temp = tempfile::tempdir().expect("temp");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("IM stop", "").expect("group");
+        im_state::update(&store, &group.group_id, |value| {
+            *value = json!({
+                "config":{"platform":"weixin"},
+                "enabled":true,
+                "running":true,
+                "adapter_available":true
+            });
+            Ok(())
+        })
+        .expect("state");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("listener");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let port = listener.local_addr().expect("address").port();
+        let mut global = settings::load(&home).expect("settings");
+        global.remote_access = json!({"web_host":"127.0.0.1","web_port":port})
+            .as_object()
+            .cloned()
+            .expect("remote access");
+        settings::save(&home, &global).expect("save settings");
+
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            while std::time::Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        let mut request = [0_u8; 4096];
+                        let read = stream.read(&mut request).expect("read request");
+                        let request = String::from_utf8_lossy(&request[..read]).into_owned();
+                        let body = r#"{"ok":true,"result":{"group_id":"g_test","running":false,"adapter_available":false}}"#;
+                        write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            body.len(),
+                            body
+                        )
+                        .expect("write response");
+                        return request;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("accept: {error}"),
+                }
+            }
+            String::new()
+        });
+
+        let request = DaemonRequest {
+            v: 1,
+            op: "im_stop".into(),
+            args: json!({"group_id":group.group_id})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        };
+        let result = running(&home, &request, false).expect("delegated stop");
+        assert_eq!(result["running"], false);
+        let observed = server.join().expect("server");
+        assert!(observed.starts_with("POST /api/im/stop HTTP/1.1"));
+        assert!(observed.contains(&format!("\"group_id\":\"{}\"", group.group_id)));
     }
 }

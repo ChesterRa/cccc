@@ -29,9 +29,9 @@ async fn terminal_clear_accepts_actor_id_from_query_without_json_body() {
         .expect("body")
         .to_bytes();
     shutdown(home, daemon).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(status, StatusCode::NOT_FOUND);
     let payload: Value = serde_json::from_slice(&body).expect("json error response");
-    assert_eq!(payload["error"]["code"], "runtime_error");
+    assert_eq!(payload["error"]["code"], "actor_not_found");
 }
 
 #[tokio::test]

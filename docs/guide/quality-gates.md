@@ -67,7 +67,7 @@ frontend and also refreshes the packaged copy under
 `src/cccc/ports/web/dist` that is embedded in wheels. `CCCC_WEB_DIST` remains
 the explicit override for testing a different bundle.
 
-CI pins Node 20.19.5 for reproducible formatting, linting, testing, and bundling, while `engines.node` defines the supported local runtime range. The project deliberately does not use `devEngines`, because exact package-manager checks can prevent every `npm` and `npx` command from starting when a developer has a different compatible npm version.
+CI pins Node 24.19.0 for reproducible formatting, linting, testing, and bundling, while `engines.node` defines the supported non-EOL local runtime range. The project deliberately does not use `devEngines`, because exact package-manager checks can prevent every `npm` and `npx` command from starting when a developer has a different compatible npm version.
 
 `npm run check` runs Vite+ Oxfmt and Oxlint, followed by the independent TypeScript 5.9 `tsc --noEmit` compatibility check. `npm run typecheck` remains available separately for focused diagnosis.
 
@@ -102,10 +102,26 @@ actual built executable. The smoke uses a fresh `CCCC_HOME`, verifies offline
 `status`, starts the daemon, creates a scoped Web Model actor, performs an MCP
 handshake and a real `cccc_code_exec` cell, then stops the daemon and verifies
 offline status again. The release-candidate verifiers repeat this check for
-the installed Unix artifact; Windows verifies installed offline status, MCP
-startup, daemon lifecycle, and that the executable is released after shutdown.
+each installed Linux and macOS artifact; Windows verifies installed offline
+status, MCP startup, daemon lifecycle, and that the executable is released
+after shutdown.
 
-The full Windows Rust workspace job is intentionally retired because it did not complete reliably on hosted runners. Windows keeps focused PTY compatibility coverage in `windows-smoke`. Python releases build and smoke one portable wheel plus a source distribution, build four native Rust wheels in parallel, and publish only after the exact version-matched set passes metadata and payload checks. Standalone releases build the shared Web bundle once, execute each of the four native binaries once, and run the final Linux and Windows installer verifiers in parallel before publication. These bounded release gates do not repeat the full Rust/Python suites, Web tests, or cross-language interoperability tests owned by normal CI. The Web job uploads its bundle and the package job consumes that artifact, so packaging tests the same bundle without rebuilding it. The `packaged_web_dist` pytest marker is reserved for assertions that require this artifact; source-only Python runs exclude it, while the package job executes it after downloading the bundle.
+Each final standalone verifier also starts the installed combined Web/daemon
+process and reruns the exact same-version installer in place. Publication is
+blocked unless the old Web process exits, the process lock and executable are
+released, the replacement daemon restarts, and the installed MCP/code-mode
+smoke still succeeds. This is the public lifecycle used by `cccc update`, not a
+source-tree substitute.
+
+Before packaging, Linux standalone builds run in the manylinux 2.28 container
+already used by the native wheel and must pass an ELF dependency/ABI check;
+OpenSSL is statically carried rather than delegated to the target host. macOS
+builds declare and verify a macOS 11.0 minimum plus system-only dylib boundary.
+Windows native-wheel and standalone build/verification runners are pinned to
+Server 2022. These checks make the advertised platform floor a property of the
+artifact rather than the moving `*-latest` runner labels.
+
+The full Windows Rust workspace job is intentionally retired because it did not complete reliably on hosted runners. Windows keeps focused PTY compatibility coverage in `windows-smoke`. Python releases install and smoke one portable wheel plus a source distribution, build and install-smoke four native Rust wheels in parallel, and publish only after the exact version-matched set passes metadata, payload, MCP, daemon-lifecycle, and engine-switch checks. Standalone releases build the shared Web bundle once, execute each of the four native binaries once, and run the final Linux, Intel macOS, Apple Silicon macOS, and Windows installer verifiers in parallel before publication. These bounded release gates do not repeat the full Rust/Python suites, Web tests, or cross-language interoperability tests owned by normal CI. The Web job uploads its bundle and the package job consumes that artifact, so packaging tests the same bundle without rebuilding it. The `packaged_web_dist` pytest marker is reserved for assertions that require this artifact; source-only Python runs exclude it, while the package job executes it after downloading the bundle.
 
 ## Stable Python Shards
 

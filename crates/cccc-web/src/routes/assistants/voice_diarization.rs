@@ -1,9 +1,9 @@
-use cccc_contracts::{Event, utc_now};
-use cccc_core::{GroupStore, assistant_state, ledger};
+use cccc_contracts::{DaemonRequest, Event};
+use cccc_core::{GroupStore, ledger};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use super::{root, voice_asr, voice_inference, voice_speaker_transcript};
+use super::{voice_asr, voice_inference, voice_speaker_transcript};
 use crate::AppState;
 
 pub(super) enum SpawnStatus {
@@ -80,7 +80,7 @@ pub(super) fn spawn(job: DiarizationJob, recording: tempfile::NamedTempFile) -> 
                 error.to_string(),
             ),
         };
-        if persist_result(
+        if let Err(error) = persist_result(
             &state,
             &group_id,
             &session_id,
@@ -89,8 +89,14 @@ pub(super) fn spawn(job: DiarizationJob, recording: tempfile::NamedTempFile) -> 
             error_code,
             &error_message,
         )
-        .is_err()
+        .await
         {
+            tracing::error!(
+                %error,
+                %group_id,
+                %session_id,
+                "failed to persist voice diarization completion"
+            );
             return;
         }
         if let Err(error) = emit_event_with_retry(
@@ -115,7 +121,7 @@ pub(super) fn spawn(job: DiarizationJob, recording: tempfile::NamedTempFile) -> 
     SpawnStatus::Started
 }
 
-fn persist_result(
+async fn persist_result(
     state: &AppState,
     group_id: &str,
     session_id: &str,
@@ -124,36 +130,50 @@ fn persist_result(
     error_code: &str,
     error_message: &str,
 ) -> std::io::Result<()> {
-    assistant_state::update(&state.home, group_id, |value| {
-        let sessions = root(value)
-            .entry("sessions")
-            .or_insert_with(|| json!([]))
-            .as_array_mut()
-            .expect("sessions initialized");
-        let index = sessions
-            .iter()
-            .position(|item| item["session_id"] == session_id)
-            .unwrap_or_else(|| {
-                sessions.push(json!({
-                    "session_id":session_id,"document_path":document_path,
-                    "capture_mode":"document","segments":[],"transcript":"","created_at":utc_now()
-                }));
-                sessions.len() - 1
-            });
-        let session = &mut sessions[index];
-        session["updated_at"] = json!(utc_now());
-        session["capture_mode"] = json!("document");
-        session["diarization_ready"] = json!(result.is_some());
-        if let Some(result) = result {
-            session["diarization"] = result;
-            if let Some(session) = session.as_object_mut() {
-                session.remove("diarization_error");
-            }
-        } else {
-            session["diarization_error"] = json!({"code":error_code,"message":error_message});
-        }
+    let patch = if let Some(result) = result {
+        json!({
+            "status":"closed",
+            "document_path":document_path,
+            "diarization_ready":true,
+            "diarization":result,
+            "error":null
+        })
+    } else {
+        json!({
+            "status":"closed",
+            "document_path":document_path,
+            "diarization_ready":false,
+            "diarization_error":{"code":error_code,"message":error_message},
+            "error":{"code":error_code,"message":error_message}
+        })
+    };
+    let response = state
+        .client
+        .call(&DaemonRequest {
+            v: 1,
+            op: "assistant_voice_session_update".into(),
+            args: json!({
+                "group_id":group_id,
+                "session_id":session_id,
+                "by":"assistant:voice_secretary",
+                "patch":patch
+            })
+            .as_object()
+            .cloned()
+            .expect("voice session update args"),
+        })
+        .await
+        .map_err(std::io::Error::other)?;
+    if response.ok {
         Ok(())
-    })
+    } else {
+        Err(std::io::Error::other(
+            response
+                .error
+                .map(|error| format!("{}: {}", error.code, error.message))
+                .unwrap_or_else(|| "voice session update failed".into()),
+        ))
+    }
 }
 
 async fn emit_event_with_retry(

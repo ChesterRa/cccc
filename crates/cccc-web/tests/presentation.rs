@@ -48,6 +48,36 @@ async fn presentation_http_routes_cover_url_upload_workspace_asset_and_clear() {
     .await;
     assert_eq!(url["result"]["card"]["card_type"], "web_preview");
 
+    let pdf_url = request_json(
+        &app,
+        Request::post(format!(
+            "/api/v1/groups/{}/presentation/publish",
+            group.group_id
+        ))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"slot":"slot-3","url":"https://example.com/report.pdf?rev=2","by":"user"}"#,
+        ))
+        .expect("request"),
+    )
+    .await;
+    assert_eq!(pdf_url["result"]["card"]["card_type"], "pdf");
+
+    let image_url = request_json(
+        &app,
+        Request::post(format!(
+            "/api/v1/groups/{}/presentation/publish",
+            group.group_id
+        ))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            r#"{"slot":"slot-3","url":"https://example.com/chart.PNG#latest","by":"user"}"#,
+        ))
+        .expect("request"),
+    )
+    .await;
+    assert_eq!(image_url["result"]["card"]["card_type"], "image");
+
     let workspace = request_json(
         &app,
         Request::post(format!(
@@ -105,7 +135,7 @@ async fn presentation_http_routes_cover_url_upload_workspace_asset_and_clear() {
 
     let boundary = "cccc-boundary";
     let multipart = format!(
-        "--{boundary}\r\nContent-Disposition: form-data; name=\"slot\"\r\n\r\nslot-2\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"notes.md\"\r\nContent-Type: text/markdown\r\n\r\n# hello\r\n--{boundary}--\r\n"
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"slot\"\r\n\r\nslot-2\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"by\"\r\n\r\n\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\n\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"notes.md\"\r\nContent-Type: text/markdown\r\n\r\n# hello\r\n--{boundary}--\r\n"
     );
     let uploaded = request_json(
         &app,
@@ -123,6 +153,9 @@ async fn presentation_http_routes_cover_url_upload_workspace_asset_and_clear() {
     .await;
     assert_eq!(uploaded["result"]["card"]["title"], "notes.md");
     assert_eq!(uploaded["result"]["card"]["content"]["markdown"], "# hello");
+    assert_eq!(uploaded["result"]["card"]["published_by"], "user");
+    assert_eq!(uploaded["result"]["card"]["source_ref"], "notes.md");
+    assert_eq!(uploaded["result"]["event"]["by"], "user");
 
     let cleared = request_json(
         &app,
@@ -145,6 +178,130 @@ async fn presentation_http_routes_cover_url_upload_workspace_asset_and_clear() {
         })
         .await;
     daemon.await.expect("daemon task").expect("daemon");
+}
+
+#[tokio::test]
+async fn presentation_upload_routes_enforce_size_group_and_slot_boundaries() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let groups = GroupStore::new(home.clone()).expect("groups");
+    let group = groups
+        .create("presentation upload boundaries", "")
+        .expect("group");
+    let app = cccc_web::app(home.clone());
+
+    let accepted = app
+        .clone()
+        .oneshot(multipart_request(
+            format!(
+                "/api/v1/groups/{}/presentation/ref_snapshot",
+                group.group_id
+            ),
+            "accepted-boundary",
+            &[("slot", "slot-2")],
+            "snapshot.jpg",
+            "image/jpeg",
+            &vec![b'x'; 3 * 1024 * 1024],
+        ))
+        .await
+        .expect("accepted upload response");
+    assert_eq!(accepted.status(), StatusCode::OK);
+
+    let oversized = app
+        .clone()
+        .oneshot(multipart_request(
+            format!(
+                "/api/v1/groups/{}/presentation/ref_snapshot",
+                group.group_id
+            ),
+            "oversized-boundary",
+            &[("slot", "slot-2")],
+            "snapshot.jpg",
+            "image/jpeg",
+            &vec![b'y'; 20 * 1024 * 1024 + 1],
+        ))
+        .await
+        .expect("oversized upload response");
+    assert_eq!(oversized.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let oversized_body = oversized
+        .into_body()
+        .collect()
+        .await
+        .expect("oversized body")
+        .to_bytes();
+    let oversized_json: Value = serde_json::from_slice(&oversized_body).expect("oversized JSON");
+    assert_eq!(oversized_json["error"]["code"], "file_too_large");
+
+    let invalid_slot = app
+        .clone()
+        .oneshot(multipart_request(
+            format!(
+                "/api/v1/groups/{}/presentation/ref_snapshot",
+                group.group_id
+            ),
+            "invalid-slot-boundary",
+            &[("slot", "slot-9")],
+            "invalid-slot.jpg",
+            "image/jpeg",
+            b"invalid-slot",
+        ))
+        .await
+        .expect("invalid slot response");
+    assert_eq!(invalid_slot.status(), StatusCode::BAD_REQUEST);
+
+    for path in [
+        "/api/v1/groups/g_missing/presentation/ref_snapshot",
+        "/api/v1/groups/g_missing/presentation/publish_upload",
+    ] {
+        let missing = app
+            .clone()
+            .oneshot(multipart_request(
+                path,
+                "missing-group-boundary",
+                &[("slot", "slot-1"), ("by", "user")],
+                "missing.png",
+                "image/png",
+                b"missing-group",
+            ))
+            .await
+            .expect("missing group response");
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND, "{path}");
+        assert!(!home.groups_dir().join("g_missing").exists(), "{path}");
+    }
+}
+
+fn multipart_request(
+    uri: impl AsRef<str>,
+    boundary: &str,
+    fields: &[(&str, &str)],
+    file_name: &str,
+    mime: &str,
+    data: &[u8],
+) -> Request<Body> {
+    let mut body = Vec::new();
+    for (name, value) in fields {
+        body.extend_from_slice(
+            format!(
+                "--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n"
+            )
+            .as_bytes(),
+        );
+    }
+    body.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\nContent-Type: {mime}\r\n\r\n"
+        )
+        .as_bytes(),
+    );
+    body.extend_from_slice(data);
+    body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    Request::post(uri.as_ref())
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(Body::from(body))
+        .expect("multipart request")
 }
 
 async fn request_json(app: &axum::Router, request: Request<Body>) -> Value {

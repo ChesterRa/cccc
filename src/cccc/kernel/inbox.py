@@ -418,8 +418,12 @@ def get_indexed_unread_counts(
 def load_cursors(group: Group) -> Dict[str, Any]:
     """Load read cursors for all actors."""
     p = _cursor_path(group)
-    doc = read_json(p)
-    return doc if isinstance(doc, dict) else {}
+    if not p.exists():
+        return {}
+    doc = json.loads(p.read_text(encoding="utf-8"))
+    if not isinstance(doc, dict):
+        raise ValueError(f"read cursor document must be an object: {p}")
+    return doc
 
 
 def _save_cursors(group: Group, doc: Dict[str, Any]) -> None:
@@ -921,10 +925,7 @@ def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> D
             read = _cursor_record_covers_event(cur, ev, positions=positions)
 
             replied = rid in replied_set
-            acked = replied or (rid in acked_set)
-            if is_attention and read:
-                # mark_read on attention is treated as ack gesture for recipients.
-                acked = True
+            acked = rid in acked_set
 
             status[rid] = {
                 "read": read,

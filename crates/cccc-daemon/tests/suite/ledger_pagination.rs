@@ -237,6 +237,16 @@ fn ledger_statuses_restore_read_ack_and_reply_state() {
         "inbox_mark_read",
         json!({"group_id":group_id,"actor_id":"alice","event_id":event_id,"by":"user"}),
     );
+    let after_read = call(
+        &home,
+        "ledger_statuses",
+        json!({"group_id":group_id,"event_ids":[event_id]}),
+    );
+    let read_status = &after_read.result["statuses"][&event_id];
+    assert_eq!(read_status["read_status"]["alice"], true);
+    assert_eq!(read_status["ack_status"]["alice"], false);
+    assert_eq!(read_status["obligation_status"]["alice"]["acked"], false);
+    assert_eq!(read_status["obligation_status"]["alice"]["replied"], false);
     call(
         &home,
         "reply",
@@ -269,6 +279,41 @@ fn ledger_statuses_restore_read_ack_and_reply_state() {
     assert_eq!(single.result["read_status"]["alice"], true);
 }
 
+#[test]
+fn ledger_and_context_reads_reject_a_missing_group() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    for (op, args) in [
+        ("ledger_tail", json!({"group_id":"g_missing"})),
+        ("ledger_search", json!({"group_id":"g_missing","q":"x"})),
+        (
+            "ledger_window",
+            json!({"group_id":"g_missing","center":"event-missing"}),
+        ),
+        (
+            "ledger_statuses",
+            json!({"group_id":"g_missing","event_ids":["event-missing"]}),
+        ),
+        (
+            "message_read_status",
+            json!({"group_id":"g_missing","event_id":"event-missing"}),
+        ),
+        (
+            "context_get",
+            json!({"group_id":"g_missing","detail":"summary"}),
+        ),
+        ("task_list", json!({"group_id":"g_missing"})),
+    ] {
+        let response = call_raw(&home, op, args);
+        assert!(!response.ok, "{op} unexpectedly succeeded");
+        assert_eq!(
+            response.error.expect("missing-group error").code,
+            "group_not_found",
+            "{op} returned the wrong error"
+        );
+    }
+}
+
 fn append(home: &HomeLayout, group_id: &str, kind: &str, id: &str) {
     let mut event = Event::new(kind, group_id);
     event.id = id.into();
@@ -287,14 +332,18 @@ fn ids(response: &DaemonResponse) -> Vec<&str> {
 }
 
 fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
-    let response = cccc_daemon::handle_request(
+    let response = call_raw(home, op, args);
+    assert!(response.ok, "{op}: {:?}", response.error);
+    response
+}
+
+fn call_raw(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
+    cccc_daemon::handle_request(
         home,
         &DaemonRequest {
             v: 1,
             op: op.into(),
             args: args.as_object().cloned().unwrap_or_else(Map::new),
         },
-    );
-    assert!(response.ok, "{op}: {:?}", response.error);
-    response
+    )
 }

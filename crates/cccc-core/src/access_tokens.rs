@@ -12,6 +12,8 @@ use uuid::Uuid;
 use crate::HomeLayout;
 use crate::fs::{read_yaml, write_yaml};
 
+pub const LAST_ADMIN_REQUIRED: &str = "last_admin_required";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AccessToken {
     #[serde(default)]
@@ -162,10 +164,33 @@ impl AccessTokenStore {
         is_admin: Option<bool>,
     ) -> io::Result<Option<AccessToken>> {
         self.mutate(|document| {
-            let Some(entry) = find_by_id_mut(document, id) else {
+            let raw = document
+                .tokens
+                .keys()
+                .find(|raw| token_id(raw) == id)
+                .cloned();
+            let Some(raw) = raw else {
                 return Ok(None);
             };
-            let next_admin = is_admin.unwrap_or(entry.is_admin);
+            let was_admin = document.tokens[&raw].is_admin;
+            let next_admin = is_admin.unwrap_or(was_admin);
+            if was_admin
+                && !next_admin
+                && document
+                    .tokens
+                    .values()
+                    .filter(|token| token.is_admin)
+                    .count()
+                    <= 1
+            {
+                return Err(last_admin_error(
+                    "cannot demote the last administrator access token",
+                ));
+            }
+            let entry = document
+                .tokens
+                .get_mut(&raw)
+                .expect("token key selected from the same document");
             if next_admin {
                 entry.allowed_groups.clear();
             } else if let Some(groups) = allowed_groups {
@@ -184,7 +209,24 @@ impl AccessTokenStore {
                 .keys()
                 .find(|raw| token_id(raw) == id)
                 .cloned();
-            Ok(raw.and_then(|raw| document.tokens.remove(&raw)))
+            let Some(raw) = raw else {
+                return Ok(None);
+            };
+            let token = &document.tokens[&raw];
+            if token.is_admin
+                && document.tokens.len() > 1
+                && document
+                    .tokens
+                    .values()
+                    .filter(|item| item.is_admin)
+                    .count()
+                    <= 1
+            {
+                return Err(last_admin_error(
+                    "cannot delete the last administrator while scoped tokens remain",
+                ));
+            }
+            Ok(document.tokens.remove(&raw))
         })
     }
 
@@ -229,16 +271,21 @@ impl AccessTokenStore {
 }
 
 #[must_use]
-pub fn token_id(raw: &str) -> String {
-    format!("{:x}", Sha256::digest(raw.as_bytes()))[..16].into()
+pub fn is_last_admin_required(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::InvalidInput
+        && error.to_string().starts_with(LAST_ADMIN_REQUIRED)
 }
 
-fn find_by_id_mut<'a>(document: &'a mut TokenDocument, id: &str) -> Option<&'a mut AccessToken> {
-    document
-        .tokens
-        .iter_mut()
-        .find(|(raw, _)| token_id(raw) == id)
-        .map(|(_, entry)| entry)
+fn last_admin_error(message: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("{LAST_ADMIN_REQUIRED}: {message}"),
+    )
+}
+
+#[must_use]
+pub fn token_id(raw: &str) -> String {
+    format!("{:x}", Sha256::digest(raw.as_bytes()))[..16].into()
 }
 
 fn normalize_groups(groups: Vec<String>) -> Vec<String> {
@@ -290,7 +337,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).expect("unchanged"), fixture);
 
         store
-            .update(&token.token_id(), None, Some(false))
+            .update(&token.token_id(), None, None)
             .expect("update")
             .expect("updated token");
         let stored: serde_yaml::Value =

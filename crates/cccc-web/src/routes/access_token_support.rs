@@ -62,10 +62,11 @@ const COOKIE_VALUE_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'%');
 
 pub fn server_error(error_value: impl std::fmt::Display) -> Response {
+    tracing::error!(error = %error_value, "failed to access CCCC access token store");
     error(
         StatusCode::INTERNAL_SERVER_ERROR,
         "access_token_store_error",
-        &error_value.to_string(),
+        "access token store is unavailable",
     )
 }
 

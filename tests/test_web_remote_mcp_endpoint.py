@@ -1161,6 +1161,14 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
                         "bootstrap_seed_version": "",
                         "bootstrap_seed_digest": "",
                         "bootstrap_seed_conversation_url": "",
+                        "last_delivery_at": "",
+                        "last_delivery_started_at": "",
+                        "last_delivery_id": "",
+                        "last_delivery_status": "",
+                        "last_submission_evidence": "",
+                        "last_send_selector": "",
+                        "last_turn_id": "",
+                        "last_event_ids": [],
                         "last_error": "",
                     },
                 )
@@ -1296,6 +1304,9 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertEqual(state.get("pending_new_chat_url"), "https://chatgpt.com/")
             self.assertEqual(state.get("pending_new_chat_submitted"), False)
             self.assertEqual(state.get("pending_new_chat_delivery_id"), "")
+            self.assertEqual(state.get("last_delivery_id"), "")
+            self.assertEqual(state.get("last_delivery_status"), "")
+            self.assertEqual(state.get("last_event_ids"), [])
             self.assertTrue(str(state.get("pending_new_chat_bind_started_at") or ""))
             self.assertTrue(str(state.get("target_saved_at") or ""))
         finally:
@@ -1331,6 +1342,69 @@ class TestWebRemoteMcpEndpoint(unittest.TestCase):
             self.assertEqual(state.get("pending_new_chat_bind"), True)
             self.assertEqual(state.get("pending_new_chat_url"), "https://chatgpt.com/")
             self.assertTrue(str(state.get("target_saved_at") or ""))
+        finally:
+            cleanup()
+
+    def test_web_model_browser_target_change_discards_previous_delivery_fence(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+        from cccc.ports.web_model_browser_sidecar import (
+            read_chatgpt_browser_state,
+            record_chatgpt_browser_state,
+        )
+
+        _, cleanup = self._with_home()
+        try:
+            group = self._create_group_with_actor()
+            record_chatgpt_browser_state(
+                group.group_id,
+                "peer1",
+                {
+                    "conversation_url": "https://chatgpt.com/c/old-chat",
+                    "target_saved_at": "2026-08-11T00:00:00Z",
+                    "last_delivery_id": "old-fenced-delivery",
+                    "last_turn_id": "old-turn",
+                    "last_event_ids": ["old-event"],
+                    "last_delivery_status": "ambiguous",
+                    "last_submission_evidence": "submit_unverified",
+                    "last_error": "old delivery was unverified",
+                },
+            )
+            admin = str(create_access_token("admin", is_admin=True).get("token") or "")
+            client = self._client()
+
+            with (
+                patch(
+                    "cccc.ports.web_model_browser_sidecar.chatgpt_browser_session_cached_status",
+                    return_value={
+                        "active": True,
+                        "tab_url": "https://chatgpt.com/c/old-chat",
+                    },
+                ),
+                patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon),
+                patch(
+                    "cccc.daemon.actors.web_model_browser_session.get_web_model_chatgpt_browser_session_state",
+                    return_value={"active": True, "state": "ready"},
+                ),
+            ):
+                response = client.post(
+                    "/api/v1/web-model/browser-session/bind-current",
+                    headers={"Authorization": f"Bearer {admin}"},
+                    json={
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "new_chat": True,
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            state = read_chatgpt_browser_state(group.group_id, "peer1")
+            self.assertEqual(state.get("conversation_url"), "")
+            self.assertTrue(state.get("pending_new_chat_bind"))
+            self.assertFalse(state.get("pending_new_chat_submitted"))
+            self.assertEqual(state.get("last_delivery_id"), "")
+            self.assertEqual(state.get("last_delivery_status"), "")
+            self.assertEqual(state.get("last_event_ids"), [])
+            self.assertEqual(state.get("last_error"), "")
         finally:
             cleanup()
 

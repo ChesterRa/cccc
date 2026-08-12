@@ -991,3 +991,36 @@ def search_event_ids_indexed(
             limit=limit,
         ),
     )
+
+
+def latest_event_ids_indexed(
+    ledger_path: Path,
+    *,
+    allowed_kinds: set[str],
+    limit: int = 50,
+) -> list[str]:
+    """Return the latest matching event ids in canonical ledger append order."""
+
+    kinds = sorted(
+        str(kind or "").strip()
+        for kind in allowed_kinds
+        if str(kind or "").strip()
+    )
+    if not kinds:
+        return []
+    bounded_limit = max(1, int(limit or 50))
+
+    def query(conn: sqlite3.Connection) -> list[str]:
+        placeholders = ", ".join("?" for _ in kinds)
+        rows = conn.execute(
+            f"SELECT event_id FROM events WHERE kind IN ({placeholders}) "
+            "ORDER BY source_seq DESC, line_no DESC LIMIT ?",
+            (*kinds, bounded_limit),
+        ).fetchall()
+        return [
+            str(row[0] or "").strip()
+            for row in rows
+            if str(row[0] or "").strip()
+        ]
+
+    return _query_ledger_index(ledger_path, query)

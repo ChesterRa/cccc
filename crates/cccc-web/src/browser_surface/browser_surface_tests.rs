@@ -489,6 +489,167 @@ async fn special_key_command_applies_native_input_behavior() {
 }
 
 #[tokio::test]
+async fn click_command_preserves_the_requested_mouse_button() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = local_page(
+        "<!doctype html><style>html,body{margin:0}#target{width:300px;height:300px}</style><div id='target'>target</div><script>target.addEventListener('contextmenu',event=>{event.preventDefault();document.body.dataset.button=String(event.button)})</script>",
+    )
+    .await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    manager
+        .open(
+            "mouse-button-test",
+            &temp.path().join("profile"),
+            &url,
+            800,
+            600,
+        )
+        .await
+        .expect("open browser");
+
+    manager
+        .command(
+            "mouse-button-test",
+            &json!({"t":"click","x":100,"y":100,"button":"right"}),
+        )
+        .await
+        .expect("right click");
+    let page = manager
+        .sessions
+        .lock()
+        .await
+        .get("mouse-button-test")
+        .expect("browser session")
+        .page
+        .clone();
+    let button: String = page
+        .evaluate("document.body.dataset.button || ''")
+        .await
+        .expect("read context-menu button")
+        .into_value()
+        .expect("button value");
+
+    assert_eq!(button, "2");
+    assert!(manager.close("mouse-button-test").await.expect("close"));
+    server.abort();
+}
+
+#[tokio::test]
+async fn core_interaction_commands_complete_a_real_page_journey() {
+    if !chrome_available() {
+        return;
+    }
+    let (url, server) = local_page(
+        "<!doctype html><style>html,body{margin:0}#input{position:absolute;left:20px;top:20px;width:240px;height:50px}</style><input id='input'><script>sessionStorage.loads=String(Number(sessionStorage.loads||0)+1)</script>",
+    )
+    .await;
+    let temp = tempfile::tempdir().expect("tempdir");
+    let manager = BrowserSurfaces::default();
+    manager
+        .open(
+            "navigate-test",
+            &temp.path().join("profile"),
+            &url,
+            800,
+            600,
+        )
+        .await
+        .expect("open browser");
+    let page = manager
+        .sessions
+        .lock()
+        .await
+        .get("navigate-test")
+        .expect("browser session")
+        .page
+        .clone();
+    let start_url = page
+        .url()
+        .await
+        .expect("read start URL")
+        .expect("start URL");
+
+    manager
+        .command(
+            "navigate-test",
+            &json!({"t":"click","x":100,"y":45,"button":"left"}),
+        )
+        .await
+        .expect("focus input");
+    manager
+        .command("navigate-test", &json!({"t":"text","text":"hello"}))
+        .await
+        .expect("insert text");
+    manager
+        .command("navigate-test", &json!({"t":"key","key":"Backspace"}))
+        .await
+        .expect("press key");
+    let value: String = page
+        .evaluate("document.querySelector('#input').value")
+        .await
+        .expect("read input")
+        .into_value()
+        .expect("input value");
+    assert_eq!(value, "hell");
+
+    manager
+        .command(
+            "navigate-test",
+            &json!({"t":"resize","width":960,"height":720}),
+        )
+        .await
+        .expect("resize");
+    let viewport: Value = page
+        .evaluate("({width:window.innerWidth,height:window.innerHeight})")
+        .await
+        .expect("read viewport")
+        .into_value()
+        .expect("viewport");
+    assert_eq!(viewport, json!({"width":960,"height":720}));
+
+    let target = format!("{url}/next");
+
+    manager
+        .command("navigate-test", &json!({"t":"navigate","url":target}))
+        .await
+        .expect("navigate");
+    let observed = page
+        .url()
+        .await
+        .expect("read browser URL")
+        .expect("browser URL");
+
+    assert_eq!(observed, target);
+    assert_eq!(manager.info("navigate-test").await["url"], target);
+    manager
+        .command("navigate-test", &json!({"t":"refresh"}))
+        .await
+        .expect("refresh");
+    let loads: String = page
+        .evaluate("sessionStorage.loads")
+        .await
+        .expect("read load count")
+        .into_value()
+        .expect("load count");
+    assert_eq!(loads, "3");
+
+    manager
+        .command("navigate-test", &json!({"t":"back"}))
+        .await
+        .expect("back");
+    assert_eq!(
+        page.url().await.expect("read back URL"),
+        Some(start_url.clone())
+    );
+    assert_eq!(manager.info("navigate-test").await["url"], start_url);
+    assert!(manager.close("navigate-test").await.expect("close"));
+    server.abort();
+}
+
+#[tokio::test]
 async fn scroll_command_targets_the_nested_container_under_the_pointer() {
     if !chrome_available() {
         return;

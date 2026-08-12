@@ -229,7 +229,7 @@ impl GroupStore {
         })
     }
 
-    pub(crate) fn mutate_with_rollback<T>(
+    pub fn mutate_with_rollback<T>(
         &self,
         group_id: &str,
         change: impl FnOnce(&mut GroupDoc) -> io::Result<T>,

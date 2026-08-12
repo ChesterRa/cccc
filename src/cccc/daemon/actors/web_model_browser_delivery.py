@@ -16,7 +16,12 @@ from typing import Any, Dict, List, Optional
 
 from ...kernel.actors import find_actor
 from ...kernel.group import load_group
-from ...kernel.inbox import iter_events_reverse, unread_messages
+from ...kernel.inbox import (
+    cursor_covers_event,
+    find_event,
+    iter_events_reverse,
+    unread_messages,
+)
 from ...kernel.ledger import append_event
 from ...kernel.system_prompt import render_system_prompt
 from ...kernel.web_model_connectors import list_web_model_connectors
@@ -69,6 +74,19 @@ _DEFERRED_MAX_AUTOMATIC_RETRIES = 3
 _DEFERRED_MAX_RETRY_AFTER_SECONDS = 30.0
 _BOOTSTRAP_SEED_VERSION = "web-model-bootstrap-normal-system-prompt-v2"
 _COMPATIBILITY_IMAGE_NOTE = "[CCCC] Compatibility attachment: the blank image is transport-only and carries no task context."
+_AT_MOST_ONCE_FENCED_STATUSES = {
+    "submitting",
+    "legacy_recovery_submitting",
+    "completion_ambiguous",
+    "submission_ambiguous_completion_pending",
+    "completion_conflict",
+    "submission_ambiguous",
+    "legacy_submission_unverified",
+}
+_FENCED_STATUSES_REQUIRING_RECOVERY = _AT_MOST_ONCE_FENCED_STATUSES - {
+    "submission_ambiguous",
+    "legacy_submission_unverified",
+}
 
 
 def _actor_env(actor: Dict[str, Any]) -> Dict[str, str]:
@@ -313,29 +331,26 @@ def _record_delivery_submitting(
     turn: Dict[str, Any],
     delivery_id: str,
     timeout_seconds: float,
-) -> None:
+) -> bool:
     now = utc_now_iso()
-    try:
-        record_chatgpt_browser_state(
-            group_id,
-            actor_id,
-            {
-                "last_delivery_at": now,
-                "last_delivery_started_at": now,
-                "last_turn_id": str(turn.get("turn_id") or ""),
-                "last_event_ids": list(turn.get("event_ids") or []),
-                "last_delivery_id": str(delivery_id or turn.get("delivery_id") or ""),
-                "last_delivery_timeout_seconds": float(
-                    timeout_seconds or _DEFAULT_TIMEOUT_SECONDS
-                ),
-                "last_delivery_status": "submitting",
-                "last_submission_evidence": "",
-                "last_send_selector": "",
-                "last_error": "",
-            },
-        )
-    except Exception:
-        pass
+    return record_chatgpt_browser_state(
+        group_id,
+        actor_id,
+        {
+            "last_delivery_at": now,
+            "last_delivery_started_at": now,
+            "last_turn_id": str(turn.get("turn_id") or ""),
+            "last_event_ids": list(turn.get("event_ids") or []),
+            "last_delivery_id": str(delivery_id or turn.get("delivery_id") or ""),
+            "last_delivery_timeout_seconds": float(
+                timeout_seconds or _DEFAULT_TIMEOUT_SECONDS
+            ),
+            "last_delivery_status": "submitting",
+            "last_submission_evidence": "",
+            "last_send_selector": "",
+            "last_error": "",
+        },
+    )
 
 
 def _is_submission_ambiguous_error(error: str) -> bool:
@@ -650,29 +665,11 @@ def submit_next_web_model_browser_turn(
             "status": "target_chat_required",
             "error": "target_chat_required",
         }
-    turn = _browser_delivery_batch(group, actor_id=aid)
-    if not turn.get("event_ids"):
-        update_headless_state(
-            group.group_id, aid, status="waiting", active_turn_id="", latest_event_id=""
-        )
-        return {"ok": True, "status": "idle"}
-
     provider = _provider_from_actor_or_connector(group.group_id, actor) or "chatgpt_web"
-    candidate_seed_text = _build_web_model_bootstrap_seed(group, actor)
-    seed_digest = _bootstrap_seed_digest(candidate_seed_text)
-    bootstrap_seed = _bootstrap_seed_required(
-        group.group_id, aid, target_url=target_url, seed_digest=seed_digest
-    )
-    bootstrap_seed_text = candidate_seed_text if bootstrap_seed else ""
-    delivery_id = str(turn.get("delivery_id") or "")
-    delivery_timeout_seconds = _timeout_seconds(actor)
     try:
         previous_browser_state = read_chatgpt_browser_state(group.group_id, aid)
     except Exception:
         previous_browser_state = {}
-    same_delivery = (
-        str(previous_browser_state.get("last_delivery_id") or "") == delivery_id
-    )
     previous_event_ids = [
         str(item or "").strip()
         for item in (
@@ -682,28 +679,66 @@ def submit_next_web_model_browser_turn(
         )
         if str(item or "").strip()
     ]
-    interrupted_submitting = (
+    previous_delivery_status = str(
+        previous_browser_state.get("last_delivery_status_canonical")
+        or previous_browser_state.get("last_delivery_status")
+        or ""
+    ).strip()
+    previous_latest_event = (
+        find_event(group, previous_event_ids[-1]) if previous_event_ids else None
+    )
+    previous_delivery_committed = bool(
+        previous_latest_event
+        and cursor_covers_event(
+            group,
+            actor_id=aid,
+            event=previous_latest_event,
+        )
+    )
+    fenced_previous_delivery = (
         bool(previous_event_ids)
-        and str(previous_browser_state.get("last_delivery_status") or "")
-        == "submitting"
+        and previous_delivery_status in _AT_MOST_ONCE_FENCED_STATUSES
+        and (
+            not previous_delivery_committed
+            or auto_bind_new_chat
+            or previous_delivery_status in _FENCED_STATUSES_REQUIRING_RECOVERY
+        )
         and not _is_submission_deferred_error(
             str(previous_browser_state.get("last_error") or "")
         )
     )
-    if interrupted_submitting:
+    if fenced_previous_delivery:
         interrupted_turn = {
-            **turn,
             "turn_id": str(previous_browser_state.get("last_turn_id") or "").strip()
-            or str(turn.get("turn_id") or ""),
+            or str(previous_browser_state.get("last_delivery_id") or "").strip()
+            or f"webdelivery:{aid}:recovery",
             "event_ids": previous_event_ids,
             "latest_event_id": previous_event_ids[-1],
         }
         interrupted_delivery_id = str(
             previous_browser_state.get("last_delivery_id") or ""
-        ).strip() or delivery_id
+        ).strip() or str(interrupted_turn["turn_id"])
+        interrupted = previous_delivery_status in {
+            "submitting",
+            "legacy_recovery_submitting",
+        }
         error = (
             "browser delivery was interrupted after its at-most-once dispatch fence; "
             "the message will not be redelivered automatically"
+            if interrupted
+            else (
+                f"browser delivery remained in {previous_delivery_status} after its "
+                "at-most-once dispatch fence; local completion was reconciled without "
+                "resubmitting the message"
+            )
+        )
+        submission_evidence = (
+            "interrupted_dispatch"
+            if interrupted
+            else str(
+                previous_browser_state.get("last_submission_evidence")
+                or "fenced_delivery_reconciled"
+            ).strip()
         )
         commit = commit_web_model_delivered_turn(
             group, actor_id=aid, turn=interrupted_turn, by="system"
@@ -735,7 +770,7 @@ def submit_next_web_model_browser_turn(
                 "last_event_ids": previous_event_ids,
                 "last_delivery_id": interrupted_delivery_id,
                 "last_delivery_status": "ambiguous",
-                "last_submission_evidence": "interrupted_dispatch",
+                "last_submission_evidence": submission_evidence,
                 "last_send_selector": "",
                 "last_error": error,
             },
@@ -757,7 +792,7 @@ def submit_next_web_model_browser_turn(
                 "trigger_event_id": str(trigger_event_id or "").strip(),
                 "delivery_id": interrupted_delivery_id,
                 "error": error,
-                "submission_evidence": "interrupted_dispatch",
+                "submission_evidence": submission_evidence,
                 "delivery_transport": "projected_session",
                 "cursor_committed": bool(commit.get("cursor_committed")),
                 "commit_error": ""
@@ -780,13 +815,56 @@ def submit_next_web_model_browser_turn(
             and not auto_bind_new_chat
             and _has_unread_work(group, aid),
         }
-    _record_delivery_submitting(
-        group.group_id,
-        aid,
-        turn=turn,
-        delivery_id=delivery_id,
-        timeout_seconds=delivery_timeout_seconds,
+    turn = _browser_delivery_batch(group, actor_id=aid)
+    if not turn.get("event_ids"):
+        update_headless_state(
+            group.group_id, aid, status="waiting", active_turn_id="", latest_event_id=""
+        )
+        return {"ok": True, "status": "idle"}
+
+    candidate_seed_text = _build_web_model_bootstrap_seed(group, actor)
+    seed_digest = _bootstrap_seed_digest(candidate_seed_text)
+    bootstrap_seed = _bootstrap_seed_required(
+        group.group_id, aid, target_url=target_url, seed_digest=seed_digest
     )
+    bootstrap_seed_text = candidate_seed_text if bootstrap_seed else ""
+    delivery_id = str(turn.get("delivery_id") or "")
+    delivery_timeout_seconds = _timeout_seconds(actor)
+    same_delivery = (
+        str(previous_browser_state.get("last_delivery_id") or "") == delivery_id
+    )
+    try:
+        fence_persisted = _record_delivery_submitting(
+            group.group_id,
+            aid,
+            turn=turn,
+            delivery_id=delivery_id,
+            timeout_seconds=delivery_timeout_seconds,
+        )
+    except Exception as exc:
+        fence_persisted = False
+        fence_error = str(exc)
+    else:
+        fence_error = ""
+    if not fence_persisted:
+        update_headless_state(
+            group.group_id,
+            aid,
+            status="waiting",
+            active_turn_id="",
+            latest_event_id="",
+        )
+        error = "browser delivery fence could not be persisted"
+        if fence_error:
+            error = f"{error}: {fence_error}"
+        return {
+            "ok": False,
+            "status": "failed",
+            "turn_id": str(turn.get("turn_id") or ""),
+            "error": error,
+            "cursor_committed": False,
+            "reschedule": False,
+        }
     if not same_delivery:
         _append_delivery_event(
             group=group,
@@ -1380,7 +1458,7 @@ def schedule_web_model_browser_delivery(
 
     def _worker() -> None:
         deferred_retries = 0
-        exhausted_delivery_id = ""
+        released_delivery_id: Optional[str] = None
         try:
             while True:
                 try:
@@ -1405,6 +1483,9 @@ def schedule_web_model_browser_delivery(
                         result.get("error"),
                     )
                 if not bool(result.get("reschedule")):
+                    result_turn_id = str(result.get("turn_id") or "").strip()
+                    if result_turn_id or str(result.get("status") or "") == "idle":
+                        released_delivery_id = result_turn_id
                     break
                 try:
                     requested_delay = max(
@@ -1419,7 +1500,7 @@ def schedule_web_model_browser_delivery(
                         threading.Event().wait(requested_delay)
                     continue
                 if deferred_retries >= _DEFERRED_MAX_AUTOMATIC_RETRIES:
-                    exhausted_delivery_id = str(result.get("turn_id") or "").strip()
+                    released_delivery_id = str(result.get("turn_id") or "").strip()
                     active_logger.info(
                         "[web-model-browser-delivery] deferred retry limit reached group=%s actor=%s",
                         gid,
@@ -1442,7 +1523,7 @@ def schedule_web_model_browser_delivery(
         finally:
             with _IN_FLIGHT_LOCK:
                 _IN_FLIGHT.discard(key)
-        if exhausted_delivery_id:
+        if released_delivery_id is not None:
             try:
                 current_group = load_group(gid)
                 current_turn = (
@@ -1451,7 +1532,7 @@ def schedule_web_model_browser_delivery(
                     else {}
                 )
                 current_delivery_id = str(current_turn.get("delivery_id") or "").strip()
-                if current_delivery_id and current_delivery_id != exhausted_delivery_id:
+                if current_delivery_id and current_delivery_id != released_delivery_id:
                     schedule_web_model_browser_delivery(
                         group_id=gid,
                         actor_id=aid,
@@ -1462,7 +1543,7 @@ def schedule_web_model_browser_delivery(
                     )
             except Exception:
                 active_logger.exception(
-                    "[web-model-browser-delivery] fresh unread check failed group=%s actor=%s",
+                    "[web-model-browser-delivery] post-release unread check failed group=%s actor=%s",
                     gid,
                     aid,
                 )

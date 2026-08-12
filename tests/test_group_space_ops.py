@@ -2664,6 +2664,29 @@ class TestGroupSpaceOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_notebooklm_auth_shutdown_cancels_and_joins_flow_thread(self) -> None:
+        from cccc.daemon.space import notebooklm_auth_flow as auth_flow
+
+        _, cleanup = self._with_home()
+        started = threading.Event()
+
+        def fake_worker(*, cancel_event: threading.Event, **_kwargs: Any) -> None:
+            started.set()
+            cancel_event.wait(5.0)
+
+        try:
+            auth_flow.shutdown_notebooklm_auth_flow(join_timeout_seconds=0.1)
+            with patch.object(auth_flow, "_connect_worker", fake_worker):
+                auth_flow.start_notebooklm_auth_flow(projected=True)
+                self.assertTrue(started.wait(1.0))
+                self.assertTrue(auth_flow.shutdown_notebooklm_auth_flow(join_timeout_seconds=1.0))
+            with auth_flow._FLOW_LOCK:
+                self.assertIsNone(auth_flow._FLOW_THREAD)
+                self.assertIsNone(auth_flow._FLOW_CANCEL_EVENT)
+        finally:
+            auth_flow.shutdown_notebooklm_auth_flow(join_timeout_seconds=1.0)
+            cleanup()
+
     def test_notebooklm_auth_verification_works_inside_running_event_loop(self) -> None:
         from cccc.daemon.space import notebooklm_auth_flow as auth_flow
 

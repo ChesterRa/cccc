@@ -1,9 +1,142 @@
+use serde_json::{Map, Value, json};
 use std::fs;
 use std::io;
 use std::path::Path;
 use uuid::Uuid;
 
-use crate::{GroupStore, Registry};
+use crate::{GroupStore, Registry, web_model_connectors};
+
+#[derive(Default)]
+struct RetiredGroupSpace {
+    binding: Option<Value>,
+    jobs: Map<String, Value>,
+    payload_refs: Vec<String>,
+}
+
+fn space_path(store: &GroupStore, name: &str) -> std::path::PathBuf {
+    store.home().root().join("state/space").join(name)
+}
+
+fn read_json_doc(path: &Path) -> io::Result<Value> {
+    if path.exists() {
+        crate::fs::read_json(path)
+    } else {
+        Ok(json!({}))
+    }
+}
+
+fn object_field<'a>(doc: &'a mut Value, key: &str) -> &'a mut Map<String, Value> {
+    if !doc.is_object() {
+        *doc = json!({});
+    }
+    let root = doc.as_object_mut().expect("JSON object initialized");
+    let field = root.entry(key).or_insert_with(|| json!({}));
+    if !field.is_object() {
+        *field = json!({});
+    }
+    field
+        .as_object_mut()
+        .expect("JSON object field initialized")
+}
+
+fn retire_group_space(store: &GroupStore, group_id: &str) -> io::Result<RetiredGroupSpace> {
+    let bindings_path = space_path(store, "bindings.json");
+    let binding =
+        crate::fs::with_exclusive_lock(&bindings_path.with_extension("json.lock"), || {
+            let mut doc = read_json_doc(&bindings_path)?;
+            let removed = object_field(&mut doc, "bindings").remove(group_id);
+            if removed.is_some() {
+                doc["updated_at"] = json!(cccc_contracts::utc_now());
+                crate::fs::write_json(&bindings_path, &doc)?;
+            }
+            Ok(removed)
+        })?;
+
+    let jobs_path = space_path(store, "jobs.json");
+    let jobs_result =
+        crate::fs::with_exclusive_lock(&jobs_path.with_extension("json.lock"), || {
+            let mut doc = read_json_doc(&jobs_path)?;
+            let jobs = object_field(&mut doc, "jobs");
+            let ids = jobs
+                .iter()
+                .filter(|(_, job)| job["group_id"].as_str() == Some(group_id))
+                .map(|(job_id, _)| job_id.clone())
+                .collect::<Vec<_>>();
+            let mut removed = Map::new();
+            let mut payload_refs = Vec::new();
+            for job_id in ids {
+                if let Some(job) = jobs.remove(&job_id) {
+                    if let Some(payload_ref) = job["payload_ref"]
+                        .as_str()
+                        .filter(|value| !value.is_empty())
+                    {
+                        payload_refs.push(payload_ref.to_owned());
+                    }
+                    removed.insert(job_id, job);
+                }
+            }
+            if !removed.is_empty() {
+                doc["updated_at"] = json!(cccc_contracts::utc_now());
+                crate::fs::write_json(&jobs_path, &doc)?;
+            }
+            Ok((removed, payload_refs))
+        });
+    match jobs_result {
+        Ok((jobs, payload_refs)) => Ok(RetiredGroupSpace {
+            binding,
+            jobs,
+            payload_refs,
+        }),
+        Err(error) => {
+            let retired = RetiredGroupSpace {
+                binding,
+                ..RetiredGroupSpace::default()
+            };
+            match restore_group_space(store, group_id, &retired) {
+                Ok(()) => Err(error),
+                Err(rollback) => Err(io::Error::other(format!(
+                    "{error}; rollback_failed: could not restore NotebookLM binding: {rollback}"
+                ))),
+            }
+        }
+    }
+}
+
+fn restore_group_space(
+    store: &GroupStore,
+    group_id: &str,
+    retired: &RetiredGroupSpace,
+) -> io::Result<()> {
+    if let Some(binding) = retired.binding.as_ref() {
+        let path = space_path(store, "bindings.json");
+        crate::fs::with_exclusive_lock(&path.with_extension("json.lock"), || {
+            let mut doc = read_json_doc(&path)?;
+            object_field(&mut doc, "bindings").insert(group_id.into(), binding.clone());
+            doc["updated_at"] = json!(cccc_contracts::utc_now());
+            crate::fs::write_json(&path, &doc)
+        })?;
+    }
+    if !retired.jobs.is_empty() {
+        let path = space_path(store, "jobs.json");
+        crate::fs::with_exclusive_lock(&path.with_extension("json.lock"), || {
+            let mut doc = read_json_doc(&path)?;
+            object_field(&mut doc, "jobs").extend(retired.jobs.clone());
+            doc["updated_at"] = json!(cccc_contracts::utc_now());
+            crate::fs::write_json(&path, &doc)
+        })?;
+    }
+    Ok(())
+}
+
+fn finalize_group_space(store: &GroupStore, retired: &RetiredGroupSpace) {
+    let root = store.home().root().join("state/space/job_payloads");
+    for payload_ref in &retired.payload_refs {
+        let path = Path::new(payload_ref);
+        if path.components().count() == 1 && path.file_name().is_some() {
+            let _ = fs::remove_file(root.join(path));
+        }
+    }
+}
 
 pub(crate) fn delete(store: &GroupStore, group_id: &str) -> io::Result<bool> {
     delete_with(store, group_id, |path| fs::remove_dir_all(path))
@@ -25,7 +158,27 @@ fn delete_with_steps(
 ) -> io::Result<bool> {
     let dir = store.group_dir(group_id)?;
     if !dir.exists() {
-        unregister_group(store, group_id)?;
+        let retired_connectors = web_model_connectors::retire_group(store.home(), group_id)?;
+        let retired_space = match retire_group_space(store, group_id) {
+            Ok(retired) => retired,
+            Err(error) => {
+                return Err(restore_connectors_after_failed_delete(
+                    store,
+                    &retired_connectors,
+                    error,
+                ));
+            }
+        };
+        if let Err(error) = unregister_group(store, group_id) {
+            return Err(restore_state_after_failed_delete(
+                store,
+                group_id,
+                &retired_connectors,
+                &retired_space,
+                error,
+            ));
+        }
+        finalize_group_space(store, &retired_space);
         cleanup_tombstones(store, group_id)?;
         return Ok(false);
     }
@@ -35,21 +188,94 @@ fn delete_with_steps(
         .groups_dir()
         .join(format!(".{group_id}.deleting-{}", Uuid::new_v4().simple()));
     fs::rename(&dir, &tombstone)?;
-    unregister_group(store, group_id).map_err(|error| match fs::rename(&tombstone, &dir) {
-        Ok(()) => error,
-        Err(rollback) => io::Error::other(format!(
-            "{error}; rollback_failed: could not restore {}: {rollback}",
-            dir.display()
-        )),
-    })?;
+    let retired_connectors = match web_model_connectors::retire_group(store.home(), group_id) {
+        Ok(retired) => retired,
+        Err(error) => {
+            return Err(match fs::rename(&tombstone, &dir) {
+                Ok(()) => error,
+                Err(rollback) => io::Error::other(format!(
+                    "{error}; rollback_failed: could not restore {}: {rollback}",
+                    dir.display()
+                )),
+            });
+        }
+    };
+    let retired_space = match retire_group_space(store, group_id) {
+        Ok(retired) => retired,
+        Err(error) => {
+            let error = restore_connectors_after_failed_delete(store, &retired_connectors, error);
+            return Err(match fs::rename(&tombstone, &dir) {
+                Ok(()) => error,
+                Err(rollback) => io::Error::other(format!(
+                    "{error}; rollback_failed: could not restore {}: {rollback}",
+                    dir.display()
+                )),
+            });
+        }
+    };
+    if let Err(error) = unregister_group(store, group_id) {
+        let error = match fs::rename(&tombstone, &dir) {
+            Ok(()) => error,
+            Err(rollback) => io::Error::other(format!(
+                "{error}; rollback_failed: could not restore {}: {rollback}",
+                dir.display()
+            )),
+        };
+        return Err(restore_state_after_failed_delete(
+            store,
+            group_id,
+            &retired_connectors,
+            &retired_space,
+            error,
+        ));
+    }
     crate::ledger_index::invalidate_path(&ledger_path);
-    remove_tombstone(&tombstone).map_err(|error| {
+    let cleanup = remove_tombstone(&tombstone).map_err(|error| {
         io::Error::other(format!(
             "rollback_failed: group was unregistered but tombstone {} could not be removed: {error}",
             tombstone.display()
         ))
-    })?;
+    });
+    finalize_group_space(store, &retired_space);
+    cleanup?;
     Ok(true)
+}
+
+fn restore_connectors_after_failed_delete(
+    store: &GroupStore,
+    retired: &[serde_json::Value],
+    original: io::Error,
+) -> io::Error {
+    match web_model_connectors::restore(store.home(), retired) {
+        Ok(()) => original,
+        Err(rollback) => io::Error::other(format!(
+            "{original}; rollback_failed: could not restore web-model connectors: {rollback}"
+        )),
+    }
+}
+
+fn restore_state_after_failed_delete(
+    store: &GroupStore,
+    group_id: &str,
+    retired_connectors: &[Value],
+    retired_space: &RetiredGroupSpace,
+    original: io::Error,
+) -> io::Error {
+    let mut failures = Vec::new();
+    if let Err(error) = restore_group_space(store, group_id, retired_space) {
+        failures.push(format!("could not restore NotebookLM state: {error}"));
+    }
+    if let Err(error) = web_model_connectors::restore(store.home(), retired_connectors) {
+        failures.push(format!("could not restore web-model connectors: {error}"));
+    }
+    if failures.is_empty() {
+        original
+    } else {
+        io::Error::other(format!(
+            "{original}; rollback_failed: {}",
+            failures.join("; ")
+        ))
+    }
 }
 
 fn unregister(store: &GroupStore, group_id: &str) -> io::Result<()> {
@@ -75,6 +301,80 @@ fn cleanup_tombstones(store: &GroupStore, group_id: &str) -> io::Result<()> {
 mod tests {
     use super::*;
     use crate::HomeLayout;
+    use serde_json::json;
+
+    fn seed_connector(home: &HomeLayout, group_id: &str) {
+        web_model_connectors::replace_active(
+            home,
+            &json!({
+                "connector_id":"wmc_group_delete",
+                "group_id":group_id,
+                "actor_id":"web1",
+                "secret":"wmcs_group_delete",
+                "created_at":"2026-08-11T00:00:00Z",
+                "updated_at":"2026-08-11T00:00:00Z",
+                "revoked":false
+            }),
+        )
+        .expect("seed connector");
+    }
+
+    fn connector_is_active(home: &HomeLayout) -> bool {
+        web_model_connectors::load(home)
+            .expect("load connectors")
+            .into_iter()
+            .find(|item| item["connector_id"] == "wmc_group_delete")
+            .is_some_and(|item| {
+                !item["revoked"].as_bool().unwrap_or(false)
+                    && web_model_connectors::secret_matches(&item, "wmcs_group_delete")
+            })
+    }
+
+    fn seed_group_space(home: &HomeLayout, group_id: &str) {
+        let root = home.root().join("state/space");
+        std::fs::create_dir_all(root.join("job_payloads")).expect("space state");
+        crate::fs::write_json(
+            &root.join("bindings.json"),
+            &json!({
+                "v":2,
+                "bindings":{(group_id):{"notebooklm":{"work":{
+                    "group_id":group_id,"provider":"notebooklm","lane":"work",
+                    "remote_space_id":"nb-rollback","status":"bound"
+                }}}}
+            }),
+        )
+        .expect("bindings");
+        crate::fs::write_json(
+            &root.join("jobs.json"),
+            &json!({
+                "v":2,
+                "jobs":{"spj_rollback":{
+                    "job_id":"spj_rollback","group_id":group_id,"provider":"notebooklm",
+                    "lane":"work","remote_space_id":"nb-rollback","kind":"context_sync",
+                    "payload":{},"payload_ref":"spj_rollback.payload.json","state":"pending"
+                }}
+            }),
+        )
+        .expect("jobs");
+        std::fs::write(
+            root.join("job_payloads/spj_rollback.payload.json"),
+            b"{\"title\":\"rollback\"}\n",
+        )
+        .expect("payload");
+    }
+
+    fn group_space_is_active(home: &HomeLayout, group_id: &str) -> bool {
+        let root = home.root().join("state/space");
+        let bindings: Value =
+            crate::fs::read_json(&root.join("bindings.json")).unwrap_or_else(|_| json!({}));
+        let jobs: Value =
+            crate::fs::read_json(&root.join("jobs.json")).unwrap_or_else(|_| json!({}));
+        bindings["bindings"].get(group_id).is_some()
+            && jobs["jobs"]["spj_rollback"]["group_id"] == group_id
+            && root
+                .join("job_payloads/spj_rollback.payload.json")
+                .is_file()
+    }
 
     #[test]
     fn failed_tombstone_cleanup_is_explicit_and_retryable() {
@@ -122,6 +422,43 @@ mod tests {
             !crate::ledger_index::is_cached(&ledger_path),
             "the cache key is the pre-rename ledger path"
         );
+    }
+
+    #[test]
+    fn deleting_a_group_retires_its_web_model_connectors() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("connector cleanup", "").expect("group");
+        seed_connector(&home, &group.group_id);
+        assert!(connector_is_active(&home));
+
+        assert!(delete(&store, &group.group_id).expect("delete group"));
+
+        assert!(!connector_is_active(&home));
+    }
+
+    #[test]
+    fn failed_group_delete_restores_web_model_connectors() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let group = store.create("connector rollback", "").expect("group");
+        seed_connector(&home, &group.group_id);
+        seed_group_space(&home, &group.group_id);
+
+        let error = delete_with_steps(
+            &store,
+            &group.group_id,
+            |path| std::fs::remove_dir_all(path),
+            |_, _| Err(io::Error::other("injected registry failure")),
+        )
+        .expect_err("delete must fail");
+
+        assert!(error.to_string().contains("injected registry failure"));
+        assert!(store.load(&group.group_id).is_ok());
+        assert!(connector_is_active(&home));
+        assert!(group_space_is_active(&home, &group.group_id));
     }
 
     #[test]

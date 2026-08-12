@@ -21,9 +21,9 @@ Check your environment and diagnose issues.
 cccc doctor             # Full environment check
 ```
 
-Browser readiness uses the same executable discovery as the Web runtime, including the standard
-Chrome, Edge, and Chromium installation directories on macOS and Windows. On Linux, the report
-includes projected-browser readiness: system Chrome/Edge, required `Xvfb`
+Python browser readiness uses the same Chrome/Edge discovery as its projected Web runtime on
+Linux, macOS, and Windows. The standalone Rust report may additionally recognize system Chromium.
+On Linux, the report includes projected-browser readiness: system Chrome/Edge, required `Xvfb`
 isolation, and the optional `x11vnc` VNC viewer. A missing `x11vnc` does not prevent browser
 isolation; CCCC falls back to its CDP screencast viewer.
 
@@ -353,8 +353,12 @@ Notes:
 - Editable and local-path installs are reported but not updated automatically.
 - The recommended platform wheel updates the public launcher, stable Python
   implementation, and experimental private Rust payload together.
-- After a successful update, CCCC stops the older Web/daemon pair; the next
-  command starts the selected implementation from the new product version.
+- A pip update stops the older Web/daemon pair; the next command starts the
+  selected implementation from the new product version. A standalone update
+  restarts the daemon when it was running, while the old combined Web process
+  remains stopped; the next bare `cccc` starts the updated Web process.
+- On Windows, standalone self-update continues in a separate PowerShell process
+  after the original executable exits so the binary can be replaced safely.
 
 ## Web Commands
 

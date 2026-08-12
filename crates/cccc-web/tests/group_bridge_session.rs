@@ -50,6 +50,7 @@ async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
     );
     assert!(session_ready(&home, &group.group_id, &peer_id).await);
     complete_client_initiated_delivery(&mut socket).await;
+    complete_web_delivery_over_session(&address, &home, &mut socket, &group.group_id).await;
     complete_daemon_delivery(&home, &mut socket, &group.group_id, &peer_id, "first").await;
 
     socket.close(None).await.expect("close");
@@ -72,6 +73,61 @@ async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
     socket.close(None).await.expect("close second");
     server.abort();
     daemon.abort();
+}
+
+async fn complete_web_delivery_over_session(
+    address: &std::net::SocketAddr,
+    home: &HomeLayout,
+    socket: &mut TestSocket,
+    group_id: &str,
+) {
+    let url = format!("http://{address}/api/v1/groups/{group_id}/send_cross_group");
+    let request = tokio::spawn(async move {
+        reqwest::Client::new()
+            .post(url)
+            .json(&json!({
+                "dst_group_id":"g_sender",
+                "text":"web over reverse session",
+                "to":["@foreman"],
+                "client_id":"web-session-once"
+            }))
+            .send()
+            .await
+            .expect("web send")
+    });
+    let frame = tokio::time::timeout(std::time::Duration::from_secs(2), next_socket_json(socket))
+        .await
+        .expect("Web cross-group send did not use the live daemon session");
+    assert_eq!(frame["op"], "remote_send");
+    socket
+        .send(WsMessage::Text(
+            json!({
+                "type":"response",
+                "response_to":frame["request_id"],
+                "result":{"ok":true,"receipt":{
+                    "status":"delivered","event_id":"remote-web-session"
+                }}
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .expect("web response");
+    let response = request.await.expect("web request join");
+    let status = response.status();
+    let body = response.json::<Value>().await.expect("web body");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"]["receipt"]["status"], "sent");
+    assert_eq!(
+        body["result"]["receipt"]["remote_event_id"],
+        "remote-web-session"
+    );
+    let bridge = cccc_core::group_bridge_legacy::load(home).expect("bridge receipts");
+    assert!(bridge["deliveries"].as_array().is_some_and(|receipts| {
+        receipts.iter().any(|receipt| {
+            receipt["idempotency_key"] == "web-session-once" && receipt["status"] == "sent"
+        })
+    }));
 }
 
 async fn complete_client_initiated_delivery(socket: &mut TestSocket) {
@@ -98,7 +154,7 @@ async fn complete_client_initiated_delivery(socket: &mut TestSocket) {
     assert_eq!(response["type"], "response");
     assert_eq!(response["response_to"], "client-request");
     assert_eq!(
-        response["result"]["receipt"]["status"], "delivered",
+        response["result"]["receipt"]["status"], "sent",
         "{response}"
     );
 }
@@ -376,6 +432,10 @@ async fn remote_foreman_selector_fails_before_ledger_write_when_group_has_no_for
     })
     .expect("bridge state");
 
+    let daemon_home = home.clone();
+    let daemon = tokio::spawn(async move { cccc_daemon::run(daemon_home).await });
+    wait_for_daemon(&home).await;
+
     let response = cccc_web::app(home.clone())
         .oneshot(request(
             &json!({"source_group_id":"g_sender","text":"must not append",
@@ -390,6 +450,7 @@ async fn remote_foreman_selector_fails_before_ledger_write_when_group_has_no_for
         .and_then(|path| ledger::read_all(&path))
         .expect("ledger");
     assert!(events.is_empty());
+    daemon.abort();
 }
 
 #[tokio::test]

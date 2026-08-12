@@ -4,51 +4,118 @@ use cccc_core::fs::{read_json, with_exclusive_lock, write_secret_json};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::io;
 use std::path::PathBuf;
 
-use crate::dispatch::{OpError, OpResult, object, required_arg};
+use crate::dispatch::{OpError, OpResult, object, required_arg, store};
 
 pub fn keys(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let actor_id = required_arg(request, "actor_id")?;
+    let (group_id, actor_id) = public_target(home, request, "access private env metadata")?;
     let keys: Vec<_> = load(home, &group_id, &actor_id)?.into_keys().collect();
-    object(json!({"actor_id": actor_id, "keys": keys}))
+    object(json!({"group_id": group_id, "actor_id": actor_id, "keys": keys}))
 }
 
 pub fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let group_id = required_arg(request, "group_id")?;
-    let actor_id = required_arg(request, "actor_id")?;
-    let mut values = load(home, &group_id, &actor_id)?;
-    if request
+    let (group_id, actor_id) = public_target(home, request, "update private env")?;
+    let clear = request
         .args
         .get("clear")
         .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        values.clear();
-    }
-    if let Some(set) = request.args.get("set").and_then(Value::as_object) {
+        .unwrap_or(false);
+    let mut set_values = Vec::new();
+    if let Some(raw) = request.args.get("set") {
+        let set = raw
+            .as_object()
+            .ok_or_else(|| OpError::new("invalid_args", "set must be an object"))?;
         for (key, value) in set {
             validate_env_key(key)?;
             let secret = python_string(value)?;
             if secret.chars().count() > 200_000 {
                 return Err(OpError::new("invalid_args", "env value too large"));
             }
-            values.insert(key.clone(), secret);
+            set_values.push((key.clone(), secret));
         }
     }
-    if let Some(unset) = request.args.get("unset").and_then(Value::as_array) {
-        for key in unset.iter().filter_map(Value::as_str) {
+    let mut unset_keys = Vec::new();
+    if let Some(raw) = request.args.get("unset") {
+        let unset = raw
+            .as_array()
+            .ok_or_else(|| OpError::new("invalid_args", "unset must be an array"))?;
+        for raw_key in unset {
+            let key = raw_key
+                .as_str()
+                .ok_or_else(|| OpError::new("invalid_args", "unset keys must be strings"))?;
             validate_env_key(key)?;
-            values.remove(key);
+            unset_keys.push(key.to_owned());
         }
     }
-    if values.len() > 256 {
-        return Err(OpError::new("invalid_args", "too many env_private keys"));
-    }
+    let values = mutate(home, &group_id, &actor_id, |values| {
+        if clear {
+            values.clear();
+        }
+        for key in unset_keys {
+            values.remove(&key);
+        }
+        for (key, value) in set_values {
+            values.insert(key, value);
+        }
+        if values.len() > 256 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "too many env_private keys",
+            ));
+        }
+        Ok(())
+    })?;
     let keys: Vec<_> = values.keys().cloned().collect();
-    save(home, &group_id, &actor_id, &values)?;
-    object(json!({"actor_id": actor_id, "keys": keys, "updated": true}))
+    object(json!({"group_id": group_id, "actor_id": actor_id, "keys": keys, "updated": true}))
+}
+
+fn public_target(
+    home: &HomeLayout,
+    request: &DaemonRequest,
+    action: &str,
+) -> Result<(String, String), OpError> {
+    let group_id = required_arg(request, "group_id")?;
+    let actor_id = required_arg(request, "actor_id")?;
+    let by = match request.args.get("by") {
+        None => "user",
+        Some(Value::String(value)) => value.trim(),
+        Some(_) => {
+            return Err(OpError::new(
+                "permission_denied",
+                format!("only user can {action}"),
+            ));
+        }
+    };
+    if !by.is_empty() && by != "user" {
+        return Err(OpError::new(
+            "permission_denied",
+            format!("only user can {action}"),
+        ));
+    }
+    let group = match store(home)?.load(&group_id) {
+        Ok(group) => group,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(OpError::new(
+                "group_not_found",
+                format!("group not found: {group_id}"),
+            ));
+        }
+        Err(error) => return Err(OpError::io(error)),
+    };
+    let actor = group
+        .actors
+        .iter()
+        .find(|actor| actor.id == actor_id)
+        .ok_or_else(|| OpError::new("actor_not_found", format!("actor not found: {actor_id}")))?;
+    if !actor.profile_id.trim().is_empty() {
+        return Err(OpError::new(
+            "actor_profile_linked_readonly",
+            "linked actor private env is profile-controlled (convert to custom first)",
+        ));
+    }
+    Ok((group_id, actor_id))
 }
 
 fn load(
@@ -109,7 +176,13 @@ pub fn copy_group(
         if entry.file_type().map_err(OpError::io)?.is_file()
             && entry.file_name().to_string_lossy().ends_with(".json")
         {
-            std::fs::copy(entry.path(), target.join(entry.file_name())).map_err(OpError::io)?;
+            let target_path = target.join(entry.file_name());
+            let lock = lock_path(&target_path);
+            with_exclusive_lock(&lock, || {
+                let value: Value = read_json(&entry.path())?;
+                write_secret_json(&target_path, &value)
+            })
+            .map_err(OpError::io)?;
         }
     }
     Ok(())
@@ -130,16 +203,56 @@ fn save(
     actor_id: &str,
     values: &BTreeMap<String, String>,
 ) -> Result<(), OpError> {
+    migrate_legacy(home, group_id)?;
     let path = path(home, group_id, actor_id)?;
+    let lock = lock_path(&path);
+    with_exclusive_lock(&lock, || save_unlocked(&path, values)).map_err(OpError::io)
+}
+
+fn mutate(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    operation: impl FnOnce(&mut BTreeMap<String, String>) -> io::Result<()>,
+) -> Result<BTreeMap<String, String>, OpError> {
+    migrate_legacy(home, group_id)?;
+    let path = path(home, group_id, actor_id)?;
+    let lock = lock_path(&path);
+    with_exclusive_lock(&lock, || {
+        let mut values = if path.exists() {
+            read_json(&path)?
+        } else {
+            BTreeMap::new()
+        };
+        operation(&mut values)?;
+        save_unlocked(&path, &values)?;
+        Ok(values)
+    })
+    .map_err(|error| {
+        if error.kind() == io::ErrorKind::InvalidInput {
+            OpError::new("invalid_args", error.to_string())
+        } else {
+            OpError::io(error)
+        }
+    })
+}
+
+fn save_unlocked(path: &std::path::Path, values: &BTreeMap<String, String>) -> io::Result<()> {
     if values.is_empty() {
         match std::fs::remove_file(path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(OpError::io(error)),
+            Err(error) => Err(error),
         }
     } else {
-        write_secret_json(&path, values).map_err(OpError::io)
+        write_secret_json(path, values)
     }
+}
+
+fn lock_path(path: &std::path::Path) -> PathBuf {
+    let mut value = path.as_os_str().to_os_string();
+    value.push(".lock");
+    PathBuf::from(value)
 }
 
 fn path(home: &HomeLayout, group_id: &str, actor_id: &str) -> Result<PathBuf, OpError> {
@@ -189,7 +302,7 @@ fn validate_component(value: &str, name: &str) -> Result<(), OpError> {
     }
 }
 
-fn validate_env_key(value: &str) -> Result<(), OpError> {
+pub(crate) fn validate_env_key(value: &str) -> Result<(), OpError> {
     let mut chars = value.chars();
     let valid_start = chars
         .next()
@@ -204,7 +317,7 @@ fn validate_env_key(value: &str) -> Result<(), OpError> {
     }
 }
 
-fn python_string(value: &Value) -> Result<String, OpError> {
+pub(crate) fn python_string(value: &Value) -> Result<String, OpError> {
     match value {
         Value::Null => Err(OpError::new("invalid_args", "missing env value")),
         Value::String(value) => Ok(value.clone()),
@@ -279,4 +392,57 @@ fn migrate_legacy(home: &HomeLayout, group_id: &str) -> Result<(), OpError> {
         std::fs::write(marker, b"migrated from state/actor-secrets.json\n")
     })
     .map_err(OpError::io)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn replacement_waits_for_the_shared_actor_secret_lock() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let secret_path = path(&home, "g_lock", "peer").expect("secret path");
+        let shared_lock = lock_path(&secret_path);
+        let (held_tx, held_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let holder = std::thread::spawn(move || {
+            with_exclusive_lock(&shared_lock, || {
+                held_tx.send(()).expect("held signal");
+                release_rx.recv().expect("release signal");
+                Ok(())
+            })
+            .expect("hold lock");
+        });
+        held_rx.recv().expect("lock held");
+
+        let writer_home = home.clone();
+        let (done_tx, done_rx) = mpsc::channel();
+        let writer = std::thread::spawn(move || {
+            replace(
+                &writer_home,
+                "g_lock",
+                "peer",
+                BTreeMap::from([("TOKEN".into(), "value".into())]),
+            )
+            .expect("replace");
+            done_tx.send(()).expect("done signal");
+        });
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "writer bypassed the shared lock"
+        );
+        release_tx.send(()).expect("release lock");
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("writer completion");
+        holder.join().expect("holder");
+        writer.join().expect("writer");
+        assert_eq!(
+            values(&home, "g_lock", "peer").expect("values"),
+            BTreeMap::from([("TOKEN".into(), "value".into())])
+        );
+    }
 }

@@ -11,6 +11,15 @@ pub struct WebInstance {
     file: File,
 }
 
+impl WebInstance {
+    /// Keep the instance lock until the operating system tears down this
+    /// process. This makes lock release a true process-exit boundary for
+    /// launchers and updaters on every supported platform.
+    pub fn hold_until_process_exit(self) {
+        std::mem::forget(self);
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct RunningInstance {
     pub pid: Option<u32>,

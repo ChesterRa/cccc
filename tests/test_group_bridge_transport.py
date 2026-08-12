@@ -510,6 +510,49 @@ class TestGroupBridgeTransport(unittest.TestCase):
         self.assertEqual(outbound_result["event_id"], "remote-after-idle")
         self.assertTrue(any(sent.get("type") == "ping" for sent in fake_ws.sent))
 
+    def test_group_bridge_session_client_closes_after_its_stop_is_set(self) -> None:
+        import socket
+        import threading
+
+        from cccc.daemon.group_bridge.ws_client import connect_group_bridge_session_once
+        from cccc.daemon.group_bridge.ws_session import clear_sessions
+
+        class FakeWs:
+            def __init__(self) -> None:
+                self.frames = ['{"ok":true,"type":"ready"}']
+                self.closed = False
+
+            def send(self, _raw):
+                return None
+
+            def recv(self):
+                if self.frames:
+                    return self.frames.pop(0)
+                raise socket.timeout("idle")
+
+            def close(self):
+                self.closed = True
+
+        fake_ws = FakeWs()
+        stop = threading.Event()
+        clear_sessions()
+        try:
+            result = connect_group_bridge_session_once(
+                remote_base_url="http://peer.example:8848",
+                local_group_id="g_local",
+                remote_group_id="g_remote",
+                remote_peer_id="peer_remote",
+                connect=lambda url, timeout: fake_ws,
+                on_ready=stop.set,
+                idle_tick_seconds=0.01,
+                stop=stop,
+            )
+        finally:
+            clear_sessions()
+
+        self.assertEqual(result, {"ok": True, "stopped": True})
+        self.assertTrue(fake_ws.closed)
+
     def test_group_bridge_session_client_default_handler_uses_connected_remote_peer_id(self) -> None:
         from unittest.mock import patch
 
@@ -707,6 +750,57 @@ class TestGroupBridgeTransport(unittest.TestCase):
         self.assertEqual(started[0]["local_group_id"], "g_local")
         self.assertEqual(started[0]["remote_group_id"], "g_session")
         self.assertEqual(started[0]["remote_peer_id"], "peer_session")
+
+    def test_group_bridge_session_manager_stops_client_after_trust_revocation(self) -> None:
+        import threading
+        from pathlib import Path
+
+        from cccc.daemon.group_bridge.ws_manager import tick_group_bridge_session_clients
+
+        client_stops = []
+
+        class AliveThread:
+            def is_alive(self) -> bool:
+                return True
+
+        def start_client(**kwargs):
+            client_stops.append(kwargs["stop"])
+            return AliveThread()
+
+        trusts = [
+            {
+                "trust_id": "t1",
+                "status": "active",
+                "transport": "group_bridge_session",
+                "group_id": "g_local",
+                "remote_group_id": "g_remote",
+                "remote_peer_id": "peer_remote",
+                "remote_endpoint": "http://peer.example:8848",
+            }
+        ]
+        state = {}
+        daemon_stop = threading.Event()
+        tick_group_bridge_session_clients(
+            home=Path("/tmp/cccc-test-home"),
+            stop_event=daemon_stop,
+            state=state,
+            list_trusts_fn=lambda home=None: trusts,
+            start_client=start_client,
+        )
+        trusts.clear()
+
+        result = tick_group_bridge_session_clients(
+            home=Path("/tmp/cccc-test-home"),
+            stop_event=daemon_stop,
+            state=state,
+            list_trusts_fn=lambda home=None: trusts,
+            start_client=start_client,
+        )
+
+        self.assertEqual(result, {"started": 0, "active": 0})
+        self.assertEqual(state, {})
+        self.assertTrue(client_stops[0].is_set())
+        self.assertFalse(daemon_stop.is_set())
 
     def _session_envelope(self, *, attachments=None, refs=None):
         from cccc.contracts.v1.group_bridge import RemoteSendPayload

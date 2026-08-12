@@ -1,7 +1,7 @@
 use cccc_core::{GroupStore, HomeLayout};
 
 use crate::dispatch::OpError;
-use crate::ops::actor_runtime;
+use crate::ops::{actor_delivery, actor_runtime};
 
 pub fn restore_running(home: &HomeLayout) -> Result<(), OpError> {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
@@ -21,13 +21,18 @@ pub fn restore_running(home: &HomeLayout) -> Result<(), OpError> {
             continue;
         }
         for actor in group.actors.iter().filter(|actor| actor.enabled) {
-            if let Err(error) = actor_runtime::apply(home, &group, &actor.id, "actor.start") {
-                tracing::warn!(
-                    group_id = %group.group_id,
-                    actor_id = %actor.id,
-                    message = %error.message,
-                    "failed to restore actor runtime"
-                );
+            match actor_runtime::apply(home, &group, &actor.id, "actor.start") {
+                Ok(_) => {
+                    actor_delivery::dispatch_unread(home, &group, &actor.id);
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        group_id = %group.group_id,
+                        actor_id = %actor.id,
+                        message = %error.message,
+                        "failed to restore actor runtime"
+                    );
+                }
             }
         }
     }

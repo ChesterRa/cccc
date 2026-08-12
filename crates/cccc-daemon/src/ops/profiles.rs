@@ -142,16 +142,57 @@ fn delete(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(OpError::io)?
         .ok_or_else(|| OpError::new("not_found", "profile not found"))?;
     super::profile_access::require_write(request, &profile)?;
-    let (deleted, detached) = profiles
+    let usage = profiles
+        .usage_ref(
+            &profile_id,
+            &profile_scope(request),
+            &profile_owner(request),
+        )
+        .map_err(OpError::io)?;
+    let force_detach = bool_arg(request, "force_detach", false);
+    if !usage.is_empty() && !force_detach {
+        return Err(OpError::new(
+            "profile_in_use",
+            "profile is in use; force_detach is required",
+        ));
+    }
+    if force_detach {
+        for linked in &usage {
+            let group_id = linked["group_id"]
+                .as_str()
+                .ok_or_else(|| OpError::new("invalid_state", "profile usage has no group_id"))?;
+            let actor_id = linked["actor_id"]
+                .as_str()
+                .ok_or_else(|| OpError::new("invalid_state", "profile usage has no actor_id"))?;
+            let mut args = Map::new();
+            for key in ["by", "caller_id", "is_admin", "allowed_groups"] {
+                if let Some(value) = request.args.get(key) {
+                    args.insert(key.into(), value.clone());
+                }
+            }
+            args.insert("group_id".into(), json!(group_id));
+            args.insert("actor_id".into(), json!(actor_id));
+            args.insert("profile_action".into(), json!("convert_to_custom"));
+            args.insert("patch".into(), json!({}));
+            let conversion = DaemonRequest {
+                v: request.v,
+                op: "actor_update".into(),
+                args,
+            };
+            super::actors::handle(home, &conversion)
+                .ok_or_else(|| OpError::new("unknown_op", "actor_update is unavailable"))??;
+        }
+    }
+    let (deleted, _) = profiles
         .delete_ref(
             &profile_id,
             &profile_scope(request),
             &profile_owner(request),
-            bool_arg(request, "force_detach", false),
+            false,
         )
         .map_err(OpError::invalid)?;
     object(
-        json!({"deleted":deleted,"profile_id":profile_id,"detached_count":detached.len(),"detached":detached}),
+        json!({"deleted":deleted,"profile_id":profile_id,"detached_count":usage.len(),"detached":usage}),
     )
 }
 fn secret_keys(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

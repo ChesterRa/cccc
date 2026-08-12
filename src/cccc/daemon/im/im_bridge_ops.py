@@ -7,6 +7,7 @@ import signal
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
+from ...util.file_lock import LockUnavailableError, acquire_lockfile, release_lockfile
 from ...util.process import pid_is_alive
 
 _IM_BRIDGE_UNSAFE_CA_ENV = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
@@ -19,45 +20,59 @@ def sanitize_im_bridge_env(env: Dict[str, str]) -> Dict[str, str]:
     return env
 
 
-def read_live_im_bridge_pid(pid_path: Path) -> Optional[int]:
-    """Return a live bridge pid from a pidfile, removing stale pidfiles."""
+def _read_positive_pid(path: Path) -> Optional[int]:
     try:
-        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        pid = int(path.read_text(encoding="utf-8").strip().splitlines()[0])
     except Exception:
-        try:
-            pid_path.unlink(missing_ok=True)
-        except Exception:
-            pass
         return None
+    return pid if pid > 0 else None
 
-    if pid <= 0:
-        try:
-            pid_path.unlink(missing_ok=True)
-        except Exception:
-            pass
-        return None
 
-    try:
-        waited_pid, _ = os.waitpid(pid, os.WNOHANG)
-        if waited_pid == pid:
-            try:
-                pid_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-            return None
-    except (AttributeError, ChildProcessError):
-        pass
-    except Exception:
-        pass
-
-    if pid_is_alive(pid):
-        return pid
-
+def _remove_pidfile(pid_path: Path) -> None:
     try:
         pid_path.unlink(missing_ok=True)
     except Exception:
         pass
-    return None
+
+
+def _owned_im_bridge_pid(
+    pid_path: Path,
+    *,
+    pid_alive: Callable[[int], bool] = pid_is_alive,
+) -> Optional[int]:
+    """Return the PID that currently owns this group's singleton lock.
+
+    A bare pidfile is not process identity: after a crash its PID can be reused
+    by an unrelated process. Every supported Python IM worker holds the sibling
+    ``im_bridge.lock`` for its whole lifetime and writes its own PID there, so
+    the held lock is the cross-platform ownership witness.
+    """
+    lock_path = pid_path.with_name("im_bridge.lock")
+    if not lock_path.exists():
+        _remove_pidfile(pid_path)
+        return None
+
+    try:
+        probe = acquire_lockfile(lock_path, blocking=False)
+    except LockUnavailableError:
+        owner_pid = _read_positive_pid(lock_path)
+        if owner_pid is not None and pid_alive(owner_pid):
+            return owner_pid
+        return None
+    except Exception:
+        # An unverifiable owner must fail closed: never guess which PID to kill.
+        return None
+    else:
+        try:
+            release_lockfile(probe)
+        finally:
+            _remove_pidfile(pid_path)
+        return None
+
+
+def read_live_im_bridge_pid(pid_path: Path) -> Optional[int]:
+    """Return the current singleton-lock owner, removing stale pid metadata."""
+    return _owned_im_bridge_pid(pid_path)
 
 
 def _proc_cccc_home(pid: int) -> Optional[Path]:
@@ -98,18 +113,11 @@ def stop_im_bridges_for_group(
 
     killed: set[int] = set()
     pid_path = home / "groups" / gid / "state" / "im_bridge.pid"
-    if pid_path.exists():
-        try:
-            pid = int(pid_path.read_text(encoding="utf-8").strip())
-            if pid > 0:
-                best_effort_killpg(pid, signal.SIGTERM)
-                killed.add(pid)
-        except Exception:
-            pass
-        try:
-            pid_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+    pid = read_live_im_bridge_pid(pid_path)
+    if pid is not None:
+        best_effort_killpg(pid, signal.SIGTERM)
+        killed.add(pid)
+        _remove_pidfile(pid_path)
 
     proc = Path("/proc")
     if proc.exists():
@@ -149,17 +157,11 @@ def stop_all_im_bridges(
     base = home / "groups"
     if base.exists():
         for pid_path in base.glob("*/state/im_bridge.pid"):
-            try:
-                pid = int(pid_path.read_text(encoding="utf-8").strip())
-                if pid > 0:
-                    best_effort_killpg(pid, signal.SIGTERM)
-                    killed.add(pid)
-            except Exception:
-                pass
-            try:
-                pid_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+            pid = read_live_im_bridge_pid(pid_path)
+            if pid is not None:
+                best_effort_killpg(pid, signal.SIGTERM)
+                killed.add(pid)
+                _remove_pidfile(pid_path)
 
     proc = Path("/proc")
     if proc.exists():
@@ -203,26 +205,20 @@ def cleanup_invalid_im_bridges(
         for pid_path in base.glob("*/state/im_bridge.pid"):
             gid = pid_path.parent.parent.name
             group_yaml = base / gid / "group.yaml"
-            try:
-                pid = int(pid_path.read_text(encoding="utf-8").strip())
-            except Exception:
-                pid = 0
-
-            if pid <= 0 or not pid_alive(pid):
-                stale_pidfiles += 1
-                try:
-                    pid_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
+            existed = pid_path.exists()
+            pid = _owned_im_bridge_pid(pid_path, pid_alive=pid_alive)
+            if pid is None:
+                if existed and not pid_path.exists():
+                    stale_pidfiles += 1
                 continue
 
             if not group_yaml.exists():
                 best_effort_killpg(pid, signal.SIGTERM)
                 killed += 1
-                try:
-                    pid_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
+                _remove_pidfile(pid_path)
+            elif not pid_alive(pid):
+                stale_pidfiles += 1
+                _remove_pidfile(pid_path)
 
     proc = Path("/proc")
     if proc.exists():

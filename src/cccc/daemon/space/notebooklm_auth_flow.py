@@ -1066,6 +1066,27 @@ def cancel_notebooklm_auth_flow() -> Dict[str, Any]:
     return _snapshot_state()
 
 
+def shutdown_notebooklm_auth_flow(*, join_timeout_seconds: float = 5.0) -> bool:
+    """Stop the daemon-owned auth flow and wait briefly for its worker to retire."""
+
+    global _FLOW_THREAD, _FLOW_CANCEL_EVENT
+    with _FLOW_LOCK:
+        thread = _FLOW_THREAD
+        cancel_event = _FLOW_CANCEL_EVENT
+    if isinstance(cancel_event, threading.Event):
+        cancel_event.set()
+    _close_projected_browser_if_any()
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(timeout=max(0.0, float(join_timeout_seconds)))
+    stopped = thread is None or not thread.is_alive()
+    if stopped:
+        with _FLOW_LOCK:
+            if _FLOW_THREAD is thread:
+                _FLOW_THREAD = None
+                _FLOW_CANCEL_EVENT = None
+    return stopped
+
+
 def disconnect_notebooklm_auth_flow() -> Dict[str, Any]:
     global _FLOW_THREAD, _FLOW_CANCEL_EVENT
     with _FLOW_LOCK:

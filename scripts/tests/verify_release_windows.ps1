@@ -24,6 +24,7 @@ $tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("cccc-release-verify-" + [Guid
 $installed = Join-Path $tempRoot "installed\cccc.exe"
 $ccccHome = Join-Path $tempRoot "home"
 $daemonAddress = Join-Path $ccccHome "daemon\ccccd.addr.json"
+$webProcess = $null
 try {
   $extractRoot = Join-Path $tempRoot "extracted"
   New-Item -ItemType Directory -Path $extractRoot | Out-Null
@@ -64,6 +65,11 @@ try {
   if ($LASTEXITCODE -ne 0 -or $reportedVersion -ne "cccc $version") {
     throw "installed version mismatch: $reportedVersion"
   }
+  $updateCheck = (& $installed update --check | Out-String)
+  if ($LASTEXITCODE -ne 0 -or -not $updateCheck.Contains("Current version: $version") -or
+      -not $updateCheck.Contains("Install directory: " + (Split-Path $installed))) {
+    throw "standalone update ownership check failed: $updateCheck"
+  }
 
   $env:CCCC_HOME = $ccccHome
   $offlineStatus = (& $installed status | Out-String)
@@ -77,10 +83,34 @@ try {
     throw "Rust MCP initialize smoke failed"
   }
 
-  & $installed daemon start
-  if ($LASTEXITCODE -ne 0) { throw "daemon start failed" }
+  $webStdout = Join-Path $tempRoot "cccc-web.stdout.log"
+  $webStderr = Join-Path $tempRoot "cccc-web.stderr.log"
+  $webProcess = Start-Process -FilePath $installed -ArgumentList @("--port", "0") -PassThru `
+    -RedirectStandardOutput $webStdout -RedirectStandardError $webStderr
+  $deadline = [DateTime]::UtcNow.AddSeconds(30)
+  while ([DateTime]::UtcNow -lt $deadline) {
+    & $installed daemon status *> $null
+    if ($LASTEXITCODE -eq 0) { break }
+    if ($webProcess.HasExited) {
+      throw "combined CCCC exited before daemon startup: $(Get-Content -LiteralPath $webStderr -Raw)"
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  if ($LASTEXITCODE -ne 0) { throw "combined CCCC daemon did not start in time" }
+
+  # Reinstalling an owned standalone while its daemon is running is the same
+  # lifecycle exercised by `cccc update`: stop fully, replace, then restart.
+  & $installer -NoModifyPath
+  if ($LASTEXITCODE -ne 0) { throw "running-daemon reinstall failed" }
+  if (-not $webProcess.WaitForExit(10000)) {
+    throw "running-daemon reinstall returned before the combined Web process exited"
+  }
+  if ($webProcess.ExitCode -ne 0) {
+    throw "combined CCCC failed during update: $(Get-Content -LiteralPath $webStderr -Raw)"
+  }
+  $webProcess = $null
   & $installed daemon status
-  if ($LASTEXITCODE -ne 0) { throw "daemon status failed" }
+  if ($LASTEXITCODE -ne 0) { throw "reinstalled daemon did not restart" }
   & $installed daemon stop
   if ($LASTEXITCODE -ne 0) { throw "daemon stop failed" }
 
@@ -112,6 +142,9 @@ try {
   if ((Test-Path -LiteralPath $installed -PathType Leaf) -and (Test-Path -LiteralPath $daemonAddress)) {
     $env:CCCC_HOME = $ccccHome
     & $installed daemon stop *> $null
+  }
+  if ($null -ne $webProcess -and -not $webProcess.HasExited) {
+    Stop-Process -Id $webProcess.Id -Force -ErrorAction SilentlyContinue
   }
   Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
   # A best-effort native cleanup must not turn a successful verification into exit 1.

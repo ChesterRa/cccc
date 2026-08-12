@@ -137,6 +137,10 @@ impl Session {
     }
 
     pub fn write(&mut self, data: &[u8]) -> Result<(), RuntimeError> {
+        let status = self.status();
+        if !status.running {
+            return Err(RuntimeError::NotFound(status.group_id, status.actor_id));
+        }
         self.writer.write_all(data)?;
         self.writer.flush()?;
         Ok(())

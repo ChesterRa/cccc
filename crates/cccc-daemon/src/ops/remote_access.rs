@@ -20,11 +20,7 @@ pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
 
 fn state(home: &HomeLayout) -> OpResult {
     let mut global = settings::load(home).map_err(OpError::io)?;
-    let before = global.remote_access.clone();
     normalize(&mut global.remote_access)?;
-    if global.remote_access != before {
-        settings::save(home, &global).map_err(OpError::io)?;
-    }
     object(payload(home, &global.remote_access))
 }
 
@@ -33,27 +29,21 @@ fn configure(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let mut global = settings::load(home).map_err(OpError::io)?;
     let before_host = text(&global.remote_access, "web_host", "127.0.0.1");
     let before_port = number(&global.remote_access, "web_port", 8848);
-    for key in [
-        "provider",
-        "mode",
-        "enabled",
-        "require_access_token",
-        "web_host",
-        "web_port",
-        "web_public_url",
-    ] {
-        if let Some(value) = request.args.get(key) {
-            global.remote_access.insert(key.into(), value.clone());
-        }
-    }
+    apply_configure_patch(&mut global.remote_access, request);
     normalize(&mut global.remote_access)?;
-    global
-        .remote_access
-        .insert("updated_at".into(), Value::String(utc_now()));
     let restart_required = before_host != text(&global.remote_access, "web_host", "127.0.0.1")
         || before_port != number(&global.remote_access, "web_port", 8848);
-    settings::save(home, &global).map_err(OpError::io)?;
-    let mut result = payload(home, &global.remote_access);
+    let remote_access = settings::update(home, |latest| {
+        apply_configure_patch(&mut latest.remote_access, request);
+        normalize(&mut latest.remote_access)
+            .map_err(|error| std::io::Error::other(error.message))?;
+        latest
+            .remote_access
+            .insert("updated_at".into(), Value::String(utc_now()));
+        Ok(latest.remote_access.clone())
+    })
+    .map_err(OpError::io)?;
+    let mut result = payload(home, &remote_access);
     if restart_required
         && let Some(remote) = result
             .get_mut("remote_access")
@@ -117,14 +107,35 @@ fn set_running(home: &HomeLayout, request: &DaemonRequest, running: bool) -> OpR
             ));
         }
     }
-    global
-        .remote_access
-        .insert("enabled".into(), Value::Bool(running));
-    global
-        .remote_access
-        .insert("updated_at".into(), Value::String(utc_now()));
-    settings::save(home, &global).map_err(OpError::io)?;
-    object(payload(home, &global.remote_access))
+    let remote_access = settings::update(home, |latest| {
+        normalize(&mut latest.remote_access)
+            .map_err(|error| std::io::Error::other(error.message))?;
+        latest
+            .remote_access
+            .insert("enabled".into(), Value::Bool(running));
+        latest
+            .remote_access
+            .insert("updated_at".into(), Value::String(utc_now()));
+        Ok(latest.remote_access.clone())
+    })
+    .map_err(OpError::io)?;
+    object(payload(home, &remote_access))
+}
+
+fn apply_configure_patch(config: &mut Map<String, Value>, request: &DaemonRequest) {
+    for key in [
+        "provider",
+        "mode",
+        "enabled",
+        "require_access_token",
+        "web_host",
+        "web_port",
+        "web_public_url",
+    ] {
+        if let Some(value) = request.args.get(key) {
+            config.insert(key.into(), value.clone());
+        }
+    }
 }
 
 fn normalize(config: &mut Map<String, Value>) -> Result<(), OpError> {

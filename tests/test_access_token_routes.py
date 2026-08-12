@@ -2,6 +2,7 @@ import hashlib
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -36,6 +37,20 @@ class TestAccessTokenRoutes(unittest.TestCase):
             data = resp.json()
             self.assertTrue(data.get("ok"))
             self.assertEqual(data["result"]["access_tokens"], [])
+        finally:
+            cleanup()
+
+    def test_malformed_access_token_store_fails_closed(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            Path(home, "access_tokens.yaml").write_text("tokens: [", encoding="utf-8")
+            client = self._create_client()
+            resp = client.get("/api/v1/access-tokens")
+            self.assertEqual(resp.status_code, 500)
+            error = resp.json().get("error") or {}
+            self.assertEqual(error.get("code"), "auth_store_error")
+            self.assertEqual(error.get("message"), "access token store is unavailable")
+            self.assertNotIn("expected", str(error).lower())
         finally:
             cleanup()
 
@@ -202,6 +217,55 @@ class TestAccessTokenRoutes(unittest.TestCase):
             self.assertTrue(data.get("ok"))
             self.assertTrue(bool((data.get("result") or {}).get("deleted_current_session")))
             self.assertTrue(bool((data.get("result") or {}).get("access_tokens_remain")))
+        finally:
+            cleanup()
+
+    def test_cannot_delete_last_admin_while_scoped_tokens_remain(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token, list_access_tokens
+
+        _, cleanup = self._with_home()
+        try:
+            admin = create_access_token("admin-user", is_admin=True)
+            admin_token = str(admin.get("token") or "")
+            create_access_token("member-user", allowed_groups=["g1"], is_admin=False)
+            client = self._create_client()
+
+            resp = client.delete(
+                "/api/v1/access-tokens/" + hashlib.sha256(admin_token.encode("utf-8")).hexdigest()[:16],
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+
+            self.assertEqual(resp.status_code, 400)
+            self.assertEqual(str((resp.json().get("error") or {}).get("code") or ""), "last_admin_required")
+            self.assertCountEqual(
+                [item.get("user_id") for item in list_access_tokens()],
+                ["admin-user", "member-user"],
+            )
+        finally:
+            cleanup()
+
+    def test_cannot_demote_last_admin_while_scoped_tokens_remain(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token, lookup_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            admin = create_access_token("admin-user", is_admin=True)
+            admin_token = str(admin.get("token") or "")
+            admin_token_id = hashlib.sha256(admin_token.encode("utf-8")).hexdigest()[:16]
+            create_access_token("member-user", allowed_groups=["g1"], is_admin=False)
+            client = self._create_client()
+
+            resp = client.patch(
+                f"/api/v1/access-tokens/{admin_token_id}",
+                json={"is_admin": False, "allowed_groups": ["g1"]},
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+
+            self.assertEqual(resp.status_code, 400)
+            self.assertEqual(str((resp.json().get("error") or {}).get("code") or ""), "last_admin_required")
+            stored = lookup_access_token(admin_token)
+            self.assertIsNotNone(stored)
+            self.assertTrue(bool((stored or {}).get("is_admin")))
         finally:
             cleanup()
 

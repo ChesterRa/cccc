@@ -207,21 +207,11 @@ def handle_actor_profile_upsert(args: Dict[str, Any]) -> DaemonResponse:
         caller_id, is_admin, _ = _caller_context(args)
         payload = dict(profile)
         env_raw = payload.get("env")
-        if env_raw is not None:
-            if not isinstance(env_raw, dict):
-                return _error("invalid_request", "profile.env must be an object")
-            has_non_empty_env = any(
-                isinstance(key, str) and str(key).strip() and (value is not None and str(value).strip())
-                for key, value in env_raw.items()
-            )
-            if has_non_empty_env:
-                return _error(
-                    "invalid_request",
-                    "profile.env is deprecated; use actor_profile_secret_update to manage profile secrets",
-                )
+        if env_raw is not None and not isinstance(env_raw, dict):
+            return _error("invalid_request", "profile.env must be an object")
 
-        # Unified model: runtime fields in profile + all variables in profile secrets.
-        payload["env"] = {}
+        # Unified model: the store accepts legacy env only as secret ingress and
+        # always persists the public profile with an empty env map.
         resolver = ProfileResolver()
         saved = resolver.save_profile(
             payload,

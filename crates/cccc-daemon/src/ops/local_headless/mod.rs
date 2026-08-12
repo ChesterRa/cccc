@@ -29,7 +29,23 @@ struct Turn {
     text: String,
     event_id: String,
     event_ts: String,
-    control: bool,
+    control_kind: String,
+}
+
+#[derive(Debug)]
+struct ActiveTurn {
+    event_id: String,
+    turn_id: String,
+    control_kind: String,
+    output_state: TurnOutputState,
+    pending_messages: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TurnOutputState {
+    Buffering,
+    Draining,
+    Announced,
 }
 
 struct Session {
@@ -44,7 +60,8 @@ struct Session {
     next_request_id: AtomicU64,
     pending: Mutex<HashMap<u64, SyncSender<Value>>>,
     thread_id: Mutex<String>,
-    active_event_id: Mutex<String>,
+    resumed_provider_session_id: Mutex<String>,
+    active_turn: Mutex<Option<ActiveTurn>>,
     completion: (Mutex<u64>, Condvar),
     turns: SyncSender<Turn>,
 }

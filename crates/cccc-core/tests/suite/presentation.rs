@@ -58,7 +58,7 @@ fn presentation_persists_contract_and_protects_workspace_boundary() {
     );
 
     let (cleared, cleared_snapshot) =
-        presentation::clear(&store, &group.group_id, "slot_1").expect("clear");
+        presentation::clear(&store, &group.group_id, "slot_1", "user").expect("clear");
     assert_eq!(cleared, ["slot-1"]);
     assert!(cleared_snapshot.slots[0].card.is_none());
     assert!(cleared_snapshot.highlight_slot_id.is_empty());
@@ -113,4 +113,33 @@ fn presentation_supports_inline_table_and_blob_cards() {
     )
     .expect("image");
     assert_eq!(image.content.mime_type.as_deref(), Some("image/png"));
+}
+
+#[test]
+fn presentation_rejects_non_http_remote_references_without_mutating_state() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let store = GroupStore::new(home).expect("store");
+    let group = store.create("url boundary", "").expect("group");
+
+    let result = presentation::publish(
+        &store,
+        &group.group_id,
+        Publish {
+            slot: "slot-1".into(),
+            card_type: "web_preview".into(),
+            url: "javascript:alert(document.domain)".into(),
+            by: "user".into(),
+            ..Publish::default()
+        },
+    );
+
+    assert!(result.is_err());
+    assert!(
+        presentation::load(&store, &group.group_id)
+            .expect("presentation")
+            .slots
+            .iter()
+            .all(|slot| slot.card.is_none())
+    );
 }

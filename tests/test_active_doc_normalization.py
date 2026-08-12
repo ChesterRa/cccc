@@ -4,7 +4,7 @@ import unittest
 
 
 class TestActiveDocNormalization(unittest.TestCase):
-    def test_load_active_normalizes_non_dict_payload(self) -> None:
+    def test_load_active_normalizes_non_dict_payload_without_writeback(self) -> None:
         from cccc.kernel.active import active_path, load_active
         from cccc.util.fs import atomic_write_json, read_json
 
@@ -22,16 +22,14 @@ class TestActiveDocNormalization(unittest.TestCase):
                 self.assertEqual(doc.get("active_group_id"), "")
                 self.assertTrue(str(doc.get("updated_at") or "").strip())
 
-                persisted = read_json(p)
-                self.assertIsInstance(persisted, dict)
-                self.assertEqual((persisted or {}).get("active_group_id"), "")
+                self.assertEqual(read_json(p), ["bad", "shape"])
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)
             else:
                 os.environ["CCCC_HOME"] = old_home
 
-    def test_load_active_preserves_and_normalizes_legacy_rust_selection(self) -> None:
+    def test_load_active_preserves_legacy_rust_selection_without_writeback(self) -> None:
         from cccc.kernel.active import active_path, load_active
         from cccc.util.fs import atomic_write_json, read_json
 
@@ -46,9 +44,7 @@ class TestActiveDocNormalization(unittest.TestCase):
                 doc = load_active()
                 self.assertEqual(doc.get("active_group_id"), "g_from_rust")
 
-                persisted = read_json(p)
-                self.assertEqual((persisted or {}).get("active_group_id"), "g_from_rust")
-                self.assertNotIn("group_id", persisted or {})
+                self.assertEqual(read_json(p), {"group_id": "g_from_rust"})
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)

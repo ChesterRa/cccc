@@ -122,10 +122,7 @@ fn inbound_decision_blocking_for_thread(
             ),
             Err(()) => InboundDecision::Reply("Usage: /verbose [on|off]".into()),
         },
-        "/status" => InboundDecision::Reply(format!(
-            "CCCC subscription status: authorized={}, paused={}, verbose={}.",
-            authorization.authorized, authorization.paused, authorization.verbose
-        )),
+        "/status" => InboundDecision::Reply(status_text(home, group_id, authorization)),
         "/help" => InboundDecision::Reply(help_text(platform).into()),
         "/send" if !authorization.authorized => {
             InboundDecision::Reply(authorization_required(platform).into())
@@ -192,6 +189,33 @@ fn group_display_name(home: &HomeLayout, group_id: &str) -> String {
         .map(|group| group.title.trim().to_owned())
         .filter(|title| !title.is_empty() && title != group_id)
         .unwrap_or_else(|| group_id.to_owned())
+}
+
+fn status_text(home: &HomeLayout, group_id: &str, authorization: ChatAuthorization) -> String {
+    let group = GroupStore::new(home.clone())
+        .and_then(|store| store.load(group_id))
+        .ok();
+    let group_status = group.map_or_else(
+        || format!("CCCC group status: id={group_id}, unavailable"),
+        |group| {
+            let state = match group.state {
+                cccc_contracts::GroupState::Active => "active",
+                cccc_contracts::GroupState::Idle => "idle",
+                cccc_contracts::GroupState::Paused => "paused",
+                cccc_contracts::GroupState::Stopped => "stopped",
+            };
+            format!(
+                "CCCC group status: title=\"{}\", state={state}, running={}, actors={}",
+                group.title,
+                group.running,
+                group.actors.len()
+            )
+        },
+    );
+    format!(
+        "{group_status}\nSubscription: authorized={}, paused={}, verbose={}.",
+        authorization.authorized, authorization.paused, authorization.verbose
+    )
 }
 
 fn update_authorization(
@@ -272,17 +296,28 @@ fn chat_authorization(
     let Ok(state) = cccc_core::im_state::load(&store, group_id) else {
         return ChatAuthorization::default();
     };
-    ["authorized", "subscribers"]
+    let Some(authorized) = state
+        .get("authorized")
         .into_iter()
-        .filter_map(|key| state.get(key))
         .flat_map(items)
         .find(|item| matches_chat(item, platform, chat_id, thread_id))
-        .map(|item| ChatAuthorization {
-            authorized: true,
-            paused: item["paused"].as_bool().unwrap_or(false),
-            verbose: item["verbose"].as_bool().unwrap_or(false),
-        })
-        .unwrap_or_default()
+    else {
+        return ChatAuthorization::default();
+    };
+    let subscriber = state
+        .get("subscribers")
+        .into_iter()
+        .flat_map(items)
+        .find(|item| matches_chat(item, platform, chat_id, thread_id));
+    ChatAuthorization {
+        authorized: true,
+        paused: subscriber
+            .and_then(|item| item["paused"].as_bool())
+            .unwrap_or_else(|| authorized["paused"].as_bool().unwrap_or(false)),
+        verbose: subscriber
+            .and_then(|item| item["verbose"].as_bool())
+            .unwrap_or_else(|| authorized["verbose"].as_bool().unwrap_or(false)),
+    }
 }
 
 fn items(value: &Value) -> Box<dyn Iterator<Item = &Value> + '_> {
@@ -680,6 +715,20 @@ mod tests {
     }
 
     #[test]
+    fn status_identifies_the_group_and_its_lifecycle() {
+        let (_temp, home, store, group_id) = setup();
+        authorize(&store, &group_id, false, false);
+
+        let status = reply(inbound_decision_blocking(
+            &home, &group_id, "telegram", "chat-1", "/status",
+        ));
+
+        assert!(status.contains("commands"));
+        assert!(status.contains("state=active"));
+        assert!(status.contains("running=false"));
+    }
+
+    #[test]
     fn ordinary_and_send_messages_obey_authorization() {
         let (_temp, home, store, group_id) = setup();
         let body = reply(inbound_decision_blocking(
@@ -698,6 +747,24 @@ mod tests {
             inbound_decision_blocking(&home, &group_id, "telegram", "chat-1", "/send"),
             InboundDecision::Reply(_)
         ));
+    }
+
+    #[test]
+    fn stale_subscription_does_not_grant_inbound_authorization() {
+        let (_temp, home, store, group_id) = setup();
+        cccc_core::im_state::update(&store, &group_id, |state| {
+            *state = json!({"subscribers":[{
+                "chat_id":"chat-1","platform":"telegram","thread_id":0,
+                "subscribed":true
+            }]});
+            Ok(())
+        })
+        .expect("stale subscriber");
+
+        let body = reply(inbound_decision_blocking(
+            &home, &group_id, "telegram", "chat-1", "hello",
+        ));
+        assert!(body.contains("not authorized"));
     }
 
     #[test]

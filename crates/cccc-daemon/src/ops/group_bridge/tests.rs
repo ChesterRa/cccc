@@ -199,7 +199,10 @@ fn remote_reply_uses_reverse_session_and_keeps_one_local_record() {
     let mut complete_args = route.clone();
     complete_args["generation"] = json!(generation);
     complete_args["response_to"] = frame["request_id"].clone();
-    complete_args["result"] = json!({"ok":true,"event_id":"remote-answer"});
+    complete_args["result"] = json!({
+        "ok":true,
+        "receipt":{"status":"delivered","event_id":"remote-answer"}
+    });
     session_runtime::complete(&home, &request("complete", complete_args)).expect("complete");
 
     let response = reply_task.join().expect("reply thread");
@@ -213,6 +216,10 @@ fn remote_reply_uses_reverse_session_and_keeps_one_local_record() {
     assert_eq!(
         response.result["group_bridge_reply"]["receipt"]["remote_event_id"],
         "remote-answer"
+    );
+    assert_eq!(
+        response.result["group_bridge_reply"]["receipt"]["status"], "sent",
+        "new Rust receipts must use the shared Python/Rust success status"
     );
 
     let messages = ledger::read_all(&ledger_path)
@@ -239,6 +246,113 @@ fn remote_reply_uses_reverse_session_and_keeps_one_local_record() {
 
     let mut close_args = route;
     close_args["generation"] = json!(generation);
+    session_runtime::close(&home, &request("close", close_args)).expect("close");
+}
+
+#[test]
+fn retrying_delivery_resumes_when_a_reverse_session_opens_and_later_work_continues() {
+    let temp = tempdir().expect("temp");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home path");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("sender", "").expect("group");
+    group_bridge_legacy::update(&home, |state| {
+        state.clear();
+        state.insert(
+            "trusts".into(),
+            json!([{
+                "trust_id":"trust_resume","registration_id":"registration_resume",
+                "group_id":group.group_id,"remote_group_id":"g_remote",
+                "remote_peer_id":"peer_remote","transport":"group_bridge_session",
+                "status":"active","remote_access_level":"messages"
+            }]),
+        );
+        Ok(())
+    })
+    .expect("bridge state");
+
+    let first = super::remote_send(
+        &home,
+        &request(
+            "remote_send",
+            json!({
+                "group_id":group.group_id,
+                "registration_id":"registration_resume",
+                "idempotency_key":"resume-a",
+                "by":"user",
+                "payload":{"text":"first while offline","to":["user"]}
+            }),
+        ),
+    )
+    .expect("durable first attempt");
+    assert_eq!(first["receipt"]["status"], "retrying");
+
+    let route = json!({
+        "group_id":group.group_id,"remote_group_id":"g_remote",
+        "remote_peer_id":"peer_remote"
+    });
+    let opened = session_runtime::open(&home, &request("open", route.clone())).expect("open");
+    let generation = opened["generation"].clone();
+    let mut poll_args = route.clone();
+    poll_args["generation"] = generation.clone();
+    poll_args["timeout_ms"] = json!(1_000);
+    let resumed = session_runtime::poll(&home, &request("poll", poll_args)).expect("poll");
+    assert_eq!(resumed["request"]["idempotency_key"], "resume-a");
+    let mut complete_args = route.clone();
+    complete_args["generation"] = generation.clone();
+    complete_args["response_to"] = resumed["request"]["request_id"].clone();
+    complete_args["result"] = json!({
+        "ok":true,"receipt":{"status":"delivered","event_id":"remote-a"}
+    });
+    session_runtime::complete(&home, &request("complete", complete_args)).expect("complete A");
+    for _ in 0..100 {
+        let state = group_bridge_legacy::load(&home).expect("receipt state");
+        if super::find_delivery(&state, "registration_resume", "resume-a")
+            .is_some_and(|receipt| receipt["status"] == "sent")
+        {
+            break;
+        }
+        thread::sleep(std::time::Duration::from_millis(10));
+    }
+    let state = group_bridge_legacy::load(&home).expect("receipt state");
+    assert_eq!(
+        super::find_delivery(&state, "registration_resume", "resume-a").expect("A receipt")["status"],
+        "sent"
+    );
+
+    let send_home = home.clone();
+    let group_id = group.group_id.clone();
+    let second = thread::spawn(move || {
+        super::remote_send(
+            &send_home,
+            &request(
+                "remote_send",
+                json!({
+                    "group_id":group_id,
+                    "registration_id":"registration_resume",
+                    "idempotency_key":"resume-b",
+                    "by":"user",
+                    "payload":{"text":"second after recovery","to":["user"]}
+                }),
+            ),
+        )
+    });
+    let mut poll_args = route.clone();
+    poll_args["generation"] = generation.clone();
+    poll_args["timeout_ms"] = json!(1_000);
+    let continued = session_runtime::poll(&home, &request("poll", poll_args)).expect("poll B");
+    assert_eq!(continued["request"]["idempotency_key"], "resume-b");
+    let mut complete_args = route.clone();
+    complete_args["generation"] = generation.clone();
+    complete_args["response_to"] = continued["request"]["request_id"].clone();
+    complete_args["result"] = json!({
+        "ok":true,"receipt":{"status":"delivered","event_id":"remote-b"}
+    });
+    session_runtime::complete(&home, &request("complete", complete_args)).expect("complete B");
+    let second = second.join().expect("join B").expect("send B");
+    assert_eq!(second["receipt"]["status"], "sent");
+
+    let mut close_args = route;
+    close_args["generation"] = generation;
     session_runtime::close(&home, &request("close", close_args)).expect("close");
 }
 

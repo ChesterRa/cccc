@@ -34,6 +34,7 @@ from .credentials import (
 from .registration import get_registration, get_registration_by_target, upsert_registration
 from .registration import delete_registration
 from .peer_addresses import record_peer_addresses
+from .state_lock import group_bridge_state_lock, serialized_group_bridge_state
 
 _INVITE_PREFIX = "pinv_"
 _REQUEST_PREFIX = "preq_"
@@ -68,25 +69,32 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
         return {}
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
-    return dict(raw) if isinstance(raw, dict) else {}
+    except Exception as exc:
+        raise ValueError(f"group bridge store is invalid: {path.name}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError(f"group bridge store must be a mapping: {path.name}")
+    return dict(raw)
 
 
 def _save_yaml(path: Path, payload: Dict[str, Any]) -> None:
     atomic_write_text(path, yaml.safe_dump(payload, allow_unicode=True, sort_keys=True, default_flow_style=False))
 
 
+@serialized_group_bridge_state
 def _load_store(home: Optional[Path] = None) -> Dict[str, Dict[str, Dict[str, Any]]]:
     raw = _load_yaml(_pairing_path(home))
     out: Dict[str, Dict[str, Dict[str, Any]]] = {"invites": {}, "requests": {}, "trusts": {}, "outbounds": {}}
     for key in out:
         section = raw.get(key)
-        if isinstance(section, dict):
-            out[key] = {str(k): dict(v) for k, v in section.items() if isinstance(v, dict)}
+        if section is None:
+            continue
+        if not isinstance(section, dict) or any(not isinstance(value, dict) for value in section.values()):
+            raise ValueError(f"group bridge pairing store section must be a mapping: {key}")
+        out[key] = {str(k): dict(v) for k, v in section.items()}
     return out
 
 
+@serialized_group_bridge_state
 def _save_store(store: Dict[str, Dict[str, Dict[str, Any]]], home: Optional[Path] = None) -> None:
     _save_yaml(_pairing_path(home), {key: dict(store.get(key) or {}) for key in ("invites", "requests", "trusts", "outbounds")})
 
@@ -160,24 +168,27 @@ def get_local_identity(*, home: Optional[Path] = None) -> Dict[str, Any]:
         group_bridge_identity = get_group_bridge_identity(home=home)
         node_id = f"node_{hashlib.sha256(group_bridge_identity.peer_id.encode('utf-8')).hexdigest()[:24]}"
         identity = {"node_id": node_id, "peer_id": group_bridge_identity.peer_id}
-        _save_yaml(_identity_path(home), identity)
+        with group_bridge_state_lock(home):
+            _save_yaml(_identity_path(home), identity)
         return dict(identity)
     except Exception:
         pass
-    path = _identity_path(home)
-    raw = _load_yaml(path)
-    node_id = str(raw.get("node_id") or "").strip()
-    peer_id = str(raw.get("peer_id") or "").strip()
-    if not node_id:
-        node_id = f"node_{secrets.token_hex(12)}"
-    if not peer_id:
-        peer_id = f"peer_{secrets.token_hex(16)}"
-    identity = {"node_id": node_id, "peer_id": peer_id}
-    if raw.get("node_id") != node_id or raw.get("peer_id") != peer_id:
-        _save_yaml(path, identity)
-    return dict(identity)
+    with group_bridge_state_lock(home):
+        path = _identity_path(home)
+        raw = _load_yaml(path)
+        node_id = str(raw.get("node_id") or "").strip()
+        peer_id = str(raw.get("peer_id") or "").strip()
+        if not node_id:
+            node_id = f"node_{secrets.token_hex(12)}"
+        if not peer_id:
+            peer_id = f"peer_{secrets.token_hex(16)}"
+        identity = {"node_id": node_id, "peer_id": peer_id}
+        if raw.get("node_id") != node_id or raw.get("peer_id") != peer_id:
+            _save_yaml(path, identity)
+        return dict(identity)
 
 
+@serialized_group_bridge_state
 def create_pairing_invite(
     *,
     group_id: str,
@@ -268,6 +279,7 @@ def get_cached_pairing_invite_code(invite_id: str) -> str:
     return _INVITE_CODE_CACHE.get(str(invite_id or "").strip(), "")
 
 
+@serialized_group_bridge_state
 def prepare_pairing_invite_for_connection_info(invite_id: str, *, home: Optional[Path] = None) -> Dict[str, Any]:
     iid = str(invite_id or "").strip()
     if not iid:
@@ -292,6 +304,7 @@ def prepare_pairing_invite_for_connection_info(invite_id: str, *, home: Optional
     return out
 
 
+@serialized_group_bridge_state
 def create_pairing_request(
     pairing_code: str,
     *,
@@ -372,6 +385,7 @@ def get_pairing_request(request_id: str, *, home: Optional[Path] = None) -> Opti
     return _project_request(req) if isinstance(req, dict) else None
 
 
+@serialized_group_bridge_state
 def get_pairing_request_public_status(
     request_id: str,
     *,
@@ -404,6 +418,7 @@ def list_pairing_requests(*, group_id: str = "", home: Optional[Path] = None) ->
     return [_project_request(r) for r in requests]
 
 
+@serialized_group_bridge_state
 def approve_pairing_request(
     request_id: str,
     *,
@@ -466,6 +481,7 @@ def approve_pairing_request(
     return {"status": "approved", "request": _project_request(request), "registration": registration, "trust": _project_trust(trust)}
 
 
+@serialized_group_bridge_state
 def reject_pairing_request(
     request_id: str,
     *,
@@ -507,6 +523,7 @@ def list_trusts(*, group_id: str = "", home: Optional[Path] = None) -> List[Dict
     return [_project_trust(t) for t in trusts]
 
 
+@serialized_group_bridge_state
 def update_trust_access_level(
     trust_id: str,
     access_level: str,
@@ -536,6 +553,7 @@ def update_trust_access_level(
     return _project_trust(_enrich_trust_display_fields(trust, store))
 
 
+@serialized_group_bridge_state
 def update_trust_remote_info(
     trust_id: str,
     *,
@@ -620,6 +638,7 @@ def _enrich_trust_display_fields(
     return trust
 
 
+@serialized_group_bridge_state
 def revoke_trust(
     trust_id: str,
     *,
@@ -657,6 +676,7 @@ def revoke_trust(
     return _project_trust(trust)
 
 
+@serialized_group_bridge_state
 def upsert_pairing_outbound(outbound: Dict[str, Any], *, home: Optional[Path] = None) -> Dict[str, Any]:
     local_gid = str(outbound.get("local_group_id") or outbound.get("group_id") or "").strip()
     if not local_gid:
@@ -707,6 +727,7 @@ def get_pairing_outbound(outbound_id: str, *, home: Optional[Path] = None) -> Op
     return _project_outbound(outbound) if isinstance(outbound, dict) else None
 
 
+@serialized_group_bridge_state
 def delete_pairing_outbound(outbound_id: str, *, home: Optional[Path] = None) -> bool:
     oid = str(outbound_id or "").strip()
     if not oid:

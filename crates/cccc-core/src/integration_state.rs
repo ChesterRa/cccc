@@ -17,12 +17,9 @@ pub fn global_update<T>(
     key: &str,
     change: impl FnOnce(&mut Value) -> io::Result<T>,
 ) -> io::Result<T> {
-    crate::fs::with_exclusive_lock(&home.root().join("settings.yaml.lock"), || {
-        let mut global = settings::load(home)?;
+    settings::update(home, |global| {
         let value = global.extra.entry(key.to_owned()).or_insert(Value::Null);
-        let result = change(value)?;
-        settings::save(home, &global)?;
-        Ok(result)
+        change(value)
     })
 }
 

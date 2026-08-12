@@ -246,8 +246,8 @@ Attach files to your message. Feishu files are downloaded and stored in CCCC's b
 | `/send @all <message>` | Send to all agents |
 | `/send @peers <message>` | Send to non-foreman agents |
 | `/status` | Show group and agent status |
-| `/pause` | Pause message delivery |
-| `/resume` | Resume message delivery |
+| `/pause` | Pause delivery for this chat or thread |
+| `/resume` | Resume delivery for this chat or thread |
 | `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/help` | Show available commands |
 

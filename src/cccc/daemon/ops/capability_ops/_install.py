@@ -696,6 +696,12 @@ def _remote_mcp_call(url: str, method: str, params: Dict[str, Any], *, timeout_s
     init_resp, session_id = _http_jsonrpc_request(url, init_req, timeout_s=timeout_s)
     if isinstance(init_resp.get("error"), dict):
         raise RuntimeError(str((init_resp.get("error") or {}).get("message") or "remote initialize failed"))
+    _http_jsonrpc_request(
+        url,
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
+        timeout_s=timeout_s,
+        session_id=session_id,
+    )
     call_req = {
         "jsonrpc": "2.0",
         "id": 2,
@@ -1122,6 +1128,7 @@ def _install_via_stdio_commands(
                 "clientInfo": {"name": "cccc-capability-runtime", "version": "1.0"},
             },
         },
+        {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
         {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
     ]
     commands = _pkg()._choose_available_command(commands)
@@ -1388,6 +1395,7 @@ def _invoke_installed_external_tool(
                     "clientInfo": {"name": "cccc-capability-runtime", "version": "1.0"},
                 },
             },
+            {"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}},
             {
                 "jsonrpc": "2.0",
                 "id": 2,

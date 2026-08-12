@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -71,6 +72,121 @@ class TestWebLedgerTailApi(unittest.TestCase):
             self.assertEqual(result.get("has_more"), False)
             self.assertEqual(int(result.get("count") or 0), len(events))
             self.assertTrue(all(str(event.get("kind") or "") == "chat.message" for event in events))
+        finally:
+            cleanup()
+
+    def test_attention_ack_status_is_stable_across_cold_and_warm_reads(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "ledger-ack-cache", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "custom",
+                    "runner": "pty",
+                    "command": ["sh", "-c", "exit 0"],
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            send, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "to": ["peer1"],
+                    "text": "read is not ack",
+                    "priority": "attention",
+                    "reply_required": True,
+                },
+            )
+            self.assertTrue(send.ok, getattr(send, "error", None))
+            event_id = str(((send.result or {}).get("event") or {}).get("id") or "").strip()
+            self.assertTrue(event_id)
+            marked, _ = self._call(
+                "inbox_mark_read",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "event_id": event_id,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(marked.ok, getattr(marked, "error", None))
+
+            path = (
+                f"/api/v1/groups/{group_id}/ledger/tail?kind=chat&limit=10"
+                "&with_read_status=true&with_ack_status=true&with_obligation_status=true"
+            )
+            with self._client() as client:
+                responses = [client.get(path), client.get(path)]
+                responses.append(
+                    client.post(
+                        f"/api/v1/groups/{group_id}/ledger/statuses",
+                        json={"event_ids": [event_id]},
+                    )
+                )
+
+            for response in responses:
+                self.assertEqual(response.status_code, 200)
+                body = response.json()
+                self.assertTrue(bool(body.get("ok")), body)
+                result = body.get("result") or {}
+                if "events" in result:
+                    payload = next(
+                        event
+                        for event in result.get("events") or []
+                        if str(event.get("id") or "") == event_id
+                    )
+                    ack_status = payload.get("_ack_status") or {}
+                    obligation_status = payload.get("_obligation_status") or {}
+                else:
+                    payload = (result.get("statuses") or {}).get(event_id) or {}
+                    ack_status = payload.get("ack_status") or {}
+                    obligation_status = payload.get("obligation_status") or {}
+                self.assertEqual(ack_status.get("peer1"), False)
+                self.assertEqual(
+                    (obligation_status.get("peer1") or {}).get("acked"),
+                    False,
+                )
+        finally:
+            cleanup()
+
+    def test_group_reads_reject_a_missing_group_instead_of_returning_empty_state(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            with self._client() as client:
+                responses = [
+                    client.get("/api/v1/groups/g_missing/ledger/tail?kind=chat"),
+                    client.get("/api/v1/groups/g_missing/ledger/search?kind=chat&q=x"),
+                    client.get(
+                        "/api/v1/groups/g_missing/ledger/window"
+                        "?kind=chat&center=event-missing"
+                    ),
+                    client.post(
+                        "/api/v1/groups/g_missing/ledger/statuses",
+                        json={"event_ids": ["event-missing"]},
+                    ),
+                    client.get(
+                        "/api/v1/groups/g_missing/events/event-missing/read_status"
+                    ),
+                    client.get("/api/v1/groups/g_missing/context?detail=summary"),
+                    client.get("/api/v1/groups/g_missing/context?detail=full"),
+                    client.get("/api/v1/groups/g_missing/tasks"),
+                ]
+
+            for response in responses:
+                self.assertEqual(response.status_code, 404, response.text)
+                body = response.json()
+                self.assertEqual((body.get("error") or {}).get("code"), "group_not_found")
         finally:
             cleanup()
 
@@ -436,5 +552,88 @@ class TestWebLedgerTailApi(unittest.TestCase):
             message = next((event for event in events if str(event.get("id") or "") == event_id), None)
             self.assertIsNotNone(message)
             self.assertEqual((message or {}).get("_web_model_delivery_status", {}).get("state"), "bound")
+        finally:
+            cleanup()
+
+    def test_ledger_statuses_use_append_order_when_delivery_timestamps_regress(
+        self,
+    ) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "ledger-web-model-append-order", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "web-1",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            send, _ = self._call(
+                "send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "to": ["web-1"],
+                    "text": "append order decides the visible receipt",
+                },
+            )
+            self.assertTrue(send.ok, getattr(send, "error", None))
+            event_id = str(((send.result or {}).get("event") or {}).get("id") or "")
+            self.assertTrue(event_id)
+
+            from cccc.contracts.v1 import Event
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            delivery_events = []
+            for kind, ts in (
+                ("web_model.browser_delivery.submitting", "2026-08-11T00:00:02Z"),
+                ("web_model.browser_delivery.submitted", "2026-08-11T00:00:01Z"),
+            ):
+                delivery = Event(
+                    kind=kind,
+                    group_id=group_id,
+                    scope_key="",
+                    by="system",
+                    data={
+                        "actor_id": "web-1",
+                        "delivery_id": "delivery-regressed-ts",
+                        "event_ids": [event_id],
+                    },
+                )
+                delivery.ts = ts
+                delivery_events.append(delivery.model_dump())
+            with group.ledger_path.open("a", encoding="utf-8") as ledger:
+                for delivery in delivery_events:
+                    ledger.write(json.dumps(delivery, ensure_ascii=False) + "\n")
+
+            with self._client() as client:
+                response = client.post(
+                    f"/api/v1/groups/{group_id}/ledger/statuses",
+                    json={"event_ids": [event_id]},
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            status = (
+                ((response.json().get("result") or {}).get("statuses") or {}).get(
+                    event_id
+                )
+                or {}
+            )
+            self.assertEqual(
+                (status.get("web_model_delivery_status") or {}).get("state"),
+                "submitted",
+            )
         finally:
             cleanup()

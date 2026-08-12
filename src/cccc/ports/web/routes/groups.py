@@ -81,6 +81,7 @@ from ....kernel.prompt_files import (
 )
 from ....paths import ensure_home
 from ....util.conv import coerce_bool
+from ....util.file_lock import acquire_lockfile, release_lockfile
 from ....util.fs import atomic_write_text
 from ....util.time import utc_now_iso
 from ....util.process import pid_is_alive
@@ -139,7 +140,7 @@ from .group_copy_uploads import (
 _VOICE_DIARIZATION_INTERVAL_MS = 8_000
 _VOICE_DIARIZATION_MIN_AUDIO_MS = 10_000
 _VOICE_DIARIZATION_ENABLE_PROVISIONAL = True
-_VOICE_STREAMING_PCM16_DEFAULT_MAX_BYTES = 128 * 1024 * 1024
+_VOICE_STREAMING_PCM16_DEFAULT_MAX_BYTES = 100 * 1024 * 1024
 
 
 class _VoiceStreamingAudioLimitExceeded(Exception):
@@ -223,6 +224,16 @@ def _safe_voice_document_id(value: Any = "") -> str:
 
 def _voice_documents_root(group_id: str) -> Path:
     return ensure_home() / "voice-secretary" / str(group_id or "").strip() / "documents"
+
+
+@contextlib.contextmanager
+def _voice_transcript_lock(group_id: str):
+    path = ensure_home() / "voice-secretary" / str(group_id or "").strip() / "transcript.lock"
+    file_lock = acquire_lockfile(path, blocking=True)
+    try:
+        yield
+    finally:
+        release_lockfile(file_lock)
 
 
 def _voice_documents_index_path(group_id: str) -> Path:
@@ -359,50 +370,6 @@ def _append_voice_document_transcript_segment(
         handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
 
 
-def _read_voice_document_transcript_segments(group_id: str, document_path: str, *, limit: int = 1000) -> list[dict[str, Any]]:
-    record = _voice_document_record_for_path(group_id, document_path)
-    doc_id = str(record.get("document_id") or "").strip()
-    if not doc_id:
-        return []
-    path = _voice_document_transcript_path(group_id, doc_id)
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:
-        return []
-    for line in lines[-max(1, int(limit)) :]:
-        try:
-            payload = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(payload, dict) and str(payload.get("text") or "").strip():
-            rows.append(payload)
-    return rows
-
-
-def _read_voice_document_transcript_session(group_id: str, document_path: str) -> dict[str, Any]:
-    rows = _read_voice_document_transcript_segments(group_id, document_path)
-    if not rows:
-        return {}
-    record = _voice_document_record_for_path(group_id, document_path)
-    doc_id = str(record.get("document_id") or "").strip()
-    return {
-        "schema": 1,
-        "group_id": str(group_id or "").strip(),
-        "session_id": f"document-{doc_id}" if doc_id else "document-transcript",
-        "status": "ready",
-        "capture_mode": "document",
-        "document_path": str(document_path or "").strip(),
-        "created_at": str(rows[0].get("created_at") or ""),
-        "updated_at": str(rows[-1].get("updated_at") or rows[-1].get("created_at") or ""),
-        "segments": rows,
-        "diarization": {},
-        "source": "document_transcript",
-    }
-
-
 def _voice_meeting_transcript_text(group_id: str, session_id: str, *, limit: int = 200) -> str:
     texts: list[str] = []
     for segment in _read_voice_meeting_segments(group_id, session_id, limit=limit):
@@ -425,18 +392,29 @@ def _read_voice_meeting_session(group_id: str, session_id: str) -> dict[str, Any
     }
 
 
+def _merge_voice_meeting_session(
+    canonical: dict[str, Any],
+    sidecar: dict[str, Any],
+) -> dict[str, Any]:
+    if not canonical:
+        return dict(sidecar)
+    if not sidecar:
+        return dict(canonical)
+    merged = {**sidecar, **canonical}
+    if not isinstance(canonical.get("diarization"), dict) and isinstance(
+        sidecar.get("diarization"), dict
+    ):
+        merged["diarization"] = dict(sidecar["diarization"])
+    return merged
+
+
 def _read_latest_voice_meeting_session(
     group_id: str,
     *,
     document_path: str = "",
-    prefer_document_transcript: bool = True,
 ) -> dict[str, Any]:
     root = ensure_home() / "voice-secretary" / str(group_id or "").strip()
     target_document_path = str(document_path or "").strip()
-    if prefer_document_transcript and target_document_path:
-        document_session = _read_voice_document_transcript_session(group_id, target_document_path)
-        if document_session:
-            return document_session
     if not root.exists():
         return {}
     candidates = []
@@ -503,6 +481,43 @@ def _append_voice_meeting_session_event(
             "error_message": str((error or {}).get("message") or ""),
         },
     )
+
+
+async def _persist_voice_meeting_session_projection(
+    daemon: Any,
+    *,
+    group_id: str,
+    session_id: str,
+    patch: dict[str, Any],
+) -> bool:
+    try:
+        response = await daemon(
+            {
+                "op": "assistant_voice_session_update",
+                "args": {
+                    "group_id": group_id,
+                    "session_id": session_id,
+                    "patch": patch,
+                    "by": "assistant:voice_secretary",
+                },
+            }
+        )
+    except Exception:
+        logger.exception(
+            "voice meeting session projection failed: group_id=%s session_id=%s",
+            group_id,
+            session_id,
+        )
+        return False
+    if not isinstance(response, dict) or not bool(response.get("ok")):
+        logger.error(
+            "voice meeting session projection rejected: group_id=%s session_id=%s response=%r",
+            group_id,
+            session_id,
+            response,
+        )
+        return False
+    return True
 
 
 async def _run_voice_meeting_diarization_background(
@@ -590,26 +605,38 @@ async def _run_voice_meeting_diarization_background(
                 "final_apply_result": final_apply_result,
             },
         )
+        session_patch = {
+            "status": "failed" if speaker_transcript_error else "closed",
+            "audio_duration_ms": audio_duration_ms,
+            "diarization_artifact_path": artifact_path,
+            "diarization_ready": not bool(speaker_transcript_error),
+            "diarization": {
+                **diarization,
+                "speaker_transcript_segments": speaker_transcript_segments,
+                "speaker_transcript_error": speaker_transcript_error,
+                "speaker_transcript_model_id": final_asr_model_id,
+                "final_apply_result": final_apply_result,
+                "artifact_path": artifact_path,
+                "provisional": False,
+            },
+            "error": speaker_transcript_error,
+            "document_path": document_path,
+        }
         _write_voice_meeting_session(
             group_id,
             session_id,
             {
-                "status": "failed" if speaker_transcript_error else "closed",
-                "audio_duration_ms": audio_duration_ms,
                 "audio_path": str(pcm16_path),
-                "diarization_artifact_path": artifact_path,
-                "diarization": {
-                    **diarization,
-                    "speaker_transcript_segments": speaker_transcript_segments,
-                    "speaker_transcript_error": speaker_transcript_error,
-                    "speaker_transcript_model_id": final_asr_model_id,
-                    "final_apply_result": final_apply_result,
-                    "artifact_path": artifact_path,
-                    "provisional": False,
-                },
-                "error": speaker_transcript_error,
+                **session_patch,
             },
         )
+        if not await _persist_voice_meeting_session_projection(
+            daemon,
+            group_id=group_id,
+            session_id=session_id,
+            patch=session_patch,
+        ):
+            return
         _append_voice_meeting_session_event(
             group_id,
             session_id,
@@ -632,17 +659,30 @@ async def _run_voice_meeting_diarization_background(
                 "speaker_transcript_error": error,
             },
         )
+        session_patch = {
+            "status": "closed",
+            "audio_duration_ms": audio_duration_ms,
+            "diarization_artifact_path": artifact_path,
+            "diarization_ready": False,
+            "diarization_error": error,
+            "error": error,
+            "document_path": document_path,
+        }
         _write_voice_meeting_session(
             group_id,
             session_id,
             {
-                "status": "closed",
-                "audio_duration_ms": audio_duration_ms,
                 "audio_path": str(pcm16_path),
-                "diarization_artifact_path": artifact_path,
-                "error": error,
+                **session_patch,
             },
         )
+        if not await _persist_voice_meeting_session_projection(
+            daemon,
+            group_id=group_id,
+            session_id=session_id,
+            patch=session_patch,
+        ):
+            return
         _append_voice_meeting_session_event(
             group_id,
             session_id,
@@ -666,17 +706,30 @@ async def _run_voice_meeting_diarization_background(
                 "speaker_transcript_error": error,
             },
         )
+        session_patch = {
+            "status": "closed",
+            "audio_duration_ms": audio_duration_ms,
+            "diarization_artifact_path": artifact_path,
+            "diarization_ready": False,
+            "diarization_error": error,
+            "error": error,
+            "document_path": document_path,
+        }
         _write_voice_meeting_session(
             group_id,
             session_id,
             {
-                "status": "closed",
-                "audio_duration_ms": audio_duration_ms,
                 "audio_path": str(pcm16_path),
-                "diarization_artifact_path": artifact_path,
-                "error": error,
+                **session_patch,
             },
         )
+        if not await _persist_voice_meeting_session_projection(
+            daemon,
+            group_id=group_id,
+            session_id=session_id,
+            patch=session_patch,
+        ):
+            return
         _append_voice_meeting_session_event(
             group_id,
             session_id,
@@ -907,23 +960,6 @@ def _read_headless_snapshot(group: Any, *, limit: int = 400) -> Dict[str, Any]:
     }
 
 
-def _read_presentation_local(group_id: str) -> Dict[str, Any]:
-    gid = str(group_id or "").strip()
-    if not gid:
-        return {"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id"}}
-    group = load_group(gid)
-    if group is None:
-        return {"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {gid}"}}
-    snapshot = load_presentation_snapshot(group.group_id)
-    return {
-        "ok": True,
-        "result": {
-            "group_id": group.group_id,
-            "presentation": snapshot.model_dump(mode="json", exclude_none=True),
-        },
-    }
-
-
 def _read_context_summary_local(group_id: str) -> Dict[str, Any]:
     gid = str(group_id or "").strip()
     if not gid:
@@ -1113,15 +1149,17 @@ def _collect_web_model_delivery_statuses(group: Any, event_ids: list[str]) -> di
         return {}
     wanted = set(normalized_ids)
     try:
-        from ....kernel.ledger_index import lookup_events_by_ids, search_event_ids_indexed
+        from ....kernel.ledger_index import (
+            latest_event_ids_indexed,
+            lookup_events_by_ids,
+        )
     except Exception:
         return {}
 
     try:
-        candidate_ids, _has_more = search_event_ids_indexed(
+        candidate_ids = latest_event_ids_indexed(
             group.ledger_path,
             allowed_kinds=set(_WEB_MODEL_DELIVERY_KIND_TO_STATE.keys()),
-            query="",
             limit=_WEB_MODEL_DELIVERY_STATUS_LOOKBACK,
         )
     except Exception:
@@ -1552,6 +1590,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def group_context(group_id: str, fresh: bool = False, detail: str = "summary") -> Dict[str, Any]:
         """Get a group context view (summary by default, full when requested)."""
         gid = str(group_id or "").strip()
+        if load_group(gid) is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {gid}",
+                },
+            )
         detail_mode = str(detail or "summary").strip().lower() or "summary"
         if detail_mode not in {"summary", "full"}:
             raise HTTPException(
@@ -1599,6 +1645,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     @group_router.get("/tasks")
     async def group_tasks(group_id: str, task_id: Optional[str] = None) -> Dict[str, Any]:
         """List tasks (or fetch a single task when task_id is provided)."""
+        if load_group(group_id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "group_not_found",
+                    "message": f"group not found: {group_id}",
+                },
+            )
         args: Dict[str, Any] = {"group_id": group_id}
         if task_id:
             args["task_id"] = task_id
@@ -1606,7 +1660,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @group_router.get("/presentation")
     async def group_presentation_get(group_id: str) -> Dict[str, Any]:
-        return await run_in_threadpool(_read_presentation_local, group_id)
+        return await ctx.daemon({"op": "presentation_get", "args": {"group_id": group_id}})
 
     @group_router.post("/presentation/publish")
     async def group_presentation_publish(group_id: str, req: GroupPresentationPublishRequest) -> Dict[str, Any]:
@@ -1722,7 +1776,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         }
 
         if card_type == "markdown":
-            args["content"] = raw.decode("utf-8", errors="replace")
+            try:
+                args["content"] = raw.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "invalid_request", "message": "markdown upload must be UTF-8"},
+                ) from exc
             args["source_ref"] = filename
         else:
             stored = store_blob_bytes(
@@ -2519,8 +2579,52 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             await websocket.close(code=1008)
             return
 
+        recording_owner_id = str(websocket.query_params.get("owner_id") or "").strip()
+        recording_lease_id = str(websocket.query_params.get("lease_id") or "").strip()
+
+        async def renew_streaming_recording_lease() -> tuple[bool, bool, dict[str, Any]]:
+            if not recording_owner_id or not recording_lease_id:
+                return False, True, {}
+            try:
+                response = await ctx.daemon(
+                    {
+                        "op": "assistant_voice_recording_lease",
+                        "args": {
+                            "group_id": group_id,
+                            "action": "heartbeat",
+                            "owner_id": recording_owner_id,
+                            "lease_id": recording_lease_id,
+                            "by": "user",
+                        },
+                    }
+                )
+            except Exception:
+                return False, False, {}
+            if not bool(response.get("ok")):
+                return False, False, {}
+            result = response.get("result") if isinstance(response.get("result"), dict) else {}
+            if bool(result.get("lost")) or not bool(result.get("acquired")):
+                return False, True, {}
+            lease = result.get("lease") if isinstance(result.get("lease"), dict) else {}
+            return True, False, dict(lease)
+
+        lease_valid, _, streaming_recording_lease = await renew_streaming_recording_lease()
+        if not lease_valid:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "ok": False,
+                    "error": {
+                        "code": "assistant_voice_recording_lease_lost",
+                        "message": "voice secretary recording lease is missing, expired, or owned by another client",
+                    },
+                }
+            )
+            await websocket.close(code=1008)
+            return
+        streaming_lease_checked_at = time.monotonic()
+
         streaming_session = None
-        streaming_pcm16_audio = bytearray()
         streaming_pcm16_path: Path | None = None
         streaming_pcm16_bytes = 0
         streaming_audio_level_stats = _empty_pcm16_audio_level_stats()
@@ -2570,12 +2674,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if streaming_pcm16_path is not None:
                 try:
                     return streaming_pcm16_path.read_bytes()
-                except Exception:
-                    pass
-            return bytes(streaming_pcm16_audio)
+                except Exception as exc:
+                    raise SherpaStreamingAsrError(
+                        "voice_stream_audio_read_failed",
+                        f"streaming PCM16 audio could not be read: {exc}",
+                    ) from exc
+            return b""
 
         async def cleanup_streaming_state() -> None:
-            nonlocal streaming_session, streaming_diarization_task, streaming_pcm16_audio
+            nonlocal streaming_session, streaming_diarization_task
             if streaming_diarization_task is not None:
                 if not streaming_diarization_task.done():
                     streaming_diarization_task.cancel()
@@ -2585,7 +2692,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             if streaming_session is not None:
                 await streaming_session.close()
             streaming_session = None
-            streaming_pcm16_audio = bytearray()
             cleanup_streaming_pcm16()
 
         async def send_streaming_json(payload: dict[str, Any], *, enabled: bool = True) -> None:
@@ -2906,6 +3012,31 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
                 message_type = str(payload.get("type") or "transcribe").strip()
                 seq = payload.get("seq")
+                if message_type == "audio" and time.monotonic() - streaming_lease_checked_at >= 5.0:
+                    lease_valid, lease_lost, renewed_lease = await renew_streaming_recording_lease()
+                    streaming_lease_checked_at = time.monotonic()
+                    if lease_lost:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "ok": False,
+                                "seq": seq,
+                                "error": {
+                                    "code": "assistant_voice_recording_lease_lost",
+                                    "message": "voice secretary recording lease is missing, expired, or owned by another client",
+                                },
+                            }
+                        )
+                        await finalize_streaming_state(send_client_events=False)
+                        await websocket.close(code=1008)
+                        return
+                    if lease_valid:
+                        streaming_recording_lease = renewed_lease
+                    if not lease_valid:
+                        logger.warning(
+                            "voice transcription websocket could not renew its recording lease; keeping the active stream",
+                            extra={"group_id": group_id, "owner_id": recording_owner_id},
+                        )
                 if message_type == "start":
                     if isinstance(seq, int) and not isinstance(seq, bool):
                         streaming_audio_seq = max(streaming_audio_seq, seq)
@@ -2927,6 +3058,25 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     streaming_dispatch_target = str(
                         payload.get("dispatch_target") or payload.get("dispatchTarget") or ""
                     ).strip().lower()
+                    leased_capture_mode = str(streaming_recording_lease.get("capture_mode") or "").strip().lower()
+                    leased_dispatch_target = str(streaming_recording_lease.get("dispatch_target") or "").strip().lower()
+                    if (
+                        (leased_capture_mode and leased_capture_mode != streaming_capture_mode)
+                        or (leased_dispatch_target and leased_dispatch_target != streaming_dispatch_target)
+                    ):
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "ok": False,
+                                "seq": seq,
+                                "error": {
+                                    "code": "assistant_voice_recording_lease_mismatch",
+                                    "message": "voice transcription mode does not match the active recording lease",
+                                },
+                            }
+                        )
+                        await websocket.close(code=1008)
+                        return
                     streaming_document_path = (
                         str(payload.get("document_path") or payload.get("documentPath") or "").strip()
                         if streaming_capture_mode == "document"
@@ -2935,7 +3085,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     streaming_language = str(payload.get("language") or config.get("recognition_language") or "").strip()
                     cleanup_streaming_pcm16()
                     streaming_audio_level_stats = _empty_pcm16_audio_level_stats()
-                    streaming_pcm16_audio = bytearray()
                     streaming_sample_rate = int(payload.get("sample_rate") or 16000)
                     streaming_diarization_ready = bool(
                         persist_secretary_artifacts()
@@ -3019,7 +3168,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                                     await cleanup_streaming_state()
                                     await websocket.close(code=1009)
                                     return
-                                streaming_pcm16_audio.extend(pcm16_chunk)
                                 streaming_sample_rate = sample_rate
                         if _VOICE_DIARIZATION_ENABLE_PROVISIONAL and streaming_diarization_task is not None and streaming_diarization_task.done():
                             try:
@@ -3055,12 +3203,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                             _VOICE_DIARIZATION_ENABLE_PROVISIONAL
                             and
                             streaming_diarization_ready
-                            and streaming_pcm16_audio
+                            and streaming_pcm16_bytes > 0
                             and audio_duration_ms >= _VOICE_DIARIZATION_MIN_AUDIO_MS
                             and audio_duration_ms - streaming_last_diarization_ms >= _VOICE_DIARIZATION_INTERVAL_MS
                             and streaming_diarization_task is None
                         ):
-                            prefix_audio = bytes(streaming_pcm16_audio)
+                            prefix_audio = read_streaming_pcm16_audio()
                             previous_segments = list(streaming_stable_diarization_segments)
                             previous_speaker_embeddings = list(streaming_stable_speaker_embeddings)
                             streaming_diarization_seq += 1
@@ -3156,6 +3304,19 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return
         finally:
             await cleanup_streaming_state()
+            with contextlib.suppress(Exception):
+                await ctx.daemon(
+                    {
+                        "op": "assistant_voice_recording_lease",
+                        "args": {
+                            "group_id": group_id,
+                            "action": "release",
+                            "owner_id": recording_owner_id,
+                            "lease_id": recording_lease_id,
+                            "by": "user",
+                        },
+                    }
+                )
 
     @group_router.post("/assistants/voice_secretary/models/install")
     async def group_voice_secretary_model_install(
@@ -3232,53 +3393,97 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @group_router.get("/assistants/voice_secretary/sessions/latest")
     async def group_voice_secretary_latest_session_get(group_id: str, document_path: str = "") -> Dict[str, Any]:
+        response = await ctx.daemon(
+            {
+                "op": "assistant_state",
+                "args": {
+                    "group_id": group_id,
+                    "assistant_id": "voice_secretary",
+                    "view": "voice_session",
+                    "document_path": document_path,
+                    "suppress_retry_notify": True,
+                },
+            }
+        )
+        if not bool(response.get("ok")):
+            return response
+        result = response.get("result") if isinstance(response.get("result"), dict) else {}
+        canonical = result.get("session") if isinstance(result.get("session"), dict) else {}
+        session_id = str(canonical.get("session_id") or "").strip()
+        if canonical:
+            session = _merge_voice_meeting_session(
+                canonical,
+                _read_voice_meeting_session(group_id, session_id) if session_id else {},
+            )
+        else:
+            session = _read_latest_voice_meeting_session(group_id, document_path=document_path)
         return {
             "ok": True,
             "result": {
                 "group_id": group_id,
-                "session": _read_latest_voice_meeting_session(group_id, document_path=document_path),
+                "session": session,
             },
         }
 
     @group_router.get("/assistants/voice_secretary/sessions/{session_id}")
     async def group_voice_secretary_session_get(group_id: str, session_id: str) -> Dict[str, Any]:
-        return {"ok": True, "result": {"group_id": group_id, "session": _read_voice_meeting_session(group_id, session_id)}}
+        live_sidecar = _read_voice_meeting_session(group_id, session_id)
+        if str(live_sidecar.get("status") or "").strip() == "recording":
+            return {
+                "ok": True,
+                "result": {"group_id": group_id, "session": live_sidecar},
+            }
+        response = await ctx.daemon(
+            {
+                "op": "assistant_state",
+                "args": {
+                    "group_id": group_id,
+                    "assistant_id": "voice_secretary",
+                    "view": "voice_session",
+                    "session_id": session_id,
+                    "suppress_retry_notify": True,
+                },
+            }
+        )
+        if not bool(response.get("ok")):
+            return response
+        result = response.get("result") if isinstance(response.get("result"), dict) else {}
+        canonical = result.get("session") if isinstance(result.get("session"), dict) else {}
+        session = _merge_voice_meeting_session(
+            canonical,
+            _read_voice_meeting_session(group_id, session_id),
+        )
+        return {"ok": True, "result": {"group_id": group_id, "session": session}}
 
     @group_router.delete("/assistants/voice_secretary/sessions/latest/transcript")
     async def group_voice_secretary_latest_session_transcript_clear(group_id: str, req: AssistantVoiceTranscriptClearRequest) -> Dict[str, Any]:
-        cleared = False
-        document_path = str(req.document_path or "").strip()
-        if document_path:
-            record = _voice_document_record_for_path(group_id, document_path)
-            doc_id = str(record.get("document_id") or "").strip()
-            if doc_id:
-                transcript_path = _voice_document_transcript_path(group_id, doc_id)
-                if transcript_path.exists():
-                    try:
-                        transcript_path.unlink()
-                        cleared = True
-                    except FileNotFoundError:
-                        cleared = True
-                else:
-                    cleared = True
-        session = _read_latest_voice_meeting_session(
-            group_id,
-            document_path=req.document_path,
-            prefer_document_transcript=False,
+        response = await ctx.daemon(
+            {
+                "op": "assistant_voice_session_transcript_clear",
+                "args": {
+                    "group_id": group_id,
+                    "document_path": req.document_path,
+                    "by": req.by,
+                },
+            }
         )
-        session_id = str(session.get("session_id") or "").strip()
+        if not bool(response.get("ok")):
+            return response
+        result = response.get("result") if isinstance(response.get("result"), dict) else {}
+        session_id = str(result.get("session_id") or "").strip()
         if session_id:
             path = _voice_meeting_segments_path(group_id, session_id)
             if path.exists():
                 try:
                     path.unlink()
-                    cleared = True
                 except FileNotFoundError:
-                    cleared = True
-            else:
-                cleared = True
-            _write_voice_meeting_session(group_id, session_id, {"latest_partial": ""})
-        return {"ok": True, "result": {"group_id": group_id, "session_id": session_id, "cleared": cleared}}
+                    pass
+            _write_voice_meeting_session(
+                group_id,
+                session_id,
+                {"latest_partial": "", "transcript_cleared_at": utc_now_iso()},
+            )
+        return response
 
     @group_router.post("/assistants/voice_secretary/transcript_segments")
     async def group_voice_secretary_transcript_segment_append(
@@ -3298,33 +3503,35 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             "trigger": dict(req.trigger),
             "by": req.by,
         }
-        segment_path = _append_voice_meeting_segment(
-            group_id,
-            req.session_id,
-            segment_record,
-        )
         trigger_kind = str(req.trigger.get("trigger_kind") or "").strip().lower()
-        _write_voice_meeting_session(
-            group_id,
-            req.session_id,
-            {
-                "status": (
-                    "closed"
-                    if req.flush and trigger_kind in {"push_to_talk_stop", "service_transcript"}
-                    else "recording"
-                ),
-                "language": req.language,
-                "document_path": req.document_path,
-                "latest_partial": "",
-            },
-        )
-        if not req.flush:
-            _append_voice_document_transcript_segment(
+        with _voice_transcript_lock(group_id):
+            segment_path = _append_voice_meeting_segment(
                 group_id,
-                document_path=req.document_path,
-                segment=segment_record,
-                segment_path=segment_path,
+                req.session_id,
+                segment_record,
             )
+            _write_voice_meeting_session(
+                group_id,
+                req.session_id,
+                {
+                    "status": (
+                        "closed"
+                        if req.flush and trigger_kind in {"push_to_talk_stop", "service_transcript"}
+                        else "recording"
+                    ),
+                    "language": req.language,
+                    "document_path": req.document_path,
+                    "latest_partial": "",
+                },
+            )
+            if not req.flush:
+                _append_voice_document_transcript_segment(
+                    group_id,
+                    document_path=req.document_path,
+                    segment=segment_record,
+                    segment_path=segment_path,
+                )
+        if not req.flush:
             return {
                 "ok": True,
                 "result": {

@@ -110,6 +110,26 @@ class TestPtyHistoryPage(unittest.TestCase):
         self.assertEqual(complete["end_cursor"], 3)
         self.assertFalse(complete["has_more"])
 
+    def test_replay_page_keeps_the_first_complete_end_cursor_fixed(self) -> None:
+        session = self._session()
+        session._append_backlog(b"first")
+
+        first, replay_end = session.replay_page(after=0, end_cursor=None, limit_bytes=3)
+        session._append_backlog(b"later")
+        second, repeated_end = session.replay_page(
+            after=int(first["end_cursor"]),
+            end_cursor=replay_end,
+            limit_bytes=64,
+        )
+
+        self.assertEqual(replay_end, 5)
+        self.assertEqual(first["data"], b"fir")
+        self.assertTrue(first["has_more"])
+        self.assertEqual(repeated_end, replay_end)
+        self.assertEqual(second["data"], b"st")
+        self.assertEqual(second["end_cursor"], replay_end)
+        self.assertFalse(second["has_more"])
+
     def test_replacement_session_continues_the_actor_byte_cursor(self) -> None:
         from cccc.runners import pty as pty_runner
 

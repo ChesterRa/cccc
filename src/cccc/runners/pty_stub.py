@@ -77,6 +77,17 @@ class PtySupervisor:
             "cursor_expired": False,
         }
 
+    def active_replay_page(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        after: int,
+        end_cursor: Optional[int],
+        limit_bytes: int = 512 * 1024,
+    ) -> Optional[Tuple[Dict[str, object], int]]:
+        return None
+
     def terminal_override(self, *, group_id: str, actor_id: str):
         return None
 
@@ -132,8 +143,8 @@ class PtySupervisor:
     def session_key(self, *, group_id: str, actor_id: str) -> Optional[str]:
         return None
 
-    def resize(self, *, group_id: str, actor_id: str, cols: int, rows: int) -> None:
-        return None
+    def resize(self, *, group_id: str, actor_id: str, cols: int, rows: int) -> bool:
+        return False
 
     def write_input(self, *, group_id: str, actor_id: str, data: bytes) -> bool:
         return False

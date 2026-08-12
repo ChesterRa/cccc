@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 mod connection;
 use connection::Connection;
@@ -36,7 +36,6 @@ pub struct DaemonClient {
 #[derive(Debug, Default)]
 struct ClientShared {
     address: RwLock<Option<DaemonAddress>>,
-    pool: Mutex<Vec<Connection>>,
 }
 
 #[derive(Debug)]
@@ -115,23 +114,12 @@ impl DaemonClient {
         request: &DaemonRequest,
         exchange_started: &AtomicBool,
     ) -> Result<DaemonResponse, CallFailure> {
-        let mut connection = loop {
-            match self.shared.pool.lock().await.pop() {
-                Some(connection) if connection.is_usable() => break connection,
-                Some(_) => continue,
-                None => break self.connect().await.map_err(CallFailure::Connect)?,
-            }
-        };
+        let mut connection = self.connect().await.map_err(CallFailure::Connect)?;
         exchange_started.store(true, Ordering::Release);
-        let response = connection
+        connection
             .exchange(request)
             .await
-            .map_err(CallFailure::Exchange)?;
-        let mut pool = self.shared.pool.lock().await;
-        if pool.len() < 8 {
-            pool.push(connection);
-        }
-        Ok(response)
+            .map_err(CallFailure::Exchange)
     }
 
     async fn connect(&self) -> Result<Connection, ClientError> {
@@ -154,7 +142,6 @@ impl DaemonClient {
 
     async fn invalidate_transport(&self) {
         *self.shared.address.write().await = None;
-        self.shared.pool.lock().await.clear();
     }
 }
 

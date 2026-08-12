@@ -48,6 +48,32 @@ fn actor_order_defines_stable_roles() {
 }
 
 #[test]
+fn actor_add_rejects_a_malformed_web_model_target_store_without_overwriting_it() {
+    let (_temp, _home, store, group_id) = fixture();
+    store
+        .mutate(&group_id, |group| {
+            group.extra.insert(
+                "web_model_browser_targets".into(),
+                Value::String("malformed".into()),
+            );
+            Ok(())
+        })
+        .expect("malformed fixture");
+
+    assert!(
+        store
+            .mutate(&group_id, |group| actors::add(group, Actor::new("peer")))
+            .is_err()
+    );
+    let group = store.load(&group_id).expect("load rejected mutation");
+    assert!(group.actors.is_empty());
+    assert_eq!(
+        group.extra["web_model_browser_targets"],
+        Value::String("malformed".into())
+    );
+}
+
+#[test]
 fn context_sync_is_atomic_and_dry_run_does_not_persist() {
     let (_temp, home, _store, group_id) = fixture();
     let contexts = ContextStore::new(home).expect("contexts");

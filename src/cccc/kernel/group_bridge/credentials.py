@@ -17,6 +17,7 @@ import yaml
 from ...paths import ensure_home
 from ...util.fs import atomic_write_text
 from ...util.time import utc_now_iso
+from .state_lock import serialized_group_bridge_state
 
 _PAIRING_REF_PREFIX = "fsec_pairing_"
 _REMOTE_SEND_REF_PREFIX = "fsec_remote_send_"
@@ -28,20 +29,24 @@ def _path(home: Optional[Path] = None) -> Path:
     return base / "group_bridge_credentials.yaml"
 
 
+@serialized_group_bridge_state
 def _load(home: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
     path = _path(home)
     if not path.exists():
         return {}
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
+    except Exception as exc:
+        raise ValueError("group bridge credential store is invalid") from exc
     records = raw.get("credentials") if isinstance(raw, dict) else None
-    if not isinstance(records, dict):
+    if records is None:
         return {}
-    return {str(k): dict(v) for k, v in records.items() if isinstance(v, dict)}
+    if not isinstance(records, dict) or any(not isinstance(value, dict) for value in records.values()):
+        raise ValueError("group bridge credential store must contain a credentials mapping")
+    return {str(k): dict(v) for k, v in records.items()}
 
 
+@serialized_group_bridge_state
 def _save(records: Dict[str, Dict[str, Any]], home: Optional[Path] = None) -> None:
     atomic_write_text(_path(home), yaml.safe_dump({"credentials": records}, allow_unicode=True, sort_keys=True))
 
@@ -54,6 +59,7 @@ def _new_remote_send_token(records: Dict[str, Dict[str, Any]]) -> str:
             return token
 
 
+@serialized_group_bridge_state
 def save_pairing_bearer_token(
     *,
     local_group_id: str,
@@ -98,6 +104,7 @@ def resolve_group_bridge_credential(credential_ref: str, *, home: Optional[Path]
     return str(record.get("token") or "").strip()
 
 
+@serialized_group_bridge_state
 def create_pairing_remote_send_credential(
     *,
     group_id: str,
@@ -160,6 +167,7 @@ def lookup_pairing_remote_send_credential(token: str, *, home: Optional[Path] = 
     return None
 
 
+@serialized_group_bridge_state
 def delete_group_bridge_credential(credential_ref: str, *, home: Optional[Path] = None) -> bool:
     ref = str(credential_ref or "").strip()
     if not ref:

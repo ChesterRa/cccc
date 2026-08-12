@@ -23,6 +23,7 @@ from ...contracts.v1.group_bridge import RegistrationRecord
 from ...paths import ensure_home
 from ...util.fs import atomic_write_text
 from ...util.time import utc_now_iso
+from .state_lock import serialized_group_bridge_state
 
 _REG_PREFIX = "reg_"
 _DEFAULT_PORTS = {"http": 80, "https": 443}
@@ -88,20 +89,24 @@ def _registrations_path(home: Optional[Path] = None) -> Path:
     return base / "group_bridge_registrations.yaml"
 
 
+@serialized_group_bridge_state
 def load_registrations(home: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
     path = _registrations_path(home)
     if not path.exists():
         return {}
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
+    except Exception as exc:
+        raise ValueError("group bridge registration store is invalid") from exc
     records = raw.get("registrations") if isinstance(raw, dict) else None
-    if not isinstance(records, dict):
+    if records is None:
         return {}
-    return {str(k): dict(v) for k, v in records.items() if isinstance(v, dict)}
+    if not isinstance(records, dict) or any(not isinstance(value, dict) for value in records.values()):
+        raise ValueError("group bridge registration store must contain a registrations mapping")
+    return {str(k): dict(v) for k, v in records.items()}
 
 
+@serialized_group_bridge_state
 def _save_registrations(records: Dict[str, Dict[str, Any]], home: Optional[Path] = None) -> None:
     payload = {"registrations": {str(k): dict(v) for k, v in records.items()}}
     atomic_write_text(
@@ -140,6 +145,7 @@ def _new_registration_id(existing: Dict[str, Dict[str, Any]]) -> str:
             return candidate
 
 
+@serialized_group_bridge_state
 def upsert_registration(
     group_id: str,
     url: str,
@@ -212,6 +218,7 @@ def upsert_registration(
     return record.model_dump()
 
 
+@serialized_group_bridge_state
 def delete_registration(registration_id: str, home: Optional[Path] = None) -> bool:
     rid = str(registration_id or "").strip()
     if not rid:

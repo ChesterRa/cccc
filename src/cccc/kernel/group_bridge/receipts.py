@@ -20,6 +20,7 @@ import yaml
 
 from ...paths import ensure_home
 from ...util.fs import atomic_write_text
+from .state_lock import serialized_group_bridge_state
 
 # registration_id is always a fixed "reg_<hex>" shape, so the first separator
 # unambiguously delimits it from the (client-supplied) idempotency key.
@@ -40,20 +41,24 @@ def _compose_key(registration_id: str, idempotency_key: str) -> str:
     return f"{rid}{_KEY_SEP}{ik}"
 
 
+@serialized_group_bridge_state
 def load_receipts(home: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
     path = _receipts_path(home)
     if not path.exists():
         return {}
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
+    except Exception as exc:
+        raise ValueError("group bridge receipt store is invalid") from exc
     receipts = raw.get("receipts") if isinstance(raw, dict) else None
-    if not isinstance(receipts, dict):
+    if receipts is None:
         return {}
-    return {str(k): dict(v) for k, v in receipts.items() if isinstance(v, dict)}
+    if not isinstance(receipts, dict) or any(not isinstance(value, dict) for value in receipts.values()):
+        raise ValueError("group bridge receipt store must contain a receipts mapping")
+    return {str(k): dict(v) for k, v in receipts.items()}
 
 
+@serialized_group_bridge_state
 def _save_receipts(receipts: Dict[str, Dict[str, Any]], home: Optional[Path] = None) -> None:
     payload = {"receipts": {str(k): dict(v) for k, v in receipts.items()}}
     atomic_write_text(
@@ -68,6 +73,7 @@ def get_receipt(registration_id: str, idempotency_key: str, home: Optional[Path]
     return dict(entry) if isinstance(entry, dict) else None
 
 
+@serialized_group_bridge_state
 def record_receipt(
     registration_id: str,
     idempotency_key: str,
@@ -92,6 +98,7 @@ def record_receipt(
     return dict(entry), True
 
 
+@serialized_group_bridge_state
 def update_receipt(
     registration_id: str,
     idempotency_key: str,

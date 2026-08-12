@@ -6,6 +6,7 @@ import os
 import socket
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -219,6 +220,19 @@ class TestWebBindPreflight(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         server_instance.run.assert_called_once_with()
+
+    def test_malformed_token_store_allows_loopback_but_blocks_remote_listener(self) -> None:
+        from cccc.ports.web.runtime_control import web_listener_auth_error
+
+        home, cleanup = self._with_home()
+        try:
+            path = Path(home)
+            (path / "access_tokens.yaml").write_text("tokens: [", encoding="utf-8")
+            self.assertIsNone(web_listener_auth_error(home=path, host="127.0.0.1"))
+            error = web_listener_auth_error(home=path, host="0.0.0.0")
+            self.assertIn("access token store is unavailable", str(error or ""))
+        finally:
+            cleanup()
 
     def test_python_supervisor_refuses_remote_child_before_spawn(self) -> None:
         from pathlib import Path

@@ -35,7 +35,9 @@ def handle_group_set_state(
         old_state = get_group_state(group)
         group = set_group_state(group, state=state)
         new_state = get_group_state(group)
-        if old_state in ("idle", "paused") and new_state == "active":
+        if (old_state == "paused" and new_state in {"active", "idle"}) or (
+            old_state == "idle" and new_state == "active"
+        ):
             try:
                 automation_on_resume(group)
             except Exception:

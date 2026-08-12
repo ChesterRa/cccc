@@ -294,6 +294,61 @@ async fn legacy_flat_token_document_keeps_authentication_enabled() {
 }
 
 #[tokio::test]
+async fn malformed_token_document_fails_closed_without_leaking_parser_details() {
+    let (_temp, home) = home();
+    std::fs::write(home.root().join("access_tokens.yaml"), "tokens: [").expect("malformed fixture");
+
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::get("/api/v1/access-tokens")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(payload["error"]["code"], "auth_store_error");
+    assert_eq!(
+        payload["error"]["message"],
+        "access token store is unavailable"
+    );
+    assert!(!String::from_utf8_lossy(&body).contains("expected"));
+}
+
+#[tokio::test]
+async fn unavailable_daemon_response_does_not_expose_transport_paths() {
+    let (_temp, home) = home();
+    let home_path = home.root().display().to_string();
+
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::get("/api/v1/groups")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(payload["error"]["code"], "daemon_unavailable");
+    assert_eq!(payload["error"]["message"], "ccccd unavailable");
+    assert!(!String::from_utf8_lossy(&body).contains(&home_path));
+}
+
+#[tokio::test]
 async fn encoded_custom_token_authenticates_event_source_queries() {
     let (_temp, home) = home();
     AccessTokenStore::new(home.clone())
@@ -341,6 +396,59 @@ async fn cannot_delete_the_last_admin_while_scoped_tokens_remain() {
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(payload["error"]["code"], "last_admin_required");
+    assert!(
+        store
+            .lookup(&admin.token)
+            .expect("lookup")
+            .is_some_and(|token| token.is_admin)
+    );
+}
+
+#[tokio::test]
+async fn cannot_demote_the_last_admin_while_scoped_tokens_remain() {
+    let (_temp, home) = home();
+    let store = AccessTokenStore::new(home.clone()).expect("store");
+    let admin = store
+        .create("admin", Vec::new(), true, None)
+        .expect("admin");
+    store
+        .create("member", vec!["g_allowed".into()], false, None)
+        .expect("member");
+    let response = cccc_web::app(home)
+        .oneshot(
+            Request::patch(format!("/api/v1/access-tokens/{}", admin.token_id()))
+                .header(header::AUTHORIZATION, format!("Bearer {}", admin.token))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"is_admin":false,"allowed_groups":["g_allowed"]}"#,
+                ))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    let payload: Value = serde_json::from_slice(&body).expect("json");
+    assert_eq!(payload["error"]["code"], "last_admin_required");
+    assert!(
+        store
+            .lookup(&admin.token)
+            .expect("lookup")
+            .is_some_and(|token| token.is_admin)
+    );
 }
 
 fn home() -> (tempfile::TempDir, HomeLayout) {

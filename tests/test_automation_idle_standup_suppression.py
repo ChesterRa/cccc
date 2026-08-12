@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -178,6 +179,108 @@ class TestIdleStandupSuppression(unittest.TestCase):
             mgr._check_rules(group, later, group_state="idle")
             self.assertGreater(mock_append.call_count, 0,
                                "custom rule should still fire when idle")
+
+    def test_idle_custom_rule_is_durable_without_a_running_actor_process(self) -> None:
+        """Scheduled reminders belong to the ledger, not to a live PTY process."""
+        from cccc.daemon.automation.engine import AutomationManager
+        from cccc.kernel.group import set_group_state
+
+        at = (datetime.now(timezone.utc) - timedelta(minutes=1)).replace(microsecond=0)
+        group = self._create_group_with_actor_and_rules(
+            {
+                "rules": [
+                    {
+                        "id": "background_reminder",
+                        "enabled": True,
+                        "scope": "group",
+                        "to": ["@foreman"],
+                        "trigger": {"kind": "at", "at": at.isoformat().replace("+00:00", "Z")},
+                        "action": {"kind": "notify", "message": "persist me"},
+                    }
+                ],
+                "snippets": {},
+            }
+        )
+        set_group_state(group, state="idle")
+
+        manager = AutomationManager()
+        with (
+            patch("cccc.daemon.automation.engine.append_event", return_value={"id": "ev1", "ts": ""}) as append,
+            patch("cccc.daemon.automation.engine.pty_runner.SUPERVISOR.group_running", return_value=False),
+            patch("cccc.daemon.automation.engine.headless_runner.SUPERVISOR.group_running", return_value=False),
+            patch("cccc.daemon.automation.engine.pty_runner.SUPERVISOR.actor_running", return_value=False),
+            patch("cccc.daemon.automation.engine.headless_runner.SUPERVISOR.actor_running", return_value=False),
+            patch("cccc.daemon.automation.engine._queue_notify_to_pty"),
+        ):
+            manager.tick(home=Path(self._td.name))
+
+        append.assert_called_once()
+
+    def test_resume_keeps_a_future_one_time_rule_eligible(self) -> None:
+        """Resetting cadence on resume must not complete a future one-time rule."""
+        from cccc.daemon.automation.engine import AutomationManager
+
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        future = now + timedelta(hours=1)
+        group = self._create_group_with_actor_and_rules(
+            {
+                "rules": [
+                    {
+                        "id": "future_once",
+                        "enabled": True,
+                        "scope": "group",
+                        "to": ["@foreman"],
+                        "trigger": {"kind": "at", "at": future.isoformat().replace("+00:00", "Z")},
+                        "action": {"kind": "notify", "message": "future"},
+                    }
+                ],
+                "snippets": {},
+            }
+        )
+        manager = AutomationManager()
+        manager.on_resume(group)
+
+        with (
+            patch("cccc.daemon.automation.engine.append_event", return_value={"id": "ev1", "ts": ""}) as append,
+            patch("cccc.daemon.automation.engine.pty_runner.SUPERVISOR.actor_running", return_value=True),
+            patch("cccc.daemon.automation.engine._queue_notify_to_pty"),
+        ):
+            manager._check_rules(group, future + timedelta(seconds=1))
+
+        append.assert_called_once()
+
+    def test_resume_does_not_catch_up_a_missed_one_time_rule(self) -> None:
+        """A paused group must not execute stale one-time work when it resumes."""
+        from cccc.daemon.automation.engine import AutomationManager
+
+        now = datetime.now(timezone.utc).replace(microsecond=0)
+        past = now - timedelta(hours=1)
+        group = self._create_group_with_actor_and_rules(
+            {
+                "rules": [
+                    {
+                        "id": "missed_once",
+                        "enabled": True,
+                        "scope": "group",
+                        "to": ["@foreman"],
+                        "trigger": {"kind": "at", "at": past.isoformat().replace("+00:00", "Z")},
+                        "action": {"kind": "notify", "message": "stale"},
+                    }
+                ],
+                "snippets": {},
+            }
+        )
+        manager = AutomationManager()
+        manager.on_resume(group)
+
+        with (
+            patch("cccc.daemon.automation.engine.append_event", return_value={"id": "ev1", "ts": ""}) as append,
+            patch("cccc.daemon.automation.engine.pty_runner.SUPERVISOR.actor_running", return_value=True),
+            patch("cccc.daemon.automation.engine._queue_notify_to_pty"),
+        ):
+            manager._check_rules(group, now + timedelta(seconds=1))
+
+        append.assert_not_called()
 
     def test_idle_suppressed_rule_ids_contains_standup(self) -> None:
         """Verify the suppression set includes 'standup'."""

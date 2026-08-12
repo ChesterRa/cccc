@@ -163,6 +163,27 @@ class TestKeyManagerPersistence(unittest.TestCase):
         self.assertIsNotNone(meta)
         self.assertEqual(meta["chat_id"], "123")
 
+    def test_stale_manager_snapshot_does_not_drop_another_pending_key(self) -> None:
+        first = KeyManager(self.state_dir)
+        second = KeyManager(self.state_dir)
+
+        first.generate_key("chat-a", 0, "telegram")
+        second.generate_key("chat-b", 0, "telegram")
+
+        self.assertEqual(
+            {item["chat_id"] for item in KeyManager(self.state_dir).list_pending()},
+            {"chat-a", "chat-b"},
+        )
+
+    def test_long_lived_manager_observes_external_revoke(self) -> None:
+        writer = KeyManager(self.state_dir)
+        writer.authorize_direct("chat", 0, "telegram", "test")
+        long_lived = KeyManager(self.state_dir)
+
+        self.assertTrue(KeyManager(self.state_dir).revoke("chat", 0))
+
+        self.assertFalse(long_lived.is_authorized("chat", 0, "telegram"))
+
 
 class TestKeyManagerExpiry(unittest.TestCase):
     """Key TTL enforcement."""
@@ -511,6 +532,76 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         bridge._process_outbound()
 
         self.assertEqual(adapter.sent_messages, [])
+
+    def test_rust_paused_subscription_blocks_python_outbound(self) -> None:
+        from cccc.ports.im.bridge import IMBridge
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        km = KeyManager(self.state_dir)
+        key = km.generate_key("chat_auth", 0, "telegram")
+        km.authorize("chat_auth", 0, "telegram", key)
+        (self.state_dir / "im_subscribers.json").write_text(
+            json.dumps(
+                {
+                    "chat_auth": {
+                        "chat_id": "chat_auth",
+                        "thread_id": 0,
+                        "platform": "telegram",
+                        "subscribed": True,
+                        "paused": True,
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        paused = SubscriberManager(self.state_dir)
+        self.assertTrue(paused.is_paused("chat_auth"))
+        self.assertEqual(paused.count(), 1)
+
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={"title": "demo", "im": {}},
+        )
+        adapter = self._FakeAdapter()
+        bridge = IMBridge(group=fake_group, adapter=adapter)
+        bridge._forward_event(
+            {
+                "kind": "chat.message",
+                "by": "foreman",
+                "data": {"text": "hello", "to": ["user"], "attachments": []},
+            }
+        )
+
+        self.assertEqual(adapter.sent_messages, [])
+
+    def test_pause_and_resume_change_only_the_chat_subscription(self) -> None:
+        from cccc.ports.im.bridge import IMBridge
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        km = KeyManager(self.state_dir)
+        key = km.generate_key("chat_auth", 0, "telegram")
+        km.authorize("chat_auth", 0, "telegram", key)
+        SubscriberManager(self.state_dir).subscribe(
+            "chat_auth", chat_title="auth", thread_id=0, platform="telegram"
+        )
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={"title": "demo", "im": {}},
+        )
+        adapter = self._FakeAdapter()
+        bridge = IMBridge(group=fake_group, adapter=adapter)
+        bridge._daemon = lambda _req: self.fail(
+            "chat pause must not mutate group state"
+        )  # type: ignore[method-assign]
+
+        bridge._handle_pause("chat_auth")
+        self.assertTrue(SubscriberManager(self.state_dir).is_paused("chat_auth"))
+        bridge._handle_resume("chat_auth")
+        self.assertFalse(SubscriberManager(self.state_dir).is_paused("chat_auth"))
 
     def test_outbound_header_uses_actor_title_first(self) -> None:
         from cccc.ports.im.bridge import IMBridge
@@ -956,8 +1047,8 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         key = km_daemon.generate_key("chat_ext", 0, "telegram")
         km_daemon.authorize("chat_ext", 0, "telegram", key)
 
-        # Bridge's in-memory state does NOT have this authorization.
-        self.assertFalse(bridge.key_manager.is_authorized("chat_ext", 0))
+        # Long-lived bridge state follows the current canonical authorization.
+        self.assertTrue(bridge.key_manager.is_authorized("chat_ext", 0))
 
         # User sends /unsubscribe — bridge must reload and then revoke.
         bridge._handle_unsubscribe("chat_ext", thread_id=0)

@@ -34,7 +34,7 @@ from ...contracts.v1 import SystemNotifyData
 from ...kernel.actors import find_actor, list_actors
 from ...kernel.delivery_policy import auto_mark_on_delivery_from_doc
 from ...kernel.group import Group, get_group_state, load_group, set_group_state
-from ...kernel.inbox import cursor_covers_event, get_cursor, is_message_for_actor, set_cursor
+from ...kernel.inbox import cursor_covers_event, get_cursor, is_message_for_actor, set_cursor, unread_messages
 from ...kernel.ledger import append_event
 from ...kernel.runtime import (
     build_prompt_assisted_mcp_setup_prompt,
@@ -405,6 +405,19 @@ class DeliveryThrottle:
             state = self._get_state(group_id, actor_id)
             logger.debug(f"[THROTTLE] requeue_front: {group_id}/{actor_id} requeue={len(messages)} existing={len(state.pending_messages)}")
             state.pending_messages = list(messages) + state.pending_messages
+
+    def recover_front(self, group_id: str, actor_id: str, messages: List[PendingMessage]) -> int:
+        """Prepend canonical unread work without duplicating queued event IDs."""
+        if not messages:
+            return 0
+        with self._lock:
+            state = self._get_state(group_id, actor_id)
+            if state.delivery_inflight:
+                return 0
+            existing_ids = {str(item.event_id or "") for item in state.pending_messages}
+            recovered = [item for item in messages if str(item.event_id or "") not in existing_ids]
+            state.pending_messages = recovered + state.pending_messages
+            return len(recovered)
 
     def mark_delivered(self, group_id: str, actor_id: str) -> None:
         """Mark a successful delivery timestamp for an actor."""
@@ -942,6 +955,88 @@ def queue_system_notify(
     )
 
 
+def recover_unread_pty_messages(group: Group, *, actor_id: str, limit: int = 256) -> int:
+    """Rebuild a lost in-memory PTY queue from the canonical inbox."""
+    aid = str(actor_id or "").strip()
+    actor = find_actor(group, aid)
+    if not aid or not isinstance(actor, dict):
+        return 0
+    if not bool(actor.get("enabled", True)) or str(actor.get("runner") or "pty").strip() != "pty":
+        return 0
+    from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
+    from .actor_turn_rendering import build_actor_delivery_text
+
+    if actor_uses_codex_app_server_state(actor):
+        return 0
+
+    recovered: List[PendingMessage] = []
+    for event in unread_messages(group, actor_id=aid, limit=max(1, int(limit or 256)), kind_filter="all"):
+        event_id = str(event.get("id") or "").strip()
+        event_ts = str(event.get("ts") or "").strip()
+        kind = str(event.get("kind") or "").strip()
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        if not event_id:
+            continue
+        if kind == "chat.message":
+            refs = [item for item in data.get("refs", []) if isinstance(item, dict)] if isinstance(data.get("refs"), list) else []
+            attachments = (
+                [item for item in data.get("attachments", []) if isinstance(item, dict)]
+                if isinstance(data.get("attachments"), list)
+                else []
+            )
+            remote_reply_to = (
+                [str(item or "").strip() for item in data.get("remote_reply_to", []) if str(item or "").strip()]
+                if isinstance(data.get("remote_reply_to"), list)
+                else []
+            )
+            recipients = (
+                [str(item or "").strip() for item in data.get("to", []) if str(item or "").strip()]
+                if isinstance(data.get("to"), list)
+                else [aid]
+            )
+            recovered.append(PendingMessage(
+                event_id=event_id,
+                by=str(event.get("by") or "user").strip() or "user",
+                to=recipients or [aid],
+                text=build_actor_delivery_text(
+                    text=str(data.get("text") or ""),
+                    insight=data.get("insight"),
+                    priority=str(data.get("priority") or "normal"),
+                    reply_required=bool(data.get("reply_required")),
+                    event_id=event_id,
+                    refs=refs,
+                    attachments=attachments,
+                    src_group_id=str(data.get("src_group_id") or ""),
+                    src_event_id=str(data.get("src_event_id") or ""),
+                    remote_reply_to=remote_reply_to,
+                ),
+                reply_to=str(data.get("reply_to") or "") or None,
+                quote_text=str(data.get("quote_text") or "") or None,
+                source_platform=str(data.get("source_platform") or "") or None,
+                source_user_name=str(data.get("source_user_name") or "") or None,
+                source_user_id=str(data.get("source_user_id") or "") or None,
+                ts=event_ts,
+            ))
+            continue
+        if kind == "system.notify":
+            try:
+                notify = SystemNotifyData.model_validate(data)
+            except Exception:
+                continue
+            recovered.append(PendingMessage(
+                event_id=event_id,
+                by="system",
+                to=[aid],
+                text="",
+                kind="system.notify",
+                notify_kind=str(notify.kind),
+                notify_title=str(notify.title or ""),
+                notify_message=_render_system_notify_message_for_delivery(notify=notify, group=group),
+                ts=event_ts,
+            ))
+    return THROTTLE.recover_front(group.group_id, aid, recovered)
+
+
 def dispatch_system_notify_event_to_actor(
     group: Group,
     *,
@@ -1087,16 +1182,17 @@ def _finalize_delivery_success(
     chat_total: int,
     deliverable: List[PendingMessage],
     requeue: List[PendingMessage],
-) -> None:
+) -> bool:
     """Record a successful delivery attempt and preserve blocked messages."""
     gid = str(group.group_id or "").strip()
     aid = str(actor_id or "").strip()
+    cursor_covered = False
     if chat_total > 0:
         THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
     THROTTLE.mark_delivered(gid, aid)
     if _get_auto_mark_on_delivery(group) and deliverable:
         last_msg = deliverable[-1]
-        maybe_auto_mark_delivered_event(
+        cursor_covered = maybe_auto_mark_delivered_event(
             group,
             actor_id=aid,
             event_id=str(last_msg.event_id or ""),
@@ -1104,6 +1200,7 @@ def _finalize_delivery_success(
         )
     if requeue:
         THROTTLE.requeue_front(gid, aid, requeue)
+    return cursor_covered
 
 
 def maybe_auto_mark_delivered_event(
@@ -1179,11 +1276,13 @@ def auto_mark_headless_delivery_started(
     )
 
 
-def _finish_delivery_chain(group: Group, *, actor_id: str) -> None:
+def _finish_delivery_chain(group: Group, *, actor_id: str, reload_unread: bool = False) -> None:
     """Release delivery ownership and opportunistically continue queued work."""
     gid = str(group.group_id or "").strip()
     aid = str(actor_id or "").strip()
     THROTTLE.end_delivery(gid, aid)
+    if reload_unread:
+        recover_unread_pty_messages(group, actor_id=aid)
     if not THROTTLE.has_pending(gid, aid):
         return
     try:
@@ -1214,6 +1313,7 @@ def _start_async_first_delivery(
     aid = str(actor_id or "").strip()
 
     def worker() -> None:
+        reload_unread = False
         try:
             prompt = _render_delivery_preamble(group, actor)
             if prompt and prompt.strip():
@@ -1225,7 +1325,7 @@ def _start_async_first_delivery(
                 logger.debug(f"[flush] {gid}/{aid} preamble sent in background, will send message after delay")
 
             if not message_text:
-                _finalize_delivery_success(
+                reload_unread = _finalize_delivery_success(
                     group,
                     actor_id=aid,
                     chat_total=chat_total,
@@ -1243,7 +1343,7 @@ def _start_async_first_delivery(
             logger.debug(f"[flush] {gid}/{aid} sending delayed first message now")
             ok = bool(pty_submit_text(group, actor_id=aid, text=message_text, wait_for_submit=True))
             if ok:
-                _finalize_delivery_success(
+                reload_unread = _finalize_delivery_success(
                     group,
                     actor_id=aid,
                     chat_total=chat_total,
@@ -1259,7 +1359,7 @@ def _start_async_first_delivery(
             THROTTLE.requeue_front(gid, aid, messages)
             logger.exception("[flush] first delivery worker failed gid=%s aid=%s", gid, aid)
         finally:
-            _finish_delivery_chain(group, actor_id=aid)
+            _finish_delivery_chain(group, actor_id=aid, reload_unread=reload_unread)
 
     thread = threading.Thread(target=worker, name=f"cccc-delivery-{gid}-{aid}", daemon=True)
     thread.start()
@@ -1287,6 +1387,7 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         return False
 
     background_started = False
+    reload_unread = False
     try:
         # Boundary: the synchronous send path only guarantees durable append + enqueue.
         # Any PTY worker timing after that point must stay inside the delivery layer.
@@ -1375,7 +1476,7 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         if message_text:
             delivered = bool(pty_submit_text(group, actor_id=aid, text=message_text, wait_for_submit=True))
             if delivered:
-                _finalize_delivery_success(
+                reload_unread = _finalize_delivery_success(
                     group,
                     actor_id=aid,
                     chat_total=chat_total,
@@ -1390,6 +1491,8 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
     finally:
         if not background_started:
             THROTTLE.end_delivery(gid, aid)
+            if reload_unread:
+                recover_unread_pty_messages(group, actor_id=aid)
 
 
 def request_flush_pending_messages(group: Group, *, actor_id: str) -> bool:

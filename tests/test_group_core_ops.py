@@ -7,6 +7,22 @@ import errno
 import shutil
 
 
+class _FakePresentationRuntime:
+    strategy = "fake_cdp"
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def current_url(self) -> str:
+        return "http://127.0.0.1:3000"
+
+    def capture_frame(self) -> bytes:
+        return b"frame"
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class TestGroupCoreOps(unittest.TestCase):
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
@@ -357,6 +373,10 @@ class TestGroupCoreOps(unittest.TestCase):
     def test_group_delete_clears_active_and_removes_group(self) -> None:
         from cccc.kernel.active import load_active, set_active_group_id
         from cccc.kernel.group import load_group
+        from cccc.kernel.web_model_connectors import (
+            create_web_model_connector,
+            verify_web_model_connector_secret,
+        )
 
         _, cleanup = self._with_home()
         try:
@@ -364,6 +384,24 @@ class TestGroupCoreOps(unittest.TestCase):
             self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
             group_id = str((create_resp.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
+
+            actor_resp, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "web1",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "enabled": False,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(actor_resp.ok, getattr(actor_resp, "error", None))
+            connector = create_web_model_connector(
+                group_id=group_id,
+                actor_id="web1",
+                provider="chatgpt",
+            )
 
             set_active_group_id(group_id)
             self.assertEqual(str(load_active().get("active_group_id") or ""), group_id)
@@ -374,11 +412,91 @@ class TestGroupCoreOps(unittest.TestCase):
 
             self.assertIsNone(load_group(group_id))
             self.assertEqual(str(load_active().get("active_group_id") or ""), "")
+            self.assertIsNone(
+                verify_web_model_connector_secret(
+                    str(connector.get("connector_id") or ""),
+                    str(connector.get("secret") or ""),
+                )
+            )
 
             show_resp, _ = self._call("group_show", {"group_id": group_id})
             self.assertFalse(show_resp.ok)
             self.assertEqual((show_resp.error.code if show_resp.error else ""), "group_not_found")
         finally:
+            cleanup()
+
+    def test_group_delete_closes_its_presentation_browser_sessions(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as browser_runtime
+        from cccc.daemon.group import presentation_browser_runtime as presentation
+
+        _, cleanup = self._with_home()
+        fake = _FakePresentationRuntime()
+        try:
+            create_resp, _ = self._call(
+                "group_create",
+                {"title": "delete-browser", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "")
+            with patch.object(
+                browser_runtime,
+                "launch_projected_browser_runtime",
+                return_value=fake,
+            ):
+                opened = presentation.open_browser_surface_session(
+                    group_id=group_id,
+                    slot_id="slot-1",
+                    url="http://127.0.0.1:3000",
+                    width=1280,
+                    height=800,
+                )
+            self.assertEqual(opened.get("state"), "ready")
+
+            deleted, _ = self._call(
+                "group_delete", {"group_id": group_id, "by": "user"}
+            )
+
+            self.assertTrue(deleted.ok, getattr(deleted, "error", None))
+            self.assertTrue(fake.closed)
+        finally:
+            presentation.close_all_browser_surface_sessions()
+            cleanup()
+
+    def test_group_reset_closes_source_presentation_browser_sessions(self) -> None:
+        from cccc.daemon.browser import projected_browser_runtime as browser_runtime
+        from cccc.daemon.group import presentation_browser_runtime as presentation
+
+        _, cleanup = self._with_home()
+        fake = _FakePresentationRuntime()
+        try:
+            create_resp, _ = self._call(
+                "group_create",
+                {"title": "reset-browser", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+            group_id = str((create_resp.result or {}).get("group_id") or "")
+            with patch.object(
+                browser_runtime,
+                "launch_projected_browser_runtime",
+                return_value=fake,
+            ):
+                presentation.open_browser_surface_session(
+                    group_id=group_id,
+                    slot_id="slot-1",
+                    url="http://127.0.0.1:3000",
+                    width=1280,
+                    height=800,
+                )
+
+            reset, _ = self._call(
+                "group_reset",
+                {"group_id": group_id, "confirm": group_id, "by": "user"},
+            )
+
+            self.assertTrue(reset.ok, getattr(reset, "error", None))
+            self.assertTrue(fake.closed)
+        finally:
+            presentation.close_all_browser_surface_sessions()
             cleanup()
 
     def test_group_delete_tolerates_transient_directory_not_empty(self) -> None:
@@ -456,9 +574,19 @@ class TestGroupCoreOps(unittest.TestCase):
 
     def test_group_delete_restores_group_routing_and_secrets_when_registry_save_fails(self) -> None:
         from cccc.daemon.actors.private_env_ops import load_actor_private_env
+        from cccc.daemon.space.group_space_store import (
+            enqueue_space_job,
+            get_space_binding,
+            list_space_jobs,
+            upsert_space_binding,
+        )
         from cccc.kernel.active import load_active, set_active_group_id
         from cccc.kernel.group import load_group
         from cccc.kernel.registry import load_registry
+        from cccc.kernel.web_model_connectors import (
+            create_web_model_connector,
+            verify_web_model_connector_secret,
+        )
 
         home_raw, cleanup = self._with_home()
         try:
@@ -483,6 +611,30 @@ class TestGroupCoreOps(unittest.TestCase):
                 },
             )
             self.assertTrue(added.ok, getattr(added, "error", None))
+            connector = create_web_model_connector(
+                group_id=group_id,
+                actor_id="rollback-peer",
+                provider="chatgpt",
+            )
+            upsert_space_binding(
+                group_id,
+                provider="notebooklm",
+                lane="work",
+                remote_space_id="nb-rollback",
+                by="user",
+            )
+            job, deduped = enqueue_space_job(
+                group_id=group_id,
+                provider="notebooklm",
+                lane="work",
+                remote_space_id="nb-rollback",
+                kind="context_sync",
+                payload={"title": "rollback"},
+                idempotency_key="group-delete-rollback",
+            )
+            self.assertFalse(deduped)
+            payload_ref = str(job.get("payload_ref") or "")
+            self.assertTrue(payload_ref)
             set_active_group_id(group_id)
             registry_text_before = (home / "registry.json").read_text(encoding="utf-8")
 
@@ -507,6 +659,28 @@ class TestGroupCoreOps(unittest.TestCase):
                 load_actor_private_env(group_id, "rollback-peer").get("ROLLBACK_SECRET"),
                 "preserve-me",
             )
+            self.assertIsNotNone(
+                verify_web_model_connector_secret(
+                    str(connector.get("connector_id") or ""),
+                    str(connector.get("secret") or ""),
+                )
+            )
+            self.assertEqual(
+                str(
+                    (
+                        get_space_binding(
+                            group_id,
+                            provider="notebooklm",
+                            lane="work",
+                        )
+                        or {}
+                    ).get("remote_space_id")
+                    or ""
+                ),
+                "nb-rollback",
+            )
+            self.assertEqual(len(list_space_jobs(group_id=group_id)), 1)
+            self.assertTrue((home / "state" / "space" / "job_payloads" / payload_ref).is_file())
 
             retried, _ = self._call(
                 "group_delete", {"group_id": group_id, "by": "user"}
@@ -516,6 +690,21 @@ class TestGroupCoreOps(unittest.TestCase):
             self.assertNotIn(group_id, load_registry().groups)
             self.assertEqual(str(load_active().get("active_group_id") or ""), "")
             self.assertEqual(load_actor_private_env(group_id, "rollback-peer"), {})
+            self.assertIsNone(
+                verify_web_model_connector_secret(
+                    str(connector.get("connector_id") or ""),
+                    str(connector.get("secret") or ""),
+                )
+            )
+            self.assertIsNone(
+                get_space_binding(
+                    group_id,
+                    provider="notebooklm",
+                    lane="work",
+                )
+            )
+            self.assertEqual(list_space_jobs(group_id=group_id), [])
+            self.assertFalse((home / "state" / "space" / "job_payloads" / payload_ref).exists())
         finally:
             cleanup()
 

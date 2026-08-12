@@ -4,7 +4,7 @@ use serde::Serialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, SyncSender, TrySendError};
+use std::sync::mpsc::{self, RecvTimeoutError, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::ops::actor_delivery_worker;
@@ -18,6 +18,7 @@ const QUEUE_CAPACITY: usize = 256;
 const COMPLETION_CAPACITY: usize = 4096;
 const BATCH_CAPACITY: usize = 64;
 const BATCH_WINDOW: std::time::Duration = std::time::Duration::from_millis(250);
+const DEFERRED_RETRY_MAX: std::time::Duration = std::time::Duration::from_secs(4);
 
 type Key = (String, String);
 
@@ -159,6 +160,53 @@ pub fn dispatch(home: &HomeLayout, group: &GroupDoc, event: &Event) -> DispatchR
     report(targets.len(), online, queued)
 }
 
+pub fn dispatch_unread(home: &HomeLayout, group: &GroupDoc, actor_id: &str) -> usize {
+    if matches!(group.state, GroupState::Paused | GroupState::Stopped) {
+        return 0;
+    }
+    let Some(actor) = group.actors.iter().find(|actor| actor.id == actor_id) else {
+        return 0;
+    };
+    if !actor.enabled
+        || (crate::ops::actor_runtime::is_structured(actor)
+            && !crate::ops::local_headless::supports(actor))
+    {
+        return 0;
+    }
+    let events = match inbox::list_unread(home, group, actor_id, QUEUE_CAPACITY, "all") {
+        Ok(events) => events,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                group_id = %group.group_id,
+                %actor_id,
+                "failed to reload unread runtime deliveries"
+            );
+            return 0;
+        }
+    };
+    events
+        .into_iter()
+        .filter(|event| matches!(event.kind.as_str(), "chat.message" | "system.notify"))
+        .filter(|event| {
+            enqueue(DeliveryJob {
+                home: home.clone(),
+                group: group.clone(),
+                actor: actor.clone(),
+                event: event.clone(),
+            })
+        })
+        .count()
+}
+
+pub fn dispatch_group_unread(home: &HomeLayout, group: &GroupDoc) -> usize {
+    group
+        .actors
+        .iter()
+        .map(|actor| dispatch_unread(home, group, &actor.id))
+        .sum()
+}
+
 fn report(targeted: usize, online: usize, queued: usize) -> DispatchReport {
     let state = if queued > 0 {
         "queued"
@@ -245,19 +293,40 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
     let thread = std::thread::Builder::new().name(name).spawn(move || {
         let mut preamble_session = String::new();
         let mut last_delivery = None;
+        let mut deferred = Vec::new();
+        let mut deferred_failures: u32 = 0;
         while !thread_cancelled.load(Ordering::Acquire) {
-            let Ok(job) = receiver.recv() else {
-                break;
+            let mut batch = if deferred.is_empty() {
+                let Ok(job) = receiver.recv() else {
+                    break;
+                };
+                vec![job]
+            } else {
+                match receiver.recv_timeout(deferred_retry_delay(deferred_failures)) {
+                    Ok(job) => {
+                        let mut batch = std::mem::take(&mut deferred);
+                        batch.push(job);
+                        batch
+                    }
+                    Err(RecvTimeoutError::Timeout) => std::mem::take(&mut deferred),
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
             };
             if !actor_delivery_worker::wait_for_delivery_slot(
-                &job,
+                &batch[0],
                 &last_delivery,
                 &thread_cancelled,
             ) {
-                release_in_flight(&job);
+                if thread_cancelled.load(Ordering::Acquire) {
+                    for job in &batch {
+                        release_in_flight(job);
+                    }
+                    break;
+                }
+                deferred = batch;
+                deferred_failures = deferred_failures.saturating_add(1);
                 continue;
             }
-            let mut batch = vec![job];
             if batch[0].actor.runtime != ActorRuntime::Custom
                 && !crate::ops::local_headless::supports(&batch[0].actor)
             {
@@ -297,10 +366,14 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
                 }
             }
             if !delivered {
-                for job in &batch {
-                    release_in_flight(job);
-                }
+                deferred = batch;
+                deferred_failures = deferred_failures.saturating_add(1);
+            } else {
+                deferred_failures = 0;
             }
+        }
+        for job in &deferred {
+            release_in_flight(job);
         }
     });
     let thread = match thread {
@@ -317,9 +390,16 @@ fn spawn_worker(key: &Key) -> DeliveryWorker {
     }
 }
 
+fn deferred_retry_delay(failures: u32) -> std::time::Duration {
+    let exponent = failures.saturating_sub(1).min(4);
+    let delay = std::time::Duration::from_millis(250 * (1_u64 << exponent));
+    delay.min(DEFERRED_RETRY_MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cccc_core::Scope;
 
     #[test]
     fn delivery_settings_prefer_canonical_section_and_read_legacy_flat_value() {
@@ -341,5 +421,108 @@ mod tests {
             delivery_setting(&group, "min_interval_seconds").and_then(|value| value.as_u64()),
             Some(7)
         );
+    }
+
+    #[test]
+    fn actor_activation_can_reload_canonical_unread_work() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("unread activation", "").expect("group");
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::Custom;
+        actor.command = vec!["sh".into(), "-c".into(), "sleep 30".into()];
+        group.actors.push(actor);
+        store.save(&group).expect("save actor");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({"to":["peer1"],"text":"recover me"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        ledger::append(
+            &store.ledger_path(&group.group_id).expect("ledger path"),
+            &event,
+        )
+        .expect("append message");
+
+        assert_eq!(dispatch_unread(&home, &group, "peer1"), 1);
+        assert!(in_flight().lock().expect("in flight").contains(&(
+            group.group_id.clone(),
+            "peer1".into(),
+            event.id.clone(),
+        )));
+
+        shutdown_actor(&group.group_id, "peer1");
+        let _ = cccc_runtime::stop(&group.group_id, "peer1");
+    }
+
+    #[test]
+    fn deferred_delivery_retries_without_waiting_for_another_message() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workspace = temp.path().join("workspace");
+        std::fs::create_dir(&workspace).expect("workspace");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home.clone()).expect("store");
+        let mut group = store.create("deferred retry", "").expect("group");
+        let mut actor = Actor::new("peer1");
+        actor.runtime = ActorRuntime::Custom;
+        actor.command = vec!["sh".into(), "-c".into(), "sleep 30".into()];
+        group.actors.push(actor);
+        group.scopes.push(Scope {
+            scope_key: "scope".into(),
+            url: workspace.to_string_lossy().into_owned(),
+            label: "workspace".into(),
+            git_remote: String::new(),
+        });
+        group.active_scope_key = "scope".into();
+        store.save(&group).expect("save actor");
+        let mut event = Event::new("chat.message", &group.group_id);
+        event.by = "user".into();
+        event.data = json!({"to":["peer1"],"text":"retry without a new event"})
+            .as_object()
+            .cloned()
+            .expect("event data");
+        ledger::append(
+            &store.ledger_path(&group.group_id).expect("ledger path"),
+            &event,
+        )
+        .expect("append message");
+
+        let group_path = store
+            .group_dir(&group.group_id)
+            .expect("group dir")
+            .join("group.yaml");
+        let hidden_path = group_path.with_extension("yaml.hidden");
+        std::fs::rename(&group_path, &hidden_path).expect("hide group state");
+        assert_eq!(dispatch_unread(&home, &group, "peer1"), 1);
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        std::fs::rename(&hidden_path, &group_path).expect("restore group state");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let completed = completions()
+                .lock()
+                .expect("completions")
+                .iter()
+                .any(|item| item.event_id == event.id);
+            if completed || std::time::Instant::now() >= deadline {
+                assert!(completed, "deferred delivery was not retried");
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+
+        shutdown_actor(&group.group_id, "peer1");
+        let _ = cccc_runtime::stop(&group.group_id, "peer1");
+    }
+
+    #[test]
+    fn deferred_retry_backoff_is_bounded() {
+        assert_eq!(
+            deferred_retry_delay(1),
+            std::time::Duration::from_millis(250)
+        );
+        assert_eq!(deferred_retry_delay(u32::MAX), DEFERRED_RETRY_MAX);
     }
 }

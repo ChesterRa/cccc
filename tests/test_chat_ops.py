@@ -1296,6 +1296,37 @@ class TestChatOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_tracked_send_preserves_group_state_at_accept(self) -> None:
+        from cccc.kernel.group import get_group_state, load_group
+
+        group_id, cleanup = self._setup_group_with_actors()
+        try:
+            set_idle, _ = self._call(
+                "group_set_state",
+                {"group_id": group_id, "state": "idle", "by": "user"},
+            )
+            self.assertTrue(set_idle.ok, getattr(set_idle, "error", None))
+
+            sent, _ = self._call(
+                "tracked_send",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "to": ["user"],
+                    "title": "Accepted while active",
+                    "text": "Do not undo a later idle transition.",
+                    "__group_state_at_accept": "active",
+                },
+            )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            self.assertTrue((sent.result or {}).get("message_sent"))
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            self.assertEqual(get_group_state(group), "idle")
+        finally:
+            cleanup()
+
     def test_tracked_send_replay_does_not_duplicate_successful_request(self) -> None:
         group_id, cleanup = self._setup_group_with_actors()
         try:

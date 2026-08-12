@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import find_actor
 from ...kernel.group import load_group
+from ..browser.projected_browser_runtime import validate_projected_browser_url
 from .presentation_browser_runtime import (
     close_browser_surface_session,
     get_browser_surface_session_state,
@@ -48,6 +49,10 @@ def handle_presentation_browser_open(args: Dict[str, Any]) -> DaemonResponse:
         return _error("missing_group_id", "missing group_id")
     if not url:
         return _error("missing_url", "missing url")
+    try:
+        url = validate_projected_browser_url(url)
+    except ValueError as exc:
+        return _error("invalid_url", str(exc))
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")

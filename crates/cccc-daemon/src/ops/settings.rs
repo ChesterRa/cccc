@@ -173,18 +173,19 @@ fn global_update(home: &HomeLayout, request: &DaemonRequest, key: &str) -> OpRes
         ));
     }
     let patch = patch(request)?;
-    let mut global = settings::load(home).map_err(OpError::io)?;
-    let target = if key == "branding" {
-        &mut global.branding
-    } else {
-        &mut global.observability
-    };
-    settings::merge(target, &patch);
-    if key == "branding" {
-        cccc_core::branding::touch(target);
-    }
-    let result = target.clone();
-    settings::save(home, &global).map_err(OpError::io)?;
+    let result = settings::update(home, |global| {
+        let target = if key == "branding" {
+            &mut global.branding
+        } else {
+            &mut global.observability
+        };
+        settings::merge(target, &patch);
+        if key == "branding" {
+            cccc_core::branding::touch(target);
+        }
+        Ok(target.clone())
+    })
+    .map_err(OpError::io)?;
     object(json!({key: result}))
 }
 

@@ -31,6 +31,7 @@ impl AuthFlowManager {
             )
             .await;
             remove_profile(&context.profile).await;
+            self.clear_active(&context.session_id).await;
             return;
         }
         if self
@@ -38,6 +39,7 @@ impl AuthFlowManager {
             .await
         {
             remove_profile(&context.profile).await;
+            self.clear_active(&context.session_id).await;
             return;
         }
         self.update(
@@ -61,6 +63,7 @@ impl AuthFlowManager {
                 profile = %context.profile.display(),
                 "keeping NotebookLM auth profile because the previous browser did not close cleanly"
             );
+            self.clear_active(&context.session_id).await;
             return;
         }
         let storage_state = saved_raw
@@ -87,6 +90,7 @@ impl AuthFlowManager {
             )
             .await;
             remove_profile(&context.profile).await;
+            self.clear_active(&context.session_id).await;
             return;
         }
         self.update(

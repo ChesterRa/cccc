@@ -2,7 +2,7 @@ use cccc_contracts::{Actor, ActorRuntime, DaemonRequest, Event};
 use cccc_core::actors;
 use cccc_core::ledger;
 use cccc_core::permissions::{self, ActorAction};
-use cccc_core::{GroupDoc, HomeLayout, group_scope, inbox};
+use cccc_core::{GroupDoc, GroupStore, HomeLayout, group_scope, inbox, web_model_connectors};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -10,6 +10,10 @@ use crate::dispatch::{OpError, OpResult, object, required_arg, store, string_arg
 use crate::ops::{
     actor_delivery, actor_profile_runtime, actor_runtime, actor_secrets, runtime_session,
 };
+
+const WEB_MODEL_TARGETS_KEY: &str = "web_model_browser_targets";
+const WEB_MODEL_DELIVERY_PREFERENCES_KEY: &str = "web_model_delivery_preferences";
+const RUNTIME_STATES_KEY: &str = "runtime_states";
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
@@ -55,6 +59,13 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     authorize(&group, request, ActorAction::Add, "")?;
     let mut actor = actor_from_args(request)?;
     let private_env = private_env_arg(request)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
+    if private_env.is_some() && !by.trim().is_empty() && by.trim() != "user" {
+        return Err(OpError::new(
+            "permission_denied",
+            "env_private is only allowed for by=user",
+        ));
+    }
     if !actor.profile_id.is_empty() {
         if private_env.is_some() {
             return Err(OpError::new(
@@ -71,6 +82,26 @@ fn add(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let added = store(home)?
         .mutate(&group_id, |doc| actors::add(doc, actor))
         .map_err(OpError::invalid)?;
+    if let Err(error) =
+        web_model_connectors::retire_actor(home, &group_id, &added.id).map_err(OpError::io)
+    {
+        return Err(super::actor_saga::rollback_added(
+            home, &group_id, &added.id, error,
+        ));
+    }
+    if let Err(error) = remove_persisted_headless_state(home, &group_id, &added.id) {
+        return Err(super::actor_saga::rollback_added(
+            home,
+            &group_id,
+            &added.id,
+            OpError::io(error),
+        ));
+    }
+    if let Err(error) = actor_secrets::remove(home, &group_id, &added.id) {
+        return Err(super::actor_saga::rollback_added(
+            home, &group_id, &added.id, error,
+        ));
+    }
     if let Some(values) = private_env
         && let Err(error) = actor_secrets::replace(home, &group_id, &added.id, values)
     {
@@ -166,6 +197,8 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     } else if profile_action == "convert_to_custom" {
         let mut resolved = actor_profile_runtime::resolve(home, &patched_preview)?;
         resolved.profile_id.clear();
+        resolved.profile_scope = "global".into();
+        resolved.profile_owner.clear();
         resolved.profile_revision_applied = 0;
         resolved
     } else {
@@ -199,6 +232,8 @@ fn update(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 let mut resolved = actor_profile_runtime::resolve(home, &patched)
                     .map_err(|error| std::io::Error::other(error.message))?;
                 resolved.profile_id.clear();
+                resolved.profile_scope = "global".into();
+                resolved.profile_owner.clear();
                 resolved.profile_revision_applied = 0;
                 resolved
             } else {
@@ -415,49 +450,127 @@ fn remove(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .position(|actor| actor.id == actor_id)
         .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
     let original_actor = group.actors[index].clone();
+    let original_web_model_target = web_model_target(&group, &actor_id).cloned();
+    let original_web_model_delivery_preference =
+        web_model_delivery_preference(&group, &actor_id).cloned();
+    let original_runtime_state = runtime_state(&group, &actor_id).cloned();
     let original_secrets = actor_secrets::values(home, &group_id, &actor_id)?;
-    actor_delivery::shutdown_actor(&group_id, &actor_id);
-    actor_runtime::apply(home, &group, &actor_id, "actor.stop")?;
-    let actor = store(home)?
-        .mutate(&group_id, |doc| actors::remove(doc, &actor_id))
+    store(home)?
+        .mutate(&group_id, |doc| {
+            actors::remove(doc, &actor_id)?;
+            Ok(())
+        })
         .map_err(OpError::invalid)?;
-    if let Err(error) = runtime_session::remove(home, &group_id, &actor_id).map_err(OpError::io) {
-        return Err(super::actor_saga::restore_removed(
-            home,
-            &group_id,
-            original_actor,
-            index,
-            original_secrets,
-            error,
-        ));
-    }
+    let retired_connectors = match web_model_connectors::retire_actor(home, &group_id, &actor_id) {
+        Ok(entries) => entries,
+        Err(error) => {
+            return Err(super::actor_saga::restore_removed(
+                home,
+                &group_id,
+                super::actor_saga::RemovedActorSnapshot {
+                    actor: original_actor,
+                    index,
+                    web_model_target: original_web_model_target,
+                    web_model_delivery_preference: original_web_model_delivery_preference,
+                    runtime_state: original_runtime_state,
+                    connector_entries: Vec::new(),
+                    secrets: original_secrets,
+                },
+                OpError::io(error),
+            ));
+        }
+    };
+    let removal_snapshot = super::actor_saga::RemovedActorSnapshot {
+        actor: original_actor,
+        index,
+        web_model_target: original_web_model_target,
+        web_model_delivery_preference: original_web_model_delivery_preference,
+        runtime_state: original_runtime_state,
+        connector_entries: retired_connectors,
+        secrets: original_secrets,
+    };
     if let Err(error) = actor_secrets::remove(home, &group_id, &actor_id) {
         return Err(super::actor_saga::restore_removed(
             home,
             &group_id,
-            original_actor,
-            index,
-            original_secrets,
+            removal_snapshot,
             error,
         ));
     }
-    if let Err(error) = append_event(
+    let event = match append_event(
         home,
         &group_id,
         "actor.remove",
         request,
         json!({"actor_id": actor_id}),
     ) {
-        return Err(super::actor_saga::restore_removed(
-            home,
-            &group_id,
-            original_actor,
-            index,
-            original_secrets,
-            error,
-        ));
+        Ok(event) => event,
+        Err(error) => {
+            return Err(super::actor_saga::restore_removed(
+                home,
+                &group_id,
+                removal_snapshot,
+                error,
+            ));
+        }
+    };
+    actor_delivery::shutdown_actor(&group_id, &actor_id);
+    if let Err(error) = actor_runtime::apply(home, &group, &actor_id, "actor.stop") {
+        tracing::warn!(
+            message = %error.message,
+            %group_id,
+            %actor_id,
+            "post-commit actor runtime stop failed"
+        );
     }
-    object(json!({"removed": true, "actor": actor}))
+    if let Err(error) = remove_persisted_headless_state(home, &group_id, &actor_id) {
+        tracing::warn!(%error, %group_id, %actor_id, "post-commit headless state cleanup failed");
+    }
+    if let Err(error) = runtime_session::remove(home, &group_id, &actor_id) {
+        tracing::warn!(%error, %group_id, %actor_id, "post-commit runtime session cleanup failed");
+    }
+    object(json!({"actor_id": actor_id, "event": event}))
+}
+
+fn web_model_target<'a>(group: &'a GroupDoc, actor_id: &str) -> Option<&'a Value> {
+    group
+        .extra
+        .get(WEB_MODEL_TARGETS_KEY)
+        .and_then(Value::as_object)
+        .and_then(|targets| targets.get(actor_id))
+}
+
+fn web_model_delivery_preference<'a>(group: &'a GroupDoc, actor_id: &str) -> Option<&'a Value> {
+    group
+        .extra
+        .get(WEB_MODEL_DELIVERY_PREFERENCES_KEY)
+        .and_then(Value::as_object)
+        .and_then(|preferences| preferences.get(actor_id))
+}
+
+fn runtime_state<'a>(group: &'a GroupDoc, actor_id: &str) -> Option<&'a Value> {
+    group
+        .extra
+        .get(RUNTIME_STATES_KEY)
+        .and_then(Value::as_object)
+        .and_then(|states| states.get(actor_id))
+}
+
+fn remove_persisted_headless_state(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+) -> std::io::Result<()> {
+    let path = home
+        .groups_dir()
+        .join(group_id)
+        .join("state/runners/headless")
+        .join(format!("{actor_id}.json"));
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult {
@@ -470,24 +583,187 @@ fn lifecycle(home: &HomeLayout, request: &DaemonRequest, kind: &str) -> OpResult
         _ => ActorAction::Restart,
     };
     authorize(&group, request, action, &actor_id)?;
+    let original_actor = group
+        .actors
+        .iter()
+        .find(|actor| actor.id == actor_id)
+        .cloned()
+        .ok_or_else(|| OpError::new("actor_not_found", "actor not found"))?;
+    let runtime_was_running = actor_process_running(&group, &original_actor);
+    let runtime_session_snapshot = if kind == "actor.new_session" {
+        Some(runtime_session::snapshot(home, &group_id, &actor_id).map_err(OpError::io)?)
+    } else {
+        None
+    };
     if kind == "actor.new_session" {
         runtime_session::remove(home, &group_id, &actor_id).map_err(OpError::io)?;
     }
-    if kind != "actor.start" {
+    if kind != "actor.start" || !runtime_was_running {
         actor_delivery::shutdown_actor(&group_id, &actor_id);
     }
     let enabled = kind != "actor.stop";
-    let status = actor_runtime::apply(home, &group, &actor_id, kind)?;
+    let status = match actor_runtime::apply(home, &group, &actor_id, kind) {
+        Ok(status) => status,
+        Err(error) => {
+            let effect = lifecycle_effect(
+                kind,
+                runtime_was_running,
+                actor_process_running(&group, &original_actor),
+            );
+            return Err(rollback_actor_lifecycle(
+                home,
+                &group,
+                &original_actor,
+                runtime_session_snapshot.as_ref(),
+                effect,
+                error,
+            ));
+        }
+    };
+    let effect = lifecycle_effect(
+        kind,
+        runtime_was_running,
+        actor_process_running(&group, &original_actor),
+    );
     let actor =
-        actor_runtime::persist_lifecycle(home, &group, &actor_id, enabled, status.as_ref())?;
-    append_event(
+        match actor_runtime::persist_lifecycle(home, &group, &actor_id, enabled, status.as_ref()) {
+            Ok(actor) => actor,
+            Err(error) => {
+                return Err(rollback_actor_lifecycle(
+                    home,
+                    &group,
+                    &original_actor,
+                    runtime_session_snapshot.as_ref(),
+                    effect,
+                    error,
+                ));
+            }
+        };
+    let event = match append_event(
         home,
         &group_id,
         kind,
         request,
         json!({"actor_id": actor_id, "runner": actor.runner}),
-    )?;
-    object(json!({"actor": actor, "runtime": status}))
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            return Err(rollback_actor_lifecycle(
+                home,
+                &group,
+                &original_actor,
+                runtime_session_snapshot.as_ref(),
+                effect,
+                error,
+            ));
+        }
+    };
+    if enabled {
+        match GroupStore::new(home.clone()).and_then(|store| store.load(&group_id)) {
+            Ok(current_group) => {
+                actor_delivery::dispatch_unread(home, &current_group, &actor_id);
+            }
+            Err(error) => tracing::warn!(
+                %error,
+                %group_id,
+                %actor_id,
+                "failed to reload actor inbox after activation"
+            ),
+        }
+    }
+    object(json!({"actor": actor, "event": event, "runtime": status}))
+}
+
+#[derive(Clone, Copy)]
+enum ActorLifecycleEffect {
+    None,
+    Started,
+    Stopped,
+    Replaced,
+}
+
+fn lifecycle_effect(kind: &str, was_running: bool, is_running: bool) -> ActorLifecycleEffect {
+    match (kind, was_running, is_running) {
+        ("actor.stop", true, false) => ActorLifecycleEffect::Stopped,
+        ("actor.start", false, true) => ActorLifecycleEffect::Started,
+        ("actor.restart" | "actor.new_session", true, true) => ActorLifecycleEffect::Replaced,
+        ("actor.restart" | "actor.new_session", true, false) => ActorLifecycleEffect::Stopped,
+        ("actor.restart" | "actor.new_session", false, true) => ActorLifecycleEffect::Started,
+        _ => ActorLifecycleEffect::None,
+    }
+}
+
+fn rollback_actor_lifecycle(
+    home: &HomeLayout,
+    original_group: &GroupDoc,
+    original_actor: &Actor,
+    runtime_session_snapshot: Option<&Option<serde_json::Map<String, Value>>>,
+    effect: ActorLifecycleEffect,
+    original: OpError,
+) -> OpError {
+    let mut failures = Vec::new();
+    if matches!(
+        effect,
+        ActorLifecycleEffect::Started | ActorLifecycleEffect::Replaced
+    ) {
+        actor_delivery::shutdown_actor(&original_group.group_id, &original_actor.id);
+        if let Err(error) =
+            actor_runtime::apply(home, original_group, &original_actor.id, "actor.stop")
+        {
+            failures.push(format!("stop replacement runtime: {}", error.message));
+        }
+    }
+    if let Some(snapshot) = runtime_session_snapshot
+        && let Err(error) = runtime_session::restore_snapshot(
+            home,
+            &original_group.group_id,
+            &original_actor.id,
+            snapshot.as_ref(),
+        )
+    {
+        failures.push(format!("restore runtime session: {error}"));
+    }
+    match store(home).and_then(|store| {
+        store
+            .mutate(&original_group.group_id, |doc| {
+                let index = doc
+                    .actors
+                    .iter()
+                    .position(|actor| actor.id == original_actor.id)
+                    .ok_or_else(|| std::io::Error::other("actor not found during rollback"))?;
+                doc.actors[index] = original_actor.clone();
+                doc.running = original_group.running;
+                doc.state = original_group.state;
+                Ok(())
+            })
+            .map_err(OpError::io)
+    }) {
+        Ok(()) => {}
+        Err(error) => failures.push(format!("restore actor state: {}", error.message)),
+    }
+    if matches!(
+        effect,
+        ActorLifecycleEffect::Stopped | ActorLifecycleEffect::Replaced
+    ) && let Err(error) =
+        actor_runtime::apply(home, original_group, &original_actor.id, "actor.start")
+    {
+        failures.push(format!("restore previous runtime: {}", error.message));
+    }
+    if original_actor.enabled && original_group.running {
+        actor_delivery::dispatch_unread(home, original_group, &original_actor.id);
+    }
+    if failures.is_empty() {
+        original
+    } else {
+        OpError::new(
+            "rollback_failed",
+            format!(
+                "{}; rollback failed: {}",
+                original.message,
+                failures.join("; ")
+            ),
+        )
+    }
 }
 
 fn actor_from_args(request: &DaemonRequest) -> Result<Actor, OpError> {
@@ -560,16 +836,19 @@ fn private_env_arg(request: &DaemonRequest) -> Result<Option<BTreeMap<String, St
     let object = value
         .as_object()
         .ok_or_else(|| OpError::new("invalid_args", "env_private must be an object"))?;
-    object
-        .iter()
-        .map(|(key, value)| {
-            value
-                .as_str()
-                .map(|value| (key.clone(), value.to_owned()))
-                .ok_or_else(|| OpError::new("invalid_args", "env_private values must be strings"))
-        })
-        .collect::<Result<BTreeMap<_, _>, _>>()
-        .map(Some)
+    if object.len() > 256 {
+        return Err(OpError::new("invalid_args", "too many env_private keys"));
+    }
+    let mut values = BTreeMap::new();
+    for (key, value) in object {
+        actor_secrets::validate_env_key(key)?;
+        let value = actor_secrets::python_string(value)?;
+        if value.chars().count() > 200_000 {
+            return Err(OpError::new("invalid_args", "env value too large"));
+        }
+        values.insert(key.clone(), value);
+    }
+    Ok(Some(values))
 }
 
 fn load(home: &HomeLayout, request: &DaemonRequest) -> Result<GroupDoc, OpError> {

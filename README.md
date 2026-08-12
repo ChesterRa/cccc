@@ -519,7 +519,9 @@ Use this optional channel only when evaluating the experimental Rust
 implementation in a Rust-only deployment without Python. It downloads a
 checksum-verified binary from GitHub Releases and updates through the same
 installer, but it has no Python fallback or implementation switching and is not
-the recommended replacement for the stable pip/Python path. The
+the recommended replacement for the stable pip/Python path. The current preview
+targets glibc 2.28+ Linux x86-64 without a system OpenSSL dependency, macOS 11+
+on Intel or Apple Silicon, and Windows x86-64. The
 installer refuses to overwrite an existing `cccc` command that it does not own;
 uninstall that command deliberately or choose another `CCCC_INSTALL_DIR` first.
 Commands in other directories are left untouched. For the default install

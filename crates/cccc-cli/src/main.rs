@@ -12,9 +12,12 @@ use cccc_core::{GroupStore, HomeLayout, active};
 use cccc_daemon::{DetachedDaemon, StartOutcome};
 use clap::Parser;
 use commands::common::{call, print};
+use fs2::FileExt;
 use serde_json::json;
+use std::fs::OpenOptions;
 
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const DAEMON_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -128,8 +131,9 @@ async fn launch(
     let mut binding = web_launch::resolve(&home, host_override.as_deref(), port_override)?;
     let client =
         DaemonClient::new(home.clone()).with_timeout(std::time::Duration::from_millis(250));
-    let _instance = claim_web_instance(&home, &client).await?;
-    replace_incompatible_daemon(&client).await?;
+    let instance = claim_web_instance(&home, &client).await?;
+    instance.hold_until_process_exit();
+    replace_incompatible_daemon(&home, &client).await?;
     let mut embedded_daemon = None;
     if !ping(&client).await {
         let daemon_home = home.clone();
@@ -207,11 +211,10 @@ async fn confirm_and_stop_existing(
         );
     }
     if running_daemon_pid(client).await.is_some() {
-        let response = call(client, "shutdown", json!({})).await?;
+        let response = stop_daemon(client, home).await?;
         if !response.ok {
             bail!("failed to stop the existing CCCC process");
         }
-        wait_for_daemon_loss(client, &home.daemon_dir().join("ccccd.addr.json")).await;
     }
     Ok(())
 }
@@ -269,7 +272,16 @@ async fn finish_embedded_daemon(
 async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -> Result<()> {
     match action {
         DaemonAction::Run => cccc_daemon::run(home).await,
-        DaemonAction::Stop => print(call(client, "shutdown", json!({})).await?),
+        DaemonAction::Stop => {
+            let response = stop_daemon(client, &home).await?;
+            if response.ok {
+                // A combined `cccc` process owns both Web and daemon. Do not
+                // report process-wide shutdown while that executable is still
+                // serving Web (or still locked against a Windows update).
+                drop(wait_for_web_instance_exit(&home, DAEMON_SHUTDOWN_TIMEOUT).await?);
+            }
+            print(response)
+        }
         DaemonAction::Status => {
             if ping(client).await {
                 println!("ccccd: running");
@@ -279,7 +291,7 @@ async fn daemon(action: DaemonAction, home: HomeLayout, client: &DaemonClient) -
             }
         }
         DaemonAction::Start => {
-            replace_incompatible_daemon(client).await?;
+            replace_incompatible_daemon(&home, client).await?;
             if ping(client).await {
                 println!("ccccd: already running");
                 return Ok(());
@@ -378,7 +390,66 @@ async fn wait_for_daemon_loss(client: &DaemonClient, address: &std::path::Path) 
     }
 }
 
-async fn replace_incompatible_daemon(client: &DaemonClient) -> Result<()> {
+async fn stop_daemon(
+    client: &DaemonClient,
+    home: &HomeLayout,
+) -> Result<cccc_contracts::DaemonResponse> {
+    let response = call(client, "shutdown", json!({})).await?;
+    if response.ok {
+        wait_for_daemon_lock_release(home, DAEMON_SHUTDOWN_TIMEOUT).await?;
+    }
+    Ok(response)
+}
+
+async fn wait_for_daemon_lock_release(
+    home: &HomeLayout,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    let lock_path = home.daemon_dir().join("ccccd.lock");
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "could not open daemon lock {}: {error}",
+                    lock_path.display()
+                )
+            })?;
+        match lock.try_lock_exclusive() {
+            Ok(()) => {
+                FileExt::unlock(&lock).map_err(|error| {
+                    anyhow::anyhow!(
+                        "could not release daemon lock probe {}: {error}",
+                        lock_path.display()
+                    )
+                })?;
+                return Ok(());
+            }
+            Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {}
+            Err(error) => {
+                bail!(
+                    "could not probe daemon lock {}: {error}",
+                    lock_path.display()
+                )
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            bail!(
+                "CCCC daemon did not release {} within {} seconds",
+                lock_path.display(),
+                timeout.as_secs()
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+async fn replace_incompatible_daemon(home: &HomeLayout, client: &DaemonClient) -> Result<()> {
     let Ok(response) = call(client, "ping", json!({})).await else {
         return Ok(());
     };
@@ -386,20 +457,11 @@ async fn replace_incompatible_daemon(client: &DaemonClient) -> Result<()> {
         return Ok(());
     }
     eprintln!("Switching CCCC daemon from legacy or incompatible implementation to Rust...");
-    let shutdown = call(client, "shutdown", json!({})).await?;
+    let shutdown = stop_daemon(client, home).await?;
     if !shutdown.ok {
         bail!("failed to stop incompatible CCCC daemon");
     }
-    for _ in 0..40 {
-        if call(client, "ping", json!({})).await.is_err() {
-            // The legacy daemon can remove its socket just before releasing the
-            // shared process lock. Give shutdown cleanup a brief grace period.
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            return Ok(());
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    }
-    bail!("incompatible CCCC daemon did not stop")
+    Ok(())
 }
 
 fn is_compatible_daemon(response: &cccc_contracts::DaemonResponse) -> bool {
@@ -418,10 +480,16 @@ fn is_compatible_daemon(response: &cccc_contracts::DaemonResponse) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{PRODUCT_VERSION, is_compatible_daemon, select_active_group, web_endpoint};
+    use super::{
+        PRODUCT_VERSION, is_compatible_daemon, select_active_group, wait_for_daemon_lock_release,
+        web_endpoint,
+    };
     use cccc_contracts::DaemonResponse;
     use cccc_core::{GroupStore, HomeLayout, active};
+    use fs2::FileExt;
     use serde_json::json;
+    use std::fs::OpenOptions;
+    use std::time::Duration;
 
     #[test]
     fn distinguishes_rust_from_legacy_daemon_ping() {
@@ -489,5 +557,40 @@ mod tests {
             Some(group.group_id.as_str())
         );
         assert!(select_active_group(&home, "g_missing").is_err());
+    }
+
+    #[tokio::test]
+    async fn daemon_shutdown_boundary_waits_for_the_process_lock() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize home");
+        let lock_path = home.daemon_dir().join("ccccd.lock");
+        let held_lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(lock_path)
+            .expect("open held daemon lock");
+        held_lock
+            .try_lock_exclusive()
+            .expect("hold daemon process lock");
+
+        let waiter_home = home.clone();
+        let waiter = tokio::spawn(async move {
+            wait_for_daemon_lock_release(&waiter_home, Duration::from_secs(2)).await
+        });
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            !waiter.is_finished(),
+            "shutdown boundary returned while the daemon lock was still held"
+        );
+
+        FileExt::unlock(&held_lock).expect("release held daemon lock");
+        tokio::time::timeout(Duration::from_secs(1), waiter)
+            .await
+            .expect("waiter timeout")
+            .expect("waiter task")
+            .expect("lock release detected");
     }
 }

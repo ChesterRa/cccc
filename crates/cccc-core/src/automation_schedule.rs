@@ -29,6 +29,38 @@ pub fn is_due(trigger: Option<&Map<String, Value>>, last: Option<i64>, now: Date
     }
 }
 
+pub(crate) fn next_fire_at(
+    trigger: Option<&Map<String, Value>>,
+    last: Option<i64>,
+    now: DateTime<Utc>,
+) -> Option<DateTime<Utc>> {
+    let kind = trigger
+        .and_then(|trigger| trigger.get("kind"))
+        .and_then(Value::as_str)
+        .unwrap_or("interval");
+    match kind {
+        "interval" => {
+            let seconds = trigger
+                .and_then(|trigger| trigger.get("every_seconds"))
+                .and_then(Value::as_i64)?;
+            if seconds <= 0 {
+                return None;
+            }
+            let base = last
+                .and_then(|timestamp| DateTime::from_timestamp(timestamp, 0))
+                .unwrap_or(now);
+            base.checked_add_signed(TimeDelta::seconds(seconds))
+        }
+        "at" if last.is_none() => trigger
+            .and_then(|trigger| trigger.get("at"))
+            .and_then(Value::as_str)
+            .and_then(|value| DateTime::parse_from_rfc3339(value).ok())
+            .map(|value| value.with_timezone(&Utc)),
+        "cron" => cron_next(trigger, now),
+        _ => None,
+    }
+}
+
 fn cron_due(trigger: Option<&Map<String, Value>>, last: Option<i64>, now: DateTime<Utc>) -> bool {
     let raw = trigger
         .and_then(|trigger| trigger.get("cron"))
@@ -42,12 +74,14 @@ fn cron_due(trigger: Option<&Map<String, Value>>, last: Option<i64>, now: DateTi
     let Ok(schedule) = Schedule::from_str(&expression) else {
         return false;
     };
-    let timezone = trigger
+    let Ok(timezone) = trigger
         .and_then(|trigger| trigger.get("timezone"))
         .and_then(Value::as_str)
         .unwrap_or("UTC")
         .parse::<Tz>()
-        .unwrap_or(chrono_tz::UTC);
+    else {
+        return false;
+    };
     let base = last
         .and_then(|timestamp| DateTime::from_timestamp(timestamp, 0))
         .unwrap_or_else(|| now - TimeDelta::seconds(61))
@@ -56,6 +90,28 @@ fn cron_due(trigger: Option<&Map<String, Value>>, last: Option<i64>, now: DateTi
         .after(&base)
         .next()
         .is_some_and(|next| next <= now.with_timezone(&timezone))
+}
+
+fn cron_next(trigger: Option<&Map<String, Value>>, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    let raw = trigger
+        .and_then(|trigger| trigger.get("cron"))
+        .and_then(Value::as_str)?;
+    let expression = if raw.split_whitespace().count() == 5 {
+        format!("0 {raw}")
+    } else {
+        raw.to_owned()
+    };
+    let schedule = Schedule::from_str(&expression).ok()?;
+    let timezone = trigger
+        .and_then(|trigger| trigger.get("timezone"))
+        .and_then(Value::as_str)
+        .unwrap_or("UTC")
+        .parse::<Tz>()
+        .ok()?;
+    schedule
+        .after(&now.with_timezone(&timezone))
+        .next()
+        .map(|value| value.with_timezone(&Utc))
 }
 
 #[cfg(test)]

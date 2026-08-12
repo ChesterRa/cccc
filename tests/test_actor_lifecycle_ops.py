@@ -65,6 +65,321 @@ class TestActorLifecycleOps(unittest.TestCase):
                 kinds.append(kind)
         return kinds
 
+    def test_actor_add_ledger_failure_rolls_back_actor_and_private_env(self) -> None:
+        from cccc.daemon.actors.private_env_ops import load_actor_private_env
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "actor-add-rollback", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            with patch(
+                "cccc.daemon.actors.actor_add_ops.append_event",
+                side_effect=RuntimeError("injected ledger failure"),
+            ):
+                added, _ = self._call(
+                    "actor_add",
+                    {
+                        "group_id": group_id,
+                        "actor_id": "peer1",
+                        "runtime": "custom",
+                        "runner": "headless",
+                        "env_private": {"TOKEN": "must-not-survive"},
+                        "by": "user",
+                    },
+                )
+
+            self.assertFalse(added.ok)
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            actors = group.doc.get("actors") if group is not None else []
+            self.assertFalse(
+                any(isinstance(actor, dict) and actor.get("id") == "peer1" for actor in actors or [])
+            )
+            self.assertEqual(load_actor_private_env(group_id, "peer1"), {})
+        finally:
+            cleanup()
+
+    def test_actor_remove_ledger_failure_restores_actor_without_stopping_runtime(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "actor-remove-rollback", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "web_model",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            from cccc.kernel.group import load_group
+
+            with (
+                patch(
+                    "cccc.daemon.actors.actor_membership_ops.append_event",
+                    side_effect=OSError("injected ledger failure"),
+                ),
+                patch(
+                    "cccc.daemon.actors.actor_membership_ops.headless_runner.SUPERVISOR.stop_actor"
+                ) as stop_headless,
+            ):
+                removed, _ = self._call(
+                    "actor_remove",
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+                )
+
+            self.assertFalse(removed.ok)
+            self.assertEqual(getattr(removed.error, "code", ""), "actor_remove_failed")
+            restored = load_group(group_id)
+            self.assertIsNotNone(restored)
+            assert restored is not None
+            self.assertIn("peer1", [actor.get("id") for actor in restored.doc.get("actors", [])])
+            stop_headless.assert_not_called()
+        finally:
+            cleanup()
+
+    def test_actor_update_ledger_failure_restores_actor_document(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "actor-update-rollback", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Before",
+                    "runtime": "custom",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            with patch(
+                "cccc.daemon.actors.actor_update_ops.append_event",
+                side_effect=OSError("injected ledger failure"),
+            ):
+                updated, _ = self._call(
+                    "actor_update",
+                    {
+                        "group_id": group_id,
+                        "actor_id": "peer1",
+                        "patch": {"title": "After"},
+                        "by": "user",
+                    },
+                )
+
+            self.assertFalse(updated.ok)
+            self.assertEqual(getattr(updated.error, "code", ""), "actor_update_failed")
+            restored = load_group(group_id)
+            self.assertIsNotNone(restored)
+            assert restored is not None
+            actor = next(item for item in restored.doc.get("actors", []) if item.get("id") == "peer1")
+            self.assertEqual(actor.get("title"), "Before")
+        finally:
+            cleanup()
+
+    def test_actor_stop_ledger_failure_restores_enabled_state(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "actor-stop-rollback", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "custom",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            with patch(
+                "cccc.daemon.actors.actor_lifecycle_ops.append_event",
+                side_effect=OSError("injected ledger failure"),
+            ):
+                stopped, _ = self._call(
+                    "actor_stop",
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+                )
+
+            self.assertFalse(stopped.ok)
+            self.assertEqual(getattr(stopped.error, "code", ""), "actor_stop_failed")
+            restored = load_group(group_id)
+            self.assertIsNotNone(restored)
+            assert restored is not None
+            actor = next(item for item in restored.doc.get("actors", []) if item.get("id") == "peer1")
+            self.assertTrue(bool(actor.get("enabled", False)))
+        finally:
+            cleanup()
+
+    def test_actor_start_ledger_failure_stops_new_runtime_and_restores_state(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "actor-start-rollback", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            attach, _ = self._call(
+                "attach",
+                {"group_id": group_id, "path": ".", "by": "user"},
+            )
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "custom",
+                    "runner": "headless",
+                    "command": ["sh", "-c", "sleep 30"],
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            stopped_before, _ = self._call(
+                "actor_stop",
+                {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+            )
+            self.assertTrue(stopped_before.ok, getattr(stopped_before, "error", None))
+
+            with (
+                patch(
+                    "cccc.daemon.actors.actor_runtime_ops.headless_runner.SUPERVISOR.start_actor"
+                ) as start_runtime,
+                patch(
+                    "cccc.daemon.actors.actor_runtime_ops.headless_runner.SUPERVISOR.stop_actor"
+                ) as stop_runtime,
+                patch(
+                    "cccc.daemon.actors.actor_runtime_ops.append_event",
+                    side_effect=OSError("injected ledger failure"),
+                ),
+            ):
+                started, _ = self._call(
+                    "actor_start",
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+                )
+
+            self.assertFalse(started.ok)
+            self.assertEqual(getattr(started.error, "code", ""), "actor_start_failed")
+            start_runtime.assert_called_once()
+            stop_runtime.assert_called_once_with(group_id=group_id, actor_id="peer1")
+            restored = load_group(group_id)
+            self.assertIsNotNone(restored)
+            assert restored is not None
+            actor = next(item for item in restored.doc.get("actors", []) if item.get("id") == "peer1")
+            self.assertFalse(bool(actor.get("enabled", True)))
+            self.assertFalse(bool(restored.doc.get("running")))
+        finally:
+            cleanup()
+
+    def test_actor_new_session_ledger_failure_restores_runtime_session(self) -> None:
+        from cccc.daemon.runtime_session_ops import (
+            read_runtime_session,
+            record_pty_runtime_session,
+        )
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "actor-new-session-rollback", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            attach, _ = self._call(
+                "attach",
+                {"group_id": group_id, "path": ".", "by": "user"},
+            )
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+            stopped_group, _ = self._call(
+                "group_stop",
+                {"group_id": group_id, "by": "user"},
+            )
+            self.assertTrue(stopped_group.ok, getattr(stopped_group, "error", None))
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            record_pty_runtime_session(
+                group_id=group_id,
+                actor_id="peer1",
+                runtime="codex",
+                cwd=Path("."),
+                command=["codex"],
+                provider_session_id="019dbe1d-cd97-7d31-9ba6-212d3e57b15c",
+                captured_from="test",
+            )
+
+            with (
+                patch(
+                    "cccc.daemon.actors.actor_runtime_ops.codex_app_supervisor.start_actor"
+                ) as start_runtime,
+                patch(
+                    "cccc.daemon.actors.actor_lifecycle_ops.append_event",
+                    side_effect=OSError("injected ledger failure"),
+                ),
+            ):
+                rotated, _ = self._call(
+                    "actor_new_session",
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+                )
+
+            self.assertFalse(rotated.ok)
+            self.assertEqual(getattr(rotated.error, "code", ""), "actor_new_session_failed")
+            start_runtime.assert_called_once()
+            self.assertEqual(
+                read_runtime_session(group_id, "peer1").get("provider_session_id"),
+                "019dbe1d-cd97-7d31-9ba6-212d3e57b15c",
+            )
+            restored = load_group(group_id)
+            self.assertIsNotNone(restored)
+            assert restored is not None
+            self.assertEqual(restored.doc.get("state"), "stopped")
+            self.assertFalse(bool(restored.doc.get("running")))
+        finally:
+            cleanup()
+
     def test_actor_start_stop_transitions_group_running(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -217,6 +532,13 @@ class TestActorLifecycleOps(unittest.TestCase):
             actors = group_doc.get("actors") if isinstance(group_doc.get("actors"), list) else []
             actor = next((item for item in actors if isinstance(item, dict) and item.get("id") == "peer1"), {})
             self.assertFalse(bool(actor.get("enabled", True)))
+
+            stop, _ = self._call(
+                "actor_stop",
+                {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+            )
+            self.assertTrue(stop.ok, getattr(stop, "error", None))
+            self.assertEqual((stop.result or {}).get("event", {}).get("kind"), "actor.stop")
         finally:
             cleanup()
 
@@ -913,6 +1235,78 @@ class TestActorLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_new_session_rotates_running_antigravity_in_place(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "actor-new-session-antigravity", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call(
+                "attach", {"group_id": group_id, "path": ".", "by": "user"}
+            )
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "antigravity",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = True
+            group.save()
+
+            with (
+                patch(
+                    "cccc.daemon.actors.actor_lifecycle_ops.pty_runner.SUPERVISOR.actor_running",
+                    return_value=True,
+                ),
+                patch(
+                    "cccc.daemon.messaging.delivery.pty_submit_text",
+                    return_value=True,
+                ) as submit,
+                patch(
+                    "cccc.daemon.actors.actor_lifecycle_ops._stop_actor_runtime_handles"
+                ) as stop_runtime,
+            ):
+                new_session, _ = self._call(
+                    "actor_new_session",
+                    {"group_id": group_id, "actor_id": "peer1", "by": "user"},
+                )
+
+            self.assertTrue(new_session.ok, getattr(new_session, "error", None))
+            self.assertTrue(bool((new_session.result or {}).get("new_session")))
+            self.assertEqual((new_session.result or {}).get("rotation"), "in_place")
+            submit.assert_called_once()
+            submitted_group = submit.call_args.args[0]
+            self.assertEqual(submitted_group.group_id, group_id)
+            self.assertEqual(
+                submit.call_args.kwargs,
+                {
+                    "actor_id": "peer1",
+                    "text": "/clear",
+                    "wait_for_submit": True,
+                },
+            )
+            stop_runtime.assert_not_called()
+        finally:
+            cleanup()
+
     def test_actor_new_session_rejects_unsupported_runtime_without_clearing_session(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -1066,7 +1460,59 @@ class TestActorLifecycleOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_actor_remove_retires_connectors_after_runtime_changes(self) -> None:
+        from cccc.kernel.web_model_connectors import (
+            create_web_model_connector,
+            verify_web_model_connector_secret,
+        )
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call(
+                "group_create",
+                {"title": "connector-retirement", "topic": "", "by": "user"},
+            )
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "former-web",
+                    "runtime": "custom",
+                    "runner": "pty",
+                    "command": ["sh"],
+                    "enabled": False,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            connector = create_web_model_connector(
+                group_id=group_id,
+                actor_id="former-web",
+                provider="chatgpt",
+            )
+
+            remove, _ = self._call(
+                "actor_remove",
+                {"group_id": group_id, "actor_id": "former-web", "by": "user"},
+            )
+
+            self.assertTrue(remove.ok, getattr(remove, "error", None))
+            self.assertIsNone(
+                verify_web_model_connector_secret(
+                    str(connector.get("connector_id") or ""),
+                    str(connector.get("secret") or ""),
+                )
+            )
+        finally:
+            cleanup()
+
     def test_web_model_actor_recreate_resets_browser_binding_state(self) -> None:
+        from cccc.kernel.web_model_connectors import (
+            create_web_model_connector,
+            verify_web_model_connector_secret,
+        )
         from cccc.ports.web_model_browser_sidecar import (
             chatgpt_browser_profile_dir,
             read_chatgpt_browser_state,
@@ -1079,6 +1525,18 @@ class TestActorLifecycleOps(unittest.TestCase):
             self.assertTrue(create.ok, getattr(create, "error", None))
             group_id = str((create.result or {}).get("group_id") or "").strip()
             self.assertTrue(group_id)
+
+            stale_connector = create_web_model_connector(
+                group_id=group_id,
+                actor_id="peer1",
+                provider="chatgpt",
+            )
+            self.assertIsNotNone(
+                verify_web_model_connector_secret(
+                    str(stale_connector.get("connector_id") or ""),
+                    str(stale_connector.get("secret") or ""),
+                )
+            )
 
             profile_dir = chatgpt_browser_profile_dir(group_id, "peer1")
             marker = profile_dir / "login-marker"
@@ -1109,6 +1567,12 @@ class TestActorLifecycleOps(unittest.TestCase):
                 },
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
+            self.assertIsNone(
+                verify_web_model_connector_secret(
+                    str(stale_connector.get("connector_id") or ""),
+                    str(stale_connector.get("secret") or ""),
+                )
+            )
             state_after_add = read_chatgpt_browser_state(group_id, "peer1")
             self.assertEqual(state_after_add.get("conversation_url"), "")
             self.assertEqual(state_after_add.get("bootstrap_seed_delivered_at"), "")
@@ -1130,9 +1594,20 @@ class TestActorLifecycleOps(unittest.TestCase):
                     "last_event_ids": ["current-event"],
                 },
             )
+            current_connector = create_web_model_connector(
+                group_id=group_id,
+                actor_id="peer1",
+                provider="chatgpt",
+            )
 
             remove, _ = self._call("actor_remove", {"group_id": group_id, "actor_id": "peer1", "by": "user"})
             self.assertTrue(remove.ok, getattr(remove, "error", None))
+            self.assertIsNone(
+                verify_web_model_connector_secret(
+                    str(current_connector.get("connector_id") or ""),
+                    str(current_connector.get("secret") or ""),
+                )
+            )
             state_after_remove = read_chatgpt_browser_state(group_id, "peer1")
             self.assertEqual(state_after_remove.get("conversation_url"), "")
             self.assertEqual(state_after_remove.get("bootstrap_seed_delivered_at"), "")

@@ -14,6 +14,7 @@ from ..browser.projected_browser_runtime import (
     ensure_dir,
     launch_projected_browser_runtime as _shared_launch_projected_browser_runtime,
     reset_dir,
+    validate_projected_browser_url,
 )
 
 _MANAGER = ProjectedBrowserSessionManager(
@@ -72,6 +73,7 @@ def _launch_browser_surface_runtime(*, group_id: str, slot_id: str, url: str, wi
 
 
 def open_browser_surface_session(*, group_id: str, slot_id: str, url: str, width: int, height: int) -> dict[str, object]:
+    url = validate_projected_browser_url(url)
     _ = _MANAGER.close(key=_session_key(group_id, slot_id))
     _reset_browser_profile_dir(group_id, slot_id)
     return _MANAGER.open(
@@ -91,6 +93,13 @@ def get_browser_surface_session_state(*, group_id: str, slot_id: str) -> dict[st
 
 def close_browser_surface_session(*, group_id: str, slot_id: str) -> dict[str, object]:
     return _MANAGER.close(key=_session_key(group_id, slot_id))
+
+
+def close_group_browser_surface_sessions(*, group_id: str) -> int:
+    normalized_group_id = str(group_id or "").strip()
+    if not normalized_group_id:
+        return 0
+    return _MANAGER.close_prefix(prefix=f"{normalized_group_id}::")
 
 
 def close_all_browser_surface_sessions() -> None:

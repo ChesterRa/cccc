@@ -2,7 +2,7 @@ use cccc_contracts::utc_now;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io;
 use uuid::Uuid;
 
@@ -167,13 +167,14 @@ impl ProfileStore {
                 expected.unwrap_or_default()
             )));
         }
-        let env = profile
-            .remove("env")
-            .and_then(|value| value.as_object().cloned())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(key, value)| (key, json!(python_string(&value))))
-            .collect::<Map<_, _>>();
+        let legacy_env = match profile.remove("env") {
+            Some(Value::Object(values)) => values
+                .into_iter()
+                .map(|(key, value)| (key, python_string(&value)))
+                .collect::<BTreeMap<_, _>>(),
+            Some(_) => return Err(io::Error::other("profile.env must be an object")),
+            None => BTreeMap::new(),
+        };
         let now = utc_now();
         profile.insert("v".into(), json!(1));
         profile.insert("id".into(), json!(id));
@@ -184,7 +185,7 @@ impl ProfileStore {
         profile.entry("runner").or_insert_with(|| json!("pty"));
         profile.entry("command").or_insert_with(|| json!([]));
         profile.entry("submit").or_insert_with(|| json!("enter"));
-        profile.insert("env".into(), Value::Object(env));
+        profile.insert("env".into(), json!({}));
         profile.insert(
             "created_at".into(),
             current
@@ -212,6 +213,16 @@ impl ProfileStore {
             )
         });
         let result = Value::Object(profile);
+        if !legacy_env.is_empty() {
+            let path = self.secret_path(&result);
+            let mut secrets = if path.exists() {
+                read_json(&path)?
+            } else {
+                BTreeMap::new()
+            };
+            secrets.extend(legacy_env);
+            self.write_secret_file(&result, &secrets)?;
+        }
         if let Some(current_key) = current_key {
             doc.profiles.remove(&current_key);
         }
@@ -230,31 +241,14 @@ impl ProfileStore {
         profile_id: &str,
         scope: &str,
         owner_id: &str,
-        force_detach: bool,
+        _force_detach: bool,
     ) -> io::Result<(bool, Vec<Value>)> {
         validate_profile_ref(profile_id, scope, owner_id)?;
         let usage = self.usage_ref(profile_id, scope, owner_id)?;
-        if !usage.is_empty() && !force_detach {
+        if !usage.is_empty() {
             return Err(io::Error::other(
                 "profile is in use; force_detach is required",
             ));
-        }
-        if force_detach {
-            let groups = GroupStore::new(self.home.clone())?;
-            for entry in &usage {
-                let group_id = entry["group_id"].as_str().unwrap_or("");
-                let actor_id = entry["actor_id"].as_str().unwrap_or("");
-                groups.mutate(group_id, |group| {
-                    if let Some(actor) = group.actors.iter_mut().find(|actor| actor.id == actor_id)
-                    {
-                        actor.profile_id.clear();
-                        actor.profile_scope = "global".into();
-                        actor.profile_owner.clear();
-                        actor.profile_revision_applied = 0;
-                    }
-                    Ok(())
-                })?;
-            }
         }
         let mut doc = self.load()?;
         let key =
@@ -463,7 +457,6 @@ impl ProfileStore {
             || {
                 let mut profiles = self.load()?;
                 let mut changed = false;
-                let mut imported_legacy_keys = BTreeSet::new();
                 if !marker.exists() {
                     let legacy_profiles = self.home.root().join("profiles.json");
                     if legacy_profiles.exists() {
@@ -476,7 +469,6 @@ impl ProfileStore {
                             .is_none()
                             {
                                 let storage_key = profile_storage_key(&profile);
-                                imported_legacy_keys.insert(storage_key.clone());
                                 profiles.profiles.insert(storage_key, profile);
                                 changed = true;
                             }
@@ -498,10 +490,7 @@ impl ProfileStore {
                     }
                 }
                 let mut extracted = Vec::new();
-                for (storage_key, profile) in &mut profiles.profiles {
-                    if !imported_legacy_keys.contains(storage_key) {
-                        continue;
-                    }
+                for profile in profiles.profiles.values_mut() {
                     let Some(env) = profile.get("env").and_then(Value::as_object).cloned() else {
                         continue;
                     };
@@ -510,19 +499,11 @@ impl ProfileStore {
                     }
                     let mut target = BTreeMap::new();
                     for (key, value) in env {
-                        let value = value.as_str().ok_or_else(|| {
-                            io::Error::other(format!(
-                                "profile {storage_key} env values must be strings"
-                            ))
-                        })?;
-                        target.insert(key, value.to_owned());
+                        target.insert(key, python_string(&value));
                     }
                     extracted.push((profile.clone(), target));
                     profile["env"] = json!({});
                     changed = true;
-                }
-                if changed {
-                    self.save(&profiles)?;
                 }
                 for (profile, values) in extracted {
                     let mut current = if self.secret_path(&profile).exists() {
@@ -532,6 +513,9 @@ impl ProfileStore {
                     };
                     current.extend(values);
                     self.write_secret_file(&profile, &current)?;
+                }
+                if changed {
+                    self.save(&profiles)?;
                 }
                 if !marker.exists() {
                     if let Some(parent) = marker.parent() {
@@ -690,6 +674,53 @@ mod tests {
         );
         assert!(
             !std::fs::read_to_string(home.root().join("state/actor_profiles/profiles.json"))
+                .expect("profiles")
+                .contains("secret")
+        );
+    }
+
+    #[test]
+    fn opening_store_extracts_env_from_an_already_canonical_profile() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path()).expect("home");
+        home.initialize().expect("initialize");
+        let profile_root = home.root().join("state/actor_profiles");
+        std::fs::create_dir_all(&profile_root).expect("profile root");
+        write_json(
+            &profile_root.join("profiles.json"),
+            &json!({
+                "profiles":{
+                    "canonical":{
+                        "id":"canonical",
+                        "name":"Canonical",
+                        "runtime":"codex",
+                        "env":{"TOKEN":"secret"}
+                    }
+                }
+            }),
+        )
+        .expect("canonical profile fixture");
+        std::fs::write(
+            profile_root.join(".rust-profiles-migrated-v1"),
+            b"migrated from Rust profile storage\n",
+        )
+        .expect("existing migration marker");
+
+        let store = ProfileStore::new(home.clone()).expect("store");
+        assert_eq!(
+            store.get("canonical").expect("get").expect("profile")["env"],
+            json!({})
+        );
+        assert_eq!(
+            store
+                .secret_values("canonical")
+                .expect("secrets")
+                .get("TOKEN")
+                .map(String::as_str),
+            Some("secret")
+        );
+        assert!(
+            !std::fs::read_to_string(profile_root.join("profiles.json"))
                 .expect("profiles")
                 .contains("secret")
         );

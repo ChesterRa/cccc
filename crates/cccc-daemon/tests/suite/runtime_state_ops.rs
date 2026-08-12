@@ -108,14 +108,174 @@ fn headless_actor_uses_structured_turns_without_a_pty() {
 
 #[cfg(unix)]
 #[test]
+fn local_headless_requires_an_attached_project_scope() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let created = call(&home, "group_create", json!({"title":"headless scope"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"codex-headless",
+            "runtime":"codex",
+            "runner":"headless",
+            "command":["sh","-c","while IFS= read -r line; do :; done"],
+            "by":"user"
+        }),
+    );
+
+    let started = raw_call(
+        &home,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
+    );
+
+    assert!(
+        !started.ok,
+        "scope-less headless actor unexpectedly started"
+    );
+    assert_eq!(
+        started.error.as_ref().map(|error| error.code.as_str()),
+        Some("missing_project_root")
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn codex_headless_restores_working_after_waiting_flags_clear() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    let waiting_log = temp.path().join("waiting");
+    let active_log = temp.path().join("active");
+    let created = call(&home, "group_create", json!({"title":"codex waiting"}));
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id");
+    call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":temp.path(),"by":"user"}),
+    );
+    let fake_app_server = r#"
+while IFS= read -r line; do
+  id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  case "$line" in
+    *'"method":"initialize"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id"
+      ;;
+    *'"method":"thread/start"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"thread":{"id":"thread-1"}}}\n' "$id"
+      ;;
+    *'"method":"turn/start"'*)
+      printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"turn-%s"}}}\n' "$id" "$id"
+      printf '{"jsonrpc":"2.0","method":"thread/status/changed","params":{"threadId":"thread-1","status":{"type":"active","activeFlags":["waitingOnUserInput"]}}}\n'
+      : > "$CCCC_WAITING_LOG"
+      sleep 1
+      printf '{"jsonrpc":"2.0","method":"thread/status/changed","params":{"threadId":"thread-1","status":{"type":"active","activeFlags":[]}}}\n'
+      : > "$CCCC_ACTIVE_LOG"
+      sleep 1
+      printf '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-%s","status":"completed"}}}\n' "$id"
+      ;;
+  esac
+done
+"#;
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"codex-headless",
+            "runtime":"codex",
+            "runner":"headless",
+            "command":["sh","-c",fake_app_server],
+            "env":{
+                "CCCC_WAITING_LOG":waiting_log,
+                "CCCC_ACTIVE_LOG":active_log
+            },
+            "by":"user"
+        }),
+    );
+    call(
+        &home,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
+    );
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !waiting_log.is_file() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "waiting status not emitted"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    loop {
+        let state = call(
+            &home,
+            "headless_status",
+            json!({"group_id":group_id,"actor_id":"codex-headless"}),
+        );
+        if state.result["state"]["status"] == "waiting" {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "waiting state not observed"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !active_log.is_file() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "active status not emitted"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    loop {
+        let state = call(
+            &home,
+            "headless_status",
+            json!({"group_id":group_id,"actor_id":"codex-headless"}),
+        );
+        if state.result["state"]["status"] == "working" {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "working state not restored"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    call(
+        &home,
+        "actor_stop",
+        json!({"group_id":group_id,"actor_id":"codex-headless","by":"user"}),
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn codex_headless_starts_a_provider_and_delivers_messages() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     let resume_log = temp.path().join("resume-attempted");
+    let server_request_log = temp.path().join("server-request-response");
     let created = call(&home, "group_create", json!({"title":"codex headless"}));
     let group_id = created.result["group"]["group_id"]
         .as_str()
         .expect("group id");
+    call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":temp.path(),"by":"user"}),
+    );
     let fake_app_server = r#"
 while IFS= read -r line; do
   id=$(printf '%s' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
@@ -132,7 +292,18 @@ while IFS= read -r line; do
       ;;
     *'"method":"turn/start"'*)
       printf '{"jsonrpc":"2.0","id":%s,"result":{"turn":{"id":"turn-%s"}}}\n' "$id" "$id"
-      printf '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-%s","status":"completed"}}}\n' "$id"
+      printf '{"jsonrpc":"2.0","id":"input-1","method":"item/tool/requestUserInput","params":{"turnId":"turn-%s"}}\n' "$id"
+      case "$line" in
+        *'fail this turn'*)
+          printf '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-%s","status":"failed","error":{"message":"provider failed"}}}}\n' "$id"
+          ;;
+        *)
+          printf '{"jsonrpc":"2.0","method":"turn/completed","params":{"turn":{"id":"turn-%s","status":"completed"}}}\n' "$id"
+          ;;
+      esac
+      ;;
+    *'"id":"input-1"'*)
+      printf '%s' "$line" > "$CCCC_SERVER_REQUEST_LOG"
       ;;
   esac
 done
@@ -146,7 +317,10 @@ done
             "runtime":"codex",
             "runner":"headless",
             "command":["sh","-c",fake_app_server],
-            "env":{"CCCC_RESUME_LOG":resume_log},
+            "env":{
+                "CCCC_RESUME_LOG":resume_log,
+                "CCCC_SERVER_REQUEST_LOG":server_request_log
+            },
             "by":"user"
         }),
     );
@@ -189,6 +363,128 @@ done
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    let headless_events_path = home
+        .groups_dir()
+        .join(group_id)
+        .join("state/headless/events.jsonl");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let headless_events = loop {
+        let events = std::fs::read_to_string(&headless_events_path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .collect::<Vec<_>>();
+        let has_terminal = events.iter().any(|event| {
+            event["data"]["event_id"] == event_id
+                && matches!(
+                    event["type"].as_str(),
+                    Some("headless.turn.completed" | "headless.turn.failed")
+                )
+        });
+        if has_terminal {
+            break events;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "headless terminal event was not recorded"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    let started_index = headless_events
+        .iter()
+        .position(|event| {
+            event["type"] == "headless.turn.started" && event["data"]["event_id"] == event_id
+        })
+        .expect("turn started event");
+    let terminal_index = headless_events
+        .iter()
+        .position(|event| {
+            event["data"]["event_id"] == event_id
+                && matches!(
+                    event["type"].as_str(),
+                    Some("headless.turn.completed" | "headless.turn.failed")
+                )
+        })
+        .expect("turn terminal event");
+    assert!(
+        started_index < terminal_index,
+        "provider terminal event preceded turn acceptance: {headless_events:?}"
+    );
+    assert!(headless_events.iter().any(|event| {
+        event["type"] == "headless.control.started" && event["data"]["control_kind"] == "bootstrap"
+    }));
+    assert!(headless_events.iter().any(|event| {
+        event["type"] == "headless.control.completed"
+            && event["data"]["control_kind"] == "bootstrap"
+    }));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while !server_request_log.is_file() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "headless provider server request received no response"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let server_response: Value = serde_json::from_str(
+        &std::fs::read_to_string(&server_request_log).expect("server request response"),
+    )
+    .expect("valid server request response");
+    assert_eq!(server_response["id"], "input-1");
+    assert_eq!(server_response["error"]["code"], -32601);
+
+    let failed = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["codex-headless"],"text":"fail this turn"}),
+    );
+    let failed_event_id = failed.result["event"]["id"]
+        .as_str()
+        .expect("failed event id");
+    let succeeded = call(
+        &home,
+        "send",
+        json!({"group_id":group_id,"by":"user","to":["codex-headless"],"text":"continue after failure"}),
+    );
+    let succeeded_event_id = succeeded.result["event"]["id"]
+        .as_str()
+        .expect("succeeded event id");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    let recovery_events = loop {
+        let events = std::fs::read_to_string(&headless_events_path)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .collect::<Vec<_>>();
+        let failed_recorded = events.iter().any(|event| {
+            event["type"] == "headless.turn.failed" && event["data"]["event_id"] == failed_event_id
+        });
+        let success_recorded = events.iter().any(|event| {
+            event["type"] == "headless.turn.completed"
+                && event["data"]["event_id"] == succeeded_event_id
+        });
+        if failed_recorded && success_recorded {
+            break events;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "later headless turn did not progress after provider failure: {events:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    let failed_index = recovery_events
+        .iter()
+        .position(|event| {
+            event["type"] == "headless.turn.failed" && event["data"]["event_id"] == failed_event_id
+        })
+        .expect("failed terminal event");
+    let success_index = recovery_events
+        .iter()
+        .position(|event| {
+            event["type"] == "headless.turn.completed"
+                && event["data"]["event_id"] == succeeded_event_id
+        })
+        .expect("later completed event");
+    assert!(failed_index < success_index);
     let state = call(
         &home,
         "actor_list",
@@ -249,6 +545,11 @@ fn claude_headless_stream_json_stops_with_its_group() {
     let group_id = created.result["group"]["group_id"]
         .as_str()
         .expect("group id");
+    call(
+        &home,
+        "attach",
+        json!({"group_id":group_id,"path":temp.path(),"by":"user"}),
+    );
     let fake_claude = r#"
 while IFS= read -r line; do
   printf '{"type":"assistant","message":{"id":"message-1","content":[{"type":"text","text":"done"}]}}\n'

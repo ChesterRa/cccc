@@ -231,6 +231,19 @@ mod tests {
         }
     }
 
+    #[test]
+    fn presentation_mutations_are_serialized_as_group_writes() {
+        for op in ["presentation_publish", "presentation_clear"] {
+            assert!(
+                matches!(
+                    access(&request(op, json!({"group_id":"g_one"}))),
+                    Access::GroupWrite(group_id) if group_id == "g_one"
+                ),
+                "{op} must be serialized as a group write"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn group_writes_are_isolated_without_blocking_other_groups() {
         let locks = DispatchLocks::default();

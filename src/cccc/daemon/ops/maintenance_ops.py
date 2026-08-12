@@ -9,7 +9,7 @@ from ...contracts.v1 import DaemonError, DaemonResponse
 from ..group_bridge.cross_group_receipt_projection import project_remote_send_receipt
 from ..group_bridge.ops import handle_remote_send
 from ..group_bridge.route_lookup import resolve_remote_group_route
-from ...kernel.actors import resolve_recipient_tokens
+from ...kernel.actors import find_actor, resolve_recipient_tokens
 from ...kernel.chat_idempotency import find_existing_reply_result
 from ...kernel.group import load_group
 from ...kernel.inbox import iter_events
@@ -134,12 +134,29 @@ def handle_term_resize(args: Dict[str, Any]) -> DaemonResponse:
         return _error("missing_group_id", "missing group_id")
     if not actor_id:
         return _error("missing_actor_id", "missing actor_id")
-    if cols < 10 or rows < 2:
-        return _error("invalid_size", f"cols={cols} rows={rows} too small")
+    if cols < 10 or rows < 2 or cols > 65_535 or rows > 65_535:
+        return _error("invalid_size", f"invalid terminal size: cols={cols} rows={rows}")
     group = load_group(group_id)
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
-    pty_runner.SUPERVISOR.resize(group_id=group_id, actor_id=actor_id, cols=cols, rows=rows)
+    actor = find_actor(group, actor_id)
+    if not isinstance(actor, dict):
+        return _error("actor_not_found", f"actor not found: {actor_id}")
+    runner_kind = str(actor.get("runner") or "pty").strip().lower() or "pty"
+    if runner_kind == "headless":
+        return _error(
+            "not_pty_actor",
+            "terminal resize is only available for PTY actors",
+            details={"runner": runner_kind},
+        )
+    resized = pty_runner.SUPERVISOR.resize(
+        group_id=group_id,
+        actor_id=actor_id,
+        cols=cols,
+        rows=rows,
+    )
+    if not resized:
+        return _error("actor_not_running", "actor is not running")
     return DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id, "cols": cols, "rows": rows})
 
 

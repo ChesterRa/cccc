@@ -42,8 +42,8 @@ Once authorized, these commands work across platforms:
 | `/subscribe` | Request authorization and receive a one-time binding key (not required for the Weixin QR-login account) |
 | `/unsubscribe` | Stop receiving messages |
 | `/status` | Show group status |
-| `/pause` | Pause message delivery |
-| `/resume` | Resume message delivery |
+| `/pause` | Pause delivery for this chat or thread |
+| `/resume` | Resume delivery for this chat or thread |
 | `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/help` | Show help |
 
@@ -52,6 +52,8 @@ On platforms that support group chats, @mentioning the bot, or sending a direct 
 
 A recognized CCCC slash command is itself an explicit bot address and may be sent without an @mention on group providers that deliver it. Ordinary group text and attachments still require an explicit @mention. This rule is shared by the Rust and Python workers, including Feishu; it avoids a provider-specific command policy.
 :::
+
+The Python compatibility worker also retains the legacy `/context`, `/launch`, and `/quit` commands. They are not part of the portable IM command contract; use Web or the CCCC CLI for lifecycle control when a workflow must survive an engine switch. The low-level `skip_pending_on_start=false` backlog-replay policy is likewise Python-only. Rust rejects that policy at worker startup instead of silently skipping the requested backlog.
 
 Weixin currently supports direct bot chats only. Confirming the QR login immediately authorizes the scanning account; it can send plain text as soon as the bridge is running, with no `/subscribe`, binding key, or manual approval step. Worker startup and login-status recovery repair this authorization automatically. The Rust SDK callback does not expose a stable group-chat ID, so Weixin group messages are intentionally outside the supported bridge contract.
 

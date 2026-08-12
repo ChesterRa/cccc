@@ -5,7 +5,7 @@ use sha2::{Digest, Sha256};
 use std::io;
 use uuid::Uuid;
 
-use super::{voice_input, voice_semantic_input, voice_settings};
+use super::{voice_document_state, voice_input, voice_semantic_input, voice_settings};
 use crate::dispatch::{
     OpError, OpResult, bool_arg, first_non_blank_arg, object, required_arg, string_arg,
 };
@@ -46,7 +46,7 @@ pub(super) fn input(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         voice_input::validate_document_path(&document_path)?;
     }
 
-    let state = assistant_state::load(home, &group_id).map_err(OpError::io)?;
+    let state = voice_document_state::load(home, &group_id).map_err(OpError::io)?;
     let document = if document_path.is_empty() {
         None
     } else {

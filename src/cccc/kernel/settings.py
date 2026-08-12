@@ -12,17 +12,19 @@ import copy
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 import yaml  # type: ignore
 
 from ..paths import ensure_home
+from ..util.file_lock import acquire_lockfile, release_lockfile
 from ..util.fs import atomic_write_text
 from ..util.time import utc_now_iso
 
 _SETTINGS_CACHE_LOCK = threading.Lock()
 _SETTINGS_CACHE_KEY: tuple[str, int, int] | None = None
 _SETTINGS_CACHE_DOC: Dict[str, Any] | None = None
+_T = TypeVar("_T")
 
 
 @dataclass
@@ -335,76 +337,80 @@ def get_observability_settings() -> Dict[str, Any]:
 
 def update_observability_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
     """Update observability settings in ~/.cccc/settings.yaml and return merged result."""
-    settings = load_settings()
-    current = _merge_observability(settings.get("observability"))
     if not isinstance(patch, dict):
-        return current
+        return get_observability_settings()
 
-    merged = dict(current)
-    if "developer_mode" in patch:
-        merged["developer_mode"] = _as_bool(patch.get("developer_mode"), bool(merged["developer_mode"]))
-    if "log_level" in patch:
-        merged["log_level"] = _as_log_level_name(patch.get("log_level"), str(merged["log_level"]))
-    if "components" in patch:
-        comps = patch.get("components")
-        if isinstance(comps, list):
-            merged["components"] = [str(x).strip() for x in comps if str(x).strip()]
-    if "logger_levels" in patch:
-        logger_levels_patch = patch.get("logger_levels")
-        logger_levels: Dict[str, str] = {}
-        if isinstance(logger_levels_patch, dict):
-            for name, level in logger_levels_patch.items():
-                logger_name = str(name or "").strip()
-                if not logger_name:
-                    continue
-                normalized = _as_log_level_name(level, "")
-                if normalized:
-                    logger_levels[logger_name] = normalized
-        merged["logger_levels"] = logger_levels
-    if "terminal_transcript" in patch:
-        tt_patch = patch.get("terminal_transcript")
-        if isinstance(tt_patch, dict):
-            tt = dict(merged.get("terminal_transcript") or {})
-            if "enabled" in tt_patch:
-                tt["enabled"] = _as_bool(tt_patch.get("enabled"), bool(tt.get("enabled", False)))
-            if "per_actor_bytes" in tt_patch:
-                tt["per_actor_bytes"] = _as_int(tt_patch.get("per_actor_bytes"), int(tt.get("per_actor_bytes", 0)), min_value=0)
-            if "persist" in tt_patch:
-                tt["persist"] = _as_bool(tt_patch.get("persist"), bool(tt.get("persist", False)))
-            if "strip_ansi" in tt_patch:
-                tt["strip_ansi"] = _as_bool(tt_patch.get("strip_ansi"), bool(tt.get("strip_ansi", True)))
-            merged["terminal_transcript"] = tt
-    if "terminal_ui" in patch:
-        tui_patch = patch.get("terminal_ui")
-        if isinstance(tui_patch, dict):
-            tui = dict(merged.get("terminal_ui") or {})
-            if "scrollback_lines" in tui_patch:
-                tui["scrollback_lines"] = _as_int(
-                    tui_patch.get("scrollback_lines"),
-                    int(tui.get("scrollback_lines", 8000)),
-                    min_value=1000,
-                    max_value=200_000,
-                )
-            merged["terminal_ui"] = tui
-    if "runtime_visibility" in patch:
-        runtime_visibility_patch = patch.get("runtime_visibility")
-        if isinstance(runtime_visibility_patch, dict):
-            runtime_visibility = dict(merged.get("runtime_visibility") or {})
-            if "peer_runtime" in runtime_visibility_patch:
-                runtime_visibility["peer_runtime"] = _as_runtime_visibility(
-                    runtime_visibility_patch.get("peer_runtime"),
-                    str(runtime_visibility.get("peer_runtime", "visible")),
-                )
-            if "assistant_runtime" in runtime_visibility_patch:
-                runtime_visibility["assistant_runtime"] = _as_runtime_visibility(
-                    runtime_visibility_patch.get("assistant_runtime"),
-                    str(runtime_visibility.get("assistant_runtime", "hidden")),
-                )
-            merged["runtime_visibility"] = runtime_visibility
+    def apply(settings: Dict[str, Any]) -> Dict[str, Any]:
+        current = _merge_observability(settings.get("observability"))
+        merged = dict(current)
+        if "developer_mode" in patch:
+            merged["developer_mode"] = _as_bool(patch.get("developer_mode"), bool(merged["developer_mode"]))
+        if "log_level" in patch:
+            merged["log_level"] = _as_log_level_name(patch.get("log_level"), str(merged["log_level"]))
+        if "components" in patch:
+            comps = patch.get("components")
+            if isinstance(comps, list):
+                merged["components"] = [str(x).strip() for x in comps if str(x).strip()]
+        if "logger_levels" in patch:
+            logger_levels_patch = patch.get("logger_levels")
+            logger_levels: Dict[str, str] = {}
+            if isinstance(logger_levels_patch, dict):
+                for name, level in logger_levels_patch.items():
+                    logger_name = str(name or "").strip()
+                    if not logger_name:
+                        continue
+                    normalized = _as_log_level_name(level, "")
+                    if normalized:
+                        logger_levels[logger_name] = normalized
+            merged["logger_levels"] = logger_levels
+        if "terminal_transcript" in patch:
+            tt_patch = patch.get("terminal_transcript")
+            if isinstance(tt_patch, dict):
+                tt = dict(merged.get("terminal_transcript") or {})
+                if "enabled" in tt_patch:
+                    tt["enabled"] = _as_bool(tt_patch.get("enabled"), bool(tt.get("enabled", False)))
+                if "per_actor_bytes" in tt_patch:
+                    tt["per_actor_bytes"] = _as_int(
+                        tt_patch.get("per_actor_bytes"),
+                        int(tt.get("per_actor_bytes", 0)),
+                        min_value=0,
+                    )
+                if "persist" in tt_patch:
+                    tt["persist"] = _as_bool(tt_patch.get("persist"), bool(tt.get("persist", False)))
+                if "strip_ansi" in tt_patch:
+                    tt["strip_ansi"] = _as_bool(tt_patch.get("strip_ansi"), bool(tt.get("strip_ansi", True)))
+                merged["terminal_transcript"] = tt
+        if "terminal_ui" in patch:
+            tui_patch = patch.get("terminal_ui")
+            if isinstance(tui_patch, dict):
+                tui = dict(merged.get("terminal_ui") or {})
+                if "scrollback_lines" in tui_patch:
+                    tui["scrollback_lines"] = _as_int(
+                        tui_patch.get("scrollback_lines"),
+                        int(tui.get("scrollback_lines", 8000)),
+                        min_value=1000,
+                        max_value=200_000,
+                    )
+                merged["terminal_ui"] = tui
+        if "runtime_visibility" in patch:
+            runtime_visibility_patch = patch.get("runtime_visibility")
+            if isinstance(runtime_visibility_patch, dict):
+                runtime_visibility = dict(merged.get("runtime_visibility") or {})
+                if "peer_runtime" in runtime_visibility_patch:
+                    runtime_visibility["peer_runtime"] = _as_runtime_visibility(
+                        runtime_visibility_patch.get("peer_runtime"),
+                        str(runtime_visibility.get("peer_runtime", "visible")),
+                    )
+                if "assistant_runtime" in runtime_visibility_patch:
+                    runtime_visibility["assistant_runtime"] = _as_runtime_visibility(
+                        runtime_visibility_patch.get("assistant_runtime"),
+                        str(runtime_visibility.get("assistant_runtime", "hidden")),
+                    )
+                merged["runtime_visibility"] = runtime_visibility
+        settings["observability"] = merged
+        return _merge_observability(merged)
 
-    settings["observability"] = merged
-    save_settings(settings)
-    return _merge_observability(merged)
+    return _mutate_settings(apply)
 
 
 def get_remote_access_settings() -> Dict[str, Any]:
@@ -467,103 +473,105 @@ def update_remote_access_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
     present in the raw settings).  This avoids writing default values (e.g.
     web_port=8848) that would shadow env-var fallbacks later.
     """
-    settings = load_settings()
-    current = _merge_remote_access(settings.get("remote_access"))
     if not isinstance(patch, dict) or not patch:
-        return current
+        return get_remote_access_settings()
 
-    # Work on the RAW persisted dict, not the merged-with-defaults version.
-    # This ensures we never persist a default value that wasn't explicitly set.
-    raw = dict(settings.get("remote_access") if isinstance(settings.get("remote_access"), dict) else {})
-    changed = False
+    def apply(settings: Dict[str, Any]) -> Dict[str, Any]:
+        current = _merge_remote_access(settings.get("remote_access"))
+        # Work on the RAW persisted dict, not the merged-with-defaults version.
+        # This ensures we never persist a default value that wasn't explicitly set.
+        raw = dict(settings.get("remote_access") if isinstance(settings.get("remote_access"), dict) else {})
+        changed = False
 
-    if "provider" in patch:
-        provider = _as_str(patch.get("provider"), str(current["provider"])).lower()
-        if provider not in ("off", "manual", "tailscale"):
-            provider = "off"
-        raw["provider"] = provider
-        changed = True
+        if "provider" in patch:
+            provider = _as_str(patch.get("provider"), str(current["provider"])).lower()
+            if provider not in ("off", "manual", "tailscale"):
+                provider = "off"
+            raw["provider"] = provider
+            changed = True
+        if "mode" in patch:
+            mode = _as_str(patch.get("mode"), str(current["mode"]))
+            raw["mode"] = mode or str(DEFAULT_REMOTE_ACCESS["mode"])
+            changed = True
+        if "require_access_token" in patch:
+            raw["require_access_token"] = _as_bool(
+                patch.get("require_access_token"),
+                bool(current["require_access_token"]),
+            )
+            changed = True
+        if "enabled" in patch:
+            raw["enabled"] = _as_bool(patch.get("enabled"), bool(current["enabled"]))
+            changed = True
+        if "web_host" in patch:
+            raw["web_host"] = str(patch.get("web_host") or "").strip()
+            changed = True
+        if "web_port" in patch:
+            raw["web_port"] = _as_int(
+                patch.get("web_port"),
+                int(current.get("web_port") or 8848),
+                min_value=1,
+                max_value=65535,
+            )
+            changed = True
+        if "web_public_url" in patch:
+            raw["web_public_url"] = str(patch.get("web_public_url") or "").strip()
+            changed = True
+        if "updated_at" in patch:
+            raw["updated_at"] = _as_str(patch.get("updated_at"), str(raw.get("updated_at") or ""))
+            changed = True
+        elif changed:
+            raw["updated_at"] = utc_now_iso()
 
-    if "mode" in patch:
-        mode = _as_str(patch.get("mode"), str(current["mode"]))
-        raw["mode"] = mode or str(DEFAULT_REMOTE_ACCESS["mode"])
-        changed = True
+        merged_provider = str(raw.get("provider") or current.get("provider") or "").strip().lower()
+        if merged_provider == "off":
+            raw["enabled"] = False
+        settings["remote_access"] = raw
+        return _merge_remote_access(raw)
 
-    if "require_access_token" in patch:
-        raw["require_access_token"] = _as_bool(
-            patch.get("require_access_token"),
-            bool(current["require_access_token"]),
-        )
-        changed = True
-
-    if "enabled" in patch:
-        raw["enabled"] = _as_bool(patch.get("enabled"), bool(current["enabled"]))
-        changed = True
-
-    if "web_host" in patch:
-        raw["web_host"] = str(patch.get("web_host") or "").strip()
-        changed = True
-
-    if "web_port" in patch:
-        raw["web_port"] = _as_int(patch.get("web_port"), int(current.get("web_port") or 8848), min_value=1, max_value=65535)
-        changed = True
-
-    if "web_public_url" in patch:
-        raw["web_public_url"] = str(patch.get("web_public_url") or "").strip()
-        changed = True
-
-    if "updated_at" in patch:
-        raw["updated_at"] = _as_str(patch.get("updated_at"), str(raw.get("updated_at") or ""))
-        changed = True
-    elif changed:
-        raw["updated_at"] = utc_now_iso()
-
-    # Enforce provider=off => enabled=False on the raw dict before save.
-    merged_provider = str(raw.get("provider") or current.get("provider") or "").strip().lower()
-    if merged_provider == "off":
-        raw["enabled"] = False
-
-    settings["remote_access"] = raw
-    save_settings(settings)
-    return _merge_remote_access(raw)
+    return _mutate_settings(apply)
 
 
 def update_web_branding_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
     """Update web branding settings in ~/.cccc/settings.yaml and return merged result."""
-    settings = load_settings()
-    current = _merge_web_branding(settings.get("web_branding"))
     if not isinstance(patch, dict) or not patch:
-        return current
+        return get_web_branding_settings()
 
-    raw = dict(settings.get("web_branding") if isinstance(settings.get("web_branding"), dict) else {})
-    changed = False
+    def apply(settings: Dict[str, Any]) -> Dict[str, Any]:
+        raw = dict(settings.get("web_branding") if isinstance(settings.get("web_branding"), dict) else {})
+        changed = False
+        if "product_name" in patch:
+            product_name = str(patch.get("product_name") or "").strip()
+            raw["product_name"] = product_name or str(DEFAULT_WEB_BRANDING["product_name"])
+            changed = True
+        if "logo_icon_asset_path" in patch:
+            raw["logo_icon_asset_path"] = str(patch.get("logo_icon_asset_path") or "").strip()
+            changed = True
+        if "favicon_asset_path" in patch:
+            raw["favicon_asset_path"] = str(patch.get("favicon_asset_path") or "").strip()
+            changed = True
+        if "updated_at" in patch:
+            raw["updated_at"] = _as_str(patch.get("updated_at"), str(raw.get("updated_at") or ""))
+            changed = True
+        elif changed:
+            raw["updated_at"] = utc_now_iso()
+        settings["web_branding"] = raw
+        return _merge_web_branding(raw)
 
-    if "product_name" in patch:
-        product_name = str(patch.get("product_name") or "").strip()
-        raw["product_name"] = product_name or str(DEFAULT_WEB_BRANDING["product_name"])
-        changed = True
-
-    if "logo_icon_asset_path" in patch:
-        raw["logo_icon_asset_path"] = str(patch.get("logo_icon_asset_path") or "").strip()
-        changed = True
-
-    if "favicon_asset_path" in patch:
-        raw["favicon_asset_path"] = str(patch.get("favicon_asset_path") or "").strip()
-        changed = True
-
-    if "updated_at" in patch:
-        raw["updated_at"] = _as_str(patch.get("updated_at"), str(raw.get("updated_at") or ""))
-        changed = True
-    elif changed:
-        raw["updated_at"] = utc_now_iso()
-
-    settings["web_branding"] = raw
-    save_settings(settings)
-    return _merge_web_branding(raw)
+    return _mutate_settings(apply)
 
 
 def _settings_path() -> Path:
     return ensure_home() / "settings.yaml"
+
+
+def _read_settings_file(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return {}
+    return doc if isinstance(doc, dict) else {}
 
 
 def _clone_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -592,11 +600,7 @@ def load_settings() -> Dict[str, Any]:
         with _SETTINGS_CACHE_LOCK:
             if _SETTINGS_CACHE_KEY == cache_key and _SETTINGS_CACHE_DOC is not None:
                 return _clone_settings(_SETTINGS_CACHE_DOC)
-    try:
-        doc = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-        out = doc if isinstance(doc, dict) else {}
-    except Exception:
-        return {}
+    out = _read_settings_file(p)
     if cache_key is not None:
         with _SETTINGS_CACHE_LOCK:
             _SETTINGS_CACHE_KEY = cache_key
@@ -610,6 +614,21 @@ def save_settings(settings: Dict[str, Any]) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(p, yaml.safe_dump(settings, allow_unicode=True, sort_keys=False))
     _invalidate_settings_cache()
+
+
+def _mutate_settings(change: Callable[[Dict[str, Any]], _T]) -> _T:
+    """Apply one global settings mutation against the latest file under the shared lock."""
+    path = _settings_path()
+    lock = acquire_lockfile(path.with_name(f"{path.name}.lock"), blocking=True)
+    try:
+        settings = _read_settings_file(path)
+        result = change(settings)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(path, yaml.safe_dump(settings, allow_unicode=True, sort_keys=False))
+        _invalidate_settings_cache()
+        return result
+    finally:
+        release_lockfile(lock)
 
 
 def get_runtime_pool() -> List[RuntimePoolEntry]:
@@ -635,9 +654,10 @@ def get_runtime_pool() -> List[RuntimePoolEntry]:
 
 def set_runtime_pool(pool: List[RuntimePoolEntry]) -> None:
     """Set the runtime pool in settings."""
-    settings = load_settings()
-    settings["runtime_pool"] = [e.to_dict() for e in pool]
-    save_settings(settings)
+    def apply(settings: Dict[str, Any]) -> None:
+        settings["runtime_pool"] = [entry.to_dict() for entry in pool]
+
+    _mutate_settings(apply)
 
 
 def get_recommended_runtime(scenario: str = "general") -> Optional[str]:

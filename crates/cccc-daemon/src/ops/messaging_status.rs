@@ -56,7 +56,9 @@ impl StatusSnapshot<'_> {
         group_id: &str,
         use_snapshot: impl FnOnce(&StatusSnapshot<'_>) -> T,
     ) -> Result<T, OpError> {
-        let group = store(home)?.load(group_id).map_err(OpError::not_found)?;
+        let group = store(home)?
+            .load(group_id)
+            .map_err(|_| OpError::new("group_not_found", format!("group not found: {group_id}")))?;
         let path = store(home)?.ledger_path(group_id).map_err(OpError::io)?;
         let cursors = inbox::cursors(home, group_id).map_err(OpError::io)?;
         ledger::inspect_status(&path, |events, positions, acked_by, replied_by| {
@@ -124,9 +126,7 @@ impl StatusSnapshot<'_> {
             let ack_status = obligation_recipients
                 .iter()
                 .map(|actor_id| {
-                    let value = replied.is_some_and(|actors| actors.contains(actor_id))
-                        || acked.is_some_and(|actors| actors.contains(actor_id))
-                        || self.is_read(event, actor_id);
+                    let value = acked.is_some_and(|actors| actors.contains(actor_id));
                     (actor_id.clone(), Value::Bool(value))
                 })
                 .collect::<Map<_, _>>();
@@ -138,9 +138,7 @@ impl StatusSnapshot<'_> {
             .map(|actor_id| {
                 let read = self.is_read(event, &actor_id);
                 let replied = replied.is_some_and(|actors| actors.contains(&actor_id));
-                let acked = replied
-                    || acked.is_some_and(|actors| actors.contains(&actor_id))
-                    || (is_attention && read);
+                let acked = acked.is_some_and(|actors| actors.contains(&actor_id));
                 (
                     actor_id,
                     json!({
@@ -306,7 +304,7 @@ mod tests {
         .cloned()
         .expect("data");
         let mut submitted = Event::new("web_model.browser_delivery.submitted", "g_one");
-        submitted.ts = "2026-08-10T00:00:01Z".into();
+        submitted.ts = "2026-08-09T23:59:59Z".into();
         submitted.data = json!({
             "actor_id":"web","delivery_id":"delivery-1","event_ids":["event-1","event-2"],
             "submission_evidence":"message_echo"

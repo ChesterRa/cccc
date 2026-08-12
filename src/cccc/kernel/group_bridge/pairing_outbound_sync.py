@@ -8,8 +8,10 @@ from typing import Any, Dict, Optional
 from ...util.time import utc_now_iso
 from . import pairing
 from .credentials import save_pairing_bearer_token
+from .state_lock import serialized_group_bridge_state
 
 
+@serialized_group_bridge_state
 def approve_outbound_from_remote_request(
     outbound_id: str,
     remote_request: Dict[str, Any],

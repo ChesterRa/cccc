@@ -10,6 +10,25 @@ import yaml
 
 
 class TestWebModelConnectorInterop(unittest.TestCase):
+    def test_malformed_connector_store_fails_closed_without_overwrite(self) -> None:
+        from cccc.kernel.web_model_connectors import create_web_model_connector
+
+        with tempfile.TemporaryDirectory() as raw_home:
+            home = Path(raw_home)
+            path = home / "web_model_connectors.yaml"
+            malformed = "connectors: [unterminated\n"
+            path.write_text(malformed, encoding="utf-8")
+
+            with self.assertRaises(ValueError):
+                create_web_model_connector(
+                    group_id="g_shared",
+                    actor_id="web1",
+                    provider="chatgpt_web",
+                    home=home,
+                )
+
+            self.assertEqual(path.read_text(encoding="utf-8"), malformed)
+
     def test_rust_settings_store_migrates_into_python_connector_file(self) -> None:
         from cccc.kernel.web_model_connectors import (
             load_web_model_connectors,

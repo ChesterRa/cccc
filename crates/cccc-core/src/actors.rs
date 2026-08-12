@@ -8,6 +8,9 @@ use crate::GroupDoc;
 const RESERVED: &[&str] = &[
     "user", "all", "system", "foreman", "peers", "admin", "root", "cccc",
 ];
+const WEB_MODEL_DELIVERY_PREFERENCES_KEY: &str = "web_model_delivery_preferences";
+const RUNTIME_STATES_KEY: &str = "runtime_states";
+const WEB_MODEL_BROWSER_TARGETS_KEY: &str = "web_model_browser_targets";
 
 /// Existing recipient selector used when a cross-group caller omits `to`.
 pub const CROSS_GROUP_FOREMAN_RECIPIENT: &str = "@foreman";
@@ -92,6 +95,9 @@ pub fn add(group: &mut GroupDoc, mut actor: Actor) -> io::Result<Actor> {
     actor.capability_autoload = dedupe(actor.capability_autoload);
     actor.capability_hidden = dedupe(actor.capability_hidden);
     actor.updated_at = utc_now();
+    retire_web_model_delivery_preference(group, &actor.id);
+    retire_runtime_state(group, &actor.id);
+    retire_web_model_browser_target(group, &actor.id)?;
     group.actors.push(actor.clone());
     actor.role = effective_role(group, &actor.id);
     Ok(actor)
@@ -134,7 +140,39 @@ pub fn remove(group: &mut GroupDoc, actor_id: &str) -> io::Result<Actor> {
         .iter()
         .position(|actor| actor.id == actor_id)
         .ok_or_else(|| io::Error::other(format!("actor not found: {actor_id}")))?;
+    retire_web_model_delivery_preference(group, actor_id);
+    retire_runtime_state(group, actor_id);
+    retire_web_model_browser_target(group, actor_id)?;
     Ok(group.actors.remove(index))
+}
+
+fn retire_web_model_delivery_preference(group: &mut GroupDoc, actor_id: &str) -> Option<Value> {
+    group
+        .extra
+        .get_mut(WEB_MODEL_DELIVERY_PREFERENCES_KEY)
+        .and_then(Value::as_object_mut)
+        .and_then(|preferences| preferences.remove(actor_id))
+}
+
+fn retire_runtime_state(group: &mut GroupDoc, actor_id: &str) -> Option<Value> {
+    group
+        .extra
+        .get_mut(RUNTIME_STATES_KEY)
+        .and_then(Value::as_object_mut)
+        .and_then(|states| states.remove(actor_id))
+}
+
+fn retire_web_model_browser_target(
+    group: &mut GroupDoc,
+    actor_id: &str,
+) -> io::Result<Option<Value>> {
+    let targets = group
+        .extra
+        .entry(WEB_MODEL_BROWSER_TARGETS_KEY)
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| io::Error::other("web_model_browser_targets must be an object"))?;
+    Ok(targets.remove(actor_id))
 }
 
 pub fn reorder(group: &mut GroupDoc, ids: &[String]) -> io::Result<Vec<Actor>> {

@@ -12,6 +12,7 @@ from ...kernel.help_markdown import _select_help_markdown, parse_help_markdown, 
 from ..actors.private_env_ops import copy_group_private_env
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
+from .presentation_browser_runtime import close_group_browser_surface_sessions
 from ...kernel.active import load_active, set_active_group_id
 from ...kernel.group import (
     Group,
@@ -443,6 +444,7 @@ def handle_group_delete(
     try:
         require_group_permission(group, by=by, action="group.delete")
         stop_im_bridges_for_group(group_id)
+        close_group_browser_surface_sessions(group_id=group_id)
         codex_app_supervisor.stop_group(group_id=group_id)
         claude_app_supervisor.stop_group(group_id=group_id)
         pty_runner.SUPERVISOR.stop_group(group_id=group_id)
@@ -585,6 +587,7 @@ def _delete_group_for_reset(
 ) -> Optional[str]:
     try:
         stop_im_bridges_for_group(group_id)
+        close_group_browser_surface_sessions(group_id=group_id)
         codex_app_supervisor.stop_group(group_id=group_id)
         claude_app_supervisor.stop_group(group_id=group_id)
         pty_runner.SUPERVISOR.stop_group(group_id=group_id)

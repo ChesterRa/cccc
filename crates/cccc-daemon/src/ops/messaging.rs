@@ -570,9 +570,10 @@ pub(super) fn append(
 }
 
 pub(super) fn load(home: &HomeLayout, request: &DaemonRequest) -> Result<GroupDoc, OpError> {
+    let group_id = required_arg(request, "group_id")?;
     store(home)?
-        .load(&required_arg(request, "group_id")?)
-        .map_err(OpError::not_found)
+        .load(&group_id)
+        .map_err(|_| OpError::new("group_not_found", format!("group not found: {group_id}")))
 }
 
 pub(super) fn find_event(

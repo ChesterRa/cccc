@@ -12,6 +12,30 @@ pub(super) fn persists_secretary_artifacts(command: &Value) -> bool {
         && command["dispatch_target"].as_str() != Some("composer")
 }
 
+pub(super) fn validate_recording_lease_scope(
+    lease: &Value,
+    command: &Value,
+) -> Result<(), voice_asr::VoiceError> {
+    let leased_capture_mode = lease["capture_mode"].as_str().unwrap_or("").trim();
+    let leased_dispatch_target = lease["dispatch_target"].as_str().unwrap_or("").trim();
+    let requested_capture_mode = command["capture_mode"]
+        .as_str()
+        .unwrap_or("document")
+        .trim();
+    let requested_dispatch_target = command["dispatch_target"].as_str().unwrap_or("").trim();
+    if (!leased_capture_mode.is_empty() && leased_capture_mode != requested_capture_mode)
+        || (!leased_dispatch_target.is_empty()
+            && leased_dispatch_target != requested_dispatch_target)
+    {
+        return Err(voice_asr::VoiceError {
+            code: "assistant_voice_recording_lease_mismatch",
+            message: "voice transcription mode does not match the active recording lease".into(),
+            details: serde_json::Map::new(),
+        });
+    }
+    Ok(())
+}
+
 pub(super) struct DisconnectContext {
     pub(super) state: AppState,
     pub(super) group_id: String,
@@ -201,6 +225,31 @@ mod tests {
         assert!(!persists_secretary_artifacts(
             &json!({"capture_mode":"instruction","dispatch_target":"instruction"})
         ));
+    }
+
+    #[test]
+    fn recording_start_must_match_nonempty_lease_scope() {
+        let lease = json!({"capture_mode":"prompt","dispatch_target":"composer"});
+        assert!(
+            validate_recording_lease_scope(
+                &lease,
+                &json!({"capture_mode":"prompt","dispatch_target":"composer"})
+            )
+            .is_ok()
+        );
+        let error = validate_recording_lease_scope(
+            &lease,
+            &json!({"capture_mode":"document","dispatch_target":"document"}),
+        )
+        .expect_err("mismatched start must be rejected");
+        assert_eq!(error.code, "assistant_voice_recording_lease_mismatch");
+        assert!(
+            validate_recording_lease_scope(
+                &json!({}),
+                &json!({"capture_mode":"document","dispatch_target":"document"})
+            )
+            .is_ok()
+        );
     }
 
     #[test]

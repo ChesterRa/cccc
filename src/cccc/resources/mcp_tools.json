@@ -14,6 +14,9 @@
   {
     "name": "cccc_bootstrap",
     "description": "Cold-start bootstrap: session + recovery + inbox_preview + context_hygiene + memory_recall_gate + next_calls. Use it first on cold start or resume. Call cccc_help only when a CCCC route or state boundary is unclear; follow next_calls for colder detail because hidden tools are routed through cccc_capability_use.",
+    "annotations": {
+      "readOnlyHint": true
+    },
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1611,6 +1614,9 @@
   {
     "name": "cccc_capability_state",
     "description": "Get caller-effective capability state and visible/dynamic tools.",
+    "annotations": {
+      "readOnlyHint": true
+    },
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2148,6 +2154,9 @@
   {
     "name": "cccc_context_get",
     "description": "Get the context control-plane snapshot (coordination, agent states, attention, board).",
+    "annotations": {
+      "readOnlyHint": true
+    },
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2850,6 +2859,9 @@
   {
     "name": "cccc_debug",
     "description": "Developer diagnostics: action=snapshot|tail_logs.",
+    "annotations": {
+      "readOnlyHint": true
+    },
     "inputSchema": {
       "type": "object",
       "properties": {

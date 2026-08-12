@@ -53,7 +53,10 @@ import { VoiceSecretaryWorkspacePanel } from "./voice-secretary/VoiceSecretaryWo
 import { useVoiceCaptureTargetDocumentSelection } from "./voice-secretary/useVoiceCaptureTargetDocumentSelection";
 import { useVoiceAudioLevelMeter } from "./voice-secretary/useVoiceAudioLevelMeter";
 import { shouldScheduleBrowserSpeechErrorRestart } from "./voice-secretary/browserSpeechRecoveryModel";
-import { voiceCaptureStopAction } from "./voice-secretary/voiceCaptureStopModel";
+import {
+  shouldCloseVoiceCaptureSocket,
+  voiceCaptureStopAction,
+} from "./voice-secretary/voiceCaptureStopModel";
 import { createVoiceRecordingSessionId } from "./voice-secretary/voiceCaptureLock";
 import { getVoiceSecretaryWorkspaceVisibility } from "./voice-secretary/voiceSecretaryWorkspaceLayout";
 import {
@@ -2428,7 +2431,7 @@ export function VoiceSecretaryComposerControl({
       const ws = serviceAudioWsRef.current;
       serviceAudioWsRef.current = null;
       serviceAudioExpectedCloseRunIdRef.current = 0;
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      if (ws && shouldCloseVoiceCaptureSocket(ws.readyState)) {
         try {
           if (runId) serviceAudioExpectedCloseRunIdRef.current = runId;
           ws.close(1000, "cleanup");
@@ -3731,12 +3734,37 @@ export function VoiceSecretaryComposerControl({
           if (voiceRecordingLeaseIsDefinitelyLost(resp)) {
             voiceRecordingLeaseAcquiredRef.current = false;
             voiceRecordingLeaseIdRef.current = "";
+            const message = t("voiceSecretaryRecordingLeaseLost", {
+              defaultValue:
+                "Voice Secretary recording ownership was lost. Recording has been stopped; start it again when the microphone is available.",
+            });
+            reportRecordingStopReason("recording_lease_lost", {
+              detail: message,
+              backend: recognitionBackend,
+              groupId: gid,
+            });
+            if (isCurrentGroup(gid)) {
+              setSpeechError(message);
+              showError(message);
+            }
+            stopCurrentRecording();
           }
         })
         .catch(() => undefined);
     }, 5000);
     return () => window.clearInterval(interval);
-  }, [captureDispatchTarget, captureMode, recognitionBackend, recording, selectedGroupId]);
+  }, [
+    captureDispatchTarget,
+    captureMode,
+    isCurrentGroup,
+    recognitionBackend,
+    recording,
+    reportRecordingStopReason,
+    selectedGroupId,
+    showError,
+    stopCurrentRecording,
+    t,
+  ]);
 
   const setAssistantEnabledForGroup = useCallback(
     async (nextEnabled: boolean) => {

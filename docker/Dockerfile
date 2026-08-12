@@ -1,5 +1,5 @@
 # Stage 1: Build WebUI
-FROM node:20-bookworm-slim AS web-builder
+FROM node:24-bookworm-slim AS web-builder
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
 ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY}
@@ -27,7 +27,7 @@ RUN set -eux; \
       ${CCCC_BROWSER_DEPS}; \
     rm -rf /var/lib/apt/lists/*
 
-# Reuse the already-pinned Node.js 20 runtime from the Web build stage.
+# Reuse the already-pinned Node.js 24 runtime from the Web build stage.
 # This avoids NodeSource/Debian package fallback drift and guarantees npm is present.
 COPY --from=web-builder /usr/local/bin/node /usr/local/bin/node
 COPY --from=web-builder /usr/local/lib/node_modules /usr/local/lib/node_modules

@@ -21,7 +21,8 @@ pub(super) fn load(store: &GroupStore, group_id: &str) -> io::Result<RuntimeStat
     let legacy = state_dir.join("automation-runtime.json");
     let marker = state_dir.join(".rust-automation-migrated-v1");
     let mut state = RuntimeState::default();
-    if canonical.exists() {
+    let canonical_exists = canonical.exists();
+    if canonical_exists {
         let doc: Value = read_json(&canonical)?;
         if let Some(rules) = doc.get("rules").and_then(Value::as_object) {
             for (rule_id, entry) in rules {
@@ -53,7 +54,8 @@ pub(super) fn load(store: &GroupStore, group_id: &str) -> io::Result<RuntimeStat
             }
         }
     }
-    let migrate_legacy = legacy.exists() && !marker.exists();
+    let legacy_pending = legacy.exists() && !marker.exists();
+    let migrate_legacy = legacy_pending && !canonical_exists;
     if migrate_legacy {
         let legacy: RuntimeState = read_json(&legacy)?;
         for (key, value) in legacy.last_rule {
@@ -71,6 +73,11 @@ pub(super) fn load(store: &GroupStore, group_id: &str) -> io::Result<RuntimeStat
                 .or_insert(value);
         }
         save(store, group_id, &state)?;
+    } else if legacy_pending {
+        std::fs::write(
+            marker,
+            b"canonical automation.json supersedes automation-runtime.json\n",
+        )?;
     }
     Ok(state)
 }
@@ -109,6 +116,91 @@ pub(super) fn save(store: &GroupStore, group_id: &str, state: &RuntimeState) -> 
     )
 }
 
+pub(super) fn reconcile_rules(
+    store: &GroupStore,
+    group_id: &str,
+    previous: &[Value],
+    current: &[Value],
+) -> io::Result<()> {
+    let path = store.state_dir(group_id)?.join("automation.json");
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut doc = read_json::<Value>(&path)?;
+    let Some(rules_state) = doc.get_mut("rules").and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    let previous = rules_by_id(previous);
+    let current = rules_by_id(current);
+    let mut changed = false;
+
+    rules_state.retain(|rule_id, _| {
+        let keep = current.contains_key(rule_id);
+        changed |= !keep;
+        keep
+    });
+    for (rule_id, rule) in current {
+        let Some(entry) = rules_state.get_mut(&rule_id).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        let current_kind = trigger_text(rule, "kind");
+        if current_kind != "at" {
+            changed |= entry.remove("at_fired").is_some();
+            if entry
+                .get("last_slot_key")
+                .and_then(Value::as_str)
+                .is_some_and(|slot| slot.starts_with("at:"))
+            {
+                entry.remove("last_slot_key");
+                changed = true;
+            }
+            continue;
+        }
+        let same_generation = previous.get(&rule_id).is_some_and(|previous| {
+            trigger_text(previous, "kind") == "at"
+                && trigger_text(previous, "at") == trigger_text(rule, "at")
+        });
+        if same_generation {
+            continue;
+        }
+        changed |= entry.remove("at_fired").is_some();
+        changed |= entry.remove("last_fired_at").is_some();
+        if entry
+            .get("last_slot_key")
+            .and_then(Value::as_str)
+            .is_some_and(|slot| slot.starts_with("at:"))
+        {
+            entry.remove("last_slot_key");
+            changed = true;
+        }
+    }
+    if changed {
+        object(&mut doc).insert("updated_at".into(), json!(utc_now()));
+        write_json(&path, &doc)?;
+    }
+    Ok(())
+}
+
+fn rules_by_id(rules: &[Value]) -> BTreeMap<String, &Value> {
+    rules
+        .iter()
+        .filter_map(|rule| {
+            rule.get("id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
+                .map(|id| (id.to_owned(), rule))
+        })
+        .collect()
+}
+
+fn trigger_text<'a>(rule: &'a Value, key: &str) -> &'a str {
+    rule.get("trigger")
+        .and_then(|trigger| trigger.get(key))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+}
+
 fn object(value: &mut Value) -> &mut Map<String, Value> {
     if !value.is_object() {
         *value = json!({});
@@ -128,4 +220,57 @@ fn format_timestamp(value: i64) -> String {
     chrono::DateTime::from_timestamp(value, 0)
         .map(|value| value.to_rfc3339())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{GroupStore, HomeLayout};
+
+    #[test]
+    fn canonical_state_does_not_reimport_unmarked_legacy_rules() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("automation", "").expect("group");
+        let state_dir = store.state_dir(&group.group_id).expect("state dir");
+        write_json(
+            &state_dir.join("automation.json"),
+            &json!({"v":5,"rules":{}}),
+        )
+        .expect("canonical state");
+        write_json(
+            &state_dir.join("automation-runtime.json"),
+            &json!({"last_rule":{"retired-rule":1_700_000_000}}),
+        )
+        .expect("legacy state");
+
+        let loaded = load(&store, &group.group_id).expect("load canonical state");
+
+        assert!(
+            !loaded.last_rule.contains_key("retired-rule"),
+            "an existing canonical state is terminal and must not import a stale legacy rule"
+        );
+        assert!(state_dir.join(".rust-automation-migrated-v1").exists());
+    }
+
+    #[test]
+    fn legacy_state_migrates_when_no_canonical_state_exists() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = GroupStore::new(home).expect("store");
+        let group = store.create("automation", "").expect("group");
+        let state_dir = store.state_dir(&group.group_id).expect("state dir");
+        write_json(
+            &state_dir.join("automation-runtime.json"),
+            &json!({"last_rule":{"legacy-rule":1_700_000_000}}),
+        )
+        .expect("legacy state");
+
+        let loaded = load(&store, &group.group_id).expect("migrate legacy state");
+
+        assert_eq!(loaded.last_rule.get("legacy-rule"), Some(&1_700_000_000));
+        assert!(state_dir.join("automation.json").exists());
+        assert!(state_dir.join(".rust-automation-migrated-v1").exists());
+    }
 }

@@ -5,6 +5,27 @@ use super::actor_runtime::terminal_history;
 
 const MAX_RETAINED_HISTORY_BYTES: usize = 50_000_000;
 
+fn empty_history() -> HistoryPage {
+    HistoryPage {
+        data: String::new(),
+        start_cursor: 0,
+        end_cursor: 0,
+        has_more: false,
+        cursor_expired: false,
+    }
+}
+
+fn absent_history_is_empty(
+    result: Result<HistoryPage, RuntimeError>,
+) -> Result<HistoryPage, RuntimeError> {
+    match result {
+        Err(RuntimeError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(empty_history())
+        }
+        result => result,
+    }
+}
+
 pub(super) fn page(
     home: &HomeLayout,
     group_id: &str,
@@ -13,11 +34,13 @@ pub(super) fn page(
     limit: usize,
 ) -> Result<HistoryPage, RuntimeError> {
     match cccc_runtime::history(group_id, actor_id, before, limit) {
-        Err(RuntimeError::NotFound(_, _)) => cccc_runtime::read_latest_page(
-            &terminal_history::actor_dir(home, group_id, actor_id)?,
-            before,
-            limit,
-        ),
+        Err(RuntimeError::NotFound(_, _)) => {
+            absent_history_is_empty(cccc_runtime::read_latest_page(
+                &terminal_history::actor_dir(home, group_id, actor_id)?,
+                before,
+                limit,
+            ))
+        }
         result => result,
     }
 }
@@ -29,11 +52,13 @@ pub(super) fn retained(
     limit: usize,
 ) -> Result<HistoryPage, RuntimeError> {
     match cccc_runtime::retained_history_tail(group_id, actor_id, limit) {
-        Err(RuntimeError::NotFound(_, _)) => cccc_runtime::read_latest_page(
-            &terminal_history::actor_dir(home, group_id, actor_id)?,
-            None,
-            limit,
-        ),
+        Err(RuntimeError::NotFound(_, _)) => {
+            absent_history_is_empty(cccc_runtime::read_latest_page(
+                &terminal_history::actor_dir(home, group_id, actor_id)?,
+                None,
+                limit,
+            ))
+        }
         result => result,
     }
 }
@@ -44,11 +69,13 @@ pub(super) fn retained_full(
     actor_id: &str,
 ) -> Result<HistoryPage, RuntimeError> {
     match cccc_runtime::retained_history(group_id, actor_id) {
-        Err(RuntimeError::NotFound(_, _)) => cccc_runtime::read_latest_page(
-            &terminal_history::actor_dir(home, group_id, actor_id)?,
-            None,
-            MAX_RETAINED_HISTORY_BYTES,
-        ),
+        Err(RuntimeError::NotFound(_, _)) => {
+            absent_history_is_empty(cccc_runtime::read_latest_page(
+                &terminal_history::actor_dir(home, group_id, actor_id)?,
+                None,
+                MAX_RETAINED_HISTORY_BYTES,
+            ))
+        }
         result => result,
     }
 }
@@ -61,11 +88,13 @@ pub(super) fn since(
     limit: usize,
 ) -> Result<HistoryPage, RuntimeError> {
     match cccc_runtime::history_since(group_id, actor_id, after, limit) {
-        Err(RuntimeError::NotFound(_, _)) => cccc_runtime::read_latest_since(
-            &terminal_history::actor_dir(home, group_id, actor_id)?,
-            after,
-            limit,
-        ),
+        Err(RuntimeError::NotFound(_, _)) => {
+            absent_history_is_empty(cccc_runtime::read_latest_since(
+                &terminal_history::actor_dir(home, group_id, actor_id)?,
+                after,
+                limit,
+            ))
+        }
         result => result,
     }
 }

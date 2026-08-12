@@ -251,6 +251,55 @@ class TestDiagnosticsOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_terminal_replay_returns_active_raw_page_with_fixed_boundary(self) -> None:
+        from unittest.mock import patch
+
+        from cccc.kernel.actors import add_actor
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            group = create_group(load_registry(), title="terminal-replay")
+            add_actor(group, actor_id="peer1", title="Peer 1", runtime="codex", runner="pty")
+
+            with patch(
+                "cccc.daemon.ops.diagnostics_ops.pty_runner.SUPERVISOR.active_replay_page",
+                return_value=(
+                    {
+                        "data": b"\x1b[31mraw\x1b[0m",
+                        "start_cursor": 3,
+                        "end_cursor": 15,
+                        "has_more": False,
+                        "cursor_expired": False,
+                    },
+                    15,
+                ),
+            ) as replay_page:
+                resp = self._call(
+                    "terminal_replay",
+                    {
+                        "group_id": group.group_id,
+                        "actor_id": "peer1",
+                        "after": 3,
+                        "end_cursor": 15,
+                        "limit_bytes": 4096,
+                    },
+                )[0]
+
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            self.assertEqual((resp.result or {}).get("replay_end_cursor"), 15)
+            self.assertEqual((resp.result or {}).get("history", {}).get("data"), "\x1b[31mraw\x1b[0m")
+            replay_page.assert_called_once_with(
+                group_id=group.group_id,
+                actor_id="peer1",
+                after=3,
+                end_cursor=15,
+                limit_bytes=4096,
+            )
+        finally:
+            cleanup()
+
     def test_terminal_snapshot_renders_at_the_complete_raw_cursor(self) -> None:
         from unittest.mock import patch
 

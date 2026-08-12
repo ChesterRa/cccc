@@ -164,11 +164,55 @@ impl LoginRegistry {
         self.status(home, group_id).await
     }
 
-    pub(super) fn clear(&self, group_id: &str) {
+    pub(super) fn clear(&self, group_id: &str) -> bool {
         self.attempts
             .lock()
             .expect("Weixin login registry poisoned")
-            .remove(group_id);
+            .remove(group_id)
+            .is_some()
+    }
+
+    pub(super) fn clear_all(&self) {
+        self.attempts
+            .lock()
+            .expect("Weixin login registry poisoned")
+            .clear();
+    }
+
+    pub(super) fn group_ids(&self) -> Vec<String> {
+        self.attempts
+            .lock()
+            .expect("Weixin login registry poisoned")
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(super) fn insert_test_attempt(&self, group_id: &str) {
+        let config = WeixinConfig::builder().token("").build().expect("config");
+        self.attempts
+            .lock()
+            .expect("Weixin login registry poisoned")
+            .insert(
+                group_id.to_owned(),
+                Arc::new(tokio::sync::Mutex::new(LoginAttempt {
+                    login: StandaloneQrLogin::new(&config),
+                    session: QrLoginSession {
+                        qrcode: "test-qr".into(),
+                        qrcode_img_content: "test-image".into(),
+                    },
+                    verify_code: None,
+                })),
+            );
+    }
+
+    #[cfg(test)]
+    pub(super) fn contains(&self, group_id: &str) -> bool {
+        self.attempts
+            .lock()
+            .expect("Weixin login registry poisoned")
+            .contains_key(group_id)
     }
 
     fn remove_attempt(&self, group_id: &str, expected: &Arc<tokio::sync::Mutex<LoginAttempt>>) {

@@ -122,10 +122,15 @@ async fn revoke(State(state): State<AppState>, Path(sid): Path<String>) -> Respo
         Ok(store) => store,
         Err(error) => return failure(StatusCode::INTERNAL_SERVER_ERROR, error),
     };
-    match store.revoke(&sid) {
-        Ok(true) => Json(json!({"ok":true,"result":{"sid":sid,"revoked":true}})).into_response(),
-        Ok(false) => failure(StatusCode::NOT_FOUND, "session not found"),
-        Err(error) => failure(StatusCode::BAD_REQUEST, error),
+    let revoke_sid = sid.clone();
+    let result = tokio::task::spawn_blocking(move || store.revoke(&revoke_sid)).await;
+    match result {
+        Err(error) => failure(StatusCode::INTERNAL_SERVER_ERROR, error),
+        Ok(Ok(true)) => {
+            Json(json!({"ok":true,"result":{"sid":sid,"revoked":true}})).into_response()
+        }
+        Ok(Ok(false)) => failure(StatusCode::NOT_FOUND, "session not found"),
+        Ok(Err(error)) => failure(StatusCode::BAD_REQUEST, error),
     }
 }
 

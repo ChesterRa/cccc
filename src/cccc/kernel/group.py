@@ -8,14 +8,20 @@ import logging
 import shutil
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import yaml  # type: ignore
 
 from ..paths import ensure_home
-from ..util.fs import atomic_write_text
+from ..util.file_lock import acquire_lockfile, release_lockfile
+from ..util.fs import (
+    atomic_write_json,
+    atomic_write_text,
+    merge_concurrent_document_changes,
+    read_json,
+)
 from ..util.time import utc_now_iso
 from .ledger_segments import ensure_ledger_layout
 from .registry import Registry
@@ -270,6 +276,10 @@ class Group:
     group_id: str
     path: Path
     doc: Dict[str, Any]
+    _baseline: Dict[str, Any] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        self._baseline = copy.deepcopy(self.doc)
 
     @property
     def ledger_path(self) -> Path:
@@ -277,12 +287,42 @@ class Group:
         return self.path / "ledger.jsonl"
 
     def save(self) -> None:
-        self.doc.setdefault("v", 1)
-        self.doc["updated_at"] = utc_now_iso()
-        atomic_write_text(
-            self.path / "group.yaml",
-            yaml.dump(self.doc, Dumper=_GroupDumper, allow_unicode=True, sort_keys=False),
-        )
+        path = self.path / "group.yaml"
+        lock = acquire_lockfile(path.with_suffix(".yaml.lock"), blocking=True)
+        try:
+            if path.exists():
+                current = yaml.load(path.read_text(encoding="utf-8"), Loader=_GroupLoader) or {}
+                if not isinstance(current, dict):
+                    raise ValueError(f"invalid group document: {path}")
+                normalize_legacy_group_settings(current)
+            else:
+                current = copy.deepcopy(self._baseline)
+
+            baseline = copy.deepcopy(self._baseline)
+            desired = copy.deepcopy(self.doc)
+            for document in (baseline, desired, current):
+                document.pop("updated_at", None)
+            merged = merge_concurrent_document_changes(
+                baseline,
+                desired,
+                current,
+                document=str(path),
+            )
+            merged.setdefault("v", 1)
+            merged["updated_at"] = utc_now_iso()
+            try:
+                atomic_write_text(
+                    path,
+                    yaml.dump(merged, Dumper=_GroupDumper, allow_unicode=True, sort_keys=False),
+                )
+            except Exception:
+                persisted = yaml.load(path.read_text(encoding="utf-8"), Loader=_GroupLoader) if path.exists() else None
+                if persisted != merged:
+                    raise
+            self.doc = copy.deepcopy(merged)
+            self._baseline = copy.deepcopy(merged)
+        finally:
+            release_lockfile(lock)
 
 
 def load_group(group_id: str) -> Optional[Group]:
@@ -383,6 +423,7 @@ def attach_scope_to_group(reg: Registry, group: Group, scope: ScopeIdentity, *, 
     before_group_doc = copy.deepcopy(group.doc)
     before_registry_doc = copy.deepcopy(reg.doc)
     before_group_text = group_yaml.read_text(encoding="utf-8")
+    saved_group_doc: Optional[Dict[str, Any]] = None
     scope_dir_existed = scope_dir.exists()
     scope_yaml_existed = scope_yaml.is_file()
     before_scope_text = scope_yaml.read_text(encoding="utf-8") if scope_yaml_existed else ""
@@ -444,6 +485,7 @@ def attach_scope_to_group(reg: Registry, group: Group, scope: ScopeIdentity, *, 
             group.doc["active_scope_key"] = scope.scope_key
 
         group.save()
+        saved_group_doc = copy.deepcopy(group.doc)
 
         reg.defaults[scope.scope_key] = group.group_id
         meta = reg.groups.get(group.group_id)
@@ -455,12 +497,24 @@ def attach_scope_to_group(reg: Registry, group: Group, scope: ScopeIdentity, *, 
         return group
     except Exception as original:
         rollback_failures: list[str] = []
-        group.doc = before_group_doc
         reg.doc = before_registry_doc
-        try:
-            atomic_write_text(group_yaml, before_group_text)
-        except Exception as error:
-            rollback_failures.append(f"group: {error}")
+        if saved_group_doc is not None:
+            group_lock = acquire_lockfile(group_yaml.with_suffix(".yaml.lock"), blocking=True)
+            try:
+                current = yaml.load(group_yaml.read_text(encoding="utf-8"), Loader=_GroupLoader) or {}
+                if current != saved_group_doc:
+                    rollback_failures.append("group: rollback skipped because group changed concurrently")
+                else:
+                    atomic_write_text(group_yaml, before_group_text)
+                    group.doc = copy.deepcopy(before_group_doc)
+                    group._baseline = copy.deepcopy(before_group_doc)
+            except Exception as error:
+                rollback_failures.append(f"group: {error}")
+            finally:
+                release_lockfile(group_lock)
+        else:
+            group.doc = copy.deepcopy(before_group_doc)
+            group._baseline = copy.deepcopy(before_group_doc)
         try:
             if scope_yaml_existed:
                 atomic_write_text(scope_yaml, before_scope_text)
@@ -646,6 +700,116 @@ def detach_scope_from_group(reg: Registry, group: Group, *, scope_key: str) -> G
     return group
 
 
+def _space_state_path(home: Path, name: str) -> Path:
+    return home / "state" / "space" / name
+
+
+def _save_space_state_doc(path: Path, doc: Dict[str, Any]) -> None:
+    doc["updated_at"] = utc_now_iso()
+    atomic_write_json(path, doc, indent=2)
+    try:
+        path.chmod(0o600)
+    except Exception:
+        pass
+
+
+def _restore_group_space_state(home: Path, group_id: str, retired: Dict[str, Any]) -> None:
+    binding = retired.get("binding")
+    if binding is not None:
+        path = _space_state_path(home, "bindings.json")
+        lock = acquire_lockfile(path.with_suffix(".json.lock"), blocking=True)
+        try:
+            doc = read_json(path)
+            if not isinstance(doc, dict):
+                doc = {}
+            bindings = doc.get("bindings") if isinstance(doc.get("bindings"), dict) else {}
+            bindings[group_id] = copy.deepcopy(binding)
+            doc["bindings"] = bindings
+            _save_space_state_doc(path, doc)
+        finally:
+            release_lockfile(lock)
+
+    retired_jobs = retired.get("jobs") if isinstance(retired.get("jobs"), dict) else {}
+    if retired_jobs:
+        path = _space_state_path(home, "jobs.json")
+        lock = acquire_lockfile(path.with_suffix(".json.lock"), blocking=True)
+        try:
+            doc = read_json(path)
+            if not isinstance(doc, dict):
+                doc = {}
+            jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
+            jobs.update(copy.deepcopy(retired_jobs))
+            doc["jobs"] = jobs
+            _save_space_state_doc(path, doc)
+        finally:
+            release_lockfile(lock)
+
+
+def _retire_group_space_state(home: Path, group_id: str) -> Dict[str, Any]:
+    retired: Dict[str, Any] = {"binding": None, "jobs": {}, "payload_refs": []}
+    bindings_path = _space_state_path(home, "bindings.json")
+    lock = acquire_lockfile(bindings_path.with_suffix(".json.lock"), blocking=True)
+    try:
+        doc = read_json(bindings_path)
+        if not isinstance(doc, dict):
+            doc = {}
+        bindings = doc.get("bindings") if isinstance(doc.get("bindings"), dict) else {}
+        retired["binding"] = copy.deepcopy(bindings.pop(group_id, None))
+        if retired["binding"] is not None:
+            doc["bindings"] = bindings
+            _save_space_state_doc(bindings_path, doc)
+    finally:
+        release_lockfile(lock)
+
+    jobs_path = _space_state_path(home, "jobs.json")
+    try:
+        lock = acquire_lockfile(jobs_path.with_suffix(".json.lock"), blocking=True)
+        try:
+            doc = read_json(jobs_path)
+            if not isinstance(doc, dict):
+                doc = {}
+            jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
+            removed: Dict[str, Any] = {}
+            payload_refs: list[str] = []
+            for job_id, job in list(jobs.items()):
+                if not isinstance(job, dict) or str(job.get("group_id") or "") != group_id:
+                    continue
+                removed[job_id] = copy.deepcopy(job)
+                payload_ref = str(job.get("payload_ref") or "").strip()
+                if payload_ref:
+                    payload_refs.append(payload_ref)
+                jobs.pop(job_id, None)
+            if removed:
+                doc["jobs"] = jobs
+                _save_space_state_doc(jobs_path, doc)
+            retired["jobs"] = removed
+            retired["payload_refs"] = payload_refs
+        finally:
+            release_lockfile(lock)
+    except Exception as original:
+        try:
+            _restore_group_space_state(home, group_id, retired)
+        except Exception as rollback:
+            raise RuntimeError(
+                f"{original}; rollback_failed: could not restore NotebookLM binding: {rollback}"
+            ) from original
+        raise
+    return retired
+
+
+def _finalize_group_space_state(home: Path, retired: Dict[str, Any]) -> None:
+    root = _space_state_path(home, "job_payloads")
+    refs = retired.get("payload_refs") if isinstance(retired.get("payload_refs"), list) else []
+    for raw_ref in refs:
+        ref = str(raw_ref or "").strip()
+        if not ref or Path(ref).name != ref or ref in {".", ".."}:
+            continue
+        try:
+            (root / ref).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
 def delete_group(reg: Registry, *, group_id: str, publish: bool = True) -> None:
     gid = group_id.strip()
     if not gid:
@@ -658,15 +822,14 @@ def delete_group(reg: Registry, *, group_id: str, publish: bool = True) -> None:
         tombstone = gp.with_name(f".{gid}.deleting-{uuid.uuid4().hex[:8]}")
         gp.rename(tombstone)
 
-    before_registry_doc = copy.deepcopy(reg.doc)
+    from .web_model_connectors import (
+        restore_web_model_connectors,
+        retire_web_model_connectors_for_group,
+    )
+
     try:
-        reg.groups.pop(gid, None)
-        for k, v in list(reg.defaults.items()):
-            if v == gid:
-                reg.defaults.pop(k, None)
-        reg.save()
+        retired_connectors = retire_web_model_connectors_for_group(gid, home=home)
     except Exception as original:
-        reg.doc = before_registry_doc
         if tombstone is not None and tombstone.exists():
             try:
                 tombstone.rename(gp)
@@ -676,10 +839,61 @@ def delete_group(reg: Registry, *, group_id: str, publish: bool = True) -> None:
                 ) from original
         raise
 
-    if tombstone is not None:
-        _delete_group_dir(tombstone)
-    if gp.exists():
-        _delete_group_dir(gp)
+    try:
+        retired_space = _retire_group_space_state(home, gid)
+    except Exception as original:
+        rollback_failures: list[str] = []
+        if tombstone is not None and tombstone.exists():
+            try:
+                tombstone.rename(gp)
+            except Exception as rollback:
+                rollback_failures.append(f"could not restore {gp}: {rollback}")
+        try:
+            restore_web_model_connectors(retired_connectors, home=home)
+        except Exception as rollback:
+            rollback_failures.append(f"could not restore web-model connectors: {rollback}")
+        if rollback_failures:
+            raise RuntimeError(
+                f"{original}; rollback_failed: {'; '.join(rollback_failures)}"
+            ) from original
+        raise
+
+    before_registry_doc = copy.deepcopy(reg.doc)
+    try:
+        reg.groups.pop(gid, None)
+        for k, v in list(reg.defaults.items()):
+            if v == gid:
+                reg.defaults.pop(k, None)
+        reg.save()
+    except Exception as original:
+        reg.doc = before_registry_doc
+        rollback_failures: list[str] = []
+        if tombstone is not None and tombstone.exists():
+            try:
+                tombstone.rename(gp)
+            except Exception as rollback:
+                rollback_failures.append(f"could not restore {gp}: {rollback}")
+        try:
+            restore_web_model_connectors(retired_connectors, home=home)
+        except Exception as rollback:
+            rollback_failures.append(f"could not restore web-model connectors: {rollback}")
+        try:
+            _restore_group_space_state(home, gid, retired_space)
+        except Exception as rollback:
+            rollback_failures.append(f"could not restore NotebookLM state: {rollback}")
+        if rollback_failures:
+            raise RuntimeError(
+                f"{original}; rollback_failed: {'; '.join(rollback_failures)}"
+            ) from original
+        raise
+
+    try:
+        if tombstone is not None:
+            _delete_group_dir(tombstone)
+        if gp.exists():
+            _delete_group_dir(gp)
+    finally:
+        _finalize_group_space_state(home, retired_space)
 
     if publish:
         from .events import publish_event

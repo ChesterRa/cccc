@@ -69,6 +69,17 @@ must be reopened (or its PATH refreshed). Custom install directories and
 When PATH still selects the old command, run the newly installed executable by
 the absolute path printed by the installer to get the current diagnostic report.
 
+### How do I uninstall CCCC without losing my groups?
+
+Run `cccc home` first and stop the running product. Pip installations should be
+removed with `python -m pip uninstall cccc-pair`. For a standalone preview,
+verify the complete `.cccc-standalone` ownership marker and remove only the
+owned executable and marker; do not delete a shared command directory. CCCC
+intentionally retains `CCCC_HOME`, so groups, ledgers, settings, credentials,
+and browser profiles remain available after reinstall. Exact macOS/Linux and
+Windows standalone steps are in the
+[dual-engine distribution guide](../rust-migration.md#uninstall-without-removing-user-data).
+
 ### How do I upgrade from an older version (0.3.x)?
 
 You must uninstall the old version first:

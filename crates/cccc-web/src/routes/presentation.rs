@@ -1,4 +1,4 @@
-use axum::extract::{Multipart, Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Multipart, Path, Query, State};
 use axum::http::Response;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -10,6 +10,9 @@ use std::collections::HashMap;
 use crate::AppState;
 use crate::api::{ApiError, ApiResult, body_object, call, object};
 
+const MAX_PRESENTATION_UPLOAD_BYTES: usize = 20 * 1024 * 1024;
+const MULTIPART_OVERHEAD_BYTES: usize = 1024 * 1024;
+
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route(
@@ -19,10 +22,6 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/v1/groups/{group_id}/presentation/publish",
             post(publish),
-        )
-        .route(
-            "/api/v1/groups/{group_id}/presentation/publish_upload",
-            post(publish_upload),
         )
         .route(
             "/api/v1/groups/{group_id}/presentation/publish_workspace",
@@ -37,10 +36,22 @@ pub fn routes() -> Router<AppState> {
             "/api/v1/groups/{group_id}/presentation/slots/{slot_id}/asset",
             get(asset),
         )
+        .merge(upload_routes())
+}
+
+fn upload_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/api/v1/groups/{group_id}/presentation/publish_upload",
+            post(publish_upload),
+        )
         .route(
             "/api/v1/groups/{group_id}/presentation/ref_snapshot",
             post(reference_snapshot),
         )
+        .layer(DefaultBodyLimit::max(
+            MAX_PRESENTATION_UPLOAD_BYTES + MULTIPART_OVERHEAD_BYTES,
+        ))
 }
 
 async fn get_presentation(
@@ -68,7 +79,12 @@ async fn publish(
         .is_some_and(|url| !url.trim().is_empty())
         && !args.contains_key("card_type")
     {
-        args.insert("card_type".into(), Value::String("web_preview".into()));
+        let card_type = args
+            .get("url")
+            .and_then(Value::as_str)
+            .map(card_type_for_url)
+            .unwrap_or("web_preview");
+        args.insert("card_type".into(), Value::String(card_type.into()));
     }
     publish_and_cleanup(&state, &group_id, args).await
 }
@@ -111,6 +127,7 @@ async fn publish_upload(
     Path(group_id): Path<String>,
     multipart: Multipart,
 ) -> ApiResult {
+    ensure_group_exists(&state, &group_id)?;
     let upload = parse_upload(multipart).await?;
     let file_name = upload
         .file_name
@@ -125,19 +142,36 @@ async fn publish_upload(
     });
     let card_type = card_type_for(&file_name, &mime);
     let mut args = upload.fields;
+    let slot = normalize_slot(args.get("slot").and_then(Value::as_str).unwrap_or("auto"))?;
+    let by = args
+        .get("by")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("user")
+        .to_owned();
     args.insert("group_id".into(), Value::String(group_id.clone()));
-    args.entry("title")
-        .or_insert_with(|| Value::String(file_name.clone()));
+    args.insert("slot".into(), Value::String(slot));
+    args.insert("by".into(), Value::String(by));
+    if args
+        .get("title")
+        .and_then(Value::as_str)
+        .is_none_or(|title| title.trim().is_empty())
+    {
+        args.insert("title".into(), Value::String(file_name.clone()));
+    }
     args.insert("card_type".into(), Value::String(card_type.into()));
     args.insert("source_label".into(), Value::String(file_name.clone()));
     if card_type == "markdown" {
         let content =
             String::from_utf8(data).map_err(|_| ApiError::bad("markdown upload must be UTF-8"))?;
+        args.insert("source_ref".into(), Value::String(file_name));
         args.insert("content".into(), Value::String(content));
     } else {
         let blob = cccc_core::blobs::store(&state.home, &group_id, &data)
             .map_err(|error| ApiError::bad(error.to_string()))?;
-        args.insert("blob_rel_path".into(), Value::String(blob.path));
+        args.insert("blob_rel_path".into(), Value::String(blob.path.clone()));
+        args.insert("source_ref".into(), Value::String(blob.path));
     }
     publish_and_cleanup(&state, &group_id, args).await
 }
@@ -236,7 +270,15 @@ async fn reference_snapshot(
     Path(group_id): Path<String>,
     multipart: Multipart,
 ) -> ApiResult {
+    ensure_group_exists(&state, &group_id)?;
     let upload = parse_upload(multipart).await?;
+    normalize_slot(
+        upload
+            .fields
+            .get("slot")
+            .and_then(Value::as_str)
+            .unwrap_or("auto"),
+    )?;
     let data = upload
         .data
         .ok_or_else(|| ApiError::bad("file is required"))?;
@@ -261,7 +303,10 @@ async fn reference_snapshot(
             "width":number("width"),
             "height":number("height"),
             "captured_at":field("captured_at"),
-            "source":field("source")
+            "source":match field("source") {
+                source if source.trim().is_empty() => "browser_surface".to_owned(),
+                source => source,
+            }
         }
     }})))
 }
@@ -296,6 +341,16 @@ async fn parse_upload(mut multipart: Multipart) -> Result<Upload, ApiError> {
                     .map_err(|error| ApiError::bad(error.to_string()))?
                     .to_vec(),
             );
+            if upload
+                .data
+                .as_ref()
+                .is_some_and(|data| data.len() > MAX_PRESENTATION_UPLOAD_BYTES)
+            {
+                return Err(ApiError::payload_too_large(
+                    "file_too_large",
+                    "file too large",
+                ));
+            }
         } else {
             upload.fields.insert(
                 name,
@@ -311,15 +366,51 @@ async fn parse_upload(mut multipart: Multipart) -> Result<Upload, ApiError> {
     Ok(upload)
 }
 
+fn ensure_group_exists(state: &AppState, group_id: &str) -> Result<(), ApiError> {
+    let store =
+        GroupStore::new(state.home.clone()).map_err(|error| ApiError::bad(error.to_string()))?;
+    store.load(group_id).map(|_| ()).map_err(|_| {
+        ApiError::not_found_code("group_not_found", format!("group not found: {group_id}"))
+    })
+}
+
+fn normalize_slot(value: &str) -> Result<String, ApiError> {
+    let normalized = value.trim().to_ascii_lowercase().replace('_', "-");
+    let normalized = if normalized.is_empty() {
+        "auto".to_owned()
+    } else {
+        normalized
+    };
+    if matches!(
+        normalized.as_str(),
+        "auto" | "slot-1" | "slot-2" | "slot-3" | "slot-4"
+    ) {
+        Ok(normalized)
+    } else {
+        Err(ApiError::bad_code(
+            "invalid_slot",
+            "slot must be auto or one of: slot-1, slot-2, slot-3, slot-4",
+            json!({}),
+        ))
+    }
+}
+
 fn card_type_for(file_name: &str, mime: &str) -> &'static str {
     let extension = std::path::Path::new(file_name)
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    if matches!(extension.as_str(), "md" | "markdown") || mime == "text/markdown" {
+    let mime = mime.trim().to_ascii_lowercase();
+    if matches!(extension.as_str(), "md" | "markdown")
+        || matches!(mime.as_str(), "text/markdown" | "text/x-markdown")
+    {
         "markdown"
-    } else if mime.starts_with("image/") {
+    } else if matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif"
+    ) || mime.starts_with("image/")
+    {
         "image"
     } else if extension == "pdf" || mime == "application/pdf" {
         "pdf"
@@ -327,6 +418,28 @@ fn card_type_for(file_name: &str, mime: &str) -> &'static str {
         "web_preview"
     } else {
         "file"
+    }
+}
+
+fn card_type_for_url(value: &str) -> &'static str {
+    let extension = url::Url::parse(value.trim())
+        .ok()
+        .and_then(|url| {
+            std::path::Path::new(url.path())
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(str::to_ascii_lowercase)
+        })
+        .unwrap_or_default();
+    if matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "avif"
+    ) {
+        "image"
+    } else if extension == "pdf" {
+        "pdf"
+    } else {
+        "web_preview"
     }
 }
 
@@ -341,5 +454,14 @@ mod tests {
 
         assert_eq!(replaced_slot(&replaced).as_deref(), Some("slot-2"));
         assert_eq!(replaced_slot(&first_publish), None);
+    }
+
+    #[test]
+    fn upload_card_type_uses_file_extension_and_supported_markdown_mimes() {
+        assert_eq!(
+            card_type_for("diagram.PNG", "application/octet-stream"),
+            "image"
+        );
+        assert_eq!(card_type_for("notes.txt", "text/x-markdown"), "markdown");
     }
 }

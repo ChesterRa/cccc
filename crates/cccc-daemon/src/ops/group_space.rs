@@ -45,27 +45,15 @@ fn status(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     require_notebooklm(&provider)?;
     let value = load(home, &group_id)?;
     let provider_state = provider_runtime_state(home, &provider)?;
+    let sync = sync::work_status_value(home, &group_id, &value)?;
+    let (_, memory_sync) = sync::memory_status_values(home, &group_id, &provider, &value)?;
     object(json!({
         "group_id":group_id,
         "provider":provider_state,
         "bindings":value["bindings"],
         "queue_summary":{"work":summary_for(&value,"work"),"memory":summary_for(&value,"memory")},
-        "sync":value.get("sync").cloned().unwrap_or(json!({"available":false,"converged":false,"reason":"provider_unavailable"})),
-        "memory_sync":{
-            "lane":"memory",
-            "manifest_path":"",
-            "last_scan_at":null,
-            "last_success_at":null,
-            "pending_files":0,
-            "running_files":0,
-            "failed_files":0,
-            "blocked_files":0,
-            "eligible_daily_files":0,
-            "synced_daily_files":0,
-            "empty_daily_skipped":0,
-            "last_eligible_daily_date":null,
-            "last_synced_daily_date":null
-        }
+        "sync":sync,
+        "memory_sync":memory_sync
     }))
 }
 fn capabilities(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -128,13 +116,13 @@ fn capabilities(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         },
         "notes":[
             "Native Rust resource_ingest currently supports pasted_text only; unsupported source types fail explicitly.",
-            "Work and memory file sync upload .md/.txt content as pasted text.",
+            "Native Rust reads Python-compatible work and memory sync status but does not mutate remote sync state.",
             "Native Rust wait=false returns after remote generation starts; automatic background save is not yet available.",
             "Native Rust artifact download currently supports audio, video, report/study guide, infographic, and slide deck outputs.",
             "NotebookLM uses an unofficial upstream protocol and may require compatibility updates."
         ],
-        "capabilities":json!(["bind","ingest","query","sources","artifact","jobs","sync"]),
-        "unavailable_capabilities":json!(["resource_ingest.file","resource_ingest.web_page","resource_ingest.youtube","resource_ingest.google_drive","artifact.download.quiz","artifact.download.flashcards","artifact.download.mind_map","artifact.download.data_table"]),
+        "capabilities":json!(["bind","ingest","query","sources","artifact","jobs"]),
+        "unavailable_capabilities":json!(["sync.work","sync.memory","resource_ingest.file","resource_ingest.web_page","resource_ingest.youtube","resource_ingest.google_drive","artifact.download.quiz","artifact.download.flashcards","artifact.download.mind_map","artifact.download.data_table"]),
         "mode":"remote"
     }))
 }

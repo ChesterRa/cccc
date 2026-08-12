@@ -129,4 +129,8 @@ Relevant metadata files remain:
 - `<scope_root>/space/.sync/remote-sources/*.json`
 - `<scope_root>/space/artifacts/notebooklm/...`
 
+The stable Python engine currently owns work- and memory-lane synchronization.
+The experimental Rust engine reads these same metadata files so status survives
+an engine switch, but rejects sync runs before making remote changes.
+
 These implementation details matter for agent/developer workflows, but they are not part of the normal user-facing binding flow.

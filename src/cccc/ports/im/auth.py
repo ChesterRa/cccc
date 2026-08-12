@@ -15,6 +15,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ...kernel.im_state import im_state_lock
+
 
 # Key time-to-live: 10 minutes.
 KEY_TTL_SECONDS = 600
@@ -78,6 +80,10 @@ class KeyManager:
     # ------------------------------------------------------------------
 
     def _load(self) -> None:
+        with im_state_lock(self.state_dir):
+            self._load_unlocked()
+
+    def _load_unlocked(self) -> None:
         self._pending = self._read_json(self._pending_path)
         self._authorized = self._read_json(self._authorized_path)
 
@@ -116,79 +122,91 @@ class KeyManager:
 
     def generate_key(self, chat_id: str, thread_id: ThreadId, platform: str) -> str:
         """Create a pending authorization key (``secrets.token_urlsafe(8)``)."""
-        key = secrets.token_urlsafe(8)
-        self._pending[key] = {
-            "chat_id": str(chat_id),
-            "thread_id": normalize_thread_id(thread_id),
-            "platform": str(platform or ""),
-            "created_at": time.time(),
-        }
-        self._purge_expired()
-        self._save_pending()
-        return key
+        with im_state_lock(self.state_dir):
+            self._load_unlocked()
+            key = secrets.token_urlsafe(8)
+            self._pending[key] = {
+                "chat_id": str(chat_id),
+                "thread_id": normalize_thread_id(thread_id),
+                "platform": str(platform or ""),
+                "created_at": time.time(),
+            }
+            self._purge_expired()
+            self._save_pending()
+            return key
 
     def get_pending_key(self, key: str) -> Optional[Dict[str, Any]]:
         """Return pending-key metadata if *key* exists and has not expired."""
-        entry = self._pending.get(key)
-        if entry is None:
-            return None
-        if time.time() - float(entry.get("created_at", 0)) > KEY_TTL_SECONDS:
-            # Expired — clean up lazily.
-            self._pending.pop(key, None)
-            self._save_pending()
-            return None
-        return dict(entry)
+        with im_state_lock(self.state_dir):
+            self._load_unlocked()
+            entry = self._pending.get(key)
+            if entry is None:
+                return None
+            if time.time() - float(entry.get("created_at", 0)) > KEY_TTL_SECONDS:
+                # Expired — clean up lazily.
+                self._pending.pop(key, None)
+                self._save_pending()
+                return None
+            return dict(entry)
 
     def is_authorized(
         self, chat_id: str, thread_id: ThreadId, platform: str = ""
     ) -> bool:
-        ck = self._chat_key(chat_id, thread_id)
-        entry = self._authorized.get(ck)
-        if entry is None:
-            return False
-        requested = str(platform or "").strip().lower()
-        if not requested or not isinstance(entry, dict):
-            return True
-        stored = str(entry.get("platform") or "").strip().lower()
-        return not stored or stored == requested
+        with im_state_lock(self.state_dir):
+            self._load_unlocked()
+            ck = self._chat_key(chat_id, thread_id)
+            entry = self._authorized.get(ck)
+            if entry is None:
+                return False
+            requested = str(platform or "").strip().lower()
+            if not requested or not isinstance(entry, dict):
+                return True
+            stored = str(entry.get("platform") or "").strip().lower()
+            return not stored or stored == requested
 
     def authorize(
         self, chat_id: str, thread_id: ThreadId, platform: str, key_used: str
     ) -> None:
         """Mark a chat as authorized and remove the consumed key."""
-        self._store_authorization(
-            chat_id,
-            thread_id,
-            platform,
-            authorization_source="binding_key",
-            key_used=key_used,
-        )
-        self._pending.pop(key_used, None)
-        self._save_pending()
+        with im_state_lock(self.state_dir):
+            self._load_unlocked()
+            self._store_authorization(
+                chat_id,
+                thread_id,
+                platform,
+                authorization_source="binding_key",
+                key_used=key_used,
+            )
+            self._pending.pop(key_used, None)
+            self._save_pending()
 
     def authorize_direct(
         self, chat_id: str, thread_id: ThreadId, platform: str, source: str
     ) -> None:
         """Authorize a chat through an explicit non-key trust flow."""
-        self._store_authorization(
-            chat_id,
-            thread_id,
-            platform,
-            authorization_source=str(source or "direct").strip() or "direct",
-            key_used="",
-        )
+        with im_state_lock(self.state_dir):
+            self._load_unlocked()
+            self._store_authorization(
+                chat_id,
+                thread_id,
+                platform,
+                authorization_source=str(source or "direct").strip() or "direct",
+                key_used="",
+            )
 
     def revoke_direct(self, chat_id: str, thread_id: ThreadId, source: str) -> bool:
         """Revoke a direct authorization only when its source matches."""
-        ck = self._chat_key(chat_id, thread_id)
-        entry = self._authorized.get(ck)
-        if not isinstance(entry, dict) or str(
-            entry.get("authorization_source") or ""
-        ) != str(source or ""):
-            return False
-        del self._authorized[ck]
-        self._save_authorized()
-        return True
+        with im_state_lock(self.state_dir):
+            self._load_unlocked()
+            ck = self._chat_key(chat_id, thread_id)
+            entry = self._authorized.get(ck)
+            if not isinstance(entry, dict) or str(
+                entry.get("authorization_source") or ""
+            ) != str(source or ""):
+                return False
+            del self._authorized[ck]
+            self._save_authorized()
+            return True
 
     def _store_authorization(
         self,
@@ -212,54 +230,64 @@ class KeyManager:
 
     def revoke(self, chat_id: str, thread_id: ThreadId) -> bool:
         """Revoke authorization. Returns ``True`` if the chat was authorized."""
-        ck = self._chat_key(chat_id, thread_id)
-        if ck in self._authorized:
-            del self._authorized[ck]
-            self._save_authorized()
-            return True
-        return False
+        with im_state_lock(self.state_dir):
+            self._load_unlocked()
+            ck = self._chat_key(chat_id, thread_id)
+            if ck in self._authorized:
+                del self._authorized[ck]
+                self._save_authorized()
+                return True
+            return False
 
     def list_authorized(self) -> List[Dict[str, Any]]:
-        return list(self._authorized.values())
+        with im_state_lock(self.state_dir):
+            self._load_unlocked()
+            return list(self._authorized.values())
 
     def list_pending(self) -> List[Dict[str, Any]]:
         """List pending bind requests (expired keys are purged first)."""
-        removed = self._purge_expired()
-        if removed:
-            self._save_pending()
-        now = time.time()
-        items: List[Dict[str, Any]] = []
-        for key, entry in self._pending.items():
-            created_at = float(entry.get("created_at", 0) or 0)
-            expires_at = created_at + KEY_TTL_SECONDS
-            items.append(
-                {
-                    "key": str(key),
-                    "chat_id": str(entry.get("chat_id") or ""),
-                    "thread_id": normalize_thread_id(entry.get("thread_id")),
-                    "platform": str(entry.get("platform") or ""),
-                    "created_at": created_at,
-                    "expires_at": expires_at,
-                    "expires_in_seconds": max(0, int(expires_at - now)),
-                }
+        with im_state_lock(self.state_dir):
+            self._load_unlocked()
+            removed = self._purge_expired()
+            if removed:
+                self._save_pending()
+            now = time.time()
+            items: List[Dict[str, Any]] = []
+            for key, entry in self._pending.items():
+                created_at = float(entry.get("created_at", 0) or 0)
+                expires_at = created_at + KEY_TTL_SECONDS
+                items.append(
+                    {
+                        "key": str(key),
+                        "chat_id": str(entry.get("chat_id") or ""),
+                        "thread_id": normalize_thread_id(entry.get("thread_id")),
+                        "platform": str(entry.get("platform") or ""),
+                        "created_at": created_at,
+                        "expires_at": expires_at,
+                        "expires_in_seconds": max(0, int(expires_at - now)),
+                    }
+                )
+            items.sort(
+                key=lambda item: float(item.get("created_at") or 0), reverse=True
             )
-        items.sort(key=lambda item: float(item.get("created_at") or 0), reverse=True)
-        return items
+            return items
 
     def reject_pending(self, key: str) -> bool:
         """Reject a pending bind key. Returns True when removed."""
         token = str(key or "").strip()
         if not token:
             return False
-        removed = self._purge_expired()
-        existed = token in self._pending
-        if existed:
-            self._pending.pop(token, None)
-            self._save_pending()
-            return True
-        if removed:
-            self._save_pending()
-        return False
+        with im_state_lock(self.state_dir):
+            self._load_unlocked()
+            removed = self._purge_expired()
+            existed = token in self._pending
+            if existed:
+                self._pending.pop(token, None)
+                self._save_pending()
+                return True
+            if removed:
+                self._save_pending()
+            return False
 
     # ------------------------------------------------------------------
     # Internal

@@ -59,42 +59,6 @@ impl Connection {
             Self::Unix(stream) => exchange(stream, request).await,
         }
     }
-
-    pub(super) fn is_usable(&self) -> bool {
-        match self {
-            Self::Tcp(stream) => stream_is_usable(stream),
-            #[cfg(unix)]
-            Self::Unix(stream) => stream_is_usable(stream),
-        }
-    }
-}
-
-fn stream_is_usable<S>(stream: &BufReader<S>) -> bool
-where
-    S: tokio::io::AsyncRead + TryRead,
-{
-    if !stream.buffer().is_empty() {
-        return false;
-    }
-    let mut byte = [0_u8; 1];
-    matches!(stream.get_ref().try_read(&mut byte), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
-}
-
-trait TryRead {
-    fn try_read(&self, buffer: &mut [u8]) -> std::io::Result<usize>;
-}
-
-impl TryRead for TcpStream {
-    fn try_read(&self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        TcpStream::try_read(self, buffer)
-    }
-}
-
-#[cfg(unix)]
-impl TryRead for UnixStream {
-    fn try_read(&self, buffer: &mut [u8]) -> std::io::Result<usize> {
-        UnixStream::try_read(self, buffer)
-    }
 }
 
 async fn exchange<S>(

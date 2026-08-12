@@ -107,11 +107,8 @@ def write_runtime_session(group_id: str, actor_id: str, payload: Dict[str, Any])
 
 
 def remove_runtime_session(group_id: str, actor_id: str) -> None:
-    try:
-        with _RUNTIME_SESSION_WRITE_LOCK:
-            runtime_session_path(group_id, actor_id).unlink(missing_ok=True)
-    except Exception:
-        pass
+    with _RUNTIME_SESSION_WRITE_LOCK:
+        runtime_session_path(group_id, actor_id).unlink(missing_ok=True)
 
 
 def _stable_runtime_command_argv(command: Iterable[str]) -> list[str]:

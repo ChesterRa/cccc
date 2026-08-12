@@ -12,7 +12,7 @@ pub async fn call(
     name: &str,
     arguments: Map<String, Value>,
 ) -> Result<Value, String> {
-    call_with_context(home, client, name, arguments, None).await
+    call_with_context(home, client, name, arguments, None, false).await
 }
 
 pub(crate) async fn call_with_context(
@@ -21,6 +21,7 @@ pub(crate) async fn call_with_context(
     name: &str,
     mut arguments: Map<String, Value>,
     context: Option<RequestContext<'_>>,
+    via_capability_use: bool,
 ) -> Result<Value, String> {
     add_runtime_context(home, &mut arguments);
     if let Some(context) = context {
@@ -29,7 +30,7 @@ pub(crate) async fn call_with_context(
     if name == "cccc_task" {
         prepare_task_arguments(home, &mut arguments)?;
     }
-    authorize_tool(home, name, &arguments)?;
+    authorize_tool(home, name, &arguments, via_capability_use)?;
     if name == "cccc_capability_use" {
         return capability_use(home, client, arguments, context).await;
     }
@@ -115,6 +116,7 @@ fn authorize_tool(
     home: &HomeLayout,
     name: &str,
     arguments: &Map<String, Value>,
+    via_capability_use: bool,
 ) -> Result<(), String> {
     let actor_id = arguments
         .get("by")
@@ -125,6 +127,41 @@ fn authorize_tool(
             "{name} is only available to the voice-secretary actor"
         ));
     }
+    let group_id = arguments
+        .get("group_id")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let group = if actor_id == "user" || group_id.is_empty() {
+        None
+    } else {
+        Some(
+            cccc_core::GroupStore::new(home.clone())
+                .and_then(|store| store.load(group_id))
+                .map_err(|error| error.to_string())?,
+        )
+    };
+    if let Some(group) = group.as_ref()
+        && group
+            .actors
+            .iter()
+            .find(|actor| actor.id == actor_id)
+            .is_some_and(|actor| actor.runtime == cccc_contracts::ActorRuntime::WebModel)
+    {
+        let role = cccc_core::actors::effective_role(group, actor_id)
+            .unwrap_or(cccc_contracts::ActorRole::Peer);
+        if cccc_core::WEB_MODEL_CORE_TOOL_NAMES.contains(&name)
+            || (via_capability_use
+                && role == cccc_contracts::ActorRole::Foreman
+                && cccc_core::is_builtin_capability_pack_tool(name))
+        {
+            return Ok(());
+        }
+        return if role == cccc_contracts::ActorRole::Peer {
+            Err(format!("{name} requires a Web Model foreman actor"))
+        } else {
+            Err(format!("{name} is not available to Web Model actors"))
+        };
+    }
     if !matches!(
         name,
         "cccc_capability_import" | "cccc_capability_block" | "cccc_capability_uninstall"
@@ -132,17 +169,16 @@ fn authorize_tool(
     {
         return Ok(());
     }
-    let Some(group_id) = arguments.get("group_id").and_then(Value::as_str) else {
+    if group_id.is_empty() {
         return Err("group_id is required".into());
+    }
+    let group = match group {
+        Some(group) => group,
+        None => cccc_core::GroupStore::new(home.clone())
+            .and_then(|store| store.load(group_id))
+            .map_err(|error| error.to_string())?,
     };
-    let group = cccc_core::GroupStore::new(home.clone())
-        .and_then(|store| store.load(group_id))
-        .map_err(|error| error.to_string())?;
-    let peer = group
-        .actors
-        .iter()
-        .find(|actor| actor.id == actor_id)
-        .and_then(|actor| actor.role)
+    let peer = cccc_core::actors::effective_role(&group, actor_id)
         == Some(cccc_contracts::ActorRole::Peer);
     if peer {
         Err(format!("{name} is not available to peer actors"))
@@ -369,6 +405,7 @@ async fn capability_use(
         &tool_name,
         tool_arguments,
         context,
+        true,
     ))
     .await?;
     let nested_payload = nested.get("structuredContent").cloned().unwrap_or(nested);
@@ -735,6 +772,67 @@ mod tests {
     use crate::RequestContext;
     use serde_json::json;
 
+    #[test]
+    fn web_model_tool_authorization_is_role_aware_and_capability_routed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = cccc_core::HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let store = cccc_core::GroupStore::new(home.clone()).expect("store");
+
+        let mut foreman_group = store.create("web model foreman", "").expect("group");
+        let mut web_foreman = cccc_contracts::Actor::new("web-foreman");
+        web_foreman.runtime = cccc_contracts::ActorRuntime::WebModel;
+        cccc_core::actors::add(&mut foreman_group, web_foreman).expect("web foreman");
+        store.save(&foreman_group).expect("save foreman group");
+        let foreman_args = json!({
+            "group_id":foreman_group.group_id,
+            "by":"web-foreman"
+        })
+        .as_object()
+        .cloned()
+        .expect("foreman args");
+        assert!(super::authorize_tool(&home, "cccc_repo", &foreman_args, false).is_ok());
+        assert_eq!(
+            super::authorize_tool(&home, "cccc_actor", &foreman_args, false)
+                .expect_err("direct management call must fail"),
+            "cccc_actor is not available to Web Model actors"
+        );
+        assert!(super::authorize_tool(&home, "cccc_actor", &foreman_args, true).is_ok());
+
+        let mut peer_group = store.create("web model peer", "").expect("group");
+        cccc_core::actors::add(
+            &mut peer_group,
+            cccc_contracts::Actor::new("native-foreman"),
+        )
+        .expect("native foreman");
+        let mut web_peer = cccc_contracts::Actor::new("web-peer");
+        web_peer.runtime = cccc_contracts::ActorRuntime::WebModel;
+        cccc_core::actors::add(&mut peer_group, web_peer).expect("web peer");
+        cccc_core::actors::add(&mut peer_group, cccc_contracts::Actor::new("native-peer"))
+            .expect("native peer");
+        store.save(&peer_group).expect("save peer group");
+        let peer_args = json!({"group_id":peer_group.group_id,"by":"web-peer"})
+            .as_object()
+            .cloned()
+            .expect("peer args");
+        assert_eq!(
+            super::authorize_tool(&home, "cccc_actor", &peer_args, true)
+                .expect_err("peer management call must fail"),
+            "cccc_actor requires a Web Model foreman actor"
+        );
+        let native_peer_args = json!({
+            "group_id":peer_group.group_id,
+            "by":"native-peer"
+        })
+        .as_object()
+        .cloned()
+        .expect("native peer args");
+        assert_eq!(
+            super::authorize_tool(&home, "cccc_capability_import", &native_peer_args, false,)
+                .expect_err("peer capability administration must fail"),
+            "cccc_capability_import is not available to peer actors"
+        );
+    }
+
     #[tokio::test]
     async fn capability_use_enables_hidden_pack_and_calls_inferred_builtin() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -773,6 +871,7 @@ mod tests {
                 .cloned()
                 .expect("enable args"),
             context,
+            false,
         )
         .await
         .expect("enable pack");
@@ -806,6 +905,7 @@ mod tests {
                 .cloned()
                 .expect("call args"),
             context,
+            false,
         )
         .await
         .expect("call inferred built-in");

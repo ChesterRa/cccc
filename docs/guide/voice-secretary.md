@@ -1,9 +1,8 @@
-# Voice Secretary (Experimental Rust Implementation)
+# Voice Secretary (Python Stable, Rust Experimental)
 
-Python remains the stable default CCCC implementation. This page documents Voice
-Secretary in the experimental Rust implementation and its native speech
-pipeline. See the standard Voice Secretary controls in the Web UI when running
-Python.
+Python remains the stable default CCCC implementation. Rust is experimental,
+but both engines expose the same Voice Secretary product controls and durable
+workflow authority. Native local-ASR details below apply to Rust where noted.
 
 Voice Secretary is a hidden internal actor backed by repository Markdown.
 Enabling it copies the foreman's runtime settings into the dedicated
@@ -29,6 +28,11 @@ final-ASR permit prevents native inference from stalling normal Web/API requests
 or multiplying large memory peaks. The 100 MiB value is a per-recording abuse and
 resource limit (about 55 minutes of PCM16), not a preallocated memory requirement.
 Each WebSocket recording must also hold the daemon recording lease.
+The linked Rust speech runtime and an installed live streaming model are
+separate readiness conditions: the microphone control is service-ready only
+when a compatible streaming model is installed (or an explicit test mock is
+configured). Runtime linkage alone must not defer a predictable missing-model
+failure until after recording starts.
 Disconnects finalize the last hypothesis. Stopping capture releases the
 microphone immediately, runs the installed SenseVoice model on the blocking
 worker pool, and sends `final_asr_text` before closing the recording connection.
@@ -53,6 +57,8 @@ document capture before starting speaker separation. Prompt, instruction, and
 direct-composer capture never create meeting artifacts or speaker-analysis jobs.
 The connection releases its recording lease only when the stored owner and lease
 ID still match, so stale connection cleanup cannot unlock a newer recorder.
+Reacquiring from the same browser owner also creates a fresh lease ID and fences
+the superseded connection.
 Only one native diarization job runs at a time. The sherpa-onnx diarization API
 requires one complete `f32` waveform, so this stage has a bounded, temporary
 full-recording memory peak; it reads directly from the recording file without
@@ -68,6 +74,13 @@ Stable document-capture ASR segments are appended to:
 ```text
 ~/.cccc/voice-secretary/<group_id>/<session_id>/transcripts/segments.jsonl
 ```
+
+The bounded per-session meeting projection is shared in
+`groups/<group_id>/state/assistants.json`. The durable document-level transcript
+that survives session pruning and aggregates several recordings is shared at
+`~/.cccc/voice-secretary/<group_id>/documents/<document_id>/transcript.jsonl`.
+Both Web implementations read these records through the daemon instead of
+owning a separate browser-side transcript authority.
 
 Prompt refinement and document instructions are semantic inputs, not meeting
 transcripts: they never create a session entry or a per-session transcript
@@ -118,6 +131,9 @@ dictation. Both Rust and Python local ASR paths accept the explicit `composer`
 dispatch target, but the browser appends the transcript straight to the composer
 without creating a secretary input, running prompt refinement, updating a
 document, persisting a secretary session, or starting speaker diarization.
+Composer acquisition and heartbeats remain valid while Voice Secretary is
+disabled; a heartbeat that omits its dispatch target inherits `composer` from
+the matching active lease.
 
 An active Rust local-ASR audio stream renews its recording lease. The browser's
 HTTP heartbeat remains a cross-tab status signal, but transient heartbeat
@@ -137,10 +153,13 @@ remain in `group.yaml`; process-local PID, port, service, and socket observation
 are rebuilt after startup. Rust-only input/document projection fields are
 preserved under `rust_state` rather than being mistaken for common workflow
 records. The global recording lease also uses the same file and token semantics
-in both implementations, so an engine switch cannot silently create a second
-recorder. Repository Markdown, transcript/input sidecars, Python's document
-index, and native model caches retain their existing specialized stores; this
-shared-state repair does not claim full Python/Rust feature parity.
+in both implementations. Every mutation and expiry-capable read is serialized
+through `~/.cccc/state/voice_secretary_recording_lease.json.lock`, so concurrent
+Python/Rust processes and an engine switch cannot silently create a second
+recorder. Repository Markdown, transcript/input sidecars, the shared document
+index, and native model caches retain their specialized stores. Shared state
+and engine switching are contractual; native model availability and
+implementation maturity are still allowed to differ explicitly.
 
 Native Rust model installation is still an experimental Web-owned boundary:
 the Rust Web UI manages the bundled sherpa-onnx model cache, while Rust reports

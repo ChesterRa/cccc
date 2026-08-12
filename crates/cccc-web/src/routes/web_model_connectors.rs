@@ -1,8 +1,10 @@
+use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::AppState;
 use crate::api::ApiError;
@@ -49,9 +51,9 @@ async fn mcp_info(
     Path(connector_id): Path<String>,
     Query(query): Query<TokenQuery>,
     headers: HeaderMap,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Response, ApiError> {
     let secret = connector_secret(&headers, &query)?;
-    let connector = store::find_authorized(&state, &connector_id, Some(secret))?;
+    store::find_authorized(&state, &connector_id, Some(secret))?;
     activity::record(
         &state,
         &connector_id,
@@ -64,14 +66,14 @@ async fn mcp_info(
             error: "",
         },
     )?;
-    Ok(Json(info_payload(&connector)))
+    Ok(sse_probe_response())
 }
 
 async fn mcp_info_token(
     State(state): State<AppState>,
     Path((connector_id, secret)): Path<(String, String)>,
-) -> Result<Json<Value>, ApiError> {
-    let connector = store::find_authorized(&state, &connector_id, Some(&secret))?;
+) -> Result<Response, ApiError> {
+    store::find_authorized(&state, &connector_id, Some(&secret))?;
     activity::record(
         &state,
         &connector_id,
@@ -84,7 +86,7 @@ async fn mcp_info_token(
             error: "",
         },
     )?;
-    Ok(Json(info_payload(&connector)))
+    Ok(sse_probe_response())
 }
 
 async fn mcp_with_header(
@@ -93,7 +95,7 @@ async fn mcp_with_header(
     Query(query): Query<TokenQuery>,
     headers: HeaderMap,
     Json(body): Json<Value>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Response, ApiError> {
     let secret = connector_secret(&headers, &query)?;
     let connector = store::find_authorized(&state, &connector_id, Some(secret))?;
     run_connector_mcp(&state, &connector, body).await
@@ -103,7 +105,7 @@ async fn mcp_with_path_token(
     State(state): State<AppState>,
     Path((connector_id, secret)): Path<(String, String)>,
     Json(body): Json<Value>,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Response, ApiError> {
     let connector = store::find_authorized(&state, &connector_id, Some(&secret))?;
     run_connector_mcp(&state, &connector, body).await
 }
@@ -112,7 +114,7 @@ async fn run_connector_mcp(
     state: &AppState,
     connector: &Value,
     request: Value,
-) -> Result<Json<Value>, ApiError> {
+) -> Result<Response, ApiError> {
     let method = request
         .get("method")
         .and_then(Value::as_str)
@@ -120,27 +122,38 @@ async fn run_connector_mcp(
         .to_owned();
     let mut tool_name = String::new();
     if request.get("method").and_then(Value::as_str) == Some("tools/call") {
-        let params = request
-            .get("params")
-            .and_then(Value::as_object)
-            .ok_or_else(|| ApiError::bad("tools/call params must be an object"))?;
-        tool_name = params
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_owned();
-        let arguments = params
-            .get("arguments")
-            .and_then(Value::as_object)
-            .ok_or_else(|| ApiError::bad("tools/call arguments must be an object"))?;
-        let bound_group = connector["group_id"].as_str().unwrap_or("");
-        if arguments
-            .get("group_id")
-            .and_then(Value::as_str)
-            .is_some_and(|group_id| group_id != bound_group)
-        {
-            return Err(ApiError::forbidden("connector cannot access another group"));
+        if let Some(params) = request.get("params").and_then(Value::as_object) {
+            tool_name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            if let Some(arguments) = params.get("arguments").and_then(Value::as_object) {
+                let bound_group = connector["group_id"].as_str().unwrap_or("");
+                if arguments
+                    .get("group_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|group_id| group_id != bound_group)
+                {
+                    return Err(ApiError::forbidden("connector cannot access another group"));
+                }
+            }
         }
+    }
+    if request.get("id").is_none() && method.starts_with("notifications/") {
+        activity::record(
+            state,
+            connector["connector_id"].as_str().unwrap_or(""),
+            Activity {
+                method: &method,
+                tool_name: "",
+                call_status: "ok",
+                wait_status: "",
+                turn_id: "",
+                error: "",
+            },
+        )?;
+        return Ok(StatusCode::ACCEPTED.into_response());
     }
     let response = cccc_mcp::handle_request_for_actor(
         &state.home,
@@ -169,7 +182,7 @@ async fn run_connector_mcp(
             error: &error,
         },
     )?;
-    Ok(Json(response))
+    Ok(Json(response).into_response())
 }
 
 async fn mcp_options() -> StatusCode {
@@ -198,14 +211,14 @@ fn connector_secret<'a>(
         .ok_or_else(|| ApiError::forbidden("connector token required"))
 }
 
-fn info_payload(connector: &Value) -> Value {
-    json!({
-        "name":"cccc-web-model-mcp",
-        "version":env!("CARGO_PKG_VERSION"),
-        "connector_id":connector["connector_id"],
-        "group_id":connector["group_id"],
-        "actor_id":connector["actor_id"]
-    })
+fn sse_probe_response() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .header("x-accel-buffering", "no")
+        .body(Body::from(": cccc web-model connector ready\n\n"))
+        .expect("static SSE probe response")
 }
 
 pub(super) fn required(body: &Value, key: &str) -> Result<String, ApiError> {

@@ -1,5 +1,6 @@
-use cccc_contracts::DaemonRequest;
+use cccc_contracts::{DaemonRequest, utc_now};
 use cccc_core::HomeLayout;
+use cccc_core::fs::{read_json, with_exclusive_lock, write_json};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
@@ -125,16 +126,50 @@ pub(super) fn call(home: &HomeLayout, request: &DaemonRequest, tool_name: &str) 
         .unwrap_or_else(|| json!({}));
     let result = match kind {
         "remote_http" | "streamable_http" | "http" => {
-            call_http(invoker, tool_name, real_name, arguments)?
+            call_http(invoker, tool_name, real_name, arguments)
         }
         "npm_stdio" | "package_stdio" | "command_stdio" => {
-            call_stdio(invoker, real_name, arguments)?
+            call_stdio(invoker, real_name, arguments)
         }
         _ => {
             return Err(OpError::new(
                 "capability_runtime_unavailable",
                 format!("unsupported Rust external capability invoker: {kind}"),
             ));
+        }
+    };
+    let result = match result {
+        Ok(result) => {
+            if let Err(error) = record_call_state(
+                home,
+                &group_id,
+                &actor_id,
+                capability_id,
+                artifact_id,
+                "verified",
+                "",
+            ) {
+                tracing::warn!(
+                    %group_id,
+                    %actor_id,
+                    %capability_id,
+                    message = %error.message,
+                    "failed to persist successful capability tool call state"
+                );
+            }
+            result
+        }
+        Err(error) => {
+            let _ = record_call_state(
+                home,
+                &group_id,
+                &actor_id,
+                capability_id,
+                artifact_id,
+                "tool_call_failed",
+                &error.message,
+            );
+            return Err(error);
         }
     };
     object(json!({
@@ -193,6 +228,13 @@ fn call_http(
             format!("remote initialize failed: {error}"),
         ));
     }
+    http_notification(
+        &client,
+        url,
+        token,
+        session_id.as_deref(),
+        &json!({"jsonrpc":"2.0","method":"notifications/initialized","params":{}}),
+    )?;
     let (value, _) = http_jsonrpc(
         &client,
         url,
@@ -207,6 +249,35 @@ fn call_http(
         return Err(OpError::new("capability_tool_failed", error.to_string()));
     }
     Ok(value.get("result").cloned().unwrap_or(Value::Null))
+}
+
+fn http_notification(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    token: Option<&str>,
+    session_id: Option<&str>,
+    payload: &Value,
+) -> Result<(), OpError> {
+    let mut request = client
+        .post(url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .json(payload);
+    if let Some(token) = token {
+        request = request.bearer_auth(token);
+    }
+    if let Some(session_id) = session_id {
+        request = request.header("Mcp-Session-Id", session_id);
+    }
+    let response = request
+        .send()
+        .map_err(|error| OpError::new("capability_transport_error", error.to_string()))?;
+    if !response.status().is_success() {
+        return Err(OpError::new(
+            "capability_transport_error",
+            format!("initialized notification returned {}", response.status()),
+        ));
+    }
+    Ok(())
 }
 
 fn http_jsonrpc(
@@ -290,6 +361,9 @@ fn call_stdio(
             "jsonrpc":"2.0","id":1,"method":"initialize",
             "params":{"protocolVersion":"2024-11-05","capabilities":{},
                 "clientInfo":{"name":"cccc-capability-runtime","version":"1.0"}}
+        }),
+        json!({
+            "jsonrpc":"2.0","method":"notifications/initialized","params":{}
         }),
         json!({
             "jsonrpc":"2.0","id":2,"method":"tools/call",
@@ -385,7 +459,88 @@ fn load(home: &HomeLayout) -> Result<Value, OpError> {
     if !path.exists() {
         return Ok(json!({}));
     }
-    cccc_core::fs::read_json(&path).map_err(OpError::io)
+    read_json(&path).map_err(OpError::io)
+}
+
+fn record_call_state(
+    home: &HomeLayout,
+    group_id: &str,
+    actor_id: &str,
+    capability_id: &str,
+    artifact_id: &str,
+    state: &str,
+    error: &str,
+) -> Result<(), OpError> {
+    let path = home.root().join("state/capabilities/runtime.json");
+    with_exclusive_lock(&path.with_extension("json.lock"), || {
+        let mut runtime = if path.exists() {
+            read_json::<Value>(&path)?
+        } else {
+            json!({"v":2,"created_at":utc_now()})
+        };
+        runtime["v"] = json!(2);
+        runtime["updated_at"] = json!(utc_now());
+        if let Some(artifact) = runtime
+            .get_mut("artifacts")
+            .and_then(Value::as_object_mut)
+            .and_then(|artifacts| artifacts.get_mut(artifact_id))
+            .and_then(Value::as_object_mut)
+        {
+            artifact.insert("last_error".into(), json!(error));
+            artifact.insert("updated_at".into(), json!(utc_now()));
+        }
+        let groups = object_field_mut(&mut runtime, "actor_instances");
+        let actors = nested_object_mut(groups, group_id);
+        let capabilities = nested_object_mut(actors, actor_id);
+        capabilities.insert(
+            capability_id.into(),
+            json!({
+                "artifact_id":artifact_id,"state":state,"last_error":error,
+                "updated_at":utc_now()
+            }),
+        );
+        if state == "verified" {
+            let recent = object_field_mut(&mut runtime, "recent_success");
+            let previous = recent
+                .get(capability_id)
+                .and_then(|entry| entry.get("success_count"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            recent.insert(
+                capability_id.into(),
+                json!({
+                    "capability_id":capability_id,"success_count":previous + 1,
+                    "last_success_at":utc_now(),"last_group_id":group_id,
+                    "last_actor_id":actor_id,"last_action":"tool_call"
+                }),
+            );
+        }
+        write_json(&path, &runtime)
+    })
+    .map_err(OpError::io)
+}
+
+fn object_field_mut<'a>(value: &'a mut Value, key: &str) -> &'a mut Map<String, Value> {
+    if !value.is_object() {
+        *value = json!({});
+    }
+    let root = value.as_object_mut().expect("object initialized");
+    let field = root.entry(key).or_insert_with(|| json!({}));
+    if !field.is_object() {
+        *field = json!({});
+    }
+    field.as_object_mut().expect("field initialized")
+}
+
+fn nested_object_mut<'a>(
+    parent: &'a mut Map<String, Value>,
+    key: &str,
+) -> &'a mut Map<String, Value> {
+    let value = parent.entry(key).or_insert_with(|| json!({}));
+    if !value.is_object() {
+        *value = json!({});
+    }
+    value.as_object_mut().expect("nested object initialized")
 }
 
 fn object_field<'a>(value: &'a Value, key: &str) -> &'a Map<String, Value> {
@@ -401,11 +556,24 @@ fn empty() -> &'static Map<String, Value> {
 }
 
 fn install_state_ready(state: &str) -> bool {
-    matches!(state, "installed" | "ready" | "active")
+    matches!(
+        state,
+        "installed" | "installed_degraded" | "ready" | "active"
+    )
 }
 
 fn binding_state_ready(state: &str) -> bool {
-    state.is_empty() || matches!(state, "bound" | "ready" | "active")
+    state.is_empty()
+        || matches!(
+            state,
+            "bound"
+                | "ready"
+                | "active"
+                | "activation_pending"
+                | "runnable"
+                | "verified"
+                | "tool_call_failed"
+        )
 }
 
 fn dynamic_tool_limit() -> usize {

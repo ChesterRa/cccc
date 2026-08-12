@@ -9,6 +9,14 @@ use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+fn pty_group(home: &HomeLayout, actor_id: &str) -> String {
+    let store = GroupStore::new(home.clone()).expect("store");
+    let mut group = store.create("terminal test", "").expect("group");
+    cccc_core::actors::add(&mut group, Actor::new(actor_id)).expect("actor");
+    store.save(&group).expect("save group");
+    group.group_id
+}
+
 #[test]
 fn write_preserves_standalone_carriage_return() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -105,8 +113,8 @@ fn tail_rendering_handles_unicode_and_ansi_before_truncation() {
 fn terminal_tail_uses_complete_hot_stream_and_preserves_raw_cursor() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
-    let group_id = format!("g_terminal_{}", uuid::Uuid::new_v4().simple());
     let actor_id = "tail-peer";
+    let group_id = pty_group(&home, actor_id);
     cccc_runtime::start(LaunchSpec {
         group_id: group_id.clone(),
         actor_id: actor_id.into(),
@@ -152,8 +160,8 @@ fn terminal_tail_uses_complete_hot_stream_and_preserves_raw_cursor() {
 fn terminal_snapshot_returns_a_rendered_screen_at_the_raw_end_cursor() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
-    let group_id = format!("g_snapshot_{}", uuid::Uuid::new_v4().simple());
     let actor_id = "snapshot-peer";
+    let group_id = pty_group(&home, actor_id);
     cccc_runtime::start(LaunchSpec {
         group_id: group_id.clone(),
         actor_id: actor_id.into(),
@@ -197,8 +205,8 @@ fn terminal_snapshot_returns_a_rendered_screen_at_the_raw_end_cursor() {
 fn terminal_replay_preserves_current_session_raw_ansi() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path()).expect("home");
-    let group_id = format!("g_history_{}", uuid::Uuid::new_v4().simple());
     let actor_id = "history-peer";
+    let group_id = pty_group(&home, actor_id);
     cccc_runtime::start(LaunchSpec {
         group_id: group_id.clone(),
         actor_id: actor_id.into(),

@@ -110,7 +110,7 @@ class TestMessageObligation(unittest.TestCase):
             st2 = get_obligation_status_batch(group, [msg])
             peer2 = st2.get(msg_id, {}).get("peer1", {})
             self.assertEqual(peer2.get("read"), True)
-            self.assertEqual(peer2.get("acked"), True)
+            self.assertEqual(peer2.get("acked"), False)
             self.assertEqual(peer2.get("replied"), False)
 
             append_event(
@@ -129,7 +129,21 @@ class TestMessageObligation(unittest.TestCase):
             st3 = get_obligation_status_batch(group, [msg])
             peer3 = st3.get(msg_id, {}).get("peer1", {})
             self.assertEqual(peer3.get("replied"), True)
-            self.assertEqual(peer3.get("acked"), True)
+            self.assertEqual(peer3.get("acked"), False)
+
+            append_event(
+                group.ledger_path,
+                kind="chat.ack",
+                group_id=group.group_id,
+                scope_key="",
+                by="peer1",
+                data={"actor_id": "peer1", "event_id": msg_id},
+            )
+            st4 = get_obligation_status_batch(group, [msg])
+            peer4 = st4.get(msg_id, {}).get("peer1", {})
+            self.assertEqual(peer4.get("read"), True)
+            self.assertEqual(peer4.get("replied"), True)
+            self.assertEqual(peer4.get("acked"), True)
         finally:
             cleanup()
 

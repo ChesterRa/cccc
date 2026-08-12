@@ -7,7 +7,7 @@ from typing import Any
 from ..util.conv import coerce_bool
 
 
-FAST_QUEUE_OPS = {"send", "send_files", "reply", "chat_ack"}
+FAST_QUEUE_OPS = {"send", "send_files", "tracked_send", "reply", "chat_ack"}
 
 READ_QUEUE_OPS = {
     "branding_get",
@@ -23,6 +23,7 @@ READ_QUEUE_OPS = {
     "actor_profile_list",
     "observability_get",
     "ping",
+    "presentation_get",
     "web_model_delivery_preferences_get",
     "web_model_runtime_recover_turn",
 }

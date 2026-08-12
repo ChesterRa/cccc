@@ -80,6 +80,28 @@ async fn query_flags_change_final_actor_ledger_and_context_responses() {
     assert_eq!(invalid["body"]["error"]["code"], "invalid_boolean");
 }
 
+#[tokio::test]
+async fn missing_group_reads_return_a_resource_error_instead_of_empty_state() {
+    let (_temp, home, _group_id, daemon) = running_home().await;
+    for path in [
+        "/api/v1/groups/g_missing/ledger/tail?kind=chat",
+        "/api/v1/groups/g_missing/ledger/search?kind=chat&q=x",
+        "/api/v1/groups/g_missing/ledger/window?kind=chat&center=event-missing",
+        "/api/v1/groups/g_missing/events/event-missing/read_status",
+        "/api/v1/groups/g_missing/context?detail=summary",
+        "/api/v1/groups/g_missing/context?detail=full",
+        "/api/v1/groups/g_missing/tasks",
+    ] {
+        let response = get(&home, path.into()).await;
+        assert_eq!(response["status"], 404, "{path}");
+        assert_eq!(
+            response["body"]["error"]["code"], "group_not_found",
+            "{path}"
+        );
+    }
+    daemon.0.abort();
+}
+
 fn actor<'a>(payload: &'a Value, id: &str) -> Option<&'a Value> {
     payload["result"]["actors"]
         .as_array()?

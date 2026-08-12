@@ -2,10 +2,25 @@ use cccc_contracts::{
     Actor, ActorRole, ActorRuntime, DaemonRequest, DaemonResponse, Event, RunnerKind,
 };
 use cccc_core::{GroupStore, HomeLayout, Scope, assistant_state, ledger, ledger_archive};
+use fs2::FileExt;
 use serde_json::{Map, Value, json};
+use std::fs::OpenOptions;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 fn load_voice_state(home: &HomeLayout, group_id: &str) -> Value {
-    assistant_state::load(home, group_id).expect("assistant state")
+    let mut state = assistant_state::load(home, group_id).expect("assistant state");
+    let documents = ok(
+        home,
+        "assistant_voice_document_list",
+        json!({"group_id":group_id,"include_archived":true}),
+    );
+    let root = state.as_object_mut().expect("assistant state object");
+    for key in ["documents", "active_document_id", "active_document_path"] {
+        root.insert(key.into(), documents.result[key].clone());
+    }
+    state
 }
 
 fn update_voice_state(
@@ -14,6 +29,21 @@ fn update_voice_state(
     change: impl FnOnce(&mut Map<String, Value>) -> std::io::Result<()>,
 ) {
     assistant_state::update(home, group_id, change).expect("assistant state update");
+}
+
+fn set_voice_active_document_id(home: &HomeLayout, group_id: &str, document_id: &Value) {
+    let path = home
+        .root()
+        .join("voice-secretary")
+        .join(group_id)
+        .join("documents/index.json");
+    let mut index: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("voice document index"))
+            .expect("valid voice document index");
+    index["active_document_id"] = document_id.clone();
+    let mut bytes = serde_json::to_vec_pretty(&index).expect("serialize voice document index");
+    bytes.push(b'\n');
+    cccc_core::fs::atomic_write(&path, &bytes).expect("write voice document index");
 }
 
 #[test]
@@ -88,6 +118,75 @@ fn voice_input_is_durable_idempotent_and_delivered_to_internal_actor() {
     assert!(workspace.join("docs/voice-secretary/meeting.md").is_file());
     let duplicate = ok(&home, "assistant_voice_transcript_append", args);
     assert_eq!(duplicate.result["input_event_created"], false);
+    let document_id = first.result["document"]["document_id"]
+        .as_str()
+        .expect("voice document id");
+    let transcript_path = home
+        .root()
+        .join("voice-secretary")
+        .join(&group.group_id)
+        .join("documents")
+        .join(document_id)
+        .join("transcript.jsonl");
+    let transcript_lines = std::fs::read_to_string(transcript_path)
+        .expect("shared document transcript")
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).expect("transcript row"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        transcript_lines.len(),
+        1,
+        "retry must not duplicate transcript"
+    );
+    assert_eq!(transcript_lines[0]["session_id"], "session-1");
+    assert_eq!(transcript_lines[0]["segment_id"], "segment-1");
+    assert_eq!(transcript_lines[0]["text"], "讨论发布计划和负责人。");
+    let failed_update = ok(
+        &home,
+        "assistant_voice_session_update",
+        json!({
+            "group_id":group.group_id,
+            "session_id":"session-1",
+            "by":"assistant:voice_secretary",
+            "patch":{
+                "status":"closed",
+                "diarization_ready":false,
+                "diarization_error":{"code":"temporary","message":"retry"},
+                "error":{"code":"temporary","message":"retry"}
+            }
+        }),
+    );
+    assert_eq!(failed_update.result["session"]["diarization_ready"], false);
+    let updated = ok(
+        &home,
+        "assistant_voice_session_update",
+        json!({
+            "group_id":group.group_id,
+            "session_id":"session-1",
+            "by":"assistant:voice_secretary",
+            "patch":{
+                "status":"closed",
+                "diarization_ready":true,
+                "diarization":{
+                    "model_id":"diarization-model",
+                    "speaker_transcript_model_id":"transcript-model",
+                    "speaker_transcript_segments":[{"text":"讨论发布计划和负责人。","speaker_label":"Speaker 1"}]
+                },
+                "error":null
+            }
+        }),
+    );
+    assert_eq!(
+        updated.result["session"]["transcript"],
+        "讨论发布计划和负责人。"
+    );
+    assert_eq!(
+        updated.result["session"]["segments"][0]["segment_id"],
+        "segment-1"
+    );
+    assert_eq!(updated.result["session"]["diarization_ready"], true);
+    assert!(updated.result["session"].get("diarization_error").is_none());
+    assert!(updated.result["session"].get("error").is_none());
     let assistant_state = load_voice_state(&home, &group.group_id);
     assert_eq!(assistant_state["sessions"][0]["capture_mode"], "document");
 
@@ -126,6 +225,257 @@ fn voice_input_is_durable_idempotent_and_delivered_to_internal_actor() {
                 && event.data["kind"] == "voice_secretary_input")
             .count(),
         1
+    );
+}
+
+#[test]
+fn document_only_transcript_clear_reports_that_visible_history_was_cleared() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let document_path = "docs/voice-secretary/document-only.md";
+    let appended = ok(
+        &home,
+        "assistant_voice_transcript_append",
+        json!({
+            "group_id":group_id,
+            "by":"user",
+            "session_id":"document-only-session",
+            "segment_id":"segment-1",
+            "text":"durable document transcript",
+            "document_path":document_path,
+            "is_final":true
+        }),
+    );
+    let document_id = appended.result["document"]["document_id"]
+        .as_str()
+        .expect("document id");
+    let transcript_path = home
+        .root()
+        .join("voice-secretary")
+        .join(&group_id)
+        .join("documents")
+        .join(document_id)
+        .join("transcript.jsonl");
+    assert!(transcript_path.is_file());
+
+    update_voice_state(&home, &group_id, |state| {
+        state.insert("sessions".into(), json!([]));
+        Ok(())
+    });
+    let fallback = ok(
+        &home,
+        "assistant_state",
+        json!({"group_id":group_id,"view":"voice_session","document_path":document_path}),
+    );
+    assert_eq!(fallback.result["session"]["source"], "document_transcript");
+
+    let cleared = ok(
+        &home,
+        "assistant_voice_session_transcript_clear",
+        json!({"group_id":group_id,"document_path":document_path,"by":"user"}),
+    );
+    assert_eq!(cleared.result["cleared"], true);
+    assert!(!transcript_path.exists());
+}
+
+#[test]
+fn transcript_append_and_clear_share_the_group_mutation_lock() {
+    let (_temp, home, _store, group_id) = enabled_voice_group();
+    let lock_path = home
+        .root()
+        .join("voice-secretary")
+        .join(&group_id)
+        .join("transcript.lock");
+    std::fs::create_dir_all(lock_path.parent().expect("lock parent")).expect("lock directory");
+
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .expect("transcript lock");
+    lock.lock_exclusive().expect("lock append");
+    let append_home = home.clone();
+    let append_group_id = group_id.clone();
+    let (append_started_tx, append_started_rx) = mpsc::channel();
+    let append = thread::spawn(move || {
+        append_started_tx.send(()).expect("append start receiver");
+        call(
+            &append_home,
+            "assistant_voice_transcript_append",
+            json!({
+                "group_id":append_group_id,
+                "session_id":"locked-session",
+                "segment_id":"locked-segment",
+                "document_path":"docs/voice-secretary/locked.md",
+                "text":"serialized transcript",
+                "is_final":true,
+                "by":"user"
+            }),
+        )
+    });
+    append_started_rx.recv().expect("append started");
+    thread::sleep(Duration::from_millis(200));
+    assert!(
+        !append.is_finished(),
+        "append must wait for the transcript mutation lock"
+    );
+    FileExt::unlock(&lock).expect("unlock append");
+    drop(lock);
+    let appended = append.join().expect("append thread");
+    assert!(appended.ok, "append failed: {:?}", appended.error);
+
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .expect("transcript lock");
+    lock.lock_exclusive().expect("lock clear");
+    let clear_home = home.clone();
+    let clear_group_id = group_id.clone();
+    let (clear_started_tx, clear_started_rx) = mpsc::channel();
+    let clear = thread::spawn(move || {
+        clear_started_tx.send(()).expect("clear start receiver");
+        call(
+            &clear_home,
+            "assistant_voice_session_transcript_clear",
+            json!({
+                "group_id":clear_group_id,
+                "session_id":"locked-session",
+                "document_path":"docs/voice-secretary/locked.md",
+                "by":"user"
+            }),
+        )
+    });
+    clear_started_rx.recv().expect("clear started");
+    thread::sleep(Duration::from_millis(200));
+    assert!(
+        !clear.is_finished(),
+        "clear must wait for the transcript mutation lock"
+    );
+    FileExt::unlock(&lock).expect("unlock clear");
+    drop(lock);
+    let cleared = clear.join().expect("clear thread");
+    assert!(cleared.ok, "clear failed: {:?}", cleared.error);
+    assert_eq!(cleared.result["cleared"], true);
+}
+
+#[test]
+fn voice_session_mutations_enforce_status_permissions() {
+    let (_temp, home, store, group_id) = enabled_voice_group();
+    store
+        .mutate(&group_id, |group| {
+            let mut peer = Actor::new("peer");
+            peer.role = Some(ActorRole::Peer);
+            group.actors.push(peer);
+            Ok(())
+        })
+        .expect("add peer");
+
+    for (op, args) in [
+        (
+            "assistant_voice_session_update",
+            json!({
+                "group_id":group_id,
+                "session_id":"peer-session",
+                "by":"peer",
+                "patch":{"status":"closed"}
+            }),
+        ),
+        (
+            "assistant_voice_session_transcript_clear",
+            json!({
+                "group_id":group_id,
+                "session_id":"peer-session",
+                "by":"peer"
+            }),
+        ),
+    ] {
+        let denied = call(&home, op, args);
+        assert!(!denied.ok, "{op} unexpectedly allowed a peer");
+        assert_eq!(
+            denied.error.expect("permission error").code,
+            "permission_denied"
+        );
+    }
+
+    let allowed = ok(
+        &home,
+        "assistant_voice_session_update",
+        json!({
+            "group_id":group_id,
+            "session_id":"foreman-session",
+            "by":"foreman",
+            "patch":{"status":"closed"}
+        }),
+    );
+    assert_eq!(allowed.result["session"]["status"], "closed");
+}
+
+#[test]
+fn voice_session_mutations_reject_path_like_session_ids() {
+    let (temp, home, _store, group_id) = enabled_voice_group();
+    let external_session = temp.path().join("external-session");
+    let external_transcript = external_session.join("transcripts/segments.jsonl");
+    std::fs::create_dir_all(external_transcript.parent().expect("transcript parent"))
+        .expect("external transcript directory");
+    std::fs::write(&external_transcript, b"preserve me\n").expect("external transcript");
+    let external_session_id = external_session.to_string_lossy().into_owned();
+
+    update_voice_state(&home, &group_id, |state| {
+        state.insert(
+            "sessions".into(),
+            json!([{
+                "schema":1,
+                "group_id":group_id,
+                "session_id":external_session_id,
+                "capture_mode":"document",
+                "document_path":"docs/voice-secretary/unsafe.md",
+                "segments":[],
+                "transcript":"unsafe"
+            }]),
+        );
+        Ok(())
+    });
+
+    let clear = call(
+        &home,
+        "assistant_voice_session_transcript_clear",
+        json!({
+            "group_id":group_id,
+            "session_id":external_session_id,
+            "by":"user"
+        }),
+    );
+    assert!(!clear.ok, "absolute session id unexpectedly accepted");
+    assert_eq!(
+        clear.error.expect("invalid session id").code,
+        "invalid_args"
+    );
+    assert!(
+        external_transcript.is_file(),
+        "transcript outside the group session root was deleted"
+    );
+
+    let update = call(
+        &home,
+        "assistant_voice_session_update",
+        json!({
+            "group_id":group_id,
+            "session_id":"..",
+            "by":"assistant:voice_secretary",
+            "patch":{"status":"closed"}
+        }),
+    );
+    assert!(
+        !update.ok,
+        "parent-directory session id unexpectedly accepted"
+    );
+    assert_eq!(
+        update.error.expect("invalid session id").code,
+        "invalid_args"
     );
 }
 
@@ -621,17 +971,7 @@ fn archiving_document_removes_it_from_index_and_selects_the_next_active_document
         "docs/voice-secretary/first.md"
     );
 
-    update_voice_state(&home, &group_id, |state| {
-        state.insert(
-            "active_document_id".into(),
-            second.result["document"]["document_id"].clone(),
-        );
-        state.insert(
-            "active_document_path".into(),
-            json!("docs/voice-secretary/second.md"),
-        );
-        Ok(())
-    });
+    set_voice_active_document_id(&home, &group_id, &second.result["document"]["document_id"]);
 
     let index = ok(&home, "assistant_index", json!({"group_id":group_id}));
     assert_eq!(index.result["documents"].as_array().map(Vec::len), Some(1));
@@ -688,17 +1028,7 @@ fn archiving_document_removes_it_from_index_and_selects_the_next_active_document
             "document_path":"docs/voice-secretary/first.md"
         }),
     );
-    update_voice_state(&home, &group_id, |state| {
-        state.insert(
-            "active_document_id".into(),
-            first.result["document"]["document_id"].clone(),
-        );
-        state.insert(
-            "active_document_path".into(),
-            json!("docs/voice-secretary/first.md"),
-        );
-        Ok(())
-    });
+    set_voice_active_document_id(&home, &group_id, &first.result["document"]["document_id"]);
     let empty_index = ok(&home, "assistant_index", json!({"group_id":group_id}));
     assert_eq!(
         empty_index.result["documents"].as_array().map(Vec::len),
@@ -764,7 +1094,7 @@ fn semantic_voice_inputs_do_not_create_meeting_transcripts() {
             .exists()
     );
     let voice_root = home.root().join("voice-secretary").join(&group_id);
-    assert!(voice_root.join("inputs.jsonl").is_file());
+    assert!(voice_root.join("input_events.jsonl").is_file());
     assert!(!voice_root.join("voice-secretary-prompt-refine").exists());
     assert!(!voice_root.join("voice-secretary-user-instruction").exists());
 }
@@ -929,6 +1259,26 @@ fn disabling_voice_secretary_removes_internal_actor_without_touching_documents()
     );
     ok(
         &home,
+        "actor_env_private_update",
+        json!({
+            "group_id":group.group_id,
+            "actor_id":"voice-secretary",
+            "by":"user",
+            "set":{"VOICE_TEST_SECRET":"retire-me"}
+        }),
+    );
+    let secret_dir = home
+        .root()
+        .join("state/secrets/actors")
+        .join(&group.group_id);
+    assert!(
+        std::fs::read_dir(&secret_dir)
+            .expect("secret directory")
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name().to_string_lossy().ends_with(".json"))
+    );
+    ok(
+        &home,
         "assistant_settings_update",
         json!({"group_id":group.group_id,"patch":{"enabled":false}}),
     );
@@ -939,9 +1289,78 @@ fn disabling_voice_secretary_removes_internal_actor_without_touching_documents()
             .iter()
             .any(|actor| actor.id == "voice-secretary")
     );
+    assert!(
+        !secret_dir.exists()
+            || std::fs::read_dir(secret_dir)
+                .expect("retired secret directory")
+                .filter_map(Result::ok)
+                .all(|entry| !entry.file_name().to_string_lossy().ends_with(".json"))
+    );
     assert_eq!(
         load_voice_state(&home, &group.group_id)["documents"][0]["content"],
         "keep me"
+    );
+}
+
+#[test]
+fn failed_voice_secretary_disable_restores_actor_secrets() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    home.initialize().expect("initialize");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("voice", "").expect("group");
+    store
+        .mutate(&group.group_id, |doc| {
+            let mut actor = Actor::new("foreman");
+            actor.role = Some(ActorRole::Foreman);
+            doc.actors.push(actor);
+            Ok(())
+        })
+        .expect("foreman");
+    ok(
+        &home,
+        "assistant_settings_update",
+        json!({"group_id":group.group_id,"patch":{"enabled":true}}),
+    );
+    ok(
+        &home,
+        "actor_env_private_update",
+        json!({
+            "group_id":group.group_id,
+            "actor_id":"voice-secretary",
+            "by":"user",
+            "set":{"VOICE_TEST_SECRET":"restore-me"}
+        }),
+    );
+    let lock_path = home
+        .groups_dir()
+        .join(&group.group_id)
+        .join("group.yaml.lock");
+    std::fs::remove_file(&lock_path).expect("remove lock file");
+    std::fs::create_dir(&lock_path).expect("block group mutation");
+
+    let failed = call(
+        &home,
+        "assistant_settings_update",
+        json!({"group_id":group.group_id,"patch":{"enabled":false}}),
+    );
+    assert!(!failed.ok);
+    let loaded = store.load(&group.group_id).expect("unchanged group");
+    assert!(
+        loaded
+            .actors
+            .iter()
+            .any(|actor| actor.id == "voice-secretary")
+    );
+    let secret_dir = home
+        .root()
+        .join("state/secrets/actors")
+        .join(&group.group_id);
+    assert!(
+        std::fs::read_dir(secret_dir)
+            .expect("restored secret directory")
+            .filter_map(Result::ok)
+            .any(|entry| entry.file_name().to_string_lossy().ends_with(".json"))
     );
 }
 
@@ -1050,6 +1469,47 @@ fn assistant_state_and_recording_lease_use_the_public_daemon_contract() {
 }
 
 #[test]
+fn disabled_voice_secretary_direct_dictation_heartbeat_preserves_lease_scope() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("direct dictation", "").expect("group");
+    let acquired = ok(
+        &home,
+        "assistant_voice_recording_lease",
+        json!({
+            "group_id":group.group_id,
+            "action":"acquire",
+            "owner_id":"tab-direct",
+            "capture_mode":"prompt",
+            "recognition_backend":"assistant_service_local_asr",
+            "dispatch_target":"composer"
+        }),
+    );
+    let lease_id = acquired.result["lease_id"]
+        .as_str()
+        .expect("private lease token");
+
+    let heartbeat = ok(
+        &home,
+        "assistant_voice_recording_lease",
+        json!({
+            "group_id":group.group_id,
+            "action":"heartbeat",
+            "owner_id":"tab-direct",
+            "lease_id":lease_id
+        }),
+    );
+    assert_eq!(heartbeat.result["acquired"], true);
+    assert_eq!(heartbeat.result["lease"]["capture_mode"], "prompt");
+    assert_eq!(
+        heartbeat.result["lease"]["recognition_backend"],
+        "assistant_service_local_asr"
+    );
+    assert_eq!(heartbeat.result["lease"]["dispatch_target"], "composer");
+}
+
+#[test]
 fn voice_input_retries_cleanly_after_document_preflight_failure() {
     let temp = tempfile::tempdir().expect("tempdir");
     let workspace = temp.path().join("workspace");
@@ -1089,7 +1549,7 @@ fn voice_input_retries_cleanly_after_document_preflight_failure() {
             .root()
             .join("voice-secretary")
             .join(&group.group_id)
-            .join("inputs.jsonl")
+            .join("input_events.jsonl")
             .exists()
     );
 
@@ -1200,6 +1660,8 @@ fn enabling_voice_secretary_rolls_back_runtime_start_failure() {
 #[test]
 fn headless_voice_secretary_health_tracks_its_local_process() {
     let temp = tempfile::tempdir().expect("tempdir");
+    let workspace = temp.path().join("workspace");
+    std::fs::create_dir(&workspace).expect("workspace");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
     home.initialize().expect("initialize");
     let store = GroupStore::new(home.clone()).expect("store");
@@ -1225,6 +1687,13 @@ done
             foreman.runner = RunnerKind::Headless;
             foreman.command = vec!["sh".into(), "-c".into(), fake_app_server.into()];
             doc.actors.push(foreman);
+            doc.scopes.push(Scope {
+                scope_key: "scope".into(),
+                url: workspace.to_string_lossy().into_owned(),
+                label: "workspace".into(),
+                git_remote: String::new(),
+            });
+            doc.active_scope_key = "scope".into();
             doc.running = true;
             Ok(())
         })
@@ -1397,7 +1866,7 @@ fn incomplete_jsonl_tail_is_repaired_before_appending() {
         .root()
         .join("voice-secretary")
         .join(&group_id)
-        .join("inputs.jsonl");
+        .join("input_events.jsonl");
     let mut bytes = std::fs::read(&input_path).expect("read input log");
     bytes.extend_from_slice(b"{\"schema\":1,\"segment_id\":\"partial");
     std::fs::write(&input_path, bytes).expect("damage tail");

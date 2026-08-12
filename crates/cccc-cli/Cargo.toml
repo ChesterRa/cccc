@@ -13,6 +13,11 @@ keywords = ["ai", "agents", "collaboration", "mcp", "automation"]
 categories = ["command-line-utilities", "development-tools"]
 publish = false
 
+[features]
+# Standalone Linux archives cannot rely on the target host's OpenSSL package.
+# This direct optional edge enables the transitive openssl-sys vendored build.
+standalone = ["dep:openssl-sys"]
+
 [dependencies]
 anyhow.workspace = true
 cccc-client = { package = "cccc-pair-client", version = "=0.4.34-rc2", path = "../cccc-client" }
@@ -28,6 +33,9 @@ reqwest.workspace = true
 serde_json.workspace = true
 shell-words.workspace = true
 tokio.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+openssl-sys = { version = "0.9", features = ["vendored"], optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

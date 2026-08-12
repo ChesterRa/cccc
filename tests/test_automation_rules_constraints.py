@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
@@ -70,6 +71,39 @@ class TestAutomationRulesConstraints(unittest.TestCase):
             err = resp.error.model_dump() if resp.error else {}
             self.assertEqual(str(err.get("code") or ""), "group_automation_manage_failed")
             self.assertIn("only supports trigger.kind=at", str(err.get("message") or ""))
+        finally:
+            cleanup()
+
+    def test_full_ruleset_rejects_empty_and_duplicate_rule_ids(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group_id()
+            valid_trigger = {"kind": "interval", "every_seconds": 60}
+            invalid_rules = [
+                [{"id": "", "trigger": valid_trigger}],
+                [
+                    {"id": "duplicate", "trigger": valid_trigger},
+                    {"id": "duplicate", "trigger": valid_trigger},
+                ],
+            ]
+            for rules in invalid_rules:
+                with self.subTest(rules=rules):
+                    response, _ = handle_request(
+                        DaemonRequest(
+                            op="group_automation_update",
+                            args={
+                                "group_id": gid,
+                                "by": "user",
+                                "ruleset": {"rules": rules, "snippets": {}},
+                            },
+                        )
+                    )
+                    self.assertFalse(response.ok)
+                    error = response.error.model_dump() if response.error else {}
+                    self.assertEqual(str(error.get("code") or ""), "group_automation_update_failed")
         finally:
             cleanup()
 
@@ -180,6 +214,7 @@ class TestAutomationRulesConstraints(unittest.TestCase):
             assert isinstance(rule_after, dict)
             self.assertNotIn("at_fired", rule_after)
             self.assertNotIn("last_slot_key", rule_after)
+            self.assertNotIn("last_fired_at", rule_after)
         finally:
             cleanup()
 
@@ -265,6 +300,174 @@ class TestAutomationRulesConstraints(unittest.TestCase):
             self.assertIsNotNone(once_rule)
             assert isinstance(once_rule, dict)
             self.assertFalse(bool(once_rule.get("enabled", True)))
+        finally:
+            cleanup()
+
+    def test_ruleset_reconcile_serializes_with_scheduler_state_writes(self) -> None:
+        from pathlib import Path
+
+        from cccc.contracts.v1 import AutomationRuleSet
+        from cccc.daemon.automation import AutomationManager
+        from cccc.daemon.automation import automation_ops, engine
+        from cccc.kernel.group import Group
+        from cccc.util.fs import atomic_write_json, read_json
+
+        td, cleanup = self._with_home()
+        try:
+            group_path = Path(td) / "groups" / "g_automation_lock"
+            (group_path / "state").mkdir(parents=True)
+            group = Group(
+                group_id="g_automation_lock",
+                path=group_path,
+                doc={"automation": {"rules": []}},
+            )
+            state_path = group_path / "state" / "automation.json"
+            old_fire = "2020-01-01T00:00:00Z"
+            new_fire = "2030-01-01T00:00:00Z"
+            atomic_write_json(
+                state_path,
+                {
+                    "v": 5,
+                    "rules": {
+                        "keep": {"last_fired_at": old_fire},
+                        "retired": {"last_fired_at": old_fire},
+                    },
+                },
+            )
+            rule = lambda rule_id: {
+                "id": rule_id,
+                "enabled": True,
+                "scope": "group",
+                "to": ["@all"],
+                "trigger": {"kind": "interval", "every_seconds": 60},
+                "action": {"kind": "notify", "message": "tick"},
+            }
+            previous = AutomationRuleSet.model_validate(
+                {"rules": [rule("keep"), rule("retired")], "snippets": {}}
+            )
+            current = AutomationRuleSet.model_validate(
+                {"rules": [rule("keep")], "snippets": {}}
+            )
+            manager = AutomationManager()
+            scheduler_loaded = threading.Event()
+            release_scheduler = threading.Event()
+            reconcile_done = threading.Event()
+            errors: list[BaseException] = []
+            real_engine_read = engine.read_json
+
+            def paused_engine_read(path):
+                document = real_engine_read(path)
+                if Path(path) == state_path and not scheduler_loaded.is_set():
+                    scheduler_loaded.set()
+                    release_scheduler.wait(timeout=2)
+                return document
+
+            def scheduler_write() -> None:
+                try:
+                    with manager._lock:
+                        state = engine._load_state(group)
+                        state["rules"]["keep"]["last_fired_at"] = new_fire
+                        engine._save_state(group, state)
+                except BaseException as exc:  # pragma: no cover - surfaced below
+                    errors.append(exc)
+
+            def reconcile() -> None:
+                try:
+                    automation_ops._reconcile_automation_state_after_ruleset_change(
+                        group,
+                        previous=previous,
+                        current=current,
+                    )
+                except BaseException as exc:  # pragma: no cover - surfaced below
+                    errors.append(exc)
+                finally:
+                    reconcile_done.set()
+
+            with patch.object(engine, "read_json", side_effect=paused_engine_read):
+                scheduler = threading.Thread(target=scheduler_write)
+                scheduler.start()
+                self.assertTrue(scheduler_loaded.wait(timeout=1))
+                updater = threading.Thread(target=reconcile)
+                updater.start()
+                reconcile_done.wait(timeout=0.1)
+                release_scheduler.set()
+                scheduler.join(timeout=2)
+                updater.join(timeout=2)
+
+            self.assertFalse(scheduler.is_alive())
+            self.assertFalse(updater.is_alive())
+            self.assertEqual(errors, [])
+            final = read_json(state_path)
+            self.assertEqual(final["rules"]["keep"]["last_fired_at"], new_fire)
+            self.assertNotIn("retired", final["rules"])
+        finally:
+            cleanup()
+
+    def test_ruleset_update_rolls_back_when_runtime_reconcile_fails(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.automation import automation_ops
+        from cccc.daemon.server import handle_request
+        from cccc.kernel.group import load_group
+        from cccc.util.fs import atomic_write_json
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group_id()
+
+            def ruleset(at: str) -> dict:
+                return {
+                    "rules": [
+                        {
+                            "id": "once",
+                            "enabled": True,
+                            "scope": "group",
+                            "to": ["@all"],
+                            "trigger": {"kind": "at", "at": at},
+                            "action": {"kind": "notify", "message": "once"},
+                        }
+                    ],
+                    "snippets": {},
+                }
+
+            first_at = "2030-01-01T00:00:00Z"
+            second_at = "2030-01-02T00:00:00Z"
+            created, _ = handle_request(
+                DaemonRequest(
+                    op="group_automation_update",
+                    args={"group_id": gid, "by": "user", "ruleset": ruleset(first_at)},
+                )
+            )
+            self.assertTrue(created.ok, getattr(created, "error", None))
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            assert group is not None
+            atomic_write_json(
+                group.path / "state" / "automation.json",
+                {
+                    "v": 5,
+                    "rules": {
+                        "once": {
+                            "last_fired_at": first_at,
+                            "at_fired": True,
+                            "last_slot_key": f"at:{first_at}",
+                        }
+                    },
+                },
+            )
+
+            with patch.object(automation_ops, "atomic_write_json", side_effect=OSError("state write failed")):
+                failed, _ = handle_request(
+                    DaemonRequest(
+                        op="group_automation_update",
+                        args={"group_id": gid, "by": "user", "ruleset": ruleset(second_at)},
+                    )
+                )
+
+            self.assertFalse(failed.ok)
+            reloaded = load_group(gid)
+            self.assertIsNotNone(reloaded)
+            assert reloaded is not None
+            self.assertEqual(reloaded.doc["automation"]["rules"][0]["trigger"]["at"], first_at)
         finally:
             cleanup()
 

@@ -77,7 +77,7 @@ def test_web_ci_uses_managed_node_and_composite_vite_plus_check() -> None:
     runs = _runs(web)
     node_setup = next(step for step in web["steps"] if step.get("uses", "").startswith("actions/setup-node"))
 
-    assert node_setup["with"]["node-version"] == "20.19.5"
+    assert node_setup["with"]["node-version"] == "24.19.0"
     assert "npm -C web run check" in runs
     assert "npm -C web run typecheck" not in runs
     assert "npm -C web run lint" not in runs
@@ -270,18 +270,24 @@ def test_python_release_builds_one_atomic_dual_implementation_set() -> None:
         "macosx_11_0_x86_64",
         "win_amd64",
     }
+    assert next(item for item in desktop_matrix if item["platform_tag"] == "win_amd64")["os"] == (
+        "windows-2022"
+    )
 
     build_runs = _runs(jobs["build"])
     release_runs = "\n".join(_runs(job) for job in jobs.values()).lower()
     collect_runs = _runs(jobs["collect"])
     assert "python -m build" in build_runs
     assert "python -m twine check" in build_runs
-    assert "python -m venv .release-smoke" in build_runs
-    assert "--no-deps --force-reinstall dist/*.whl" in build_runs
-    assert ".release-smoke/bin/cccc version" in build_runs
+    assert "scripts/tests/smoke_wheel_frontdoor.py dist/*.whl --expect-rust unavailable" in build_runs
     assert "cargo build --release --locked" in release_runs
     assert "scripts/check_release_versions.py --rust-binary" in release_runs
     assert "scripts/verify_native_wheel.py" in release_runs
+    for native_job in ("native-linux-x64", "native-desktop"):
+        assert (
+            "scripts/tests/smoke_wheel_frontdoor.py wheelhouse/final/*.whl --expect-rust available"
+            in _runs(jobs[native_job])
+        )
     assert "auditwheel==6.7.0" in release_runs
     assert "delocate==0.13.0" in release_runs
     assert "delvewheel==1.13.0" in release_runs
@@ -319,27 +325,50 @@ def test_product_tag_publishes_pypi_while_standalone_preview_is_manual() -> None
         "cancel-in-progress": "false",
     }
     assert rust_candidate["jobs"]["publish"]["if"] == "startsWith(github.ref, 'refs/tags/v')"
-    assert set(rust_candidate["jobs"]) == {"web", "build", "prepare", "verify", "publish"}
+    assert set(rust_candidate["jobs"]) == {
+        "web",
+        "build-linux",
+        "build-desktop",
+        "prepare",
+        "verify",
+        "publish",
+    }
     assert {
         name: job.get("timeout-minutes") for name, job in rust_candidate["jobs"].items()
     } == {
         "web": "15",
-        "build": "45",
+        "build-linux": "45",
+        "build-desktop": "45",
         "prepare": "10",
         "verify": "5",
         "publish": "10",
     }
-    assert rust_candidate["jobs"]["build"]["needs"] == "web"
-    assert {item["target"] for item in rust_candidate["jobs"]["build"]["strategy"]["matrix"]["include"]} == {
+    assert rust_candidate["jobs"]["build-linux"]["needs"] == "web"
+    assert rust_candidate["jobs"]["build-linux"]["container"] == (
+        "quay.io/pypa/manylinux_2_28_x86_64:latest"
+    )
+    linux_runs = _runs(rust_candidate["jobs"]["build-linux"])
+    assert "cargo build --release --locked --features standalone" in linux_runs
+    assert "scripts/verify_standalone_binary.py" in linux_runs
+
+    desktop = rust_candidate["jobs"]["build-desktop"]
+    assert desktop["needs"] == "web"
+    assert {item["target"] for item in desktop["strategy"]["matrix"]["include"]} == {
         "aarch64-apple-darwin",
         "x86_64-apple-darwin",
-        "x86_64-unknown-linux-gnu",
         "x86_64-pc-windows-msvc",
     }
+    assert next(item for item in desktop["strategy"]["matrix"]["include"] if "windows" in item["target"])[
+        "os"
+    ] == "windows-2022"
+    desktop_build = next(step for step in desktop["steps"] if step.get("name") == "Build Rust distribution")
+    assert desktop_build["env"]["MACOSX_DEPLOYMENT_TARGET"] == "11.0"
+    assert "scripts/verify_standalone_binary.py" in _runs(desktop)
+    assert set(rust_candidate["jobs"]["prepare"]["needs"]) == {"build-linux", "build-desktop"}
     web_runs = _runs(rust_candidate["jobs"]["web"])
     assert "prepare_rust_web_assets.mjs --install-deps" in web_runs
     build_uses = {
-        step.get("uses", "") for step in rust_candidate["jobs"]["build"]["steps"]
+        step.get("uses", "") for step in desktop["steps"]
     }
     assert not any(item.startswith("actions/setup-python") for item in build_uses)
     assert not any(item.startswith("actions/setup-node") for item in build_uses)
@@ -353,9 +382,14 @@ def test_product_tag_publishes_pypi_while_standalone_preview_is_manual() -> None
     assert verify["needs"] == "prepare"
     assert verify["timeout-minutes"] == "5"
     assert {item["target"] for item in verify["strategy"]["matrix"]["include"]} == {
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
         "x86_64-unknown-linux-gnu",
         "x86_64-pc-windows-msvc",
     }
+    assert next(item for item in verify["strategy"]["matrix"]["include"] if "windows" in item["target"])[
+        "os"
+    ] == "windows-2022"
     assert "scripts/tests/verify_release_unix.sh" in rust_release_runs
     assert "scripts/tests/verify_release_windows.ps1" in rust_release_runs
     for source_test in ("cargo test", "pytest", "context_python_interop", "python_storage_interop"):

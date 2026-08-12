@@ -215,4 +215,116 @@ describe("ProjectedBrowserSurfacePanel viewer switching", () => {
       dy: 121,
     });
   });
+
+  it("maps touch taps and drag scrolling into page coordinates", async () => {
+    const loadSession = vi.fn(async () => ({
+      ok: true as const,
+      result: { browser_surface: readySurface },
+    }));
+    const startSession = vi.fn(async () => ({
+      ok: true as const,
+      result: { browser_surface: readySurface },
+    }));
+
+    await act(async () => {
+      root.render(
+        <ProjectedBrowserSurfacePanel
+          isDark={false}
+          refreshNonce={0}
+          defaultViewerMode="page"
+          loadSession={loadSession}
+          startSession={startSession}
+          webSocketUrl="ws://localhost/browser"
+        />,
+      );
+    });
+
+    const socket = FakeWebSocket.instances.at(-1);
+    await act(async () => {
+      socket?.onmessage?.({
+        data: JSON.stringify({
+          t: "frame",
+          seq: 1,
+          data_base64: "AA==",
+          width: 1000,
+          height: 500,
+          mime: "image/jpeg",
+        }),
+      } as MessageEvent);
+      await Promise.resolve();
+    });
+
+    const frame = host.querySelector("img");
+    expect(frame).toBeTruthy();
+    vi.spyOn(frame!, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 0,
+      top: 0,
+      right: 1000,
+      bottom: 600,
+      width: 1000,
+      height: 600,
+      toJSON: () => ({}),
+    });
+
+    const pointer = (type: string, x: number, y: number, pointerId: number) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperties(event, {
+        button: { value: 0 },
+        clientX: { value: x },
+        clientY: { value: y },
+        pointerId: { value: pointerId },
+        pointerType: { value: "touch" },
+      });
+      frame?.dispatchEvent(event);
+      return event;
+    };
+
+    await act(async () => {
+      pointer("pointerdown", 500, 300, 7);
+      pointer("pointermove", 500, 200, 7);
+      pointer("pointerup", 500, 200, 7);
+      pointer("pointerdown", 400, 250, 8);
+      pointer("pointerup", 400, 250, 8);
+
+      const rightClick = new Event("pointerdown", { bubbles: true, cancelable: true });
+      Object.defineProperties(rightClick, {
+        button: { value: 2 },
+        clientX: { value: 300 },
+        clientY: { value: 350 },
+        pointerId: { value: 9 },
+        pointerType: { value: "mouse" },
+      });
+      frame?.dispatchEvent(rightClick);
+    });
+
+    const inputRelay = host.querySelector<HTMLTextAreaElement>(
+      "textarea[data-browser-input-relay]",
+    );
+    expect(inputRelay).toBeTruthy();
+    await act(async () => {
+      inputRelay?.dispatchEvent(new Event("compositionstart", { bubbles: true }));
+      if (inputRelay) inputRelay.value = "你好";
+      const composingInput = new Event("input", { bubbles: true });
+      Object.defineProperty(composingInput, "isComposing", { value: true });
+      inputRelay?.dispatchEvent(composingInput);
+      inputRelay?.dispatchEvent(new Event("compositionend", { bubbles: true }));
+      const committedInput = new Event("input", { bubbles: true });
+      Object.defineProperty(committedInput, "isComposing", { value: false });
+      inputRelay?.dispatchEvent(committedInput);
+
+      if (inputRelay) inputRelay.value = "paste text";
+      inputRelay?.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const commands = (socket?.sent || []).map((value) => JSON.parse(value));
+    expect(commands).toContainEqual({ t: "scroll", x: 500, y: 150, dx: 0, dy: 100 });
+    expect(commands).toContainEqual({ t: "click", x: 400, y: 200, button: "left" });
+    expect(commands).toContainEqual({ t: "click", x: 300, y: 300, button: "right" });
+    expect(commands.filter((command) => command.t === "text")).toEqual([
+      { t: "text", text: "你好" },
+      { t: "text", text: "paste text" },
+    ]);
+  });
 });

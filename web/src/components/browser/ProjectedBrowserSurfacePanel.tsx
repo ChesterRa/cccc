@@ -2,8 +2,9 @@ import {
   useEffect,
   useRef,
   useState,
+  type FormEvent,
   type KeyboardEvent,
-  type MouseEvent,
+  type PointerEvent,
   type WheelEvent,
 } from "react";
 import { createPortal } from "react-dom";
@@ -211,6 +212,7 @@ export function ProjectedBrowserSurfacePanel({
   const { t } = useTranslation("chat");
   const containerRef = useRef<HTMLDivElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const inputRelayRef = useRef<HTMLTextAreaElement | null>(null);
   const vncTargetRef = useRef<HTMLDivElement | null>(null);
   const rfbRef = useRef<RfbInstance | null>(null);
   const frameRef = useRef<ProjectedBrowserFrame | null>(null);
@@ -228,6 +230,13 @@ export function ProjectedBrowserSurfacePanel({
   const lastRefreshNonceRef = useRef(refreshNonce);
   const pendingRefreshIdRef = useRef("");
   const refreshFeedbackTimerRef = useRef<number | null>(null);
+  const relayComposingRef = useRef(false);
+  const touchGestureRef = useRef<{
+    pointerId: number;
+    start: { x: number; y: number };
+    last: { x: number; y: number };
+    moved: boolean;
+  } | null>(null);
 
   const texts = {
     starting:
@@ -866,15 +875,75 @@ export function ProjectedBrowserSurfacePanel({
     return () => window.clearTimeout(timer);
   }, [refreshNonce, sessionState.state, texts.starting]);
 
-  const handleMouseDown = (event: MouseEvent<HTMLImageElement>) => {
+  const framePoint = (clientX: number, clientY: number) => {
     if (vncAvailable) return;
     const frame = frameRef.current || renderedFrame;
     if (!frame || !imageRef.current) return;
     const rect = imageRef.current.getBoundingClientRect();
-    const point = mapContainedImagePoint({ x: event.clientX, y: event.clientY }, rect, frame);
+    return mapContainedImagePoint({ x: clientX, y: clientY }, rect, frame);
+  };
+
+  const handlePointerDown = (event: PointerEvent<HTMLImageElement>) => {
+    const point = framePoint(event.clientX, event.clientY);
     if (!point) return;
-    sendCommand({ t: "click", x: point.x, y: point.y, button: buttonFromMouseEvent(event.button) });
-    containerRef.current?.focus();
+    if (event.pointerType === "touch") {
+      touchGestureRef.current = {
+        pointerId: event.pointerId,
+        start: point,
+        last: point,
+        moved: false,
+      };
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    } else {
+      sendCommand({
+        t: "click",
+        x: point.x,
+        y: point.y,
+        button: buttonFromMouseEvent(event.button),
+      });
+    }
+    inputRelayRef.current?.focus({ preventScroll: true });
+    event.preventDefault();
+  };
+
+  const handlePointerMove = (event: PointerEvent<HTMLImageElement>) => {
+    const gesture = touchGestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    const point = framePoint(event.clientX, event.clientY);
+    if (!point) return;
+    const moved =
+      gesture.moved ||
+      Math.abs(point.x - gesture.start.x) + Math.abs(point.y - gesture.start.y) >= 4;
+    if (!moved) {
+      event.preventDefault();
+      return;
+    }
+    const previous = gesture.moved ? gesture.last : gesture.start;
+    sendCommand({
+      t: "scroll",
+      x: point.x,
+      y: point.y,
+      dx: previous.x - point.x,
+      dy: previous.y - point.y,
+    });
+    gesture.last = point;
+    gesture.moved = true;
+    event.preventDefault();
+  };
+
+  const finishTouchGesture = (event: PointerEvent<HTMLImageElement>, cancelled: boolean) => {
+    const gesture = touchGestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    if (!cancelled && !gesture.moved) {
+      const point = framePoint(event.clientX, event.clientY);
+      if (point) {
+        sendCommand({ t: "click", x: point.x, y: point.y, button: "left" });
+      }
+    }
+    touchGestureRef.current = null;
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
     event.preventDefault();
   };
 
@@ -897,8 +966,10 @@ export function ProjectedBrowserSurfacePanel({
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (vncAvailable) return;
+    if (event.nativeEvent.isComposing || relayComposingRef.current) return;
     if (event.metaKey || event.ctrlKey) return;
-    if (!event.altKey && event.key.length === 1) {
+    const fromInputRelay = event.target === inputRelayRef.current;
+    if (!fromInputRelay && !event.altKey && event.key.length === 1) {
       sendCommand({ t: "text", text: event.key });
       event.preventDefault();
       return;
@@ -907,6 +978,14 @@ export function ProjectedBrowserSurfacePanel({
     if (!special) return;
     sendCommand({ t: "key", key: special });
     event.preventDefault();
+  };
+
+  const handleInputRelay = (event: FormEvent<HTMLTextAreaElement>) => {
+    if (relayComposingRef.current || (event.nativeEvent as InputEvent).isComposing) return;
+    const text = event.currentTarget.value;
+    if (!text) return;
+    sendCommand({ t: "text", text });
+    event.currentTarget.value = "";
   };
 
   const showReconnect =
@@ -947,6 +1026,27 @@ export function ProjectedBrowserSurfacePanel({
       onKeyDown={handleKeyDown}
       className={panelClassName}
     >
+      <textarea
+        ref={inputRelayRef}
+        data-browser-input-relay
+        tabIndex={-1}
+        aria-label="Browser input relay"
+        autoCapitalize="none"
+        autoCorrect="off"
+        spellCheck={false}
+        onCompositionStart={() => {
+          relayComposingRef.current = true;
+        }}
+        onCompositionEnd={() => {
+          relayComposingRef.current = false;
+        }}
+        onInput={handleInputRelay}
+        onBlur={(event) => {
+          relayComposingRef.current = false;
+          event.currentTarget.value = "";
+        }}
+        className="pointer-events-none fixed h-px w-px opacity-0"
+      />
       <div
         className={classNames(
           "flex flex-wrap items-center gap-2 text-xs",
@@ -1122,10 +1222,13 @@ export function ProjectedBrowserSurfacePanel({
             ref={imageRef}
             src={renderedFrame.dataUrl}
             alt={texts.frameAlt}
-            onMouseDown={handleMouseDown}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={(event) => finishTouchGesture(event, false)}
+            onPointerCancel={(event) => finishTouchGesture(event, true)}
             onContextMenu={(event) => event.preventDefault()}
             className={classNames(
-              "max-h-full max-w-full select-none object-contain",
+              "max-h-full max-w-full touch-none select-none object-contain",
               chromeMode === "embedded"
                 ? "h-full w-full"
                 : "rounded-2xl border border-[var(--glass-border-subtle)] shadow-2xl",

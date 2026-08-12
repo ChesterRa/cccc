@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
+
 import hashlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from ....util.fs import atomic_write_json, read_json
+from ....util.fs import atomic_write_json
 from ....util.time import parse_utc_iso, utc_now_iso
 
 from ._common import (
@@ -472,9 +474,18 @@ def _normalize_runtime_doc(raw: Any) -> Dict[str, Any]:
     return doc
 
 
+def _read_shared_json_object(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(raw, dict):
+        raise ValueError(f"shared capability document must be an object: {path}")
+    return raw
+
+
 def _load_state_doc() -> Tuple[Path, Dict[str, Any]]:
     path = _state_path()
-    return path, _normalize_state_doc(read_json(path))
+    return path, _normalize_state_doc(_read_shared_json_object(path))
 
 
 def _save_state_doc(path: Path, doc: Dict[str, Any]) -> None:
@@ -485,7 +496,7 @@ def _save_state_doc(path: Path, doc: Dict[str, Any]) -> None:
 
 def _load_catalog_doc() -> Tuple[Path, Dict[str, Any]]:
     path = _catalog_path()
-    return path, _normalize_catalog_doc(read_json(path))
+    return path, _normalize_catalog_doc(_read_shared_json_object(path))
 
 
 def _save_catalog_doc(path: Path, doc: Dict[str, Any]) -> None:
@@ -497,7 +508,7 @@ def _save_catalog_doc(path: Path, doc: Dict[str, Any]) -> None:
 
 def _load_runtime_doc() -> Tuple[Path, Dict[str, Any]]:
     path = _runtime_path()
-    return path, _normalize_runtime_doc(read_json(path))
+    return path, _normalize_runtime_doc(_read_shared_json_object(path))
 
 
 def _save_runtime_doc(path: Path, doc: Dict[str, Any]) -> None:

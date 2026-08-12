@@ -13,6 +13,7 @@ mod voice_document_state;
 mod voice_input;
 mod voice_input_delivery;
 mod voice_semantic_input;
+mod voice_session;
 mod voice_settings;
 
 use crate::dispatch::{
@@ -24,12 +25,25 @@ const KEY: &str = "assistants";
 
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
+        "assistant_state" | "assistant_index"
+            if string_arg(request, "view").as_deref() == Some("voice_session") =>
+        {
+            voice_session::view(home, request)
+        }
         "assistant_state" | "assistant_index" => document_reconcile::run(home, request)
             .and_then(|_| voice_settings::index(home, request)),
         "assistant_settings_update" => voice_settings::update(home, request),
         "assistant_status_update" => voice_settings::status(home, request),
         "assistant_voice_recording_lease" => recording_lease(home, request),
         "assistant_voice_transcript_append" => voice_input::append(home, request),
+        "assistant_voice_session_transcript_clear" => {
+            authorize_voice_session_mutation(home, request, "user")
+                .and_then(|_| voice_session::clear_transcript(home, request))
+        }
+        "assistant_voice_session_update" => {
+            authorize_voice_session_mutation(home, request, "assistant:voice_secretary")
+                .and_then(|_| voice_session::update(home, request))
+        }
         "assistant_voice_document_list" => documents(home, request),
         "assistant_voice_document_select" => select(home, request),
         "assistant_voice_document_input_read" => voice_input::read(home, request),
@@ -59,30 +73,27 @@ fn recording_lease(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let store = GroupStore::new(home.clone()).map_err(OpError::io)?;
     let group = store.load(&group_id).map_err(OpError::not_found)?;
     let by = string_arg(request, "by").unwrap_or_else(|| "user".into());
-    if !by.is_empty() && by != "user" && by != "assistant:voice_secretary" {
-        match cccc_core::actors::effective_role(&group, &by) {
-            Some(ActorRole::Foreman) => {}
-            Some(ActorRole::Peer) => {
-                return Err(OpError::new(
-                    "permission_denied",
-                    format!("permission denied: {by}"),
-                ));
-            }
-            None => {
-                return Err(OpError::new(
-                    "permission_denied",
-                    format!("unknown actor: {by}"),
-                ));
-            }
-        }
-    }
+    require_voice_status_permission(&group, &by)?;
     let action = string_arg(request, "action").unwrap_or_else(|| "status".into());
     let dispatch_target = string_arg(request, "dispatch_target").unwrap_or_default();
     let state = group.extra.get(KEY).cloned().unwrap_or_else(|| json!({}));
     let assistant = voice_settings::effective_assistant(&state);
+    let disabled_recording_allowed = match action.as_str() {
+        "acquire" => dispatch_target == "composer",
+        "heartbeat" if dispatch_target == "composer" => true,
+        "heartbeat" if dispatch_target.is_empty() => {
+            let owner_id = string_arg(request, "owner_id").unwrap_or_default();
+            let lease_id = string_arg(request, "lease_id").unwrap_or_default();
+            match voice_recording_lease::validate(home, &group_id, &owner_id, &lease_id) {
+                Ok(lease) => lease["dispatch_target"] == "composer",
+                Err(_) => true,
+            }
+        }
+        _ => false,
+    };
     if !assistant["enabled"].as_bool().unwrap_or(false)
         && matches!(action.as_str(), "acquire" | "heartbeat")
-        && dispatch_target != "composer"
+        && !disabled_recording_allowed
     {
         return Err(OpError::new(
             "assistant_disabled",
@@ -101,6 +112,38 @@ fn recording_lease(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         mapped
     })
     .and_then(object)
+}
+
+fn authorize_voice_session_mutation(
+    home: &HomeLayout,
+    request: &DaemonRequest,
+    default_by: &str,
+) -> Result<(), OpError> {
+    let group_id = required_arg(request, "group_id")?;
+    let group = GroupStore::new(home.clone())
+        .map_err(OpError::io)?
+        .load(&group_id)
+        .map_err(OpError::not_found)?;
+    let by = string_arg(request, "by").unwrap_or_else(|| default_by.into());
+    require_voice_status_permission(&group, &by)
+}
+
+fn require_voice_status_permission(group: &cccc_core::GroupDoc, by: &str) -> Result<(), OpError> {
+    let by = by.trim();
+    if by.is_empty() || by == "user" || by == "assistant:voice_secretary" {
+        return Ok(());
+    }
+    match cccc_core::actors::effective_role(group, by) {
+        Some(ActorRole::Foreman) => Ok(()),
+        Some(ActorRole::Peer) => Err(OpError::new(
+            "permission_denied",
+            format!("permission denied: {by}"),
+        )),
+        None => Err(OpError::new(
+            "permission_denied",
+            format!("unknown actor: {by}"),
+        )),
+    }
 }
 
 fn documents(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -125,7 +168,7 @@ fn select(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let path = document_path(request)?;
     document_reconcile::run(home, request)?;
-    let document = update(home, &group_id, |state| {
+    let document = voice_document_state::update(home, &group_id, |state| {
         let document = array(state, "documents")
             .iter()
             .find(|item| item["document_path"] == path)
@@ -140,7 +183,8 @@ fn select(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         state.insert("active_document_id".into(), document["document_id"].clone());
         state.insert("active_document_path".into(), json!(path));
         Ok(document)
-    })?;
+    })
+    .map_err(OpError::io)?;
     document_result(home, request, &group_id, document, "selected")
 }
 fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -157,7 +201,7 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         .map_err(OpError::not_found)?;
     let (storage_path, storage_kind) = document_storage_path(home, &group, &path)?;
     let mut previous_file = None::<Option<Vec<u8>>>;
-    let result = update(home, &group_id, |state| {
+    let result = voice_document_state::update(home, &group_id, |state| {
         let docs = array(state, "documents");
         let index = docs.iter().position(|item| item["document_path"] == path);
         let is_new = index.is_none();
@@ -194,14 +238,15 @@ fn save(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         state.insert("active_document_id".into(), document["document_id"].clone());
         state.insert("active_document_path".into(), json!(path));
         Ok(document)
-    });
+    })
+    .map_err(OpError::io);
     let document = match result {
         Ok(document) => document,
         Err(error) => {
             if let Some(previous) = previous_file {
                 let attempted_content = content.clone();
                 let current_matches_attempt =
-                    assistant_state::load(home, &group_id)
+                    voice_document_state::load(home, &group_id)
                         .ok()
                         .is_some_and(|state| {
                             attempted_content.as_deref().is_some_and(|text| {
@@ -275,7 +320,7 @@ fn write_document_bytes(path: &std::path::Path, content: &[u8]) -> io::Result<()
 fn archive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let group_id = required_arg(request, "group_id")?;
     let path = document_path(request)?;
-    let document = update(home, &group_id, |state| {
+    let document = voice_document_state::update(home, &group_id, |state| {
         let document = {
             let item = array(state, "documents")
                 .iter_mut()
@@ -295,7 +340,8 @@ fn archive(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
             voice_document_state::set_active(state, next.as_ref());
         }
         Ok(document)
-    })?;
+    })
+    .map_err(OpError::io)?;
     document_result(home, request, &group_id, document, "archived")
 }
 fn voice_request(home: &HomeLayout, request: &DaemonRequest) -> OpResult {

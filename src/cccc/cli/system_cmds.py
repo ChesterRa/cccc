@@ -27,6 +27,12 @@ _KNOWN_UPDATE_CHANNELS = {_STABLE_CHANNEL, _RC_CHANNEL}
 _BLOCKED_INSTALL_KINDS = {"editable", "local_path"}
 
 
+def _projected_browser_path() -> Path | None:
+    from ..daemon.browser.projected_browser_runtime import system_browser_path
+
+    return system_browser_path()
+
+
 def _find_installed_distribution() -> Any:
     """Return the installed CCCC distribution, preferring the published package name."""
     for dist_name in (_UPDATE_PACKAGE_NAME, "cccc"):
@@ -401,23 +407,23 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     else:
         print("Daemon: not running")
 
+    browser = _projected_browser_path()
+    print()
     if sys.platform.startswith("linux"):
-        browser = next(
-            (
-                path
-                for name in ("google-chrome", "google-chrome-stable", "microsoft-edge", "microsoft-edge-stable")
-                if (path := shutil.which(name))
-            ),
-            None,
-        )
         xvfb = shutil.which("Xvfb")
         x11vnc = shutil.which("x11vnc")
-        print()
         print("Projected Browser (Linux):")
-        print(f"  System Chrome/Edge: {'OK (' + browser + ')' if browser else 'NOT FOUND (required for ChatGPT Web)'}")
+        print(
+            f"  System Chrome/Edge: {'OK (' + str(browser) + ')' if browser else 'NOT FOUND (required for ChatGPT Web)'}"
+        )
         print(f"  Xvfb isolation: {'OK (' + xvfb + ')' if xvfb else 'NOT FOUND (required; install `xvfb`)'}")
         print(
             f"  x11vnc viewer: {'OK (' + x11vnc + ')' if x11vnc else 'NOT FOUND (optional; CDP screencast remains available)'}"
+        )
+    else:
+        print("Projected Browser:")
+        print(
+            f"  System Chrome/Edge: {'OK (' + str(browser) + ')' if browser else 'NOT FOUND (required for ChatGPT Web)'}"
         )
 
     pty_diag = pty_support_details()
@@ -445,7 +451,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     for rt in runtimes:
         status = "OK" if rt.available else "NOT FOUND"
         mark = "[OK]" if rt.available else "[NO]" if ascii_only else ("✓" if rt.available else "✗")
-        path_info = f" ({rt.path})" if rt.available else ""
+        path_info = f" ({rt.path})" if rt.available and rt.path else ""
         print(f"  {mark} {rt.name}: {status}{path_info}")
         if rt.available:
             available_count += 1

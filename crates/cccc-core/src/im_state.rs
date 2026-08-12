@@ -3,7 +3,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::fs::{read_json, write_json_committed};
+use crate::fs::{read_json, with_exclusive_lock, write_json_committed};
 use crate::{GroupDoc, GroupStore};
 
 const CONFIG_KEY: &str = "im";
@@ -235,9 +235,13 @@ pub fn has_required_credentials(platform: &str, config: &Map<String, Value>) -> 
 /// `im_bridge` object contributes only runtime diagnostics after a bounded
 /// missing-state import.
 pub fn load(store: &GroupStore, group_id: &str) -> io::Result<Value> {
-    import_missing_shadow_state(store, group_id)?;
-    let group = store.load(group_id)?;
-    load_from_group(store, group_id, &group)
+    store.load(group_id)?;
+    let state_dir = store.state_dir(group_id)?;
+    with_exclusive_lock(&state_dir.join("im_state.lock"), || {
+        import_missing_shadow_state(store, group_id)?;
+        let group = store.load(group_id)?;
+        load_from_group(store, group_id, &group)
+    })
 }
 
 /// Mutate the composite IM envelope and project it back to the canonical state
@@ -247,13 +251,16 @@ pub fn update<T>(
     group_id: &str,
     change: impl FnOnce(&mut Value) -> io::Result<T>,
 ) -> io::Result<T> {
-    import_missing_shadow_state(store, group_id)?;
+    store.load(group_id)?;
     let state_dir = store.state_dir(group_id)?;
-    store.mutate(group_id, |group| {
-        let mut state = load_from_paths(group, &state_dir);
-        let result = change(&mut state)?;
-        persist(group, &state_dir, &state)?;
-        Ok(result)
+    with_exclusive_lock(&state_dir.join("im_state.lock"), || {
+        import_missing_shadow_state(store, group_id)?;
+        store.mutate(group_id, |group| {
+            let mut state = load_from_paths(group, &state_dir);
+            let result = change(&mut state)?;
+            persist(group, &state_dir, &state)?;
+            Ok(result)
+        })
     })
 }
 

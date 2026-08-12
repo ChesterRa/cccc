@@ -1,10 +1,122 @@
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 class TestActorPrivateEnv(unittest.TestCase):
+    def test_actor_recreation_does_not_inherit_residual_private_env(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.actors.private_env_ops import load_actor_private_env
+        from cccc.daemon.server import handle_request
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                create, _ = handle_request(
+                    DaemonRequest.model_validate(
+                        {"op": "group_create", "args": {"title": "generation", "topic": "", "by": "user"}}
+                    )
+                )
+                group_id = str((create.result or {}).get("group_id") or "").strip()
+                add_args = {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "custom",
+                    "runner": "headless",
+                    "by": "user",
+                }
+                added, _ = handle_request(
+                    DaemonRequest.model_validate(
+                        {"op": "actor_add", "args": {**add_args, "env_private": {"TOKEN": "old-generation"}}}
+                    )
+                )
+                self.assertTrue(added.ok, getattr(added, "error", None))
+                removed, _ = handle_request(
+                    DaemonRequest.model_validate(
+                        {"op": "actor_remove", "args": {"group_id": group_id, "actor_id": "peer1", "by": "user"}}
+                    )
+                )
+                self.assertTrue(removed.ok, getattr(removed, "error", None))
+
+                # Model a legacy/post-commit cleanup failure that left generation-scoped
+                # credentials behind after the actor itself was removed.
+                from cccc.daemon.actors.private_env_ops import update_actor_private_env
+
+                update_actor_private_env(
+                    group_id,
+                    "peer1",
+                    set_vars={"TOKEN": "old-generation"},
+                    unset_keys=[],
+                    clear=True,
+                )
+                recreated, _ = handle_request(
+                    DaemonRequest.model_validate({"op": "actor_add", "args": add_args})
+                )
+                self.assertTrue(recreated.ok, getattr(recreated, "error", None))
+                self.assertEqual(load_actor_private_env(group_id, "peer1"), {})
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
+    def test_private_env_updates_serialize_the_complete_read_modify_write(self) -> None:
+        from cccc.daemon.actors import private_env_ops
+
+        old_home = os.environ.get("CCCC_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                barrier = threading.Barrier(2)
+                original_read = private_env_ops.read_json
+
+                def interleaved_read(path: Path):
+                    value = original_read(path)
+                    try:
+                        barrier.wait(timeout=0.5)
+                    except threading.BrokenBarrierError:
+                        pass
+                    return value
+
+                errors: list[BaseException] = []
+
+                def update(key: str) -> None:
+                    try:
+                        private_env_ops.update_actor_private_env(
+                            "g_concurrent",
+                            "peer1",
+                            set_vars={key: key.lower()},
+                            unset_keys=[],
+                            clear=False,
+                        )
+                    except BaseException as error:  # pragma: no cover - asserted below
+                        errors.append(error)
+
+                with patch.object(private_env_ops, "read_json", side_effect=interleaved_read):
+                    first = threading.Thread(target=update, args=("FIRST",))
+                    second = threading.Thread(target=update, args=("SECOND",))
+                    first.start()
+                    second.start()
+                    first.join(timeout=3)
+                    second.join(timeout=3)
+
+                self.assertFalse(first.is_alive())
+                self.assertFalse(second.is_alive())
+                self.assertEqual(errors, [])
+                self.assertEqual(
+                    private_env_ops.load_actor_private_env("g_concurrent", "peer1"),
+                    {"FIRST": "first", "SECOND": "second"},
+                )
+        finally:
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
     def test_private_env_user_only_permissions(self) -> None:
         from cccc.contracts.v1 import DaemonRequest
         from cccc.daemon.server import handle_request

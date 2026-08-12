@@ -18,12 +18,18 @@ from typing import Any, Dict, Optional
 
 from ... import __version__
 from .server import MCPError, handle_tool_call, list_tools_for_caller
+from .toolspecs import MCP_TOOLS
 
 _SUPPORTED_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2024-11-05")
 _DEFAULT_PROTOCOL_VERSION = _SUPPORTED_PROTOCOL_VERSIONS[0]
 # Match the response framing to the inbound stdio framing. Some clients send
 # newline JSON; MCP Content-Length framing is enabled only after seeing it.
 _STDIO_WRITE_CONTENT_LENGTH = False
+_BUILTIN_TOOL_NAMES = frozenset(
+    str(tool.get("name") or "").strip()
+    for tool in MCP_TOOLS
+    if isinstance(tool, dict) and str(tool.get("name") or "").strip()
+)
 
 
 def _reset_session_state_for_tests() -> None:
@@ -176,11 +182,30 @@ def _make_error(id: Any, code: int, message: str, data: Any = None) -> Dict[str,
     return {"jsonrpc": "2.0", "id": id, "error": error}
 
 
-def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
+def _make_tool_result(payload: Dict[str, Any], *, is_error: bool = False) -> Dict[str, Any]:
+    result: Dict[str, Any] = {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(payload, ensure_ascii=False, indent=2),
+            }
+        ],
+        "structuredContent": payload,
+    }
+    if is_error:
+        result["isError"] = True
+    return result
+
+
+def handle_request(req: Any) -> Dict[str, Any]:
     """Handle an MCP JSON-RPC request."""
+    if not isinstance(req, dict):
+        return _make_error(None, -32600, "Invalid Request")
     req_id = req.get("id")
     method = str(req.get("method") or "")
-    params = req.get("params") or {}
+    params = req.get("params")
+    if params is None:
+        params = {}
 
     # MCP protocol methods
     if method == "initialize":
@@ -206,6 +231,8 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
         return {}
 
     if method == "tools/list":
+        if not isinstance(params, dict):
+            return _make_error(req_id, -32602, "tools/list params must be an object")
         tools = list_tools_for_caller()
         cursor = _decode_cursor(params.get("cursor"))
         try:
@@ -240,52 +267,60 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
         return _make_response(req_id, {})
 
     if method == "tools/call":
-        tool_name = str(params.get("name") or "")
-        arguments = params.get("arguments") or {}
-        if not isinstance(arguments, dict):
-            arguments = {}
+        if not isinstance(params, dict):
+            return _make_error(req_id, -32602, "tools/call params must be an object")
+        tool_name_raw = params.get("name")
+        if not isinstance(tool_name_raw, str) or not tool_name_raw:
+            return _make_error(req_id, -32602, "tools/call name must be a non-empty string")
+        tool_name = tool_name_raw
+        arguments_raw = params.get("arguments")
+        if arguments_raw is None:
+            arguments: Dict[str, Any] = {}
+        elif isinstance(arguments_raw, dict):
+            arguments = arguments_raw
+        else:
+            return _make_error(req_id, -32602, "tools/call arguments must be an object")
+        if tool_name not in _BUILTIN_TOOL_NAMES:
+            visible_names = {
+                str(tool.get("name") or "").strip()
+                for tool in list_tools_for_caller()
+                if isinstance(tool, dict) and str(tool.get("name") or "").strip()
+            }
+            if tool_name not in visible_names:
+                return _make_error(req_id, -32602, f"Unknown tool: {tool_name}")
 
         try:
             result = handle_tool_call(tool_name, arguments)
-            return _make_response(req_id, {
-                "content": [
-                    {
-                        "type": "text",
-                        "text": json.dumps(result, ensure_ascii=False, indent=2),
-                    }
-                ],
-            })
+            return _make_response(req_id, _make_tool_result(result))
         except MCPError as e:
-            return _make_response(req_id, {
-                "content": [
+            if e.code == "unknown_tool":
+                return _make_error(req_id, -32602, f"Unknown tool: {tool_name}")
+            return _make_response(
+                req_id,
+                _make_tool_result(
                     {
-                        "type": "text",
-                        "text": json.dumps({
-                            "error": {
-                                "code": e.code,
-                                "message": e.message,
-                                "details": e.details,
-                            }
-                        }, ensure_ascii=False, indent=2),
-                    }
-                ],
-                "isError": True,
-            })
+                        "error": {
+                            "code": e.code,
+                            "message": e.message,
+                            "details": e.details,
+                        }
+                    },
+                    is_error=True,
+                ),
+            )
         except Exception as e:
-            return _make_response(req_id, {
-                "content": [
+            return _make_response(
+                req_id,
+                _make_tool_result(
                     {
-                        "type": "text",
-                        "text": json.dumps({
-                            "error": {
-                                "code": "internal_error",
-                                "message": str(e),
-                            }
-                        }, ensure_ascii=False, indent=2),
-                    }
-                ],
-                "isError": True,
-            })
+                        "error": {
+                            "code": "internal_error",
+                            "message": str(e),
+                        }
+                    },
+                    is_error=True,
+                ),
+            )
 
     # Unknown method
     return _make_error(req_id, -32601, f"Method not found: {method}")

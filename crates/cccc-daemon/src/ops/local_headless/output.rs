@@ -1,43 +1,107 @@
-use super::{Session, Turn, events};
+use super::{ActiveTurn, Session, Turn, TurnOutputState, events};
 use cccc_contracts::{ActorRuntime, Event};
 use cccc_core::{GroupStore, inbox};
 use serde_json::{Map, Value, json};
 
 pub(super) fn handle_message(session: &Session, message: Value) {
-    if let Some(id) = message.get("id").and_then(Value::as_u64) {
-        if let Some(sender) = session
-            .pending
-            .lock()
-            .ok()
-            .and_then(|mut pending| pending.remove(&id))
+    if message.get("id").is_some() {
+        if message.get("method").and_then(Value::as_str).is_some() {
+            respond_unsupported_server_request(session, &message);
+        } else if let Some(id) = message.get("id").and_then(Value::as_u64)
+            && let Some(sender) = session
+                .pending
+                .lock()
+                .ok()
+                .and_then(|mut pending| pending.remove(&id))
         {
             let _ = sender.try_send(message);
         }
         return;
     }
+    if defer_until_announced(session, &message) {
+        return;
+    }
+    handle_announced_message(session, message);
+}
+
+pub(super) fn announce_turn(session: &Session) {
+    drain_buffered_messages(&session.active_turn, |message| {
+        handle_announced_message(session, message);
+    });
+}
+
+fn defer_until_announced(session: &Session, message: &Value) -> bool {
+    defer_message_until_announced(&session.active_turn, message)
+}
+
+fn defer_message_until_announced(
+    active_turn: &std::sync::Mutex<Option<ActiveTurn>>,
+    message: &Value,
+) -> bool {
+    let Ok(mut active_turn) = active_turn.lock() else {
+        return false;
+    };
+    let Some(active_turn) = active_turn.as_mut() else {
+        return false;
+    };
+    if active_turn.output_state == TurnOutputState::Announced {
+        return false;
+    }
+    active_turn.pending_messages.push(message.clone());
+    true
+}
+
+fn drain_buffered_messages(
+    active_turn: &std::sync::Mutex<Option<ActiveTurn>>,
+    mut handle: impl FnMut(Value),
+) {
+    loop {
+        let pending_messages = {
+            let Ok(mut active_turn) = active_turn.lock() else {
+                return;
+            };
+            let Some(active_turn) = active_turn.as_mut() else {
+                return;
+            };
+            active_turn.output_state = TurnOutputState::Draining;
+            if active_turn.pending_messages.is_empty() {
+                active_turn.output_state = TurnOutputState::Announced;
+                return;
+            }
+            std::mem::take(&mut active_turn.pending_messages)
+        };
+        for message in pending_messages {
+            handle(message);
+        }
+    }
+}
+
+fn respond_unsupported_server_request(session: &Session, message: &Value) {
+    let Some(id) = message.get("id") else {
+        return;
+    };
+    let method = message
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let _ = session.write_json(&json!({
+        "jsonrpc":"2.0",
+        "id":id,
+        "error":{
+            "code":-32601,
+            "message":format!("CCCC headless does not support provider request: {method}")
+        }
+    }));
+}
+
+fn handle_announced_message(session: &Session, message: Value) {
     let completed = if session.runtime == ActorRuntime::Codex {
         message.get("method").and_then(Value::as_str) == Some("turn/completed")
     } else {
         message.get("type").and_then(Value::as_str) == Some("result")
     };
     if completed {
-        session.set_status("idle", None);
-        if let Ok(mut generation) = session.completion.0.lock() {
-            *generation += 1;
-        }
-        session.completion.1.notify_all();
-        let event_id = session
-            .active_event_id
-            .lock()
-            .map(|mut value| std::mem::take(&mut *value))
-            .unwrap_or_default();
-        if session.runtime == ActorRuntime::Codex {
-            let (kind, data) = codex_terminal_event(&message, &event_id);
-            emit(session, kind, data);
-        } else {
-            let (kind, data) = claude_terminal_event(&message, &event_id);
-            emit(session, kind, data);
-        }
+        complete_turn(session, &message);
         return;
     }
     if session.runtime == ActorRuntime::Codex {
@@ -53,20 +117,145 @@ pub(super) fn handle_message(session: &Session, message: Value) {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        if flags.iter().any(|flag| {
+        let waiting = flags.iter().any(|flag| {
             matches!(
                 flag.as_str(),
                 Some("waitingOnApproval" | "waitingOnUserInput")
             )
-        }) {
-            let task = session
+        });
+        let task = active_context(session).map(|(_, turn_id, _)| turn_id);
+        if waiting {
+            session.set_status("waiting", task);
+        } else if message
+            .pointer("/params/status/type")
+            .and_then(Value::as_str)
+            == Some("active")
+            && task.is_some()
+            && session
                 .status
                 .lock()
-                .ok()
-                .and_then(|state| state.task_id.clone());
-            session.set_status("waiting", task);
+                .is_ok_and(|state| state.status == "waiting")
+        {
+            session.set_status("working", task);
         }
     }
+}
+
+fn complete_turn(session: &Session, message: &Value) {
+    let Ok(mut active_turn) = session.active_turn.lock() else {
+        return;
+    };
+    let Some(current) = active_turn.as_ref() else {
+        return;
+    };
+    if session.runtime == ActorRuntime::Codex {
+        let reported_turn_id = message
+            .pointer("/params/turn/id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if !reported_turn_id.is_empty()
+            && !current.turn_id.is_empty()
+            && reported_turn_id != current.turn_id
+        {
+            return;
+        }
+    }
+    let Some(current) = active_turn.take() else {
+        return;
+    };
+    drop(active_turn);
+
+    session.set_status("idle", None);
+    if let Ok(mut generation) = session.completion.0.lock() {
+        *generation += 1;
+    }
+    session.completion.1.notify_all();
+    let (kind, mut data) = if session.runtime == ActorRuntime::Codex {
+        codex_terminal_event(message, &current.event_id)
+    } else {
+        claude_terminal_event(message, &current.event_id)
+    };
+    let resume_rejection = if session.runtime == ActorRuntime::Claude {
+        reconcile_claude_resume(session, message)
+    } else {
+        None
+    };
+    data.entry("turn_id")
+        .or_insert_with(|| json!(current.turn_id));
+    let is_control = !current.control_kind.is_empty();
+    if is_control {
+        data.insert("control_kind".into(), json!(current.control_kind));
+    }
+    let control_kind = is_control.then(|| kind.replace("turn", "control"));
+    emit(session, control_kind.as_deref().unwrap_or(kind), data);
+    if let Some((provider_session_id, error)) = resume_rejection {
+        emit(
+            session,
+            "headless.session.resume_failed",
+            Map::from_iter([
+                ("provider_session_id".into(), json!(provider_session_id)),
+                ("error".into(), json!(error)),
+            ]),
+        );
+        session.stop();
+    }
+}
+
+fn reconcile_claude_resume(session: &Session, message: &Value) -> Option<(String, String)> {
+    let subtype = message
+        .get("subtype")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let normalized_subtype = subtype.trim().to_ascii_lowercase();
+    let failed = message.get("is_error").and_then(Value::as_bool) == Some(true)
+        || normalized_subtype == "error"
+        || normalized_subtype.starts_with("error_");
+    if !failed {
+        if let Ok(mut session_id) = session.resumed_provider_session_id.lock() {
+            session_id.clear();
+        }
+        return None;
+    }
+    let error = claude_result_error(message, subtype)
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or(subtype)
+        .trim()
+        .to_owned();
+    super::super::runtime_session::resume_failure_marker(&error)?;
+    let provider_session_id = session
+        .resumed_provider_session_id
+        .lock()
+        .ok()
+        .map(|mut session_id| std::mem::take(&mut *session_id))
+        .unwrap_or_default();
+    if provider_session_id.is_empty() {
+        return None;
+    }
+    if let Err(persist_error) = super::super::runtime_session::mark_resume_failed(
+        &session.home,
+        &session.group_id,
+        &session.actor_id,
+        &error,
+    ) {
+        tracing::warn!(
+            error = %persist_error,
+            group_id = %session.group_id,
+            actor_id = %session.actor_id,
+            "failed to persist delayed Claude resume rejection"
+        );
+    }
+    Some((provider_session_id, error))
+}
+
+fn active_context(session: &Session) -> Option<(String, String, String)> {
+    session.active_turn.lock().ok()?.as_ref().map(|turn| {
+        (
+            turn.event_id.clone(),
+            turn.turn_id.clone(),
+            turn.control_kind.clone(),
+        )
+    })
 }
 
 fn codex_terminal_event(message: &Value, event_id: &str) -> (&'static str, Map<String, Value>) {
@@ -251,11 +440,9 @@ fn emit_message(session: &Session, kind: &str, text: &str, stream_id: &str) {
     if text.is_empty() {
         return;
     }
-    let event_id = session
-        .active_event_id
-        .lock()
-        .map(|value| value.clone())
-        .unwrap_or_default();
+    let Some((event_id, turn_id, _)) = active_context(session) else {
+        return;
+    };
     let key = if kind.ends_with("delta") {
         "delta"
     } else {
@@ -265,6 +452,7 @@ fn emit_message(session: &Session, kind: &str, text: &str, stream_id: &str) {
         session,
         kind,
         Map::from_iter([
+            ("turn_id".into(), json!(turn_id)),
             ("event_id".into(), json!(event_id)),
             ("stream_id".into(), json!(stream_id)),
             (key.into(), json!(text)),
@@ -298,15 +486,16 @@ pub(super) fn mark_read(session: &Session, turn: &Turn) {
 }
 
 pub(super) fn emit_turn(session: &Session, turn: &Turn, kind: &str, turn_id: &str) {
-    let control_kind = turn.control.then(|| kind.replace("turn", "control"));
-    emit(
-        session,
-        control_kind.as_deref().unwrap_or(kind),
-        Map::from_iter([
-            ("turn_id".into(), json!(turn_id)),
-            ("event_id".into(), json!(turn.event_id)),
-        ]),
-    );
+    let control_event_kind =
+        (!turn.control_kind.is_empty()).then(|| kind.replace("turn", "control"));
+    let mut data = Map::from_iter([
+        ("turn_id".into(), json!(turn_id)),
+        ("event_id".into(), json!(turn.event_id)),
+    ]);
+    if !turn.control_kind.is_empty() {
+        data.insert("control_kind".into(), json!(turn.control_kind));
+    }
+    emit(session, control_event_kind.as_deref().unwrap_or(kind), data);
 }
 
 pub(super) fn emit(session: &Session, kind: &str, data: Map<String, Value>) {
@@ -324,6 +513,40 @@ pub(super) fn emit(session: &Session, kind: &str, data: Map<String, Value>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_arriving_during_backlog_drain_stays_ordered() {
+        let active_turn = std::sync::Mutex::new(Some(ActiveTurn {
+            event_id: "event-1".into(),
+            turn_id: "turn-1".into(),
+            control_kind: String::new(),
+            output_state: TurnOutputState::Buffering,
+            pending_messages: vec![json!({"sequence":1})],
+        }));
+        let mut observed = Vec::new();
+
+        drain_buffered_messages(&active_turn, |message| {
+            let sequence = message["sequence"].as_u64().expect("sequence");
+            observed.push(sequence);
+            if sequence == 1 {
+                assert!(defer_message_until_announced(
+                    &active_turn,
+                    &json!({"sequence":2})
+                ));
+            }
+        });
+
+        assert_eq!(observed, vec![1, 2]);
+        assert_eq!(
+            active_turn
+                .lock()
+                .expect("active turn")
+                .as_ref()
+                .expect("turn")
+                .output_state,
+            TurnOutputState::Announced
+        );
+    }
 
     #[test]
     fn codex_failed_completion_preserves_status_and_error() {

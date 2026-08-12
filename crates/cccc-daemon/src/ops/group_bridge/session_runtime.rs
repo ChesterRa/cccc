@@ -51,6 +51,7 @@ fn key(home: &HomeLayout, request: &DaemonRequest) -> Result<RouteKey, OpError> 
 
 pub(super) fn open(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     let key = key(home, request)?;
+    let retry_route = key.clone();
     let generation = Uuid::new_v4().simple().to_string();
     let (lock, changed) = runtime();
     let mut state = lock
@@ -66,6 +67,13 @@ pub(super) fn open(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         },
     );
     changed.notify_all();
+    drop(state);
+    super::schedule_pending_route_retry(
+        home.clone(),
+        retry_route.group_id,
+        retry_route.remote_group_id,
+        retry_route.remote_peer_id,
+    );
     object(json!({"generation":generation,"ready":true}))
 }
 

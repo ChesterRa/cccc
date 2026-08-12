@@ -135,6 +135,83 @@ fn user_profiles_are_isolated_for_list_get_upsert_secrets_and_delete() {
     assert_eq!(a.result["profile"]["owner_id"], "user-a");
 }
 
+#[test]
+fn force_delete_converts_linked_actor_with_profile_secrets_intact() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+    call(
+        &home,
+        "actor_profile_upsert",
+        json!({
+            "profile_id":"detach-profile",
+            "name":"Detach Profile",
+            "runtime":"codex",
+            "runner":"headless"
+        }),
+    );
+    call(
+        &home,
+        "actor_profile_secret_update",
+        json!({"profile_id":"detach-profile","set":{"TOKEN":"secret"}}),
+    );
+    let group_id =
+        call(&home, "group_create", json!({"title":"detach"})).result["group"]["group_id"]
+            .as_str()
+            .expect("group id")
+            .to_owned();
+    call(
+        &home,
+        "group_stop",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    call(
+        &home,
+        "actor_add",
+        json!({
+            "group_id":group_id,
+            "actor_id":"linked",
+            "profile_id":"detach-profile",
+            "enabled":false,
+            "by":"user"
+        }),
+    );
+
+    let rejected = raw_call(
+        &home,
+        "actor_profile_delete",
+        json!({"profile_id":"detach-profile","by":"user"}),
+    );
+    assert!(!rejected.ok);
+    let deleted = call(
+        &home,
+        "actor_profile_delete",
+        json!({"profile_id":"detach-profile","force_detach":true,"by":"user"}),
+    );
+    assert_eq!(deleted.result["detached_count"], 1);
+    let actors = call(
+        &home,
+        "actor_list",
+        json!({"group_id":group_id,"by":"user"}),
+    );
+    let actor = actors.result["actors"]
+        .as_array()
+        .expect("actors")
+        .iter()
+        .find(|actor| actor["id"] == "linked")
+        .expect("linked actor");
+    assert_eq!(actor["profile_id"], "");
+    assert_eq!(actor["profile_scope"], "global");
+    assert_eq!(actor["profile_owner"], "");
+    assert_eq!(actor["runtime"], "codex");
+    assert_eq!(actor["runner"], "headless");
+    let keys = call(
+        &home,
+        "actor_env_private_keys",
+        json!({"group_id":group_id,"actor_id":"linked","by":"user"}),
+    );
+    assert_eq!(keys.result["keys"], json!(["TOKEN"]));
+}
+
 fn assert_denied(response: DaemonResponse) {
     assert!(!response.ok);
     assert!(

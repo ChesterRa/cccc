@@ -30,6 +30,23 @@ class TestEventContractInternalParity(unittest.TestCase):
 
         self.assertEqual(missing, [])
 
+    def test_actor_new_session_accepts_the_in_place_rotation_contract(self) -> None:
+        from cccc.contracts.v1.event import normalize_event_data
+
+        payload = normalize_event_data(
+            "actor.new_session",
+            {
+                "actor_id": "peer1",
+                "runner": "pty",
+                "runtime": "antigravity",
+                "rotation": "in_place",
+            },
+        )
+
+        self.assertEqual(payload["actor_id"], "peer1")
+        self.assertEqual(payload["runtime"], "antigravity")
+        self.assertEqual(payload["rotation"], "in_place")
+
 
 if __name__ == "__main__":
     unittest.main()

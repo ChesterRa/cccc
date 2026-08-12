@@ -86,6 +86,14 @@ struct OpenRequest<'a> {
     mode: BrowserMode,
 }
 
+pub(super) fn validate_browser_surface_url(value: &str) -> Result<()> {
+    let url = reqwest::Url::parse(value).context("invalid browser surface URL")?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        bail!("browser surface URL must use http or https");
+    }
+    Ok(())
+}
+
 impl BrowserSurfaces {
     pub async fn close_missing_groups(&self, active_groups: &HashSet<String>) -> Result<usize> {
         let keys = self
@@ -264,9 +272,7 @@ impl BrowserSurfaces {
             reuse_existing,
             mode,
         } = request;
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            bail!("browser surface URL must use http or https");
-        }
+        validate_browser_surface_url(url)?;
         if self.shutting_down.load(Ordering::Acquire) {
             bail!("browser surfaces are shutting down");
         }

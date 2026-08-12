@@ -325,18 +325,23 @@ def _ensure_shared_profile_migrated(group_id: str, actor_id: str) -> None:
 
 def record_chatgpt_browser_state(
     group_id: str, actor_id: str, state: dict[str, Any]
-) -> None:
+) -> bool:
     state_root = chatgpt_browser_actor_state_root(group_id, actor_id)
     current = read_chatgpt_browser_state(group_id, actor_id)
     incoming = dict(state or {})
     updated = {**current, **incoming}
+    if "last_delivery_status" in incoming:
+        updated["last_delivery_status_canonical"] = _canonical_delivery_status(
+            incoming.get("last_delivery_status")
+        )
     if "last_submission_evidence" in incoming:
         updated["last_submission_evidence_raw"] = incoming.get(
             "last_submission_evidence"
         )
     _write_state(state_root, updated)
     if _CANONICAL_TARGET_FIELDS.intersection(incoming):
-        _persist_canonical_browser_target(group_id, actor_id, updated)
+        return _persist_canonical_browser_target(group_id, actor_id, updated)
+    return False
 
 
 def read_chatgpt_browser_state(group_id: str, actor_id: str) -> dict[str, Any]:
@@ -367,8 +372,17 @@ def _canonical_browser_target(
         return False, {}
 
 
+def _canonical_delivery_status(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    return {
+        "pending": "pending_new_chat_bind",
+        "ambiguous": "submission_ambiguous",
+    }.get(raw, raw)
+
+
 def _session_patch_from_canonical_target(target: dict[str, Any]) -> dict[str, Any]:
     kind = str((target or {}).get("kind") or "").strip().lower()
+    canonical_status = _canonical_delivery_status(target.get("last_delivery_status"))
     if kind == "existing_chat":
         raw_conversation_url = str(target.get("url") or "").strip()
         conversation_url = _conversation_url_from_tab(raw_conversation_url)
@@ -386,10 +400,9 @@ def _session_patch_from_canonical_target(target: dict[str, Any]) -> dict[str, An
             "target_saved_at": str(target.get("saved_at") or ""),
         }
     elif kind == "new_chat":
-        raw_status = str(target.get("last_delivery_status") or "").strip().lower()
         submitted = (
             str(target.get("state") or "").strip().lower() == "new_chat_submitted"
-            or raw_status == "pending_new_chat_bind"
+            or canonical_status == "pending_new_chat_bind"
         )
         selection = {
             "conversation_url": "",
@@ -416,20 +429,19 @@ def _session_patch_from_canonical_target(target: dict[str, Any]) -> dict[str, An
             "target_saved_at": "",
         }
 
-    raw_status = str(target.get("last_delivery_status") or "").strip().lower()
-    if raw_status == "pending_new_chat_bind":
+    if canonical_status == "pending_new_chat_bind":
         delivery_status = "pending"
-    elif raw_status in {
+    elif canonical_status in {
         "submission_ambiguous",
         "submission_ambiguous_completion_pending",
         "completion_ambiguous",
         "legacy_submission_unverified",
     }:
         delivery_status = "ambiguous"
-    elif raw_status in {"deferred", "legacy_recovery_submitting"}:
+    elif canonical_status in {"deferred", "legacy_recovery_submitting"}:
         delivery_status = "submitting"
     else:
-        delivery_status = raw_status
+        delivery_status = canonical_status
     evidence = target.get("last_submission_evidence")
     if isinstance(evidence, dict):
         submission_evidence = str(evidence.get("submission_evidence") or "")
@@ -469,6 +481,7 @@ def _session_patch_from_canonical_target(target: dict[str, Any]) -> dict[str, An
         ),
         "last_delivery_id": str(target.get("last_delivery_id") or ""),
         "last_delivery_status": delivery_status,
+        "last_delivery_status_canonical": canonical_status,
         "last_submission_evidence": submission_evidence,
         "last_submission_evidence_raw": evidence,
         "last_send_selector": send_selector,
@@ -488,44 +501,32 @@ def _session_patch_from_canonical_target(target: dict[str, Any]) -> dict[str, An
 
 def _persist_canonical_browser_target(
     group_id: str, actor_id: str, state: dict[str, Any]
-) -> None:
+) -> bool:
     normalized_group_id = str(group_id or "").strip()
     normalized_actor_id = str(actor_id or "").strip()
     if not normalized_group_id or not normalized_actor_id:
-        return
-    lock = None
-    try:
-        from ..kernel.group import load_group
-        from ..util.file_lock import acquire_lockfile
+        return False
+    from ..kernel.group import load_group
 
-        with _TARGET_STATE_LOCK:
-            group_dir = ensure_home() / "groups" / normalized_group_id
-            lock = acquire_lockfile(group_dir / "group.yaml.lock", blocking=True)
-            group = load_group(normalized_group_id)
-            if group is None or not isinstance(group.doc, dict):
-                return
-            targets = group.doc.get(_BROWSER_TARGETS_KEY)
-            if not isinstance(targets, dict):
-                targets = {}
-                group.doc[_BROWSER_TARGETS_KEY] = targets
-            target = _chatgpt_delivery_target_snapshot(state)
-            if str(target.get("kind") or "") == "none":
-                targets.pop(normalized_actor_id, None)
-            else:
-                current = targets.get(normalized_actor_id)
-                targets[normalized_actor_id] = {
-                    **(dict(current) if isinstance(current, dict) else {}),
-                    **target,
-                }
-            group.save()
-    except Exception:
-        pass
-    finally:
-        if lock is not None:
-            try:
-                lock.close()
-            except Exception:
-                pass
+    with _TARGET_STATE_LOCK:
+        group = load_group(normalized_group_id)
+        if group is None or not isinstance(group.doc, dict):
+            return False
+        targets = group.doc.get(_BROWSER_TARGETS_KEY)
+        if not isinstance(targets, dict):
+            targets = {}
+            group.doc[_BROWSER_TARGETS_KEY] = targets
+        target = _chatgpt_delivery_target_snapshot(state)
+        if str(target.get("kind") or "") == "none":
+            targets.pop(normalized_actor_id, None)
+        else:
+            current = targets.get(normalized_actor_id)
+            targets[normalized_actor_id] = {
+                **(dict(current) if isinstance(current, dict) else {}),
+                **target,
+            }
+        group.save()
+        return True
 
 
 def record_chatgpt_browser_process_state(state: dict[str, Any]) -> None:
@@ -807,13 +808,7 @@ def _stop_browser_profile_processes(profile_dir: str | Path) -> None:
 
 
 def _stop_browser_state(state: dict[str, Any]) -> None:
-    pid = int(state.get("pid") or 0)
     profile_dir = str(state.get("profile_dir") or "").strip()
-    if pid <= 0:
-        if profile_dir:
-            _stop_browser_profile_processes(profile_dir)
-        return
-    terminate_pid(pid, timeout_s=3.0, include_group=True, force=True)
     if profile_dir:
         _stop_browser_profile_processes(profile_dir)
 
@@ -2193,11 +2188,10 @@ def _chatgpt_delivery_target_snapshot(session: dict[str, Any]) -> dict[str, Any]
         or session.get("pending_new_chat_bind_started_at")
         or ""
     ).strip()
-    raw_delivery_status = str(session.get("last_delivery_status") or "").strip()
-    canonical_delivery_status = {
-        "pending": "pending_new_chat_bind",
-        "ambiguous": "submission_ambiguous",
-    }.get(raw_delivery_status, raw_delivery_status)
+    canonical_delivery_status = _canonical_delivery_status(
+        session.get("last_delivery_status_canonical")
+        or session.get("last_delivery_status")
+    )
     raw_evidence = session.get("last_submission_evidence_raw")
     evidence = dict(raw_evidence) if isinstance(raw_evidence, dict) else {}
     submission_evidence = str(session.get("last_submission_evidence") or "").strip()
@@ -2373,7 +2367,12 @@ def build_chatgpt_web_model_health_snapshot(
         browser_label = "Not open"
         browser_reason = "Open ChatGPT to sign in or inspect the page."
 
-    delivery_target = _chatgpt_delivery_target_snapshot(session)
+    stored_delivery_target = session.get("delivery_target")
+    delivery_target = (
+        dict(stored_delivery_target)
+        if isinstance(stored_delivery_target, dict)
+        else _chatgpt_delivery_target_snapshot(session)
+    )
     conversation_url = _conversation_url_from_tab(session.get("conversation_url"))
     invalid_conversation_url = str(
         session.get("invalid_conversation_url") or ""
@@ -2425,9 +2424,13 @@ def build_chatgpt_web_model_health_snapshot(
         )
         target_url = ""
 
-    raw_delivery_status = str(session.get("last_delivery_status") or "").strip().lower()
+    raw_delivery_status = _canonical_delivery_status(
+        delivery_target.get("last_delivery_status")
+        or session.get("last_delivery_status_canonical")
+        or session.get("last_delivery_status")
+    )
     last_delivery_at = str(session.get("last_delivery_at") or "").strip()
-    pending_bind_delivery = raw_delivery_status == "pending" or (
+    pending_bind_delivery = raw_delivery_status == "pending_new_chat_bind" or (
         not conversation_url
         and pending_new_chat
         and (
@@ -2435,8 +2438,8 @@ def build_chatgpt_web_model_health_snapshot(
             or last_error == "conversation_url_pending"
         )
     )
-    stale_submitting_delivery = (
-        raw_delivery_status == "submitting" and _stale_submitting_delivery(session)
+    stale_submitting_delivery = raw_delivery_status == "submitting" and (
+        _stale_submitting_delivery(session)
     )
     if pending_bind_delivery:
         delivery_state = "pending_bind"
@@ -2451,20 +2454,31 @@ def build_chatgpt_web_model_health_snapshot(
             "Browser delivery started but did not finish before the submit timeout."
         )
         last_error = last_error or "delivery_submitting_stale"
-    elif raw_delivery_status == "submitting":
+    elif raw_delivery_status in {"submitting", "legacy_recovery_submitting"}:
         delivery_state = "submitting"
         delivery_label = "Submitting"
         delivery_reason = (
             "CCCC is currently injecting this batch into the ChatGPT browser session."
         )
-    elif raw_delivery_status == "ambiguous":
+    elif raw_delivery_status == "deferred":
+        delivery_state = "submitting"
+        delivery_label = "Waiting to submit"
+        delivery_reason = (
+            "ChatGPT is responding and no safe Send prompt control is available yet."
+        )
+    elif raw_delivery_status in {
+        "submission_ambiguous",
+        "submission_ambiguous_completion_pending",
+        "completion_ambiguous",
+        "legacy_submission_unverified",
+    }:
         delivery_state = "ambiguous"
         delivery_label = "Delivery unverified"
         delivery_reason = (
             last_error
             or "CCCC attempted to submit the prompt, but could not verify whether ChatGPT accepted it."
         )
-    elif raw_delivery_status == "failed":
+    elif raw_delivery_status in {"failed", "completion_conflict"}:
         delivery_state = "failed"
         delivery_label = "Delivery failed"
         delivery_reason = last_error or "The last ChatGPT delivery did not complete."
@@ -2474,7 +2488,7 @@ def build_chatgpt_web_model_health_snapshot(
         delivery_reason = (
             "The submitted prompt has been bound to a ChatGPT conversation."
         )
-    elif raw_delivery_status == "submitted" or last_delivery_at:
+    elif raw_delivery_status == "submitted":
         delivery_state = "submitted"
         delivery_label = "Submitted"
         delivery_reason = (
@@ -2578,8 +2592,14 @@ def build_chatgpt_web_model_health_snapshot(
             if delivery_state == "pending_bind"
             and last_error == "conversation_url_pending"
             else last_error,
-            "cursor_committed": delivery_state
-            in {"submitted", "bound", "pending_bind", "ambiguous"},
+            "cursor_committed": raw_delivery_status
+            in {
+                "submitted",
+                "pending_new_chat_bind",
+                "submission_ambiguous",
+                "legacy_submission_unverified",
+                "bound",
+            },
             "mode": "image_compat"
             if str(session.get("delivery_mode") or "") == "image_compat"
             else "standard",
@@ -2696,7 +2716,7 @@ def _session_payload(
     }
     if inspection and alive:
         payload.update(inspection)
-    payload["delivery_target"] = _chatgpt_delivery_target_snapshot(payload)
+    payload["delivery_target"] = _chatgpt_delivery_target_snapshot(state)
     return payload
 
 

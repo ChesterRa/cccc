@@ -387,6 +387,8 @@ class CodexAppSession:
         self._item_snapshots_by_id: Dict[str, Dict[str, Any]] = {}
         self._active_control_kind = ""
         self._active_payload: Optional[_PendingTurn] = None
+        self._active_turn_announced = True
+        self._pending_turn_notifications: list[tuple[str, Dict[str, Any]]] = []
         self._last_turn_event_monotonic = 0.0
         self._active_stalled_emitted = False
         self._runtime_command: list[str] = []
@@ -851,6 +853,9 @@ class CodexAppSession:
             self._active_control_kind = ""
             self._active_event_id = ""
             self._active_turn_id = ""
+            self._active_payload = None
+            self._active_turn_announced = True
+            self._pending_turn_notifications.clear()
         self._persist_state()
         self._turn_done.set()
         try:
@@ -1023,6 +1028,8 @@ class CodexAppSession:
             self._active_event_id = ""
             self._active_control_kind = ""
             self._active_payload = None
+            self._active_turn_announced = True
+            self._pending_turn_notifications.clear()
             self._session_state.status = "idle"
             self._session_state.current_task_id = None
             self._session_state.updated_at = now
@@ -1169,9 +1176,38 @@ class CodexAppSession:
         result = response.get("result")
         return result if isinstance(result, dict) else {}
 
+    def _respond_unsupported_server_request(self, message: Dict[str, Any]) -> None:
+        request_id = message.get("id")
+        method = str(message.get("method") or "unknown").strip() or "unknown"
+        response = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": {
+                    "code": -32601,
+                    "message": f"CCCC headless does not support provider request: {method}",
+                },
+            },
+            ensure_ascii=False,
+        )
+        with self._lock:
+            if self.transport == "websocket":
+                if self._ws is not None:
+                    self._ws.send(response)
+                return
+            if self._proc is not None and self._proc.stdin is not None:
+                self._proc.stdin.write(response + "\n")
+                self._proc.stdin.flush()
+
     def _handle_protocol_message(self, message: Dict[str, Any]) -> None:
+        if "id" in message and str(message.get("method") or "").strip():
+            self._respond_unsupported_server_request(message)
+            return
         if "id" in message:
-            request_id = int(message.get("id") or 0)
+            raw_request_id = message.get("id")
+            if isinstance(raw_request_id, bool) or not isinstance(raw_request_id, int):
+                return
+            request_id = raw_request_id
             with self._lock:
                 result_q = self._pending.pop(request_id, None)
             if result_q is not None:
@@ -1337,6 +1373,10 @@ class CodexAppSession:
             with self._lock:
                 self._active_control_kind = str(payload.control_kind or "").strip().lower()
                 self._active_payload = payload
+                self._active_event_id = payload.event_id
+                self._active_turn_id = ""
+                self._active_turn_announced = False
+                self._pending_turn_notifications.clear()
             turn_text = str(payload.text or "")
 
             def _handle_turn_start_failed(exc_obj: BaseException) -> None:
@@ -1348,6 +1388,8 @@ class CodexAppSession:
                         self._active_event_id = ""
                         self._active_control_kind = ""
                         self._active_payload = None
+                        self._active_turn_announced = True
+                        self._pending_turn_notifications.clear()
                         self._session_state.current_task_id = None
                         self._session_state.updated_at = utc_now_iso()
                     self._persist_state()
@@ -1427,6 +1469,12 @@ class CodexAppSession:
                             "reply_to": payload.reply_to,
                         },
                     )
+                with self._lock:
+                    self._active_turn_announced = True
+                    pending_notifications = list(self._pending_turn_notifications)
+                    self._pending_turn_notifications.clear()
+                for pending_method, pending_params in pending_notifications:
+                    self._handle_notification(pending_method, pending_params)
             except Exception as exc:
                 logger.warning("codex turn start failed: group=%s actor=%s err=%s", self.group_id, self.actor_id, exc)
                 with self._lock:
@@ -1434,6 +1482,8 @@ class CodexAppSession:
                     self._active_event_id = ""
                     self._active_control_kind = ""
                     self._active_payload = None
+                    self._active_turn_announced = True
+                    self._pending_turn_notifications.clear()
                     self._session_state.current_task_id = None
                     self._session_state.updated_at = utc_now_iso()
                 self._persist_state()
@@ -1453,6 +1503,11 @@ class CodexAppSession:
                 self._maybe_emit_turn_stalled(payload=payload, turn_id=turn_id)
 
     def _handle_notification(self, method: str, params: Dict[str, Any]) -> None:
+        if method.startswith(("turn/", "item/")):
+            with self._lock:
+                if self._active_payload is not None and not self._active_turn_announced:
+                    self._pending_turn_notifications.append((method, dict(params)))
+                    return
         now = utc_now_iso()
         with self._lock:
             active_event_id = str(self._active_event_id or "").strip()
@@ -1475,13 +1530,18 @@ class CodexAppSession:
                 if thread_id and not current_thread_id:
                     self._session_state.thread_id = thread_id
                 if status_type == "active":
-                    self._session_state.status = (
-                        "waiting"
-                        if flags.intersection({"waitingOnApproval", "waitingOnUserInput"})
-                        else self._session_state.status or "idle"
-                    )
-                    if flags.intersection({"waitingOnApproval", "waitingOnUserInput"}):
-                        self._session_state.current_task_id = thread_id or self._session_state.thread_id or None
+                    waiting = bool(flags.intersection({"waitingOnApproval", "waitingOnUserInput"}))
+                    active_task_id = str(self._active_turn_id or self._active_event_id or "").strip()
+                    if waiting:
+                        self._session_state.status = "waiting"
+                        self._session_state.current_task_id = (
+                            active_task_id or thread_id or self._session_state.thread_id or None
+                        )
+                    elif active_task_id:
+                        self._session_state.status = "working"
+                        self._session_state.current_task_id = active_task_id
+                    else:
+                        self._session_state.status = self._session_state.status or "idle"
                 elif status_type == "idle":
                     self._session_state.status = "idle"
                     self._session_state.current_task_id = None
@@ -1554,6 +1614,8 @@ class CodexAppSession:
                 self._active_event_id = ""
                 self._active_control_kind = ""
                 self._active_payload = None
+                self._active_turn_announced = True
+                self._pending_turn_notifications.clear()
                 self._session_state.status = "idle"
                 self._session_state.current_task_id = None
                 self._session_state.updated_at = now
@@ -1891,6 +1953,9 @@ class CodexAppSession:
             with self._lock:
                 self._active_turn_id = ""
                 self._active_event_id = ""
+                self._active_payload = None
+                self._active_turn_announced = True
+                self._pending_turn_notifications.clear()
                 self._session_state.status = "idle"
                 self._session_state.current_task_id = None
                 self._session_state.updated_at = now

@@ -1,6 +1,8 @@
+import json
 import os
 import tempfile
 import unittest
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -160,6 +162,56 @@ class TestWebImConfigCanonicalization(unittest.TestCase):
                 self.assertEqual(str(im.get("wecom_bot_id") or ""), "corp123")
                 self.assertEqual(str(im.get("wecom_secret") or ""), "sec456")
                 self.assertNotIn("wecom_agent_id", im)
+        finally:
+            cleanup()
+
+    def test_im_unset_clears_authority_and_retires_legacy_shadow(self) -> None:
+        from cccc.kernel.group import load_group
+        from cccc.ports.web.app import create_app
+
+        home, cleanup = self._with_home()
+        try:
+            gid = self._create_group("im-unset-retire")
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            group.doc["im"] = {
+                "platform": "telegram",
+                "bot_token_env": "CANONICAL",
+            }
+            group.doc["im_bridge"] = {
+                "config": {"platform": "telegram", "bot_token_env": "STALE"},
+                "enabled": True,
+                "authorized": [{"chat_id": "stale-chat"}],
+                "pending": [{"key": "stale-key", "chat_id": "stale-chat"}],
+                "subscribers": [{"chat_id": "stale-chat"}],
+                "running": False,
+            }
+            group.save()
+            state_dir = Path(home) / "groups" / gid / "state"
+            for name in (
+                "im_authorized_chats.json",
+                "im_pending_keys.json",
+                "im_subscribers.json",
+            ):
+                (state_dir / name).write_text('{"current": {}}', encoding="utf-8")
+
+            with TestClient(create_app()) as client:
+                response = client.post("/api/im/unset", json={"group_id": gid})
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json().get("ok"))
+
+            current = load_group(gid)
+            self.assertIsNotNone(current)
+            self.assertNotIn("im", current.doc)
+            self.assertEqual(current.doc.get("im_bridge"), {"running": False})
+            for name in (
+                "im_authorized_chats.json",
+                "im_pending_keys.json",
+                "im_subscribers.json",
+            ):
+                self.assertEqual(
+                    json.loads((state_dir / name).read_text(encoding="utf-8")), {}
+                )
         finally:
             cleanup()
 

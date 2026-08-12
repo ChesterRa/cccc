@@ -21,6 +21,10 @@ pub struct GlobalSettings {
 
 pub fn load(home: &HomeLayout) -> io::Result<GlobalSettings> {
     migrate_legacy_json(home)?;
+    load_canonical(home)
+}
+
+fn load_canonical(home: &HomeLayout) -> io::Result<GlobalSettings> {
     let path = home.root().join("settings.yaml");
     let mut settings = if path.exists() {
         read_yaml(&path)
@@ -29,6 +33,21 @@ pub fn load(home: &HomeLayout) -> io::Result<GlobalSettings> {
     }?;
     migrate_flat_observability(&mut settings.observability);
     Ok(settings)
+}
+
+pub fn update<T>(
+    home: &HomeLayout,
+    change: impl FnOnce(&mut GlobalSettings) -> io::Result<T>,
+) -> io::Result<T> {
+    // Legacy migration owns this same lock, so finish it before entering the
+    // canonical read/modify/write section.
+    migrate_legacy_json(home)?;
+    with_exclusive_lock(&home.root().join("settings.yaml.lock"), || {
+        let mut settings = load_canonical(home)?;
+        let result = change(&mut settings)?;
+        write_yaml(&home.root().join("settings.yaml"), &settings)?;
+        Ok(result)
+    })
 }
 
 pub fn save(home: &HomeLayout, settings: &GlobalSettings) -> io::Result<()> {
@@ -166,6 +185,7 @@ fn migrate_flat_observability(observability: &mut Map<String, Value>) {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::sync::{Arc, Barrier};
 
     #[test]
     fn loads_canonical_python_yaml() {
@@ -207,6 +227,69 @@ mod tests {
 
         let settings = load(&home).expect("load saved settings");
         assert_eq!(settings.remote_access["web_host"], json!("127.0.0.2"));
+    }
+
+    #[test]
+    fn concurrent_updates_preserve_disjoint_sections() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        let barrier = Arc::new(Barrier::new(2));
+
+        let first_home = home.clone();
+        let first_barrier = Arc::clone(&barrier);
+        let first = std::thread::spawn(move || {
+            first_barrier.wait();
+            update(&first_home, |settings| {
+                settings
+                    .observability
+                    .insert("developer_mode".into(), json!(true));
+                Ok(())
+            })
+        });
+        let second_home = home.clone();
+        let second = std::thread::spawn(move || {
+            barrier.wait();
+            update(&second_home, |settings| {
+                settings
+                    .branding
+                    .insert("product_name".into(), json!("Concurrent"));
+                Ok(())
+            })
+        });
+
+        first.join().expect("first thread").expect("first update");
+        second
+            .join()
+            .expect("second thread")
+            .expect("second update");
+        let settings = load(&home).expect("settings");
+        assert_eq!(settings.observability["developer_mode"], json!(true));
+        assert_eq!(settings.branding["product_name"], json!("Concurrent"));
+    }
+
+    #[test]
+    fn update_finishes_legacy_migration_before_locking() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        home.initialize().expect("initialize");
+        std::fs::write(
+            home.root().join("settings.json"),
+            serde_json::to_vec(&json!({"legacy_section":{"kept":true}})).expect("json"),
+        )
+        .expect("legacy settings");
+
+        update(&home, |settings| {
+            settings
+                .branding
+                .insert("product_name".into(), json!("Migrated"));
+            Ok(())
+        })
+        .expect("update");
+
+        let settings = load(&home).expect("settings");
+        assert_eq!(settings.extra["legacy_section"]["kept"], json!(true));
+        assert_eq!(settings.branding["product_name"], json!("Migrated"));
     }
 
     #[test]

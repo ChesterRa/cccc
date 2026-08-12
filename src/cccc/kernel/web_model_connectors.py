@@ -156,8 +156,8 @@ def _read_connectors_unlocked(home: Optional[Path] = None) -> Dict[str, Dict[str
         return {}
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
-        return {}
+    except Exception as exc:
+        raise ValueError("web model connector store is invalid") from exc
     return _normalized_connector_map(raw)
 
 
@@ -299,15 +299,6 @@ def load_web_model_connectors(home: Optional[Path] = None) -> Dict[str, Dict[str
         release_lockfile(lock)
 
 
-def save_web_model_connectors(connectors: Dict[str, Dict[str, Any]], home: Optional[Path] = None) -> None:
-    _migrate_rust_settings_store(home)
-    lock = acquire_lockfile(_connectors_lock_path(home))
-    try:
-        _write_connectors_unlocked(connectors, home)
-    finally:
-        release_lockfile(lock)
-
-
 def _new_connector_id(existing: Dict[str, Dict[str, Any]]) -> str:
     while True:
         candidate = f"{_CONNECTOR_PREFIX}{secrets.token_hex(8)}"
@@ -424,6 +415,80 @@ def revoke_web_model_connector(connector_id: str, home: Optional[Path] = None) -
         return True
 
     return _mutate_web_model_connectors(_revoke, home)
+
+
+def retire_web_model_connectors_for_actor(
+    group_id: str,
+    actor_id: str,
+    home: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    gid = str(group_id or "").strip()
+    aid = str(actor_id or "").strip()
+    if not gid or not aid:
+        return []
+
+    def _retire(connectors: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+        retired: List[Dict[str, Any]] = []
+        now = utc_now_iso()
+        for connector_id, entry in connectors.items():
+            if not isinstance(entry, dict) or bool(entry.get("revoked")):
+                continue
+            if str(entry.get("group_id") or "").strip() != gid:
+                continue
+            if str(entry.get("actor_id") or "").strip() != aid:
+                continue
+            retired.append(dict(entry))
+            entry["revoked"] = True
+            entry["updated_at"] = now
+            connectors[connector_id] = entry
+        return retired
+
+    return _mutate_web_model_connectors(_retire, home)
+
+
+def retire_web_model_connectors_for_group(
+    group_id: str,
+    home: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    gid = str(group_id or "").strip()
+    if not gid:
+        return []
+
+    def _retire(connectors: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+        retired: List[Dict[str, Any]] = []
+        now = utc_now_iso()
+        for connector_id, entry in connectors.items():
+            if not isinstance(entry, dict) or bool(entry.get("revoked")):
+                continue
+            if str(entry.get("group_id") or "").strip() != gid:
+                continue
+            retired.append(dict(entry))
+            entry["revoked"] = True
+            entry["updated_at"] = now
+            connectors[connector_id] = entry
+        return retired
+
+    return _mutate_web_model_connectors(_retire, home)
+
+
+def restore_web_model_connectors(
+    entries: List[Dict[str, Any]],
+    home: Optional[Path] = None,
+) -> None:
+    snapshots = [dict(entry) for entry in entries if isinstance(entry, dict)]
+    if not snapshots:
+        return
+
+    def _restore(connectors: Dict[str, Dict[str, Any]]) -> None:
+        for entry in snapshots:
+            connector_id = str(entry.get("connector_id") or "").strip()
+            normalized = _normalize_entry(connector_id, entry)
+            if normalized is None:
+                raise ValueError("invalid web-model connector snapshot")
+            connectors[connector_id] = normalized
+        _collapse_active_connector_duplicates(connectors)
+
+    _mutate_web_model_connectors(_restore, home)
 
 
 def record_web_model_connector_activity(

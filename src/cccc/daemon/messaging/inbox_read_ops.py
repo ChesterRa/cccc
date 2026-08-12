@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+from ...kernel.actors import find_actor
 from ...kernel.group import load_group
 from ...kernel.inbox import (
+    actor_existed_at_event,
     find_event,
     get_cursor,
     has_chat_ack,
@@ -42,8 +44,11 @@ def handle_inbox_list(args: Dict[str, Any]) -> DaemonResponse:
         require_inbox_permission(group, by=by, target_actor_id=actor_id)
     except Exception as e:
         return _error("permission_denied", str(e))
-    messages = unread_messages(group, actor_id=actor_id, limit=limit, kind_filter=kind_filter)  # type: ignore
-    cur_event_id, cur_ts = get_cursor(group, actor_id)
+    try:
+        messages = unread_messages(group, actor_id=actor_id, limit=limit, kind_filter=kind_filter)  # type: ignore
+        cur_event_id, cur_ts = get_cursor(group, actor_id)
+    except Exception as e:
+        return _error("io_error", str(e))
     return DaemonResponse(ok=True, result={"messages": messages, "cursor": {"event_id": cur_event_id, "ts": cur_ts}})
 
 
@@ -70,18 +75,40 @@ def handle_inbox_mark_read(args: Dict[str, Any]) -> DaemonResponse:
         return _error("event_not_found", f"event not found: {event_id}")
     if str(event.get("kind") or "") not in ("chat.message", "system.notify"):
         return _error("invalid_event_kind", "event kind must be chat.message or system.notify")
+    if str(event.get("by") or "").strip() == actor_id:
+        return _error(
+            "event_not_for_actor", f"event is not addressed to actor: {actor_id}"
+        )
     if not is_message_for_actor(group, actor_id=actor_id, event=event):
-        return _error("event_not_for_actor", f"event is not addressed to actor: {actor_id}")
+        return _error(
+            "event_not_for_actor", f"event is not addressed to actor: {actor_id}"
+        )
+    if actor_id != "user":
+        actor = find_actor(group, actor_id)
+        if not isinstance(actor, dict) or not actor_existed_at_event(
+            group, actor=actor, event=event
+        ):
+            return _error(
+                "event_not_for_actor",
+                f"event predates the current actor generation: {actor_id}",
+            )
     ts = str(event.get("ts") or "")
-    cursor = set_cursor(group, actor_id, event_id=event_id, ts=ts)
-    read_event = append_event(
-        group.ledger_path,
-        kind="chat.read",
-        group_id=group.group_id,
-        scope_key="",
-        by=by,
-        data={"actor_id": actor_id, "event_id": event_id},
-    )
+    try:
+        # Validate the shared cursor document before committing the read event.
+        # The ledger append comes before cursor advancement so a failed append
+        # cannot silently remove the message from the actor's unread inbox.
+        get_cursor(group, actor_id)
+        read_event = append_event(
+            group.ledger_path,
+            kind="chat.read",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={"actor_id": actor_id, "event_id": event_id},
+        )
+        cursor = set_cursor(group, actor_id, event_id=event_id, ts=ts)
+    except Exception as e:
+        return _error("io_error", str(e))
     ack_event: Optional[dict[str, Any]] = None
     try:
         if by == actor_id and str(event.get("kind") or "") == "chat.message":

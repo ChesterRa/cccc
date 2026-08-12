@@ -36,14 +36,12 @@ fn actor_lifecycle_controls_terminal_process() {
         )
         .ok
     );
-    assert!(
-        call(
-            &home,
-            "actor_start",
-            json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-        )
-        .ok
+    let started = call(
+        &home,
+        "actor_start",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
     );
+    assert_eq!(started.result["event"]["kind"], "actor.start");
     let groups = call(&home, "group_list", json!({}));
     let summary = groups.result["groups"]
         .as_array()
@@ -84,6 +82,17 @@ fn actor_lifecycle_controls_terminal_process() {
             .map(|error| error.code.as_str()),
         Some("invalid_args")
     );
+    for invalid_size in [
+        json!({"group_id":group_id,"actor_id":"peer1","cols":9,"rows":1}),
+        json!({"group_id":group_id,"actor_id":"peer1"}),
+        json!({"group_id":group_id,"actor_id":"peer1","cols":70_000,"rows":24}),
+    ] {
+        let response = raw_call(&home, "term_resize", invalid_size);
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code.as_str()),
+            Some("invalid_size")
+        );
+    }
     let resized = call(
         &home,
         "term_resize",
@@ -102,6 +111,12 @@ fn actor_lifecycle_controls_terminal_process() {
         )
         .ok
     );
+    let restarted = call(
+        &home,
+        "actor_restart",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
+    );
+    assert_eq!(restarted.result["event"]["kind"], "actor.restart");
     assert!(
         call(
             &home,
@@ -159,14 +174,12 @@ fn actor_lifecycle_controls_terminal_process() {
         working.result["actors"][0]["effective_working_reason"],
         "codex_hook_pending"
     );
-    assert!(
-        call(
-            &home,
-            "actor_stop",
-            json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
-        )
-        .ok
+    let stopped = call(
+        &home,
+        "actor_stop",
+        json!({"group_id":group_id,"actor_id":"peer1","by":"user"}),
     );
+    assert_eq!(stopped.result["event"]["kind"], "actor.stop");
     let actors = call(
         &home,
         "actor_list",
@@ -207,15 +220,118 @@ fn actor_lifecycle_controls_terminal_process() {
         .ok
     );
     assert!(cccc_runtime::status(&group_id, "peer-remove").is_ok());
+    let removed = call(
+        &home,
+        "actor_remove",
+        json!({"group_id":group_id,"actor_id":"peer-remove","by":"user"}),
+    );
+    assert_eq!(removed.result["actor_id"], "peer-remove");
+    assert_eq!(removed.result["event"]["kind"], "actor.remove");
+    assert!(cccc_runtime::status(&group_id, "peer-remove").is_err());
+}
+
+#[test]
+fn terminal_operations_distinguish_invalid_targets_from_inactive_pty_sessions() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
+    home.initialize().expect("initialize");
+    let created = call(
+        &home,
+        "group_create",
+        json!({"title":"terminal-targets","by":"user"}),
+    );
+    let group_id = created.result["group"]["group_id"]
+        .as_str()
+        .expect("group id")
+        .to_owned();
     assert!(
         call(
             &home,
-            "actor_remove",
-            json!({"group_id":group_id,"actor_id":"peer-remove","by":"user"}),
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":"pty-stopped",
+                "runner":"pty",
+                "runtime":"codex",
+                "by":"user"
+            }),
         )
         .ok
     );
-    assert!(cccc_runtime::status(&group_id, "peer-remove").is_err());
+    assert!(
+        call(
+            &home,
+            "actor_add",
+            json!({
+                "group_id":group_id,
+                "actor_id":"headless",
+                "runner":"headless",
+                "runtime":"web_model",
+                "by":"user"
+            }),
+        )
+        .ok
+    );
+
+    let args = |op: &str, target_group: &str, actor_id: &str| {
+        let mut args = json!({"group_id":target_group,"actor_id":actor_id})
+            .as_object()
+            .cloned()
+            .expect("args");
+        if op == "terminal_since" {
+            args.insert("after".into(), json!(0));
+        }
+        if op == "term_resize" {
+            args.insert("cols".into(), json!(80));
+            args.insert("rows".into(), json!(24));
+        }
+        Value::Object(args)
+    };
+    let operations = [
+        "terminal_tail",
+        "terminal_snapshot",
+        "terminal_replay",
+        "terminal_history",
+        "terminal_since",
+        "terminal_clear",
+        "term_resize",
+    ];
+
+    for op in operations {
+        for (target_group, actor_id, expected) in [
+            ("missing-group", "missing", "group_not_found"),
+            (group_id.as_str(), "missing", "actor_not_found"),
+            (group_id.as_str(), "headless", "not_pty_actor"),
+        ] {
+            let response = raw_call(&home, op, args(op, target_group, actor_id));
+            assert_eq!(
+                response.error.as_ref().map(|error| error.code.as_str()),
+                Some(expected),
+                "{op} should reject {target_group}/{actor_id}: {response:?}"
+            );
+        }
+    }
+
+    for op in [
+        "terminal_tail",
+        "terminal_snapshot",
+        "terminal_history",
+        "terminal_since",
+    ] {
+        let response = raw_call(&home, op, args(op, &group_id, "pty-stopped"));
+        assert!(
+            response.ok,
+            "{op} should return an empty history: {response:?}"
+        );
+    }
+    for op in ["terminal_replay", "terminal_clear", "term_resize"] {
+        let response = raw_call(&home, op, args(op, &group_id, "pty-stopped"));
+        assert_eq!(
+            response.error.as_ref().map(|error| error.code.as_str()),
+            Some("actor_not_running"),
+            "{op} requires an active PTY session: {response:?}"
+        );
+    }
 }
 
 #[test]
@@ -398,6 +514,12 @@ fn actor_update_enable_rolls_back_when_runtime_start_fails() {
             .iter()
             .any(|event| { event.kind == "actor.update" && event.data["actor_id"] == "broken" })
     );
+    let recovered = call(
+        &home,
+        "actor_stop",
+        json!({"group_id":group_id,"actor_id":"broken","by":"user"}),
+    );
+    assert_eq!(recovered.result["event"]["kind"], "actor.stop");
     call(
         &home,
         "group_stop",

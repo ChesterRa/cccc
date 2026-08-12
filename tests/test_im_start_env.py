@@ -48,6 +48,7 @@ def test_im_start_drops_inherited_python_ca_bundle_env(tmp_path, monkeypatch) ->
         patch("cccc.cli.im_cmds.load_group", return_value=group),
         patch("cccc.cli.im_cmds._im_find_bridge_pid", return_value=None),
         patch("cccc.cli.im_cmds._im_find_bridge_pids_by_script", return_value=[]),
+        patch("cccc.cli.im_cmds.set_im_enabled"),
         patch("cccc.cli.im_cmds.subprocess.Popen", side_effect=fake_popen),
     ):
         rc = cmd_im_start(argparse.Namespace(group="g_env"))
@@ -65,11 +66,13 @@ def test_im_start_drops_inherited_python_ca_bundle_env(tmp_path, monkeypatch) ->
 def test_shared_im_bridge_env_sanitizer_drops_ca_bundle_overrides() -> None:
     from cccc.daemon.im.im_bridge_ops import sanitize_im_bridge_env
 
-    env = sanitize_im_bridge_env({
-        "SSL_CERT_FILE": "/bad/cert.pem",
-        "REQUESTS_CA_BUNDLE": "/bad/requests.pem",
-        "CURL_CA_BUNDLE": "/bad/curl.pem",
-        "DINGTALK_APP_KEY": "app-key",
-    })
+    env = sanitize_im_bridge_env(
+        {
+            "SSL_CERT_FILE": "/bad/cert.pem",
+            "REQUESTS_CA_BUNDLE": "/bad/requests.pem",
+            "CURL_CA_BUNDLE": "/bad/curl.pem",
+            "DINGTALK_APP_KEY": "app-key",
+        }
+    )
 
     assert env == {"DINGTALK_APP_KEY": "app-key"}

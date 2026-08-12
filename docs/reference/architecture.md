@@ -150,6 +150,7 @@ write directions, including group-copy packages.
 | `actor.start` | Start an actor runtime |
 | `actor.stop` | Stop an actor runtime |
 | `actor.restart` | Restart an actor runtime |
+| `actor.new_session` | Start a fresh provider session for an actor |
 | `actor.remove` | Remove an actor |
 | `actor.activity` | Runtime activity/status snapshot |
 | `context.sync` | Context/control-plane sync event |

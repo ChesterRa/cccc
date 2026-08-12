@@ -1,8 +1,10 @@
 use cccc_contracts::utc_now;
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -78,6 +80,24 @@ pub struct CreateSpec {
     pub scope_key: String,
     pub allowed_paths: Vec<String>,
     pub expires_in_seconds: i64,
+}
+
+pub struct AdvisoryPermit {
+    pub session: Session,
+    path: PathBuf,
+    _lock: File,
+}
+
+impl AdvisoryPermit {
+    pub fn record_message(mut self, message_id: &str) -> io::Result<bool> {
+        if !self.session.sent_message_ids.insert(message_id.into()) {
+            return Ok(false);
+        }
+        self.session.canonicalize();
+        self.session.updated_at = utc_now();
+        write_json(&self.path, &self.session)?;
+        Ok(true)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -172,24 +192,25 @@ impl Store {
         let session = self
             .get(sid)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "session not found"))?;
-        if !session.revoked_at.is_empty() {
-            return Err(io::Error::other("session revoked"));
-        }
-        let expires =
-            chrono::DateTime::parse_from_rfc3339(&session.expires_at).map_err(io::Error::other)?;
-        if expires < chrono::Utc::now() {
-            return Err(io::Error::other("session expired"));
-        }
-        if digest(secret) != session.credential_digest() {
-            return Err(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "invalid session secret",
-            ));
-        }
+        validate_authorization(&session, secret)?;
         Ok(session)
     }
 
+    pub fn authorize_advisory(&self, sid: &str, secret: &str) -> io::Result<AdvisoryPermit> {
+        let lock = self.acquire_session_lock(sid)?;
+        let session = self
+            .get(sid)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "session not found"))?;
+        validate_authorization(&session, secret)?;
+        Ok(AdvisoryPermit {
+            session,
+            path: self.path(sid),
+            _lock: lock,
+        })
+    }
+
     pub fn revoke(&self, sid: &str) -> io::Result<bool> {
+        let _lock = self.acquire_session_lock(sid)?;
         let Some(mut session) = self.get(sid)? else {
             return Ok(false);
         };
@@ -201,6 +222,7 @@ impl Store {
     }
 
     pub fn record_message(&self, sid: &str, message_id: &str) -> io::Result<bool> {
+        let _lock = self.acquire_session_lock(sid)?;
         let mut session = self
             .get(sid)?
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "session not found"))?;
@@ -211,6 +233,19 @@ impl Store {
         session.updated_at = utc_now();
         self.save(&session)?;
         Ok(true)
+    }
+
+    fn acquire_session_lock(&self, sid: &str) -> io::Result<File> {
+        validate_sid(sid)?;
+        let path = self.dir().join(format!("{sid}.lock"));
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(path)?;
+        lock.lock_exclusive()?;
+        Ok(lock)
     }
 
     fn save(&self, session: &Session) -> io::Result<()> {
@@ -224,6 +259,24 @@ impl Store {
     fn dir(&self) -> PathBuf {
         self.home.root().join("state/nomcp_sessions")
     }
+}
+
+fn validate_authorization(session: &Session, secret: &str) -> io::Result<()> {
+    if !session.revoked_at.is_empty() {
+        return Err(io::Error::other("session revoked"));
+    }
+    let expires =
+        chrono::DateTime::parse_from_rfc3339(&session.expires_at).map_err(io::Error::other)?;
+    if expires < chrono::Utc::now() {
+        return Err(io::Error::other("session expired"));
+    }
+    if digest(secret) != session.credential_digest() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "invalid session secret",
+        ));
+    }
+    Ok(())
 }
 
 fn normalize_paths(paths: Vec<String>) -> io::Result<Vec<String>> {
@@ -264,4 +317,75 @@ fn preview(secret: &str) -> String {
         return "****".into();
     }
     format!("{}...{}", &secret[..7], &secret[secret.len() - 4..])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Scope, group_scope};
+    use fs2::FileExt;
+    use std::fs::OpenOptions;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    #[test]
+    fn record_message_waits_for_the_shared_session_lock() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("repo");
+        let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
+        let groups = GroupStore::new(home.clone()).expect("groups");
+        let group = groups.create("nomcp", "").expect("group");
+        group_scope::attach(
+            &groups,
+            &group.group_id,
+            Scope {
+                scope_key: "scope_repo".into(),
+                url: repo.to_string_lossy().into_owned(),
+                label: "repo".into(),
+                git_remote: String::new(),
+            },
+        )
+        .expect("attach");
+        let store = Store::new(home).expect("store");
+        let created = store
+            .create(CreateSpec {
+                group_id: group.group_id,
+                title: String::new(),
+                brief: String::new(),
+                reply_to_event_id: String::new(),
+                recipient: "user".into(),
+                scope_key: "scope_repo".into(),
+                allowed_paths: Vec::new(),
+                expires_in_seconds: 600,
+            })
+            .expect("session");
+        let lock_path = store.dir().join(format!("{}.lock", created.session.sid));
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(lock_path)
+            .expect("lock file");
+        lock.lock_exclusive().expect("hold Python-compatible lock");
+        let sid = created.session.sid;
+        let writer = store.clone();
+        let (tx, rx) = mpsc::channel();
+        let task = std::thread::spawn(move || {
+            tx.send(writer.record_message(&sid, "msg-1"))
+                .expect("send result");
+        });
+
+        let blocked = rx.recv_timeout(Duration::from_millis(100)).is_err();
+        FileExt::unlock(&lock).expect("unlock");
+        if blocked {
+            rx.recv_timeout(Duration::from_secs(2))
+                .expect("writer resumed")
+                .expect("record message");
+        }
+        task.join().expect("writer");
+
+        assert!(blocked, "Rust mutation must honor the shared session lock");
+    }
 }

@@ -2,28 +2,29 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Sequence
+import copy
+from typing import Any, Callable, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import find_actor, is_internal_actor, is_supported_internal_actor, list_actors, update_actor
-from ...kernel.context import ContextStorage
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
-from ...kernel.runtime import runtime_start_preflight_error
-from ...kernel.runtime_state_source import actor_uses_codex_app_server_state
 from ..claude_app_sessions import SUPERVISOR as claude_app_supervisor
 from ..codex_app_sessions import SUPERVISOR as codex_app_supervisor
-from ..mcp_install import prepare_runtime_mcp_env
-from ..runtime_session_ops import remove_runtime_session, start_pty_actor_with_runtime_resume
+from ..runtime_session_ops import (
+    read_runtime_session,
+    remove_runtime_session,
+    runtime_session_path,
+    write_runtime_session,
+)
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
-from .actor_runtime_ops import model_from_runtime_command, resolve_actor_launch_spec
+from .actor_runtime_ops import actor_runtime_running, stop_actor_runtime_handles
 from .actor_profile_runtime import ActorProfileAccessDeniedError, resolve_linked_actor_before_start
 
-_NEW_SESSION_RUNTIMES = frozenset({"claude", "codex", "grok"})
+_NEW_SESSION_RUNTIMES = frozenset({"antigravity", "claude", "codex", "grok"})
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -44,6 +45,59 @@ def _unsupported_internal_actor_error(group_id: str, actor_id: str, actor: Dict[
             "internal_kind": str(actor.get("internal_kind") or "").strip(),
         },
     )
+
+
+def _restore_actor_persistent_state(
+    group: Any,
+    actor_id: str,
+    *,
+    group_doc: Dict[str, Any],
+    private_env: Dict[str, str],
+    update_actor_private_env: Callable[..., Dict[str, str]],
+) -> list[str]:
+    failures: list[str] = []
+    try:
+        group.doc = copy.deepcopy(group_doc)
+        group.save()
+    except Exception as error:
+        failures.append(f"group: {error}")
+    try:
+        update_actor_private_env(
+            group.group_id,
+            actor_id,
+            set_vars=dict(private_env),
+            unset_keys=[],
+            clear=True,
+        )
+    except Exception as error:
+        failures.append(f"private_env: {error}")
+    return failures
+
+
+def _error_after_rollback(
+    code: str,
+    message: str,
+    failures: list[str],
+    *,
+    details: Optional[Dict[str, Any]] = None,
+) -> DaemonResponse:
+    if not failures:
+        return _error(code, message, details=details)
+    return _error("rollback_failed", f"{message}; rollback failed: {'; '.join(failures)}")
+
+
+def _classify_start_failure(message: str, *, default_code: str) -> tuple[str, str]:
+    if message == "no active scope for group":
+        return "missing_project_root", "missing project root for group (no active scope)"
+    if message.startswith("scope not attached:"):
+        return "scope_not_attached", message
+    if message.startswith("project root path does not exist:"):
+        return "invalid_project_root", "project root path does not exist"
+    if message.startswith("unsupported runtime:"):
+        return "unsupported_runtime", message
+    if message == "custom runtime requires a command (PTY runner)":
+        return "missing_command", message
+    return default_code, message
 
 
 def _stop_actor_runtime_handles(
@@ -67,9 +121,9 @@ def handle_actor_start(
     foreman_id: Callable[[Any], str],
     maybe_reset_automation_on_foreman_change: Callable[..., None],
     start_actor_process: Callable[..., Dict[str, Any]],
-    effective_runner_kind: Callable[[str], str],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
     load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    load_actor_private_env: Callable[[str, str], Dict[str, str]],
     update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
@@ -85,27 +139,35 @@ def handle_actor_start(
     caller_id = str(args.get("caller_id") or "").strip()
     is_admin = coerce_bool(args.get("is_admin"), default=not caller_context_explicit)
     previous_actor = find_actor(group, actor_id)
-    previous_enabled = (
-        coerce_bool(previous_actor.get("enabled"), default=True)
-        if isinstance(previous_actor, dict)
-        else None
-    )
-    enabled_was_updated = False
-
-    def _restore_previous_enabled() -> None:
-        if not enabled_was_updated or previous_enabled is None:
-            return
-        try:
-            update_actor(group, actor_id, {"enabled": previous_enabled})
-        except Exception:
-            pass
-
     try:
         require_actor_permission(group, by=by, action="actor.start", target_actor_id=actor_id)
+    except Exception as error:
+        return _error("actor_start_failed", str(error))
+    before_group_doc = copy.deepcopy(group.doc)
+    try:
+        before_private_env = load_actor_private_env(group_id, actor_id)
+    except Exception as error:
+        return _error("actor_start_failed", str(error))
+
+    def _rollback(
+        code: str,
+        message: str,
+        *,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> DaemonResponse:
+        failures = _restore_actor_persistent_state(
+            group,
+            actor_id,
+            group_doc=before_group_doc,
+            private_env=before_private_env,
+            update_actor_private_env=update_actor_private_env,
+        )
+        return _error_after_rollback(code, message, failures, details=details)
+
+    try:
         if _is_unsupported_internal_actor(previous_actor):
             return _unsupported_internal_actor_error(group.group_id, actor_id, previous_actor)
         actor = update_actor(group, actor_id, {"enabled": True})
-        enabled_was_updated = True
         actor = resolve_linked_actor_before_start(
             group,
             actor_id,
@@ -116,13 +178,12 @@ def handle_actor_start(
             is_admin=is_admin,
         )
     except Exception as e:
-        _restore_previous_enabled()
         msg = str(e)
         if "profile not found:" in msg:
-            return _error("profile_not_found", msg)
+            return _rollback("profile_not_found", msg)
         if isinstance(e, ActorProfileAccessDeniedError):
-            return _error("permission_denied", msg)
-        return _error("actor_start_failed", msg)
+            return _rollback("permission_denied", msg)
+        return _rollback("actor_start_failed", msg)
 
     cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
     env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
@@ -141,42 +202,19 @@ def handle_actor_start(
             is_admin=is_admin,
         )
     except Exception as e:
-        _restore_previous_enabled()
-        return _error("actor_start_failed", str(e))
+        return _rollback("actor_start_failed", str(e))
     if not start_result["success"]:
-        _restore_previous_enabled()
         message = str(start_result.get("error") or "unknown error")
         if message == "no active scope for group":
-            return _error(
+            return _rollback(
                 "missing_project_root",
                 "missing project root for group (no active scope)",
-                details={"hint": "Attach a project root first (e.g. cccc attach <path> --group <id>)"},
             )
         if message.startswith("scope not attached:"):
-            scope_key = message.partition(":")[2].strip()
-            return _error(
-                "scope_not_attached",
-                message,
-                details={
-                    "group_id": group.group_id,
-                    "actor_id": actor_id,
-                    "scope_key": scope_key,
-                    "hint": "Attach this scope to the group (cccc attach <path> --group <id>)",
-                },
-            )
+            return _rollback("scope_not_attached", message)
         if message.startswith("project root path does not exist:"):
-            return _error(
-                "invalid_project_root",
-                "project root path does not exist",
-                details={
-                    "group_id": group.group_id,
-                    "actor_id": actor_id,
-                    "scope_key": str(actor.get("default_scope_key") or group.doc.get("active_scope_key") or "").strip(),
-                    "path": message.partition(":")[2].strip(),
-                    "hint": "Re-attach a valid project root (cccc attach <path> --group <id>)",
-                },
-            )
-        return _error("actor_start_failed", message)
+            return _rollback("invalid_project_root", "project root path does not exist")
+        return _rollback("actor_start_failed", message)
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
     result: Dict[str, Any] = {"actor": actor, "event": start_result["event"]}
@@ -190,9 +228,12 @@ def handle_actor_stop(
     *,
     foreman_id: Callable[[Any], str],
     maybe_reset_automation_on_foreman_change: Callable[..., None],
+    start_actor_process: Callable[..., Dict[str, Any]],
     effective_runner_kind: Callable[[str], str],
     remove_headless_state: Callable[[str, str], None],
     remove_pty_state_if_pid: Callable[..., None],
+    load_actor_private_env: Callable[[str, str], Dict[str, str]],
+    update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     actor_id = str(args.get("actor_id") or "").strip()
@@ -203,39 +244,32 @@ def handle_actor_stop(
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
     before_foreman = foreman_id(group)
+    before_group_doc: Optional[Dict[str, Any]] = None
+    before_private_env: Dict[str, str] = {}
+    runtime_was_running = False
+    actor: Dict[str, Any] = {}
     try:
         require_actor_permission(group, by=by, action="actor.stop", target_actor_id=actor_id)
         current_actor = find_actor(group, actor_id)
+        if not isinstance(current_actor, dict):
+            raise ValueError(f"actor not found: {actor_id}")
+        before_group_doc = copy.deepcopy(group.doc)
+        before_private_env = load_actor_private_env(group_id, actor_id)
+        runtime_was_running = actor_runtime_running(
+            group.group_id,
+            current_actor,
+            effective_runner_kind=effective_runner_kind,
+        )
         if isinstance(current_actor, dict) and is_internal_actor(current_actor):
             actor = dict(current_actor)
         else:
             actor = update_actor(group, actor_id, {"enabled": False})
-        runner_kind = str(actor.get("runner") or "pty").strip()
-        runner_effective = effective_runner_kind(runner_kind)
-        runtime = str(actor.get("runtime") or "codex").strip() or "codex"
-        if runtime == "web_model" and runner_effective == "headless":
-            remove_headless_state(group.group_id, actor_id)
-            remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-        elif runtime == "codex" and runner_effective == "headless":
-            codex_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
-            remove_headless_state(group.group_id, actor_id)
-            remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-        elif runtime == "claude" and runner_effective == "headless":
-            claude_app_supervisor.stop_actor(group_id=group.group_id, actor_id=actor_id)
-            remove_headless_state(group.group_id, actor_id)
-            remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-        elif runner_effective == "headless":
-            headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
-            remove_headless_state(group.group_id, actor_id)
-            remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-        else:
-            pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
-            remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-            remove_headless_state(group.group_id, actor_id)
-    except Exception as e:
-        return _error("actor_stop_failed", str(e))
-
-    try:
+        _stop_actor_runtime_handles(
+            group.group_id,
+            actor_id,
+            remove_headless_state=remove_headless_state,
+            remove_pty_state_if_pid=remove_pty_state_if_pid,
+        )
         any_enabled = any(
             coerce_bool(item.get("enabled"), default=True)
             for item in list_actors(group)
@@ -244,19 +278,44 @@ def handle_actor_stop(
         if not any_enabled:
             group.doc["running"] = False
             group.save()
-    except Exception:
-        pass
+        event = append_event(
+            group.ledger_path,
+            kind="actor.stop",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={"actor_id": actor_id},
+        )
+    except Exception as error:
+        if before_group_doc is None:
+            return _error("actor_stop_failed", str(error))
+        failures = _restore_actor_persistent_state(
+            group,
+            actor_id,
+            group_doc=before_group_doc,
+            private_env=before_private_env,
+            update_actor_private_env=update_actor_private_env,
+        )
+        if runtime_was_running:
+            restored_actor = find_actor(group, actor_id)
+            if not isinstance(restored_actor, dict):
+                failures.append("runtime: restored actor is missing")
+            else:
+                restart = start_actor_process(
+                    group,
+                    actor_id,
+                    command=list(restored_actor.get("command") or []),
+                    env=dict(restored_actor.get("env") or {}),
+                    runner=str(restored_actor.get("runner") or "pty"),
+                    runtime=str(restored_actor.get("runtime") or "codex"),
+                    by="system",
+                    launch_only=True,
+                )
+                if not restart.get("success"):
+                    failures.append(f"runtime: {restart.get('error') or 'failed to restart'}")
+        return _error_after_rollback("actor_stop_failed", str(error), failures)
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
-    event = append_event(
-        group.ledger_path,
-        kind="actor.stop",
-        group_id=group.group_id,
-        scope_key="",
-        by=by,
-        data={"actor_id": actor_id},
-    )
-
     from ...kernel.events import publish_event
     publish_event("actor.stop", {"group_id": group.group_id, "actor_id": actor_id})
     return DaemonResponse(ok=True, result={"actor": actor, "event": event})
@@ -267,24 +326,14 @@ def handle_actor_restart(
     *,
     foreman_id: Callable[[Any], str],
     maybe_reset_automation_on_foreman_change: Callable[..., None],
+    start_actor_process: Callable[..., Dict[str, Any]],
     effective_runner_kind: Callable[[str], str],
     remove_headless_state: Callable[[str, str], None],
     remove_pty_state_if_pid: Callable[..., None],
-    clear_preamble_sent: Callable[[Any, str], None],
-    throttle_reset_actor: Callable[..., None],
-    find_scope_url: Callable[[Any, str], str],
-    merge_actor_env_with_private: Callable[[str, str, Dict[str, Any]], Dict[str, Any]],
-    inject_actor_context_env: Callable[..., Dict[str, Any]],
-    normalize_runtime_command: Callable[[str, list[str]], list[str]],
-    prepare_pty_env: Callable[[Dict[str, Any]], Dict[str, Any]],
-    pty_backlog_bytes: Callable[[], int],
-    ensure_mcp_installed: Callable[..., bool],
-    write_headless_state: Callable[[str, str], None],
-    write_pty_state: Callable[..., None],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
     load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    load_actor_private_env: Callable[[str, str], Dict[str, str]],
     update_actor_private_env: Callable[..., Dict[str, str]],
-    supported_runtimes: Sequence[str],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     actor_id = str(args.get("actor_id") or "").strip()
@@ -300,9 +349,28 @@ def handle_actor_restart(
     is_admin = coerce_bool(args.get("is_admin"), default=not caller_context_explicit)
     try:
         require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
-        current_actor = find_actor(group, actor_id)
-        if _is_unsupported_internal_actor(current_actor):
-            return _unsupported_internal_actor_error(group.group_id, actor_id, current_actor)
+    except Exception as error:
+        return _error("actor_restart_failed", str(error))
+    current_actor = find_actor(group, actor_id)
+    if not isinstance(current_actor, dict):
+        return _error("actor_restart_failed", f"actor not found: {actor_id}")
+    if _is_unsupported_internal_actor(current_actor):
+        return _unsupported_internal_actor_error(group.group_id, actor_id, current_actor)
+    before_group_doc = copy.deepcopy(group.doc)
+    try:
+        before_private_env = load_actor_private_env(group_id, actor_id)
+    except Exception as error:
+        return _error("actor_restart_failed", str(error))
+    runtime_was_running = actor_runtime_running(
+        group.group_id,
+        current_actor,
+        effective_runner_kind=effective_runner_kind,
+    )
+    replacement_started = False
+    actor = dict(current_actor)
+    runner_effective = effective_runner_kind(str(actor.get("runner") or "pty"))
+    failure_code = "actor_restart_failed"
+    try:
         actor = update_actor(group, actor_id, {"enabled": True})
         actor = resolve_linked_actor_before_start(
             group,
@@ -319,232 +387,84 @@ def handle_actor_restart(
             remove_headless_state=remove_headless_state,
             remove_pty_state_if_pid=remove_pty_state_if_pid,
         )
-        clear_preamble_sent(group, actor_id)
-        throttle_reset_actor(group.group_id, actor_id, keep_pending=True)
-    except Exception as e:
-        msg = str(e)
-        if "profile not found:" in msg:
-            return _error("profile_not_found", msg)
-        if isinstance(e, ActorProfileAccessDeniedError):
-            return _error("permission_denied", msg)
-        return _error("actor_restart_failed", msg)
-
-    runner_effective = effective_runner_kind(str(actor.get("runner") or "pty"))
-    if coerce_bool(group.doc.get("running"), default=False):
-        try:
-            launch_spec = resolve_actor_launch_spec(
+        if coerce_bool(group.doc.get("running"), default=False):
+            started = start_actor_process(
                 group,
                 actor_id,
-                command=list(actor.get("command") or []) if isinstance(actor.get("command"), list) else [],
-                env=dict(actor.get("env") or {}) if isinstance(actor.get("env"), dict) else {},
+                command=list(actor.get("command") or []),
+                env=dict(actor.get("env") or {}),
                 runner=str(actor.get("runner") or "pty"),
                 runtime=str(actor.get("runtime") or "codex"),
-                find_scope_url=find_scope_url,
-                effective_runner_kind=effective_runner_kind,
-                normalize_runtime_command=normalize_runtime_command,
-                supported_runtimes=list(supported_runtimes),
+                by=by,
                 caller_id=caller_id,
                 is_admin=is_admin,
-                merge_actor_env_with_private=merge_actor_env_with_private,
+                launch_only=True,
+                launch_reason="actor_restart",
             )
-        except ValueError as e:
-            msg = str(e)
-            if msg == "no active scope for group":
-                return _error(
-                    "missing_project_root",
-                    "missing project root for group (no active scope)",
-                    details={"hint": "Attach a project root first (e.g. cccc attach <path> --group <id>)"},
+            if not started.get("success"):
+                message = str(started.get("error") or "unknown error")
+                failure_code, normalized = _classify_start_failure(
+                    message,
+                    default_code="actor_restart_failed",
                 )
-            if msg.startswith("scope not attached:"):
-                scope_key = msg.partition(":")[2].strip()
-                return _error(
-                    "scope_not_attached",
-                    msg,
-                    details={
-                        "group_id": group.group_id,
-                        "actor_id": actor_id,
-                        "scope_key": scope_key,
-                        "hint": "Attach this scope to the group (cccc attach <path> --group <id>)",
-                    },
-                )
-            if msg.startswith("project root path does not exist:"):
-                return _error(
-                    "invalid_project_root",
-                    "project root path does not exist",
-                    details={
-                        "group_id": group.group_id,
-                        "actor_id": actor_id,
-                        "scope_key": str(actor.get("default_scope_key") or group.doc.get("active_scope_key") or "").strip(),
-                        "path": msg.partition(":")[2].strip(),
-                        "hint": "Re-attach a valid project root (cccc attach <path> --group <id>)",
-                    },
-                )
-            if msg.startswith("unsupported runtime:"):
-                runtime = msg.partition(":")[2].strip()
-                return _error(
-                    "unsupported_runtime",
-                    msg,
-                    details={
-                        "group_id": group.group_id,
-                        "actor_id": actor_id,
-                        "runtime": runtime,
-                        "supported": list(supported_runtimes),
-                        "hint": "Change the actor runtime to a supported one.",
-                    },
-                )
-            if msg == "custom runtime requires a command (PTY runner)":
-                return _error(
-                    "missing_command",
-                    msg,
-                    details={
-                        "group_id": group.group_id,
-                        "actor_id": actor_id,
-                        "runtime": str(actor.get("runtime") or "codex").strip() or "codex",
-                        "hint": "Set actor.command (or switch runner to headless).",
-                    },
-                )
-            return _error("actor_restart_failed", msg)
-        cwd = launch_spec["cwd"]
-        runner_kind = str(launch_spec["runner"])
-        runner_effective = str(launch_spec["effective_runner"])
-        runtime = str(launch_spec["runtime"])
-        effective_env = dict(launch_spec["merged_env"])
-
-        def _launch_env() -> Dict[str, str]:
-            return prepare_runtime_mcp_env(
-                runtime,
-                inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id),
-            )
-
-        if runner_effective != "headless":
+                raise RuntimeError(normalized)
+            replacement_started = True
+            runner_effective = str(started.get("effective_runner") or runner_effective)
+        event = append_event(
+            group.ledger_path,
+            kind="actor.restart",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={
+                "actor_id": actor_id,
+                "runner": str(actor.get("runner") or "pty"),
+                "runner_effective": runner_effective,
+            },
+        )
+    except Exception as error:
+        failures: list[str] = []
+        if replacement_started:
             try:
-                mcp_env = _launch_env()
-                mcp_ready = bool(
-                    ensure_mcp_installed(
-                        runtime,
-                        cwd,
-                        env=mcp_env,
-                    )
+                stop_actor_runtime_handles(
+                    group.group_id,
+                    actor_id,
+                    actor,
+                    effective_runner_kind=effective_runner_kind,
                 )
-            except Exception as e:
-                return _error("actor_restart_failed", f"failed to install MCP: {e}")
-            if not mcp_ready:
-                return _error("actor_restart_failed", f"failed to install MCP for runtime: {runtime}")
-
-        try:
-            if runtime == "web_model" and runner_effective == "headless":
-                try:
-                    write_headless_state(group.group_id, actor_id)
-                except Exception:
-                    pass
-                try:
-                    from .web_model_browser_delivery import (
-                        schedule_web_model_browser_delivery,
-                        web_model_browser_delivery_enabled,
-                    )
-                    from .web_model_browser_session import (
-                        schedule_web_model_chatgpt_browser_session_warmup,
-                    )
-
-                    if web_model_browser_delivery_enabled(group.group_id, actor):
-                        schedule_web_model_chatgpt_browser_session_warmup(
-                            group_id=group.group_id,
-                            actor_id=actor_id,
-                            reason="actor_restart",
-                            retry_seconds=0.0,
-                        )
-                        schedule_web_model_browser_delivery(
-                            group_id=group.group_id,
-                            actor_id=actor_id,
-                        )
-                except Exception:
-                    pass
-            elif actor_uses_codex_app_server_state(actor):
-                session = codex_app_supervisor.start_pty_app_actor(
-                    group_id=group.group_id,
-                    actor_id=actor_id,
-                    cwd=cwd,
-                    env=_launch_env(),
-                    model=model_from_runtime_command(launch_spec["effective_command"]),
-                    remote_tui_base_command=list(launch_spec["effective_command"]),
-                    max_backlog_bytes=pty_backlog_bytes(),
-                )
-                try:
-                    write_pty_state(group.group_id, actor_id, pid=session.remote_tui_pid())
-                except Exception:
-                    pass
-            elif runtime == "codex" and runner_effective == "headless":
-                codex_app_supervisor.start_actor(
-                    group_id=group.group_id,
-                    actor_id=actor_id,
-                    cwd=cwd,
-                    env=_launch_env(),
-                    model=model_from_runtime_command(launch_spec["effective_command"]),
-                )
-            elif runtime == "claude" and runner_effective == "headless":
-                claude_app_supervisor.start_actor(
-                    group_id=group.group_id,
-                    actor_id=actor_id,
-                    cwd=cwd,
-                    env=_launch_env(),
-                    model=model_from_runtime_command(launch_spec["effective_command"]),
-                )
-            elif runner_effective == "headless":
-                headless_runner.SUPERVISOR.start_actor(
-                    group_id=group.group_id,
-                    actor_id=actor_id,
-                    cwd=cwd,
-                    env=_launch_env(),
-                )
-                try:
-                    write_headless_state(group.group_id, actor_id)
-                except Exception:
-                    pass
+            except Exception as rollback_error:
+                failures.append(f"replacement_runtime: {rollback_error}")
+        failures.extend(
+            _restore_actor_persistent_state(
+                group,
+                actor_id,
+                group_doc=before_group_doc,
+                private_env=before_private_env,
+                update_actor_private_env=update_actor_private_env,
+            )
+        )
+        if runtime_was_running:
+            restored_actor = find_actor(group, actor_id)
+            if not isinstance(restored_actor, dict):
+                failures.append("runtime: restored actor is missing")
             else:
-                session = start_pty_actor_with_runtime_resume(
-                    group_id=group.group_id,
-                    actor_id=actor_id,
-                    cwd=cwd,
-                    base_command=launch_spec["effective_command"],
-                    env=prepare_pty_env(_launch_env()),
-                    runtime=runtime,
-                    model=model_from_runtime_command(launch_spec["effective_command"]),
-                    max_backlog_bytes=pty_backlog_bytes(),
-                    runtime_start_preflight_error=runtime_start_preflight_error,
+                restored = start_actor_process(
+                    group,
+                    actor_id,
+                    command=list(restored_actor.get("command") or []),
+                    env=dict(restored_actor.get("env") or {}),
+                    runner=str(restored_actor.get("runner") or "pty"),
+                    runtime=str(restored_actor.get("runtime") or "codex"),
+                    by="system",
+                    launch_only=True,
                 )
-                try:
-                    write_pty_state(group.group_id, actor_id, pid=session.pid)
-                except Exception:
-                    pass
-        except Exception as e:
-            return _error("actor_restart_failed", str(e))
-        try:
-            ContextStorage(group).clear_agent_status_if_present(actor_id)
-        except Exception:
-            pass
-        try:
-            if str(group.doc.get("state") or "").strip() == "stopped":
-                group.doc["state"] = "active"
-            group.doc["running"] = True
-            group.save()
-        except Exception:
-            pass
+                if not restored.get("success"):
+                    failures.append(f"runtime: {restored.get('error') or 'failed to restore'}")
+        return _error_after_rollback(failure_code, str(error), failures)
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
-    event = append_event(
-        group.ledger_path,
-        kind="actor.restart",
-        group_id=group.group_id,
-        scope_key="",
-        by=by,
-        data={
-            "actor_id": actor_id,
-            "runner": str(actor.get("runner") or "pty"),
-            "runner_effective": runner_effective,
-        },
-    )
-
     from ...kernel.events import publish_event
+
     publish_event("actor.restart", {"group_id": group.group_id, "actor_id": actor_id})
     return DaemonResponse(ok=True, result={"actor": actor, "event": event})
 
@@ -555,10 +475,12 @@ def handle_actor_new_session(
     foreman_id: Callable[[Any], str],
     maybe_reset_automation_on_foreman_change: Callable[..., None],
     start_actor_process: Callable[..., Dict[str, Any]],
+    effective_runner_kind: Callable[[str], str],
     remove_headless_state: Callable[[str, str], None],
     remove_pty_state_if_pid: Callable[..., None],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
     load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    load_actor_private_env: Callable[[str, str], Dict[str, str]],
     update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
@@ -573,28 +495,36 @@ def handle_actor_new_session(
     caller_context_explicit = "caller_id" in args or "is_admin" in args
     caller_id = str(args.get("caller_id") or "").strip()
     is_admin = coerce_bool(args.get("is_admin"), default=not caller_context_explicit)
-    previous_actor = find_actor(group, actor_id)
-    previous_enabled = (
-        coerce_bool(previous_actor.get("enabled"), default=True)
-        if isinstance(previous_actor, dict)
-        else None
-    )
-    enabled_was_updated = False
-
-    def _restore_previous_enabled() -> None:
-        if not enabled_was_updated or previous_enabled is None:
-            return
-        try:
-            update_actor(group, actor_id, {"enabled": previous_enabled})
-        except Exception:
-            pass
-
     try:
         require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
-        if _is_unsupported_internal_actor(previous_actor):
-            return _unsupported_internal_actor_error(group.group_id, actor_id, previous_actor)
+    except Exception as error:
+        return _error("actor_new_session_failed", str(error))
+    current_actor = find_actor(group, actor_id)
+    if not isinstance(current_actor, dict):
+        return _error("actor_new_session_failed", f"actor not found: {actor_id}")
+    if _is_unsupported_internal_actor(current_actor):
+        return _unsupported_internal_actor_error(group.group_id, actor_id, current_actor)
+    before_group_doc = copy.deepcopy(group.doc)
+    try:
+        before_private_env = load_actor_private_env(group_id, actor_id)
+    except Exception as error:
+        return _error("actor_new_session_failed", str(error))
+    session_path = runtime_session_path(group_id, actor_id)
+    session_existed = session_path.is_file()
+    before_runtime_session = read_runtime_session(group_id, actor_id) if session_existed else {}
+    runtime_was_running = actor_runtime_running(
+        group.group_id,
+        current_actor,
+        effective_runner_kind=effective_runner_kind,
+    )
+    replacement_started = False
+    provider_rotated = False
+    actor = dict(current_actor)
+    runtime = str(actor.get("runtime") or "codex").strip().lower() or "codex"
+    runner_effective = effective_runner_kind(str(actor.get("runner") or "pty"))
+    failure_code = "actor_new_session_failed"
+    try:
         actor = update_actor(group, actor_id, {"enabled": True})
-        enabled_was_updated = True
         actor = resolve_linked_actor_before_start(
             group,
             actor_id,
@@ -606,60 +536,139 @@ def handle_actor_new_session(
         )
         runtime = str(actor.get("runtime") or "codex").strip().lower() or "codex"
         if runtime not in _NEW_SESSION_RUNTIMES:
-            _restore_previous_enabled()
-            return _error(
-                "unsupported_runtime",
-                "new session is supported only for claude, codex, and grok actors",
-                details={
-                    "group_id": group.group_id,
-                    "actor_id": actor_id,
-                    "runtime": runtime,
-                    "supported": sorted(_NEW_SESSION_RUNTIMES),
-                },
+            failure_code = "unsupported_runtime"
+            raise ValueError(
+                "new session is supported only for antigravity, claude, codex, and grok actors"
             )
-        _stop_actor_runtime_handles(
+        if runtime == "antigravity" and pty_runner.SUPERVISOR.actor_running(
             group.group_id,
             actor_id,
-            remove_headless_state=remove_headless_state,
-            remove_pty_state_if_pid=remove_pty_state_if_pid,
-        )
-        remove_runtime_session(group.group_id, actor_id)
-    except Exception as e:
-        _restore_previous_enabled()
-        msg = str(e)
-        if "profile not found:" in msg:
-            return _error("profile_not_found", msg)
-        if isinstance(e, ActorProfileAccessDeniedError):
-            return _error("permission_denied", msg)
-        return _error("actor_new_session_failed", msg)
+        ):
+            from ..messaging.delivery import pty_submit_text
 
-    cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
-    env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
-    runner_kind = str(actor.get("runner") or "pty").strip()
-    runtime = str(actor.get("runtime") or "codex").strip()
-    try:
-        start_result = start_actor_process(
-            group,
-            actor_id,
-            command=list(cmd or []),
-            env=dict(env or {}),
-            runner=runner_kind,
-            runtime=runtime,
+            if not pty_submit_text(
+                group,
+                actor_id=actor_id,
+                text="/clear",
+                wait_for_submit=True,
+            ):
+                raise RuntimeError("failed to start a fresh Antigravity conversation")
+            provider_rotated = True
+            rotation = "in_place"
+        else:
+            _stop_actor_runtime_handles(
+                group.group_id,
+                actor_id,
+                remove_headless_state=remove_headless_state,
+                remove_pty_state_if_pid=remove_pty_state_if_pid,
+            )
+            remove_runtime_session(group.group_id, actor_id)
+            started = start_actor_process(
+                group,
+                actor_id,
+                command=list(actor.get("command") or []),
+                env=dict(actor.get("env") or {}),
+                runner=str(actor.get("runner") or "pty"),
+                runtime=runtime,
+                by=by,
+                caller_id=caller_id,
+                is_admin=is_admin,
+                launch_only=True,
+                launch_reason="actor_new_session",
+            )
+            if not started.get("success"):
+                message = str(started.get("error") or "unknown error")
+                failure_code, normalized = _classify_start_failure(
+                    message,
+                    default_code="actor_new_session_failed",
+                )
+                raise RuntimeError(normalized)
+            replacement_started = True
+            runner_effective = str(started.get("effective_runner") or runner_effective)
+            if str(group.doc.get("state") or "").strip() == "stopped":
+                group.doc["state"] = "active"
+            group.doc["running"] = True
+            group.save()
+            rotation = ""
+        event_data: Dict[str, Any] = {
+            "actor_id": actor_id,
+            "runner": str(actor.get("runner") or "pty"),
+            "runner_effective": runner_effective,
+            "runtime": runtime,
+        }
+        if rotation:
+            event_data["rotation"] = rotation
+        event = append_event(
+            group.ledger_path,
+            kind="actor.new_session",
+            group_id=group.group_id,
+            scope_key="",
             by=by,
-            caller_id=caller_id,
-            is_admin=is_admin,
+            data=event_data,
         )
-    except Exception as e:
-        _restore_previous_enabled()
-        return _error("actor_new_session_failed", str(e))
-    if not start_result["success"]:
-        _restore_previous_enabled()
-        return _error("actor_new_session_failed", start_result.get("error") or "unknown error")
+    except Exception as error:
+        failures: list[str] = []
+        if replacement_started:
+            try:
+                stop_actor_runtime_handles(
+                    group.group_id,
+                    actor_id,
+                    actor,
+                    effective_runner_kind=effective_runner_kind,
+                )
+            except Exception as rollback_error:
+                failures.append(f"replacement_runtime: {rollback_error}")
+        failures.extend(
+            _restore_actor_persistent_state(
+                group,
+                actor_id,
+                group_doc=before_group_doc,
+                private_env=before_private_env,
+                update_actor_private_env=update_actor_private_env,
+            )
+        )
+        try:
+            if session_existed:
+                write_runtime_session(group_id, actor_id, before_runtime_session)
+            else:
+                remove_runtime_session(group_id, actor_id)
+        except Exception as rollback_error:
+            failures.append(f"runtime_session: {rollback_error}")
+        if provider_rotated:
+            failures.append("provider_session: in-place rotation cannot be reversed")
+        elif runtime_was_running:
+            restored_actor = find_actor(group, actor_id)
+            if not isinstance(restored_actor, dict):
+                failures.append("runtime: restored actor is missing")
+            else:
+                restored = start_actor_process(
+                    group,
+                    actor_id,
+                    command=list(restored_actor.get("command") or []),
+                    env=dict(restored_actor.get("env") or {}),
+                    runner=str(restored_actor.get("runner") or "pty"),
+                    runtime=str(restored_actor.get("runtime") or "codex"),
+                    by="system",
+                    launch_only=True,
+                    launch_reason="actor_new_session_rollback",
+                )
+                if not restored.get("success"):
+                    failures.append(f"runtime: {restored.get('error') or 'failed to restore'}")
+        return _error_after_rollback(failure_code, str(error), failures)
 
     maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman)
-    result: Dict[str, Any] = {"actor": actor, "event": start_result["event"], "new_session": True}
-    if start_result.get("effective_runner") != runner_kind:
-        result["runner_effective"] = start_result.get("effective_runner")
+    from ...kernel.events import publish_event
+
+    publish_event("actor.new_session", {"group_id": group.group_id, "actor_id": actor_id})
+    result: Dict[str, Any] = {
+        "actor": actor,
+        "event": event,
+        "new_session": True,
+    }
+    if rotation:
+        result["rotation"] = rotation
+    if runner_effective != str(actor.get("runner") or "pty"):
+        result["runner_effective"] = runner_effective
     return DaemonResponse(ok=True, result=result)
 
 
@@ -673,21 +682,10 @@ def try_handle_actor_lifecycle_op(
     effective_runner_kind: Callable[[str], str],
     remove_headless_state: Callable[[str, str], None],
     remove_pty_state_if_pid: Callable[..., None],
-    clear_preamble_sent: Callable[[Any, str], None],
-    throttle_reset_actor: Callable[..., None],
-    find_scope_url: Callable[[Any, str], str],
-    merge_actor_env_with_private: Callable[[str, str, Dict[str, Any]], Dict[str, Any]],
-    inject_actor_context_env: Callable[..., Dict[str, Any]],
-    normalize_runtime_command: Callable[[str, list[str]], list[str]],
-    prepare_pty_env: Callable[[Dict[str, Any]], Dict[str, Any]],
-    pty_backlog_bytes: Callable[[], int],
-    ensure_mcp_installed: Callable[..., bool],
-    write_headless_state: Callable[[str, str], None],
-    write_pty_state: Callable[..., None],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
     load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    load_actor_private_env: Callable[[str, str], Dict[str, str]],
     update_actor_private_env: Callable[..., Dict[str, str]],
-    supported_runtimes: Sequence[str],
 ) -> Optional[DaemonResponse]:
     if op == "actor_start":
         return handle_actor_start(
@@ -695,9 +693,9 @@ def try_handle_actor_lifecycle_op(
             foreman_id=foreman_id,
             maybe_reset_automation_on_foreman_change=maybe_reset_automation_on_foreman_change,
             start_actor_process=start_actor_process,
-            effective_runner_kind=effective_runner_kind,
             get_actor_profile=get_actor_profile,
             load_actor_profile_secrets=load_actor_profile_secrets,
+            load_actor_private_env=load_actor_private_env,
             update_actor_private_env=update_actor_private_env,
         )
     if op == "actor_stop":
@@ -705,33 +703,26 @@ def try_handle_actor_lifecycle_op(
             args,
             foreman_id=foreman_id,
             maybe_reset_automation_on_foreman_change=maybe_reset_automation_on_foreman_change,
+            start_actor_process=start_actor_process,
             effective_runner_kind=effective_runner_kind,
             remove_headless_state=remove_headless_state,
             remove_pty_state_if_pid=remove_pty_state_if_pid,
+            load_actor_private_env=load_actor_private_env,
+            update_actor_private_env=update_actor_private_env,
         )
     if op == "actor_restart":
         return handle_actor_restart(
             args,
             foreman_id=foreman_id,
             maybe_reset_automation_on_foreman_change=maybe_reset_automation_on_foreman_change,
+            start_actor_process=start_actor_process,
             effective_runner_kind=effective_runner_kind,
             remove_headless_state=remove_headless_state,
             remove_pty_state_if_pid=remove_pty_state_if_pid,
-            clear_preamble_sent=clear_preamble_sent,
-            throttle_reset_actor=throttle_reset_actor,
-            find_scope_url=find_scope_url,
-            merge_actor_env_with_private=merge_actor_env_with_private,
-            inject_actor_context_env=inject_actor_context_env,
-            normalize_runtime_command=normalize_runtime_command,
-            prepare_pty_env=prepare_pty_env,
-            pty_backlog_bytes=pty_backlog_bytes,
-            ensure_mcp_installed=ensure_mcp_installed,
-            write_headless_state=write_headless_state,
-            write_pty_state=write_pty_state,
             get_actor_profile=get_actor_profile,
             load_actor_profile_secrets=load_actor_profile_secrets,
+            load_actor_private_env=load_actor_private_env,
             update_actor_private_env=update_actor_private_env,
-            supported_runtimes=supported_runtimes,
         )
     if op == "actor_new_session":
         return handle_actor_new_session(
@@ -739,10 +730,12 @@ def try_handle_actor_lifecycle_op(
             foreman_id=foreman_id,
             maybe_reset_automation_on_foreman_change=maybe_reset_automation_on_foreman_change,
             start_actor_process=start_actor_process,
+            effective_runner_kind=effective_runner_kind,
             remove_headless_state=remove_headless_state,
             remove_pty_state_if_pid=remove_pty_state_if_pid,
             get_actor_profile=get_actor_profile,
             load_actor_profile_secrets=load_actor_profile_secrets,
+            load_actor_private_env=load_actor_private_env,
             update_actor_private_env=update_actor_private_env,
         )
     return None

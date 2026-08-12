@@ -95,7 +95,7 @@ For agent-driven messaging, use the normal CCCC message tools. Discover remote t
 cccc_remote_access(action="list")
 ```
 
-Then send a normal message with `dst_group_id` set to the remote group id and `to` set to `["@foreman"]`. For retryable workflows, reuse one stable `idempotency_key` so a transport retry does not create a duplicate remote message.
+Then send a normal message with `dst_group_id` set to the remote group id and `to` set to `["@foreman"]`. For retryable workflows, reuse one stable `idempotency_key` so a transport retry does not create a duplicate remote message. Session-backed Rust deliveries resume when the signed route reconnects. Python Web also sweeps due receipts in the background; a direct HTTP/MCP retry on Rust is caller-driven and must reuse the same key.
 
 Attachments can be sent through Group Bridge when the target is a trusted remote group. Use attachments for evidence, logs, screenshots, or small artifacts that should be visible in the remote conversation.
 

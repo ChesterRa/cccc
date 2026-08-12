@@ -212,8 +212,8 @@ Agent output is updated progressively with `chat.update`. Completed replies long
 | `/send @all <message>` | Send to all agents |
 | `/send @peers <message>` | Send to non-foreman agents |
 | `/status` | Show group and agent status |
-| `/pause` | Pause delivery |
-| `/resume` | Resume delivery |
+| `/pause` | Pause delivery for this channel or thread |
+| `/resume` | Resume delivery for this channel or thread |
 | `/verbose [on\|off]` | Enable verbose delivery, or disable it with `off` |
 | `/help` | Show help |
 

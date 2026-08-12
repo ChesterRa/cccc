@@ -1,4 +1,4 @@
-use super::{Session, Turn, output, poisoned, protocol};
+use super::{ActiveTurn, Session, Turn, TurnOutputState, output, poisoned, protocol};
 use cccc_contracts::{ActorRuntime, utc_now};
 use serde_json::{Value, json};
 use std::io::{self, BufRead, BufReader, Write};
@@ -142,9 +142,17 @@ pub(super) fn spawn_worker(session: Arc<Session>, receiver: Receiver<Turn>) -> i
                     .lock()
                     .map(|value| *value)
                     .unwrap_or_default();
-                if let Ok(mut active_event_id) = session.active_event_id.lock() {
-                    active_event_id.clone_from(&turn.event_id);
-                }
+                let Ok(mut active_turn) = session.active_turn.lock() else {
+                    break;
+                };
+                *active_turn = Some(ActiveTurn {
+                    event_id: turn.event_id.clone(),
+                    turn_id: String::new(),
+                    control_kind: turn.control_kind.clone(),
+                    output_state: TurnOutputState::Buffering,
+                    pending_messages: Vec::new(),
+                });
+                drop(active_turn);
                 session.set_status(
                     "working",
                     Some(turn.event_id.clone()).filter(|id| !id.is_empty()),
@@ -155,20 +163,29 @@ pub(super) fn spawn_worker(session: Arc<Session>, receiver: Receiver<Turn>) -> i
                     protocol::submit_claude(&session, &turn)
                 };
                 let Ok(turn_id) = result else {
+                    if let Ok(mut active_turn) = session.active_turn.lock() {
+                        active_turn.take();
+                    }
                     session.set_status("waiting", None);
                     output::emit_turn(&session, &turn, "headless.turn.failed", "");
                     continue;
                 };
+                if let Ok(mut active_turn) = session.active_turn.lock()
+                    && let Some(active_turn) = active_turn.as_mut()
+                {
+                    active_turn.turn_id.clone_from(&turn_id);
+                }
                 if let Ok(mut state) = session.status.lock()
                     && state.status == "working"
                 {
                     state.task_id = Some(turn_id.clone());
                     state.updated_at = utc_now();
                 }
-                if !turn.control {
+                if turn.control_kind.is_empty() {
                     output::mark_read(&session, &turn);
                 }
                 output::emit_turn(&session, &turn, "headless.turn.started", &turn_id);
+                output::announce_turn(&session);
                 let mut completed = match session.completion.0.lock() {
                     Ok(value) => value,
                     Err(_) => break,

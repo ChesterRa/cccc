@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any, Dict, List, Optional
 
 from ...contracts.v1 import (
@@ -26,6 +27,7 @@ from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_json, read_json
 from ...util.time import utc_now_iso
 from .engine import (
+    _AUTOMATION_STATE_LOCK,
     _load_ruleset as load_automation_ruleset,
     automation_supported_vars,
     build_automation_status,
@@ -98,6 +100,20 @@ def _reconcile_automation_state_after_ruleset_change(
     previous: AutomationRuleSet,
     current: AutomationRuleSet,
 ) -> None:
+    with _AUTOMATION_STATE_LOCK:
+        _reconcile_automation_state_after_ruleset_change_unlocked(
+            group,
+            previous=previous,
+            current=current,
+        )
+
+
+def _reconcile_automation_state_after_ruleset_change_unlocked(
+    group: Any,
+    *,
+    previous: AutomationRuleSet,
+    current: AutomationRuleSet,
+) -> None:
     state_path = group.path / "state" / "automation.json"
     raw = read_json(state_path)
     state = raw if isinstance(raw, dict) else {}
@@ -148,6 +164,8 @@ def _reconcile_automation_state_after_ruleset_change(
 
         if entry.pop("at_fired", None) is not None:
             changed = True
+        if entry.pop("last_fired_at", None) is not None:
+            changed = True
         slot_key = str(entry.get("last_slot_key") or "")
         if slot_key.startswith("at:"):
             entry.pop("last_slot_key", None)
@@ -162,21 +180,31 @@ def _reconcile_automation_state_after_ruleset_change(
 
 
 def _set_automation_ruleset(group: Any, *, ruleset: AutomationRuleSet) -> int:
-    previous_ruleset = load_automation_ruleset(group)
-    automation = _ensure_automation_doc(group)
-    custom_snippets, built_in_overrides = split_automation_snippets_for_storage(ruleset.snippets or {})
-    automation["rules"] = [r.model_dump(exclude_none=True) for r in (ruleset.rules or [])]
-    automation["snippets"] = custom_snippets
-    automation["snippet_overrides"] = built_in_overrides
-    try:
-        old_version = int(automation.get("version") or 0)
-    except Exception:
-        old_version = 0
-    automation["version"] = max(1, old_version) + 1
-    group.doc["automation"] = automation
-    group.save()
-    _reconcile_automation_state_after_ruleset_change(group, previous=previous_ruleset, current=ruleset)
-    return int(automation["version"])
+    with _AUTOMATION_STATE_LOCK:
+        previous_doc = copy.deepcopy(group.doc)
+        previous_ruleset = load_automation_ruleset(group)
+        automation = _ensure_automation_doc(group)
+        custom_snippets, built_in_overrides = split_automation_snippets_for_storage(ruleset.snippets or {})
+        automation["rules"] = [r.model_dump(exclude_none=True) for r in (ruleset.rules or [])]
+        automation["snippets"] = custom_snippets
+        automation["snippet_overrides"] = built_in_overrides
+        try:
+            old_version = int(automation.get("version") or 0)
+        except Exception:
+            old_version = 0
+        automation["version"] = max(1, old_version) + 1
+        group.doc["automation"] = automation
+        try:
+            group.save()
+            _reconcile_automation_state_after_ruleset_change(group, previous=previous_ruleset, current=ruleset)
+        except Exception as error:
+            group.doc = previous_doc
+            try:
+                group.save()
+            except Exception as rollback_error:
+                raise RuntimeError(f"{error}; rollback_failed: {rollback_error}") from error
+            raise
+        return int(automation["version"])
 
 
 def _validate_automation_rule_action_trigger(rule: AutomationRule) -> None:
@@ -185,6 +213,41 @@ def _validate_automation_rule_action_trigger(rule: AutomationRule) -> None:
     action_kind = str(getattr(rule.action, "kind", "notify") or "notify").strip()
     if action_kind in {"group_state", "actor_control"} and trigger_kind != "at":
         raise ValueError(f'rule "{rid}": action.kind={action_kind} only supports trigger.kind=at')
+
+
+def _normalize_automation_rule(rule: AutomationRule) -> AutomationRule:
+    scope = str(rule.scope or "group")
+    owner = str(rule.owner_actor_id or "").strip()
+    if scope == "group":
+        if owner:
+            return rule.model_copy(update={"owner_actor_id": None})
+        return rule
+    if scope == "personal":
+        if not owner:
+            raise ValueError("personal rule requires owner_actor_id")
+        return rule
+    raise ValueError(f"invalid scope: {scope}")
+
+
+def _validate_full_ruleset(ruleset: AutomationRuleSet, *, agents_notify_only: bool) -> AutomationRuleSet:
+    seen: set[str] = set()
+    normalized: list[AutomationRule] = []
+    for rule in ruleset.rules:
+        rid = str(rule.id or "").strip()
+        if not rid:
+            raise ValueError("rule.id is required")
+        if rid in seen:
+            raise ValueError(f"duplicate rule id: {rid}")
+        seen.add(rid)
+        rule = _normalize_automation_rule(rule)
+        _validate_automation_rule_action_trigger(rule)
+        if agents_notify_only:
+            action = getattr(rule, "action", None)
+            kind = str(getattr(action, "kind", "notify") or "notify").strip()
+            if kind != "notify":
+                raise ValueError("agents can only manage notify automation rules")
+        normalized.append(rule)
+    return AutomationRuleSet(rules=normalized, snippets=dict(ruleset.snippets or {}))
 
 
 def _reject_legacy_automation_rule_shape(rule_raw: Dict[str, Any], *, loc: str) -> None:
@@ -303,15 +366,10 @@ def handle_group_automation_update(args: Dict[str, Any]) -> DaemonResponse:
                 for i, raw_rule in enumerate(raw_rules):
                     if isinstance(raw_rule, dict):
                         _reject_legacy_automation_rule_shape(raw_rule, loc=f"ruleset.rules[{i}]")
-        ruleset = AutomationRuleSet.model_validate(raw)
-        for rule in ruleset.rules:
-            _validate_automation_rule_action_trigger(rule)
-        if by and by != "user":
-            for rule in ruleset.rules:
-                action = getattr(rule, "action", None)
-                kind = str(getattr(action, "kind", "notify") or "notify").strip()
-                if kind != "notify":
-                    raise ValueError("agents can only manage notify automation rules")
+        ruleset = _validate_full_ruleset(
+            AutomationRuleSet.model_validate(raw),
+            agents_notify_only=bool(by and by != "user"),
+        )
         current_version = _automation_version(group)
         if expected_version is not None and expected_version != current_version:
             return _error(
@@ -434,19 +492,6 @@ def handle_group_automation_manage(args: Dict[str, Any]) -> DaemonResponse:
             raise ValueError("agents can only manage notify automation rules")
         return rule
 
-    def _normalize_rule(rule: Any) -> Any:
-        scope = str(rule.scope or "group")
-        owner = str(rule.owner_actor_id or "").strip()
-        if scope == "group":
-            if owner:
-                rule = rule.model_copy(update={"owner_actor_id": None})
-        elif scope == "personal":
-            if not owner:
-                raise ValueError("personal rule requires owner_actor_id")
-        else:
-            raise ValueError(f"invalid scope: {scope}")
-        return rule
-
     applied_actions: List[Dict[str, Any]] = []
 
     try:
@@ -468,7 +513,7 @@ def handle_group_automation_manage(args: Dict[str, Any]) -> DaemonResponse:
                     raise ValueError("rule.id is required")
                 if rid in rules_by_id:
                     raise ValueError(f"rule already exists: {rid}")
-                rule = _normalize_rule(rule)
+                rule = _normalize_automation_rule(rule)
                 rule = _enforce_peer_rule(rule)
                 rule = _enforce_actor_action_kind(rule)
                 _validate_automation_rule_action_trigger(rule)
@@ -491,7 +536,7 @@ def handle_group_automation_manage(args: Dict[str, Any]) -> DaemonResponse:
                     raise ValueError(f"rule not found: {rid}")
                 _enforce_peer_rule(existing)
                 _enforce_actor_action_kind(existing)
-                rule = _normalize_rule(rule)
+                rule = _normalize_automation_rule(rule)
                 rule = _enforce_peer_rule(rule, existing=existing)
                 rule = _enforce_actor_action_kind(rule)
                 _validate_automation_rule_action_trigger(rule)
@@ -552,7 +597,7 @@ def handle_group_automation_manage(args: Dict[str, Any]) -> DaemonResponse:
                     if rid in seen:
                         raise ValueError(f"duplicate rule id: {rid}")
                     seen.add(rid)
-                    normalized = _normalize_rule(rule)
+                    normalized = _normalize_automation_rule(rule)
                     normalized = _enforce_actor_action_kind(normalized)
                     _validate_automation_rule_action_trigger(normalized)
                     new_order.append(rid)
