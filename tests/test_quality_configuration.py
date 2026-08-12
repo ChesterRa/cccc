@@ -173,6 +173,21 @@ def test_python_support_contract_matches_the_tested_range() -> None:
     }
 
 
+def test_sherpa_native_archive_download_retries_and_preserves_verified_fallback() -> None:
+    source = (ROOT / "crates/third-party/sherpa-onnx-sys/build.rs").read_text(encoding="utf-8")
+    curl_body = source.split("fn download_with_curl", 1)[1].split("fn download_with_ureq", 1)[0]
+    download_flow = source.split("let curl_failure = match download_with_curl", 1)[1].split(
+        "if let Err(error) = verify_archive_sha256", 1
+    )[0]
+
+    for argument in ('"--retry"', '"3"', '"--retry-all-errors"', '"--retry-delay"', '"2"'):
+        assert argument in curl_body
+    assert "Err(error) => Some(error.to_string())" in download_flow
+    assert "download_with_ureq(&url, &archive_path)" in download_flow
+    assert "verify_archive_sha256(&archive_path, expected_sha256)" in source
+    assert "write_reader_atomically(&mut reader, output)" in source
+
+
 def test_local_fast_gate_runs_current_checks_without_historical_migration_governance() -> None:
     source = (ROOT / "scripts/quality_gate.sh").read_text(encoding="utf-8")
     fast_block = source.split("fast)", 1)[1].split(";;", 1)[0]

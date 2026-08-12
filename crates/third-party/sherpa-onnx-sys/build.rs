@@ -159,17 +159,20 @@ fn download_prebuilt_libs(
             let url = format!("{RELEASE_BASE_URL}/v{UPSTREAM_VERSION}/{archive_name}");
             eprintln!("Downloading sherpa-onnx libs from {url}");
 
-            if !download_with_curl(&url, &archive_path)? {
-                let response = ureq::builder()
-                    .try_proxy_from_env(true)
-                    .build()
-                    .get(&url)
-                    .call()
-                    .map_err(|e| {
-                        format!("Failed to download sherpa-onnx archive from {url}: {e}")
-                    })?;
-                let mut reader = response.into_reader();
-                write_reader_atomically(&mut reader, &archive_path)?;
+            let curl_failure = match download_with_curl(&url, &archive_path) {
+                Ok(true) => None,
+                Ok(false) => Some("curl executable is unavailable".to_owned()),
+                Err(error) => Some(error.to_string()),
+            };
+            if let Some(curl_failure) = curl_failure {
+                eprintln!(
+                    "curl download did not complete ({curl_failure}); falling back to the built-in HTTP client"
+                );
+                download_with_ureq(&url, &archive_path).map_err(|fallback_error| {
+                    format!(
+                        "Failed to download sherpa-onnx archive from {url}; curl: {curl_failure}; built-in HTTP client: {fallback_error}"
+                    )
+                })?;
             }
         }
     }
@@ -294,6 +297,11 @@ fn download_with_curl(url: &str, output: &Path) -> Result<bool, DynError> {
             "--show-error",
             "--connect-timeout",
             "30",
+            "--retry",
+            "3",
+            "--retry-all-errors",
+            "--retry-delay",
+            "2",
             "--output",
         ])
         .arg(&temp)
@@ -310,6 +318,16 @@ fn download_with_curl(url: &str, output: &Path) -> Result<bool, DynError> {
     }
     fs::rename(temp, output)?;
     Ok(true)
+}
+
+fn download_with_ureq(url: &str, output: &Path) -> Result<(), DynError> {
+    let response = ureq::builder()
+        .try_proxy_from_env(true)
+        .build()
+        .get(url)
+        .call()?;
+    let mut reader = response.into_reader();
+    write_reader_atomically(&mut reader, output)
 }
 
 fn archive_name(
