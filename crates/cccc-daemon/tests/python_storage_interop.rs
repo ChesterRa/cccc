@@ -15,7 +15,7 @@ use std::thread;
 use std::time::Duration;
 
 #[test]
-fn python_voice_recording_lease_waits_for_the_shared_rust_lock() {
+fn python_interop_voice_recording_lease_waits_for_the_shared_rust_lock() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -121,7 +121,7 @@ print(json.dumps(response.model_dump(exclude_none=True)), flush=True)
 }
 
 #[test]
-fn python_and_rust_share_the_voice_recording_lease_lifecycle() {
+fn python_interop_share_the_voice_recording_lease_lifecycle() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -272,7 +272,7 @@ print(json.dumps(released.result))
 }
 
 #[test]
-fn python_and_rust_serialize_access_token_mutations_with_the_shared_lock() {
+fn python_interop_serialize_access_token_mutations_with_the_shared_lock() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -347,7 +347,7 @@ finally:
 }
 
 #[test]
-fn python_and_rust_share_access_token_creation_and_revocation() {
+fn python_interop_share_access_token_creation_and_revocation() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -412,7 +412,7 @@ assert list_access_tokens() == []
 }
 
 #[test]
-fn python_and_rust_share_nomcp_sessions_messages_and_revocation() {
+fn python_interop_share_nomcp_sessions_messages_and_revocation() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -538,7 +538,7 @@ else:
 }
 
 #[test]
-fn python_and_rust_retire_web_model_connectors_at_actor_generation_boundaries() {
+fn python_interop_retire_web_model_connectors_at_actor_generation_boundaries() {
     let repo = workspace_root();
 
     let rust_to_python = tempfile::tempdir().expect("Rust to Python home");
@@ -671,7 +671,7 @@ print(json.dumps({"id": connector["connector_id"], "secret": connector["secret"]
 }
 
 #[test]
-fn python_and_rust_retire_web_model_connectors_at_group_deletion_boundaries() {
+fn python_interop_retire_web_model_connectors_at_group_deletion_boundaries() {
     let repo = workspace_root();
 
     let rust_to_python = tempfile::tempdir().expect("Rust to Python home");
@@ -808,7 +808,7 @@ assert verify_web_model_connector_secret(sys.argv[1], sys.argv[2]) is None
 }
 
 #[test]
-fn python_and_rust_share_web_model_preference_without_crossing_actor_generation() {
+fn python_interop_share_web_model_preference_without_crossing_actor_generation() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -894,7 +894,7 @@ call("web_model_delivery_preferences_update", {
 }
 
 #[test]
-fn python_and_rust_share_web_model_browser_target_state() {
+fn python_interop_share_web_model_browser_target_state() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -1018,7 +1018,7 @@ assert state["bootstrap_seed_conversation_url"] == "https://chatgpt.com/c/rust-t
 }
 
 #[test]
-fn python_and_rust_share_voice_secretary_semantic_input_and_cursor() {
+fn python_interop_share_voice_secretary_semantic_input_and_cursor() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -1123,7 +1123,7 @@ assert "Rust input" in response.result["input_text"], response
 }
 
 #[test]
-fn python_and_rust_share_voice_secretary_document_transcript_projection() {
+fn python_interop_share_voice_secretary_document_transcript_projection() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path().join("home")).expect("home");
@@ -1238,7 +1238,7 @@ assert append.ok, append
 }
 
 #[test]
-fn python_and_rust_migrate_split_voice_input_without_skipping_unread_work() {
+fn python_interop_migrate_split_voice_input_without_skipping_unread_work() {
     let repo = workspace_root();
 
     let rust_temp = tempfile::tempdir().expect("Rust migration home");
@@ -1375,7 +1375,7 @@ assert not (ensure_home() / "voice-secretary" / group_id / "inputs.jsonl").exist
 }
 
 #[test]
-fn python_and_rust_share_voice_secretary_documents_and_active_selection() {
+fn python_interop_share_voice_secretary_documents_and_active_selection() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let workspace = temp.path().join("workspace");
@@ -1489,7 +1489,7 @@ assert response.result["active_document_path"] == "docs/voice-secretary/rust.md"
 }
 
 #[test]
-fn python_and_rust_discover_workspace_voice_documents() {
+fn python_interop_discover_workspace_voice_documents() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let workspace = temp.path().join("workspace");
@@ -1559,7 +1559,7 @@ assert any(item["document_path"] == "docs/voice-secretary/direct.md" for item in
 }
 
 #[test]
-fn python_and_rust_retire_legacy_voice_document_state_after_migration() {
+fn python_interop_retire_legacy_voice_document_state_after_migration() {
     let repo = workspace_root();
 
     let rust_temp = tempfile::tempdir().expect("Rust migration home");
@@ -1733,7 +1733,7 @@ assert "active_document_id" not in state["rust_state"], state
 }
 
 #[test]
-fn python_and_rust_retire_each_others_web_model_runtime_state_on_recreate() {
+fn python_interop_retire_each_others_web_model_runtime_state_on_recreate() {
     let repo = workspace_root();
 
     let rust_to_python = tempfile::tempdir().expect("Rust to Python home");
@@ -1934,7 +1934,7 @@ assert actor["effective_working_state"] == "stopped", actor
 }
 
 #[test]
-fn rust_actor_add_blocks_legacy_python_web_model_target_resurrection() {
+fn python_interop_rust_actor_add_blocks_legacy_web_model_target_resurrection() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -2016,7 +2016,7 @@ assert group.doc.get("web_model_browser_targets") == {}, group.doc
 }
 
 #[test]
-fn python_credential_clear_retires_the_legacy_rust_notebooklm_secret() {
+fn python_interop_credential_clear_retires_the_legacy_rust_notebooklm_secret() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -2074,7 +2074,7 @@ assert update_space_provider_secrets(
 }
 
 #[test]
-fn python_unbind_is_not_reversed_by_legacy_rust_group_space_state() {
+fn python_interop_unbind_is_not_reversed_by_legacy_rust_group_space_state() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -2206,7 +2206,7 @@ assert get_space_binding(group_id, provider="notebooklm", lane="work")["remote_s
 }
 
 #[test]
-fn rust_legacy_group_space_migration_is_canonical_first_and_python_visible() {
+fn python_interop_rust_legacy_group_space_migration_is_canonical_first_and_visible() {
     let repo = workspace_root();
 
     let canonical_home = tempfile::tempdir().expect("canonical-first home");
@@ -2327,7 +2327,7 @@ assert jobs[0]["payload"]["title"] == "Rust import", jobs
 }
 
 #[test]
-fn python_and_rust_group_delete_retire_shared_notebooklm_state() {
+fn python_interop_group_delete_retires_shared_notebooklm_state() {
     let repo = workspace_root();
     for delete_engine in ["rust", "python"] {
         let temp = tempfile::tempdir().expect("temp home");
@@ -2441,7 +2441,7 @@ assert response.ok, response
 }
 
 #[test]
-fn python_and_rust_share_persisted_control_plane_state() {
+fn python_interop_share_persisted_control_plane_state() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -2839,7 +2839,7 @@ enqueue_space_job(
 }
 
 #[test]
-fn rust_fired_one_time_automation_is_not_replayed_by_python() {
+fn python_interop_rust_fired_one_time_automation_is_not_replayed() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -2917,7 +2917,7 @@ assert len(matching) == 1, matching
 }
 
 #[test]
-fn python_completed_one_time_automation_is_not_replayed_by_rust() {
+fn python_interop_completed_one_time_automation_is_not_replayed_by_rust() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -3015,7 +3015,7 @@ assert len(matching) == 1, matching
 }
 
 #[test]
-fn rust_fired_cron_slot_is_not_replayed_by_python() {
+fn python_interop_rust_fired_cron_slot_is_not_replayed() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -3096,7 +3096,7 @@ assert len(matching) == 1, matching
 }
 
 #[test]
-fn python_fired_cron_slot_is_not_replayed_by_rust() {
+fn python_interop_fired_cron_slot_is_not_replayed_by_rust() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -3158,7 +3158,7 @@ with patch("cccc.daemon.automation.engine.pty_runner.SUPERVISOR.actor_running", 
 }
 
 #[test]
-fn python_and_rust_share_inbox_order_status_and_actor_generation() {
+fn python_interop_share_inbox_order_status_and_actor_generation() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -3354,7 +3354,7 @@ assert inbox["messages"] == []
 }
 
 #[test]
-fn python_and_rust_accept_each_others_group_copy_packages() {
+fn python_interop_accept_each_others_group_copy_packages() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -3415,7 +3415,7 @@ print(json.dumps(exported.result))
 }
 
 #[test]
-fn python_and_rust_share_actor_updates_secrets_and_deletion() {
+fn python_interop_share_actor_updates_secrets_and_deletion() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -3571,7 +3571,7 @@ assert response.error.code == "actor_not_found"
 }
 
 #[test]
-fn python_actor_secret_deletion_retires_the_legacy_rust_shadow() {
+fn python_interop_actor_secret_deletion_retires_the_legacy_rust_shadow() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -3663,7 +3663,7 @@ assert response.result["keys"] == [], response
 }
 
 #[test]
-fn python_profile_deletion_retires_the_legacy_rust_shadow() {
+fn python_interop_profile_deletion_retires_the_legacy_rust_shadow() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -3744,7 +3744,7 @@ call("actor_profile_delete", {
 }
 
 #[test]
-fn python_im_unset_retires_legacy_rust_durable_shadow() {
+fn python_interop_im_unset_retires_legacy_rust_durable_shadow() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -3816,7 +3816,7 @@ assert cmd_im_unset(argparse.Namespace(group=__import__('sys').argv[1])) == 0
 }
 
 #[test]
-fn python_and_rust_serialize_im_state_with_the_shared_lock() {
+fn python_interop_serialize_im_state_with_the_shared_lock() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -3899,7 +3899,7 @@ with im_state_lock(state_dir):
 }
 
 #[test]
-fn python_and_rust_share_im_revoke_and_opaque_thread_state() {
+fn python_interop_share_im_revoke_and_opaque_thread_state() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -3975,7 +3975,7 @@ assert not SubscriberManager(state_dir).is_subscribed("C-shared", thread_id)
 }
 
 #[test]
-fn python_and_rust_share_presentation_state_and_result_contracts() {
+fn python_interop_share_presentation_state_and_result_contracts() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");

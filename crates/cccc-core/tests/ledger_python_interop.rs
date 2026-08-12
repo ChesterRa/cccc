@@ -18,7 +18,7 @@ fn python_executable(repo: &Path) -> PathBuf {
 }
 
 #[test]
-fn rust_append_waits_for_the_python_ledger_lock() {
+fn python_interop_rust_append_waits_for_the_ledger_lock() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)

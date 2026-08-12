@@ -21,7 +21,7 @@ fn python_executable(repo: &Path) -> PathBuf {
 }
 
 #[test]
-fn python_and_rust_share_identity_and_signed_session_hello() {
+fn python_interop_share_identity_and_signed_session_hello() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
@@ -65,7 +65,7 @@ print(json.dumps({"peer_id": identity.peer_id, "hello": hello}))
 }
 
 #[test]
-fn python_and_rust_serialize_identity_initialization_with_the_shared_lock() {
+fn python_interop_serialize_identity_initialization_with_the_shared_lock() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -116,18 +117,35 @@ def test_rust_job_is_python_free_and_serializes_daemon_tests() -> None:
         "cargo test --package cccc-pair-daemon --locked"
         in runs
     )
-    for legacy_test in (
-        "python_and_rust_share_context_tasks_and_version_state",
-        "python_and_rust_share_identity_and_signed_session_hello",
-        "python_and_rust_serialize_identity_initialization_with_the_shared_lock",
-        "python_and_rust_processes_share_paths_files_and_locks",
-        "python_and_rust_share_launch_identity_format",
-        "group_bridge_and_voice_workflow_share_one_cross_engine_authority",
-        "rust_append_waits_for_the_python_ledger_lock",
-        "python_and_rust_share_persisted_control_plane_state",
-        "python_and_rust_accept_each_others_group_copy_packages",
-    ):
-        assert f"--skip {legacy_test}" in runs
+    assert runs.count("--skip python_interop_") == 2
+
+
+def test_python_backed_rust_tests_share_one_explicit_ci_category() -> None:
+    expected_sources = {
+        "crates/cccc-core/tests/context_python_interop.rs",
+        "crates/cccc-core/tests/group_bridge_identity_interop.rs",
+        "crates/cccc-core/tests/ledger_python_interop.rs",
+        "crates/cccc-core/tests/runtime_hook_identity_interop.rs",
+        "crates/cccc-core/tests/runtime_hook_interop.rs",
+        "crates/cccc-core/tests/shared_integration_state_interop.rs",
+        "crates/cccc-daemon/tests/python_storage_interop.rs",
+    }
+    actual_sources = {
+        path.relative_to(ROOT).as_posix()
+        for path in ROOT.glob("crates/*/tests/*.rs")
+        if "CCCC_TEST_PYTHON" in path.read_text(encoding="utf-8")
+    }
+    assert actual_sources == expected_sources
+
+    pure_rust_tests = {"legacy_rust_json_is_migrated_once_without_deleting_the_source"}
+    for relative_path in expected_sources:
+        source = (ROOT / relative_path).read_text(encoding="utf-8")
+        test_names = set(re.findall(r"#\[test\]\s*fn\s+(\w+)\s*\(", source))
+        assert test_names
+        assert all(
+            name.startswith("python_interop_") or name in pure_rust_tests
+            for name in test_names
+        ), relative_path
 
 
 def test_rust_job_and_manual_verifiers_cover_replacement_smoke() -> None:

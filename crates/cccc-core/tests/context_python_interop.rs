@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[test]
-fn python_and_rust_share_context_tasks_and_version_state() {
+fn python_interop_share_context_tasks_and_version_state() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");

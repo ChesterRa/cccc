@@ -56,7 +56,7 @@ fn actor_digest() -> String {
 }
 
 #[test]
-fn python_and_rust_processes_share_paths_files_and_locks() {
+fn python_interop_processes_share_paths_files_and_locks() {
     let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)

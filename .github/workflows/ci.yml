@@ -307,20 +307,13 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test Rust workspace
         run: |
-          # These legacy cross-language tests still execute src/cccc. Keep the
-          # Rust job Python-free while they are replaced with checked-in fixtures.
+          # The dedicated interop job owns tests that execute src/cccc. Keep
+          # this Rust-only job independent of a Python installation.
           cargo test --workspace --exclude cccc-pair-daemon --locked -- \
-            --skip python_and_rust_share_context_tasks_and_version_state \
-            --skip python_and_rust_share_identity_and_signed_session_hello \
-            --skip python_and_rust_serialize_identity_initialization_with_the_shared_lock \
-            --skip python_and_rust_processes_share_paths_files_and_locks \
-            --skip python_and_rust_share_launch_identity_format \
-            --skip group_bridge_and_voice_workflow_share_one_cross_engine_authority \
-            --skip rust_append_waits_for_the_python_ledger_lock
+            --skip python_interop_
           cargo test --package cccc-pair-daemon --locked -- \
             --test-threads=1 \
-            --skip python_and_rust_share_persisted_control_plane_state \
-            --skip python_and_rust_accept_each_others_group_copy_packages
+            --skip python_interop_
       - name: Build and verify Rust distribution
         run: |
           cargo build --workspace --release --locked

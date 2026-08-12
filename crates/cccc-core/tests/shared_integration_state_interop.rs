@@ -45,7 +45,7 @@ fn python(repo: &Path, home: &Path, script: &str, group_id: &str) {
 }
 
 #[test]
-fn python_and_rust_serialize_group_bridge_state_with_the_shared_lock() {
+fn python_interop_serialize_group_bridge_state_with_the_shared_lock() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
@@ -137,7 +137,7 @@ finally:
 }
 
 #[test]
-fn group_bridge_and_voice_workflow_share_one_cross_engine_authority() {
+fn python_interop_group_bridge_and_voice_workflow_share_one_cross_engine_authority() {
     let repo = workspace_root();
     let temp = tempfile::tempdir().expect("temp home");
     let home = HomeLayout::from_path(temp.path()).expect("home");
