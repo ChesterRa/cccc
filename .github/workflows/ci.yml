@@ -312,6 +312,7 @@ jobs:
           cargo test --workspace --exclude cccc-pair-daemon --locked -- \
             --skip python_and_rust_share_context_tasks_and_version_state \
             --skip python_and_rust_share_identity_and_signed_session_hello \
+            --skip python_and_rust_serialize_identity_initialization_with_the_shared_lock \
             --skip python_and_rust_processes_share_paths_files_and_locks \
             --skip python_and_rust_share_launch_identity_format \
             --skip group_bridge_and_voice_workflow_share_one_cross_engine_authority \

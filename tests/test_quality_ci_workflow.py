@@ -119,6 +119,7 @@ def test_rust_job_is_python_free_and_serializes_daemon_tests() -> None:
     for legacy_test in (
         "python_and_rust_share_context_tasks_and_version_state",
         "python_and_rust_share_identity_and_signed_session_hello",
+        "python_and_rust_serialize_identity_initialization_with_the_shared_lock",
         "python_and_rust_processes_share_paths_files_and_locks",
         "python_and_rust_share_launch_identity_format",
         "group_bridge_and_voice_workflow_share_one_cross_engine_authority",

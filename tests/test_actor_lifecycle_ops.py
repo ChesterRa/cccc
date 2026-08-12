@@ -622,9 +622,16 @@ class TestActorLifecycleOps(unittest.TestCase):
             group.doc["running"] = True
             group.save()
 
-            with patch("cccc.daemon.server.runtime_ensure_mcp_installed", return_value=True), patch(
-                "cccc.daemon.actors.actor_lifecycle_ops.codex_app_supervisor.start_pty_app_actor",
-                side_effect=RuntimeError("codex app-server resume failed"),
+            with (
+                patch("cccc.daemon.server.runtime_ensure_mcp_installed", return_value=True),
+                patch(
+                    "cccc.daemon.actors.actor_runtime_ops.runtime_start_preflight_error",
+                    return_value="",
+                ),
+                patch(
+                    "cccc.daemon.actors.actor_lifecycle_ops.codex_app_supervisor.start_pty_app_actor",
+                    side_effect=RuntimeError("codex app-server resume failed"),
+                ),
             ):
                 restart, _ = self._call("actor_restart", {"group_id": group_id, "actor_id": "peer1", "by": "user"})
 

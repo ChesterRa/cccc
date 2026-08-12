@@ -2,7 +2,7 @@ import argparse
 import io
 import unittest
 from contextlib import redirect_stdout
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -40,7 +40,7 @@ class TestSystemCmdsDoctor(unittest.TestCase):
             patch.object(
                 system_cmds,
                 "_projected_browser_path",
-                return_value=Path(browser) if browser else None,
+                return_value=PurePosixPath(browser) if browser else None,
                 create=True,
             ),
             patch.object(system_cmds, "ensure_home", return_value=Path("/tmp/cccc-home")),
