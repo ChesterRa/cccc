@@ -705,9 +705,31 @@ mod tests {
                 .is_some_and(|value| !value.is_empty() && value != "remote-origin-event")
         );
         let events = ledger::read_all(&ledger_path).expect("events");
-        let local_reply = events.last().expect("local reply");
+        let local_replies = events
+            .iter()
+            .filter(|event| {
+                event.kind == "chat.message"
+                    && event.data.get("reply_to").and_then(Value::as_str)
+                        == Some(inbound.id.as_str())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(local_replies.len(), 1);
+        let local_reply = local_replies[0];
         assert_eq!(local_reply.data["reply_to"], inbound.id);
         assert_eq!(local_reply.data["to"], json!(["user"]));
+        let projected_receipts = events
+            .iter()
+            .filter(|event| event.kind == "chat.cross_group_receipt")
+            .collect::<Vec<_>>();
+        assert_eq!(projected_receipts.len(), 1);
+        assert_eq!(
+            projected_receipts[0].data["source_event_id"],
+            local_reply.id
+        );
+        assert_eq!(
+            projected_receipts[0].data["remote_event_id"],
+            "remote-reply"
+        );
 
         daemon_task.abort();
         remote_task.abort();
