@@ -132,7 +132,13 @@ def dispatch_request(
     if remote_access_resp is not None:
         return remote_access_resp, False
 
-    remote_send_resp = try_handle_remote_send_op(op, args)
+    remote_send_resp = try_handle_remote_send_op(
+        op,
+        args,
+        dispatch_send=lambda relay_op, relay_args: recurse(
+            deps.daemon_request_factory(op=relay_op, args=relay_args)
+        ),
+    )
     if remote_send_resp is not None:
         return remote_send_resp, False
 

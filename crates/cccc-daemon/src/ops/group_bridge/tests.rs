@@ -201,7 +201,10 @@ fn remote_reply_uses_reverse_session_and_keeps_one_local_record() {
     complete_args["response_to"] = frame["request_id"].clone();
     complete_args["result"] = json!({
         "ok":true,
-        "receipt":{"status":"delivered","event_id":"remote-answer"}
+        "receipt":{
+            "status":"delivered","event_id":"remote-answer",
+            "projected":true,"registration_id":"peer-controlled"
+        }
     });
     session_runtime::complete(&home, &request("complete", complete_args)).expect("complete");
 
@@ -222,9 +225,9 @@ fn remote_reply_uses_reverse_session_and_keeps_one_local_record() {
         "new Rust receipts must use the shared Python/Rust success status"
     );
 
-    let messages = ledger::read_all(&ledger_path)
-        .expect("read ledger")
-        .into_iter()
+    let events = ledger::read_all(&ledger_path).expect("read ledger");
+    let messages = events
+        .iter()
         .filter(|event| event.kind == "chat.message")
         .collect::<Vec<_>>();
     assert_eq!(
@@ -243,10 +246,107 @@ fn remote_reply_uses_reverse_session_and_keeps_one_local_record() {
             .count(),
         1
     );
+    let projected = events
+        .iter()
+        .filter(|event| event.kind == "chat.cross_group_receipt")
+        .collect::<Vec<_>>();
+    assert_eq!(projected.len(), 1);
+    assert_eq!(
+        projected[0].data["source_event_id"],
+        response.result["event"]["id"]
+    );
+    assert_eq!(projected[0].data["remote_event_id"], "remote-answer");
+    assert_eq!(
+        response.result["group_bridge_reply"]["receipt"]["registration_id"], "registration_reply",
+        "peer receipt metadata must not replace the local receipt identity"
+    );
 
     let mut close_args = route;
     close_args["generation"] = json!(generation);
     session_runtime::close(&home, &request("close", close_args)).expect("close");
+}
+
+#[test]
+fn rust_retry_reuses_a_python_source_event_without_appending_a_duplicate() {
+    let temp = tempdir().expect("temp");
+    let home = HomeLayout::from_path(temp.path().join("home")).expect("home path");
+    let store = GroupStore::new(home.clone()).expect("store");
+    let group = store.create("sender", "").expect("group");
+    let ledger_path = store.ledger_path(&group.group_id).expect("ledger path");
+    let mut source = Event::new("chat.message", &group.group_id);
+    source.by = "python-agent".into();
+    source.data = json!({
+        "text":"created by Python","to":["user"],
+        "dst_group_id":"g_remote","dst_to":["@foreman"],
+        "client_id":"python-source-client-id"
+    })
+    .as_object()
+    .cloned()
+    .expect("source data");
+    ledger::append(&ledger_path, &source).expect("append Python source");
+    group_bridge_legacy::update(&home, |state| {
+        state.clear();
+        state.insert(
+            "trusts".into(),
+            json!([{
+                "trust_id":"trust_retry","registration_id":"registration_retry",
+                "group_id":group.group_id,"remote_group_id":"g_remote",
+                "remote_peer_id":"peer_remote","transport":"group_bridge_session",
+                "status":"active","remote_access_level":"messages"
+            }]),
+        );
+        state.insert(
+            "deliveries".into(),
+            json!([{
+                "ok":false,"status":"retrying",
+                "registration_id":"registration_retry",
+                "idempotency_key":"python-retry","src_group_id":group.group_id,
+                "dst_group_id":"g_remote","source_event_id":source.id,
+                "attempt":1,"max_attempts":5,
+                "payload":{
+                    "text":"created by Python","to":["@foreman"],
+                    "priority":"normal","reply_required":false,
+                    "refs":[],"attachments":[],"source_by":"python-agent"
+                },
+                "source_record_payload":{
+                    "text":"created by Python","to":["@foreman"],
+                    "priority":"normal","reply_required":false,
+                    "refs":[],"attachments":[],"source_by":"python-agent"
+                }
+            }]),
+        );
+        Ok(())
+    })
+    .expect("bridge state");
+
+    let result = super::remote_send(
+        &home,
+        &request(
+            "remote_send",
+            json!({
+                "group_id":group.group_id,
+                "registration_id":"registration_retry",
+                "idempotency_key":"python-retry",
+                "by":"python-agent",
+                "payload":{"text":"changed retry body","to":["@foreman"]}
+            }),
+        ),
+    )
+    .expect("retry remains durable");
+
+    assert_eq!(result["receipt"]["status"], "retrying");
+    assert_eq!(result["receipt"]["source_event_id"], source.id);
+    let messages = ledger::read_all(&ledger_path)
+        .expect("ledger")
+        .into_iter()
+        .filter(|event| event.kind == "chat.message")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        messages.len(),
+        1,
+        "retry must reuse the Python source event"
+    );
+    assert_eq!(messages[0].id, source.id);
 }
 
 #[test]

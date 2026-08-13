@@ -47,7 +47,9 @@ failure until after recording starts.
 Disconnects finalize the last hypothesis. Stopping capture releases the
 microphone immediately, runs the installed SenseVoice model on the blocking
 worker pool, and sends `final_asr_text` before closing the recording connection.
-If final ASR fails, the live transcript remains available. An installed
+If final ASR fails, the live transcript remains available. For segmented
+recordings, successful segment text is retained, while any failed segment is
+reported explicitly as a partial final transcript in the Web UI. An installed
 diarization model then adds speaker ranges in the background and emits an
 `assistant.voice.session` event when the result is ready.
 Speaker ranges are normalized to first-seen `Speaker 1..N` labels, tiny

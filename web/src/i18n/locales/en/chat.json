@@ -264,6 +264,7 @@
   "voiceSecretaryMicBusyOrUnavailable": "The microphone could not be started. Check whether another app is using it or the OS blocked access.",
   "voiceSecretarySelectedMicUnavailable": "The selected microphone is unavailable. Reset to the system default microphone and try again.",
   "voiceSecretaryAudioTranscribeFailed": "Voice Secretary could not transcribe the recorded audio.",
+  "voiceSecretaryFinalAsrPartial": "The final transcript is incomplete: {{count}} recording segment(s) could not be transcribed. Available text was kept.",
   "voiceSecretaryServiceAsrCommandMissing": "Audio was captured, but assistant service local ASR has no active transcription backend yet. Switch to Browser ASR.",
   "voiceSecretaryServiceAsrBackendUnavailable": "Audio was captured, but assistant service local ASR does not have an active transcription backend yet. Use Browser ASR for now.",
   "voiceSecretarySpeechError": "Speech recognition error: {{code}}",

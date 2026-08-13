@@ -43,6 +43,8 @@ def try_handle_daemon_core_op(
                         "space_provider_auth_browser_vnc_attach": True,
                         "web_model_browser_attach": True,
                         "web_model_browser_vnc_attach": True,
+                        "term_attachment_status": False,
+                        "term_attach_snapshot_v1": False,
                         "assistant_state": True,
                         "assistant_voice_recording_lease": True,
                         "assistant_voice_model_install": True,

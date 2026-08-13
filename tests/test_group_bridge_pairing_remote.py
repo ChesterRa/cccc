@@ -653,15 +653,28 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
             cleanup()
 
     def test_approved_remote_pairing_session_registration_requires_active_session(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
         from cccc.daemon.group_bridge.ops import handle_remote_send
+        from cccc.daemon.server import handle_request
+        from cccc.kernel.group import create_group
         from cccc.kernel.group_bridge import pairing
         from cccc.kernel.group_bridge.pairing import create_pairing_invite
         from cccc.kernel.group_bridge.pairing_remote import build_connection_payload, submit_remote_pairing_request, sync_remote_pairing_outbound
         from cccc.kernel.group_bridge.registration import list_registrations
+        from cccc.kernel.registry import load_registry
 
         issuer_home, issuer_cleanup = self._home()
         joiner_home, joiner_cleanup = self._home()
         try:
+            old_home = os.environ.get("CCCC_HOME")
+            os.environ["CCCC_HOME"] = str(joiner_home)
+            try:
+                joiner_group = create_group(load_registry(), title="Joiner Group", topic="")
+            finally:
+                if old_home is None:
+                    os.environ.pop("CCCC_HOME", None)
+                else:
+                    os.environ["CCCC_HOME"] = old_home
             invite = create_pairing_invite(group_id="g_issuer", ttl_seconds=600, home=issuer_home)
             payload = build_connection_payload(invite, issuer_endpoint="http://127.0.0.1:5555", issuer_group_title="Issuer Group", home=issuer_home)
 
@@ -679,7 +692,7 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
 
             outbound = submit_remote_pairing_request(
                 payload,
-                local_group_id="g_joiner",
+                local_group_id=joiner_group.group_id,
                 client=submit_client,
                 allow_localhost=True,
                 home=joiner_home,
@@ -704,11 +717,12 @@ class TestGroupBridgePairingRemote(unittest.TestCase):
             try:
                 result = handle_remote_send(
                     {
-                        "group_id": "g_joiner",
+                        "group_id": joiner_group.group_id,
                         "registration_id": registration["registration_id"],
                         "idempotency_key": "send-credential",
                         "payload": {"text": "hello", "to": ["@foreman"]},
-                    }
+                    },
+                    dispatch_send=lambda op, args: handle_request(DaemonRequest(op=op, args=args)),
                 )
             finally:
                 if old_home is None:

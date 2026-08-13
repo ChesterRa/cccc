@@ -92,6 +92,7 @@ fn segmented_result_payload(results: Vec<SegmentAsrResult>) -> Value {
     let mut text = Vec::new();
     let mut segments = Vec::with_capacity(results.len());
     let mut first_error = None;
+    let mut failed_segment_count = 0;
     let mut model_id = Value::Null;
     let mut sample_rate = Value::Null;
     for item in results {
@@ -111,6 +112,7 @@ fn segmented_result_payload(results: Vec<SegmentAsrResult>) -> Value {
                 }));
             }
             Err(error) => {
+                failed_segment_count += 1;
                 if first_error.is_none() {
                     first_error = Some((error.code, error.message.clone(), error.details.clone()));
                 }
@@ -139,7 +141,8 @@ fn segmented_result_payload(results: Vec<SegmentAsrResult>) -> Value {
     json!({
         "type":"final_asr_text","ok":true,"text":text.join("\n"),
         "model_id":model_id,"sample_rate":sample_rate,"segments":segments,
-        "segment_count":segment_count
+        "segment_count":segment_count,"partial":failed_segment_count > 0,
+        "failed_segment_count":failed_segment_count
     })
 }
 
@@ -204,6 +207,8 @@ mod tests {
         assert_eq!(payload["ok"], true);
         assert_eq!(payload["text"], "第一段");
         assert_eq!(payload["segment_count"], 2);
+        assert_eq!(payload["partial"], true);
+        assert_eq!(payload["failed_segment_count"], 1);
         assert_eq!(payload["segments"][1]["error"]["code"], "asr_failed");
     }
 }

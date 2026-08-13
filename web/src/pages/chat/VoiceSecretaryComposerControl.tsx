@@ -3436,6 +3436,13 @@ export function VoiceSecretaryComposerControl({
             }
             if (type === "final_asr_text") {
               if (payload.ok !== false) {
+                if (payload.partial === true) {
+                  showNotice({
+                    message: t("voiceSecretaryFinalAsrPartial", {
+                      count: Math.max(1, Number(payload.failed_segment_count) || 1),
+                    }),
+                  });
+                }
                 const finalText = String(payload.text || "").trim();
                 if (isMeaningfulVoiceDispatchText(finalText)) {
                   serviceFinalAsrTextRef.current = finalText;

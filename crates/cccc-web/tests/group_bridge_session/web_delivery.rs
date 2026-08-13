@@ -29,6 +29,26 @@ pub(super) async fn complete_web_delivery_over_session(
         .expect("Web cross-group send did not use the live daemon session");
     assert_eq!(frame["op"], "remote_send");
     assert_eq!(frame["payload"]["reply_to"], "remote-parent-event");
+    let source_ledger = GroupStore::new(home.clone())
+        .and_then(|store| store.ledger_path(group_id))
+        .expect("source ledger");
+    let source_messages = ledger::read_all(&source_ledger)
+        .expect("source events before remote completion")
+        .into_iter()
+        .filter(|event| {
+            event.kind == "chat.message"
+                && event.data.get("dst_group_id").and_then(Value::as_str) == Some("g_sender")
+                && event.data.get("text").and_then(Value::as_str)
+                    == Some("web over reverse session")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(source_messages.len(), 1);
+    assert!(source_messages[0].data.get("source_by").is_none());
+    assert!(source_messages[0].data.get("transport").is_none());
+    assert_eq!(
+        frame["payload"]["src_event_id"], source_messages[0].id,
+        "the local source event must be durable before remote delivery"
+    );
     socket
         .send(WsMessage::Text(
             json!({
@@ -78,4 +98,29 @@ pub(super) async fn complete_web_delivery_over_session(
             receipt["idempotency_key"] == "web-session-once" && receipt["status"] == "sent"
         })
     }));
+    let events = ledger::read_all(&source_ledger).expect("source events after retry");
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| {
+                event.kind == "chat.message"
+                    && event.data.get("dst_group_id").and_then(Value::as_str) == Some("g_sender")
+                    && event.data.get("text").and_then(Value::as_str)
+                        == Some("web over reverse session")
+            })
+            .count(),
+        1,
+        "idempotent retries must not duplicate the source message"
+    );
+    let receipts = events
+        .iter()
+        .filter(|event| {
+            event.kind == "chat.cross_group_receipt"
+                && event.data.get("idempotency_key").and_then(Value::as_str)
+                    == Some("web-session-once")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(receipts.len(), 1, "the delivery receipt must project once");
+    assert_eq!(receipts[0].data["source_event_id"], source_messages[0].id);
+    assert_eq!(receipts[0].data["remote_event_id"], "remote-web-session");
 }

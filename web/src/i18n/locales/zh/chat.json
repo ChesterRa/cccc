@@ -264,6 +264,7 @@
   "voiceSecretaryMicBusyOrUnavailable": "麦克风无法启动。请检查是否被其它应用占用，或是否被系统权限阻止。",
   "voiceSecretarySelectedMicUnavailable": "当前选择的麦克风不可用。已重置为系统默认麦克风，请重试。",
   "voiceSecretaryAudioTranscribeFailed": "语音小秘书无法转写这段录音。",
+  "voiceSecretaryFinalAsrPartial": "最终转写不完整：有 {{count}} 个录音分段转写失败，已保留其余可用文本。",
   "voiceSecretaryServiceAsrCommandMissing": "音频已经采集到，但助手服务本地 ASR 还没有可用的转写后端。请切到浏览器 ASR。",
   "voiceSecretaryServiceAsrBackendUnavailable": "音频已经采集到，但助手服务本地 ASR 还没有接入可用的转写后端。请先使用浏览器 ASR。",
   "voiceSecretarySpeechError": "语音识别错误：{{code}}",

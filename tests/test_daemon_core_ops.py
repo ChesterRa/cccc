@@ -41,6 +41,8 @@ class TestDaemonCoreOps(unittest.TestCase):
             self.assertIs(capabilities.get("assistant_state"), True)
             self.assertIs(capabilities.get("assistant_voice_recording_lease"), True)
             self.assertIs(capabilities.get("assistant_voice_model_install"), True)
+            self.assertIs(capabilities.get("term_attachment_status"), False)
+            self.assertIs(capabilities.get("term_attach_snapshot_v1"), False)
             for operation in (
                 "presentation_browser_attach",
                 "presentation_browser_vnc_attach",

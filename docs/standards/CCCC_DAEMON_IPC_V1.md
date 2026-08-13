@@ -353,9 +353,14 @@ Notes:
 - SDK-compatible daemons MUST return `ipc_v: 1`; omitting it is interpreted as IPC version `0`.
 - SDK-compatible daemons MUST identify their active implementation as `python` or `rust`.
 - `compatibility`, when present, is an implementation-specific compatibility identity; clients MUST NOT infer compatibility from the implementation name alone.
-- SDK-compatible daemons MUST return a `capabilities` feature map. Python and Rust daemons advertise supported `events_stream`, `remote_access`, and optional browser-attach operations here.
+- SDK-compatible daemons MUST return a `capabilities` feature map. Python and Rust daemons advertise supported `events_stream`, `remote_access`, optional browser-attach operations, and optional terminal-attach extensions here.
 - Each optional browser stream is advertised under its exact operation name (`presentation_browser_attach`, `presentation_browser_vnc_attach`, `space_provider_auth_browser_attach`, `space_provider_auth_browser_vnc_attach`, `web_model_browser_attach`, or `web_model_browser_vnc_attach`). `true` means the daemon recognizes that streaming upgrade; `false` means callers MUST use another product surface or treat the operation as unavailable.
 - A product implementation MAY serve an equivalent ephemeral browser surface directly through its local Web port. That does not make the daemon IPC upgrade supported: the exact daemon capability MUST remain `false` unless that daemon recognizes and serves the operation itself.
+- `term_attachment_status=true` means `term_attach` returns a positive
+  `attachment_id` and the daemon implements writer-ownership status checks for
+  that ID. `term_attach_snapshot_v1=true` means callers may request
+  `bootstrap="snapshot_v1"` and receive `initial_output` metadata. Clients MUST
+  retain the baseline replay-stream behavior when either extension is false.
 - Clients SHOULD probe operation support independently; a recognized operation may reject empty probe arguments, but MUST NOT return `unknown_op`.
 - Clients MUST NOT probe an unadvertised browser attach operation merely to discover support: a successful probe upgrades the connection and may acquire the only controller. They SHOULD consult the exact capability first.
 - Clients MUST use protocol, compatibility, and capability fields instead of exact product-version equality.
@@ -1886,7 +1891,11 @@ capture. Rust stores 48,000,000 PCM bytes per segment (25 minutes) and caps one
 WebSocket session at 800 MiB (about 7 hours 17 minutes). On `stop` or an
 unexpected disconnect, final ASR processes segment files sequentially. The
 `final_asr_text` event keeps the combined text in timeline order and includes a
-`segments` array with each segment's status. Speaker analysis is likewise
+`segments` array with each segment's status. If at least one segment succeeds
+and another fails, the event keeps `ok=true` so the available text is retained,
+and MUST also report `partial=true` plus `failed_segment_count`; clients MUST
+surface that incompleteness rather than presenting the text as a complete
+transcript. Speaker analysis is likewise
 sequential so native diarization holds at most one segment waveform at a time.
 Multi-segment speaker results MUST NOT imply cross-segment identity matching;
 Rust marks them with `speaker_identity_scope="recording_segment"`.
@@ -3967,10 +3976,11 @@ Args:
 
 `cols` MUST be in `10..=65535` and `rows` MUST be in `2..=65535`; invalid or
 missing dimensions return `invalid_size` without resizing the PTY.
-WebSocket attachment bridges MUST include the positive `attachment_id` returned by
-`term_attach`. When present, the daemon atomically verifies that the attachment is
-still the current writer before resizing; a stale or viewer attachment returns
-`terminal_not_writer`. Legacy non-attachment control clients may omit the field.
+When `term_attachment_status=true`, WebSocket attachment bridges MUST include the
+positive `attachment_id` returned by `term_attach`. The daemon atomically verifies
+that the attachment is still the current writer before resizing; a stale or viewer
+attachment returns `terminal_not_writer`. Legacy clients and daemons that advertise
+the capability as false omit the field.
 
 Result:
 ```ts
@@ -3978,6 +3988,9 @@ Result:
 ```
 
 #### `term_attachment_status`
+
+Optional extension, advertised by `ping.capabilities.term_attachment_status`.
+Clients MUST NOT assume this operation is available when that capability is false.
 
 Args:
 ```ts
@@ -4010,13 +4023,13 @@ Result (handshake):
 {
   group_id: string
   actor_id: string
-  attachment_id: number
+  attachment_id?: number
   terminal_mode: "control" | "viewer"
   terminal_writable: boolean
   writer_replaced: boolean
   replay_cursor: number
   replay_end_cursor: number
-  initial_output: {
+  initial_output?: {
     kind: "replay" | "snapshot"
     bytes: number
     cursor: number
@@ -4031,6 +4044,11 @@ After a successful handshake, the connection becomes a terminal stream (see §4.
 Notes:
 - `term_resize` MUST be sent over a separate daemon connection (the PTY stream is not NDJSON).
 - `term_attach` returns `not_pty_actor` when the actor is not effectively running on the PTY runner.
+- `attachment_id` and `initial_output` are optional extensions. Callers MUST
+  consult `ping.capabilities.term_attachment_status` and
+  `ping.capabilities.term_attach_snapshot_v1` before depending on them. The
+  baseline handshake always provides replay cursors and streams retained output
+  from `replay_cursor` through `replay_end_cursor` before live PTY bytes.
 - A successful `term_attach` owns a dedicated connection and MUST NOT be returned
   to an NDJSON request pool. Rust daemon and Web implementations use this raw
   stream directly; terminal output is not transported through polling RPCs.
@@ -4559,6 +4577,18 @@ events when the same registration and idempotency key are retried.
 The canonical receipt lifecycle is `queued`, `sending`, `retrying`, `sent`, or
 `failed`; `sent` and `failed` are terminal. Readers MUST also treat the legacy
 Rust success value `delivered` as terminal, but new receipts MUST write `sent`.
+
+For a new outbound message, the source-group `chat.message` MUST be appended
+idempotently before any remote transport side effect. Its event ID MUST be sent
+as `src_event_id` alongside `src_group_id`, and every subsequent retry for the
+same registration and idempotency key MUST reuse that source event. A successful
+remote receipt MUST be projected into the source ledger as one idempotent
+`chat.cross_group_receipt`; transport state belongs in that receipt, not in the
+immutable source message. A remote reply may reuse the local reply event that was
+already appended instead of creating a second source message.
+The receipt field `projected` is local bookkeeping only. Implementations MUST
+ignore a peer-supplied `projected` value and establish projection from trusted
+local receipt state or the source ledger.
 
 The cross-engine persistence authority is the Python-compatible set of
 purpose-specific files in `CCCC_HOME`:

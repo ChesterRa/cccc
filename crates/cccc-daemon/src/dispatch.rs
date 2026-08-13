@@ -37,6 +37,8 @@ fn dispatch_result(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
                 "space_provider_auth_browser_vnc_attach": false,
                 "web_model_browser_attach": false,
                 "web_model_browser_vnc_attach": false,
+                "term_attachment_status": true,
+                "term_attach_snapshot_v1": true,
                 "assistant_state": true,
                 "assistant_voice_recording_lease": true,
                 "assistant_voice_model_install": false,

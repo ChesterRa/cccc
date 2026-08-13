@@ -39,6 +39,14 @@ fn ping_exposes_truthful_sdk_contract() {
         response.result["capabilities"]["remote_access"],
         json!(true)
     );
+    assert_eq!(
+        response.result["capabilities"]["term_attachment_status"],
+        json!(true)
+    );
+    assert_eq!(
+        response.result["capabilities"]["term_attach_snapshot_v1"],
+        json!(true)
+    );
     for operation in [
         "presentation_browser_attach",
         "presentation_browser_vnc_attach",

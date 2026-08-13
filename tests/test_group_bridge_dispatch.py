@@ -182,6 +182,63 @@ class TestGroupBridgeDispatch(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_python_retry_accepts_rust_enriched_transport_payload(self) -> None:
+        from cccc.daemon.group_bridge.remote_dispatch import deliver_enqueued
+        from cccc.daemon.group_bridge.transports.base import RemoteSendResult
+        from cccc.kernel.group_bridge.receipts import record_receipt
+
+        _, cleanup = self._with_home()
+        try:
+            reg = self._make_registration()
+            rid = reg["registration_id"]
+            record_receipt(
+                rid,
+                "rust-retry",
+                {
+                    "ok": False,
+                    "status": "retrying",
+                    "src_group_id": "g_local",
+                    "source_event_id": "source-rust-1",
+                    "payload": {
+                        "text": "hello from Rust",
+                        "to": ["@foreman"],
+                        "priority": "attention",
+                        "reply_required": True,
+                        "refs": [],
+                        "attachments": [],
+                        "source_by": "peer-rust",
+                        "source_group_id": "g_local",
+                        "src_group_id": "g_local",
+                        "source_group_title": "Local",
+                        "idempotency_key": "rust-retry",
+                        "src_event_id": "source-rust-1",
+                    },
+                },
+            )
+            captured = {}
+
+            class Capturing:
+                transport = "fake"
+                capabilities = frozenset()
+
+                def deliver(self, envelope):
+                    captured["env"] = envelope
+                    return RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="fake")
+
+            result = deliver_enqueued(
+                registration_id=rid,
+                idempotency_key="rust-retry",
+                transport_factory=lambda _name: Capturing(),
+                credential="secret",
+            )
+
+            self.assertEqual(result["status"], "sent")
+            self.assertEqual(captured["env"].payload.text, "hello from Rust")
+            self.assertEqual(captured["env"].payload.source_by, "peer-rust")
+            self.assertNotIn("src_group_id", captured["env"].payload.model_dump())
+        finally:
+            cleanup()
+
     def test_deliver_uses_source_event_id_separate_from_idempotency_key(self) -> None:
         from cccc.daemon.group_bridge.remote_dispatch import deliver_enqueued, enqueue_remote_send
         from cccc.daemon.group_bridge.transports.base import RemoteSendResult

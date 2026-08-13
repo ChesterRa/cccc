@@ -1,3 +1,5 @@
+use crate::RuntimeError;
+use crate::session_history::InitialHistory;
 use crate::session_history::SessionHistory;
 use crate::transcript_archive::HistoryConfig;
 
@@ -85,4 +87,32 @@ fn archive_creation_fallback_keeps_the_replacement_cursor() {
     assert_eq!(page.data, "replacement");
     assert_eq!(page.start_cursor, 42);
     assert!(!page.cursor_expired);
+}
+
+#[test]
+fn terminal_mirror_resize_commits_only_after_the_pty_resize() {
+    let history = SessionHistory::new(None).expect("history");
+    history.push(b"visible output").expect("push");
+
+    let error = history
+        .resize_terminal_with(120, 40, || {
+            Err(RuntimeError::Io(std::io::Error::other(
+                "synthetic PTY resize failure",
+            )))
+        })
+        .expect_err("resize must fail");
+    assert!(error.to_string().contains("synthetic PTY resize failure"));
+    assert_eq!(snapshot_size(&history), (80, 24));
+
+    history
+        .resize_terminal_with(120, 40, || Ok(()))
+        .expect("resize");
+    assert_eq!(snapshot_size(&history), (120, 40));
+}
+
+fn snapshot_size(history: &SessionHistory) -> (u16, u16) {
+    match history.subscribe(None, true).expect("subscription").initial {
+        InitialHistory::Snapshot(snapshot) => (snapshot.cols, snapshot.rows),
+        InitialHistory::Replay(_) => panic!("expected terminal snapshot"),
+    }
 }

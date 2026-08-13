@@ -211,7 +211,6 @@ fn send_cross_group_remote_record(home: &HomeLayout, request: &DaemonRequest) ->
     data.insert("to".into(), json!(["user"]));
     data.insert("dst_to".into(), destination_recipients);
     data.insert("dst_group_id".into(), json!(destination_id));
-    data.insert("transport".into(), json!("group_bridge_session"));
     let event = append(home, &source.group_id, "chat.message", &by, data)?;
     object(json!({"source_event":event,"transport":"group_bridge_session"}))
 }
@@ -303,7 +302,6 @@ fn send_cross_group(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
         source_data.insert("to".into(), json!(["user"]));
         source_data.insert("dst_to".into(), destination_recipients);
         source_data.insert("dst_group_id".into(), json!(destination.group_id));
-        source_data.insert("transport".into(), json!("local"));
         append(home, &source.group_id, "chat.message", &by, source_data)?
     };
 

@@ -43,11 +43,19 @@ impl SessionHistory {
         Ok(HistorySubscription { initial, changes })
     }
 
-    pub(crate) fn resize_terminal(&self, cols: u16, rows: u16) -> Result<(u16, u16), RuntimeError> {
+    pub(crate) fn resize_terminal_with(
+        &self,
+        cols: u16,
+        rows: u16,
+        resize_pty: impl FnOnce() -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
         let mut state = self.state.lock().map_err(|_| RuntimeError::Poisoned)?;
-        let previous = state.terminal.size();
+        if state.terminal.size() == (cols, rows) {
+            return Ok(());
+        }
+        resize_pty()?;
         state.terminal.resize(cols, rows);
-        Ok(previous)
+        Ok(())
     }
 
     pub(crate) fn active_raw_page_since(

@@ -9,13 +9,16 @@ class _CountingTransport:
     transport = "registry_hub"
     capabilities = frozenset()
 
-    def __init__(self, result):
+    def __init__(self, result, *, on_deliver=None):
         self._result = result
+        self._on_deliver = on_deliver
         self.calls = 0
         self.credentials = []
         self.payloads = []
 
     def deliver(self, envelope):
+        if self._on_deliver is not None:
+            self._on_deliver(envelope)
         self.calls += 1
         self.credentials.append(envelope.credential)
         self.payloads.append(envelope.payload)
@@ -65,6 +68,18 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
             credential_ref=credential_ref,
         )
 
+    def _group(self, title: str = "group-bridge-source"):
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        return create_group(load_registry(), title=title, topic="")
+
+    def _dispatch_send(self, op, args):
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+
+        return handle_request(DaemonRequest(op=op, args=args))
+
     def test_unrelated_op_returns_none(self) -> None:
         from cccc.daemon.group_bridge.ops import try_handle_remote_send_op
 
@@ -103,22 +118,34 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
     def test_remote_send_delivers_once_and_replays_terminal_receipt(self) -> None:
         from cccc.daemon.group_bridge.ops import handle_remote_send, handle_remote_delivery_status
         from cccc.daemon.group_bridge.transports.base import RemoteSendResult
+        from cccc.kernel.inbox import iter_events
 
         _, cleanup = self._with_home()
         try:
-            reg = self._registration()
+            group = self._group()
+            reg = self._registration(group_id=group.group_id)
+
+            def assert_source_was_persisted(envelope):
+                from cccc.kernel.inbox import find_event
+
+                event = find_event(group, envelope.source_event_id)
+                self.assertIsInstance(event, dict)
+                self.assertEqual((event or {}).get("kind"), "chat.message")
+
             fake = _CountingTransport(
-                RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="registry_hub")
+                RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="registry_hub"),
+                on_deliver=assert_source_was_persisted,
             )
             resp = handle_remote_send(
                 {
-                    "group_id": "g_local",
+                    "group_id": group.group_id,
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
                     "payload": {"text": "hi", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
+                dispatch_send=self._dispatch_send,
             )
             self.assertIsNotNone(resp)
             self.assertTrue(resp.ok)
@@ -127,23 +154,36 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
             self.assertEqual(resp.result["receipt"]["remote_event_id"], "remote-1")
             self.assertEqual(fake.calls, 1)
             self.assertEqual(fake.payloads[0].source_by, "actor-a")
+            source_event_id = str(resp.result["receipt"].get("source_event_id") or "")
+            source_messages = [
+                event for event in iter_events(group.ledger_path)
+                if event.get("kind") == "chat.message"
+            ]
+            self.assertEqual(len(source_messages), 1)
+            self.assertEqual(source_messages[0].get("id"), source_event_id)
+            self.assertEqual((source_messages[0].get("data") or {}).get("dst_group_id"), "g_remote")
 
             replay = handle_remote_send(
                 {
-                    "group_id": "g_local",
+                    "group_id": group.group_id,
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
                     "payload": {"text": "changed", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
+                dispatch_send=self._dispatch_send,
             )
             self.assertTrue(replay.ok)
             self.assertEqual(replay.result["receipt"]["remote_event_id"], "remote-1")
             self.assertEqual(fake.calls, 1)
+            self.assertEqual(
+                len([event for event in iter_events(group.ledger_path) if event.get("kind") == "chat.message"]),
+                1,
+            )
 
             status = handle_remote_delivery_status(
-                {"group_id": "g_local", "registration_id": reg["registration_id"], "idempotency_key": "k1"}
+                {"group_id": group.group_id, "registration_id": reg["registration_id"], "idempotency_key": "k1"}
             )
             self.assertTrue(status.ok)
             self.assertEqual(status.result["receipt"]["status"], "sent")
@@ -158,14 +198,15 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
-            reg = self._registration()
+            group = self._group()
+            reg = self._registration(group_id=group.group_id)
             rid = reg["registration_id"]
             fake = _CountingTransport(
                 RemoteSendResult(ok=True, status="sent", remote_event_id="remote-insight", transport="registry_hub")
             )
             missing = handle_remote_send(
                 {
-                    "group_id": "g_local",
+                    "group_id": group.group_id,
                     "by": "actor-a",
                     "registration_id": rid,
                     "idempotency_key": "strict-missing",
@@ -182,7 +223,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
 
             sent = handle_remote_send(
                 {
-                    "group_id": "g_local",
+                    "group_id": group.group_id,
                     "by": "actor-a",
                     "registration_id": rid,
                     "idempotency_key": "strict-sent",
@@ -191,6 +232,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "payload": {"text": "review this", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
+                dispatch_send=self._dispatch_send,
             )
             self.assertTrue(sent.ok, getattr(sent, "error", None))
             self.assertEqual(fake.calls, 1)
@@ -206,7 +248,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
 
             replay = handle_remote_send(
                 {
-                    "group_id": "g_local",
+                    "group_id": group.group_id,
                     "by": "actor-a",
                     "registration_id": rid,
                     "idempotency_key": "strict-sent",
@@ -214,6 +256,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "payload": {"text": "changed retry", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
+                dispatch_send=self._dispatch_send,
             )
             self.assertTrue(replay.ok, getattr(replay, "error", None))
             self.assertEqual(fake.calls, 1)
@@ -226,13 +269,14 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
-            reg = self._registration()
+            group = self._group()
+            reg = self._registration(group_id=group.group_id)
             fake = _CountingTransport(
                 RemoteSendResult(ok=True, status="sent", remote_event_id="remote-user", transport="registry_hub")
             )
             sent = handle_remote_send(
                 {
-                    "group_id": "g_local",
+                    "group_id": group.group_id,
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "strict-user",
@@ -240,6 +284,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                     "payload": {"text": "answer for user", "to": ["user"]},
                 },
                 transport_factory=lambda _name: fake,
+                dispatch_send=self._dispatch_send,
             )
             self.assertTrue(sent.ok, getattr(sent, "error", None))
             self.assertEqual(fake.payloads[0].text, "answer for user")
@@ -252,19 +297,21 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
-            reg = self._registration(credential_ref="sec_remote_peer")
+            group = self._group()
+            reg = self._registration(group_id=group.group_id, credential_ref="sec_remote_peer")
             fake = _CountingTransport(
                 RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="registry_hub")
             )
             resp = handle_remote_send(
                 {
-                    "group_id": "g_local",
+                    "group_id": group.group_id,
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
                     "payload": {"text": "hi", "to": ["@foreman"]},
                 },
                 transport_factory=lambda _name: fake,
+                dispatch_send=self._dispatch_send,
             )
             self.assertTrue(resp.ok)
             receipt = resp.result["receipt"]
@@ -281,13 +328,14 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
-            reg = self._registration(credential_ref="sec_remote_peer")
+            group = self._group()
+            reg = self._registration(group_id=group.group_id, credential_ref="sec_remote_peer")
             fake = _CountingTransport(
                 RemoteSendResult(ok=True, status="sent", remote_event_id="remote-1", transport="registry_hub")
             )
             resp = handle_remote_send(
                 {
-                    "group_id": "g_local",
+                    "group_id": group.group_id,
                     "by": "actor-a",
                     "registration_id": reg["registration_id"],
                     "idempotency_key": "k1",
@@ -295,6 +343,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
                 },
                 transport_factory=lambda _name: fake,
                 credential_resolver=lambda _ref: "raw-token-from-store",
+                dispatch_send=self._dispatch_send,
             )
             self.assertTrue(resp.ok)
             self.assertEqual(resp.result["receipt"]["status"], "sent")
@@ -329,10 +378,11 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
-            reg = self._registration(credential_ref="sec_remote_peer")
+            group = self._group()
+            reg = self._registration(group_id=group.group_id, credential_ref="sec_remote_peer")
             resp = try_handle_remote_send_op(
                 "remote_send",
-                {"group_id": "g_local", "registration_id": reg["registration_id"], "payload": {"text": "x"}},
+                {"group_id": group.group_id, "registration_id": reg["registration_id"], "payload": {"text": "x"}},
             )
             self.assertIsNotNone(resp)
             assert resp is not None
@@ -347,12 +397,13 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
-            reg = self._registration()
+            group = self._group()
+            reg = self._registration(group_id=group.group_id)
             rid = reg["registration_id"]
             resp = try_handle_remote_send_op(
                 "remote_send",
                 {
-                    "group_id": "g_local",
+                    "group_id": group.group_id,
                     "registration_id": rid,
                     "idempotency_key": "k1",
                     "payload": {"text": "x", "to": [" "]},
@@ -396,17 +447,9 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
 
         _, cleanup = self._with_home()
         try:
-            reg = self._registration(credential_ref="sec_remote_peer")
+            group = self._group()
+            reg = self._registration(group_id=group.group_id, credential_ref="sec_remote_peer")
             rid = reg["registration_id"]
-            try_handle_remote_send_op(
-                "remote_send",
-                {
-                    "group_id": "g_local",
-                    "registration_id": rid,
-                    "idempotency_key": "k1",
-                    "payload": {"text": "hi", "to": ["@foreman"]},
-                },
-            )
             resp = try_handle_remote_send_op(
                 "remote_delivery_status",
                 {"group_id": "g_other", "registration_id": rid, "idempotency_key": "k1"},
@@ -418,24 +461,37 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
             cleanup()
 
     def test_remote_delivery_status_returns_receipt(self) -> None:
+        from cccc.contracts.v1 import DaemonRequest
         from cccc.daemon.group_bridge.ops import try_handle_remote_send_op
+        from cccc.daemon.server import handle_request
+        from cccc.kernel.inbox import iter_events
 
         _, cleanup = self._with_home()
         try:
-            reg = self._registration(credential_ref="sec_remote_peer")
+            group = self._group()
+            reg = self._registration(group_id=group.group_id, credential_ref="sec_remote_peer")
             rid = reg["registration_id"]
-            try_handle_remote_send_op(
-                "remote_send",
-                {
-                    "group_id": "g_local",
-                    "registration_id": rid,
-                    "idempotency_key": "k1",
-                    "payload": {"text": "hi", "to": ["@foreman"]},
-                },
+            sent, _ = handle_request(
+                DaemonRequest(
+                    op="remote_send",
+                    args={
+                        "group_id": group.group_id,
+                        "registration_id": rid,
+                        "idempotency_key": "k1",
+                        "payload": {"text": "hi", "to": ["@foreman"]},
+                    },
+                )
             )
+            self.assertTrue(sent.ok, getattr(sent, "error", None))
+            source_messages = [
+                event for event in iter_events(group.ledger_path)
+                if event.get("kind") == "chat.message"
+            ]
+            self.assertEqual(len(source_messages), 1)
+            self.assertEqual(source_messages[0].get("id"), sent.result["receipt"].get("source_event_id"))
             resp = try_handle_remote_send_op(
                 "remote_delivery_status",
-                {"group_id": "g_local", "registration_id": rid, "idempotency_key": "k1"},
+                {"group_id": group.group_id, "registration_id": rid, "idempotency_key": "k1"},
             )
             self.assertIsNotNone(resp)
             assert resp is not None
@@ -445,7 +501,7 @@ class TestGroupBridgeDaemonOps(unittest.TestCase):
 
             missing = try_handle_remote_send_op(
                 "remote_delivery_status",
-                {"group_id": "g_local", "registration_id": rid, "idempotency_key": "nope"},
+                {"group_id": group.group_id, "registration_id": rid, "idempotency_key": "nope"},
             )
             assert missing is not None
             self.assertTrue(missing.ok)

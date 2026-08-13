@@ -224,20 +224,16 @@ impl Session {
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), RuntimeError> {
         let cols = cols.max(1);
         let rows = rows.max(1);
-        let previous = self.history.resize_terminal(cols, rows)?;
-        if previous == (cols, rows) {
-            return Ok(());
-        }
-        if let Err(error) = self.master.resize(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        }) {
-            let _ = self.history.resize_terminal(previous.0, previous.1);
-            return Err(RuntimeError::Io(std::io::Error::other(error.to_string())));
-        }
-        Ok(())
+        self.history.resize_terminal_with(cols, rows, || {
+            self.master
+                .resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(|error| RuntimeError::Io(std::io::Error::other(error.to_string())))
+        })
     }
 
     pub fn history(&self, before: Option<u64>, limit: usize) -> Result<HistoryPage, RuntimeError> {

@@ -46,6 +46,7 @@ def enqueue_remote_send(
     idempotency_key: str,
     payload: Dict[str, Any],
     source_event_id: str = "",
+    source_record_payload: Optional[Dict[str, Any]] = None,
     reply_to_remote_event_id: str = "",
     group_bridge_thread: str = "",
     home: Optional[Path] = None,
@@ -62,6 +63,7 @@ def enqueue_remote_send(
         "idempotency_key": str(idempotency_key or "").strip(),
         "src_group_id": str(src_group_id or "").strip(),
         "source_event_id": str(source_event_id or "").strip(),
+        "source_record_payload": dict(source_record_payload or {}),
         "reply_to_remote_event_id": str(reply_to_remote_event_id or "").strip(),
         "group_bridge_thread": str(group_bridge_thread or "").strip(),
         "payload": normalized_payload,
@@ -259,7 +261,11 @@ def payload_from_receipt(receipt: Optional[Dict[str, Any]]) -> Optional[Dict[str
     if not isinstance(receipt, dict):
         return None
     payload = receipt.get("payload")
-    return dict(payload) if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    # Rust receipts enrich their transport payload with routing metadata. Keep
+    # only the shared message contract when Python resumes that delivery.
+    return {key: value for key, value in payload.items() if key in RemoteSendPayload.model_fields}
 
 
 def _finalize(
