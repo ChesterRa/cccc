@@ -5,6 +5,7 @@ import {
   buildTerminalConnectionKey,
   decodeTerminalJsonFrame,
   encodeTerminalInputFrame,
+  encodeTerminalOutputAckFrame,
   encodeTerminalResizeFrame,
   filterTerminalInputForRuntime,
   isTerminalAttachNonRetryableErrorCode,
@@ -17,7 +18,9 @@ import {
   TERMINAL_FRAME_INPUT,
   TERMINAL_FRAME_INPUT_ACK,
   TERMINAL_FRAME_OUTPUT,
+  TERMINAL_FRAME_OUTPUT_ACK,
   TERMINAL_FRAME_RESIZE,
+  TERMINAL_FRAME_WRITABLE,
 } from "../../src/utils/terminalConnection";
 
 describe("buildTerminalConnectionKey", () => {
@@ -202,6 +205,18 @@ describe("buildTerminalWebSocketUrl", () => {
     ).toBe("ws://localhost:5173/api/v1/groups/g1/actors/peer1/term?mode=control&takeover=true");
   });
 
+  it("can negotiate output consumption acknowledgements", () => {
+    expect(
+      buildTerminalWebSocketUrl({
+        protocol: "https:",
+        host: "example.test",
+        groupId: "g1",
+        actorId: "peer1",
+        outputFlowControl: "ack_v1",
+      }),
+    ).toBe("wss://example.test/api/v1/groups/g1/actors/peer1/term?mode=control&output_flow=ack_v1");
+  });
+
   it("can request a read-only viewer attach", () => {
     expect(
       buildTerminalWebSocketUrl({
@@ -240,7 +255,13 @@ describe("terminal opframes", () => {
     expect(decodeTerminalJsonFrame(frame.slice(1))).toEqual({ cols: 120, rows: 42 });
   });
 
-  it("parses output, attach, and input ack frames", () => {
+  it("acknowledges output only through the dedicated cursor frame", () => {
+    const frame = encodeTerminalOutputAckFrame(123.9);
+    expect(frame[0]).toBe(TERMINAL_FRAME_OUTPUT_ACK);
+    expect(decodeTerminalJsonFrame(frame.slice(1))).toEqual({ cursor: 123 });
+  });
+
+  it("parses output, attach, and acknowledgement frames", () => {
     const output = new Uint8Array([TERMINAL_FRAME_OUTPUT, 65]).buffer;
     expect(parseTerminalBinaryFrame(output)).toEqual({
       type: "output",
@@ -262,5 +283,14 @@ describe("terminal opframes", () => {
     ack[0] = TERMINAL_FRAME_INPUT_ACK;
     ack.set(ackPayload, 1);
     expect(parseTerminalBinaryFrame(ack.buffer)?.type).toBe("input_ack");
+
+    const outputAck = encodeTerminalOutputAckFrame(42);
+    expect(parseTerminalBinaryFrame(outputAck.buffer)?.type).toBe("output_ack");
+
+    const writablePayload = new TextEncoder().encode(JSON.stringify({ terminal_writable: false }));
+    const writable = new Uint8Array(writablePayload.length + 1);
+    writable[0] = TERMINAL_FRAME_WRITABLE;
+    writable.set(writablePayload, 1);
+    expect(parseTerminalBinaryFrame(writable.buffer)?.type).toBe("writable");
   });
 });

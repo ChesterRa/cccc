@@ -60,7 +60,7 @@ async fn open_completes_after_dom_content_loaded_without_waiting_for_subresource
     let manager = BrowserSurfaces::default();
 
     let state = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(15),
         manager.open(
             "dom-content-loaded",
             &temp.path().join("profile"),

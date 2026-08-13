@@ -151,6 +151,13 @@ mod tests {
             Access::GroupRead(group_id) if group_id == "g_one"
         ));
         assert!(matches!(
+            access(&request(
+                "term_attachment_status",
+                json!({"group_id":"g_one","actor_id":"peer1","attachment_id":1})
+            )),
+            Access::GlobalRead
+        ));
+        assert!(matches!(
             access(&request("send", json!({"group_id":"g_one"}))),
             Access::GroupWrite(group_id) if group_id == "g_one"
         ));

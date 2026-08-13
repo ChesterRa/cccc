@@ -1,5 +1,8 @@
 use cccc_contracts::{DaemonAddress, DaemonRequest, DaemonResponse, Transport};
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 
 use crate::ClientError;
@@ -7,11 +10,74 @@ use crate::ClientError;
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
+const CONNECTION_BUFFER_BYTES: usize = 64 * 1024;
+
 #[derive(Debug)]
 pub(super) enum Connection {
     Tcp(BufReader<TcpStream>),
     #[cfg(unix)]
     Unix(BufReader<UnixStream>),
+}
+
+#[derive(Debug)]
+pub struct DaemonStream {
+    connection: Connection,
+}
+
+impl DaemonStream {
+    pub(super) fn new(connection: Connection) -> Self {
+        Self { connection }
+    }
+}
+
+impl AsyncRead for DaemonStream {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        match &mut self.get_mut().connection {
+            Connection::Tcp(stream) => Pin::new(stream).poll_read(context, buffer),
+            #[cfg(unix)]
+            Connection::Unix(stream) => Pin::new(stream).poll_read(context, buffer),
+        }
+    }
+}
+
+impl AsyncWrite for DaemonStream {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        buffer: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        match &mut self.get_mut().connection {
+            Connection::Tcp(stream) => Pin::new(stream).poll_write(context, buffer),
+            #[cfg(unix)]
+            Connection::Unix(stream) => Pin::new(stream).poll_write(context, buffer),
+        }
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        match &mut self.get_mut().connection {
+            Connection::Tcp(stream) => Pin::new(stream).poll_flush(context),
+            #[cfg(unix)]
+            Connection::Unix(stream) => Pin::new(stream).poll_flush(context),
+        }
+    }
+
+    fn poll_shutdown(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        match &mut self.get_mut().connection {
+            Connection::Tcp(stream) => Pin::new(stream).poll_shutdown(context),
+            #[cfg(unix)]
+            Connection::Unix(stream) => Pin::new(stream).poll_shutdown(context),
+        }
+    }
 }
 
 impl Connection {
@@ -24,7 +90,10 @@ impl Connection {
                     ));
                 }
                 let stream = TcpStream::connect((address.host.as_str(), address.port)).await?;
-                Ok(Self::Tcp(BufReader::new(stream)))
+                Ok(Self::Tcp(BufReader::with_capacity(
+                    CONNECTION_BUFFER_BYTES,
+                    stream,
+                )))
             }
             Transport::Unix => Self::connect_unix(address).await,
         }
@@ -37,7 +106,8 @@ impl Connection {
                 "missing Unix socket path".into(),
             ));
         }
-        Ok(Self::Unix(BufReader::new(
+        Ok(Self::Unix(BufReader::with_capacity(
+            CONNECTION_BUFFER_BYTES,
             UnixStream::connect(&address.path).await?,
         )))
     }

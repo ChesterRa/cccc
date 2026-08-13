@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 
 mod connection;
 use connection::Connection;
+pub use connection::DaemonStream;
 
 #[derive(Debug, Error)]
 pub enum ClientError {
@@ -83,6 +84,27 @@ impl DaemonClient {
         }
     }
 
+    /// Opens a dedicated connection and preserves it after the response line
+    /// for protocol operations that upgrade to a raw stream.
+    pub async fn upgrade(
+        &self,
+        request: &DaemonRequest,
+    ) -> Result<(DaemonResponse, DaemonStream), ClientError> {
+        let exchange_started = AtomicBool::new(false);
+        match tokio::time::timeout(self.timeout, self.upgrade_inner(request, &exchange_started))
+            .await
+        {
+            Ok(result) => result,
+            Err(_) if exchange_started.load(Ordering::Acquire) => {
+                Err(ClientError::OutcomeUnknown {
+                    op: request.op.clone(),
+                    message: "request timed out after exchange started".into(),
+                })
+            }
+            Err(_) => Err(ClientError::Timeout),
+        }
+    }
+
     async fn call_inner(
         &self,
         request: &DaemonRequest,
@@ -107,6 +129,46 @@ impl DaemonClient {
             Err(error) => Err(error.into_client_error()),
             Ok(response) => Ok(response),
         }
+    }
+
+    async fn upgrade_inner(
+        &self,
+        request: &DaemonRequest,
+        exchange_started: &AtomicBool,
+    ) -> Result<(DaemonResponse, DaemonStream), ClientError> {
+        match self.upgrade_once(request, exchange_started).await {
+            Err(CallFailure::Connect(ClientError::Transport(_))) => {
+                self.invalidate_transport().await;
+                match self.upgrade_once(request, exchange_started).await {
+                    Err(CallFailure::Exchange(error)) => {
+                        self.invalidate_transport().await;
+                        Err(outcome_unknown(request, error))
+                    }
+                    Err(error) => Err(error.into_client_error()),
+                    Ok(result) => Ok(result),
+                }
+            }
+            Err(CallFailure::Exchange(error)) => {
+                self.invalidate_transport().await;
+                Err(outcome_unknown(request, error))
+            }
+            Err(error) => Err(error.into_client_error()),
+            Ok(result) => Ok(result),
+        }
+    }
+
+    async fn upgrade_once(
+        &self,
+        request: &DaemonRequest,
+        exchange_started: &AtomicBool,
+    ) -> Result<(DaemonResponse, DaemonStream), CallFailure> {
+        let mut connection = self.connect().await.map_err(CallFailure::Connect)?;
+        exchange_started.store(true, Ordering::Release);
+        let response = connection
+            .exchange(request)
+            .await
+            .map_err(CallFailure::Exchange)?;
+        Ok((response, DaemonStream::new(connection)))
     }
 
     async fn call_once(

@@ -2,9 +2,15 @@
 
 // Included by the crate-level integration test harness.
 
-use cccc_contracts::{DaemonRequest, DaemonResponse};
 use cccc_core::HomeLayout;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
+
+#[path = "runtime_lifecycle/support.rs"]
+mod support;
+#[path = "runtime_lifecycle/terminal_attachment.rs"]
+mod terminal_attachment;
+
+use support::{call, raw_call};
 
 #[test]
 fn actor_lifecycle_controls_terminal_process() {
@@ -111,6 +117,7 @@ fn actor_lifecycle_controls_terminal_process() {
         )
         .ok
     );
+    terminal_attachment::assert_resize_ownership(&home, &group_id);
     let restarted = call(
         &home,
         "actor_restart",
@@ -649,23 +656,4 @@ fn attach_project_scope(home: &HomeLayout, group_id: &str, temp_root: &std::path
         "attach",
         json!({"group_id":group_id,"path":project,"by":"user"}),
     );
-}
-
-fn call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
-    let response = raw_call(home, op, args);
-    assert!(
-        response.ok,
-        "{op} failed: {:?}",
-        response.error.as_ref().map(|error| &error.message)
-    );
-    response
-}
-
-fn raw_call(home: &HomeLayout, op: &str, args: Value) -> DaemonResponse {
-    let request = DaemonRequest {
-        v: 1,
-        op: op.into(),
-        args: args.as_object().cloned().unwrap_or_else(Map::new),
-    };
-    cccc_daemon::handle_request(home, &request)
 }

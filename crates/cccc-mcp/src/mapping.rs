@@ -1,6 +1,7 @@
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use crate::actions;
+use crate::argument_normalization::{alias, normalize_message_author, normalize_recipients};
 
 pub fn daemon_call(
     name: &str,
@@ -9,6 +10,7 @@ pub fn daemon_call(
     normalize_recipients(&mut args);
     let op = match name {
         "cccc_inbox_list" => "inbox_list",
+        "cccc_inbox_mark_read" => return crate::inbox_mapping::daemon_call(args),
         "cccc_message_send" => {
             alias(&mut args, "event_id", "reply_to");
             normalize_message_author(&mut args);
@@ -313,39 +315,10 @@ fn retain_fields(args: &mut Map<String, Value>, allowed: &[&str]) {
     args.retain(|key, _| allowed.contains(&key.as_str()));
 }
 
-fn alias(args: &mut Map<String, Value>, from: &str, to: &str) {
-    if let Some(value) = args.remove(from) {
-        args.entry(to).or_insert(value);
-    }
-}
-fn normalize_recipients(args: &mut Map<String, Value>) {
-    if let Some(Value::String(value)) = args.get("to").cloned() {
-        args.insert("to".into(), json!([value]));
-    }
-}
-
-pub(crate) fn normalize_message_author(args: &mut Map<String, Value>) {
-    if args
-        .get("by")
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return;
-    }
-    if let Some(actor_id) = args
-        .get("actor_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-    {
-        args.insert("by".into(), Value::String(actor_id));
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{daemon_call, normalize_message_author};
+    use super::daemon_call;
+    use crate::argument_normalization::normalize_message_author;
     use serde_json::{Map, json};
 
     #[test]

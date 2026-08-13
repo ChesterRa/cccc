@@ -9,6 +9,9 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+#[path = "assistant_voice_ops/voice_session_update.rs"]
+mod voice_session_update;
+
 fn load_voice_state(home: &HomeLayout, group_id: &str) -> Value {
     let mut state = assistant_state::load(home, group_id).expect("assistant state");
     let documents = ok(
@@ -360,58 +363,6 @@ fn transcript_append_and_clear_share_the_group_mutation_lock() {
     let cleared = clear.join().expect("clear thread");
     assert!(cleared.ok, "clear failed: {:?}", cleared.error);
     assert_eq!(cleared.result["cleared"], true);
-}
-
-#[test]
-fn voice_session_mutations_enforce_status_permissions() {
-    let (_temp, home, store, group_id) = enabled_voice_group();
-    store
-        .mutate(&group_id, |group| {
-            let mut peer = Actor::new("peer");
-            peer.role = Some(ActorRole::Peer);
-            group.actors.push(peer);
-            Ok(())
-        })
-        .expect("add peer");
-
-    for (op, args) in [
-        (
-            "assistant_voice_session_update",
-            json!({
-                "group_id":group_id,
-                "session_id":"peer-session",
-                "by":"peer",
-                "patch":{"status":"closed"}
-            }),
-        ),
-        (
-            "assistant_voice_session_transcript_clear",
-            json!({
-                "group_id":group_id,
-                "session_id":"peer-session",
-                "by":"peer"
-            }),
-        ),
-    ] {
-        let denied = call(&home, op, args);
-        assert!(!denied.ok, "{op} unexpectedly allowed a peer");
-        assert_eq!(
-            denied.error.expect("permission error").code,
-            "permission_denied"
-        );
-    }
-
-    let allowed = ok(
-        &home,
-        "assistant_voice_session_update",
-        json!({
-            "group_id":group_id,
-            "session_id":"foreman-session",
-            "by":"foreman",
-            "patch":{"status":"closed"}
-        }),
-    );
-    assert_eq!(allowed.result["session"]["status"], "closed");
 }
 
 #[test]

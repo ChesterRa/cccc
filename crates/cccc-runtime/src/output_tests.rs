@@ -163,3 +163,19 @@ fn partial_utf8_pages_preserve_cursor_byte_length() {
     assert_eq!(page.data, "??");
     assert_eq!(page.data.len() as u64, page.end_cursor - page.start_cursor);
 }
+
+#[test]
+fn raw_pages_preserve_non_utf8_bytes_and_exact_cursors() {
+    let mut output = OutputBuffer::with_capacity_at(6, 40);
+    output.push(&[b'a', 0xff, b'b', 0xfe, b'c', b'd', b'e']);
+
+    let retained = output.raw_retained_since(Some(40));
+    assert_eq!(retained.data, [0xff, b'b', 0xfe, b'c', b'd', b'e']);
+    assert_eq!(retained.start_cursor, 41);
+    assert_eq!(retained.end_cursor, 47);
+    assert!(retained.cursor_expired);
+
+    let first = output.raw_page_since(41, 3);
+    assert_eq!(first.data, [0xff, b'b', 0xfe]);
+    assert_eq!(first.end_cursor, 44);
+}

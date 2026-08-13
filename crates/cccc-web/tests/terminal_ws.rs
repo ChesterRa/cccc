@@ -1,16 +1,20 @@
 #![cfg(unix)]
 
-use cccc_contracts::{Actor, DaemonRequest, RunnerKind};
+use cccc_contracts::{Actor, RunnerKind};
 use cccc_core::{GroupStore, HomeLayout, actors};
 use cccc_runtime::{HistoryConfig, LaunchSpec};
 use futures_util::{SinkExt, StreamExt};
-use serde_json::{Map, Value};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::time::Duration;
 use tokio_tungstenite::tungstenite::Message;
 
+#[path = "support/terminal_ws.rs"]
+mod support;
+use support::*;
+
 #[tokio::test]
-async fn first_websocket_attach_replays_current_raw_ansi_history() {
+async fn websocket_attach_streams_full_replay_and_keeps_legacy_clients_compatible() {
     let temp = tempfile::tempdir().expect("tempdir");
     let home = HomeLayout::from_path(temp.path().join("rust-home")).expect("home");
     home.initialize().expect("initialize");
@@ -56,7 +60,7 @@ async fn first_websocket_attach_replays_current_raw_ansi_history() {
     let web_home = home.clone();
     let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(web_home)).await });
     let (mut socket, _) = tokio_tungstenite::connect_async(format!(
-        "ws://{address}/api/v1/groups/{}/actors/{actor_id}/term?mode=viewer",
+        "ws://{address}/api/v1/groups/{}/actors/{actor_id}/term?mode=viewer&output_flow=ack_v1",
         group.group_id
     ))
     .await
@@ -66,29 +70,85 @@ async fn first_websocket_attach_replays_current_raw_ansi_history() {
     assert_eq!(attach.first(), Some(&b'3'));
     let attach_payload: Value = serde_json::from_slice(&attach[1..]).expect("attach json");
     assert_eq!(attach_payload["terminal_writable"], false);
+    assert_eq!(attach_payload["output_flow_control"]["protocol"], "ack_v1");
+    assert_eq!(
+        attach_payload["output_flow_control"]["window_bytes"],
+        256 * 1024
+    );
     assert_eq!(attach_payload["replay_cursor"], 0);
     let replay_end_cursor = attach_payload["replay_end_cursor"]
         .as_u64()
         .expect("replay end cursor");
     assert!(replay_end_cursor > 512 * 1024);
 
-    let mut output = Vec::new();
-    for _ in 0..20 {
-        let frame = next_binary_frame(&mut socket).await;
-        if frame.first() == Some(&b'1') {
-            output.extend_from_slice(&frame[1..]);
-        }
-        if output.ends_with(b"current screen") {
-            break;
-        }
-    }
+    let (output, consumed_cursor) = read_replay(
+        &mut socket,
+        attach_payload["replay_cursor"].as_u64().unwrap_or(0),
+        true,
+    )
+    .await;
     let output = String::from_utf8(output).expect("utf8 terminal output");
-    assert!(output.len() > 512 * 1024, "replay was not paginated");
+    assert!(
+        output.len() > 512 * 1024,
+        "full replay was truncated at {} bytes",
+        output.len()
+    );
     assert!(output.contains("history-start"));
     assert!(output.contains("\u{1b}[2J\u{1b}[H"));
     assert!(output.contains("current screen"));
+    assert_eq!(consumed_cursor, replay_end_cursor);
 
     let _ = socket.send(Message::Close(None)).await;
+
+    let (mut legacy_socket, _) = tokio_tungstenite::connect_async(format!(
+        "ws://{address}/api/v1/groups/{}/actors/{actor_id}/term?mode=viewer",
+        group.group_id
+    ))
+    .await
+    .expect("connect legacy terminal websocket");
+    let legacy_attach = next_binary_frame(&mut legacy_socket).await;
+    let legacy_payload: Value =
+        serde_json::from_slice(&legacy_attach[1..]).expect("legacy attach json");
+    assert!(legacy_payload.get("output_flow_control").is_none());
+    let (legacy_output, legacy_cursor) = read_replay(
+        &mut legacy_socket,
+        legacy_payload["replay_cursor"].as_u64().unwrap_or(0),
+        false,
+    )
+    .await;
+    assert!(legacy_output.ends_with(b"current screen"));
+    assert_eq!(legacy_cursor, legacy_payload["replay_end_cursor"]);
+    let _ = legacy_socket.send(Message::Close(None)).await;
+
+    let control_url = format!(
+        "ws://{address}/api/v1/groups/{}/actors/{actor_id}/term?mode=control&since={replay_end_cursor}",
+        group.group_id
+    );
+    let (mut first_control, _) = tokio_tungstenite::connect_async(&control_url)
+        .await
+        .expect("connect first control");
+    let first_control_attach = read_attach_payload(&mut first_control).await;
+    assert_eq!(first_control_attach["terminal_writable"], true);
+
+    let (mut second_control, _) = tokio_tungstenite::connect_async(&control_url)
+        .await
+        .expect("connect second control");
+    let second_control_attach = read_attach_payload(&mut second_control).await;
+    assert_eq!(second_control_attach["terminal_writable"], false);
+
+    let (mut takeover, _) =
+        tokio_tungstenite::connect_async(format!("{control_url}&takeover=true"))
+            .await
+            .expect("connect takeover control");
+    let takeover_attach = read_attach_payload(&mut takeover).await;
+    assert_eq!(takeover_attach["terminal_writable"], true);
+    assert_eq!(takeover_attach["writer_replaced"], true);
+    assert!(!read_writable_payload(&mut first_control).await);
+    let _ = takeover.send(Message::Close(None)).await;
+    assert!(read_writable_payload(&mut first_control).await);
+    let _ = second_control.send(Message::Close(None)).await;
+    let _ = first_control.send(Message::Close(None)).await;
+
     cccc_runtime::stop(&group.group_id, actor_id).expect("stop terminal");
     shutdown_daemon(&home).await;
     daemon.await.expect("daemon task").expect("daemon");
@@ -142,7 +202,7 @@ async fn high_volume_initial_replay_does_not_starve_control_input() {
     let web_home = home.clone();
     let server = tokio::spawn(async move { axum::serve(listener, cccc_web::app(web_home)).await });
     let (mut socket, _) = tokio_tungstenite::connect_async(format!(
-        "ws://{address}/api/v1/groups/{}/actors/{actor_id}/term?mode=control",
+        "ws://{address}/api/v1/groups/{}/actors/{actor_id}/term?mode=control&output_flow=ack_v1",
         group.group_id
     ))
     .await
@@ -155,7 +215,7 @@ async fn high_volume_initial_replay_does_not_starve_control_input() {
         .await
         .expect("queue ctrl-c");
 
-    let stopped = tokio::time::timeout(Duration::from_secs(8), async {
+    let stopped = tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let _ = tokio::time::timeout(Duration::from_millis(50), socket.next()).await;
             let stopped = match cccc_runtime::status(&group.group_id, actor_id) {
@@ -177,70 +237,4 @@ async fn high_volume_initial_replay_does_not_starve_control_input() {
     daemon.await.expect("daemon task").expect("daemon");
     server.abort();
     assert!(stopped, "Ctrl-C was starved by the initial replay loop");
-}
-
-async fn next_binary_frame(
-    socket: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-) -> Vec<u8> {
-    let message = tokio::time::timeout(Duration::from_secs(3), socket.next())
-        .await
-        .expect("terminal websocket timeout")
-        .expect("terminal websocket closed")
-        .expect("terminal websocket message");
-    match message {
-        Message::Binary(data) => data.to_vec(),
-        other => panic!("expected binary terminal frame, got {other:?}"),
-    }
-}
-
-async fn wait_for_terminal_output(group_id: &str, actor_id: &str) {
-    for _ in 0..100 {
-        if cccc_runtime::retained_history(group_id, actor_id)
-            .is_ok_and(|page| page.data.contains("current screen"))
-        {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("terminal output did not become ready");
-}
-
-async fn wait_for_terminal_bytes(group_id: &str, actor_id: &str, minimum: u64) {
-    for _ in 0..200 {
-        if cccc_runtime::retained_history(group_id, actor_id)
-            .is_ok_and(|page| page.end_cursor.saturating_sub(page.start_cursor) >= minimum)
-        {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    panic!("terminal output did not reach {minimum} retained bytes");
-}
-
-async fn wait_for_daemon(home: &HomeLayout) {
-    let client = cccc_client::DaemonClient::new(home.clone());
-    for _ in 0..100 {
-        if client.call(&request("ping")).await.is_ok() {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("daemon did not start");
-}
-
-async fn shutdown_daemon(home: &HomeLayout) {
-    cccc_client::DaemonClient::new(home.clone())
-        .call(&request("shutdown"))
-        .await
-        .expect("shutdown daemon");
-}
-
-fn request(op: &str) -> DaemonRequest {
-    DaemonRequest {
-        v: 1,
-        op: op.into(),
-        args: Map::new(),
-    }
 }

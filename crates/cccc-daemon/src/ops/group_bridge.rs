@@ -9,6 +9,7 @@ use crate::dispatch::{OpError, OpResult, object, required_arg};
 
 mod payload;
 mod reply;
+mod result_projection;
 mod session_runtime;
 mod state;
 #[cfg(test)]
@@ -184,15 +185,8 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
         ));
     }
     let existing = find_delivery(&state, &registration_id, &idempotency_key);
-    if existing.as_ref().is_some_and(|receipt| {
-        matches!(
-            receipt["status"].as_str().unwrap_or(""),
-            "delivered" | "sent" | "failed"
-        )
-    }) {
-        return object(json!({
-            "queued":false,"receipt":existing,"deduped":true
-        }));
+    if let Some(result) = result_projection::deduped(home, &group_id, &existing) {
+        return result;
     }
     let attempt = existing
         .as_ref()
@@ -405,6 +399,7 @@ fn remote_send_inner(home: &HomeLayout, request: &DaemonRequest, record_source: 
     } else {
         Value::Null
     };
+    result_projection::persist_source_event(home, &mut receipt, &source_event)?;
     object(json!({
         "queued":false,"receipt":receipt,"source_event":source_event,
         "transport":"group_bridge_session","deduped":false

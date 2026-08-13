@@ -11,6 +11,7 @@ mod server_automation;
 mod server_connection;
 mod server_connections;
 mod server_lifecycle;
+mod server_terminal_attach;
 
 pub use dispatch::dispatch as handle_request;
 pub use paths::DaemonPaths;

@@ -3,7 +3,9 @@ use cccc_core::{GroupStore, ledger};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use super::{voice_asr, voice_inference, voice_speaker_transcript};
+use super::{
+    voice_asr, voice_inference, voice_segment_analysis, voice_segmented_recording::RecordingSegment,
+};
 use crate::AppState;
 
 pub(super) enum SpawnStatus {
@@ -21,7 +23,7 @@ pub(super) struct DiarizationJob {
     pub(super) language: String,
 }
 
-pub(super) fn spawn(job: DiarizationJob, recording: tempfile::NamedTempFile) -> SpawnStatus {
+pub(super) fn spawn(job: DiarizationJob, recordings: Vec<RecordingSegment>) -> SpawnStatus {
     let DiarizationJob {
         state,
         group_id,
@@ -39,30 +41,16 @@ pub(super) fn spawn(job: DiarizationJob, recording: tempfile::NamedTempFile) -> 
     };
     tokio::spawn(async move {
         let home = state.home.clone();
-        let outcome =
-            tokio::task::spawn_blocking(move || -> Result<Option<Value>, voice_asr::VoiceError> {
-                let Some(mut result) = voice_asr::diarize_pcm16_file(
-                    &home,
-                    &diarization_model,
-                    recording.path(),
-                    16_000,
-                )?
-                else {
-                    return Ok(None);
-                };
-                voice_speaker_transcript::normalize_diarization_result(&mut result);
-                let transcript = voice_speaker_transcript::build(
-                    &home,
-                    &transcript_model,
-                    recording.path(),
-                    &language,
-                    &result,
-                )?;
-                result["speaker_transcript_segments"] = json!(transcript.segments);
-                result["speaker_transcript_model_id"] = json!(transcript.model_id);
-                Ok(Some(result))
-            })
-            .await;
+        let outcome = tokio::task::spawn_blocking(move || {
+            voice_segment_analysis::analyze(
+                &home,
+                &diarization_model,
+                &transcript_model,
+                &language,
+                &recordings,
+            )
+        })
+        .await;
         drop(permit);
         let (action, result, error_code, error_message) = match outcome {
             Ok(Ok(Some(result))) => ("diarization_ready", Some(result), "", String::new()),
@@ -130,6 +118,38 @@ async fn persist_result(
     error_code: &str,
     error_message: &str,
 ) -> std::io::Result<()> {
+    let response = state
+        .client
+        .call(&completion_request(
+            group_id,
+            session_id,
+            document_path,
+            result,
+            error_code,
+            error_message,
+        ))
+        .await
+        .map_err(std::io::Error::other)?;
+    if response.ok {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(
+            response
+                .error
+                .map(|error| format!("{}: {}", error.code, error.message))
+                .unwrap_or_else(|| "voice session update failed".into()),
+        ))
+    }
+}
+
+fn completion_request(
+    group_id: &str,
+    session_id: &str,
+    document_path: &str,
+    result: Option<Value>,
+    error_code: &str,
+    error_message: &str,
+) -> DaemonRequest {
     let patch = if let Some(result) = result {
         json!({
             "status":"closed",
@@ -147,32 +167,18 @@ async fn persist_result(
             "error":{"code":error_code,"message":error_message}
         })
     };
-    let response = state
-        .client
-        .call(&DaemonRequest {
-            v: 1,
-            op: "assistant_voice_session_update".into(),
-            args: json!({
-                "group_id":group_id,
-                "session_id":session_id,
-                "by":"assistant:voice_secretary",
-                "patch":patch
-            })
-            .as_object()
-            .cloned()
-            .expect("voice session update args"),
+    DaemonRequest {
+        v: 1,
+        op: "assistant_voice_session_update".into(),
+        args: json!({
+            "group_id":group_id,
+            "session_id":session_id,
+            "by":"assistant:voice_secretary",
+            "patch":patch
         })
-        .await
-        .map_err(std::io::Error::other)?;
-    if response.ok {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(
-            response
-                .error
-                .map(|error| format!("{}: {}", error.code, error.message))
-                .unwrap_or_else(|| "voice session update failed".into()),
-        ))
+        .as_object()
+        .cloned()
+        .expect("voice session update args"),
     }
 }
 
@@ -217,3 +223,7 @@ async fn emit_event_with_retry(
     }
     Err(last_error.unwrap_or_else(|| std::io::Error::other("event append failed")))
 }
+
+#[cfg(test)]
+#[path = "voice_diarization/tests.rs"]
+mod tests;

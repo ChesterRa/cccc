@@ -13,13 +13,17 @@ function setupWriter() {
 }
 
 describe("terminal replay write guard", () => {
-  it("does not mark live terminal writes as replay", () => {
-    const { guard, write } = setupWriter();
+  it("commits live terminal writes only after xterm parses them", () => {
+    const { callbacks, guard, write } = setupWriter();
+    const parsed = vi.fn();
 
-    guard.write("live", false);
+    guard.write("live", false, parsed);
 
-    expect(write).toHaveBeenCalledWith("live");
+    expect(write).toHaveBeenCalledWith("live", expect.any(Function));
     expect(guard.isReplaying()).toBe(false);
+    expect(parsed).not.toHaveBeenCalled();
+    callbacks[0]?.();
+    expect(parsed).toHaveBeenCalledOnce();
   });
 
   it("keeps replay mode active until every queued write is parsed", () => {
@@ -42,7 +46,9 @@ describe("terminal replay write guard", () => {
     });
     const guard = createTerminalReplayWriteGuard({ write } as unknown as Pick<Terminal, "write">);
 
-    expect(() => guard.write("history", true)).toThrow("write failed");
+    const parsed = vi.fn();
+    expect(() => guard.write("history", true, parsed)).toThrow("write failed");
     expect(guard.isReplaying()).toBe(false);
+    expect(parsed).not.toHaveBeenCalled();
   });
 });

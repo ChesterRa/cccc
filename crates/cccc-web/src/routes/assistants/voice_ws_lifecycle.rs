@@ -1,7 +1,9 @@
 use cccc_contracts::DaemonRequest;
 use serde_json::{Value, json};
 
-use super::{object, short_id, voice_asr, voice_diarization, voice_final_asr, voice_pcm_recording};
+use super::{
+    object, short_id, voice_asr, voice_diarization, voice_final_asr, voice_segmented_recording,
+};
 use crate::AppState;
 
 /// Only document capture owns durable Voice Secretary artifacts. Prompt,
@@ -27,11 +29,10 @@ pub(super) fn validate_recording_lease_scope(
         || (!leased_dispatch_target.is_empty()
             && leased_dispatch_target != requested_dispatch_target)
     {
-        return Err(voice_asr::VoiceError {
-            code: "assistant_voice_recording_lease_mismatch",
-            message: "voice transcription mode does not match the active recording lease".into(),
-            details: serde_json::Map::new(),
-        });
+        return Err(voice_asr::VoiceError::new(
+            "assistant_voice_recording_lease_mismatch",
+            "voice transcription mode does not match the active recording lease",
+        ));
     }
     Ok(())
 }
@@ -50,7 +51,7 @@ pub(super) struct DisconnectContext {
 pub(super) async fn finalize_disconnect(
     context: DisconnectContext,
     streaming: Option<voice_asr::StreamingSession>,
-    recording: Option<voice_pcm_recording::PcmRecording>,
+    recording: Option<voice_segmented_recording::SegmentedPcmRecording>,
 ) {
     let DisconnectContext {
         state,
@@ -67,7 +68,7 @@ pub(super) async fn finalize_disconnect(
     }
     let session_id = effective_session_id(&client_session_id);
     let streaming_text = finish_streaming(streaming).await;
-    let Some(recording) = finish_recording(recording).await else {
+    let Some(recordings) = finish_recording(recording).await else {
         persist_disconnect_text(
             &state,
             &group_id,
@@ -81,11 +82,11 @@ pub(super) async fn finalize_disconnect(
         return;
     };
 
-    let (recording, final_result) = voice_final_asr::transcribe_pcm16_file(
+    let final_result = voice_final_asr::transcribe_pcm16_segments(
         state.home.clone(),
         final_model_id.clone(),
         language.clone(),
-        recording,
+        &recordings,
     )
     .await;
     let final_text = best_transcript(&final_result, streaming_text);
@@ -110,7 +111,7 @@ pub(super) async fn finalize_disconnect(
             transcript_model: final_model_id,
             language,
         },
-        recording,
+        recordings,
     );
 }
 
@@ -136,11 +137,12 @@ async fn finish_streaming(streaming: Option<voice_asr::StreamingSession>) -> Str
 }
 
 async fn finish_recording(
-    recording: Option<voice_pcm_recording::PcmRecording>,
-) -> Option<tempfile::NamedTempFile> {
+    recording: Option<voice_segmented_recording::SegmentedPcmRecording>,
+) -> Option<Vec<voice_segmented_recording::RecordingSegment>> {
     let recording = recording.filter(|recording| !recording.is_empty())?;
     match recording.finish().await {
-        Ok(file) => Some(file),
+        Ok(recordings) if !recordings.is_empty() => Some(recordings),
+        Ok(_) => None,
         Err(error) => {
             tracing::warn!(code = error.code, %error.message, "disconnected voice recording could not be finalized");
             None
@@ -205,78 +207,4 @@ fn effective_session_id(client_session_id: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_document_capture_persists_secretary_artifacts() {
-        assert!(persists_secretary_artifacts(
-            &json!({"capture_mode":"document","dispatch_target":"document"})
-        ));
-        assert!(persists_secretary_artifacts(
-            &json!({"dispatch_target":"document"})
-        ));
-        assert!(!persists_secretary_artifacts(
-            &json!({"capture_mode":"document","dispatch_target":"composer"})
-        ));
-        assert!(!persists_secretary_artifacts(
-            &json!({"capture_mode":"prompt","dispatch_target":"prompt"})
-        ));
-        assert!(!persists_secretary_artifacts(
-            &json!({"capture_mode":"instruction","dispatch_target":"instruction"})
-        ));
-    }
-
-    #[test]
-    fn recording_start_must_match_nonempty_lease_scope() {
-        let lease = json!({"capture_mode":"prompt","dispatch_target":"composer"});
-        assert!(
-            validate_recording_lease_scope(
-                &lease,
-                &json!({"capture_mode":"prompt","dispatch_target":"composer"})
-            )
-            .is_ok()
-        );
-        let error = validate_recording_lease_scope(
-            &lease,
-            &json!({"capture_mode":"document","dispatch_target":"document"}),
-        )
-        .expect_err("mismatched start must be rejected");
-        assert_eq!(error.code, "assistant_voice_recording_lease_mismatch");
-        assert!(
-            validate_recording_lease_scope(
-                &json!({}),
-                &json!({"capture_mode":"document","dispatch_target":"document"})
-            )
-            .is_ok()
-        );
-    }
-
-    #[test]
-    fn stable_client_session_id_is_preserved() {
-        assert_eq!(effective_session_id("voice-session"), "voice-session");
-        assert!(effective_session_id("").starts_with("ws_"));
-    }
-
-    #[test]
-    fn final_asr_wins_but_streaming_text_is_a_safe_fallback() {
-        assert_eq!(
-            best_transcript(
-                &json!({"ok":true,"text":"offline final"}),
-                "streaming final".into()
-            ),
-            "offline final"
-        );
-        assert_eq!(
-            best_transcript(
-                &json!({"ok":false,"text":"failed output"}),
-                "streaming final".into()
-            ),
-            "streaming final"
-        );
-        assert_eq!(
-            best_transcript(&json!({"ok":true,"text":"  "}), "streaming final".into()),
-            "streaming final"
-        );
-    }
-}
+mod tests;

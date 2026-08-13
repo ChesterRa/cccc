@@ -28,12 +28,22 @@ export function buildTerminalWebSocketUrl(args: {
   since?: number | string | null;
   mode?: "control" | "viewer";
   takeover?: boolean;
+  outputFlowControl?: "ack_v1";
+  bootstrap?: "snapshot_v1";
+  cols?: number;
+  rows?: number;
 }): string {
   const protocol = args.protocol === "https:" ? "wss:" : "ws:";
   const url = `${protocol}//${args.host}/api/v1/groups/${encodeURIComponent(args.groupId)}/actors/${encodeURIComponent(args.actorId)}/term`;
   const params = new URLSearchParams();
   params.set("mode", args.mode === "viewer" ? "viewer" : "control");
   if (args.takeover) params.set("takeover", "true");
+  if (args.outputFlowControl) params.set("output_flow", args.outputFlowControl);
+  if (args.bootstrap) params.set("bootstrap", args.bootstrap);
+  if (Number.isFinite(args.cols) && Number.isFinite(args.rows)) {
+    params.set("cols", String(Math.max(1, Math.floor(args.cols || 0))));
+    params.set("rows", String(Math.max(1, Math.floor(args.rows || 0))));
+  }
   const since = args.since;
   if (since !== null && since !== undefined && String(since).trim()) {
     params.set("since", String(since));
@@ -46,6 +56,9 @@ export const TERMINAL_FRAME_OUTPUT = 49; // "1"
 export const TERMINAL_FRAME_RESIZE = 50; // "2"
 export const TERMINAL_FRAME_ATTACH = 51; // "3"
 export const TERMINAL_FRAME_INPUT_ACK = 52; // "4"
+export const TERMINAL_FRAME_OUTPUT_ACK = 53; // "5"
+export const TERMINAL_FRAME_WRITABLE = 54; // "6"
+export const TERMINAL_FRAME_SNAPSHOT = 55; // "7"
 
 const terminalTextEncoder = new TextEncoder();
 const terminalTextDecoder = new TextDecoder();
@@ -62,7 +75,10 @@ export type TerminalBinaryFrame =
   | { type: "output"; payload: Uint8Array }
   | { type: "resize"; payload: Uint8Array }
   | { type: "attach"; payload: Uint8Array }
-  | { type: "input_ack"; payload: Uint8Array };
+  | { type: "input_ack"; payload: Uint8Array }
+  | { type: "output_ack"; payload: Uint8Array }
+  | { type: "writable"; payload: Uint8Array }
+  | { type: "snapshot"; payload: Uint8Array };
 
 function buildTerminalFrame(opcode: number, payload?: Uint8Array): Uint8Array {
   const body = payload || new Uint8Array();
@@ -82,6 +98,13 @@ export function encodeTerminalResizeFrame(cols: number, rows: number): Uint8Arra
     terminalTextEncoder.encode(
       JSON.stringify({ cols: Math.max(0, Math.floor(cols)), rows: Math.max(0, Math.floor(rows)) }),
     ),
+  );
+}
+
+export function encodeTerminalOutputAckFrame(cursor: number): Uint8Array {
+  return buildTerminalFrame(
+    TERMINAL_FRAME_OUTPUT_ACK,
+    terminalTextEncoder.encode(JSON.stringify({ cursor: Math.max(0, Math.floor(cursor)) })),
   );
 }
 
@@ -164,6 +187,12 @@ export function parseTerminalBinaryFrame(data: ArrayBuffer): TerminalBinaryFrame
       return { type: "attach", payload };
     case TERMINAL_FRAME_INPUT_ACK:
       return { type: "input_ack", payload };
+    case TERMINAL_FRAME_OUTPUT_ACK:
+      return { type: "output_ack", payload };
+    case TERMINAL_FRAME_WRITABLE:
+      return { type: "writable", payload };
+    case TERMINAL_FRAME_SNAPSHOT:
+      return { type: "snapshot", payload };
     default:
       return null;
   }

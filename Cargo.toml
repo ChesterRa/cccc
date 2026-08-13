@@ -55,6 +55,7 @@ http-body-util = "0.1"
 portable-pty = "0.9"
 percent-encoding = "2.3"
 regex = "1.11"
+retach = { version = "=0.10.1", default-features = false }
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "socks", "system-proxy"] }
 rust-embed = "8.7"
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
