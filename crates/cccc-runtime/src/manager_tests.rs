@@ -3,33 +3,11 @@ use super::{
     submit_interruptible, submit_sequence_interruptible, write,
 };
 use crate::registry::lookup;
-use crate::{HistoryConfig, LaunchSpec, RuntimeError, history, history_since};
-use cccc_contracts::RunnerKind;
-use std::collections::BTreeMap;
+use crate::test_support::{spec, test_guard};
+use crate::{HistoryConfig, RuntimeError, history, history_since};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::Duration;
-
-fn test_guard() -> MutexGuard<'static, ()> {
-    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    TEST_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("test lock")
-}
-
-fn spec(temp: &tempfile::TempDir, group: &str, actor: &str, command: &str) -> LaunchSpec {
-    LaunchSpec {
-        group_id: group.into(),
-        actor_id: actor.into(),
-        runner: RunnerKind::Headless,
-        command: vec!["sh".into(), "-c".into(), command.into()],
-        cwd: temp.path().into(),
-        env: BTreeMap::new(),
-        cols: 80,
-        rows: 24,
-    }
-}
 
 #[test]
 fn captures_process_output() {

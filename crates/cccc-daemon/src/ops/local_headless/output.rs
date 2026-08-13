@@ -176,7 +176,7 @@ fn complete_turn(session: &Session, message: &Value) {
         claude_terminal_event(message, &current.event_id)
     };
     let resume_rejection = if session.runtime == ActorRuntime::Claude {
-        reconcile_claude_resume(session, message)
+        take_claude_resume_rejection(session, message)
     } else {
         None
     };
@@ -189,19 +189,33 @@ fn complete_turn(session: &Session, message: &Value) {
     let control_kind = is_control.then(|| kind.replace("turn", "control"));
     emit(session, control_kind.as_deref().unwrap_or(kind), data);
     if let Some((provider_session_id, error)) = resume_rejection {
-        emit(
-            session,
-            "headless.session.resume_failed",
-            Map::from_iter([
-                ("provider_session_id".into(), json!(provider_session_id)),
-                ("error".into(), json!(error)),
-            ]),
-        );
-        session.stop();
+        session.stop_after_invalidate(|| {
+            if let Err(persist_error) = super::super::runtime_session::mark_resume_failed(
+                &session.home,
+                &session.group_id,
+                &session.actor_id,
+                &error,
+            ) {
+                tracing::warn!(
+                    error = %persist_error,
+                    group_id = %session.group_id,
+                    actor_id = %session.actor_id,
+                    "failed to persist delayed Claude resume rejection"
+                );
+            }
+            emit(
+                session,
+                "headless.session.resume_failed",
+                Map::from_iter([
+                    ("provider_session_id".into(), json!(provider_session_id)),
+                    ("error".into(), json!(error)),
+                ]),
+            );
+        });
     }
 }
 
-fn reconcile_claude_resume(session: &Session, message: &Value) -> Option<(String, String)> {
+fn take_claude_resume_rejection(session: &Session, message: &Value) -> Option<(String, String)> {
     let subtype = message
         .get("subtype")
         .and_then(Value::as_str)
@@ -231,19 +245,6 @@ fn reconcile_claude_resume(session: &Session, message: &Value) -> Option<(String
         .unwrap_or_default();
     if provider_session_id.is_empty() {
         return None;
-    }
-    if let Err(persist_error) = super::super::runtime_session::mark_resume_failed(
-        &session.home,
-        &session.group_id,
-        &session.actor_id,
-        &error,
-    ) {
-        tracing::warn!(
-            error = %persist_error,
-            group_id = %session.group_id,
-            actor_id = %session.actor_id,
-            "failed to persist delayed Claude resume rejection"
-        );
     }
     Some((provider_session_id, error))
 }

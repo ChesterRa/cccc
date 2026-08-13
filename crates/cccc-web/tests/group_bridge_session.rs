@@ -14,6 +14,10 @@ use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tower::ServiceExt;
 
+#[path = "group_bridge_session/web_delivery.rs"]
+mod web_delivery;
+use web_delivery::complete_web_delivery_over_session;
+
 #[tokio::test]
 async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -73,61 +77,6 @@ async fn signed_session_disconnects_and_reconnects_without_readiness_drift() {
     socket.close(None).await.expect("close second");
     server.abort();
     daemon.abort();
-}
-
-async fn complete_web_delivery_over_session(
-    address: &std::net::SocketAddr,
-    home: &HomeLayout,
-    socket: &mut TestSocket,
-    group_id: &str,
-) {
-    let url = format!("http://{address}/api/v1/groups/{group_id}/send_cross_group");
-    let request = tokio::spawn(async move {
-        reqwest::Client::new()
-            .post(url)
-            .json(&json!({
-                "dst_group_id":"g_sender",
-                "text":"web over reverse session",
-                "to":["@foreman"],
-                "client_id":"web-session-once"
-            }))
-            .send()
-            .await
-            .expect("web send")
-    });
-    let frame = tokio::time::timeout(std::time::Duration::from_secs(2), next_socket_json(socket))
-        .await
-        .expect("Web cross-group send did not use the live daemon session");
-    assert_eq!(frame["op"], "remote_send");
-    socket
-        .send(WsMessage::Text(
-            json!({
-                "type":"response",
-                "response_to":frame["request_id"],
-                "result":{"ok":true,"receipt":{
-                    "status":"delivered","event_id":"remote-web-session"
-                }}
-            })
-            .to_string()
-            .into(),
-        ))
-        .await
-        .expect("web response");
-    let response = request.await.expect("web request join");
-    let status = response.status();
-    let body = response.json::<Value>().await.expect("web body");
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["result"]["receipt"]["status"], "sent");
-    assert_eq!(
-        body["result"]["receipt"]["remote_event_id"],
-        "remote-web-session"
-    );
-    let bridge = cccc_core::group_bridge_legacy::load(home).expect("bridge receipts");
-    assert!(bridge["deliveries"].as_array().is_some_and(|receipts| {
-        receipts.iter().any(|receipt| {
-            receipt["idempotency_key"] == "web-session-once" && receipt["status"] == "sent"
-        })
-    }));
 }
 
 async fn complete_client_initiated_delivery(socket: &mut TestSocket) {

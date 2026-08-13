@@ -125,6 +125,8 @@ import {
 } from "./voice-secretary/voiceStreamModel";
 import { resolveVoiceServiceReadiness } from "./voice-secretary/voiceServiceReadiness";
 import { voiceRecordingLeaseIsDefinitelyLost } from "./voice-secretary/voiceRecordingLease";
+import * as voicePcmTransport from "./voice-secretary/voicePcmBackpressure";
+import { Pcm16Resampler } from "./voice-secretary/voicePcmResampler";
 import {
   voiceCaptureDispatchTarget,
   voiceCaptureTransportMode,
@@ -441,53 +443,6 @@ function mediaStreamHasLiveAudio(stream: MediaStream | null): boolean {
 function browserSpeechRestartDelayMs(transientErrorCount: number): number {
   const count = Math.max(1, transientErrorCount);
   return Math.min(BROWSER_SPEECH_RESTART_MAX_MS, BROWSER_SPEECH_RESTART_BASE_MS * count);
-}
-
-class Pcm16Resampler {
-  private readonly ratio: number;
-  private carry = new Float32Array(0);
-  private gain = 1.8;
-
-  constructor(inputSampleRate: number) {
-    const sourceRate = Math.max(1, Number(inputSampleRate) || 48000);
-    this.ratio = sourceRate / 16000;
-  }
-
-  push(input: Float32Array): Uint8Array {
-    if (!input.length) return new Uint8Array(0);
-    const samples = this.carry.length ? new Float32Array(this.carry.length + input.length) : input;
-    if (this.carry.length) {
-      samples.set(this.carry, 0);
-      samples.set(input, this.carry.length);
-    }
-    const outputLength = Math.max(0, Math.floor(samples.length / this.ratio));
-    const consumedSamples = Math.min(samples.length, Math.floor(outputLength * this.ratio));
-    this.carry =
-      consumedSamples < samples.length ? samples.slice(consumedSamples) : new Float32Array(0);
-    if (outputLength <= 0) return new Uint8Array(0);
-    const output = new Int16Array(outputLength);
-    for (let index = 0; index < outputLength; index += 1) {
-      const start = index * this.ratio;
-      const end = Math.min(samples.length, (index + 1) * this.ratio);
-      const startIndex = Math.floor(start);
-      const endIndex = Math.max(startIndex + 1, Math.ceil(end));
-      let total = 0;
-      let totalWeight = 0;
-      for (let sourceIndex = startIndex; sourceIndex < endIndex; sourceIndex += 1) {
-        const sampleStart = Math.max(start, sourceIndex);
-        const sampleEnd = Math.min(end, sourceIndex + 1);
-        const weight = Math.max(0, sampleEnd - sampleStart);
-        if (weight > 0) {
-          total += (samples[sourceIndex] || 0) * weight;
-          totalWeight += weight;
-        }
-      }
-      const averaged = totalWeight > 0 ? total / totalWeight : 0;
-      const sample = Math.max(-1, Math.min(1, averaged * this.gain));
-      output[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-    }
-    return new Uint8Array(output.buffer);
-  }
 }
 
 function hashComposerSnapshot(value: string): string {
@@ -2581,7 +2536,6 @@ export function VoiceSecretaryComposerControl({
     releaseLocalMicrophoneCapture,
     setRecordingStartingFlag,
   ]);
-
   const stopServiceAudio = useCallback(() => {
     const stopRunId = recordingRunIdRef.current;
     recordingStoppingRef.current = true;
@@ -2596,6 +2550,7 @@ export function VoiceSecretaryComposerControl({
     setRecording(false);
     if (ws && ws.readyState === WebSocket.OPEN) {
       try {
+        voicePcmTransport.drainVoicePcmQueue(ws, serviceAudioPendingPcmRef.current);
         serviceAudioSeqRef.current += 1;
         ws.send(
           JSON.stringify({
@@ -3401,14 +3356,27 @@ export function VoiceSecretaryComposerControl({
         }
         const pcm = resampler.push(input);
         if (!pcm.byteLength) return;
-        serviceAudioDurationMsRef.current += Math.round((pcm.byteLength / 2 / 16000) * 1000);
-        if (!activeWs || activeWs.readyState !== WebSocket.OPEN) {
-          serviceAudioPendingPcmRef.current.push(pcm);
-          if (serviceAudioPendingPcmRef.current.length > 80)
-            serviceAudioPendingPcmRef.current.shift();
+        const { droppedBytes } = voicePcmTransport.queueVoicePcmFrame(
+          activeWs,
+          serviceAudioPendingPcmRef.current,
+          pcm,
+        );
+        if (droppedBytes > 0) {
+          const message = t("voiceSecretaryAudioBackpressureFailed", {
+            defaultValue: "Recording stopped because the audio stream could not keep up.",
+          });
+          if (isCurrentGroup(gid)) {
+            setSpeechError(message);
+            showError(message);
+          }
+          cleanupServiceAudio(runId, {
+            code: "local_asr_pcm_backpressure",
+            detail: `${droppedBytes} bytes dropped`,
+            groupId: gid,
+          });
           return;
         }
-        activeWs.send(pcm);
+        serviceAudioDurationMsRef.current += Math.round((pcm.byteLength / 2 / 16000) * 1000);
       };
       ws.onopen = () => {
         if (!isActiveRecordingRun(runId)) return;
@@ -3427,11 +3395,7 @@ export function VoiceSecretaryComposerControl({
             by: "user",
           }),
         );
-        const pendingPcm = serviceAudioPendingPcmRef.current;
-        serviceAudioPendingPcmRef.current = [];
-        for (const pcm of pendingPcm) {
-          ws.send(pcm);
-        }
+        voicePcmTransport.flushVoicePcmQueue(ws, serviceAudioPendingPcmRef.current);
       };
       let serviceMessageQueue = Promise.resolve();
       ws.onmessage = (event) => {
@@ -3442,6 +3406,14 @@ export function VoiceSecretaryComposerControl({
             const type = String(payload.type || "").trim();
             if (type === "ready") {
               if (isCurrentGroup(gid)) setSpeechError("");
+              return;
+            }
+            if (type === "recording_segment_saved") {
+              showNotice({
+                message: t("voiceSecretaryRecordingSegmentSaved", {
+                  segment: Number(payload.segment_index) || 1,
+                }),
+              });
               return;
             }
             if (type === "partial") {
@@ -3707,6 +3679,7 @@ export function VoiceSecretaryComposerControl({
     effectiveCaptureTargetDocumentPath,
     finalizeLiveTranscriptPreview,
     showError,
+    showNotice,
     t,
     updateLiveTranscriptPreview,
     updateVoiceAudioLevelsFromSamples,

@@ -160,7 +160,7 @@ fn recipients_from_value(value: Option<&Value>) -> Vec<String> {
 }
 
 fn normalize_author_and_recipients(args: &mut Map<String, Value>) {
-    crate::mapping::normalize_message_author(args);
+    crate::argument_normalization::normalize_message_author(args);
     if let Some(Value::String(recipient)) = args.get("to").cloned() {
         args.insert("to".into(), json!([recipient]));
     }

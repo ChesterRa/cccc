@@ -128,14 +128,19 @@ failure that occurred while establishing the connection is safe because no reque
 `term_attach` is a special operation that **upgrades the connection**:
 1) Client sends a normal request line with `op="term_attach"`.
 2) Daemon sends a normal response line.
-3) If the response is `ok=true`, the connection becomes a raw **PTY stream** until closed.
+3) If the response is `ok=true`, the connection becomes a **terminal stream** until closed.
 
 After upgrade, the stream is **not** NDJSON.
 
 The stream semantics are implementation-defined but, in CCCC today:
-- The client receives raw PTY output bytes.
+- By default, the client receives raw PTY output bytes.
+- A client that requests `bootstrap="snapshot_v1"` can receive one negotiated ANSI screen
+  snapshot first, followed by raw PTY bytes after the snapshot's raw cursor fence.
 - The client MAY write raw bytes as input.
 - The daemon MAY allow only one writer at a time (others become read-only).
+- A daemon MAY close an attachment that falls behind its bounded retained-output
+  window. A reconnecting client SHOULD resume from its last fully consumed byte
+  cursor using `since`; the handshake clamps an expired cursor to retained history.
 
 Out-of-band control:
 - Control operations (e.g., `term_resize`) MUST be performed over a separate concurrent daemon connection.
@@ -1846,6 +1851,45 @@ Result:
   asr?: Record<string, unknown>
 }
 ```
+
+#### WebSocket Voice Secretary transcription
+
+The service-local ASR browser transport keeps one recording lease and one
+microphone capture active while raw PCM is rolled into bounded server-side
+files:
+
+```ts
+GET /api/v1/groups/{group_id}/assistants/voice_secretary/transcriptions/ws
+  ?owner_id={owner_id}&lease_id={lease_id}
+```
+
+After upgrade, the client sends a JSON `start` command, then 16 kHz mono PCM16
+binary frames, and finally a JSON `stop` command. The server returns a `ready`
+event whose `recording_segment_duration_ms` is currently `1500000`. Whenever a
+full segment has been flushed and data-synced, the server emits:
+
+```ts
+{
+  type: "recording_segment_saved"
+  ok: true
+  seq: number
+  segment_index: number
+  start_ms: number
+  end_ms: number
+  duration_ms: number
+  bytes: number
+}
+```
+
+Segment rollover MUST NOT stop live recognition or require a new microphone
+capture. Rust stores 48,000,000 PCM bytes per segment (25 minutes) and caps one
+WebSocket session at 800 MiB (about 7 hours 17 minutes). On `stop` or an
+unexpected disconnect, final ASR processes segment files sequentially. The
+`final_asr_text` event keeps the combined text in timeline order and includes a
+`segments` array with each segment's status. Speaker analysis is likewise
+sequential so native diarization holds at most one segment waveform at a time.
+Multi-segment speaker results MUST NOT imply cross-segment identity matching;
+Rust marks them with `speaker_identity_scope="recording_segment"`.
 
 #### `assistant_voice_recording_lease`
 
@@ -3918,15 +3962,31 @@ Result:
 
 Args:
 ```ts
-{ group_id: string; actor_id: string; cols: number; rows: number }
+{ group_id: string; actor_id: string; cols: number; rows: number; attachment_id?: number }
 ```
 
 `cols` MUST be in `10..=65535` and `rows` MUST be in `2..=65535`; invalid or
 missing dimensions return `invalid_size` without resizing the PTY.
+WebSocket attachment bridges MUST include the positive `attachment_id` returned by
+`term_attach`. When present, the daemon atomically verifies that the attachment is
+still the current writer before resizing; a stale or viewer attachment returns
+`terminal_not_writer`. Legacy non-attachment control clients may omit the field.
 
 Result:
 ```ts
 { group_id: string; actor_id: string; cols: number; rows: number }
+```
+
+#### `term_attachment_status`
+
+Args:
+```ts
+{ group_id: string; actor_id: string; attachment_id: number }
+```
+
+Result:
+```ts
+{ terminal_writable: boolean }
 ```
 
 #### `term_attach` (streaming upgrade)
@@ -3939,6 +3999,9 @@ Args:
   since?: number
   mode?: "control" | "viewer"
   takeover?: boolean
+  bootstrap?: "snapshot_v1"
+  cols?: number
+  rows?: number
 }
 ```
 
@@ -3947,24 +4010,57 @@ Result (handshake):
 {
   group_id: string
   actor_id: string
+  attachment_id: number
   terminal_mode: "control" | "viewer"
   terminal_writable: boolean
   writer_replaced: boolean
   replay_cursor: number
   replay_end_cursor: number
+  initial_output: {
+    kind: "replay" | "snapshot"
+    bytes: number
+    cursor: number
+    cols?: number
+    rows?: number
+  }
 }
 ```
 
-After a successful handshake, the connection becomes a raw PTY stream (see §4.4).
+After a successful handshake, the connection becomes a terminal stream (see §4.4).
 
 Notes:
 - `term_resize` MUST be sent over a separate daemon connection (the PTY stream is not NDJSON).
 - `term_attach` returns `not_pty_actor` when the actor is not effectively running on the PTY runner.
+- A successful `term_attach` owns a dedicated connection and MUST NOT be returned
+  to an NDJSON request pool. Rust daemon and Web implementations use this raw
+  stream directly; terminal output is not transported through polling RPCs.
 - `replay_cursor` and `replay_end_cursor` MUST come from the same backlog snapshot that is queued
   for this attachment; sampling either cursor before the actual attach is not sufficient.
-- Bytes in `[replay_cursor, replay_end_cursor)` are retained history. Clients MUST NOT send
+- For `initial_output.kind="replay"`, bytes in `[replay_cursor, replay_end_cursor)` are retained history. Clients MUST NOT send
   terminal-generated query replies while rendering that historical range; only live output after
   `replay_end_cursor` may generate PTY input.
+- For `initial_output.kind="snapshot"`, `replay_cursor`, `replay_end_cursor`, and
+  `initial_output.cursor` MUST be equal. Exactly `initial_output.bytes` bytes at the start of the
+  upgraded daemon stream encode the ANSI snapshot and do not consume raw cursor space. All bytes
+  after that payload are raw PTY output beginning at `initial_output.cursor`.
+- `cols` and `rows` are optional snapshot-size hints (`10..=4096` and `2..=4096`). The Rust daemon
+  applies them only to a control attach with `takeover=true`; viewer and non-takeover attaches do
+  not resize the shared PTY. Writer registration, this initial resize, and initial-output capture
+  MUST be serialized as one runtime operation so concurrent takeovers cannot return a snapshot at
+  another controller's dimensions.
+- The WebSocket bridge maps a negotiated snapshot to opcode `7` in one binary frame. The browser
+  MUST resize its local xterm parser to the advertised snapshot `cols`/`rows` when present, reset
+  xterm, parse that frame, and only then commit/ack `initial_output.cursor`. It MAY refit the local
+  viewport after parsing, but a viewer MUST NOT resize the shared PTY. Opcode `1` remains raw
+  replay/live output, and its payload length advances the raw cursor.
+- A WebSocket bridge MAY negotiate `output_flow=ack_v1`. The attach frame then advertises
+  `output_flow_control.protocol="ack_v1"` and a bounded `window_bytes`. After xterm has parsed an
+  output frame, the browser sends opcode `5` with `{cursor}`. The bridge MUST bound unacknowledged
+  output and MUST continue accepting input while replay is waiting for acknowledgements. Clients
+  and bridges that do not negotiate this extension retain the legacy stream behavior.
+- The WebSocket bridge sends opcode `6` with `{terminal_writable}` whenever takeover or disconnect
+  changes the attachment's writer ownership. Clients MUST update their writable state from this
+  frame instead of retaining the handshake value for the lifetime of the connection.
 
 ### 8.12 Ledger Maintenance
 

@@ -11,11 +11,15 @@ pub(super) struct PcmRecording {
 }
 
 impl PcmRecording {
+    #[cfg(test)]
     pub(super) fn create(home: &HomeLayout) -> Result<Self, voice_asr::VoiceError> {
         Self::create_with_limit(home, voice_asr::MAX_AUDIO_BYTES)
     }
 
-    fn create_with_limit(home: &HomeLayout, limit: usize) -> Result<Self, voice_asr::VoiceError> {
+    pub(super) fn create_with_limit(
+        home: &HomeLayout,
+        limit: usize,
+    ) -> Result<Self, voice_asr::VoiceError> {
         let temp_dir = home.root().join("cache/voice-ws-recordings");
         std::fs::create_dir_all(&temp_dir).map_err(write_error)?;
         let file = tempfile::NamedTempFile::new_in(temp_dir).map_err(write_error)?;
@@ -41,7 +45,7 @@ impl PcmRecording {
         if next > self.limit {
             return Err(voice_asr::VoiceError::new(
                 "audio_too_large",
-                "streaming audio exceeds 100 MiB",
+                "streaming audio exceeds the recording file limit",
             ));
         }
         self.output.write_all(pcm).await.map_err(write_error)?;
@@ -53,8 +57,17 @@ impl PcmRecording {
         self.bytes == 0
     }
 
+    pub(super) fn bytes(&self) -> usize {
+        self.bytes
+    }
+
     pub(super) async fn finish(mut self) -> Result<tempfile::NamedTempFile, voice_asr::VoiceError> {
         self.output.flush().await.map_err(write_error)?;
+        self.output
+            .get_ref()
+            .sync_data()
+            .await
+            .map_err(write_error)?;
         drop(self.output);
         Ok(self.file)
     }

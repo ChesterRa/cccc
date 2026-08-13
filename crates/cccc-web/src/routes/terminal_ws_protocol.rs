@@ -1,17 +1,28 @@
 use axum::extract::ws::{Message, WebSocket};
 use cccc_contracts::DaemonRequest;
 use serde_json::{Map, Value, json};
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
+use super::terminal_ws_flow::OutputFlow;
 use crate::AppState;
 
-pub(super) async fn handle_input(
+pub(super) struct TerminalInputContext<'a> {
+    pub(super) state: &'a AppState,
+    pub(super) group_id: &'a str,
+    pub(super) actor_id: &'a str,
+    pub(super) attachment_id: u64,
+    pub(super) writable: bool,
+}
+
+pub(super) async fn handle_stream_input<W>(
     socket: &mut WebSocket,
-    state: &AppState,
-    group_id: &str,
-    actor_id: &str,
-    writable: bool,
+    context: TerminalInputContext<'_>,
     message: Message,
-) -> bool {
+    daemon: &mut W,
+) -> bool
+where
+    W: AsyncWrite + Unpin,
+{
     let Message::Binary(data) = message else {
         return !matches!(message, Message::Close(_));
     };
@@ -19,36 +30,16 @@ pub(super) async fn handle_input(
         return true;
     };
     match opcode {
-        b'0' if writable => {
-            let response = daemon_call(
-                state,
-                "terminal_write",
-                json!({"group_id":group_id,"actor_id":actor_id,"data":String::from_utf8_lossy(payload)}),
-            )
-            .await;
-            match response {
-                Some(response) if response.ok => true,
-                Some(response) => {
-                    let error = response.error.map_or_else(
-                        || {
-                            (
-                                "write_failed".into(),
-                                "Failed to write terminal input.".into(),
-                            )
-                        },
-                        |error| (error.code, error.message),
-                    );
-                    send_input_error(socket, &error.0, &error.1).await
-                }
-                None => {
-                    send_input_error(
-                        socket,
-                        "daemon_unavailable",
-                        "Terminal service is unavailable.",
-                    )
-                    .await
-                }
+        b'0' if context.writable => {
+            if payload.is_empty() {
+                return true;
             }
+            if daemon.write_all(payload).await.is_err() || daemon.flush().await.is_err() {
+                let _ = send_input_error(socket, "write_failed", "Failed to write terminal input.")
+                    .await;
+                return false;
+            }
+            true
         }
         b'0' => {
             send_input_error(
@@ -58,12 +49,18 @@ pub(super) async fn handle_input(
             )
             .await
         }
-        b'2' if writable => {
+        b'2' if context.writable => {
             let size: Value = serde_json::from_slice(payload).unwrap_or_else(|_| json!({}));
             daemon_call(
-                state,
+                context.state,
                 "term_resize",
-                json!({"group_id":group_id,"actor_id":actor_id,"cols":size.get("cols"),"rows":size.get("rows")}),
+                json!({
+                    "group_id":context.group_id,
+                    "actor_id":context.actor_id,
+                    "attachment_id":context.attachment_id,
+                    "cols":size.get("cols"),
+                    "rows":size.get("rows")
+                }),
             )
             .await
             .is_some_and(|response| response.ok)
@@ -107,4 +104,50 @@ pub(super) fn frame(opcode: u8, payload: &[u8]) -> Vec<u8> {
     frame.push(opcode);
     frame.extend_from_slice(payload);
     frame
+}
+
+pub(super) async fn terminal_writable(
+    state: &AppState,
+    group_id: &str,
+    actor_id: &str,
+    attachment_id: u64,
+) -> Option<bool> {
+    daemon_call(
+        state,
+        "term_attachment_status",
+        json!({
+            "group_id": group_id,
+            "actor_id": actor_id,
+            "attachment_id": attachment_id,
+        }),
+    )
+    .await
+    .filter(|response| response.ok)
+    .and_then(|response| {
+        response
+            .result
+            .get("terminal_writable")
+            .and_then(Value::as_bool)
+    })
+}
+
+pub(super) async fn send_output_frame(
+    socket: &mut WebSocket,
+    opcode: u8,
+    data: &[u8],
+    end_cursor: u64,
+    flow: &mut OutputFlow,
+) -> bool {
+    if data.is_empty() {
+        return true;
+    }
+    if socket
+        .send(Message::Binary(frame(opcode, data).into()))
+        .await
+        .is_err()
+    {
+        return false;
+    }
+    flow.record_send(end_cursor, data.len());
+    true
 }

@@ -11,9 +11,11 @@ publish = false
 [dependencies]
 cccc-contracts = { package = "cccc-pair-contracts", version = "=0.4.34-rc2", path = "../cccc-contracts" }
 portable-pty.workspace = true
+retach.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

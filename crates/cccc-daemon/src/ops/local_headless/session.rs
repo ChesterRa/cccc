@@ -19,7 +19,12 @@ impl Session {
     }
 
     pub(super) fn stop(&self) {
+        self.stop_after_invalidate(|| {});
+    }
+
+    pub(super) fn stop_after_invalidate(&self, after_invalidate: impl FnOnce()) {
         let first_stop = !self.stopped.swap(true, Ordering::AcqRel);
+        after_invalidate();
         if let Ok(mut child) = self.child.lock() {
             if child.try_wait().ok().flatten().is_none() {
                 let _ = child.kill();

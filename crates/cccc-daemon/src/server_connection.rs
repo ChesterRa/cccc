@@ -36,11 +36,10 @@ async fn handle<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    let (read, mut write) = tokio::io::split(stream);
-    let mut read = BufReader::new(read);
+    let mut stream = BufReader::new(stream);
     loop {
         let mut bytes = Vec::new();
-        let mut limited = (&mut read).take((MAX_REQUEST_BYTES + 1) as u64);
+        let mut limited = (&mut stream).take((MAX_REQUEST_BYTES + 1) as u64);
         let count =
             tokio::time::timeout(REQUEST_READ_TIMEOUT, limited.read_until(b'\n', &mut bytes))
                 .await
@@ -49,32 +48,46 @@ where
             break;
         }
         let oversized = bytes.len() > MAX_REQUEST_BYTES;
-        let response = if oversized {
-            DaemonResponse::failure("request_too_large", "request exceeds 2 MB")
-        } else {
-            response(&home, &bytes, shutdown, dispatch_locks).await
-        };
-        let mut payload = serde_json::to_vec(&response)?;
-        payload.push(b'\n');
-        write.write_all(&payload).await?;
-        write.flush().await?;
         if oversized {
+            write_response(
+                stream.get_mut(),
+                &DaemonResponse::failure("request_too_large", "request exceeds 2 MB"),
+            )
+            .await?;
             break;
         }
+        let request = match serde_json::from_slice::<DaemonRequest>(&bytes) {
+            Ok(request) => request,
+            Err(error) => {
+                write_response(
+                    stream.get_mut(),
+                    &DaemonResponse::failure("invalid_request", error.to_string()),
+                )
+                .await?;
+                continue;
+            }
+        };
+        if request.op == "term_attach" {
+            return crate::server_terminal_attach::handle(
+                stream,
+                home,
+                request,
+                shutdown.subscribe(),
+            )
+            .await;
+        }
+        let response = response(&home, request, shutdown, dispatch_locks).await;
+        write_response(stream.get_mut(), &response).await?;
     }
     Ok(())
 }
 
 async fn response(
     home: &HomeLayout,
-    bytes: &[u8],
+    request: DaemonRequest,
     shutdown: &watch::Sender<bool>,
     dispatch_locks: &DispatchLocks,
 ) -> DaemonResponse {
-    let request = match serde_json::from_slice::<DaemonRequest>(bytes) {
-        Ok(request) => request,
-        Err(error) => return DaemonResponse::failure("invalid_request", error.to_string()),
-    };
     let should_shutdown = request.op == "shutdown";
     let permit = dispatch_locks.acquire(&request).await;
     let home = home.clone();
@@ -89,6 +102,17 @@ async fn response(
         shutdown.send(true).ok();
     }
     response
+}
+
+async fn write_response<W>(write: &mut W, response: &DaemonResponse) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut payload = serde_json::to_vec(response)?;
+    payload.push(b'\n');
+    write.write_all(&payload).await?;
+    write.flush().await?;
+    Ok(())
 }
 
 #[cfg(test)]

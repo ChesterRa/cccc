@@ -104,7 +104,8 @@ pub(super) fn is_read_only(op: &str) -> bool {
 pub(super) fn uses_runtime_lock_only(op: &str) -> bool {
     matches!(
         op,
-        "group_bridge_session_open"
+        "term_attachment_status"
+            | "group_bridge_session_open"
             | "group_bridge_session_close"
             | "group_bridge_session_poll"
             | "group_bridge_session_complete"

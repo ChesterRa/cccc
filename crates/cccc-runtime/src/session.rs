@@ -2,6 +2,9 @@ use crate::RuntimeError;
 use crate::output::HistoryPage;
 use crate::output_reader::OutputReader;
 use crate::session_history::SessionHistory;
+use crate::terminal_attach::{
+    AttachmentRegistry, TerminalAttachMode, TerminalAttachOptions, TerminalAttachment,
+};
 use crate::transcript_archive::HistoryConfig;
 use cccc_contracts::{RunnerKind, utc_now};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -40,6 +43,7 @@ pub struct Session {
     child: Box<dyn Child + Send + Sync>,
     writer: Box<dyn Write + Send>,
     input_gate: Arc<Mutex<()>>,
+    attachments: AttachmentRegistry,
     history: SessionHistory,
     reader: Option<OutputReader>,
 }
@@ -85,7 +89,12 @@ impl Session {
             .master
             .take_writer()
             .map_err(|error| std::io::Error::other(error.to_string()))?;
-        let history = SessionHistory::new_at(history_config, history_cursor_floor)?;
+        let history = SessionHistory::new_at_with_size(
+            history_config,
+            history_cursor_floor,
+            spec.cols,
+            spec.rows,
+        )?;
         let reader = OutputReader::start(
             format!("cccc-runtime:{}:{}", spec.group_id, spec.actor_id),
             reader,
@@ -105,6 +114,7 @@ impl Session {
             child,
             writer,
             input_gate: Arc::new(Mutex::new(())),
+            attachments: AttachmentRegistry::default(),
             history,
             reader: Some(reader),
         })
@@ -150,15 +160,84 @@ impl Session {
         Arc::clone(&self.input_gate)
     }
 
+    pub(crate) fn attach(
+        &mut self,
+        mode: TerminalAttachMode,
+        takeover: bool,
+        since: Option<u64>,
+        prefer_snapshot: bool,
+        initial_size: Option<(u16, u16)>,
+    ) -> Result<TerminalAttachment, RuntimeError> {
+        if !self.status().running {
+            return Err(RuntimeError::NotRunning(
+                self.status.group_id.clone(),
+                self.status.actor_id.clone(),
+            ));
+        }
+        if mode == TerminalAttachMode::Control
+            && takeover
+            && let Some((cols, rows)) = initial_size
+        {
+            self.resize(cols, rows)?;
+        }
+        TerminalAttachment::new(
+            self.status.group_id.clone(),
+            self.status.actor_id.clone(),
+            TerminalAttachOptions {
+                mode,
+                takeover,
+                since,
+                prefer_snapshot,
+            },
+            self.attachments.clone(),
+            self.history.clone(),
+        )
+    }
+
+    pub(crate) fn write_from_attachment(
+        &mut self,
+        registry: &AttachmentRegistry,
+        attachment_id: u64,
+        data: &[u8],
+    ) -> Result<bool, RuntimeError> {
+        if !self.attachments.same_session(registry) || !registry.is_writer(attachment_id)? {
+            return Ok(false);
+        }
+        self.write(data)?;
+        Ok(true)
+    }
+
+    pub(crate) fn attachment_writable(&self, attachment_id: u64) -> Result<bool, RuntimeError> {
+        self.attachments.is_writer(attachment_id)
+    }
+
+    pub(crate) fn resize_from_attachment(
+        &self,
+        attachment_id: u64,
+        cols: u16,
+        rows: u16,
+    ) -> Result<bool, RuntimeError> {
+        self.attachments
+            .run_if_writer(attachment_id, || self.resize(cols, rows))
+    }
+
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), RuntimeError> {
-        self.master
-            .resize(PtySize {
-                rows: rows.max(1),
-                cols: cols.max(1),
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|error| RuntimeError::Io(std::io::Error::other(error.to_string())))
+        let cols = cols.max(1);
+        let rows = rows.max(1);
+        let previous = self.history.resize_terminal(cols, rows)?;
+        if previous == (cols, rows) {
+            return Ok(());
+        }
+        if let Err(error) = self.master.resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        }) {
+            let _ = self.history.resize_terminal(previous.0, previous.1);
+            return Err(RuntimeError::Io(std::io::Error::other(error.to_string())));
+        }
+        Ok(())
     }
 
     pub fn history(&self, before: Option<u64>, limit: usize) -> Result<HistoryPage, RuntimeError> {

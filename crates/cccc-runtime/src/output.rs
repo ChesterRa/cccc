@@ -12,6 +12,14 @@ pub struct HistoryPage {
     pub cursor_expired: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RawHistoryPage {
+    pub(crate) data: Vec<u8>,
+    pub(crate) start_cursor: u64,
+    pub(crate) end_cursor: u64,
+    pub(crate) cursor_expired: bool,
+}
+
 pub struct OutputBuffer {
     chunks: VecDeque<Vec<u8>>,
     bytes: usize,
@@ -59,11 +67,21 @@ impl OutputBuffer {
         self.bytes += data.len();
         self.end = self.end.saturating_add(data.len() as u64);
         while self.bytes > self.capacity {
-            let Some(front) = self.chunks.pop_front() else {
+            let Some(front_len) = self.chunks.front().map(Vec::len) else {
                 break;
             };
-            self.bytes -= front.len();
-            self.start = self.start.saturating_add(front.len() as u64);
+            let excess = self.bytes - self.capacity;
+            if front_len <= excess {
+                self.chunks.pop_front();
+                self.bytes -= front_len;
+                self.start = self.start.saturating_add(front_len as u64);
+                continue;
+            }
+            if let Some(front) = self.chunks.front_mut() {
+                front.drain(..excess);
+            }
+            self.bytes -= excess;
+            self.start = self.start.saturating_add(excess as u64);
         }
     }
 
@@ -109,6 +127,28 @@ impl OutputBuffer {
 
     pub fn page_since(&self, after: u64, limit: usize) -> HistoryPage {
         self.page_since_until(after, self.end, limit)
+    }
+
+    pub(crate) fn raw_retained_since(&self, after: Option<u64>) -> RawHistoryPage {
+        let requested = after.unwrap_or(self.start);
+        let page_start = requested.clamp(self.start, self.end);
+        RawHistoryPage {
+            data: self.bytes_between(page_start, self.end),
+            start_cursor: page_start,
+            end_cursor: self.end,
+            cursor_expired: after.is_some_and(|cursor| cursor < self.start),
+        }
+    }
+
+    pub(crate) fn raw_page_since(&self, after: u64, limit: usize) -> RawHistoryPage {
+        let page_start = after.clamp(self.start, self.end);
+        let page_end = page_start.saturating_add(limit.max(1) as u64).min(self.end);
+        RawHistoryPage {
+            data: self.bytes_between(page_start, page_end),
+            start_cursor: page_start,
+            end_cursor: page_end,
+            cursor_expired: after < self.start,
+        }
     }
 
     pub(crate) fn page_since_until(

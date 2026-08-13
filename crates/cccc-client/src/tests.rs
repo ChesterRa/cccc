@@ -4,7 +4,7 @@ use cccc_core::HomeLayout;
 use serde_json::Map;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
 
 async fn test_server(name: &str) -> (PathBuf, HomeLayout, TcpListener) {
@@ -144,6 +144,54 @@ async fn timeout_after_send_reports_unknown_outcome() {
     ));
     server.abort();
     let _ = server.await;
+    std::fs::remove_dir_all(root).expect("cleanup");
+}
+
+#[tokio::test]
+async fn streaming_upgrade_preserves_buffered_raw_bytes_and_is_never_pooled() {
+    let (root, home, listener) = test_server("stream-upgrade").await;
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("stream accept");
+        let mut stream = BufReader::new(stream);
+        let mut request = String::new();
+        stream
+            .read_line(&mut request)
+            .await
+            .expect("stream request");
+        let mut payload =
+            serde_json::to_vec(&DaemonResponse::success(Map::new())).expect("response");
+        payload.extend_from_slice(b"\nraw\xff");
+        stream
+            .get_mut()
+            .write_all(&payload)
+            .await
+            .expect("raw response");
+        stream.get_mut().flush().await.expect("raw flush");
+        let mut input = [0_u8; 5];
+        stream.read_exact(&mut input).await.expect("raw input");
+        assert_eq!(&input, b"input");
+
+        let (normal, _) = listener.accept().await.expect("normal accept");
+        respond_once(normal).await;
+    });
+    let client = DaemonClient::new(home).with_timeout(Duration::from_secs(2));
+    let (response, mut stream) = client
+        .upgrade(&request("term_attach"))
+        .await
+        .expect("upgrade");
+    assert!(response.ok);
+    let mut raw = [0_u8; 4];
+    stream
+        .read_exact(&mut raw)
+        .await
+        .expect("buffered raw bytes");
+    assert_eq!(&raw, b"raw\xff");
+    stream.write_all(b"input").await.expect("raw input");
+    stream.flush().await.expect("raw input flush");
+    drop(stream);
+
+    assert!(client.call(&request("ping")).await.expect("normal call").ok);
+    server.await.expect("server");
     std::fs::remove_dir_all(root).expect("cleanup");
 }
 

@@ -274,7 +274,11 @@ fn new_session_ledger_failure_restores_runtime_metadata_and_stops_replacement() 
     );
 }
 
-fn request(home: &HomeLayout, op: &str, group_id: &str) -> cccc_contracts::DaemonResponse {
+pub(super) fn request(
+    home: &HomeLayout,
+    op: &str,
+    group_id: &str,
+) -> cccc_contracts::DaemonResponse {
     crate::handle_request(
         home,
         &DaemonRequest {

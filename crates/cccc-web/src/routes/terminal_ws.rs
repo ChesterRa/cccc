@@ -4,19 +4,30 @@ use axum::extract::{Path, Query, State};
 use axum::response::Response;
 use axum::routing::get;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Map, Value, json};
+use std::time::Duration;
+use tokio::io::AsyncReadExt;
 
-use super::terminal_ws_protocol::{daemon_call, frame, handle_input};
-use super::terminal_ws_replay::{initial_output, poll_output, replay_output};
+use super::terminal_ws_bootstrap::{SNAPSHOT_V1, read_snapshot, snapshot_bootstrap};
+use super::terminal_ws_flow::{OutputFlow, output_ack_cursor};
+use super::terminal_ws_protocol::{
+    TerminalInputContext, frame, handle_stream_input, send_output_frame, terminal_writable,
+};
 use crate::AppState;
 
-const MAX_CONSECUTIVE_POLL_FAILURES: usize = 20;
+const TERMINAL_OUTPUT_PAGE_BYTES: usize = 64 * 1024;
 
 #[derive(Debug, Deserialize)]
 struct AttachQuery {
     #[serde(default = "control")]
     mode: String,
     since: Option<u64>,
+    #[serde(default)]
+    takeover: bool,
+    output_flow: Option<String>,
+    bootstrap: Option<String>,
+    cols: Option<u16>,
+    rows: Option<u16>,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -52,136 +63,182 @@ async fn serve(
     actor_id: String,
     query: AttachQuery,
 ) {
-    let writable = terminal_writable(state.web_mode, &query.mode);
-    let status = daemon_call(
-        &state,
-        "terminal_status",
-        json!({"group_id":group_id,"actor_id":actor_id}),
-    )
-    .await;
-    if !status.as_ref().is_some_and(|response| {
-        response.ok
-            && response
-                .result
-                .get("session")
-                .and_then(|session| session.get("running"))
-                .and_then(serde_json::Value::as_bool)
-                == Some(true)
-    }) {
-        let error = status.and_then(|response| response.error).map_or_else(
-            || json!({"code":"actor_not_running","message":"actor is not running"}),
-            |error| json!({"code":error.code,"message":error.message}),
-        );
-        let _ = socket
-            .send(Message::Text(
-                json!({"ok":false,"error":error}).to_string().into(),
-            ))
+    let mode = requested_mode(state.web_mode, &query.mode);
+    let mut args = json!({
+        "group_id": group_id,
+        "actor_id": actor_id,
+        "mode": mode,
+        "takeover": mode == "control" && query.takeover,
+    });
+    if let Some(since) = query.since {
+        args["since"] = json!(since);
+    }
+    if query.bootstrap.as_deref() == Some(SNAPSHOT_V1) {
+        args["bootstrap"] = json!(SNAPSHOT_V1);
+    }
+    if let (Some(cols), Some(rows)) = (query.cols, query.rows) {
+        args["cols"] = json!(cols);
+        args["rows"] = json!(rows);
+    }
+    let request = cccc_contracts::DaemonRequest {
+        v: 1,
+        op: "term_attach".into(),
+        args: args.as_object().cloned().unwrap_or_else(Map::new),
+    };
+    let (response, stream) = match state.client.upgrade(&request).await {
+        Ok(result) => result,
+        Err(error) => {
+            tracing::warn!(%group_id, %actor_id, %error, "terminal stream upgrade failed");
+            send_terminal_error(
+                &mut socket,
+                "daemon_unavailable",
+                "Terminal service is unavailable.",
+            )
             .await;
-        let _ = socket.send(Message::Close(None)).await;
+            return;
+        }
+    };
+    if !response.ok {
+        let (code, message) = response.error.map_or_else(
+            || {
+                (
+                    "term_attach_failed".into(),
+                    "Terminal attach failed.".into(),
+                )
+            },
+            |error| (error.code, error.message),
+        );
+        send_terminal_error(&mut socket, &code, &message).await;
         return;
     }
-    let Some(initial) = initial_output(&state, &group_id, &actor_id, query.since).await else {
+    let mut attach_result = Value::Object(response.result);
+    let mut writable = !state.web_mode.is_read_only()
+        && attach_result
+            .get("terminal_writable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    attach_result["terminal_writable"] = json!(writable);
+    let Some(attachment_id) = attach_result.get("attachment_id").and_then(Value::as_u64) else {
         send_terminal_error(
             &mut socket,
-            "daemon_unavailable",
-            "Terminal output is temporarily unavailable.",
+            "invalid_daemon_response",
+            "Terminal attach response is missing its attachment id.",
         )
         .await;
         return;
     };
-    let attach = frame(
-        b'3',
-        json!({
-            "terminal_writable": writable,
-            "replay_cursor": initial.replay_cursor,
-            "replay_end_cursor": initial.replay_end_cursor,
-        })
-        .to_string()
-        .as_bytes(),
-    );
+    let Some(mut cursor) = attach_result.get("replay_cursor").and_then(Value::as_u64) else {
+        send_terminal_error(
+            &mut socket,
+            "invalid_daemon_response",
+            "Terminal attach response is missing its replay cursor.",
+        )
+        .await;
+        return;
+    };
+    let snapshot = match snapshot_bootstrap(&attach_result) {
+        Ok(snapshot) => snapshot,
+        Err(message) => {
+            send_terminal_error(&mut socket, "invalid_daemon_response", message).await;
+            return;
+        }
+    };
+    let mut output_flow = OutputFlow::new(query.output_flow.as_deref());
+    if let Some(protocol) = output_flow.protocol() {
+        attach_result["output_flow_control"] = json!({
+            "protocol": protocol,
+            "window_bytes": output_flow.window_bytes(),
+        });
+    }
+    let attach = frame(b'3', attach_result.to_string().as_bytes());
     if socket.send(Message::Binary(attach.into())).await.is_err() {
         return;
     }
-    if !initial.data.is_empty()
-        && socket
-            .send(Message::Binary(frame(b'1', &initial.data).into()))
-            .await
-            .is_err()
-    {
-        return;
-    }
-    let mut cursor = initial.next_cursor;
-    let replay_end_cursor = initial.replay_end_cursor;
-    while cursor < replay_end_cursor {
-        let Some(output) = replay_output(
-            &state,
-            &group_id,
-            &actor_id,
-            Some(cursor),
-            Some(replay_end_cursor),
-        )
-        .await
-        else {
-            send_terminal_error(
-                &mut socket,
-                "daemon_unavailable",
-                "Terminal history replay was interrupted.",
-            )
-            .await;
-            return;
+    let (mut daemon_read, mut daemon_write) = tokio::io::split(stream);
+    if let Some(snapshot) = snapshot {
+        let data = match read_snapshot(&mut daemon_read, snapshot).await {
+            Ok(data) => data,
+            Err(error) => {
+                tracing::warn!(%group_id, %actor_id, %error, "terminal snapshot read failed");
+                send_terminal_error(
+                    &mut socket,
+                    "daemon_unavailable",
+                    "Terminal snapshot connection was interrupted.",
+                )
+                .await;
+                return;
+            }
         };
-        if output.next_cursor <= cursor {
-            break;
-        }
-        cursor = output.next_cursor;
-        if !output.data.is_empty()
-            && socket
-                .send(Message::Binary(frame(b'1', &output.data).into()))
-                .await
-                .is_err()
-        {
+        if !send_output_frame(&mut socket, b'7', &data, snapshot.cursor, &mut output_flow).await {
             return;
         }
     }
-    let mut consecutive_poll_failures = 0;
-    let mut interval = tokio::time::interval(std::time::Duration::from_millis(50));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut output = [0_u8; TERMINAL_OUTPUT_PAGE_BYTES];
     let mut shutdown = state.shutdown.subscribe();
+    let mut writable_poll = tokio::time::interval(Duration::from_millis(100));
+    writable_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
+            biased;
             _ = shutdown.recv() => {
                 let _ = socket.send(Message::Close(None)).await;
                 break;
             }
-            _ = interval.tick() => {
-                let Some(output) = poll_output(&state, &group_id, &actor_id, cursor).await else {
-                    consecutive_poll_failures += 1;
-                    if consecutive_poll_failures < MAX_CONSECUTIVE_POLL_FAILURES {
-                        continue;
+            _ = writable_poll.tick(), if mode == "control" => {
+                let Some(next_writable) = terminal_writable(
+                    &state,
+                    &group_id,
+                    &actor_id,
+                    attachment_id,
+                ).await else { continue; };
+                if next_writable != writable {
+                    writable = next_writable;
+                    let payload = json!({"terminal_writable": writable});
+                    if socket.send(Message::Binary(frame(b'6', payload.to_string().as_bytes()).into())).await.is_err() {
+                        break;
                     }
-                    tracing::warn!(
-                        %group_id,
-                        %actor_id,
-                        cursor,
-                        "terminal websocket polling failed repeatedly"
-                    );
-                    send_terminal_error(
-                        &mut socket,
-                        "daemon_unavailable",
-                        "Terminal output connection was interrupted.",
-                    )
-                    .await;
-                    break;
-                };
-                consecutive_poll_failures = 0;
-                cursor = output.next_cursor;
-                if !output.data.is_empty() && socket.send(Message::Binary(frame(b'1', &output.data).into())).await.is_err() {
-                    break;
                 }
             }
             message = socket.recv() => {
                 let Some(Ok(message)) = message else { break; };
-                if !handle_input(&mut socket, &state, &group_id, &actor_id, writable, message).await {
+                if let Some(cursor) = output_ack_cursor(&message) {
+                    output_flow.acknowledge(cursor);
+                    continue;
+                }
+                if !handle_stream_input(
+                    &mut socket,
+                    TerminalInputContext {
+                        state: &state,
+                        group_id: &group_id,
+                        actor_id: &actor_id,
+                        attachment_id,
+                        writable,
+                    },
+                    message,
+                    &mut daemon_write,
+                )
+                .await
+                {
+                    break;
+                }
+            }
+            read = daemon_read.read(&mut output), if output_flow.can_send(TERMINAL_OUTPUT_PAGE_BYTES) => {
+                let count = match read {
+                    Ok(0) => break,
+                    Ok(count) => count,
+                    Err(error) => {
+                        tracing::warn!(%group_id, %actor_id, %error, cursor, "terminal stream read failed");
+                        send_terminal_error(
+                            &mut socket,
+                            "daemon_unavailable",
+                            "Terminal output connection was interrupted.",
+                        )
+                        .await;
+                        break;
+                    }
+                };
+                cursor = cursor.saturating_add(count as u64);
+                if !send_output_frame(&mut socket, b'1', &output[..count], cursor, &mut output_flow).await {
                     break;
                 }
             }
@@ -193,8 +250,12 @@ fn terminal_disabled(web_mode: crate::WebMode, exhibit_allow_terminal: bool) -> 
     web_mode.is_read_only() && !exhibit_allow_terminal
 }
 
-fn terminal_writable(web_mode: crate::WebMode, requested_mode: &str) -> bool {
-    !web_mode.is_read_only() && requested_mode != "viewer"
+fn requested_mode(web_mode: crate::WebMode, requested_mode: &str) -> &'static str {
+    if web_mode.is_read_only() || requested_mode.trim().eq_ignore_ascii_case("viewer") {
+        "viewer"
+    } else {
+        "control"
+    }
 }
 
 async fn send_terminal_error(socket: &mut WebSocket, code: &str, message: &str) {
@@ -214,15 +275,16 @@ fn control() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{terminal_disabled, terminal_writable};
+    use super::{requested_mode, terminal_disabled};
     use crate::WebMode;
 
     #[test]
     fn exhibit_terminal_is_disabled_by_default_and_never_writable() {
         assert!(terminal_disabled(WebMode::Exhibit, false));
         assert!(!terminal_disabled(WebMode::Exhibit, true));
-        assert!(!terminal_writable(WebMode::Exhibit, "control"));
-        assert!(terminal_writable(WebMode::Normal, "control"));
-        assert!(!terminal_writable(WebMode::Normal, "viewer"));
+        assert_eq!(requested_mode(WebMode::Exhibit, "control"), "viewer");
+        assert_eq!(requested_mode(WebMode::Normal, "control"), "control");
+        assert_eq!(requested_mode(WebMode::Normal, "viewer"), "viewer");
+        assert_eq!(requested_mode(WebMode::Normal, " Viewer "), "viewer");
     }
 }

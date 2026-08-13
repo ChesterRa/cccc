@@ -1,4 +1,4 @@
-use super::{HeadlessStatus, Session, Turn, events, poisoned, session, turn_channel};
+use super::{HeadlessStatus, Session, Turn, events, poisoned, provider_cli, session, turn_channel};
 use cccc_contracts::{Actor, ActorRuntime, Event, RunnerKind, utc_now};
 use cccc_core::{GroupDoc, HomeLayout};
 use serde_json::{Map, json};
@@ -11,7 +11,9 @@ use std::time::Duration;
 
 type Key = (String, String);
 
-const CLAUDE_STARTUP_GRACE: Duration = Duration::from_millis(250);
+// Match the Python headless runner: Claude may need time to initialize MCP
+// servers before a startup exit can be observed reliably under load.
+const CLAUDE_STARTUP_GRACE: Duration = Duration::from_secs(1);
 
 fn sessions() -> &'static RwLock<HashMap<Key, Arc<Session>>> {
     static SESSIONS: OnceLock<RwLock<HashMap<Key, Arc<Session>>>> = OnceLock::new();
@@ -330,21 +332,8 @@ fn provider_command(
     actor: &Actor,
     env: &mut BTreeMap<String, String>,
 ) -> io::Result<(Vec<String>, Vec<String>)> {
-    let base = if actor.command.is_empty() {
-        cccc_runtime::default_command(actor.runtime)
-    } else {
-        actor.command.clone()
-    };
-    let provider_binary = base.first().is_some_and(|program| {
-        std::path::Path::new(program)
-            .file_stem()
-            .and_then(|value| value.to_str())
-            == Some(match actor.runtime {
-                ActorRuntime::Codex => "codex",
-                _ => "claude",
-            })
-    });
-    if !provider_binary {
+    let base = provider_cli::base_command(actor);
+    if !provider_cli::is_provider_binary(actor, &base) {
         return Ok((base.clone(), base));
     }
     if actor.runtime == ActorRuntime::Codex {
@@ -883,8 +872,18 @@ esac
             .state_dir(&group.group_id)
             .expect("state dir")
             .join("headless/events.jsonl");
-        let events = std::fs::read_to_string(events_path).expect("headless events");
-        assert!(events.contains("headless.session.resume_failed"));
+        let event_deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let events = std::fs::read_to_string(&events_path).expect("headless events");
+            if events.contains("headless.session.resume_failed") {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < event_deadline,
+                "resume rejection event was not persisted: {events}"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
 
         start(&home, &group, &actor).expect("fresh retry");
         let recovered: serde_json::Value =

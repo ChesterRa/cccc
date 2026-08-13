@@ -28,6 +28,17 @@ final-ASR permit prevents native inference from stalling normal Web/API requests
 or multiplying large memory peaks. The 100 MiB value is a per-recording abuse and
 resource limit (about 55 minutes of PCM16), not a preallocated memory requirement.
 Each WebSocket recording must also hold the daemon recording lease.
+
+WebSocket PCM is rolled into a new file every 25 minutes (48,000,000 bytes). A
+completed segment is flushed and data-synced before the server emits
+`recording_segment_saved`; capture and live recognition continue without
+reopening the microphone. Clean completion removes the temporary files after
+the final pipeline releases them. The complete WebSocket session is capped at
+800 MiB (about 7 hours 17 minutes) as an abuse and disk guard. HTTP uploads keep
+their independent 100 MiB limit. Browser-side backpressure keeps a bounded PCM
+tail and sends it before the stop frame; if audio must be dropped, capture stops
+with an explicit error instead of silently shifting transcript timestamps.
+
 The linked Rust speech runtime and an installed live streaming model are
 separate readiness conditions: the microphone control is service-ready only
 when a compatible streaming model is installed (or an explicit test mock is
@@ -80,7 +91,9 @@ The bounded per-session meeting projection is shared in
 that survives session pruning and aggregates several recordings is shared at
 `~/.cccc/voice-secretary/<group_id>/documents/<document_id>/transcript.jsonl`.
 Both Web implementations read these records through the daemon instead of
-owning a separate browser-side transcript authority.
+owning a separate browser-side transcript authority. Transcript clearing also
+uses the daemon operation so the session projection and both durable logs are
+removed under the same transcript lock.
 
 Prompt refinement and document instructions are semantic inputs, not meeting
 transcripts: they never create a session entry or a per-session transcript

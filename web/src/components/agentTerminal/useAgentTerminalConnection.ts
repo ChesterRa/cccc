@@ -4,20 +4,22 @@ import type { Terminal } from "@xterm/xterm";
 import { fetchTerminalTail, withAuthToken } from "../../services/api";
 import type { TerminalSignal } from "../../stores/useTerminalSignalsStore";
 import { getTerminalSignalFromChunk } from "../../utils/terminalWorkingState";
+import {
+  createTerminalOutputController,
+  type TerminalOutputCursorState,
+} from "./terminalOutputController";
+import { createTerminalOutputStreamWriter } from "./terminalOutputStreamWriter";
 import { createTerminalReplayWriteGuard } from "./terminalReplayWriteGuard";
 import {
   buildTerminalWebSocketUrl,
   buildTerminalConnectionKey,
-  decodeTerminalJsonFrame,
   encodeTerminalInputFrame,
   encodeTerminalResizeFrame,
   filterTerminalInputForRuntime,
   isTerminalAttachNonRetryableErrorCode,
   isTerminalAttachStartupRaceErrorCode,
-  parseTerminalBinaryFrame,
   shouldSuppressTerminalAttachErrorOutput,
   shouldRetryTerminalClose,
-  splitTerminalOutputByReplayBoundary,
 } from "../../utils/terminalConnection";
 
 export type AgentTerminalConnectionStatus =
@@ -75,7 +77,6 @@ export function useAgentTerminalConnection(args: {
   const reconnectAttemptRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const terminalReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const outputFilterTailRef = useRef("");
   const terminalSignalBufferRef = useRef("");
   const terminalAttachNoRetryRef = useRef(false);
   const terminalAttachStartupRaceRef = useRef(false);
@@ -157,31 +158,14 @@ export function useAgentTerminalConnection(args: {
     let disposed = false;
     let disposable: { dispose: () => void } | null = null;
     let resizeDisposable: { dispose: () => void } | null = null;
-    // Absolute offset (in raw PTY bytes) of everything delivered so far this
-    // mount. The first attach replays the retained ANSI stream in bounded
-    // chunks; reconnects then resume from this cursor.
-    let deliveredCursor: number | null = null;
-    let replayEndCursor: number | null = null;
-
-    // Seed the delivered-byte cursor from the daemon's attach frame. If the daemon
-    // replayed from earlier than we asked (our cursor fell out of the ring buffer),
-    // reset so the replay rebuilds the screen cleanly instead of appending onto
-    // stale content.
-    const seedCursorFromAttach = (
-      result: Record<string, unknown>,
-      current: number | null,
-    ): number | null => {
-      const rc = Number(result?.replay_cursor);
-      if (!Number.isFinite(rc)) return current;
-      if (current !== null && rc !== current) {
-        try {
-          terminalRef.current?.reset();
-        } catch {
-          // ignore
-        }
-      }
-      return rc;
+    // Absolute raw PTY offsets. A snapshot is committed only after xterm has
+    // parsed it; its encoded byte length never advances these cursors.
+    const cursors: TerminalOutputCursorState = {
+      deliveredCursor: null,
+      receivedCursor: null,
+      replayEndCursor: null,
     };
+    let connectionGeneration = 0;
 
     const connect = async () => {
       if (disposed) return;
@@ -211,16 +195,20 @@ export function useAgentTerminalConnection(args: {
 
       const openWebSocket = (isFirstAttach: boolean) => {
         if (disposed) return;
-        // The first attach rebuilds xterm from the retained raw ANSI stream.
-        // Later attaches request only bytes produced after the tracked cursor.
+        const generation = ++connectionGeneration;
+        const fittedTerm = terminalRef.current;
         const wsUrl = buildTerminalWebSocketUrl({
           protocol: window.location.protocol,
           host: window.location.host,
           groupId,
           actorId,
-          since: isFirstAttach ? null : deliveredCursor,
+          since: isFirstAttach ? null : cursors.deliveredCursor,
           mode: canControlRef.current ? "control" : "viewer",
           takeover: canControlRef.current,
+          outputFlowControl: "ack_v1",
+          bootstrap: "snapshot_v1",
+          cols: canControlRef.current ? fittedTerm?.cols : undefined,
+          rows: canControlRef.current ? fittedTerm?.rows : undefined,
         });
 
         const ws = new WebSocket(withAuthToken(wsUrl));
@@ -235,12 +223,9 @@ export function useAgentTerminalConnection(args: {
           setConnectionStatus("connected");
           setTerminalWritable(false);
           reconnectAttemptRef.current = 0;
-          outputFilterTailRef.current = "";
           terminalSignalBufferRef.current = "";
-          // Reset only on the first (full-backlog) attach so the replay rebuilds
-          // the exact current screen with no duplicated scrollback. Reconnects are
-          // tail-only and must NOT reset — that would clear the user's screen and
-          // scroll position on every transient websocket blip.
+          // The first attach is rebuilt from either a negotiated snapshot or a
+          // legacy raw replay. Tail-only reconnects keep the current viewport.
           if (isFirstAttach) {
             try {
               terminalRef.current?.reset();
@@ -276,27 +261,11 @@ export function useAgentTerminalConnection(args: {
           }
         };
 
-        const handleDecoded = (data: string, replaying = false) => {
-          if (disposed) return;
-          const term = terminalRef.current;
-          if (!term) return;
-          const seq = "\x1b[3J";
-          const repl = "\x1b[2J";
-          const combined = `${outputFilterTailRef.current}${data || ""}`;
-          const replaced = combined.split(seq).join(repl);
-          let tail = "";
-          for (let n = seq.length - 1; n > 0; n--) {
-            const suffix = replaced.slice(-n);
-            if (seq.startsWith(suffix)) {
-              tail = suffix;
-              break;
-            }
-          }
-          outputFilterTailRef.current = tail;
-          const safe = tail ? replaced.slice(0, -tail.length) : replaced;
+        const observeTerminalText = (data: string) => {
+          if (!data) return;
           const signal = getTerminalSignalFromChunk(
             terminalSignalBufferRef.current,
-            safe,
+            data,
             runtimeRef.current,
           );
           terminalSignalBufferRef.current = signal.nextBuffer;
@@ -306,80 +275,75 @@ export function useAgentTerminalConnection(args: {
               updatedAt: Date.now(),
             });
           }
+        };
+
+        const handleDecoded = (data: string, replaying = false, onParsed?: () => void) => {
+          if (disposed) return;
+          const term = terminalRef.current;
+          if (!term) {
+            onParsed?.();
+            return;
+          }
+          observeTerminalText(data);
           try {
-            if (safe) replayWriteGuard.write(safe, replaying);
+            if (data) replayWriteGuard.write(data, replaying, onParsed);
+            else onParsed?.();
           } catch (err) {
             console.error("terminal write failed", err);
+            ws.close(1011, "Terminal renderer failed");
           }
         };
 
-        const handleAttachResult = (result: Record<string, unknown>) => {
-          deliveredCursor = seedCursorFromAttach(result, deliveredCursor);
-          const endCursor = Number(result?.replay_end_cursor);
-          replayEndCursor = Number.isFinite(endCursor)
-            ? Math.max(deliveredCursor ?? 0, endCursor)
-            : null;
-          const writable = Boolean(result.terminal_writable);
-          setTerminalWritable(writable);
-          if (canControlRef.current && !writable) {
-            handleDecoded("\r\n[terminal] read-only connection; reconnect to take control.\r\n");
-          }
-          if (terminalReadyTimeoutRef.current) {
-            clearTimeout(terminalReadyTimeoutRef.current);
-          }
-          setTerminalReady(false);
+        const outputWriter = createTerminalOutputStreamWriter({
+          write: (data, replaying, onParsed) => {
+            replayWriteGuard.write(data, replaying, onParsed);
+          },
+          onText: observeTerminalText,
+        });
+
+        const scheduleTerminalReady = () => {
+          if (terminalReadyTimeoutRef.current) return;
           terminalReadyTimeoutRef.current = setTimeout(() => {
-            if (!disposed) setTerminalReady(true);
+            terminalReadyTimeoutRef.current = null;
+            if (!disposed && generation === connectionGeneration) setTerminalReady(true);
           }, TERMINAL_SHOW_DELAY_MS);
         };
 
-        const handleOutputPayload = (payload: Uint8Array) => {
-          const startCursor = deliveredCursor;
-          if (deliveredCursor !== null) deliveredCursor += payload.byteLength;
-          const chunks = splitTerminalOutputByReplayBoundary(payload, startCursor, replayEndCursor);
-          for (const chunk of chunks) {
-            handleDecoded(new TextDecoder().decode(chunk.data), chunk.replaying);
-          }
-        };
+        const outputController = createTerminalOutputController({
+          ws,
+          cursors,
+          outputWriter,
+          getTerminal: () => terminalRef.current,
+          isCurrentGeneration: () => generation === connectionGeneration,
+          canControl: () => canControlRef.current,
+          onDecoded: handleDecoded,
+          setWritable: setTerminalWritable,
+          resetReady: () => {
+            if (terminalReadyTimeoutRef.current) {
+              clearTimeout(terminalReadyTimeoutRef.current);
+              terminalReadyTimeoutRef.current = null;
+            }
+            setTerminalReady(false);
+          },
+          scheduleReady: scheduleTerminalReady,
+          fitAfterSnapshot: fitBeforeAttach,
+        });
 
         ws.onmessage = (event) => {
           if (disposed) return;
 
           if (event.data instanceof ArrayBuffer) {
-            const frame = parseTerminalBinaryFrame(event.data);
-            if (!frame) {
-              handleOutputPayload(new Uint8Array(event.data));
-              return;
-            }
-            if (frame.type === "output") {
-              handleOutputPayload(frame.payload);
-              return;
-            }
-            if (frame.type === "attach") {
-              const result = decodeTerminalJsonFrame<Record<string, unknown>>(frame.payload) || {};
-              handleAttachResult(result);
-              return;
-            }
-            if (frame.type === "input_ack") {
-              const msg = decodeTerminalJsonFrame<{ ok?: boolean; error?: { message?: string } }>(
-                frame.payload,
-              );
-              if (msg?.ok === false) {
-                const message = String(msg.error?.message || "Terminal input was rejected.");
-                handleDecoded(`\r\n[terminal] ${message}\r\n`);
-              }
-              return;
-            }
+            outputController.handleBinaryFrame(event.data);
           } else if (event.data instanceof Blob) {
             void event.data.arrayBuffer().then((buf) => {
-              handleOutputPayload(new Uint8Array(buf));
+              if (!disposed) outputController.handleBinaryFrame(buf);
             });
           } else if (typeof event.data === "string") {
             try {
               const msg = JSON.parse(event.data);
               if (msg.type === "terminal.attach" && msg.ok === true) {
                 const result = msg.result && typeof msg.result === "object" ? msg.result : {};
-                handleAttachResult(result);
+                outputController.handleAttachResult(result);
                 return;
               }
               if (msg.type === "terminal.input_ack" && msg.ok === false) {
@@ -401,13 +365,18 @@ export function useAgentTerminalConnection(args: {
                 onStatusChangeRef.current?.();
               }
             } catch {
-              handleOutputPayload(new TextEncoder().encode(event.data));
+              outputController.handleOutputPayload(new TextEncoder().encode(event.data));
             }
           }
         };
 
         ws.onclose = (event) => {
           if (disposed) return;
+          try {
+            outputWriter.flush();
+          } catch (err) {
+            console.error("terminal output flush failed", err);
+          }
           wsRef.current = null;
           const shouldRetry = shouldRetryTerminalClose({
             actorRunning: isRunningRef.current,
@@ -475,7 +444,7 @@ export function useAgentTerminalConnection(args: {
       // Fit once so the initial resize frame (sent on open) matches the visible
       // size and the resize SIGWINCH prompts the runtime to repaint correctly.
       fitBeforeAttach?.();
-      openWebSocket(deliveredCursor === null);
+      openWebSocket(cursors.deliveredCursor === null);
     };
 
     void connect();

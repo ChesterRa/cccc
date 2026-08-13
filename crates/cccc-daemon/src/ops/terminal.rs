@@ -5,17 +5,23 @@ use serde_json::{Value, json};
 use crate::dispatch::{OpError, OpResult, bool_arg, object, required_arg, string_arg};
 use crate::ops::terminal_text;
 
+mod session_control;
+
+#[cfg(all(test, unix))]
+use session_control::write;
+
 pub fn handle(home: &HomeLayout, request: &DaemonRequest) -> Option<OpResult> {
     Some(match request.op.as_str() {
-        "terminal_status" => status(request),
+        "terminal_status" => session_control::status(request),
+        "term_attachment_status" => session_control::attachment_status(request),
         "terminal_tail" => tail(home, request),
         "terminal_snapshot" => snapshot(home, request),
         "terminal_replay" => replay(home, request),
         "terminal_history" => history(home, request),
         "terminal_since" => since(home, request),
-        "terminal_write" => write(home, request),
-        "term_resize" | "terminal_resize" => resize(home, request),
-        "terminal_clear" => clear(home, request),
+        "terminal_write" => session_control::write(home, request),
+        "term_resize" | "terminal_resize" => session_control::resize(home, request),
+        "terminal_clear" => session_control::clear(home, request),
         _ => return None,
     })
 }
@@ -25,12 +31,6 @@ fn ids(request: &DaemonRequest) -> Result<(String, String), OpError> {
         required_arg(request, "group_id")?,
         required_arg(request, "actor_id")?,
     ))
-}
-
-fn status(request: &DaemonRequest) -> OpResult {
-    let (group_id, actor_id) = ids(request)?;
-    let status = cccc_runtime::status(&group_id, &actor_id).map_err(runtime_error)?;
-    object(json!({"session": status}))
 }
 
 fn tail(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
@@ -156,50 +156,9 @@ fn since(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
     object(json!({"history": page}))
 }
 
-fn write(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let (group_id, actor_id) = ids(request)?;
-    let data = string_arg(request, "data")
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| OpError::new("invalid_args", "data is required"))?;
-    cccc_runtime::write(&group_id, &actor_id, data.as_bytes()).map_err(runtime_error)?;
-    super::runtime_hook_input::observe(home, &group_id, &actor_id, data.as_bytes());
-    object(json!({"written": data.len()}))
-}
-
 #[cfg(test)]
 fn is_interrupt_input(data: &str) -> bool {
     data.as_bytes().contains(&0x03) || data == "\u{1b}"
-}
-
-fn resize(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let (group_id, actor_id) = ids(request)?;
-    let cols = terminal_size_arg(request, "cols");
-    let rows = terminal_size_arg(request, "rows");
-    if !(10..=u16::MAX as usize).contains(&cols) || !(2..=u16::MAX as usize).contains(&rows) {
-        return Err(OpError::new(
-            "invalid_size",
-            format!("invalid terminal size: cols={cols} rows={rows}"),
-        ));
-    }
-    load_pty_target(home, &group_id, &actor_id)?;
-    require_active_session(&group_id, &actor_id)?;
-    let cols = cols as u16;
-    let rows = rows as u16;
-    cccc_runtime::resize(&group_id, &actor_id, cols, rows).map_err(active_session_error)?;
-    object(json!({
-        "group_id": group_id,
-        "actor_id": actor_id,
-        "cols": cols,
-        "rows": rows,
-    }))
-}
-
-fn clear(home: &HomeLayout, request: &DaemonRequest) -> OpResult {
-    let (group_id, actor_id) = ids(request)?;
-    authorize_transcript(home, request, &group_id, &actor_id)?;
-    require_active_session(&group_id, &actor_id)?;
-    cccc_runtime::clear(&group_id, &actor_id).map_err(active_session_error)?;
-    object(json!({"group_id": group_id, "actor_id": actor_id, "cleared": true}))
 }
 
 fn authorize_transcript(

@@ -1,6 +1,7 @@
 mod events;
 mod output;
 mod protocol;
+mod provider_cli;
 mod session;
 mod supervisor;
 
@@ -15,6 +16,10 @@ use std::sync::mpsc::{SyncSender, sync_channel};
 use std::sync::{Condvar, Mutex};
 
 pub use supervisor::{running, start, status, stop, stop_all, stop_group, submit, supports};
+
+pub(super) fn uses_managed_provider_cli(actor: &cccc_contracts::Actor) -> bool {
+    provider_cli::uses_managed_provider_cli(actor)
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct HeadlessStatus {

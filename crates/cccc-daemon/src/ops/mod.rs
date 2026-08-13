@@ -7,6 +7,8 @@ mod actor_listing;
 mod actor_profile_runtime;
 pub(crate) mod actor_runtime;
 #[cfg(test)]
+mod actor_runtime_mcp_tests;
+#[cfg(test)]
 mod actor_runtime_tests;
 mod actor_saga;
 mod actor_secrets;
@@ -50,7 +52,7 @@ mod profile_access;
 mod profiles;
 mod remote_access;
 mod runtime_completion;
-mod runtime_hook_input;
+pub(crate) mod runtime_hook_input;
 mod runtime_hook_session;
 mod runtime_mcp;
 pub(crate) mod runtime_restore;

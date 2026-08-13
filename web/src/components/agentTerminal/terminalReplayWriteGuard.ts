@@ -4,19 +4,15 @@ export function createTerminalReplayWriteGuard(term: Pick<Terminal, "write">) {
   let pendingReplayWrites = 0;
 
   return {
-    write(data: string, replaying: boolean): void {
-      if (!replaying) {
-        term.write(data);
-        return;
-      }
-
-      pendingReplayWrites += 1;
+    write(data: string | Uint8Array, replaying: boolean, onParsed?: () => void): void {
+      if (replaying) pendingReplayWrites += 1;
       try {
         term.write(data, () => {
-          pendingReplayWrites = Math.max(0, pendingReplayWrites - 1);
+          if (replaying) pendingReplayWrites = Math.max(0, pendingReplayWrites - 1);
+          onParsed?.();
         });
       } catch (error) {
-        pendingReplayWrites = Math.max(0, pendingReplayWrites - 1);
+        if (replaying) pendingReplayWrites = Math.max(0, pendingReplayWrites - 1);
         throw error;
       }
     },

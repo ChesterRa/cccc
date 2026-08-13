@@ -26,8 +26,8 @@ def _lock_path(home: Optional[Path] = None) -> Path:
 @contextmanager
 def group_bridge_state_lock(home: Optional[Path] = None) -> Iterator[None]:
     """Hold Rust's canonical Group Bridge lock, reentrantly within this process."""
-    path = _lock_path(home)
-    key = str(path.absolute())
+    path = _lock_path(home).resolve()
+    key = str(path)
     with _PROCESS_LOCK:
         held = getattr(_HELD_LOCKS, "value", None)
         if held is None:

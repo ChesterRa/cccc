@@ -21,6 +21,7 @@ impl OutputReader {
         let (finished_tx, finished) = mpsc::channel();
         let handle = std::thread::Builder::new().name(name).spawn(move || {
             copy_output(reader.as_mut(), &history);
+            let _ = history.seal_output();
             let _ = finished_tx.send(());
         })?;
         Ok(Self {
