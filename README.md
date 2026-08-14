@@ -530,7 +530,7 @@ any remaining duplicates. Open a new terminal and run `cccc doctor`; its
 `Installation` section reports the invoked executable, the command selected by
 PATH, and every conflicting command.
 
-The hosted native installer currently pins the `v0.4.34-rc3` release candidate.
+The hosted native installer currently pins the `v0.4.34-rc4` release candidate.
 
 ### pip (RC from TestPyPI)
 

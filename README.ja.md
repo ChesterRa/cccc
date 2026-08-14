@@ -520,7 +520,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointMan
 新しいターミナルで `cccc doctor` を実行すると、`Installation` セクションに
 実行中の入口、PATH が選ぶコマンド、競合するすべてのパスが表示されます。
 
-現在のネイティブインストーラーは `v0.4.34-rc3` リリース候補を固定してインストールします。
+現在のネイティブインストーラーは `v0.4.34-rc4` リリース候補を固定してインストールします。
 
 ### pip（RC 版、TestPyPI）
 
