@@ -319,7 +319,10 @@ mod tests {
     #[test]
     fn inference_acquire_wait_stays_shorter_than_the_recording_lease_ttl() {
         const RECORDING_LEASE_TTL_MS: u64 = 30_000;
-        assert!(INFERENCE_ACQUIRE_TIMEOUT_MS < RECORDING_LEASE_TTL_MS);
+        assert!(
+            std::hint::black_box(INFERENCE_ACQUIRE_TIMEOUT_MS)
+                < std::hint::black_box(RECORDING_LEASE_TTL_MS)
+        );
         let payload = result_payload(Err(voice_asr::VoiceError::new(
             "asr_busy",
             "native inference worker stayed busy past the recording lease deadline",
