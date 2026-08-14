@@ -69,6 +69,10 @@ the explicit override for testing a different bundle.
 
 CI pins Node 24.19.0 for reproducible formatting, linting, testing, and bundling, while `engines.node` defines the supported non-EOL local runtime range. The project deliberately does not use `devEngines`, because exact package-manager checks can prevent every `npm` and `npx` command from starting when a developer has a different compatible npm version.
 
+Workflow JavaScript actions use their Node 24-compatible major versions.
+Dependabot groups GitHub Actions updates into one weekly maintenance change so
+runner-runtime deprecations do not accumulate as warnings across every job.
+
 `npm run check` runs Vite+ Oxfmt and Oxlint, followed by the independent TypeScript 5.9 `tsc --noEmit` compatibility check. `npm run typecheck` remains available separately for focused diagnosis.
 
 Vite+ 0.2.4 / tsgolint 0.24 does not yet replace this project's `tsc` gate. Enabling both `lint.options.typeAware` and `typeCheck` produced 105 errors and 454 warnings across 439 files, while `tsc --noEmit` passed. Type-aware Vite+ checks remain disabled until their scope and diagnostics match the project; CI keeps the evidence-backed `vp check && npm run typecheck` combination.
@@ -86,18 +90,37 @@ Vite+ 0.2.4 / tsgolint 0.24 does not yet replace this project's `tsc` gate. Enab
 | `quality` | Ruff and quality-tool/workflow contract tests |
 | `web` | Vite+ Oxfmt/Oxlint check, independent TypeScript check, all Web tests, and the production bundle |
 | `python-tests` | Source-level Python tests distributed across four deterministic matrix shards |
+| `python-compat` | Import, CLI, and MCP handshake coverage on Python 3.11 through 3.13 |
 | `package` | Compile, build, Twine check, install, wheel resource smoke, and packaged Web bundle contract after quality/Web/Python pass |
-| `rust` | Python-free Rust workspace, installer/release assets, plus built CLI/daemon/MCP/code-mode replacement smoke on Ubuntu |
+| `rust-lint` | Rust formatting and workspace Clippy with warnings denied |
+| `rust-test` | Python-free Rust workspace plus installer/release source contracts |
+| `rust-process-lifecycle` | Serial combined daemon/Web lifecycle tests, isolated from the parallel workspace suite |
 | `interop` | Focused Python/Rust persisted-state and lock compatibility tests |
 | `windows-smoke` | Windows PTY compatibility tests |
+| `ci-required` | Stable aggregate result for branch protection; fails when any required job fails or is skipped |
 
-The Rust pull-request job is self-contained: it does not install or execute the
-Python backend. Cross-language tests that launch `src/cccc` stay excluded from
-that job so its boundary remains honest, but run in the separate mandatory
-`interop` job instead. All other Rust targets are still compiled, linted, and
-tested.
+The Rust pull-request jobs are self-contained: they do not install or execute
+the Python backend. Cross-language tests that launch `src/cccc` stay excluded
+from `rust-test` so its boundary remains honest, but run in the separate
+mandatory `interop` job instead. CLI tests that spawn and stop a combined
+daemon/Web process are also excluded from the parallel workspace invocation and
+run with one test thread in `rust-process-lifecycle`. This preserves the process
+exit contract without making it race the rest of the workspace test binary.
 
-The Rust job also executes `scripts/tests/smoke_rust_replacement.sh` against the
+## Post-Merge Native Verification
+
+Slow native distribution checks live in the separate `Post-merge` workflow so
+pull requests do not contain push-only skipped jobs and the required CI result
+stays easy to read. It runs only after changes land on `main` or `rust`:
+
+| Job | Responsibility |
+| --- | --- |
+| `web-bundle` | Build the exact frontend embedded by native artifacts |
+| `rust-dist` | Release-build the Rust workspace and run Unix installation/replacement smoke |
+| `windows-installer` | Build the native Windows CLI and verify installer ownership and PATH handling |
+| `post-merge-required` | Stable aggregate result for the slow native verification layer |
+
+`rust-dist` executes `scripts/tests/smoke_rust_replacement.sh` against the
 actual built executable. The smoke uses a fresh `CCCC_HOME`, verifies offline
 `status`, starts the daemon, creates a scoped Web Model actor, performs an MCP
 handshake and a real `cccc_code_exec` cell, then stops the daemon and verifies

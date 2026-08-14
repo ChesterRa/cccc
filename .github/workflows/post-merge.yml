@@ -1,0 +1,121 @@
+name: Post-merge
+
+on:
+  push:
+    branches: [main, rust]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: post-merge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install Web dependencies
+        run: npm ci --prefix web
+
+      - name: Build Web bundle
+        run: npm -C web run build
+
+      - name: Upload Web bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: post-merge-web
+          path: web/dist
+          if-no-files-found: error
+
+  rust-dist:
+    needs: web-bundle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download Web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: post-merge-web
+          path: web/dist
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build and verify Rust distribution
+        run: |
+          cargo build --workspace --release --locked
+          scripts/tests/install_real_unix.sh target/release/cccc
+          target/release/cccc --version
+          bash scripts/tests/smoke_rust_replacement.sh target/release/cccc
+
+  windows-installer:
+    needs: web-bundle
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download Web bundle
+        uses: actions/download-artifact@v8
+        with:
+          name: post-merge-web
+          path: web/dist
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@1.88.0
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build native Windows installer fixture
+        run: cargo build --release --locked -p cccc --bin cccc
+
+      - name: Test Windows installer ownership and PATH handling
+        shell: pwsh
+        timeout-minutes: 15
+        run: scripts/tests/install_windows.ps1
+
+  post-merge-required:
+    if: always()
+    needs: [web-bundle, rust-dist, windows-installer]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify post-merge jobs
+        env:
+          NEEDS_CONTEXT: ${{ toJSON(needs) }}
+        shell: bash
+        run: |
+          failures="$(
+            jq -r '
+              to_entries[]
+              | select(.value.result != "success")
+              | "\(.key)=\(.value.result)"
+            ' <<<"$NEEDS_CONTEXT"
+          )"
+          if [[ -n "$failures" ]]; then
+            echo "Post-merge jobs did not succeed:"
+            echo "$failures"
+            exit 1
+          fi
+          echo "All post-merge jobs succeeded."

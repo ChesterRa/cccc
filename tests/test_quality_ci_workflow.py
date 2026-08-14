@@ -34,6 +34,13 @@ def _nightly_workflow() -> dict:
     )
 
 
+def _post_merge_workflow() -> dict:
+    return yaml.load(
+        (ROOT / ".github/workflows/post-merge.yml").read_text(encoding="utf-8"),
+        Loader=yaml.BaseLoader,
+    )
+
+
 def _runs(job: dict) -> str:
     return "\n".join(step.get("run", "") for step in job.get("steps", []))
 
@@ -44,7 +51,7 @@ def test_ci_has_read_only_permissions_bounded_jobs_and_cancels_stale_runs() -> N
 
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["concurrency"] == {
-        "group": "ci-${{ github.workflow }}-${{ github.ref }}",
+        "group": "ci-${{ github.event.pull_request.number || github.ref }}",
         "cancel-in-progress": "true",
     }
     assert {name: job.get("timeout-minutes") for name, job in jobs.items()} == {
@@ -54,13 +61,13 @@ def test_ci_has_read_only_permissions_bounded_jobs_and_cancels_stale_runs() -> N
         "python-compat": "15",
         "package": "25",
         "windows-smoke": "20",
-        "windows-installer": "40",
         "rust-lint": "15",
         "rust-test": "45",
-        "rust-dist": "30",
+        "rust-process-lifecycle": "15",
         "interop": "30",
+        "ci-required": "5",
     }
-    for name in ("rust-lint", "rust-test", "rust-dist"):
+    for name in ("rust-lint", "rust-test", "rust-process-lifecycle"):
         rust_toolchain = next(
             step["uses"]
             for step in jobs[name]["steps"]
@@ -82,11 +89,24 @@ def test_pr_jobs_keep_full_quality_web_python_and_package_boundaries() -> None:
         "interop",
         "rust-lint",
         "rust-test",
+        "rust-process-lifecycle",
+        "ci-required",
     } <= set(jobs)
-    # Release-asset verification is deliberately post-merge: native builds
-    # are too slow for the PR critical path and run when changes land.
-    for gated in ("rust-dist", "windows-installer"):
-        assert jobs[gated]["if"] == "github.event_name == 'push'", gated
+    assert "rust-dist" not in jobs
+    assert "windows-installer" not in jobs
+    assert set(jobs["ci-required"]["needs"]) == {
+        "quality",
+        "web",
+        "python-tests",
+        "python-compat",
+        "package",
+        "windows-smoke",
+        "rust-lint",
+        "rust-test",
+        "rust-process-lifecycle",
+        "interop",
+    }
+    assert jobs["ci-required"]["if"] == "always()"
     assert set(jobs["package"]["needs"]) == {"quality", "web", "python-tests", "python-compat", "interop"}
     assert "ruff check" in _runs(jobs["quality"])
     assert "npm -C web test" in _runs(jobs["web"])
@@ -124,13 +144,12 @@ def test_windows_smoke_keeps_the_product_pty_checks_without_web_migration_setup(
     assert "npm " not in runs
 
 
-def test_windows_installer_job_is_a_push_gated_native_fixture() -> None:
-    installer = _workflow()["jobs"]["windows-installer"]
+def test_windows_installer_job_is_a_post_merge_native_fixture() -> None:
+    installer = _post_merge_workflow()["jobs"]["windows-installer"]
     runs = _runs(installer)
     uses = {step.get("uses", "") for step in installer["steps"]}
 
-    assert installer["if"] == "github.event_name == 'push'"
-    assert installer["needs"] == "web"
+    assert installer["needs"] == "web-bundle"
     assert "cargo build --release --locked -p cccc --bin cccc" in runs
     assert "scripts/tests/install_windows.ps1" in runs
     assert any(item.startswith("actions/download-artifact") for item in uses)
@@ -140,7 +159,7 @@ def test_windows_installer_job_is_a_push_gated_native_fixture() -> None:
 def test_rust_jobs_are_python_free_and_serialize_daemon_tests() -> None:
     jobs = _workflow()["jobs"]
 
-    for name in ("rust-lint", "rust-test", "rust-dist"):
+    for name in ("rust-lint", "rust-test", "rust-process-lifecycle"):
         job = jobs[name]
         runs = _runs(job)
         uses = {step.get("uses", "") for step in job["steps"]}
@@ -157,6 +176,11 @@ def test_rust_jobs_are_python_free_and_serialize_daemon_tests() -> None:
         in test_runs
     )
     assert test_runs.count("--skip python_interop_") == 2
+    assert "--skip daemon_self_launch::" in test_runs
+    lifecycle_runs = _runs(jobs["rust-process-lifecycle"])
+    assert "--test integration" in lifecycle_runs
+    assert "daemon_self_launch::" in lifecycle_runs
+    assert "--test-threads=1" in lifecycle_runs
     assert "cargo fmt --all --check" in _runs(jobs["rust-lint"])
     assert "cargo clippy --workspace --all-targets -- -D warnings" in _runs(jobs["rust-lint"])
 
@@ -190,13 +214,13 @@ def test_python_backed_rust_tests_share_one_explicit_ci_category() -> None:
 
 
 def test_rust_dist_and_manual_verifiers_cover_replacement_smoke() -> None:
-    dist = _workflow()["jobs"]["rust-dist"]
+    dist = _post_merge_workflow()["jobs"]["rust-dist"]
     runs = _runs(dist)
     unix_verifier = (ROOT / "scripts/tests/verify_release_unix.sh").read_text(encoding="utf-8")
     windows_verifier = (ROOT / "scripts/tests/verify_release_windows.ps1").read_text(encoding="utf-8")
     windows_installer = (ROOT / "scripts/install.ps1").read_text(encoding="utf-8")
 
-    assert dist["if"] == "github.event_name == 'push'"
+    assert dist["needs"] == "web-bundle"
     assert "cargo build --workspace --release --locked" in runs
     assert "scripts/tests/smoke_rust_replacement.sh target/release/cccc" in runs
     assert "smoke_rust_replacement.sh" in unix_verifier
@@ -301,6 +325,66 @@ def test_nightly_workflow_runs_serial_full_python_suite_at_the_oldest_endpoint()
     assert "pytest_shards.py" not in runs
     assert "pytest-xdist" not in runs
     assert " -n " not in runs
+
+
+def test_post_merge_workflow_owns_slow_native_verification() -> None:
+    workflow = _post_merge_workflow()
+    jobs = workflow["jobs"]
+
+    assert set(workflow["on"]) == {"push", "workflow_dispatch"}
+    assert workflow["on"]["push"]["branches"] == ["main", "rust"]
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["concurrency"] == {
+        "group": "post-merge-${{ github.ref }}",
+        "cancel-in-progress": "true",
+    }
+    assert set(jobs) == {
+        "web-bundle",
+        "rust-dist",
+        "windows-installer",
+        "post-merge-required",
+    }
+    assert jobs["post-merge-required"]["if"] == "always()"
+    assert set(jobs["post-merge-required"]["needs"]) == {
+        "web-bundle",
+        "rust-dist",
+        "windows-installer",
+    }
+
+
+def test_workflows_use_node24_actions_and_schedule_action_updates() -> None:
+    workflow_sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((ROOT / ".github/workflows").glob("*.yml"))
+    )
+
+    for legacy in (
+        "actions/checkout@v4",
+        "actions/setup-python@v5",
+        "actions/setup-node@v4",
+        "actions/upload-artifact@v4",
+        "actions/download-artifact@v4",
+    ):
+        assert legacy not in workflow_sources
+    for current in (
+        "actions/checkout@v7",
+        "actions/setup-python@v7",
+        "actions/setup-node@v7",
+        "actions/upload-artifact@v7",
+        "actions/download-artifact@v8",
+    ):
+        assert current in workflow_sources
+
+    dependabot = yaml.safe_load(
+        (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
+    )
+    action_updates = next(
+        update
+        for update in dependabot["updates"]
+        if update["package-ecosystem"] == "github-actions"
+    )
+    assert action_updates["directory"] == "/"
+    assert action_updates["schedule"]["interval"] == "weekly"
 
 
 def test_python_release_builds_one_atomic_dual_implementation_set() -> None:

@@ -15,11 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "24.19.0"
           cache: npm
@@ -34,7 +34,7 @@ jobs:
           fi
       - name: Build Web UI once
         run: node scripts/prepare_rust_web_assets.mjs --install-deps
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-rust-web-bundle
           path: web/dist
@@ -46,8 +46,8 @@ jobs:
     timeout-minutes: 45
     container: quay.io/pypa/manylinux_2_28_x86_64:latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: release-rust-web-bundle
           path: web/dist
@@ -75,7 +75,7 @@ jobs:
           cp target/release/cccc "dist/${package}/"
           cp LICENSE README.md docs/rust-migration.md "dist/${package}/"
           tar -C dist -czf "dist/${package}.tar.gz" "${package}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cccc-x86_64-unknown-linux-gnu
           path: dist/*.tar.gz
@@ -99,8 +99,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: release-rust-web-bundle
           path: web/dist
@@ -151,7 +151,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/cccc.exe" "dist/$name/"
           Copy-Item LICENSE,README.md,docs/rust-migration.md "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cccc-${{ matrix.target }}
           path: dist/*.${{ matrix.archive }}
@@ -164,8 +164,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: cccc-*
           path: artifacts
@@ -175,7 +175,7 @@ jobs:
         run: |
           version="$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)"
           scripts/package_release_assets.sh artifacts "$version"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: cccc-release-candidate
           path: artifacts/*
@@ -202,8 +202,8 @@ jobs:
             verifier: windows
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: cccc-release-candidate
           path: artifacts
@@ -224,8 +224,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: cccc-release-candidate
           path: artifacts
